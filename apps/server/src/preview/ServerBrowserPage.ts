@@ -19,59 +19,74 @@ import {
   type PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
 import { constVoid } from "effect/Function";
+import * as Schema from "effect/Schema";
 import type { CDPSession, ConsoleMessage, Frame, Locator, Page } from "playwright-core";
 import * as NodeCrypto from "node:crypto";
 import { BrowserControlInterrupted } from "./SessionControl.ts";
 
+const isBrowserControlInterrupted = Schema.is(BrowserControlInterrupted);
+
 const MAX_EVALUATION_BYTES = 64_000;
 const MAX_VISIBLE_TEXT_LENGTH = 20_000;
 const MAX_SCREENSHOT_WIDTH = 1280;
+// Two attempts must fit in a snapshot's 10-second deadline.
+const SCREENSHOT_TIMEOUT_MS = 3_000;
 const WAIT_POLL_MS = 100;
 export const DIAGNOSTIC_BUFFER_LIMIT = 200;
 
-export class ServerBrowserOperationError extends Error {
-  readonly tag: string;
-  readonly detail: unknown;
+export class ServerBrowserOperationError extends Schema.TaggedError<ServerBrowserOperationError>()(
+  "ServerBrowserOperationError",
+  {
+    tag: Schema.String,
+    message: Schema.String,
+    detail: Schema.optional(Schema.Unknown),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 
-  constructor(tag: string, message: string, detail?: unknown) {
-    super(message);
-    this.tag = tag;
-    this.detail = detail;
-  }
-}
+const isServerBrowserOperationError = Schema.is(ServerBrowserOperationError);
 
 export const toOperationError = (
   cause: unknown,
   timeoutMs?: number,
 ): ServerBrowserOperationError => {
-  if (cause instanceof BrowserControlInterrupted)
-    return new ServerBrowserOperationError(
-      "PreviewAutomationControlInterruptedError",
-      cause.message,
-      cause.reason,
-    );
-  if (cause instanceof ServerBrowserOperationError) return cause;
+  if (isBrowserControlInterrupted(cause))
+    return new ServerBrowserOperationError({
+      tag: "PreviewAutomationControlInterruptedError",
+      message: cause.message,
+      detail: cause.reason,
+    });
+  if (isServerBrowserOperationError(cause)) return cause;
   const message = cause instanceof Error ? cause.message : String(cause);
   const firstLine = message.split("\n")[0] ?? message;
   if (cause instanceof Error && cause.name === "TimeoutError") {
-    return new ServerBrowserOperationError(
-      "PreviewAutomationTimeoutError",
-      firstLine,
-      timeoutMs === undefined ? undefined : { timeoutMs },
-    );
+    return new ServerBrowserOperationError({
+      tag: "PreviewAutomationTimeoutError",
+      message: firstLine,
+      detail: timeoutMs === undefined ? undefined : { timeoutMs },
+    });
   }
-  if (
-    /while parsing selector|Unknown engine|Unexpected token|strict mode violation/i.test(message)
-  ) {
-    return new ServerBrowserOperationError("PreviewAutomationInvalidSelectorError", firstLine);
+  if (/while parsing selector|Unknown engine|Unexpected token/i.test(message)) {
+    return new ServerBrowserOperationError({
+      tag: "PreviewAutomationInvalidSelectorError",
+      message: firstLine,
+    });
   }
   if (/not an <input>|not editable|not an editable/i.test(message)) {
-    return new ServerBrowserOperationError("PreviewAutomationTargetNotEditableError", firstLine);
+    return new ServerBrowserOperationError({
+      tag: "PreviewAutomationTargetNotEditableError",
+      message: firstLine,
+    });
   }
-  return new ServerBrowserOperationError("PreviewAutomationExecutionError", firstLine);
+  return new ServerBrowserOperationError({
+    tag: "PreviewAutomationExecutionError",
+    message: firstLine,
+  });
 };
 
 const DEFAULT_TIMEOUT_MS = 15_000;
+const TARGET_COUNT_MS = 250;
+const MAX_TARGET_CHARS = 200;
 
 const pageRefs = new WeakMap<Page, { generation: string; refs: Map<string, string> }>();
 // A compact runtime namespace prevents old refs from aliasing after a server restart.
@@ -113,11 +128,12 @@ const targetLocator = (
     const ref = /^\s*aria-ref\s*=\s*(\S+)\s*$/.exec(selector)?.[1];
     const nativeRef = ref === undefined ? undefined : pageRefs.get(page)?.refs.get(ref);
     if (nativeRef === undefined) {
-      throw new ServerBrowserOperationError(
-        "PreviewAutomationInvalidSelectorError",
-        "This element ref is stale or belongs to another tab. Take a fresh snapshot and use its locator.",
-        { staleRef: true },
-      );
+      throw new ServerBrowserOperationError({
+        tag: "PreviewAutomationInvalidSelectorError",
+        message:
+          "This element ref is stale or belongs to another tab. Take a fresh snapshot and use its locator.",
+        detail: { staleRef: true },
+      });
     }
     return page.locator(`aria-ref=${nativeRef}`);
   }
@@ -227,16 +243,17 @@ const DOTTED_SCRIPT = `(() => {
 })()`;
 
 const pageChanged = () =>
-  new ServerBrowserOperationError(
-    "PreviewAutomationExecutionError",
-    "The page changed while capturing its snapshot. Take another snapshot.",
-  );
+  new ServerBrowserOperationError({
+    tag: "PreviewAutomationExecutionError",
+    message: "The page changed while capturing its snapshot. Take another snapshot.",
+  });
 
 const tooBusy = () =>
-  new ServerBrowserOperationError(
-    "PreviewAutomationTimeoutError",
-    "The page was too busy to capture a snapshot in time. Wait for it to settle and take another snapshot.",
-  );
+  new ServerBrowserOperationError({
+    tag: "PreviewAutomationTimeoutError",
+    message:
+      "The page was too busy to capture a snapshot in time. Wait for it to settle and take another snapshot.",
+  });
 
 const VALUE_TOO_LONG = "A password field holds a value too long to hide, so no snapshot was taken.";
 
@@ -379,7 +396,10 @@ const dottedPattern = (values: ReadonlyArray<string>) => {
     pattern.test("");
     pattern.test("\u2022");
   } catch {
-    throw new ServerBrowserOperationError("PreviewAutomationExecutionError", VALUE_TOO_LONG);
+    throw new ServerBrowserOperationError({
+      tag: "PreviewAutomationExecutionError",
+      message: VALUE_TOO_LONG,
+    });
   }
   return pattern;
 };
@@ -450,12 +470,47 @@ export const captureViewport = async (
   cdp: CDPSession,
   options: { readonly format: "png" | "jpeg"; readonly quality?: number },
 ) => {
-  const { data } = await cdp.send("Page.captureScreenshot", {
+  const capture = cdp.send("Page.captureScreenshot", {
     format: options.format,
     ...(options.quality === undefined ? {} : { quality: options.quality }),
   });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new ServerBrowserOperationError({
+            tag: "PreviewAutomationExecutionError",
+            message:
+              "The browser is not producing screenshot frames. For a desktop tab, show or restore the T3 Code window and try again.",
+          }),
+        ),
+      SCREENSHOT_TIMEOUT_MS,
+    );
+  });
+  // Hidden native guests can leave CDP captures pending forever. This deadline also
+  // releases a viewer's still-capture lock, which an agent snapshot may be waiting for.
+  const { data } = await Promise.race([capture, expired]).finally(() => clearTimeout(timer));
   return data;
 };
+
+export const captureFinalRecordingFrame = (cdp: CDPSession, quality: number) =>
+  answered(
+    cdp
+      .send("Runtime.evaluate", {
+        // Capture the destination of finite transitions, not their initially transparent frame.
+        expression: `(async () => {
+          const paint = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          await paint();
+          await Promise.allSettled(document.getAnimations()
+            .filter(animation => animation.playState === "running" && animation.effect?.getComputedTiming().iterations !== Infinity)
+            .map(animation => animation.finished));
+          await paint();
+        })()`,
+        awaitPromise: true,
+      })
+      .then(() => captureViewport(cdp, { format: "jpeg", quality })),
+  );
 
 /** Runs in the page's own isolated world, as the server has no image library. */
 const SHRINK_PNG = `async function (png, width, height) {
@@ -499,6 +554,7 @@ type SnapshotInput = {
   readonly cdp: CDPSession;
   /** Headless pages render at the scale the server set; a desktop page at its display's. */
   readonly renderScale: number | "display";
+  readonly fullScreenshot?: boolean | undefined;
   readonly consoleEntries: ReadonlyArray<PreviewAutomationConsoleEntry>;
   readonly networkEntries: ReadonlyArray<PreviewAutomationNetworkEntry>;
   readonly actionTimeline: PreviewAutomationSnapshot["actionTimeline"];
@@ -542,8 +598,13 @@ const capture = async (
         "url" | "title" | "loading" | "visibleText" | "interactiveElements"
       >
     >,
-    captureViewport(input.cdp, { format: "png" }).then((png) =>
-      scale < 1 ? shrinkPng(input.cdp, png, scale) : png,
+    captureViewport(input.cdp, { format: "png" }).then(async (full) =>
+      scale < 1
+        ? {
+            data: await shrinkPng(input.cdp, full, scale),
+            full: input.fullScreenshot ? full : undefined,
+          }
+        : { data: full, full: undefined },
     ),
   ]);
   void pageAndScreenshot.catch(constVoid);
@@ -568,7 +629,7 @@ const capture = async (
     void iframe.dispose().catch(constVoid);
     if (frame && unread.includes(frame)) throw tooBusy();
   }
-  const [page, data] = await pageAndScreenshot;
+  const [page, { full, data }] = await pageAndScreenshot;
   if (state.generation !== generation) throw pageChanged();
   const mask = (text: string) => (dotted ? text.replace(dotted, MASKED_VALUE) : text);
   // Redacted before the cut, so a payload crossing it can't leave its start showing, and before
@@ -595,6 +656,7 @@ const capture = async (
       data,
       ...pngSize(data),
     },
+    ...(full !== undefined ? { fullScreenshot: { data: full, ...pngSize(full) } } : {}),
   };
 };
 
@@ -634,6 +696,58 @@ export const click = async (
 ): Promise<{ readonly x: number; readonly y: number }> => {
   const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const locator = targetLocator(page, input);
+  try {
+    return await clickTarget(page, locator, input, timeout, pointer);
+  } catch (cause) {
+    throw locator === null ? cause : await namedTargetTimeout(locator, input, cause);
+  }
+};
+
+/**
+ * Playwright's timeout names neither the target nor why it waited. Counting only after the
+ * wait failed keeps auto-wait intact, but the count describes the page after the timeout, not
+ * what the click did: Playwright can dispatch the click and then time out waiting for the
+ * navigation it started.
+ */
+const namedTargetTimeout = async (
+  locator: Locator,
+  input: { readonly locator?: string | undefined; readonly selector?: string | undefined },
+  cause: unknown,
+) => {
+  if (!(cause instanceof Error && cause.name === "TimeoutError")) return cause;
+  const selector = JSON.stringify(input.locator ?? input.selector);
+  // The warning leads and the target is capped, so a reply cut short still carries the warning.
+  const target =
+    selector.length > MAX_TARGET_CHARS ? `${selector.slice(0, MAX_TARGET_CHARS)}...` : selector;
+  // The host's reply must still beat the broker's short grace after the operation timeout.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const matches = await Promise.race([
+    locator.count().catch(() => undefined),
+    new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), TARGET_COUNT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
+  const reason =
+    matches === undefined
+      ? `The click may have happened; check the page before retrying. Whether ${target} still matches an element is unknown.`
+      : matches === 0
+        ? `The click may have happened and removed its target or navigated; check the page before retrying. No element matches ${target} after the timeout; take a fresh snapshot and use its locator.`
+        : `The click may have happened; check the page before retrying. ${target} still matches an element after the timeout.`;
+  return new ServerBrowserOperationError({
+    tag: "PreviewAutomationTimeoutError",
+    message: reason,
+    detail: { reason },
+    cause,
+  });
+};
+
+const clickTarget = async (
+  page: Page,
+  locator: Locator | null,
+  input: PreviewAutomationClickInput,
+  timeout: number,
+  pointer: PointerReporter,
+) => {
   const point = await targetPoint(page, locator, input, timeout);
   await pointer(point, "click");
   const options = { button: input.button ?? "left", clickCount: input.clickCount ?? 1 } as const;
@@ -702,10 +816,10 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
       { timeout },
     ));
   if (focused !== true) {
-    throw new ServerBrowserOperationError(
-      "PreviewAutomationTargetNotEditableError",
-      "The target is not an enabled text field, so no text was typed.",
-    );
+    throw new ServerBrowserOperationError({
+      tag: "PreviewAutomationTargetNotEditableError",
+      message: "The target is not an enabled text field, so no text was typed.",
+    });
   }
   if (input.clear) {
     await page.keyboard.press("ControlOrMeta+A");
@@ -757,10 +871,10 @@ export const select = async (
         )?.value ?? entry,
     );
   if (values === null)
-    throw new ServerBrowserOperationError(
-      "PreviewAutomationTargetNotEditableError",
-      "This element is not a <select>. Click a custom dropdown, then click its option.",
-    );
+    throw new ServerBrowserOperationError({
+      tag: "PreviewAutomationTargetNotEditableError",
+      message: "This element is not a <select>. Click a custom dropdown, then click its option.",
+    });
   return { selected: await locator.selectOption(values, { timeout }) };
 };
 
@@ -813,47 +927,61 @@ export const evaluate = async (
   timeoutMs: number,
 ) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
   const expired = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
+      timedOut = true;
       // Stops a busy script; an awaited promise is abandoned and settles unread.
       void cdp.send("Runtime.terminateExecution").catch(constVoid);
       reject(
-        new ServerBrowserOperationError(
-          "PreviewAutomationTimeoutError",
-          `Evaluation did not finish within ${timeoutMs}ms and was stopped.`,
-        ),
+        new ServerBrowserOperationError({
+          tag: "PreviewAutomationTimeoutError",
+          message: `Evaluation did not finish within ${timeoutMs}ms and was stopped.`,
+        }),
       );
     }, timeoutMs);
   });
-  const evaluation = cdp.send("Runtime.evaluate", {
+  const params = {
     expression: input.expression,
     awaitPromise: input.awaitPromise ?? true,
-    returnByValue: input.returnByValue ?? true,
+    returnByValue: true,
+  };
+  // The devtools console's replMode allows top-level await but returns a trailing promise unawaited,
+  // so it only retries what the page's parser rejected. A parse error has a scriptId but no stack and
+  // ran nothing; a browser-internal rejection has neither.
+  const evaluation = cdp.send("Runtime.evaluate", params).then((classic) => {
+    const failure = classic.exceptionDetails;
+    const unparsed =
+      failure?.exception?.className === "SyntaxError" &&
+      failure.scriptId !== undefined &&
+      failure.stackTrace === undefined;
+    return unparsed && !timedOut && input.expression.includes("await")
+      ? cdp.send("Runtime.evaluate", { ...params, replMode: true })
+      : classic;
   });
   void evaluation.catch(constVoid);
   const result = await Promise.race([evaluation, expired]).finally(() => clearTimeout(timer));
   if (result.exceptionDetails) {
-    throw new ServerBrowserOperationError(
-      "PreviewAutomationExecutionError",
-      result.exceptionDetails.exception?.description ?? result.exceptionDetails.text,
-    );
+    throw new ServerBrowserOperationError({
+      tag: "PreviewAutomationExecutionError",
+      message: result.exceptionDetails.exception?.description ?? result.exceptionDetails.text,
+    });
   }
   const value =
     "value" in result.result ? result.result.value : (result.result.description ?? null);
   const actualBytes = Buffer.byteLength(JSON.stringify(value ?? null), "utf8");
   if (actualBytes > MAX_EVALUATION_BYTES) {
-    throw new ServerBrowserOperationError(
-      "PreviewAutomationResultTooLargeError",
-      `Evaluation result is ${actualBytes} bytes; the limit is ${MAX_EVALUATION_BYTES}.`,
-      { maximumBytes: MAX_EVALUATION_BYTES },
-    );
+    throw new ServerBrowserOperationError({
+      tag: "PreviewAutomationResultTooLargeError",
+      message: `Evaluation result is ${actualBytes} bytes; the limit is ${MAX_EVALUATION_BYTES}.`,
+      detail: { maximumBytes: MAX_EVALUATION_BYTES },
+    });
   }
   return value;
 };
 
 export const waitFor = async (page: Page, input: PreviewAutomationWaitForInput) => {
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const deadline = Date.now() + timeoutMs;
   const locator = targetLocator(page, input);
   const { text, urlIncludes } = input;
   const checks: Array<() => Promise<boolean>> = [];
@@ -868,16 +996,28 @@ export const waitFor = async (page: Page, input: PreviewAutomationWaitForInput) 
     );
   }
   if (urlIncludes !== undefined) checks.push(async () => page.url().includes(urlIncludes));
-  for (;;) {
-    const results = await Promise.all(checks.map((check) => check()));
-    if (results.every(Boolean)) return;
-    if (Date.now() >= deadline) {
-      throw new ServerBrowserOperationError(
-        "PreviewAutomationTimeoutError",
-        `Waited ${timeoutMs}ms without every condition holding.`,
-      );
+  // `count()` and `evaluate()` take no timeout; a stalled check would hold the tab's control queue.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new ServerBrowserOperationError({
+            tag: "PreviewAutomationTimeoutError",
+            message: `Waited ${timeoutMs}ms without every condition holding.`,
+          }),
+        ),
+      timeoutMs,
+    );
+  });
+  try {
+    for (;;) {
+      const results = await Promise.race([Promise.all(checks.map((check) => check())), expired]);
+      if (results.every(Boolean)) return;
+      await Promise.race([new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS)), expired]);
     }
-    await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS));
+  } finally {
+    clearTimeout(timer);
   }
 };
 
@@ -1044,11 +1184,18 @@ export const recordingEncoderScript = (frameRate: BrowserRecordingFrameRate) => 
     },
     async chunk(index) {
       const bytes = new Uint8Array(await chunks[index].arrayBuffer());
+      if (typeof bytes.toBase64 === "function") return bytes.toBase64();
       let binary = "";
       for (let offset = 0; offset < bytes.length; offset += 0x8000) {
         binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
       }
       return btoa(binary);
+    },
+    download() {
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(new Blob(chunks, { type: recorder.mimeType }));
+      link.download = "recording";
+      link.click();
     },
   };
 })()`;

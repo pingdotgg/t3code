@@ -17,9 +17,11 @@ const SNIPPET_LENGTH = 200;
 export type PullRequestWatchChange =
   | { readonly kind: "checks-failed"; readonly failed: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "checks-passed"; readonly count: number; readonly required: boolean }
+  | { readonly kind: "checks-awaiting-approval"; readonly checks: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "no-checks"; readonly minutes: number }
-  | { readonly kind: "conflicting" };
+  | { readonly kind: "conflicting" }
+  | { readonly kind: "merge-queue-removed"; readonly reason: string | null };
 
 export interface PullRequestWatchReport {
   readonly changes: ReadonlyArray<PullRequestWatchChange>;
@@ -27,37 +29,94 @@ export interface PullRequestWatchReport {
   readonly exhausted: boolean;
 }
 
-// action-required is a finished check needing human input.
 const isFailedCheck = (check: PullRequestCheck) =>
-  check.status === "failure" || check.status === "cancelled" || check.status === "action-required";
+  check.status === "failure" || check.status === "cancelled";
+
+// A GitHub Actions job's URL extends its workflow run's URL; their names need not match.
+const workflowRunOf = (url: string | null) => url?.match(/^.*\/actions\/runs\/\d+/)?.[0] ?? null;
+const approvalKey = (check: PullRequestCheck) => workflowRunOf(check.url) ?? check.name;
 
 export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
   detail: Pick<
     PullRequestDetail,
-    "capabilities" | "headSha" | "checks" | "mergeability" | "viewer" | "author"
+    | "capabilities"
+    | "headSha"
+    | "checks"
+    | "mergeability"
+    | "viewer"
+    | "author"
+    | "mergeQueueRemoval"
   >,
   remarks: ReadonlyArray<PullRequestComment> | null,
   now: number,
 ): PullRequestWatchReport {
   const changes: Array<PullRequestWatchChange> = [];
-  const headSha = detail.headSha ?? null;
-  const headMoved = headSha !== watch.headSha;
+  // A read without a head says nothing about pushes, so it keeps the last known one.
+  const headSha = detail.headSha ?? watch.headSha;
+  const headMoved = watch.headSha !== null && headSha !== watch.headSha;
+  const checksBaseline = watch.awaitingBaseline !== undefined && !headMoved;
 
   // Hosts can return no checks on read failure; preserve prior state.
   let failedChecks = headMoved ? [] : watch.failedChecks;
   let passed = headMoved ? false : watch.passed;
   let passedChecks = headMoved ? [] : watch.passedChecks;
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
-  if (detail.checks.length > 0) {
-    const failed = detail.checks.filter(isFailedCheck);
+  let awaitingApproval = headMoved ? [] : (watch.awaitingApproval ?? []);
+  let approvalAnnounced = headMoved ? false : (watch.approvalAnnounced ?? false);
+  // An unavailable approval read cannot establish success or that no checks exist.
+  const unread = detail.checks.some((check) => check.placeholder === true);
+  const checks = detail.checks.filter((check) => check.placeholder !== true);
+  const failed = checks.filter(isFailedCheck);
+  const awaiting = checks.filter((check) => check.status === "action-required");
+  if (checks.length > 0) {
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
-    if (newlyFailed.length > 0) changes.push({ kind: "checks-failed", failed: newlyFailed });
+    if (!checksBaseline && newlyFailed.length > 0) {
+      changes.push({ kind: "checks-failed", failed: newlyFailed });
+    }
+    if (!approvalAnnounced && awaiting.length > 0) {
+      if (!checksBaseline) changes.push({ kind: "checks-awaiting-approval", checks: awaiting });
+      approvalAnnounced = true;
+    }
     failedChecks = failed.map((check) => check.name);
 
-    const required = detail.checks.filter((check) => check.required === true);
-    const gate = required.length > 0 ? required : detail.checks;
-    const passedNow = gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
+    // Approval reads can omit gated runs. Keep each hold until its jobs finish.
+    const awaitingNow = [...new Set(awaiting.map(approvalKey))];
+    const nameUnfinished = (name: string) => {
+      const matching = checks.filter((check) => check.name === name);
+      return (
+        matching.length === 0 ||
+        matching.some((check) => check.status === "pending" || check.status === "action-required")
+      );
+    };
+    // GitHub deduplicates jobs across runs, so a visible pending job may hide one in an awaited run.
+    // A pending check without a URL could be such a job; one with another host's URL cannot.
+    const jobsPending = checks.some(
+      (check) =>
+        check.status === "pending" && (check.url === null || workflowRunOf(check.url) !== null),
+    );
+    const finished = new Set(
+      jobsPending
+        ? []
+        : checks
+            .filter((check) => check.status !== "action-required" && check.status !== "pending")
+            .map((check) => workflowRunOf(check.url)),
+    );
+    awaitingApproval = [
+      ...awaitingNow,
+      ...awaitingApproval.filter(
+        (key) =>
+          !awaitingNow.includes(key) &&
+          (workflowRunOf(key) === key ? !finished.has(key) : nameUnfinished(key)),
+      ),
+    ];
+  }
+  const required = checks.filter((check) => check.required === true);
+  const gate = required.length > 0 ? required : checks;
+  const passedNow =
+    awaitingApproval.length === 0 &&
+    gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
+  if (checks.length > 0 && !(unread && passedNow)) {
     const gateNames = gate.map((check) => check.name);
     const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
     // Required checks can finish between sweeps; detect new names. With no required checks, ignore advisory gate growth.
@@ -66,23 +125,27 @@ export function evaluatePullRequestWatch(
     // Only those are owed, so later advisory churn never wakes. One turned required is gate news.
     const owed =
       passedNow && passed
-        ? detail.checks
+        ? checks
             .filter((check) => check.required !== true && owedChecks.includes(check.name))
             .map((check) => check.name)
         : [];
     const settled =
-      failed.length === 0 && detail.checks.every((check) => check.status !== "pending");
+      failed.length === 0 &&
+      awaitingApproval.length === 0 &&
+      checks.every((check) => check.status !== "pending");
     owedChecks = owed;
     if (passedNow && (!passed || gateGrew)) {
-      changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
+      if (!checksBaseline) {
+        changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
+      }
       owedChecks =
         required.length > 0
-          ? detail.checks
+          ? checks
               .filter((check) => check.required !== true && check.status === "pending")
               .map((check) => check.name)
           : [];
     } else if (settled && owed.length > 0) {
-      changes.push({ kind: "checks-passed", count: detail.checks.length, required: false });
+      changes.push({ kind: "checks-passed", count: checks.length, required: false });
       owedChecks = [];
     }
     passed = passedNow;
@@ -95,12 +158,13 @@ export function evaluatePullRequestWatch(
   // repository runs no checks at all, nothing waits.
   let checksAwaitedSince = watch.checksAwaitedSince;
   if (detail.capabilities.checksAlwaysReport === true) {
-    const awaitedBefore = headMoved
-      ? DateTime.formatIso(DateTime.makeUnsafe(now))
-      : (watch.checksAwaitedSince ?? null);
-    checksAwaitedSince = detail.checks.length > 0 ? null : awaitedBefore;
+    const awaitedBefore =
+      headMoved || watch.awaitingBaseline === "all"
+        ? DateTime.formatIso(DateTime.makeUnsafe(now))
+        : (watch.checksAwaitedSince ?? null);
+    checksAwaitedSince = checks.length > 0 ? null : awaitedBefore;
     const awaitedMs = checksAwaitedSince === null ? 0 : now - Date.parse(checksAwaitedSince);
-    if (awaitedMs >= PULL_REQUEST_WATCH_NO_CHECKS_MS) {
+    if (!unread && awaitedMs >= PULL_REQUEST_WATCH_NO_CHECKS_MS) {
       changes.push({ kind: "no-checks", minutes: Math.round(awaitedMs / 60_000) });
       checksAwaitedSince = null;
     }
@@ -126,12 +190,31 @@ export function evaluatePullRequestWatch(
     ...atLatest.map((remark) => remark.id),
   ];
 
-  if (detail.mergeability === "conflicting" && !watch.conflicting) {
+  // Like a failed check, a conflict a push did not resolve is news for the new head.
+  const toldConflict = !headMoved && watch.conflicting;
+  if (watch.awaitingBaseline !== "all" && detail.mergeability === "conflicting" && !toldConflict) {
     changes.push({ kind: "conflicting" });
   }
   // "unknown" is a host still computing after a push; only a clean answer clears a conflict.
   const conflicting =
-    detail.mergeability === "unknown" ? watch.conflicting : detail.mergeability === "conflicting";
+    detail.mergeability === "unknown" ? toldConflict : detail.mergeability === "conflicting";
+
+  // The queue's checks run on a commit of its own, so its head can stay green after the queue
+  // drops it. After the first read, IDs avoid comparing the server clock with the host clock.
+  // The initial read uses whole seconds to exclude historical removals.
+  const removal = detail.mergeQueueRemoval;
+  if (
+    removal !== undefined &&
+    // Merging also records a removal, up to a second before the pull request reads as merged.
+    removal.reason !== "merged" &&
+    removal.id !== watch.mergeQueueRemovalId &&
+    (watch.mergeQueueRemovalId !== undefined ||
+      Date.parse(removal.removedAt) >= Math.floor(Date.parse(watch.startedAt) / 1000) * 1000)
+  ) {
+    changes.push({ kind: "merge-queue-removed", reason: removal.reason });
+  }
+  // Null records an empty baseline; historical IDs are saved without waking the watch.
+  const mergeQueueRemovalId = removal?.id ?? watch.mergeQueueRemovalId ?? null;
 
   const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
   const progress = headMoved || (changes.length > 0 && !commentsOnly);
@@ -145,10 +228,18 @@ export function evaluatePullRequestWatch(
       passed,
       passedChecks,
       owedChecks,
+      awaitingApproval,
+      approvalAnnounced,
       remarksThrough,
       remarkIds,
       conflicting,
+      mergeQueueRemovalId,
       wakes,
+      // Only a read that cannot be trusted to show the checks leaves the baseline to the next one.
+      ...(checksBaseline &&
+        (unread || (detail.headSha === undefined && checks.length === 0)) && {
+          awaitingBaseline: "checks" as const,
+        }),
       checksAwaitedSince,
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
@@ -160,7 +251,11 @@ function snippet(body: string): string {
     .replaceAll(/<!--[\s\S]*?-->/g, " ")
     .replaceAll(/\s+/g, " ")
     .trim();
-  return text.length <= SNIPPET_LENGTH ? text : `${text.slice(0, SNIPPET_LENGTH - 3)}...`;
+  if (text.length <= SNIPPET_LENGTH) return text;
+  // Half an emoji serializes to a lone surrogate escape, which provider JSON parsers reject.
+  const last = text.charCodeAt(SNIPPET_LENGTH - 4);
+  const end = last >= 0xd800 && last <= 0xdbff ? SNIPPET_LENGTH - 4 : SNIPPET_LENGTH - 3;
+  return `${text.slice(0, end)}...`;
 }
 
 function listed<T>(items: ReadonlyArray<T>, line: (item: T) => string): Array<string> {
@@ -183,6 +278,11 @@ function changeLines(
             `  - ${check.name}${check.status === "failure" ? "" : ` (${check.status})`}${check.url ? ` ${check.url}` : ""}`,
         ),
       ];
+    case "checks-awaiting-approval":
+      return [
+        `- Checks are waiting for approval or action from a maintainer${context.commit}:`,
+        ...listed(change.checks, (check) => `  - ${check.name}${check.url ? ` ${check.url}` : ""}`),
+      ];
     case "checks-passed":
       return [
         `- All ${change.count} ${change.required ? "required " : ""}${change.count === 1 ? "check" : "checks"} passed${context.commit}.`,
@@ -203,16 +303,59 @@ function changeLines(
       ];
     case "conflicting":
       return [`- The branch now conflicts with ${context.baseBranch}.`];
+    case "merge-queue-removed":
+      return [
+        `- It was removed from the merge queue without merging${change.reason === null ? "" : `: ${change.reason}`}.`,
+      ];
   }
 }
 
 const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   "checks-failed": "checks failed",
   "checks-passed": "checks passed",
+  "checks-awaiting-approval": "checks await approval",
   remarks: "new comments",
   "no-checks": "no checks reported",
   conflicting: "merge conflict",
+  "merge-queue-removed": "removed from merge queue",
 };
+
+const WATCHING_CLOSING =
+  "Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.";
+const WATCHING_CLOSING_PLURAL =
+  "Look into each item and act on it as your task requires. Each PR T3 Code still watches stays linked and watched, so do not link, watch, or list them again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request for each first so the thread returns to their inbox.";
+
+export interface PullRequestWatchWake {
+  readonly text: string;
+  readonly notification: OrchestrationV2Notification;
+}
+
+/** One wake for news on several pull requests, with the closing instructions said once. */
+export function combinePullRequestWatchWakes(
+  wakes: readonly [PullRequestWatchWake, ...ReadonlyArray<PullRequestWatchWake>],
+): PullRequestWatchWake {
+  if (wakes.length === 1) return wakes[0];
+  const closing = `\n\n${WATCHING_CLOSING}`;
+  const watching = wakes.some((wake) => wake.text.endsWith(closing));
+  const outcomes = wakes.map((wake) => wake.notification.outcome);
+  return {
+    text: [
+      ...wakes.map((wake) =>
+        wake.text.endsWith(closing) ? wake.text.slice(0, -closing.length) : wake.text,
+      ),
+      ...(watching ? [WATCHING_CLOSING_PLURAL] : []),
+    ].join("\n\n"),
+    notification: {
+      source: { kind: "monitor" },
+      outcome: outcomes.includes("failed")
+        ? "failed"
+        : outcomes.every((outcome) => outcome === "completed")
+          ? "completed"
+          : "updated",
+      summary: wakes.map((wake) => wake.notification.summary).join("; "),
+    },
+  };
+}
 
 export function pullRequestWatchMessage(input: {
   readonly number: number;
@@ -232,10 +375,13 @@ export function pullRequestWatchMessage(input: {
     "",
     exhausted
       ? `T3 Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} comment-only updates in a row. Call watch_pull_request to watch it again.`
-      : "Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.",
+      : WATCHING_CLOSING,
   ].join("\n");
   const failed = changes.some(
-    (change) => change.kind === "checks-failed" || change.kind === "conflicting",
+    (change) =>
+      change.kind === "checks-failed" ||
+      change.kind === "conflicting" ||
+      change.kind === "merge-queue-removed",
   );
   const summary = changes.map((change) => SUMMARY[change.kind]);
   if (exhausted) summary.push("stopped watching");

@@ -1,0 +1,37 @@
+import type * as licensemanager from "@distilled.cloud/aws/license-manager";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Request for {@link ListLicenses}.
+ */
+export interface ListLicensesRequest extends licensemanager.ListLicensesRequest {}
+
+/**
+ * Runtime binding for `license-manager:ListLicenses` — list the
+ * seller-issued licenses owned by the account.
+ *
+ * Provide the implementation with
+ * `Effect.provide(AWS.LicenseManager.ListLicensesHttp)`.
+ * ### Reading Licenses and Grants
+ * **Example:** List Owned Licenses
+ * ```typescript
+ * // init
+ * const listLicenses = yield* AWS.LicenseManager.ListLicenses();
+ *
+ * // runtime
+ * const { Licenses } = yield* listLicenses();
+ * ```
+ *
+ * @binding
+ */
+export interface ListLicenses extends Binding.Service<
+  ListLicenses,
+  "AWS.LicenseManager.ListLicenses",
+  () => Effect.Effect<
+    (
+      request?: ListLicensesRequest,
+    ) => Effect.Effect<licensemanager.ListLicensesResponse, licensemanager.ListLicensesError>
+  >
+> {}
+export const ListLicenses = Binding.Service<ListLicenses>("AWS.LicenseManager.ListLicenses");

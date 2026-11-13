@@ -1,19 +1,23 @@
 import type { SdkLoginOptions, StoredSdkCredentials } from "@cursor/sdk";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ProviderSetupError, type ProviderAuthState } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import { makeCursorAuth, type CursorAuthOptions } from "./auth.ts";
 import { loadCursorSdk } from "./sdk.ts";
 
-const { InMemoryCredentialStore } = loadCursorSdk();
+const { AuthenticationError, InMemoryCredentialStore } = loadCursorSdk();
 
 const instanceId = ProviderInstanceId.make("cursor-personal");
 const owner = "owner-client";
@@ -71,6 +75,13 @@ const makeHarness = Effect.fn("makeCursorAuthHarness")(function* (
   };
 });
 
+const captureWarnings = (warnings: string[]) =>
+  Logger.layer([
+    Logger.make(({ logLevel, cause }) => {
+      if (logLevel === "Warn") warnings.push(Cause.pretty(cause));
+    }),
+  ]);
+
 type Auth = Effect.Success<ReturnType<typeof makeCursorAuth>>;
 const phase = (auth: Auth, phase: ProviderAuthState["phase"], session = owner) =>
   auth.controller.subscribe(session).pipe(
@@ -79,7 +90,7 @@ const phase = (auth: Auth, phase: ProviderAuthState["phase"], session = owner) =
     Effect.map(Option.getOrThrow),
   );
 
-it.layer(NodeServices.layer)("CursorAuth", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CursorAuth", (it) => {
   it.effect("closes SDK sessions and interrupts in-flight credential work before signing out", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -169,8 +180,9 @@ it.layer(NodeServices.layer)("CursorAuth", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("aborts cancellation and ignores a late successful SDK login", () =>
-    Effect.gen(function* () {
+  it.effect("aborts cancellation and ignores a late successful SDK login", () => {
+    const warnings: string[] = [];
+    return Effect.gen(function* () {
       const harness = yield* makeHarness();
       yield* harness.auth.controller.start(owner);
       const waiting = yield* phase(harness.auth, "waiting");
@@ -182,8 +194,9 @@ it.layer(NodeServices.layer)("CursorAuth", (it) => {
       yield* Effect.promise(() => harness.returned.promise);
       expect(yield* harness.auth.readApiKey).toBeUndefined();
       expect(harness.changes).toEqual([]);
-    }).pipe(Effect.scoped),
-  );
+      expect(warnings).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(captureWarnings(warnings)));
+  });
 
   it.effect("discards a credential rejected by verification and permits a fresh login", () =>
     Effect.gen(function* () {
@@ -216,6 +229,24 @@ it.layer(NodeServices.layer)("CursorAuth", (it) => {
       expect(yield* harness.auth.requireApiKey).toBe("browser-key");
     }).pipe(Effect.scoped),
   );
+
+  it.effect("shows a fixed reason when browser login fails and logs the SDK cause", () => {
+    const warnings: string[] = [];
+    return Effect.gen(function* () {
+      const sdkMessage =
+        "Login succeeded, but creating an SDK API key failed: [permission_denied] user API keys are disabled for this team (your team's settings may restrict user API keys — ask a team admin, or pass an existing API key directly)";
+      const harness = yield* makeHarness({
+        login: () => Promise.reject(new AuthenticationError(sdkMessage)),
+      });
+      yield* harness.auth.controller.start(owner);
+      const failed = yield* phase(harness.auth, "failed");
+      expect(failed.message).toContain("could not create an API key");
+      expect(failed.message).not.toContain("permission_denied");
+      expect(yield* harness.auth.readApiKey).toBeUndefined();
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain(sdkMessage);
+    }).pipe(Effect.scoped, Effect.provide(captureWarnings(warnings)));
+  });
 
   it.effect("clears only this instance's credential after its sessions stop", () =>
     Effect.gen(function* () {

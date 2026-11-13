@@ -1,21 +1,22 @@
-import * as Alchemy from "@/index.ts";
-import * as Deploy from "@/Deploy.ts";
-import * as Destroy from "@/Destroy.ts";
-import * as Plan from "@/Plan.ts";
+import { describe, expect, it } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
+import type { TestApi as BunTestApi } from "@alchemy.run/test/Bun";
+import * as TestCore from "@alchemy.run/test/Core";
+import type { TestApi as VitestTestApi } from "@alchemy.run/test/Vitest";
 import * as Cause from "effect/Cause";
-import * as EffectExit from "effect/Exit";
-import { TestLayers, TestResource } from "./test.resources.ts";
-import { Stage } from "@/Stage.ts";
-import * as State from "@/State/index.ts";
-import * as Test from "@/Test/Alchemy.ts";
-import * as TestCore from "@/Test/Core.ts";
-import type { TestApi as BunTestApi } from "@/Test/Bun.ts";
-import type { TestApi as VitestTestApi } from "@/Test/Vitest.ts";
-import { describe, expect, it } from "alchemy-test";
 import type { ConfigError } from "effect/Config";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as EffectExit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Deploy from "@/Deploy.ts";
+import * as Destroy from "@/Destroy.ts";
+import * as Alchemy from "@/index.ts";
+import * as Output from "@/Output.ts";
+import * as Plan from "@/Plan.ts";
+import { Stage } from "@/Stage.ts";
+import * as State from "@/State/index.ts";
+import { TestLayers, TestResource } from "./test.resources.ts";
 
 // These tests are compile-time assertions: they verify that the
 // `Alchemy.Stack` effect permits a `ConfigError` in its body without
@@ -40,9 +41,7 @@ describe("Alchemy.Stack error channel", { tags: ["unit", "local"] }, () => {
     // The resulting effect surfaces `ConfigError` in its error channel rather
     // than `never` — the whole point of the change.
     type ErrorOf<T> = T extends Effect.Effect<any, infer E, any> ? E : never;
-    const _assertError: ErrorOf<typeof stack> extends ConfigError
-      ? true
-      : false = true;
+    const _assertError: ErrorOf<typeof stack> extends ConfigError ? true : false = true;
     expect(_assertError).toBe(true);
   });
 
@@ -66,11 +65,7 @@ describe("Alchemy.Stack runtime metadata", { tags: ["unit", "local"] }, () => {
   it("exposes stackName, providers, and state on a configured stack", () => {
     const providers = Layer.empty;
     const state = State.inMemoryState();
-    const stack = Alchemy.Stack(
-      "MetaStack",
-      { providers, state },
-      Effect.succeed({ value: "ok" }),
-    );
+    const stack = Alchemy.Stack("MetaStack", { providers, state }, Effect.succeed({ value: "ok" }));
 
     expect(stack.stackName).toBe("MetaStack");
     expect(stack.providers).toBe(providers);
@@ -78,23 +73,16 @@ describe("Alchemy.Stack runtime metadata", { tags: ["unit", "local"] }, () => {
   });
 
   it("exposes stackName on a class reference", () => {
-    class NamedStack extends Alchemy.Stack<NamedStack, { value: string }>()(
-      "NamedStack",
-    ) {}
+    class NamedStack extends Alchemy.Stack<NamedStack, { value: string }>()("NamedStack") {}
 
     expect(NamedStack.stackName).toBe("NamedStack");
   });
 
   it("exposes configured metadata identities on a class reference's make result", () => {
-    class NamedStack extends Alchemy.Stack<NamedStack, { value: string }>()(
-      "MadeStack",
-    ) {}
+    class NamedStack extends Alchemy.Stack<NamedStack, { value: string }>()("MadeStack") {}
     const providers = Layer.empty;
     const state = State.inMemoryState();
-    const stack = NamedStack.make(
-      { providers, state },
-      Effect.succeed({ value: "ok" }),
-    );
+    const stack = NamedStack.make({ providers, state }, Effect.succeed({ value: "ok" }));
 
     expect(stack.stackName).toBe("MadeStack");
     expect(stack.providers).toBe(providers);
@@ -112,6 +100,46 @@ describe("Alchemy.Stack runtime metadata", { tags: ["unit", "local"] }, () => {
     expect(InlineStack).toHaveProperty("providers", undefined);
     expect(InlineStack).toHaveProperty("state", undefined);
   });
+});
+
+describe("Alchemy.Stack stage references", { tags: ["unit", "local"] }, () => {
+  const state = State.inMemoryState(
+    {},
+    {
+      StagedStack: { prod: { value: "prod" }, "pr-42": { value: "pr-42" } },
+      InlineStagedStack: { dev: { value: "dev" } },
+    },
+  );
+  const resolve = <A>(ref: Effect.Effect<A>) =>
+    ref.pipe(
+      Effect.flatMap((expr) => Output.evaluate(expr, {})),
+      Effect.provide(state),
+    );
+
+  it.effect("stage[name] resolves a declared stage's output", () =>
+    Effect.gen(function* () {
+      class StagedStack extends Alchemy.Stack<
+        StagedStack,
+        { value: string },
+        "prod" | `pr-${number}`
+      >()("StagedStack") {}
+
+      expect(yield* resolve(StagedStack.stage.prod)).toEqual({ value: "prod" });
+      expect(yield* resolve(StagedStack.stage["pr-42"])).toEqual({ value: "pr-42" });
+    }),
+  );
+
+  it.effect("stage[name] resolves on the inline class reference form", () =>
+    Effect.gen(function* () {
+      class InlineStagedStack extends Alchemy.Stack<InlineStagedStack>()(
+        "InlineStagedStack",
+        { providers: Layer.empty, state: State.inMemoryState() },
+        Effect.succeed({ value: "dev" }),
+      ) {}
+
+      expect(yield* resolve(InlineStagedStack.stage.dev)).toEqual({ value: "dev" });
+    }),
+  );
 });
 
 describe("Test.make configured stack", { tags: ["unit", "local"] }, () => {
@@ -151,11 +179,7 @@ describe("Test.make configured stack", { tags: ["unit", "local"] }, () => {
       });
       expect(override.stage).toBe("metadata-call");
     }).pipe(
-      Effect.ensuring(
-        explicit
-          .destroy(configured, { stage: "metadata-call" })
-          .pipe(Effect.orDie),
-      ),
+      Effect.ensuring(explicit.destroy(configured, { stage: "metadata-call" }).pipe(Effect.orDie)),
       Effect.ensuring(explicit.destroy(configured).pipe(Effect.orDie)),
     ),
   );
@@ -183,9 +207,7 @@ describe("filtered deployment API", { tags: ["unit", "local"] }, () => {
 
   it("preserves legacy annotated options and exclude output inference across adapters", () => {
     type Equal<A, B> =
-      (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
-        ? true
-        : false;
+      (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
     type Output = { branch: string; worker: string };
     type DeclaredOutput = Effect.Success<typeof program>["output"];
     const options: TestCore.DeployCallOptions = {
@@ -198,8 +220,7 @@ describe("filtered deployment API", { tags: ["unit", "local"] }, () => {
     const excluded = api.deploy(program, { exclude: ["Worker"] });
     const bunExcluded = bun(program, { exclude: ["Worker"] });
     const vitestExcluded = vitest(program, { exclude: ["Worker"] });
-    const optional = (options?: TestCore.FilteredDeployCallOptions) =>
-      api.deploy(program, options);
+    const optional = (options?: TestCore.FilteredDeployCallOptions) => api.deploy(program, options);
     const absent = api.deploy(program, {
       include: undefined,
       exclude: undefined,
@@ -229,26 +250,10 @@ describe("filtered deployment API", { tags: ["unit", "local"] }, () => {
       Equal<Effect.Success<typeof direct>, Output>,
       Equal<Effect.Success<typeof piped>, Output>,
       Equal<Effect.Success<typeof filtered>, undefined>,
-      Equal<
-        Effect.Success<ReturnType<typeof optionalDirect>>,
-        Output | undefined
-      >,
+      Equal<Effect.Success<ReturnType<typeof optionalDirect>>, Output | undefined>,
       Equal<Effect.Success<typeof scratchExcluded>, undefined>,
       Equal<Effect.Success<typeof scratchPlan>["output"], undefined>,
-    ] = [
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-    ];
+    ] = [true, true, true, true, true, true, true, true, true, true, true, true];
     expect(assertions.every(Boolean)).toBe(true);
   });
 
@@ -287,9 +292,7 @@ describe("filtered deployment API", { tags: ["unit", "local"] }, () => {
         );
         const scratch = TestCore.scratchStack({ providers }, "BlockedScratch");
         const effects = [
-          Plan.destroy({ name: "Blocked", stage: "test", ...options }).pipe(
-            Effect.asVoid,
-          ),
+          Plan.destroy({ name: "Blocked", stage: "test", ...options }).pipe(Effect.asVoid),
           Destroy.destroy({ stack: blocked, stage: "test", ...options }),
           api.destroy(blocked, options),
           scratch.destroy(options),
@@ -298,9 +301,7 @@ describe("filtered deployment API", { tags: ["unit", "local"] }, () => {
           const exit = yield* effect.pipe(Effect.exit);
           expect(EffectExit.isFailure(exit)).toBe(true);
           if (EffectExit.isFailure(exit))
-            expect(Cause.pretty(exit.cause)).toContain(
-              "Filtered destroy is not supported",
-            );
+            expect(Cause.pretty(exit.cause)).toContain("Filtered destroy is not supported");
         }
       }),
     );
@@ -308,9 +309,7 @@ describe("filtered deployment API", { tags: ["unit", "local"] }, () => {
 
   it("preserves exact direct and piped output inference", () => {
     type Equal<A, B> =
-      (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
-        ? true
-        : false;
+      (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
     type Output = { branch: string; worker: string };
     const full = api.deploy(program);
     const piped = program.pipe(api.deploy);
@@ -320,14 +319,12 @@ describe("filtered deployment API", { tags: ["unit", "local"] }, () => {
       stage: "override",
     });
     const selected = api.deploy(program, { include: ["Branch"] });
-    const optional = (options: TestCore.FilteredDeployCallOptions) =>
-      api.deploy(program, options);
+    const optional = (options: TestCore.FilteredDeployCallOptions) => api.deploy(program, options);
     const core = TestCore.deploy({ providers }, program);
     const scratch = TestCore.scratchStack({ providers }, "OutputInference");
-    const declaration = Effect.map(
-      TestResource("Branch", { string: "database" }),
-      (branch) => ({ branch: branch.string }),
-    );
+    const declaration = Effect.map(TestResource("Branch", { string: "database" }), (branch) => ({
+      branch: branch.string,
+    }));
     const scratchFull = scratch.deploy(declaration);
     const scratchPiped = declaration.pipe(scratch.deploy);
     const scratchForced = scratch.deploy(declaration, { force: true });
@@ -351,40 +348,16 @@ describe("filtered deployment API", { tags: ["unit", "local"] }, () => {
       Equal<Effect.Success<typeof scratchPiped>, { branch: string }>,
       Equal<Effect.Success<typeof scratchForced>, { branch: string }>,
       Equal<Effect.Success<typeof scratchSelected>, undefined>,
-      Equal<
-        Effect.Success<ReturnType<typeof scratchOptional>>,
-        { branch: string } | undefined
-      >,
-      Equal<
-        Effect.Success<typeof plan>["output"],
-        Effect.Success<typeof declaration>
-      >,
+      Equal<Effect.Success<ReturnType<typeof scratchOptional>>, { branch: string } | undefined>,
+      Equal<Effect.Success<typeof plan>["output"], Effect.Success<typeof declaration>>,
       Equal<Effect.Success<typeof selectedPlan>["output"], undefined>,
-    ] = [
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-    ];
+    ] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
     expect(assertions.every(Boolean)).toBe(true);
   });
 
   it("preserves exact direct and higher-order Deploy output types", () => {
     type Equal<A, B> =
-      (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
-        ? true
-        : false;
+      (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
     type DeclaredOutput = Effect.Success<typeof program>["output"];
     type Output = { branch: string; worker: string };
     const options: Deploy.DeployOptions<DeclaredOutput> = {
@@ -408,14 +381,11 @@ describe("filtered deployment API", { tags: ["unit", "local"] }, () => {
       include: ["Branch"],
     };
     const filtered = Deploy.deploy(filteredOptions);
-    const filteredPiped = Effect.succeed(filteredOptions).pipe(
-      Effect.flatMap(Deploy.deploy),
-    );
+    const filteredPiped = Effect.succeed(filteredOptions).pipe(Effect.flatMap(Deploy.deploy));
     const optional = (options: Deploy.FilteredDeployOptions<DeclaredOutput>) =>
       Deploy.deploy(options);
-    const optionalPiped = (
-      options: Deploy.FilteredDeployOptions<DeclaredOutput>,
-    ) => Effect.succeed(options).pipe(Effect.flatMap(Deploy.deploy));
+    const optionalPiped = (options: Deploy.FilteredDeployOptions<DeclaredOutput>) =>
+      Effect.succeed(options).pipe(Effect.flatMap(Deploy.deploy));
     const assertions: [
       Equal<Effect.Success<typeof direct>, Output>,
       Equal<Effect.Success<typeof piped>, Output>,
@@ -424,19 +394,14 @@ describe("filtered deployment API", { tags: ["unit", "local"] }, () => {
       Equal<Effect.Success<typeof filtered>, undefined>,
       Equal<Effect.Success<typeof filteredPiped>, undefined>,
       Equal<Effect.Success<ReturnType<typeof optional>>, Output | undefined>,
-      Equal<
-        Effect.Success<ReturnType<typeof optionalPiped>>,
-        Output | undefined
-      >,
+      Equal<Effect.Success<ReturnType<typeof optionalPiped>>, Output | undefined>,
     ] = [true, true, true, true, true, true, true, true];
     expect(assertions.every(Boolean)).toBe(true);
   });
 
   it("preserves explicit output types with stage options across test adapters", () => {
     type Equal<A, B> =
-      (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
-        ? true
-        : false;
+      (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
     type DeclaredOutput = Effect.Success<typeof program>["output"];
     type Output = { branch: string; worker: string };
     const bunDeploy: BunTestApi["deploy"] = api.deploy;
@@ -448,15 +413,12 @@ describe("filtered deployment API", { tags: ["unit", "local"] }, () => {
     const bun = bunDeploy<DeclaredOutput>(program, { stage: "override" });
     const vitest = vitestDeploy<DeclaredOutput>(program, { stage: "override" });
     const full = api.deploy<DeclaredOutput>(program);
-    const filtered = api.deploy<
-      DeclaredOutput,
-      [options: { include: ReadonlyArray<string> }]
-    >(program, { include: ["Branch"] });
+    const filtered = api.deploy<DeclaredOutput, [options: { include: ReadonlyArray<string> }]>(
+      program,
+      { include: ["Branch"] },
+    );
     const optional = (options: TestCore.FilteredDeployCallOptions) =>
-      api.deploy<
-        DeclaredOutput,
-        [options?: TestCore.FilteredDeployCallOptions]
-      >(program, options);
+      api.deploy<DeclaredOutput, [options?: TestCore.FilteredDeployCallOptions]>(program, options);
     const bunPiped = program.pipe(bunDeploy);
     const vitestPiped = program.pipe(vitestDeploy);
     const bunFiltered = bunDeploy(program, { include: ["Branch"] });
@@ -494,12 +456,9 @@ describe("filtered deployment API", { tags: ["unit", "local"] }, () => {
       }
       expect(yield* state.get({ ...key, fqn: "Worker" })).toBeUndefined();
       expect(yield* state.getOutput(key)).toBeUndefined();
-      const full: { branch: string; worker: string } =
-        yield* api.deploy(program);
+      const full: { branch: string; worker: string } = yield* api.deploy(program);
       expect(full).toEqual({ branch: "database", worker: "database" });
-      const piped: { branch: string; worker: string } = yield* program.pipe(
-        api.deploy,
-      );
+      const piped: { branch: string; worker: string } = yield* program.pipe(api.deploy);
       expect(piped).toEqual(full);
       expect(yield* state.get({ ...key, fqn: "Branch" })).toMatchObject({
         instanceId: branch.instanceId,
@@ -512,12 +471,12 @@ describe("filtered deployment API", { tags: ["unit", "local"] }, () => {
       });
       expect(direct).toBeUndefined();
       expect(yield* state.getOutput(key)).toEqual(full);
-      const directFull: { branch: string; worker: string } =
-        yield* Deploy.deploy({ stack: program, stage: key.stage });
+      const directFull: { branch: string; worker: string } = yield* Deploy.deploy({
+        stack: program,
+        stage: key.stage,
+      });
       expect(directFull).toEqual(full);
-      const invalid = yield* api
-        .deploy(program, { include: [] })
-        .pipe(Effect.exit);
+      const invalid = yield* api.deploy(program, { include: [] }).pipe(Effect.exit);
       expect(EffectExit.isFailure(invalid)).toBe(true);
       expect(yield* state.getOutput(key)).toEqual(full);
       yield* api.destroy(program);

@@ -53,7 +53,7 @@ export const ProviderInstanceEnvironmentVariable = StoredProviderInstanceEnviron
       typeof StoredProviderInstanceEnvironmentVariable.Type
     >({
       decode: ({ secret, ...variable }) =>
-        secret === undefined ? variable : { ...variable, value: secret },
+        secret === undefined ? variable : { ...variable, value: secret, sensitive: true },
       encode: ({ value, ...variable }) =>
         typeof value === "string"
           ? { ...variable, value }
