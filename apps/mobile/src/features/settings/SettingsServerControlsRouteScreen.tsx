@@ -313,25 +313,6 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
             ) : null}
             {props.page === "threads" ? (
               <>
-                {!projectSelected &&
-                targets.every(
-                  (target) =>
-                    target.environment.serverConfig.environment.capabilities.explicitAgentModels ===
-                    true,
-                ) ? (
-                  <SettingsSection title="New threads">
-                    <SettingsSwitchRow
-                      label="Require explicit model for agent-created runs"
-                      subtitle={managedSubtitle(
-                        "requireExplicitAgentModel",
-                        "Reject T3 tool and CLI launches without a model.",
-                      )}
-                      value={uniform("requireExplicitAgentModel")}
-                      disabled={disabledFor("requireExplicitAgentModel")}
-                      onValueChange={(value) => write({ requireExplicitAgentModel: value })}
-                    />
-                  </SettingsSection>
-                ) : null}
                 <SettingsSection
                   title="Default workspace"
                   footer={managed("defaultThreadEnvMode")}
@@ -381,6 +362,25 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     />
                   ))}
                 </SettingsSection>
+                {!projectSelected &&
+                targets.every(
+                  (target) =>
+                    target.environment.serverConfig.environment.capabilities.explicitAgentModels ===
+                    true,
+                ) ? (
+                  <SettingsSection title="New threads">
+                    <SettingsSwitchRow
+                      label="Require explicit model for agent-created runs"
+                      subtitle={managedSubtitle(
+                        "requireExplicitAgentModel",
+                        "Reject T3 tool and CLI launches without a model.",
+                      )}
+                      value={uniform("requireExplicitAgentModel")}
+                      disabled={disabledFor("requireExplicitAgentModel")}
+                      onValueChange={(value) => write({ requireExplicitAgentModel: value })}
+                    />
+                  </SettingsSection>
+                ) : null}
                 <SettingsSection
                   title="Response streaming"
                   footer={managed("responseStreamingMode")}
