@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { CursorProviderCapabilitiesV2 } from "@t3tools/provider-cursor/testing";
+import { makeGrokAcpAdapterFlavor } from "@t3tools/provider-grok/testing";
 import * as CommandPolicy from "./CommandPolicy.ts";
 
 const commandId = CommandId.make("command-policy-test");
@@ -209,6 +210,28 @@ it("queues a steer for a provider that cannot steer either way", () => {
     }),
     { type: "steer_active", targetRunId: RunId.make("command-policy-missing-run") },
   );
+});
+
+// regression: #27014 a Grok follow-up cancels the foreground tool the user wanted to finish
+it("does not steer a Grok follow-up by interrupting its running turn", () => {
+  const grok = makeGrokAcpAdapterFlavor(
+    { makeRuntime: () => Effect.never } as unknown as Parameters<
+      typeof makeGrokAcpAdapterFlavor
+    >[0],
+    "/home/ada",
+  ).capabilities;
+  const projection = dispatchProjection(grok);
+  for (const deliveryIntent of ["auto", "steer"] as const) {
+    const mode = CommandPolicy.resolveMessageDispatchIntent(
+      projection,
+      { type: "start_immediately" },
+      deliveryIntent,
+    );
+    assert.isFalse(
+      mode.type === "steer_active" && !grok.turns.supportsActiveSteering,
+      `${deliveryIntent} follow-up resolved to ${mode.type} by interrupt-restart`,
+    );
+  }
 });
 
 it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) => {
