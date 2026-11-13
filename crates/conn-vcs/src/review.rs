@@ -1045,13 +1045,8 @@ pub async fn branch_commits(
     let fields: Vec<&str> = text.split('\0').collect();
     let complete = fields.len().saturating_sub(1);
     let mut commits = Vec::new();
-    for record in fields[..complete]
-        .chunks_exact(3)
-        .take(BRANCH_COMMIT_LIMIT + 1)
-    {
-        let [sha, subject, committed_at] = record else {
-            continue;
-        };
+    let (records, _) = fields.get(..complete).unwrap_or_default().as_chunks::<3>();
+    for [sha, subject, committed_at] in records.iter().take(BRANCH_COMMIT_LIMIT + 1) {
         // `git log -z` separates records with NUL too, so a record may start with a newline.
         let sha = sha.trim_start_matches('\n');
         if !is_object_id(sha) || committed_at.is_empty() {
