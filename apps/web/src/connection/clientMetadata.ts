@@ -5,7 +5,7 @@ import type {
   DesktopBridge,
 } from "@t3tools/contracts";
 
-interface BrowserIdentity {
+export interface BrowserIdentity {
   readonly userAgent: string;
   readonly platform: string;
   readonly maxTouchPoints: number;
@@ -32,7 +32,7 @@ function isIpadosDesktopUserAgent(identity: BrowserIdentity): boolean {
   );
 }
 
-function browserClientOs(identity: BrowserIdentity): ClientOs {
+export function browserClientOs(identity: BrowserIdentity): ClientOs {
   const userAgent = identity.userAgent;
   if (userAgent.trim() === "") return "unknown";
   if (/iphone|ipad|ipod/i.test(userAgent) || isIpadosDesktopUserAgent(identity)) return "iOS";
