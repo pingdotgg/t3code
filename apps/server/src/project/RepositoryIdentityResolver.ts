@@ -13,7 +13,7 @@ import * as Path from "effect/Path";
 
 import * as ProcessRunner from "../processRunner.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
-import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
+import { explicitBareRepositoryEnv, unsetInheritedRepositoryEnv } from "../vcs/VcsProcess.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
@@ -51,11 +51,10 @@ function isLocalRemoteUrl(url: string): boolean {
 
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   const remotes = new Map<string, string>();
-  for (const line of stdout.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) continue;
+  for (const line of stdout.split(/\r?\n/)) {
+    // Git uses a tab before the URL and one space before the direction; both can occur in URLs.
     // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
-    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(trimmed);
+    const match = /^(\S+)\t(.+) \((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(line);
     if (!match) continue;
     const [, remoteName = "", remoteUrl = "", direction = ""] = match;
     if (
@@ -168,12 +167,17 @@ class RepositoryIdentityCacheKey extends Data.Class<{
   readonly isBare: boolean;
 }> {}
 
+const gitEnv = (platform: NodeJS.Platform): NodeJS.ProcessEnv => ({
+  ...unsetInheritedRepositoryEnv(process.env, platform),
+  ...explicitBareRepositoryEnv(process.env, platform),
+});
+
 const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
   function* (cwd: string) {
     const processRunner = yield* ProcessRunner.ProcessRunner;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const env = explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform);
+    const env = gitEnv(yield* HostProcess.Platform);
 
     // `git -C` cannot enter a missing folder or a file, so every probe below would fail.
     const isFolder = yield* fileSystem.stat(cwd).pipe(
@@ -196,7 +200,8 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
       return null;
     }
     if (topLevelResult.value.code === 0) {
-      const rootPath = topLevelResult.value.stdout.trim();
+      // Paths may end in spaces, so strip only git's line terminator.
+      const rootPath = topLevelResult.value.stdout.replace(/\r?\n$/, "");
       return rootPath.length > 0
         ? new RepositoryIdentityCacheKey({ rootPath, isBare: false })
         : null;
@@ -240,9 +245,7 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
       if (bareResult._tag === "None" || bareResult.value.timedOut) return null;
       if (bareResult.value.code !== 0) continue;
 
-      const [isBare, rootPath = ""] = bareResult.value.stdout
-        .split("\n")
-        .map((line) => line.trim());
+      const [isBare, rootPath = ""] = bareResult.value.stdout.split(/\r?\n/);
       // A checkout's .git directory contains remotes but is not a project root.
       return isBare === "true" && rootPath.length > 0
         ? new RepositoryIdentityCacheKey({ rootPath, isBare: true })
@@ -258,7 +261,7 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   cacheKey: RepositoryIdentityCacheKey,
 ): Effect.fn.Return<RepositoryIdentity | null, never, ProcessRunner.ProcessRunner> {
   const processRunner = yield* ProcessRunner.ProcessRunner;
-  const env = explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform);
+  const env = gitEnv(yield* HostProcess.Platform);
   const runGit = (args: ReadonlyArray<string>) =>
     processRunner
       .run({
