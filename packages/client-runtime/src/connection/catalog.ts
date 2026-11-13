@@ -29,6 +29,8 @@ export class BearerConnectionProfile extends Schema.TaggedClass<BearerConnection
      * interface. A bare 100.64.0.0/10 address could belong to any VPN.
      */
     network: Schema.optionalKey(Schema.Literal("tailscale")),
+    /** Set on a learned route the server stopped reporting, kept only for its place in the order. */
+    withdrawn: Schema.optionalKey(Schema.Literal(true)),
   },
 ) {}
 
@@ -52,6 +54,15 @@ export interface ConnectionCatalogEntry {
   readonly target: ConnectionTarget;
   readonly profile: Option.Option<ConnectionProfile>;
   readonly alternateRoutes?: ReadonlyArray<ConnectionRoute>;
+  /**
+   * Learned routes the server stopped reporting after the user moved them, with
+   * their place among all saved routes. They are saved so a route that returns
+   * goes back there, and are never shown or connected to.
+   */
+  readonly withdrawnRoutes?: ReadonlyArray<{
+    readonly route: ConnectionRoute;
+    readonly index: number;
+  }>;
   readonly enabled: boolean;
   readonly unsupportedReason?: string;
   readonly serverUpdateRequired?: boolean;

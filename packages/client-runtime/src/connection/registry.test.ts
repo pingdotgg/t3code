@@ -42,7 +42,7 @@ import * as Connectivity from "./connectivity.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionDriver from "./driver.ts";
 import type { RouteCheck } from "./driver.ts";
-import { connectionRouteId, connectionRouteKind } from "./routes.ts";
+import { connectionRouteId, connectionRouteKind, connectionRoutes } from "./routes.ts";
 import {
   ConnectionTransientError,
   ConnectionBlockedError,
@@ -2316,6 +2316,66 @@ describe("EnvironmentRegistry routes", () => {
           httpBaseUrl,
         });
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a later app start puts a returning learned route back where the user moved it", () =>
+    Effect.gen(function* () {
+      const httpBaseUrl = "https://desk.tail1234.ts.net/";
+      const learnedId = `learned:${LAN_TARGET.environmentId}:https://desk.tail1234.ts.net@${LAN_TARGET.connectionId}`;
+      const learned = new BearerConnectionTarget({ ...LAN_TARGET, connectionId: learnedId });
+      const learnedProfile = new BearerConnectionProfile({
+        connectionId: learnedId,
+        environmentId: LAN_TARGET.environmentId,
+        label: LAN_TARGET.label,
+        httpBaseUrl,
+        wsBaseUrl: "wss://desk.tail1234.ts.net/",
+        learned: true,
+        network: "tailscale",
+      });
+      const lan = { kind: "lan" as const, httpBaseUrl: LAN_PROFILE.httpBaseUrl };
+      const routeIds = (registry: EnvironmentRegistry.EnvironmentRegistry["Service"]) =>
+        SubscriptionRef.changes(registry.entries).pipe(
+          Stream.map((entries) => entries.get(LAN_TARGET.environmentId)),
+          Stream.filter((entry) => entry !== undefined),
+          Stream.map((entry) => connectionRoutes(entry).map((route) => route.target)),
+        );
+      const withdrawing = yield* makeHarness(
+        [learned, LAN_TARGET],
+        [learnedProfile, LAN_PROFILE],
+        [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
+        { directEndpoints: [lan] },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* routeIds(registry).pipe(
+          Stream.filter((targets) => targets.length === 1),
+          Stream.runHead,
+        );
+      }).pipe(Effect.provide(withdrawing.layer), Effect.scoped);
+      const storedTargets = yield* Ref.get(withdrawing.storedTargets);
+      const storedProfiles = [...(yield* Ref.get(withdrawing.storedProfiles)).values()];
+      expect(storedTargets).toEqual([learned, LAN_TARGET]);
+      expect(storedProfiles).toContainEqual(expect.objectContaining({ withdrawn: true }));
+
+      const returning = yield* makeHarness(
+        storedTargets,
+        storedProfiles,
+        [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
+        { directEndpoints: [lan, { kind: "tailnet", httpBaseUrl }] },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        expect(yield* routeIds(registry).pipe(Stream.runHead)).toEqual(Option.some([LAN_TARGET]));
+        yield* registry.start;
+        const restored = yield* routeIds(registry).pipe(
+          Stream.filter((targets) => targets.length === 2),
+          Stream.runHead,
+        );
+        expect(restored).toEqual(Option.some([learned, LAN_TARGET]));
+        expect((yield* Ref.get(returning.storedProfiles)).get(learnedId)).toEqual(learnedProfile);
+      }).pipe(Effect.provide(returning.layer), Effect.scoped);
     }),
   );
 

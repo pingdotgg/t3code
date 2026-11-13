@@ -23,6 +23,7 @@ import {
   removedWithRelay,
   routeKeepsItsHost,
   routesAfterRemoving,
+  savedRoutes,
   sendsTokenInClear,
   upsertRoute,
   usableRoutes,
@@ -232,11 +233,21 @@ describe("learned routes", () => {
       return next === null ? entry : entryWithRoutes(entry, next);
     };
     // A restarted server reports no Serve URL until it validates; so does one probe timeout.
-    const returned = connectionRoutes(report(report(reordered, []), [serve]));
+    const withdrawn = report(reordered, []);
+    expect(ids(connectionRoutes(withdrawn))).toEqual(["relay"]);
+    expect(ids(usableRoutes(withdrawn))).toEqual(["relay"]);
+    const returned = connectionRoutes(report(withdrawn, [serve]));
     expect(ids(returned)).toEqual([
       "relay",
       `learned:${ENVIRONMENT_ID}:https://desk.tail1234.ts.net`,
     ]);
+    // A route left where it was found is forgotten, and so is one whose credential is removed.
+    expect(report(entryWithRoutes(relayOnly, first), []).withdrawnRoutes).toBeUndefined();
+    const paired = entryWithRoutes(withdrawn, [...connectionRoutes(withdrawn), LAN]);
+    expect(savedRoutes(paired)).toHaveLength(3);
+    expect(
+      savedRoutes(entryWithRoutes(paired, routesAfterRemoving(savedRoutes(paired), "relay"))),
+    ).toEqual([LAN]);
   });
 
   it("labels a learned address Tailscale only while the server reports it as tailnet", () => {
