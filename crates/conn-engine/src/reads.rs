@@ -442,19 +442,54 @@ fn count_occurrences(text: &str, needle: &str) -> u64 {
 }
 
 /// Up to 240 characters around the first match.
+///
+/// Lowercasing can make a character longer (`İ` becomes two characters), so the match is found
+/// in a lowercase copy that records, for each of its bytes, the original character it came from.
 fn snippet(text: &str, needle: &str) -> String {
-    let lower = text.to_lowercase();
-    let chars: Vec<char> = text.chars().collect();
+    let mut lower = String::with_capacity(text.len());
+    let mut origin: Vec<usize> = Vec::with_capacity(text.len());
+    for (index, c) in text.chars().enumerate() {
+        let before = lower.len();
+        lower.extend(c.to_lowercase());
+        origin.resize(origin.len() + (lower.len() - before), index);
+    }
     let at = lower
         .find(needle)
-        .map(|byte| lower[..byte].chars().count())
+        .and_then(|byte| origin.get(byte).copied())
         .unwrap_or(0);
     let start = at.saturating_sub(SNIPPET_CHARS / 3);
-    chars[start..]
-        .iter()
+    text.chars()
+        .skip(start)
         .take(SNIPPET_CHARS)
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `İ` (U+0130) lowercases to two characters, so a lowercase index is not an index into
+    /// the original text. Before the fix this panicked (`range start index 320 out of range`).
+    #[test]
+    fn snippet_survives_lowercase_expansion() {
+        let text = format!("{}abc tail", "İ".repeat(200));
+        let got = snippet(&text, "abc");
+        assert!(got.contains("abc tail"), "{got}");
+        assert!(got.starts_with('İ'), "{got}");
+        // The match sits 80 characters into the snippet, as for plain text.
+        assert_eq!(got.chars().position(|c| c == 'a'), Some(SNIPPET_CHARS / 3));
+    }
+
+    #[test]
+    fn snippet_handles_every_expanding_position() {
+        for before in 0..300 {
+            let text = format!("{}needle{}", "İ".repeat(before), "İ".repeat(before));
+            assert!(snippet(&text, "needle").contains("needle"));
+            assert!(snippet(&text, "absent").chars().count() <= SNIPPET_CHARS);
+            assert_eq!(count_occurrences(&text, "needle"), 1);
+        }
+    }
 }
