@@ -25,6 +25,7 @@ mod engine;
 mod engine_tests;
 #[cfg(any(test, feature = "fake-provider"))]
 pub mod fake;
+mod families;
 mod output;
 mod projects;
 mod reads;

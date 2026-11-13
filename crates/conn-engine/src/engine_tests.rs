@@ -1098,7 +1098,7 @@ fn every_contract_command_is_handled_or_refused_with_a_reason() {
             );
         }
     }
-    assert_eq!(handled, 37);
+    assert_eq!(handled, 41);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1581,4 +1581,191 @@ async fn frame(rx: &mut Subscription<Value, Value>) -> Value {
         .unwrap()
         .unwrap()
         .unwrap()
+}
+
+fn delegate(command: &str, task: &str, wake: Option<&str>) -> Value {
+    let mut c = json!({
+        "type": "delegated_task.request", "commandId": command, "parentThreadId": "t1",
+        "parentRunId": "run:t1:1", "parentNodeId": "node:run:t1:1:root", "task": task,
+        "title": "Helper", "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-4-5"},
+        "runtimeMode": "full-access", "interactionMode": "default",
+        "createdBy": "agent", "creationSource": "mcp",
+    });
+    if let Some(wake) = wake {
+        c["completionWake"] = json!(wake);
+    }
+    c
+}
+
+async fn run_to_end(engine: &SqliteEngine, thread: &str, run: &str) -> Value {
+    let ended = |r: &Value| {
+        ["completed", "interrupted", "failed", "cancelled"]
+            .contains(&r["status"].as_str().unwrap_or(""))
+    };
+    // Subscribe first, so an end after the snapshot still arrives as an event.
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": thread})).unwrap())
+        .await
+        .unwrap();
+    let snapshot = next(&mut stream).await;
+    let done = snapshot["projection"]["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["id"] == run && ended(r));
+    while !done {
+        let item = next(&mut stream).await;
+        let payload = &item["event"]["payload"];
+        if item["event"]["type"] == "run.updated" && payload["id"] == run && ended(payload) {
+            break;
+        }
+    }
+    projection(engine, thread).await
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_delegated_task_runs_as_a_child_thread_and_wakes_its_parent() {
+    let db = TempDb::new("delegate");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+
+    // `settled_only` (the default): the parent is busy, so the result waits.
+    dispatch(&engine, delegate("d1", "look around", None)).await;
+    let child = "thread:delegated-task:d1";
+    let task = "node:delegated-task:d1";
+    let p = run_to_end(&engine, child, &format!("run:{child}:1")).await;
+    assert_eq!(p["thread"]["lineage"]["parentThreadId"], "t1");
+    assert_eq!(p["thread"]["lineage"]["relationshipToParent"], "subagent");
+    assert_eq!(p["thread"]["forkedFrom"]["nodeId"], task);
+    let parent = projection(&engine, "t1").await;
+    let row = &parent["subagents"][0];
+    assert_eq!(row["childThreadId"], child);
+    assert_eq!(row["status"], "completed");
+    assert_eq!(row["result"], "echo: look around");
+    assert_eq!(row["completionDelivery"]["state"], "pending");
+    let item = parent["turnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["type"] == "subagent")
+        .unwrap()
+        .clone();
+    assert_eq!(item["result"], "echo: look around");
+    assert_eq!(
+        run_statuses(&parent).len(),
+        1,
+        "no wake while the parent runs"
+    );
+
+    // The family read and the shell show the child.
+    let family = call(
+        &engine,
+        "orchestration.getThreadFamily",
+        json!({"threadId": child}),
+    )
+    .await
+    .unwrap();
+    let ids: Vec<_> = family["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["id"].clone())
+        .collect();
+    assert_eq!(ids.len(), 2, "{ids:?}");
+
+    // `always`: a second task wakes the busy parent at once, queued behind its turn.
+    dispatch(&engine, delegate("d2", "second", Some("always"))).await;
+    run_to_end(
+        &engine,
+        "thread:delegated-task:d2",
+        "run:thread:delegated-task:d2:1",
+    )
+    .await;
+    let parent = projection(&engine, "t1").await;
+    assert_eq!(parent["runs"][1]["status"], "queued");
+    let wake = parent["messages"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(wake["createdBy"], "agent");
+    assert!(
+        wake["text"].as_str().unwrap().starts_with(
+            "Delegated task node:delegated-task:d2 (Helper) [completed]:\necho: second"
+        )
+    );
+
+    // When the parent's turn ends, the queued wake runs and the first task is delivered too.
+    dispatch(
+        &engine,
+        json!({"type": "run.interrupt", "commandId": "c3", "threadId": "t1", "runId": "run:t1:1"}),
+    )
+    .await;
+    let parent = run_to_end(&engine, "t1", "run:t1:3").await;
+    let deliveries: Vec<_> = parent["subagents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["completionDelivery"]["state"].clone())
+        .collect();
+    assert_eq!(deliveries, [json!("delivered"), json!("delivered")]);
+    let texts: Vec<String> = parent["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["createdBy"] == "agent" && m["role"] == "user")
+        .map(|m| m["text"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(texts.len(), 2);
+    assert!(texts[1].contains("echo: look around"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn stopping_a_parent_stops_its_children_without_a_wake() {
+    let db = TempDb::new("delegate-stop");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(&engine, delegate("d1", "hang", Some("always"))).await;
+    let child = "thread:delegated-task:d1";
+    let mut child_stream = engine
+        .subscribe_thread(from_json(json!({"threadId": child})).unwrap())
+        .await
+        .unwrap();
+    next(&mut child_stream).await;
+    loop {
+        let item = next(&mut child_stream).await;
+        if item["event"]["type"] == "provider-turn.updated" {
+            break;
+        }
+    }
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "s1", "threadId": "t1"}),
+    )
+    .await;
+    run_to_end(&engine, child, &format!("run:{child}:1")).await;
+    let parent = run_to_end(&engine, "t1", "run:t1:1").await;
+    let row = &parent["subagents"][0];
+    assert_eq!(row["status"], "interrupted");
+    assert_eq!(row["completionDelivery"]["state"], "disposed");
+    assert_eq!(
+        run_statuses(&parent).len(),
+        1,
+        "a stopped parent gets no wake"
+    );
 }

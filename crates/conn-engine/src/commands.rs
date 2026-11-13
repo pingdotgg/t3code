@@ -92,6 +92,10 @@ pub(crate) fn handler(command_type: &str) -> Option<Handler> {
         "provider-session.detach" => provider_session_detach,
         "provider.switch" => provider_switch,
         "thread.title.regeneration.complete" => thread_title_regeneration_complete,
+        "delegated_task.request" => crate::families::delegated_task_request,
+        "delegated_task.wake-policy" => crate::families::wake_policy,
+        "delegated_task.completion-delivery.acknowledge"
+        | "delegated_task.completion-delivery.dispose" => crate::families::completion_delivery,
         _ => return None,
     })
 }
@@ -118,12 +122,6 @@ pub(crate) fn refusal(command_type: &str) -> &'static str {
         }
         "subagent.stop" => {
             "Conn Server cannot stop a single subagent yet; stop the thread instead."
-        }
-        "delegated_task.request"
-        | "delegated_task.wake-policy"
-        | "delegated_task.completion-delivery.acknowledge"
-        | "delegated_task.completion-delivery.dispose" => {
-            "Conn Server does not run delegated tasks yet."
         }
         "thread.created.record" => "Conn Server does not record threads from linked environments.",
         _ => "Conn Server does not support this command.",
@@ -937,14 +935,14 @@ fn thread_stop(tx: &mut Tx<'_>, command: Value) -> Outcome {
     live_thread(tx, &c.thread_id)?;
     // Stop means stop: queued messages wait until the user sends again or resumes the queue.
     hold_queue(tx, &c.thread_id)?;
-    Ok(active_run(tx, &c.thread_id)?
+    let children = crate::families::stop_children(tx, &c.thread_id)?;
+    let own = active_run(tx, &c.thread_id)?
         .and_then(|run| run["id"].as_str().map(str::to_owned))
         .map(|run_id| Effect::Interrupt {
             thread_id: c.thread_id,
             run_id,
-        })
-        .into_iter()
-        .collect())
+        });
+    Ok(children.into_iter().chain(own).collect())
 }
 
 #[derive(Deserialize)]

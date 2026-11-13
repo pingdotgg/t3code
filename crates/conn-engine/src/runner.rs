@@ -121,12 +121,13 @@ impl Inner {
                 if held_on_failure {
                     hold_queue(tx, &thread_id)?;
                 }
-                start_next_queued(tx, &thread_id, None)
+                let mut effects = crate::families::on_run_end(tx, &thread_id, &run_id)?;
+                effects.extend(start_next_queued(tx, &thread_id, None)?);
+                Ok(effects)
             })
             .await;
         match next {
-            Ok(Some(effect)) => self.spawn_effect(effect),
-            Ok(None) => {}
+            Ok(effects) => effects.into_iter().for_each(|e| self.spawn_effect(e)),
             Err(e) => eprintln!("conn-engine: could not end run: {e}"),
         }
     }
