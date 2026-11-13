@@ -857,7 +857,11 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           ),
         ).toEqual(
           platform === "linux"
-            ? ["systemctl --user stop t3code.service", "systemctl --user restart t3code.service"]
+            ? [
+                "systemctl --user stop t3code.service",
+                "systemctl --user reset-failed t3code.service",
+                "systemctl --user restart t3code.service",
+              ]
             : [
                 "launchctl bootout --wait gui/501/com.t3tools.t3code.service",
                 `launchctl bootstrap gui/501 ${plan.unitPath}`,
@@ -1186,6 +1190,7 @@ process.disconnect();
         "systemctl --user is-active t3code.service",
         "systemctl --user stop t3code.service",
         "repair",
+        "systemctl --user reset-failed t3code.service",
         "systemctl --user restart t3code.service",
       ]);
       expect(control.active).toBe(true);
@@ -1313,6 +1318,7 @@ process.disconnect();
         expect(commands).toEqual([
           "systemctl --user daemon-reload",
           "systemctl --user enable t3code.service",
+          "systemctl --user reset-failed t3code.service",
           "systemctl --user restart --no-block t3code.service",
         ]);
         expect(outcome).toBe("queued");
@@ -1356,6 +1362,7 @@ process.disconnect();
       ).toEqual([
         "systemctl --user stop t3code.service",
         "systemctl --user daemon-reload",
+        "systemctl --user reset-failed t3code.service",
         "systemctl --user restart t3code.service",
       ]);
     }),
@@ -1389,6 +1396,7 @@ process.disconnect();
           ),
         ).toEqual([
           "systemctl --user stop t3code.service",
+          "systemctl --user reset-failed t3code.service",
           "systemctl --user restart t3code.service",
         ]);
       }
