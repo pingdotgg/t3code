@@ -530,6 +530,8 @@ export interface GlmUsageLimitsCache {
   /** Reads past the cache and stores the result; recovery and forced refreshes use it. */
   readonly readFresh: Effect.Effect<ServerProviderUsageLimits>;
   readonly invalidate: Effect.Effect<void>;
+  /** Drops the reading; another account's limits must not show even briefly. */
+  readonly clear: Effect.Effect<void>;
 }
 
 // Twice the default provider-health refresh, so routine refreshes reattach a cached reading
@@ -567,6 +569,7 @@ export const makeGlmUsageLimitsCache = Effect.fn("AcpRegistryDriver.makeGlmUsage
         invalidate: Ref.update(entry, (cached) =>
           cached === null ? null : { ...cached, expiresAt: 0 },
         ),
+        clear: Ref.set(entry, null),
       };
     }),
 );
@@ -807,10 +810,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       generation: current.generation + 1,
       entry: null,
     }));
-    // Account and endpoint changes also expire the GLM reading. The signed-out reader path must
+    // Account and endpoint changes also drop the GLM reading. The signed-out reader path must
     // not: its own refresh would read again and loop.
     const invalidateAccountCaches = invalidateEnrichmentCache.pipe(
-      Effect.andThen(glmUsageCache === null ? Effect.void : glmUsageCache.invalidate),
+      Effect.andThen(glmUsageCache === null ? Effect.void : glmUsageCache.clear),
     );
     const enrichProviderCached = Effect.fn("AcpRegistryDriver.enrichProviderCached")(function* (
       baseSnapshot: ServerProvider,

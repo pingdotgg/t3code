@@ -652,7 +652,7 @@ describe("glmUsageLimitsCache", () => {
     }),
   );
 
-  it.effect("reads fresh after a forced refresh invalidates the cache", () =>
+  it.effect("keeps the last reading through a forced refresh and drops it on clear", () =>
     Effect.gen(function* () {
       const reads = yield* Ref.make(0);
       const cache = yield* makeGlmUsageLimitsCache({
@@ -674,6 +674,9 @@ describe("glmUsageLimitsCache", () => {
       });
       yield* cache.readFresh;
       expect(yield* Ref.get(reads)).toBe(2);
+
+      yield* cache.clear;
+      expect(yield* cache.get).toEqual({ limits: undefined, expired: true });
     }),
   );
 });
