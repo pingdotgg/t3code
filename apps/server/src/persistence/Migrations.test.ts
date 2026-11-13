@@ -29,25 +29,26 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
-  it.effect("adds explicit grouping after turn item counts", () =>
+  it.effect("adds explicit grouping after turn item type status indexes", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 85 });
+      yield* runMigrations({ toMigrationInclusive: 88 });
       const before = yield* history;
       yield* sql`
         INSERT INTO projection_projects
-          (project_id, title, workspace_root, scripts_json, pinned_at, archived_at, created_at, updated_at)
-        VALUES ('sdk-project', 'SDK', '/work/sdk', '[]', '2026-10-27', '2026-10-28', '2026-10-27', '2026-10-28')
+          (project_id, title, has_custom_title, workspace_root, scripts_json, pinned_at, archived_at, created_at, updated_at)
+        VALUES ('sdk-project', 'SDK', 1, '/work/sdk', '[]', '2026-10-27', '2026-10-28', '2026-10-27', '2026-10-28')
       `;
 
-      assert.deepStrictEqual(yield* runMigrations(), [[86, "ProjectGroupingIdentity"]]);
-      assert.deepStrictEqual(yield* history, [...before, [86, "ProjectGroupingIdentity"]]);
+      assert.deepStrictEqual(yield* runMigrations(), [[89, "ProjectGroupingIdentity"]]);
+      assert.deepStrictEqual(yield* history, [...before, [89, "ProjectGroupingIdentity"]]);
       assert.deepStrictEqual(
-        yield* sql`SELECT project_id, title, workspace_root, pinned_at, archived_at, grouping_identity FROM projection_projects`,
+        yield* sql`SELECT project_id, title, has_custom_title, workspace_root, pinned_at, archived_at, grouping_identity FROM projection_projects`,
         [
           {
             project_id: "sdk-project",
             title: "SDK",
+            has_custom_title: 1,
             workspace_root: "/work/sdk",
             pinned_at: "2026-10-27",
             archived_at: "2026-10-28",
