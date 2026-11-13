@@ -1419,6 +1419,28 @@ it.layer(
     }),
   );
 
+  // Ghostty executes 0x00-0x0F inside a CSI and ignores DEL and 0x10-0x1F; none change the query.
+  it.effect.each([
+    { name: "NUL in DA", data: "A\u001b[0\u0000cB", history: "AB" },
+    { name: "DEL in DA", data: "A\u001b[0\u007fcB", history: "AB" },
+    { name: "NUL in DECRQM", data: "A\u001b[?2026\u0000$pB", history: "AB" },
+    { name: "CR in DSR", data: "AB\u001b[5\rnC", history: "AB\rC" },
+    { name: "DLE in DSR", data: "AB\u001b[5\u0010nC", history: "ABC" },
+  ])(
+    "strips a query with an embedded control but keeps what the terminal ran ($name)",
+    ({ data, history }) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager();
+        yield* manager.open(openInput());
+        ptyAdapter.processes[0]!.emitData(data);
+        yield* manager.close({ threadId: "thread-1" });
+
+        const reopened = yield* manager.open(openInput());
+        const restored = reopened.history.replaceAll("\u0000", "");
+        expect(restored.split("\u001b[?1049h")[0]).toBe(history);
+      }),
+  );
+
   it.effect.each([
     { name: "OSC", sequence: "\u001b]0;unfinished" },
     { name: "DCS", sequence: "\u001bPunfinished" },
