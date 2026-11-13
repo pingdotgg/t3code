@@ -320,6 +320,57 @@ effectIt.effect("restores a missing worktree before a send only under the worksp
   }).pipe(Effect.provide(layerRestoreLeaseTest)),
 );
 
+it.each([
+  { label: "directly in the scratch root", folder: "/tmp/t3-home/scratch/notes", recreated: true },
+  { label: "below another folder", folder: "/tmp/t3-home/scratch/notes/deep", recreated: false },
+  {
+    label: "in another project",
+    folder: "/tmp/elsewhere/notes",
+    workspaceRoot: "/tmp/elsewhere",
+    recreated: false,
+  },
+])("recreates a pruned No project folder only $label", async (input) => {
+  const makeDirectory = vi.fn(() => Effect.void);
+  await Effect.gen(function* () {
+    const { restore } = yield* ThreadWorktreeRestore;
+    yield* restore({
+      id: ThreadId.make("thread_scratch_restore"),
+      projectId: ProjectId.make("project_scratch_restore"),
+      worktreePath: input.folder,
+      branch: null,
+    });
+  }).pipe(
+    Effect.provide(
+      layerThreadWorktreeRestore.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(FileSystem.FileSystem, {
+              exists: () => Effect.succeed(false),
+              realPath: (target: string) => Effect.succeed(target),
+              makeDirectory,
+            } as never),
+            Path.layer,
+            Layer.mock(ServerConfig.ServerConfig)({
+              baseDir: "/tmp/t3-home",
+              worktreesDir: managedWorktreesDir,
+            } as ServerConfig.ServerConfig["Service"]),
+            ServerSettings.layerTest(),
+            Layer.mock(GitWorkflow.GitWorkflowService)({}),
+            Layer.mock(ProjectService.ProjectService)({
+              getById: () =>
+                Effect.succeedSome({
+                  workspaceRoot: input.workspaceRoot ?? "/tmp/t3-home/scratch",
+                } as never),
+            }),
+          ),
+        ),
+      ),
+    ),
+    Effect.runPromise,
+  );
+  expect(makeDirectory).toHaveBeenCalledTimes(input.recreated ? 1 : 0);
+});
+
 function makeLocalCommandHarness(input: {
   readonly text: string;
   readonly nativeGoals?: boolean;
