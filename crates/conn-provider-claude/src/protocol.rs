@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(clippy::large_enum_variant)] // One per stdout line, moved once.
+#[expect(clippy::large_enum_variant, reason = "one per stdout line, moved once")]
 pub enum Inbound {
     /// Answer to a request we sent.
     ControlResponse {
@@ -388,6 +388,35 @@ pub struct OutputTokensDetails {
 }
 
 impl Usage {
+    /// Field-wise sum, for a turn made of several API segments.
+    pub fn plus(&self, other: &Usage) -> Usage {
+        let add = |a: Option<u64>, b: Option<u64>| match (a, b) {
+            (None, None) => None,
+            (a, b) => Some(a.unwrap_or(0) + b.unwrap_or(0)),
+        };
+        let thinking = |u: &Usage| {
+            u.output_tokens_details
+                .as_ref()
+                .and_then(|d| d.thinking_tokens)
+        };
+        Usage {
+            input_tokens: self.input_tokens + other.input_tokens,
+            output_tokens: self.output_tokens + other.output_tokens,
+            cache_creation_input_tokens: add(
+                self.cache_creation_input_tokens,
+                other.cache_creation_input_tokens,
+            ),
+            cache_read_input_tokens: add(
+                self.cache_read_input_tokens,
+                other.cache_read_input_tokens,
+            ),
+            cache_creation: None,
+            output_tokens_details: Some(OutputTokensDetails {
+                thinking_tokens: add(thinking(self), thinking(other)),
+            }),
+        }
+    }
+
     /// `claudeMessageInputTokens`: fresh + cache-creation + cache-read input.
     pub fn input_total(&self) -> u64 {
         self.input_tokens
@@ -515,16 +544,24 @@ pub struct ResultMsg {
 
 // ---- Host → CLI ----
 
-/// A user message. Starts a turn, or (`priority: "now"`) steers the running one. `content` is
-/// a string, or blocks when the message carries images or documents.
-pub fn user_message(content: Value, uuid: &str, steer: bool) -> String {
+/// How the CLI takes a user message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Delivery {
+    /// Starts a turn.
+    Turn,
+    /// `priority: "now"`: steers the running turn.
+    Steer,
+}
+
+/// A user message. `content` is a string, or blocks when the message carries images.
+pub fn user_message(content: Value, uuid: &str, delivery: Delivery) -> String {
     let mut message = json!({
         "type": "user",
         "message": {"role": "user", "content": content},
         "parent_tool_use_id": null,
         "uuid": uuid,
     });
-    if steer {
+    if delivery == Delivery::Steer {
         message["priority"] = json!("now");
     }
     message.to_string()

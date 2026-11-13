@@ -30,8 +30,10 @@ use crate::protocol::{
 };
 
 /// What the session must do after feeding the mapper.
-// Short-lived: each value moves straight into the event channel, so boxing buys nothing.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "each value moves straight into the event channel, so boxing buys nothing"
+)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Out {
     Event(ProviderEvent),
@@ -68,8 +70,6 @@ pub struct Mapper<E: Env> {
     task_list: Option<Vec<TaskEntry>>,
     /// Context window sizes the CLI reported per model (`modelUsage[model].contextWindow`).
     context_windows: HashMap<String, u64>,
-    /// Background work after the last turn ended, as last reported.
-    background_pending: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -133,6 +133,9 @@ struct Turn {
     retry: Option<RetryState>,
     compaction: Option<Value>,
     limits: LimitState,
+    /// Usage of segments a steer cut short.
+    steered_usage: Option<Usage>,
+    had_subagents: bool,
 }
 
 impl Turn {
@@ -191,7 +194,6 @@ impl<E: Env> Mapper<E> {
             plan_ids: HashMap::new(),
             task_list: None,
             context_windows: HashMap::new(),
-            background_pending: false,
         }
     }
 
@@ -200,10 +202,17 @@ impl<E: Env> Mapper<E> {
         self.subagents.any_running() || self.continuation_requested
     }
 
-    /// Bytes this mapper holds that grow with use, for the memory checks.
+    /// Sizes of every collection that outlives a turn, for the memory checks.
     #[cfg(test)]
-    pub fn held_frames(&self) -> usize {
-        self.wake.len()
+    pub fn held_sizes(&self) -> [usize; 6] {
+        [
+            self.pending.len(),
+            self.subagents.len(),
+            self.wake.len(),
+            self.plan_ids.len(),
+            self.context_windows.len(),
+            self.task_list.as_ref().map_or(0, Vec::len),
+        ]
     }
 
     pub fn env(&mut self) -> &mut E {
@@ -320,17 +329,26 @@ impl<E: Env> Mapper<E> {
             retry: None,
             compaction: None,
             limits: LimitState::default(),
+            steered_usage: None,
+            had_subagents: false,
         };
-        let mut out = vec![event(ProviderEvent::ProviderTurnUpdated {
-            thread_id: None,
-            provider_turn: from_json(provider_turn(&turn, "running", None, false)).unwrap(),
-        })];
+        let mut out = Vec::new();
+        emit(
+            &mut out,
+            |v| ProviderEvent::ProviderTurnUpdated {
+                thread_id: None,
+                provider_turn: v,
+            },
+            provider_turn(&turn, "running", None, false),
+        );
         provider_thread["status"] = json!("active");
         provider_thread["providerSessionId"] = json!(self.provider_session_id);
         provider_thread["updatedAt"] = json!(now);
-        out.push(event(ProviderEvent::ProviderThreadUpdated {
-            provider_thread: from_json(provider_thread).unwrap(),
-        }));
+        emit(
+            &mut out,
+            |v| ProviderEvent::ProviderThreadUpdated { provider_thread: v },
+            provider_thread,
+        );
         self.last_ctx = Some(turn.parent_ctx());
         self.turn = Some(turn);
         out
@@ -360,16 +378,16 @@ impl<E: Env> Mapper<E> {
             // Subagent text arrives as whole assistant frames; its stream is not shown.
             Inbound::StreamEvent(msg) if msg.parent_tool_use_id.is_some() => {}
             Inbound::StreamEvent(msg) => self.on_stream(msg.event, &mut out),
-            Inbound::Assistant(msg) if msg.parent_tool_use_id.is_some() => {
-                let parent = msg.parent_tool_use_id.clone().unwrap();
-                self.on_child_frame(Inbound::Assistant(msg), &parent, &mut out)
-            }
-            Inbound::Assistant(msg) => self.on_assistant(msg, &mut out),
-            Inbound::User(msg) if msg.parent_tool_use_id.is_some() && !msg.is_replay => {
-                let parent = msg.parent_tool_use_id.clone().unwrap();
-                self.on_child_frame(Inbound::User(msg), &parent, &mut out)
-            }
-            Inbound::User(msg) => self.on_user(msg, &mut out),
+            Inbound::Assistant(msg) => match msg.parent_tool_use_id.clone() {
+                Some(parent) => self.on_child_frame(Inbound::Assistant(msg), &parent, &mut out),
+                None => self.on_assistant(msg, &mut out),
+            },
+            Inbound::User(msg) => match msg.parent_tool_use_id.clone() {
+                Some(parent) if !msg.is_replay => {
+                    self.on_child_frame(Inbound::User(msg), &parent, &mut out)
+                }
+                _ => self.on_user(msg, &mut out),
+            },
             Inbound::System(msg) => self.on_system(msg, &mut out),
             Inbound::Result(msg) => self.on_result(msg, &mut out),
             Inbound::CommandLifecycle { .. } => {}
@@ -685,7 +703,6 @@ impl<E: Env> Mapper<E> {
             "task_progress" => return self.on_task_progress(&msg, out),
             "task_notification" => {
                 self.on_task_notification(&msg, out);
-                self.report_background(out);
                 return;
             }
             _ => {}
@@ -781,10 +798,14 @@ impl<E: Env> Mapper<E> {
                         "maxTokens": max_tokens(turn, &self.context_windows),
                         "updatedAt": now,
                     });
-                    out.push(event(ProviderEvent::ProviderTurnUpdated {
-                        thread_id: Some(turn.thread_id.as_str().into()),
-                        provider_turn: from_json(provider_turn).unwrap(),
-                    }));
+                    emit(
+                        out,
+                        |v| ProviderEvent::ProviderTurnUpdated {
+                            thread_id: Some(turn.thread_id.as_str().into()),
+                            provider_turn: v,
+                        },
+                        provider_turn,
+                    );
                 }
                 turn.usage = None;
                 out.push(turn_item(item));
@@ -836,13 +857,16 @@ impl<E: Env> Mapper<E> {
     }
 
     fn on_result(&mut self, msg: ResultMsg, out: &mut Vec<Out>) {
+        // A result that reports a context window not seen before refreshes the usage row.
+        let mut new_window = false;
         if let Some(Value::Object(models)) = &msg.model_usage {
             for (model, usage) in models.iter().take(16) {
                 if let Some(window) = usage.get("contextWindow").and_then(Value::as_u64)
                     && window > 0
                     && (self.context_windows.len() < 16 || self.context_windows.contains_key(model))
                 {
-                    self.context_windows.insert(model.clone(), window);
+                    new_window |=
+                        self.context_windows.insert(model.clone(), window) != Some(window);
                 }
             }
         }
@@ -851,11 +875,25 @@ impl<E: Env> Mapper<E> {
             out.push(Out::Skipped("result (no active turn)".into()));
             return;
         };
+        if new_window && turn.usage.is_some() {
+            let max = context_tokens(
+                &self.context_windows,
+                &turn.root_model,
+                turn.model.as_deref(),
+            );
+            emit_usage(turn, max, &now, out);
+        }
         let steer_abort = matches!(
             msg.terminal_reason.as_deref(),
             Some("aborted_streaming" | "aborted_tools")
         );
         if turn.steered && !turn.interrupt_requested && steer_abort {
+            if let Some(usage) = &msg.usage {
+                turn.steered_usage = Some(match turn.steered_usage.take() {
+                    Some(sum) => sum.plus(usage),
+                    None => usage.clone(),
+                });
+            }
             // A steer cut this segment short; the turn goes on with the steer.
             for item_id in turn.stream_order.clone() {
                 complete_stream(turn, &item_id, None, "interrupted", &now, out);
@@ -905,7 +943,6 @@ impl<E: Env> Mapper<E> {
         self.end_running_subagents(if stopped { "cancelled" } else { "failed" }, &mut out);
         self.wake.clear();
         self.continuation_requested = false;
-        self.report_background(&mut out);
         let Some(turn) = &self.turn else {
             return out;
         };
@@ -930,6 +967,8 @@ impl<E: Env> Mapper<E> {
         result: Option<&ResultMsg>,
         out: &mut Vec<Out>,
     ) {
+        // Requests the CLI never resolved end with their turn.
+        self.cancel_all_pending(out);
         let now = self.env.now();
         let Some(mut turn) = self.turn.take() else {
             return;
@@ -991,16 +1030,29 @@ impl<E: Env> Mapper<E> {
             out.push(turn_item(item));
         }
         let mut provider_turn = provider_turn(&turn, status_text, Some(&now), true);
+        // A steer's cut-off segment counts towards the turn.
+        let usage = match (
+            turn.steered_usage.take(),
+            result.and_then(|r| r.usage.clone()),
+        ) {
+            (Some(steered), Some(last)) => Some(steered.plus(&last)),
+            (steered, last) => last.or(steered),
+        };
         provider_turn["turnTokenUsage"] = turn_token_usage(
             &turn.models,
             result,
+            usage.as_ref(),
             completed,
-            self.subagents.any_running(),
+            turn.had_subagents || self.subagents.any_running(),
         );
-        out.push(event(ProviderEvent::ProviderTurnUpdated {
-            thread_id: None,
-            provider_turn: from_json(provider_turn).unwrap(),
-        }));
+        emit(
+            out,
+            |v| ProviderEvent::ProviderTurnUpdated {
+                thread_id: None,
+                provider_turn: v,
+            },
+            provider_turn,
+        );
         let mut thread = turn.provider_thread.clone();
         thread["providerSessionId"] = json!(self.provider_session_id);
         if thread.get("firstRunOrdinal").is_none_or(Value::is_null) {
@@ -1014,19 +1066,20 @@ impl<E: Env> Mapper<E> {
         }
         thread["status"] = json!(if completed { "active" } else { "idle" });
         thread["updatedAt"] = json!(now);
-        out.push(event(ProviderEvent::ProviderThreadUpdated {
-            provider_thread: from_json(thread).unwrap(),
-        }));
+        emit(
+            out,
+            |v| ProviderEvent::ProviderThreadUpdated { provider_thread: v },
+            thread,
+        );
         out.push(event(ProviderEvent::TurnTerminal(TurnTerminal {
             provider_thread_id: turn.provider_thread_id.as_str().into(),
             provider_turn_id: turn.provider_turn_id.as_str().into(),
             run_ordinal: turn.run_ordinal,
             status,
-            failure: failure.map(|f| from_json(f).unwrap()),
+            failure: failure.and_then(|f| from_json(f).ok()),
             retry,
             thread_disposition: ThreadDisposition::Reusable,
         })));
-        self.report_background(out);
     }
 
     // ---- Requests from the CLI ----
@@ -1072,7 +1125,7 @@ impl<E: Env> Mapper<E> {
             let questions = user_input_questions(&req.input);
             let thread_id = turn.thread_id.clone();
             let root = turn.root_node_id.clone();
-            let (node, request, item) = self.request_artifacts(
+            let artifacts = self.request_artifacts(
                 &tool_use_id,
                 &tool_use_id,
                 "user_input",
@@ -1086,7 +1139,7 @@ impl<E: Env> Mapper<E> {
                     tool_use_id,
                     input: req.input,
                 },
-                (node, request, item),
+                artifacts,
                 thread_id,
                 out,
             );
@@ -1166,7 +1219,9 @@ impl<E: Env> Mapper<E> {
             return;
         }
         let native_id = format!("mcp-elicitation:{cli_id}");
-        let thread_id = self.turn.as_ref().unwrap().thread_id.clone();
+        let Some(thread_id) = self.turn.as_ref().map(|t| t.thread_id.clone()) else {
+            return;
+        };
         let options = json!([
             {"decision": "cancel", "label": "Cancel"},
             {"decision": "decline", "label": "Decline"},
@@ -1265,7 +1320,9 @@ impl<E: Env> Mapper<E> {
         else {
             return;
         };
-        let pending = self.pending.remove(&request_id).unwrap();
+        let Some(pending) = self.pending.remove(&request_id) else {
+            return;
+        };
         self.emit_cancelled(&pending, out);
         // The SDK still answers a withdrawn request, as if the user cancelled it.
         out.push(Out::Write(control_success(
@@ -1287,16 +1344,18 @@ impl<E: Env> Mapper<E> {
         let mut request = pending.request.clone();
         request["status"] = json!("cancelled");
         request["resolvedAt"] = json!(now);
-        out.push(event(ProviderEvent::RuntimeRequestUpdated {
-            thread_id: Some(pending.thread_id.as_str().into()),
-            runtime_request: from_json(request).unwrap(),
-        }));
+        emit(
+            out,
+            |v| ProviderEvent::RuntimeRequestUpdated {
+                thread_id: Some(pending.thread_id.as_str().into()),
+                runtime_request: v,
+            },
+            request,
+        );
         let mut node = pending.node.clone();
         node["status"] = json!("cancelled");
         node["completedAt"] = json!(now);
-        out.push(event(ProviderEvent::NodeUpdated {
-            node: from_json(node).unwrap(),
-        }));
+        emit(out, |v| ProviderEvent::NodeUpdated { node: v }, node);
         let mut item = pending.item.clone();
         item["status"] = json!("cancelled");
         item["completedAt"] = json!(now);
@@ -1388,17 +1447,30 @@ impl<E: Env> Mapper<E> {
         &mut self,
         cli_request_id: String,
         kind: PendingKind,
-        (node, request, item): (Value, Value, Value),
+        artifacts: Option<(Value, Value, Value)>,
         thread_id: String,
         out: &mut Vec<Out>,
     ) {
-        out.push(event(ProviderEvent::NodeUpdated {
-            node: from_json(node.clone()).unwrap(),
-        }));
-        out.push(event(ProviderEvent::RuntimeRequestUpdated {
-            thread_id: None,
-            runtime_request: from_json(request.clone()).unwrap(),
-        }));
+        let Some((node, request, item)) = artifacts else {
+            out.push(Out::Write(control_error(
+                &cli_request_id,
+                "Claude asked with no turn running.",
+            )));
+            return;
+        };
+        emit(
+            out,
+            |v| ProviderEvent::NodeUpdated { node: v },
+            node.clone(),
+        );
+        emit(
+            out,
+            |v| ProviderEvent::RuntimeRequestUpdated {
+                thread_id: None,
+                runtime_request: v,
+            },
+            request.clone(),
+        );
         out.push(turn_item(item.clone()));
         let id = str_of(&request, "id");
         self.pending.insert(
@@ -1422,9 +1494,9 @@ impl<E: Env> Mapper<E> {
         parent_node_id: Option<String>,
         body: RequestBody,
         now: &str,
-    ) -> (Value, Value, Value) {
+    ) -> Option<(Value, Value, Value)> {
         let uuid = self.env.uuid();
-        let turn = self.turn.as_mut().expect("active turn");
+        let turn = self.turn.as_mut()?;
         let request_id = ids::join_id(
             "runtime-request",
             &[
@@ -1516,12 +1588,14 @@ impl<E: Env> Mapper<E> {
                 }
             }
         }
-        (node, request, item)
+        Some((node, request, item))
     }
 
     fn proposed_plan(&mut self, tool_use_id: &str, markdown: &str, now: &str, out: &mut Vec<Out>) {
         let uuid = self.env.uuid();
-        let turn = self.turn.as_mut().expect("active turn");
+        let Some(turn) = self.turn.as_mut() else {
+            return;
+        };
         let native = format!("proposed_plan:{tool_use_id}");
         let plan_id = ids::join_id(
             "plan",
@@ -1559,12 +1633,8 @@ impl<E: Env> Mapper<E> {
             "updatedAt": now, "type": "proposed_plan", "planId": plan_id, "markdown": markdown,
             "streaming": false,
         });
-        out.push(event(ProviderEvent::NodeUpdated {
-            node: from_json(node).unwrap(),
-        }));
-        out.push(event(ProviderEvent::PlanUpdated {
-            plan: from_json(plan).unwrap(),
-        }));
+        emit(out, |v| ProviderEvent::NodeUpdated { node: v }, node);
+        emit(out, |v| ProviderEvent::PlanUpdated { plan: v }, plan);
         out.push(turn_item(item));
     }
 }
@@ -1583,9 +1653,23 @@ fn event(event: ProviderEvent) -> Out {
 }
 
 fn turn_item(item: Value) -> Out {
-    event(ProviderEvent::TurnItemUpdated {
-        turn_item: from_json(item).unwrap(),
-    })
+    match from_json(item) {
+        Ok(turn_item) => event(ProviderEvent::TurnItemUpdated { turn_item }),
+        Err(error) => Out::Skipped(format!("invalid turn item: {error}")),
+    }
+}
+
+/// Builds an event from a JSON row. Rows carry CLI values, so a row the contract rejects is
+/// skipped and logged rather than allowed to stop the server.
+fn emit<T: serde::de::DeserializeOwned>(
+    out: &mut Vec<Out>,
+    make: impl FnOnce(T) -> ProviderEvent,
+    value: Value,
+) {
+    match from_json(value) {
+        Ok(typed) => out.push(event(make(typed))),
+        Err(error) => out.push(Out::Skipped(format!("invalid event row: {error}"))),
+    }
 }
 
 fn str_of(value: &Value, key: &str) -> String {
@@ -1684,10 +1768,14 @@ fn emit_usage(turn: &Turn, max_tokens: u64, now: &str, out: &mut Vec<Out>) {
     let mut provider_turn = provider_turn(turn, "running", None, false);
     provider_turn["nativeTurnRef"]["strength"] = json!("strong");
     provider_turn["tokenUsage"] = token_usage;
-    out.push(event(ProviderEvent::ProviderTurnUpdated {
-        thread_id: Some(turn.thread_id.as_str().into()),
-        provider_turn: from_json(provider_turn).unwrap(),
-    }));
+    emit(
+        out,
+        |v| ProviderEvent::ProviderTurnUpdated {
+            thread_id: Some(turn.thread_id.as_str().into()),
+            provider_turn: v,
+        },
+        provider_turn,
+    );
 }
 
 fn complete_stream(
@@ -1737,26 +1825,28 @@ fn assistant_artifacts(
     let node_id = ids::node_from_item(item_id);
     let message_id = ids::message_from_item(item_id);
     let native_ref = json!({"driver": DRIVER, "nativeId": item_id, "strength": "strong"});
-    out.push(event(ProviderEvent::NodeUpdated {
-        node: from_json(json!({
+    emit(
+        out,
+        |v| ProviderEvent::NodeUpdated { node: v },
+        json!({
             "id": node_id, "threadId": turn.thread_id, "runId": turn.run_id,
             "parentNodeId": turn.root_node_id, "rootNodeId": turn.root_node_id,
             "kind": "assistant_message", "status": status, "countsForRun": false,
             "providerThreadId": turn.provider_thread_id, "providerTurnId": turn.provider_turn_id,
             "nativeItemRef": native_ref, "runtimeRequestId": null, "checkpointScopeId": null,
             "startedAt": started_at, "completedAt": completed_at,
-        }))
-        .unwrap(),
-    }));
-    out.push(event(ProviderEvent::MessageUpdated {
-        message: from_json(json!({
+        }),
+    );
+    emit(
+        out,
+        |v| ProviderEvent::MessageUpdated { message: v },
+        json!({
             "createdBy": "agent", "creationSource": "provider", "id": message_id,
             "threadId": turn.thread_id, "runId": turn.run_id, "nodeId": node_id,
             "role": "assistant", "text": text, "attachments": [], "streaming": running,
             "createdAt": started_at, "updatedAt": now,
-        }))
-        .unwrap(),
-    }));
+        }),
+    );
     out.push(turn_item(json!({
         "id": ids::turn_item_from_item(item_id), "threadId": turn.thread_id,
         "runId": turn.run_id, "nodeId": node_id,
@@ -1857,7 +1947,7 @@ impl Turn {
 }
 
 /// `buildToolCallArtifacts`: the tool's node and turn item.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "the fields of one contract row")]
 pub(crate) fn tool_artifacts(
     scope: &Scope,
     id: &str,
@@ -1875,17 +1965,18 @@ pub(crate) fn tool_artifacts(
     };
     let node_id = ids::node_from_item(id);
     let native_ref = json!({"driver": DRIVER, "nativeId": id, "strength": "strong"});
-    out.push(event(ProviderEvent::NodeUpdated {
-        node: from_json(json!({
+    emit(
+        out,
+        |v| ProviderEvent::NodeUpdated { node: v },
+        json!({
             "id": node_id, "threadId": scope.thread_id, "runId": scope.run_id,
             "parentNodeId": scope.parent_node_id, "rootNodeId": scope.parent_node_id,
             "kind": "tool_call", "status": status, "countsForRun": false,
             "providerThreadId": scope.provider_thread_id, "providerTurnId": scope.provider_turn_id,
             "nativeItemRef": native_ref, "runtimeRequestId": null, "checkpointScopeId": null,
             "startedAt": call.started_at, "completedAt": completed_at,
-        }))
-        .unwrap(),
-    }));
+        }),
+    );
     let mut item = Map::new();
     if let Some(kind) = non_execution_kind {
         item.insert("toolNonExecutionKind".into(), json!(kind));
@@ -2162,6 +2253,7 @@ fn elicitation_acceptance(req: &Elicitation) -> Option<Value> {
 fn turn_token_usage(
     models: &[String],
     result: Option<&ResultMsg>,
+    usage_total: Option<&Usage>,
     completed: bool,
     has_subagents: bool,
 ) -> Value {
@@ -2170,7 +2262,7 @@ fn turn_token_usage(
         usage["models"] = json!(models);
     }
     let success = result.is_some_and(|r| r.subtype == "success");
-    let Some(u) = result.and_then(|r| r.usage.as_ref()) else {
+    let Some(u) = usage_total.filter(|_| result.is_some()) else {
         usage["usageStatus"] = json!("unavailable");
         return usage;
     };
@@ -2368,21 +2460,6 @@ impl<E: Env> Mapper<E> {
         )));
     }
 
-    /// `background_work.updated` when the answer to "is work still running" changes.
-    fn report_background(&mut self, out: &mut Vec<Out>) {
-        let pending = self.turn.is_none() && self.has_pending_background_work();
-        if pending == self.background_pending {
-            return;
-        }
-        self.background_pending = pending;
-        if let Some(ctx) = &self.last_ctx {
-            out.push(event(ProviderEvent::BackgroundWorkUpdated {
-                provider_turn_id: ctx.provider_turn_id.as_str().into(),
-                pending,
-            }));
-        }
-    }
-
     fn on_rate_limit(&mut self, info: &Value, out: &mut Vec<Out>) {
         let now = self.env.now();
         let now_ms = self.env.now_ms();
@@ -2454,9 +2531,7 @@ impl<E: Env> Mapper<E> {
         {
             let mut superseded = previous;
             superseded["status"] = json!("superseded");
-            out.push(event(ProviderEvent::PlanUpdated {
-                plan: from_json(superseded).unwrap(),
-            }));
+            emit(out, |v| ProviderEvent::PlanUpdated { plan: v }, superseded);
         }
         let node_id = ids::node_from_item(&projection);
         let native_ref =
@@ -2468,8 +2543,10 @@ impl<E: Env> Mapper<E> {
             "kind": "todo_list", "status": if done { "completed" } else { "active" },
             "steps": steps,
         });
-        out.push(event(ProviderEvent::NodeUpdated {
-            node: from_json(json!({
+        emit(
+            out,
+            |v| ProviderEvent::NodeUpdated { node: v },
+            json!({
                 "id": node_id, "threadId": turn.thread_id, "runId": turn.run_id,
                 "parentNodeId": turn.root_node_id, "rootNodeId": turn.root_node_id,
                 "kind": "todo_list", "status": "completed", "countsForRun": false,
@@ -2477,12 +2554,13 @@ impl<E: Env> Mapper<E> {
                 "providerTurnId": turn.provider_turn_id, "nativeItemRef": native_ref,
                 "runtimeRequestId": null, "checkpointScopeId": null,
                 "startedAt": now, "completedAt": now,
-            }))
-            .unwrap(),
-        }));
-        out.push(event(ProviderEvent::PlanUpdated {
-            plan: from_json(plan.clone()).unwrap(),
-        }));
+            }),
+        );
+        emit(
+            out,
+            |v| ProviderEvent::PlanUpdated { plan: v },
+            plan.clone(),
+        );
         out.push(turn_item(json!({
             "id": ids::turn_item_from_item(&projection), "threadId": turn.thread_id,
             "runId": turn.run_id, "nodeId": node_id,

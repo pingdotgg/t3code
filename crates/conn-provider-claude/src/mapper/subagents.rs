@@ -93,6 +93,12 @@ pub(crate) struct Subagents {
 }
 
 impl Subagents {
+    /// Subagents, launches and held frames, for the memory checks.
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.by_task.len() + self.by_tool.len() + self.launches.len() + self.frames.len()
+    }
+
     pub fn any_running(&self) -> bool {
         self.by_task.values().any(Sub::running)
     }
@@ -382,7 +388,12 @@ impl<E: Env> Mapper<E> {
         if !is_error && is_async_ack(structured, content) {
             return true;
         }
-        let text = result_text(content);
+        // The structured result holds the subagent's own text; the tool_result wraps it.
+        let text = structured
+            .and_then(|s| s.get("content"))
+            .map(result_text)
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| result_text(content));
         self.update_subagent(
             Update {
                 task_id: &task_id,
@@ -458,8 +469,10 @@ impl<E: Env> Mapper<E> {
     ) {
         let now = self.env.now();
         let model = msg.message.model.clone().unwrap_or_default();
+        let Some(sub) = self.subagents.by_task.get(task_id) else {
+            return;
+        };
         let model_changed = {
-            let sub = &self.subagents.by_task[task_id];
             !model.is_empty()
                 && model != "<synthetic>"
                 && sub.running()
@@ -481,7 +494,9 @@ impl<E: Env> Mapper<E> {
         for (index, block) in msg.message.content.iter().enumerate() {
             match block {
                 Block::Thinking { thinking } if !thinking.trim().is_empty() => {
-                    let sub = self.subagents.by_task.get_mut(task_id).unwrap();
+                    let Some(sub) = self.subagents.by_task.get_mut(task_id) else {
+                        return;
+                    };
                     let native = format!("{}:thinking:{index}", msg.uuid);
                     let ordinal = sub.next_ordinal();
                     out.push(turn_item(json!({
@@ -499,7 +514,9 @@ impl<E: Env> Mapper<E> {
                     self.remember_agent_launch(id, input, Some(parent));
                 }
                 Block::ToolUse { id, name, input } => {
-                    let sub = self.subagents.by_task.get_mut(task_id).unwrap();
+                    let Some(sub) = self.subagents.by_task.get_mut(task_id) else {
+                        return;
+                    };
                     if sub.tools.contains_key(id) {
                         continue;
                     }
@@ -529,7 +546,9 @@ impl<E: Env> Mapper<E> {
             return;
         }
         let text = texts.join("\n\n");
-        let sub = self.subagents.by_task.get_mut(task_id).unwrap();
+        let Some(sub) = self.subagents.by_task.get_mut(task_id) else {
+            return;
+        };
         let same = sub.last_message_id.as_deref() == Some(msg.message.id.as_str());
         sub.last_text = Some(match (&sub.last_text, same) {
             (Some(prev), true) => format!("{prev}\n{text}"),
@@ -569,7 +588,9 @@ impl<E: Env> Mapper<E> {
                 self.settle_agent_result(tool_use_id, content, *is_error, None, out);
                 continue;
             }
-            let sub = self.subagents.by_task.get_mut(task_id).unwrap();
+            let Some(sub) = self.subagents.by_task.get_mut(task_id) else {
+                return;
+            };
             let Some(call) = sub.tools.remove(tool_use_id) else {
                 continue;
             };
@@ -609,8 +630,7 @@ impl<E: Env> Mapper<E> {
         }
         let mut is_reopen = false;
         let mut prior_status = String::new();
-        if existing {
-            let sub = &self.subagents.by_task[input.task_id];
+        if let Some(sub) = self.subagents.by_task.get(input.task_id) {
             prior_status = sub.task["status"].as_str().unwrap_or("").to_string();
             let terminal = prior_status != "running";
             if terminal && input.status == "running" && !input.reopen {
@@ -645,6 +665,9 @@ impl<E: Env> Mapper<E> {
                 "model": null, "status": "running", "result": null, "startedAt": now,
                 "completedAt": null, "updatedAt": now,
             });
+            if let Some(turn) = &mut self.turn {
+                turn.had_subagents = true;
+            }
             self.subagents
                 .by_tool
                 .insert(input.tool_use_id.to_string(), input.task_id.to_string());
@@ -677,7 +700,9 @@ impl<E: Env> Mapper<E> {
         if !existing {
             self.subagents.opened += 1;
         }
-        let sub = self.subagents.by_task.get_mut(input.task_id).unwrap();
+        let Some(sub) = self.subagents.by_task.get_mut(input.task_id) else {
+            return;
+        };
 
         // The task row.
         let task = &mut sub.task;
@@ -737,8 +762,10 @@ impl<E: Env> Mapper<E> {
         }
         // 2. The subagent's node in the parent turn.
         if lifecycle_changed {
-            out.push(event(ProviderEvent::NodeUpdated {
-                node: from_json(json!({
+            emit(
+                out,
+                |v| ProviderEvent::NodeUpdated { node: v },
+                json!({
                     "id": sub.node_id, "threadId": task["threadId"], "runId": task["runId"],
                     "parentNodeId": task["parentNodeId"], "rootNodeId": sub.parent.root_node_id,
                     "kind": "subagent", "status": input.status, "countsForRun": false,
@@ -747,9 +774,8 @@ impl<E: Env> Mapper<E> {
                     "nativeItemRef": task["nativeTaskRef"], "runtimeRequestId": null,
                     "checkpointScopeId": null, "startedAt": task["startedAt"],
                     "completedAt": task["completedAt"],
-                }))
-                .unwrap(),
-            }));
+                }),
+            );
         }
         // 3. The subagent.
         if let Ok(subagent) = from_json(task.clone()) {
@@ -757,17 +783,18 @@ impl<E: Env> Mapper<E> {
         }
         // 4. The child thread's root node.
         if lifecycle_changed {
-            out.push(event(ProviderEvent::NodeUpdated {
-                node: from_json(json!({
+            emit(
+                out,
+                |v| ProviderEvent::NodeUpdated { node: v },
+                json!({
                     "id": sub.child_root, "threadId": sub.child_thread_id, "runId": null,
                     "parentNodeId": null, "rootNodeId": sub.child_root, "kind": "root_turn",
                     "status": input.status, "countsForRun": false, "providerThreadId": null,
                     "providerTurnId": null, "nativeItemRef": task["nativeTaskRef"],
                     "runtimeRequestId": null, "checkpointScopeId": null,
                     "startedAt": task["startedAt"], "completedAt": task["completedAt"],
-                }))
-                .unwrap(),
-            }));
+                }),
+            );
         }
         // 5. The prompt, as the child thread's first message.
         if !existing {
@@ -903,7 +930,7 @@ fn child_app_thread(sub: &Sub, task: &Value, ordinal: u32, now: &str) -> Option<
 }
 
 /// `makeSubagentConversationArtifacts`: a message and its turn item in the child thread.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "the fields of one contract row")]
 fn child_message(
     thread_id: &str,
     root: &str,

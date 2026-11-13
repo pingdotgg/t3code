@@ -168,7 +168,7 @@ pub struct McpServer {
 }
 
 /// `ProviderAdapterV2RollbackTarget`.
-#[allow(clippy::large_enum_variant)] // Built once per rollback.
+#[expect(clippy::large_enum_variant, reason = "built once per rollback")]
 #[derive(Clone, Debug)]
 pub enum RollbackTarget {
     ThreadStart {
@@ -332,7 +332,10 @@ pub struct RuntimeRequestResponse {
 /// Serializes like the TS event (`type` tag, camelCase fields) for recorded-session tests.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all_fields = "camelCase")]
-#[allow(clippy::large_enum_variant)] // Each event moves once into the channel.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "each event moves once into the channel"
+)]
 pub enum ProviderEvent {
     #[serde(rename = "provider_session.updated")]
     ProviderSessionUpdated { provider_session: ProviderSession },
@@ -383,12 +386,6 @@ pub enum ProviderEvent {
         run_id: RunId,
         message_id: MessageId,
         status: SteerStatus,
-    },
-    /// Work the provider still runs after the turn ended (background subagents).
-    #[serde(rename = "background_work.updated")]
-    BackgroundWorkUpdated {
-        provider_turn_id: ProviderTurnId,
-        pending: bool,
     },
     /// Not in `ProviderAdapterV2Event` (TS uses a separate service): the provider produced
     /// output with no turn running and asks the engine to start a turn for it with

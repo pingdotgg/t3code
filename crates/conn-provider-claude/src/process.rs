@@ -301,6 +301,16 @@ async fn read_lines(stdout: impl AsyncRead + Unpin, events: &mpsc::Sender<ProcEv
     }
 }
 
+/// Whether a process with this pid exists (`kill -0`). For tests that check a child ended.
+#[cfg(all(test, unix))]
+pub fn pid_alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

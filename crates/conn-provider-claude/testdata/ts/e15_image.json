@@ -1,0 +1,324 @@
+{
+  "note": "ProviderAdapterV2Event list from ClaudeAdapterV2 (TS) for cli/e15_image.ndjson, via the wake test harness; driver field kept. Clock is the TestClock (epoch 0).",
+  "offered": [
+    {
+      "type": "user",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "image",
+            "source": {
+              "type": "base64",
+              "media_type": "image/png",
+              "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg=="
+            }
+          },
+          {
+            "type": "text",
+            "text": "Ultrathink:\nWhat colour is this image? One word.\n\n[Attached image \"red.png\" is saved at: <ATTACHMENTS>/attach-1.png]"
+          }
+        ]
+      },
+      "parent_tool_use_id": null,
+      "uuid": "60bae571-f0e7-4257-80a4-471f2eed8ee4"
+    }
+  ],
+  "events": [
+    {
+      "type": "provider_turn.updated",
+      "driver": "claudeAgent",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:b80f013c-6d4b-4ee4-be3a-5ade70672973",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "weak"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "provider_thread.updated",
+      "driver": "claudeAgent",
+      "providerThread": {
+        "id": "provider-thread:provider:claudeAgent:native-thread:b80f013c-6d4b-4ee4-be3a-5ade70672973",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "providerSessionId": "provider-session-claude-wake",
+        "appThreadId": "thread-claude-wake",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "claudeAgent",
+          "nativeId": "b80f013c-6d4b-4ee4-be3a-5ade70672973",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": null,
+        "lastRunOrdinal": null,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "nativeMetadata": {
+          "claudeAttachmentBudget": {
+            "bytesUsed": 436,
+            "pagesUsed": 0
+          }
+        }
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "driver": "claudeAgent",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:b80f013c-6d4b-4ee4-be3a-5ade70672973",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 32029,
+          "maxTokens": 200000,
+          "inputTokens": 32026,
+          "cachedInputTokens": 23664,
+          "outputTokens": 3,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "type": "node.updated",
+      "driver": "claudeAgent",
+      "node": {
+        "id": "node:provider:claudeAgent:native-item:msg_011CgzqwbtP5YEbwGDYtmRLY%3Atext%3A0",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "parentNodeId": "node-attempt-1",
+        "rootNodeId": "node-attempt-1",
+        "kind": "assistant_message",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:b80f013c-6d4b-4ee4-be3a-5ade70672973",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "msg_011CgzqwbtP5YEbwGDYtmRLY:text:0",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "message.updated",
+      "driver": "claudeAgent",
+      "message": {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "message:provider:claudeAgent:native-item:msg_011CgzqwbtP5YEbwGDYtmRLY%3Atext%3A0",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "nodeId": "node:provider:claudeAgent:native-item:msg_011CgzqwbtP5YEbwGDYtmRLY%3Atext%3A0",
+        "role": "assistant",
+        "text": "Red.",
+        "attachments": [],
+        "streaming": false,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "driver": "claudeAgent",
+      "turnItem": {
+        "id": "turn-item:provider:claudeAgent:native-item:msg_011CgzqwbtP5YEbwGDYtmRLY%3Atext%3A0",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "nodeId": "node:provider:claudeAgent:native-item:msg_011CgzqwbtP5YEbwGDYtmRLY%3Atext%3A0",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:b80f013c-6d4b-4ee4-be3a-5ade70672973",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "msg_011CgzqwbtP5YEbwGDYtmRLY:text:0",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 102,
+        "status": "completed",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "type": "assistant_message",
+        "messageId": "message:provider:claudeAgent:native-item:msg_011CgzqwbtP5YEbwGDYtmRLY%3Atext%3A0",
+        "text": "Red.",
+        "streaming": false
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "driver": "claudeAgent",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:b80f013c-6d4b-4ee4-be3a-5ade70672973",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 32177,
+          "maxTokens": 200000,
+          "inputTokens": 32026,
+          "cachedInputTokens": 23664,
+          "outputTokens": 151,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        },
+        "model": "claude-haiku-5-5"
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "driver": "claudeAgent",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:b80f013c-6d4b-4ee4-be3a-5ade70672973",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 32177,
+          "maxTokens": 200000,
+          "inputTokens": 32026,
+          "cachedInputTokens": 23664,
+          "outputTokens": 151,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        },
+        "model": "claude-haiku-5-5"
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "driver": "claudeAgent",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:b80f013c-6d4b-4ee4-be3a-5ade70672973",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "430a2c39-74bc-4e11-94b4-a5e4dfa60886",
+          "strength": "weak"
+        },
+        "ordinal": 1,
+        "status": "completed",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z",
+        "model": "claude-haiku-5-5",
+        "turnTokenUsage": {
+          "models": ["claude-haiku-5-5"],
+          "otherUsage": {
+            "inputTokens": 1272,
+            "outputTokens": 15
+          },
+          "usageScope": "main_agent",
+          "cachedInputTokens": 23664,
+          "cacheCreationTokens": 8360,
+          "reasoningTokens": 146,
+          "hasSubagents": false,
+          "usageStatus": "complete",
+          "inputTokens": 32026,
+          "outputTokens": 151
+        }
+      }
+    },
+    {
+      "type": "provider_thread.updated",
+      "driver": "claudeAgent",
+      "providerThread": {
+        "id": "provider-thread:provider:claudeAgent:native-thread:b80f013c-6d4b-4ee4-be3a-5ade70672973",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "providerSessionId": "provider-session-claude-wake",
+        "appThreadId": "thread-claude-wake",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "claudeAgent",
+          "nativeId": "b80f013c-6d4b-4ee4-be3a-5ade70672973",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": 1,
+        "lastRunOrdinal": 1,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "goal": null,
+        "pendingBackgroundTasks": [],
+        "nativeMetadata": {
+          "claudeAttachmentBudget": {
+            "bytesUsed": 436,
+            "pagesUsed": 0
+          }
+        }
+      },
+      "pendingBackgroundWork": false
+    },
+    {
+      "type": "turn.terminal",
+      "driver": "claudeAgent",
+      "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:b80f013c-6d4b-4ee4-be3a-5ade70672973",
+      "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+      "runOrdinal": 1,
+      "status": "completed",
+      "failure": null,
+      "threadDisposition": "reusable"
+    }
+  ]
+}

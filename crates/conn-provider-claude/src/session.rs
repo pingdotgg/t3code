@@ -27,7 +27,7 @@ use crate::ids::{self, Env, SystemEnv};
 use crate::launch::{self, ClaudeConfig, LaunchInput, T3_MCP_SERVER};
 use crate::mapper::{Mapper, Out};
 use crate::process::{ExitInfo, ProcEvent, Process};
-use crate::protocol::{Inbound, control_request, user_message};
+use crate::protocol::{Delivery, Inbound, control_request, user_message};
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
 /// The SDK leaves boot unbounded; T3 gives it about two minutes on busy hosts.
@@ -38,6 +38,7 @@ const MCP_REGISTRATION_TIMEOUT: Duration = Duration::from_secs(90);
 const MCP_TOOL_TIMEOUT_MS: u64 = 65 * 60 * 1000;
 const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 pub const EVENT_CAPACITY: usize = 256;
+const LOGGED_SKIPS_CAP: usize = 64;
 
 pub struct ClaudeSession {
     id: ProviderSessionId,
@@ -139,7 +140,12 @@ impl Inner {
                     }
                 }
                 Out::Skipped(kind) => {
-                    if self.lock().logged_skips.insert(kind.clone()) {
+                    let mut state = self.lock();
+                    // Kinds come from the CLI; remember a bounded number of them.
+                    let new = state.logged_skips.len() < LOGGED_SKIPS_CAP
+                        && state.logged_skips.insert(kind.clone());
+                    drop(state);
+                    if new {
                         eprintln!("conn-provider-claude: skipped CLI message kind `{kind}`");
                     }
                 }
@@ -486,8 +492,7 @@ impl ClaudeSession {
                         || (mode != "bypassPermissions"
                             && l.permission_mode != "bypassPermissions"))
             });
-            if reusable {
-                let live = state.live.as_ref().unwrap();
+            if let Some(live) = state.live.as_ref().filter(|_| reusable) {
                 let plan = Plan::Reuse {
                     set_model: (live.model != model).then(|| model.clone()),
                     set_effort: effort.clone().filter(|e| live.effort.as_ref() != Some(e)),
@@ -639,7 +644,7 @@ impl ClaudeSession {
         };
         inner.deliver(Some(&writer), outs).await;
         if writer
-            .send(user_message(content, &uuid, false))
+            .send(user_message(content, &uuid, Delivery::Turn))
             .await
             .is_err()
         {
@@ -717,7 +722,8 @@ impl ClaudeSession {
                 inner.config.idle_max_hold,
             ));
         }
-        let init = launch::initialize_request(&inner.config, title, t3_mcp);
+        let extra = inner.config.mcp_instructions.as_deref().filter(|_| t3_mcp);
+        let init = launch::initialize_request(&inner.config, title, extra);
         let mut result = inner.control(init, INITIALIZE_TIMEOUT).await.map(|_| ());
         let servers = inner.lock().mcp_servers.clone();
         if result.is_ok() && !servers.is_empty() {
@@ -896,7 +902,7 @@ impl Session for ClaudeSession {
             };
             self.inner.deliver(Some(&writer), outs).await;
             if writer
-                .send(user_message(content, &uuid, true))
+                .send(user_message(content, &uuid, Delivery::Steer))
                 .await
                 .is_err()
             {
@@ -1109,7 +1115,7 @@ impl Session for ClaudeSession {
                         .ok_or_else(|| {
                             failed_err("fork_thread", "the fork turn is not on that thread")
                         })?;
-                    match turn_cursor(&turns[index]) {
+                    match turns.get(index).and_then(turn_cursor) {
                         Some(cursor) => Some(cursor),
                         None if index + 1 == turns.len() => conversation_head(&source),
                         None => {

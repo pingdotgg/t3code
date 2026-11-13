@@ -223,24 +223,23 @@ pub fn env_changes(
     env
 }
 
-/// The `initialize` control request the SDK sends first. `with_t3_mcp` adds T3's
-/// orchestration instructions, as TS does when the thread has its MCP server.
+/// The `initialize` control request the SDK sends first. `extra` is appended to the system
+/// prompt, as TS appends its orchestration instructions when the thread has its MCP server.
 pub fn initialize_request(
     config: &ClaudeConfig,
     title: Option<&str>,
-    with_t3_mcp: bool,
+    extra: Option<&str>,
 ) -> serde_json::Value {
     let mut request = json!({
         "subtype": "initialize",
         "promptSuggestions": false,
         "supportedDialogKinds": ["resume_return"],
     });
-    let extra = config.mcp_instructions.as_ref().filter(|_| with_t3_mcp);
     let append: Vec<&str> = config
         .append_system_prompt
-        .iter()
+        .as_deref()
+        .into_iter()
         .chain(extra)
-        .map(String::as_str)
         .collect();
     if !append.is_empty() {
         request["appendSystemPrompt"] = json!(append.join("\n\n"));
