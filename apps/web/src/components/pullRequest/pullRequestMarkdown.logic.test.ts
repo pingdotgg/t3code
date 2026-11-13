@@ -68,7 +68,9 @@ describe("pullRequestCommentPreview", () => {
       "Review :codex-file-citation{purpose='output'} safely.",
     ],
     [":codex-followup[Prepare **print** version]", ":codex-followup[Prepare **print** version]"],
-  ])("extracts readable text from %s", (body, expected) => {
-    expect(pullRequestCommentPreview(body)).toBe(expected);
+    ["Approved :thumbsup: `:warning:`", "Approved 👍 :warning:"],
+    ["Approved :thumbsup:", "Approved :thumbsup:", "gitlab"],
+  ])("extracts readable text from %s", (body, expected, provider = "github") => {
+    expect(pullRequestCommentPreview(body, provider)).toBe(expected);
   });
 });

@@ -2,6 +2,7 @@ import {
   splitPullRequestBody,
   type PullRequestBodySegment,
 } from "@t3tools/client-runtime/pull-request-markdown";
+import { expandGithubEmoji } from "@t3tools/shared/markdownGithubEmoji";
 import { markdownTaskMarkerOffset } from "@t3tools/shared/markdownTaskList";
 import type { ReactNode } from "react";
 import { View } from "react-native";
@@ -43,6 +44,7 @@ const AutolinksContext = createContext<((text: string) => ReadonlyArray<Referenc
   null,
 );
 const LineBreaksContext = createContext(false);
+const GithubEmojiContext = createContext(false);
 const ChangeRequestUrlContext = createContext<string | null>(null);
 
 export function PullRequestMarkdownRepository(props: {
@@ -70,9 +72,11 @@ export function PullRequestMarkdownRepository(props: {
   return (
     <AutolinksContext value={autolinks}>
       <LineBreaksContext value={lineBreaks}>
-        <ChangeRequestUrlContext value={url ?? null}>
-          <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
-        </ChangeRequestUrlContext>
+        <GithubEmojiContext value={provider === "github"}>
+          <ChangeRequestUrlContext value={url ?? null}>
+            <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
+          </ChangeRequestUrlContext>
+        </GithubEmojiContext>
       </LineBreaksContext>
     </AutolinksContext>
   );
@@ -160,18 +164,27 @@ function PullRequestBodySegmentView(props: {
   readonly onTaskListUndone: () => void;
 }) {
   const { segment, onTaskListChange } = props;
+  const githubEmoji = useContext(GithubEmojiContext);
+  const text = segment.kind === "markdown" ? segment.text : "";
+  const expanded = useMemo(
+    () =>
+      githubEmoji
+        ? expandGithubEmoji(text)
+        : { markdown: text, sourceOffset: (offset: number) => offset },
+    [githubEmoji, text],
+  );
   if (segment.kind === "markdown") {
     return (
       <PullRequestMarkdownContent
         key={props.undoneTicks}
-        markdown={segment.text}
+        markdown={expanded.markdown}
         gallery={props.gallery}
         lineBreaks={props.lineBreaks}
         onTaskListItemPress={
           onTaskListChange
             ? (event) => {
                 const offset = markdownTaskMarkerOffset(
-                  segment.text,
+                  expanded.markdown,
                   event.index,
                   event.text,
                   event.checked,
@@ -179,7 +192,7 @@ function PullRequestBodySegmentView(props: {
                 const kept =
                   offset !== null &&
                   onTaskListChange({
-                    markerOffset: segment.sourceOffset + offset,
+                    markerOffset: segment.sourceOffset + expanded.sourceOffset(offset),
                     checked: event.checked,
                   });
                 if (!kept) props.onTaskListUndone();
