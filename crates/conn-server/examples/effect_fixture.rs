@@ -36,6 +36,7 @@ fn main() {
     table.stream("subscribeServerConfig", move |_, _: Value| {
         let config = server::server_config(&env, Vec::new());
         async move {
+            let config = config?;
             let (tx, rx) = mpsc::channel::<Result<Value, Failure>>(1);
             tokio::spawn(async move {
                 for _ in 0..SNAPSHOTS {

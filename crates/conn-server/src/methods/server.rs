@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use conn_contract::{ServerProcessSignal, ServerSignalProcessInput};
+use conn_contract::{ServerConfig, ServerProcessSignal, ServerSignalProcessInput};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, mpsc};
@@ -87,7 +87,7 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     let (env, providers) = (environment.clone(), deps.clone());
     table.unary("server.getConfig", move |_, _: Value| {
         let config = server_config(&env, current_providers(&providers));
-        async move { Ok(config) }
+        async move { config }
     });
     let providers = deps.clone();
     table.unary("server.refreshProviders", move |_, _: Value| {
@@ -138,7 +138,7 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     table.stream("subscribeServerConfig", move |_, _: Value| {
         let config = server_config(&env, current_providers(&providers));
         let env = env.clone();
-        async move { Ok(config_stream(env, config)) }
+        async move { Ok(config_stream(env, config?)) }
     });
     let env = environment.clone();
     table.stream("subscribeAuthAccess", move |ctx, _: Value| {
@@ -175,12 +175,14 @@ fn current_providers(deps: &Deps) -> Vec<Value> {
     super::provider::server_providers(deps, &iso8601(auth::now_ms()))
 }
 
-/// `ServerConfig` with the optional fields left out. `providers` comes from
-/// `provider::server_providers`.
-pub fn server_config(environment: &Environment, providers: Vec<Value>) -> Value {
+/// `ServerConfig`, decoded into the contract type: a required field this server does not
+/// fill fails here (and in the test below), not in a client. The optional flags come from
+/// [`environment::config_flags`], next to the descriptor's capabilities. `providers` comes
+/// from `provider::server_providers`.
+pub fn server_config(environment: &Environment, providers: Vec<Value>) -> Result<Value, Failure> {
     let state_dir = environment.state_dir.display();
     let keybindings = environment.keybindings.snapshot();
-    json!({
+    let mut config: ServerConfig = conn_contract::from_json(json!({
         "environment": environment.descriptor,
         "auth": environment.auth.descriptor(),
         "cwd": environment.cwd,
@@ -196,16 +198,14 @@ pub fn server_config(environment: &Environment, providers: Vec<Value>) -> Value 
             "otlpMetricsEnabled": false,
         },
         "settings": environment.settings.for_client(),
-        // The engine's managed folders (`EngineConfig::home` is the state folder).
-        "newProjectsRoot": environment.state_dir.join("projects"),
-        "scratchWorkspaceRoot": environment.state_dir.join("scratch"),
-        // The engine serves getThreadFamily, getOlderSettledThreads,
-        // getThreadLinkMetadata and searchThread.
-        "shellThreadFamilies": true,
-        "shellOlderSettled": true,
-        "threadLinkMetadata": true,
-        "threadFind": true,
-    })
+    }))
+    .map_err(|e| Failure::die(format!("ServerConfig does not decode: {e}")))?;
+    // The engine's managed folders (`EngineConfig::home` is the state folder).
+    config.new_projects_root = Some(environment.state_dir.join("projects").display().to_string());
+    config.scratch_workspace_root =
+        Some(environment.state_dir.join("scratch").display().to_string());
+    crate::environment::config_flags(&mut config);
+    Ok(conn_contract::to_json(&config))
 }
 
 /// The config snapshot, then `settingsUpdated` after each settings write and
@@ -354,7 +354,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn the_config_stream_follows_settings_and_keybinding_writes() {
         let (env, dir) = environment();
-        let config = server_config(&env, Vec::new());
+        let config = server_config(&env, Vec::new()).unwrap();
         assert!(config["keybindings"].as_array().unwrap().len() > 10);
         assert_eq!(config["auth"]["policy"], "remote-reachable");
         let mut stream = config_stream(env.clone(), config);
