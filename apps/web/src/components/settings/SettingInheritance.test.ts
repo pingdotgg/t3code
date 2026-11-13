@@ -63,6 +63,44 @@ describe("settingInheritanceLayers", () => {
     ]);
   });
 
+  it.each([
+    [
+      "branchNamingMode",
+      "semantic",
+      "custom",
+      ["Custom instructions", "Semantic prefix", "Static prefix"],
+    ],
+    [
+      "defaultRuntimeMode",
+      "auto-accept-edits",
+      "approval-required",
+      ["Supervised", "Auto-accept edits", "Full access"],
+    ],
+    [
+      "responseStreamingMode",
+      "turn",
+      "paragraph",
+      ["Show finished paragraphs", "Wait for the full response", "Show finished paragraphs"],
+    ],
+  ] as const)("labels %s values on every layer", (key, environmentValue, projectValue, labels) => {
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      [key]: environmentValue,
+      projectSettingsOverrides: { [projectId]: { [key]: projectValue } },
+    };
+    const layers = settingInheritanceLayers(
+      {
+        environmentId,
+        label: "Laptop",
+        projectId,
+        ...resolveProjectSettings(settings, projectId),
+      },
+      settings,
+      key,
+    );
+    expect(layers.map((layer) => layer.value)).toEqual(labels);
+  });
+
   it("shows the checkout's t3.json as a layer for file-backed keys", () => {
     const file = { defaultThreadEnvMode: "worktree" as const };
     const fromFile = settingInheritanceLayers(

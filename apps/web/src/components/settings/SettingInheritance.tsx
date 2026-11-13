@@ -1,8 +1,10 @@
 import {
+  type BranchNamingMode,
   DEFAULT_SERVER_SETTINGS,
   PROJECT_FILE_BACKED_SETTINGS,
   type ProjectFileBackedSettingKey,
   resolveEnvironmentMachineKind,
+  type RuntimeMode,
   type ServerSettings,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
@@ -11,6 +13,7 @@ import * as Equal from "effect/Equal";
 
 import { cn } from "../../lib/utils";
 import type { EnvironmentPresentation } from "../../state/environments";
+import { runtimeModeConfig } from "../chat/runtimeModeConfig";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
@@ -19,6 +22,7 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collaps
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
+import { BRANCH_NAMING_MODE_LABELS, RESPONSE_STREAMING_MODE_LABELS } from "./SettingsPanels.logic";
 import type { ProjectOverrideEntry, ScopedSettingsTarget } from "./scopedSettings";
 import { isProjectScopedSettingKey } from "./scopedSettings";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
@@ -77,6 +81,15 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
       return PULL_REQUEST_MERGE_METHOD_LABELS[
         value as keyof typeof PULL_REQUEST_MERGE_METHOD_LABELS
       ];
+    }
+    if (key === "branchNamingMode" && value in BRANCH_NAMING_MODE_LABELS) {
+      return BRANCH_NAMING_MODE_LABELS[value as BranchNamingMode];
+    }
+    if (key === "defaultRuntimeMode" && value in runtimeModeConfig) {
+      return runtimeModeConfig[value as RuntimeMode].label;
+    }
+    if (key === "responseStreamingMode" && value in RESPONSE_STREAMING_MODE_LABELS) {
+      return RESPONSE_STREAMING_MODE_LABELS[value as keyof typeof RESPONSE_STREAMING_MODE_LABELS];
     }
     return value === "" ? "Empty" : value;
   }
@@ -268,7 +281,7 @@ export function SettingInheritance({
         </TooltipTrigger>
         <TooltipPopup side="top">{overrideSummary}</TooltipPopup>
       </Tooltip>
-      <PopoverPopup align="start" width="md" padding="none">
+      <PopoverPopup align="start" width="lg" padding="none">
         <div className="divide-y divide-border/60">
           {groups.map((members) => {
             const first = members[0];
@@ -302,7 +315,7 @@ export function SettingInheritance({
                             : "text-muted-foreground/60",
                       )}
                     >
-                      <span className="max-w-32 truncate">{layer.value}</span>
+                      <span className="max-w-48 truncate">{layer.value}</span>
                       {layer.effective ? (
                         <CheckIcon aria-hidden className="size-3.5 shrink-0 text-primary" />
                       ) : (
@@ -431,7 +444,7 @@ export function SettingInheritance({
                               </span>
                             ) : null}
                           </span>
-                          <span className="max-w-32 truncate text-muted-foreground tabular-nums">
+                          <span className="max-w-48 truncate text-muted-foreground tabular-nums">
                             {isProjectScopedSettingKey(key)
                               ? formatValue(
                                   key,
