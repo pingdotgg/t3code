@@ -980,7 +980,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
   const {
     trigger: composerTrigger,
-    detectTrigger: detectActiveComposerTrigger,
+    detectTrigger: detectContinuedComposerTrigger,
     endTrigger: endComposerTrigger,
     setTrigger: setComposerTrigger,
     resolveTrigger: resolveComposerTrigger,
@@ -990,6 +990,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isLiteralPendingAnswer ? null : detectComposerTrigger(prompt, prompt.length),
   );
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
+  const detectActiveComposerTrigger = (text: string, cursor: number) => {
+    const selection = composerEditorRef.current?.readSelectionRange();
+    return detectContinuedComposerTrigger(
+      text,
+      cursor,
+      selection !== undefined && selection.start !== selection.end,
+    );
+  };
   const composerSuggestionId = useId();
   const composerSuggestionListId = `${composerSuggestionId}-${encodeURIComponent(draftId ?? activeThreadId ?? "new")}-suggestions`;
   const promptHistoryPositionRef = useRef<{

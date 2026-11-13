@@ -14,13 +14,16 @@ export function useComposerTriggerState(initialTrigger: () => ComposerTrigger | 
     setActiveTrigger(next);
   };
 
-  /** The trigger at the caret, where a space continues the `@` search that was already active. */
-  const detectTrigger = (text: string, cursor: number) => {
+  /**
+   * The trigger at the caret, where a space continues the `@` search that was already active.
+   * Selecting text ends that continuation.
+   */
+  const detectTrigger = (text: string, cursor: number, hasSelection = false) => {
     return continueComposerPathTrigger({
       text,
       cursor,
       detected: detectComposerTrigger(text, cursor),
-      previous: activeTriggerRef.current,
+      previous: hasSelection ? null : activeTriggerRef.current,
     });
   };
 
