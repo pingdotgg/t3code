@@ -36,12 +36,13 @@ function setup() {
 }
 
 it.each([false, true])(
-  "keeps repeat clicks away from Resume and Send (draft: %s)",
+  "keeps repeat clicks away from Resume and Send, then retires Stopped (draft: %s)",
   async (draft) => {
     const props = setup();
     const container = document.createElement("div");
     Object.assign(container.style, { display: "flex", justifyContent: "flex-end", width: "400px" });
     await using screen = await render(<ComposerPrimaryActions {...props} />, { container });
+    using _timers = fakeTimers();
     const stop = screen
       .getByRole("button", { name: "Stop generation" })
       .element() as HTMLButtonElement;
@@ -54,9 +55,7 @@ it.each([false, true])(
         screen.getByRole("button", { name: "Stopping", exact: true }).element() as HTMLButtonElement
       ).click(),
     );
-    await expect
-      .element(screen.getByRole("button", { name: "Stopping", exact: true }))
-      .toBeDisabled();
+    expect(screen.getByRole("button", { name: "Stopping", exact: true }).element()).toBeDisabled();
     expect(props.onInterrupt).toHaveBeenCalledTimes(1);
     await screen.rerender(
       <ComposerPrimaryActions
@@ -67,9 +66,7 @@ it.each([false, true])(
         hasSendableContent={draft}
       />,
     );
-    await expect
-      .element(screen.getByRole("button", { name: "Stopped", exact: true }))
-      .toBeDisabled();
+    expect(screen.getByRole("button", { name: "Stopped", exact: true }).element()).toBeDisabled();
     expect(target()).toHaveAttribute("aria-label", "Stopped");
     await act(() => {
       for (let i = 0; i < 20; i++) target()?.click();
@@ -81,8 +78,12 @@ it.each([false, true])(
       .element() as HTMLButtonElement;
     await act(() => action.click());
     expect(draft ? props.onSubmitMessage : props.onResume).toHaveBeenCalledTimes(1);
+    await act(() => vi.advanceTimersByTime(1_499));
+    expect(screen.getByRole("button", { name: "Stopped", exact: true }).query()).not.toBeNull();
+    await act(() => vi.advanceTimersByTime(1));
+    expect(screen.getByRole("button", { name: "Stopped", exact: true }).query()).toBeNull();
     await screen.rerender(<ComposerPrimaryActions {...props} />);
-    await expect.element(screen.getByRole("button", { name: "Stop generation" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Stop generation" }).element()).toBeEnabled();
   },
 );
 

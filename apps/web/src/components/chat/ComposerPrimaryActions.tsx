@@ -86,6 +86,8 @@ const formatPendingPrimaryActionLabel = (input: {
 };
 
 const STOP_PENDING_MAX_MS = 10_000;
+// Long enough to absorb repeat Stop clicks, short enough not to look like a broken control.
+const STOP_LANDED_HOLD_MS = 1_500;
 
 const messageActionPillClassName =
   "inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-message-action font-medium text-base text-message-action-foreground shadow-xs shadow-message-action/24 outline-none hover:bg-message-action-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 disabled:shadow-none sm:text-sm";
@@ -113,11 +115,16 @@ function useStopPhase(input: {
       setStopPhase("landed");
     else if (stopPhase === "landed" && canInterrupt) setStopPhase(null);
   }
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- timer that re-enables Stop if the interrupt never settles
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- timers that re-enable an unsettled Stop and retire a landed one
   useEffect(() => {
-    if (stopPhase !== "pending") return;
-    const timeout = setTimeout(() => setStopPhase("timedOut"), STOP_PENDING_MAX_MS);
-    return () => clearTimeout(timeout);
+    if (stopPhase === "pending") {
+      const timeout = setTimeout(() => setStopPhase("timedOut"), STOP_PENDING_MAX_MS);
+      return () => clearTimeout(timeout);
+    }
+    if (stopPhase === "landed") {
+      const timeout = setTimeout(() => setStopPhase(null), STOP_LANDED_HOLD_MS);
+      return () => clearTimeout(timeout);
+    }
   }, [stopPhase]);
   return [stopPhase, setStopPhase] as const;
 }
