@@ -80,7 +80,13 @@ export const readOrCreateLauncherId = Effect.fn("desktop.ssh.readOrCreateLaunche
   function* (filePath: string) {
     const fileSystem = yield* FileSystem.FileSystem;
     const random = yield* SecureRandom.SecureRandom;
-    const stored = yield* fileSystem.readFileString(filePath).pipe(Effect.orElseSucceed(() => ""));
+    // Any other read failure may hide a stored ID, which a new one would overwrite.
+    const stored = yield* fileSystem.readFileString(filePath).pipe(
+      Effect.catchIf(
+        (cause) => cause.reason._tag === "NotFound",
+        () => Effect.succeed(""),
+      ),
+    );
     if (/^[0-9a-f]{32}$/u.test(stored.trim())) return stored.trim();
     const launcherId = (yield* random.uuidV4()).replace(/-/g, "");
     yield* fileSystem.writeFileString(filePath, `${launcherId}\n`);
