@@ -44,7 +44,6 @@ import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import { resolveAttachmentPathById } from "../../attachmentStore.ts";
@@ -931,7 +930,7 @@ describe("CodexAdapterV2 process exit", () => {
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_CODEX_SETTINGS,
         environment: {},
-        clientFactory: { open: () => Effect.succeed(client) },
+        clientFactory: { open: () => Effect.succeed({ client, shellNoProxy: undefined }) },
         digest: yield* Digest.Digest,
         fileSystem: yield* FileSystem.FileSystem,
         idAllocator: yield* IdAllocator.IdAllocatorV2,
@@ -1063,7 +1062,6 @@ describe("CodexAdapterV2 process exit", () => {
           ),
         ),
       ),
-      Layer.provide(Layer.mergeAll(FileSystem.layerNoop({}), Path.layer)),
     );
     return Effect.gen(function* () {
       const factory = yield* CodexAdapterV2.CodexAppServerClientFactory;
@@ -1089,6 +1087,7 @@ describe("CodexAdapterV2 session initialize", () => {
     transcript: CodexReplay.CodexAppServerReplayTranscript,
     beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
     compatibility?: CodexAdapterV2.CodexAdapterV2Options["compatibility"],
+    shellNoProxy?: { readonly name: string; readonly value: string },
   ) =>
     Effect.gen(function* () {
       const driver = yield* CodexReplay.makeReplayDriver(
@@ -1117,6 +1116,7 @@ describe("CodexAdapterV2 session initialize", () => {
                       }).pipe(Effect.andThen(client.request(method, params))),
                   }) satisfies CodexClient.CodexAppServerClient["Service"],
               ),
+              Effect.map((client) => ({ client, shellNoProxy })),
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapter.ProviderAdapterOpenSessionError({
@@ -1229,6 +1229,79 @@ describe("CodexAdapterV2 session initialize", () => {
       const providerThread = yield* session.ensureThread("thread-initialize-retry");
       assert.equal(providerThread.nativeThreadRef?.nativeId, "initialize-retry");
       assert.equal(session.initializeRequests(), 2);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("gives shells back NO_PROXY unless Codex's config for the cwd already sets it", () =>
+    Effect.gen(function* () {
+      const [initialize, initializeResult, initialized, threadStart, threadStartResult] =
+        replayPreamble("project-no-proxy");
+      const [, , , , secondThreadStartResult] = replayPreamble("plain-no-proxy");
+      const configRead = (
+        id: number,
+        config: Record<string, unknown>,
+      ): Array<CodexReplay.CodexAppServerReplayEntry> => [
+        {
+          type: "expect_outbound",
+          label: "config/read",
+          frame: { id, method: "config/read", params: { cwd: "/workspace", includeLayers: false } },
+        },
+        {
+          type: "emit_inbound",
+          label: "config/read",
+          frame: { id, result: { config, origins: {} } },
+        },
+      ];
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({
+          scenario: "shell-no-proxy",
+          entries: [
+            initialize!,
+            initializeResult!,
+            initialized!,
+            // A project's .codex/config.toml reaches T3 only through Codex's effective config.
+            ...configRead(2, { shell_environment_policy: { set: { NO_PROXY: "127.0.0.1" } } }),
+            withReplayRequestId(threadStart!, 3),
+            withReplayRequestId(threadStartResult!, 3),
+            ...configRead(4, {}),
+            {
+              type: "expect_outbound",
+              label: "thread/start",
+              frame: {
+                id: 5,
+                method: "thread/start",
+                params: {
+                  config: {
+                    ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+                    "shell_environment_policy.set.NO_PROXY": "",
+                  },
+                },
+              },
+            },
+            withReplayRequestId(secondThreadStartResult!, 5),
+          ],
+        }),
+        undefined,
+        undefined,
+        { name: "NO_PROXY", value: "" },
+      );
+
+      const configured = yield* session.ensureThread("thread-project-no-proxy");
+      const plain = yield* session.ensureThread("thread-plain-no-proxy");
+      assert.deepStrictEqual(
+        [configured.nativeThreadRef?.nativeId, plain.nativeThreadRef?.nativeId],
+        ["project-no-proxy", "plain-no-proxy"],
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -1425,6 +1498,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                       },
                     }) satisfies CodexClient.CodexAppServerClient["Service"],
                 ),
+                Effect.map((client) => ({ client, shellNoProxy: undefined })),
                 Effect.provide(context),
               ),
             ),

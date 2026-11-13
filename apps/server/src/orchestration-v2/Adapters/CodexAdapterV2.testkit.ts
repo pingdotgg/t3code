@@ -116,10 +116,11 @@ export function layer(input: {
               }),
           ),
         );
-        return yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+        const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
           Effect.map((client) => withCodexReplayChildMetadata(client, input.transcript)),
           Effect.provide(context),
         );
+        return { client, shellNoProxy: undefined };
       }),
   });
   const layerServerConfig = Layer.effect(
