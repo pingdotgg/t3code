@@ -1850,6 +1850,52 @@ describe("orphan worktree reports", () => {
       ),
   );
 
+  it.live.each([
+    { state: "aged", removed: true },
+    { state: "fresh", removed: false },
+    { state: "edited", removed: false },
+    { state: "rule off", removed: false },
+  ] as const)(
+    "removes a pull request checkout no thread ever used ($state)",
+    ({ state, removed }) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fixture = yield* cleanupFixture({
+            ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+            worktreeAfterDays: 8,
+            worktreeOnDelete: state !== "rule off",
+          });
+          fixture.setThreads([]);
+          const checkout = `${fixture.config.worktreesDir}/repository/checkout`;
+          yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "checkout", checkout]);
+          const marker = `${fixture.repo}/.git/worktrees/checkout/${GitManager.UNSENT_PULL_REQUEST_CHECKOUT_FILE}`;
+          yield* fixture.fs.writeFileString(marker, fixture.repo);
+          if (state !== "fresh") yield* fixture.fs.utimes(marker, 1, 1);
+          if (state === "edited")
+            yield* fixture.fs.writeFileString(`${checkout}/tracked.txt`, "edited\n");
+          yield* fixture.fs.utimes(checkout, 1, 1);
+          const report = yield* fixture.service.runNow;
+          expect(report.entries).toEqual([
+            expect.objectContaining(
+              removed
+                ? {
+                    outcome: "removed",
+                    reason: "Pull request checkout was never used by a thread",
+                    path: checkout,
+                    projectPath: fixture.repo,
+                  }
+                : { outcome: "kept", reason: "No thread uses this worktree", path: checkout },
+            ),
+          ]);
+          expect(yield* fixture.fs.exists(checkout)).toBe(!removed);
+          // Sending the draft later restores the folder from this branch.
+          expect(
+            (yield* fixture.command(fixture.repo, ["branch", "--list", "checkout"])).stdout,
+          ).toContain("checkout");
+        }),
+      ),
+  );
+
   it.live.each(["active", "outside-active-snapshot"] as const)(
     "does not report a folder referenced by a thread (%s)",
     (location) =>

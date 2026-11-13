@@ -95,6 +95,8 @@ const DAY_MS = 86_400_000;
 const SETTLE_SCRIPT_GRACE_MS = 60_000;
 // Worktree creation can precede its thread row, including review-guide checkouts.
 const ORPHAN_WORKTREE_GRACE_MS = 60 * 60 * 1_000;
+// Drafts live only in clients, so age stands in for a pull request checkout nobody sent.
+const UNSENT_CHECKOUT_GRACE_MS = DAY_MS;
 
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 const REPORT_ENTRY_LIMIT = 200;
@@ -509,6 +511,9 @@ const make = Effect.gen(function* () {
     roots: ReadonlyArray<string>,
     projects: ReadonlyArray<{ readonly workspaceRoot: string }>,
     entries: StorageCleanupReportEntry[],
+    removeUnsentCheckout: (
+      worktreePath: string,
+    ) => Effect.Effect<boolean, never, FileSystem.FileSystem | Path.Path>,
   ) {
     const rows = yield* sql<{ worktreePath: string }>`
       SELECT DISTINCT json_extract(payload_json, '$.worktreePath') AS "worktreePath"
@@ -580,6 +585,7 @@ const make = Effect.gen(function* () {
         if (modified !== null && modified.getTime() > now - ORPHAN_WORKTREE_GRACE_MS) return;
         const gitPath = path.join(worktreePath, ".git");
         const linked = (yield* fs.exists(gitPath)) && (yield* fs.stat(gitPath)).type === "File";
+        if (linked && (yield* removeUnsentCheckout(worktreePath))) return;
         reported.add(key);
         const remaining = measurementDeadline - (yield* Clock.currentTimeMillis);
         if (!orphanSizes.has(key) && (firstMeasurement || remaining > 0)) {
@@ -1067,6 +1073,120 @@ const make = Effect.gen(function* () {
       }
       return false;
     });
+    // Sessions can outlive their run and can be shared across app threads.
+    const hasLiveSession = Effect.fnUntraced(function* (worktreePaths: ReadonlyArray<string>) {
+      const sessionRows = yield* sql<{ payload_json: string }>`
+        SELECT payload_json FROM orchestration_v2_projection_provider_sessions
+        WHERE status != 'stopped'
+      `.pipe(NodeSqliteClient.readOnly);
+      const sessions = yield* Effect.forEach(sessionRows, (row) =>
+        decodeCleanupSession(row.payload_json),
+      );
+      // Ready persisted sessions may have released their runtime; only live sessions protect the path.
+      for (const session of sessions) {
+        if (
+          (yield* occupies(worktreePaths, session.cwd)) &&
+          (yield* providerSessions.isLive(session.id))
+        )
+          return true;
+      }
+      return false;
+    });
+    // A pull request checkout whose draft never became a thread has no row for the rules above.
+    // Sending the draft later restores the folder from its branch, which removal leaves alone.
+    const removeUnsentCheckout = Effect.fn("StorageCleanup.removeUnsentCheckout")(
+      function* (worktreePath: string) {
+        const located = yield* git.execute({
+          operation: "StorageCleanup.unsentCheckout",
+          cwd: worktreePath,
+          args: ["rev-parse", "--git-path", GitManager.UNSENT_PULL_REQUEST_CHECKOUT_FILE],
+        });
+        const marker = path.resolve(worktreePath, located.stdout.trim());
+        if (!(yield* fs.exists(marker))) return false;
+        const markedAt = Option.getOrNull((yield* fs.stat(marker)).mtime);
+        if (markedAt === null || markedAt.getTime() > now - UNSENT_CHECKOUT_GRACE_MS) return false;
+        const projectKey = yield* canonical((yield* fs.readFileString(marker)).trim());
+        const projectKeys = yield* Effect.forEach(snapshot.projects, (candidate) =>
+          canonical(candidate.workspaceRoot),
+        );
+        const project = snapshot.projects.find(
+          (_candidate, index) => projectKeys[index] === projectKey,
+        );
+        if (project === undefined) return false;
+        const settings = resolveWorktreeCleanup(serverSettings, project.id);
+        if (!settings.worktreeOnDelete) return false;
+        const worktreeKey = yield* canonical(worktreePath);
+        const worktreePaths = [worktreePath, worktreeKey];
+        const blocked = Effect.fnUntraced(function* () {
+          if ((yield* worktreePathReason(worktreePath)) !== null) return true;
+          const bindings = yield* projections.getThreadWorktreePaths({ includeArchived: true });
+          const bindingKeys = yield* Effect.forEach(bindings, (binding) =>
+            canonical(binding.worktreePath),
+          );
+          if (bindingKeys.includes(worktreeKey)) return true;
+          if ((yield* hasTerminal(worktreePaths)) || (yield* hasLiveSession(worktreePaths)))
+            return true;
+          // Commits on a detached HEAD are reachable only through this worktree.
+          const head = yield* git.execute({
+            operation: "StorageCleanup.unsentCheckout",
+            cwd: worktreePath,
+            args: ["symbolic-ref", "--quiet", "HEAD"],
+            allowNonZeroExit: true,
+          });
+          if (head.exitCode !== 0) return true;
+          return (yield* localChangesReason(worktreePath, settings)) !== null;
+        });
+        if (yield* blocked()) return false;
+        const inspection = yield* measureWorktree(worktreePath, true);
+        if (inspection.reason !== null) return false;
+        return yield* withWorkspaceLease(
+          worktreePath,
+          Effect.gen(function* () {
+            if (yield* blocked()) return false;
+            if (
+              !resolveWorktreeCleanup(yield* settingsService.getSettings, project.id)
+                .worktreeOnDelete
+            )
+              return false;
+            if (settings.worktreeKeepWhen === "tracked-changes")
+              yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
+            const submodules = yield* submoduleRemoval(worktreePath, settings);
+            if (submodules.reason !== null) return false;
+            if (submodules.force && (yield* localChangesReason(worktreePath, settings)) !== null)
+              return false;
+            yield* removeLinkedWorktree({
+              operation: "StorageCleanup.cleanupGit",
+              cwd: project.workspaceRoot,
+              worktreePath,
+              force: submodules.force,
+              execute: git.execute,
+              run: (args) => cleanupGit(project.workspaceRoot, [...args], "git worktree remove"),
+            });
+            entries.push({
+              kind: "worktree",
+              outcome: "removed",
+              reason: "Pull request checkout was never used by a thread",
+              path: worktreePath,
+              projectPath: project.workspaceRoot,
+              threadId: null,
+              threadTitle: null,
+              bytes: inspection.bytes,
+              files: null,
+            });
+            yield* gitManager.invalidateStatus(project.workspaceRoot);
+            yield* Effect.logInfo("storage cleanup removed unsent pull request checkout", {
+              worktreePath,
+            });
+            return true;
+          }),
+        );
+      },
+      Effect.catch((error) =>
+        Effect.logWarning("storage cleanup failed for unsent pull request checkout", {
+          error,
+        }).pipe(Effect.as(false)),
+      ),
+    );
     const liveThreads = snapshot.threads.filter((thread) => thread.worktreePath !== null);
     const liveKeys = yield* Effect.forEach(liveThreads, (thread) =>
       canonical(thread.worktreePath!),
@@ -1385,22 +1505,8 @@ const make = Effect.gen(function* () {
             )
               return "parent settlement changed since check";
           }
-          // Sessions can outlive their run and can be shared across app threads.
-          const sessionRows = yield* sql<{ payload_json: string }>`
-            SELECT payload_json FROM orchestration_v2_projection_provider_sessions
-            WHERE status != 'stopped'
-          `.pipe(NodeSqliteClient.readOnly);
-          const sessions = yield* Effect.forEach(sessionRows, (row) =>
-            decodeCleanupSession(row.payload_json),
-          );
-          // Ready persisted sessions may have released their runtime; only live sessions protect the path.
-          for (const session of sessions) {
-            if (
-              (yield* occupies(worktreePaths, session.cwd)) &&
-              (yield* providerSessions.isLive(session.id))
-            )
-              return waitForStop("provider session is still open");
-          }
+          if (yield* hasLiveSession(worktreePaths))
+            return waitForStop("provider session is still open");
           return null;
         });
         const blocked = yield* blockedSinceCheck();
@@ -1482,6 +1588,7 @@ const make = Effect.gen(function* () {
       roots,
       yield* projectStore.list({ includeDeleted: true }),
       entries,
+      removeUnsentCheckout,
     );
     return { waiting, kept };
   });

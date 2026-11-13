@@ -191,6 +191,11 @@ const PR_LOOKUP_GIT_STATE_TTL = Duration.minutes(5);
 const SETTLED_PR_LOOKUP_RECHECK_INTERVAL = Duration.minutes(15);
 const PR_THREAD_CONTEXT_BYTES = 16_000;
 const PR_THREAD_COMMAND_OUTPUT_CHARS = 2_000;
+/**
+ * A file in a linked worktree's git directory, holding the project root. It says a pull request
+ * checkout created the worktree for a draft, which only the client knows about until it is sent.
+ */
+export const UNSENT_PULL_REQUEST_CHECKOUT_FILE = "t3-pull-request-checkout";
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
 /**
@@ -2935,6 +2940,24 @@ export const make = Effect.gen(function* () {
   const preparePullRequestThread: GitManager["Service"]["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
+    // Storage cleanup ages an unsent checkout from this file, so a reuse restarts the wait.
+    const markUnsentCheckout = Effect.fn("GitManager.markUnsentCheckout")(
+      function* (worktreePath: string, created: boolean) {
+        const located = yield* gitCore.execute({
+          operation: "GitManager.preparePullRequestThread.markUnsentCheckout",
+          cwd: worktreePath,
+          args: ["rev-parse", "--git-path", UNSENT_PULL_REQUEST_CHECKOUT_FILE],
+        });
+        const marker = path.resolve(worktreePath, located.stdout.trim());
+        if (created || (yield* fileSystem.exists(marker)))
+          yield* fileSystem.writeFileString(marker, input.cwd);
+      },
+      Effect.catch((cause) =>
+        Effect.logWarning("GitManager.preparePullRequestThread could not mark the checkout", {
+          cause,
+        }),
+      ),
+    );
     const maybeRunSetupScript = (worktreePath: string) => {
       if (!input.threadId) {
         return Effect.void;
@@ -3028,6 +3051,7 @@ export const make = Effect.gen(function* () {
         worktreePath: string,
         checkedOutBranch: string,
       ) {
+        yield* markUnsentCheckout(worktreePath, false);
         if (checkedOutBranch !== localPullRequestBranch) {
           // Bare-name matches may be unrelated local branches; preserve their work and tracking config.
           return {
@@ -3276,6 +3300,7 @@ export const make = Effect.gen(function* () {
             Effect.asVoid,
           ),
         );
+        yield* markUnsentCheckout(worktree.worktree.path, true);
         yield* maybeRunSetupScript(worktree.worktree.path);
         return {
           pullRequest,
@@ -3314,6 +3339,7 @@ export const make = Effect.gen(function* () {
       }
 
       const worktree = yield* createPullRequestWorktree();
+      yield* markUnsentCheckout(worktree.worktree.path, true);
       yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
       yield* maybeRunSetupScript(worktree.worktree.path);
 

@@ -244,11 +244,13 @@ branch and the worktree is still at the pull request's last commit.
 Enable **Delete worktrees with deleted threads** to remove safe worktrees after their last
 thread is deleted, including archived threads and worktrees left by earlier deletions. The
 server waits for sessions and terminals to stop and retries skipped worktrees after restart.
+It also removes a worktree that a pull request checkout created when no thread used it within a
+day, such as a draft that was discarded or never sent.
 Existing prompts for deleting a worktree manually remain available when this policy is off.
 
 Choose **Delete now** to run the enabled rules immediately. The latest results show which
 worktrees were removed or kept and why, plus any failures.
-Results also list folders in the worktree folder that no thread uses, with their sizes; cleanup never removes them, so remove them manually if you want.
+Results also list folders in the worktree folder that no thread uses, with their sizes; other than those pull request checkouts, cleanup never removes them, so remove them manually if you want.
 
 Browser captures and rotated logs have separate retention periods. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.
