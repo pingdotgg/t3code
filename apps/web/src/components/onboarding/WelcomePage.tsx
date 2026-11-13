@@ -87,6 +87,7 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environmen
 import { managedTelemetryOffMessage, useManagedPolicy } from "../../state/managedPolicy";
 import { useProjectScans } from "../../onboarding/useProjectScans";
 import { projectEnvironment } from "../../state/projects";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { serverEnvironment } from "../../state/server";
 import {
   readEnvironmentScope,
@@ -1068,11 +1069,27 @@ function OnboardingCodexSetup({
   const config =
     instance.config !== null && typeof instance.config === "object" ? instance.config : {};
   const mode = readCodexSetupMode(config);
+  // The server only signs in to its own runtime, so ChatGPT sign-in saves "managed" first.
+  // An attempt that ends without signing in puts back what was saved before it.
+  const modeBeforeSignIn = useRef<{ readonly setupMode: unknown } | null>(null);
+  const reportSaveFailure = (result: Awaited<ReturnType<typeof persistProviderInstance>>) => {
+    if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+    const cause = squashAtomCommandFailure(result);
+    toastManager.add({
+      type: "error",
+      title: "Could not save Codex setup",
+      ...(cause instanceof Error ? { description: cause.message } : {}),
+    });
+  };
   const changeMode = (setupMode: "managed" | "existing") => {
     // "Use existing CLI" also opens a terminal to install or sign in to the CLI.
     onUseCliChange(setupMode === "existing");
     const unchanged = mode === setupMode && provider.enabled;
     if (unchanged || !readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
+    modeBeforeSignIn.current =
+      setupMode === "managed" && mode !== "managed"
+        ? { setupMode: "setupMode" in config ? config.setupMode : undefined }
+        : null;
     // One-instance upsert keeps a provider another client added in the meantime.
     void persistProviderInstance({
       operation: "upsert",
@@ -1080,17 +1097,30 @@ function OnboardingCodexSetup({
       instance: { ...instance, enabled: true, config: { ...config, enabled: true, setupMode } },
     }).then((result) => {
       if (result._tag === "Failure") {
+        modeBeforeSignIn.current = null;
         onUseCliChange(false);
-        if (!isAtomCommandInterrupted(result)) {
-          const cause = squashAtomCommandFailure(result);
-          toastManager.add({
-            type: "error",
-            title: "Could not save Codex setup",
-            ...(cause instanceof Error ? { description: cause.message } : {}),
-          });
-        }
+        reportSaveFailure(result);
       }
     });
+  };
+  const restoreMode = () => {
+    const before = modeBeforeSignIn.current;
+    if (before === null) return;
+    modeBeforeSignIn.current = null;
+    // Sign-in ends after later renders, so restore onto the settings as they are now.
+    const current =
+      appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.settings
+        .providerInstances[instanceId] ?? instance;
+    const { setupMode: _managed, ...rest }: Record<string, unknown> =
+      current.config !== null && typeof current.config === "object" ? { ...current.config } : {};
+    void persistProviderInstance({
+      operation: "upsert",
+      instanceId,
+      instance: {
+        ...current,
+        config: before.setupMode === undefined ? rest : { ...rest, setupMode: before.setupMode },
+      },
+    }).then(reportSaveFailure);
   };
   return (
     <CodexSetupSection
@@ -1104,6 +1134,10 @@ function OnboardingCodexSetup({
       existingCliDisabled={!canOperateTerminal}
       displayName={agentName(provider)}
       onModeChange={changeMode}
+      onSignInUnfinished={restoreMode}
+      onSignInFinished={() => {
+        modeBeforeSignIn.current = null;
+      }}
     />
   );
 }

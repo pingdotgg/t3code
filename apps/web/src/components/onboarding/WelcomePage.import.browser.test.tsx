@@ -1,9 +1,11 @@
 import { RegistryContext } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProjectId,
   ProviderDriverKind,
@@ -12,6 +14,10 @@ import {
   type AuthEnvironmentScope,
   type AuthSessionState,
   type EnvironmentCloudLinkStateResult,
+  type ProviderAuthState,
+  type ProviderInstallState,
+  type ProviderInstanceMutation,
+  type ServerConfig,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -31,10 +37,15 @@ const state = vi.hoisted(() => ({
   projects: null as unknown,
   providers: null as unknown,
   config: null as unknown,
+  authState: null as unknown,
+  installState: null as unknown,
   candidates: null as unknown,
   createProject: vi.fn(),
   importThreads: vi.fn(),
   refreshProviders: vi.fn(),
+  mutateProviderInstance: vi.fn(),
+  startProviderAuth: vi.fn(),
+  cancelProviderAuth: vi.fn(),
   completeOnboarding: vi.fn(),
   onDone: vi.fn(),
   scan: vi.fn(),
@@ -107,6 +118,11 @@ vi.mock(import("../../state/server"), async (original) => {
       providersValueAtom: (() => state.providers) as never,
       configValueAtom: (() => state.config) as never,
       refreshProviders: "refreshProviders" as never,
+      providerAuthState: (() => state.authState) as never,
+      providerInstallState: (() => state.installState) as never,
+      mutateProviderInstance: "mutateProviderInstance" as never,
+      startProviderAuth: "startProviderAuth" as never,
+      cancelProviderAuth: "cancelProviderAuth" as never,
     },
   };
 });
@@ -150,8 +166,15 @@ vi.mock(import("../../onboarding/useProjectScans"), async (original) => {
 });
 vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
-  useAtomCommand: ((command: "createProject" | "importThreads" | "refreshProviders") =>
-    state[command]) as never,
+  useAtomCommand: ((
+    command:
+      | "createProject"
+      | "importThreads"
+      | "refreshProviders"
+      | "mutateProviderInstance"
+      | "startProviderAuth"
+      | "cancelProviderAuth",
+  ) => state[command]) as never,
 }));
 
 import { welcomeImportSelectionKey } from "../../onboarding/welcomeState";
@@ -288,6 +311,93 @@ async function mountWelcome() {
   );
 }
 
+const codexId = ProviderInstanceId.make("codex");
+const signedOutCodex: ServerProvider = {
+  instanceId: codexId,
+  driver: ProviderDriverKind.make("codex"),
+  installed: true,
+  enabled: true,
+  version: "0.163.0",
+  status: "error",
+  auth: { status: "unauthenticated" },
+  checkedAt: "2026-01-01T00:00:00.000Z",
+  models: [],
+  skills: [],
+  slashCommands: [],
+  setup: { canAuthenticate: true, canInstall: true },
+};
+
+function authState(phase: ProviderAuthState["phase"], message: string | null = null) {
+  const active = phase !== "idle";
+  return {
+    instanceId: codexId,
+    phase,
+    flowId: active ? "flow-1" : null,
+    authorizationUrl: active ? "https://auth.openai.com/oauth/authorize" : null,
+    expiresAt: null,
+    message,
+  } as ProviderAuthState;
+}
+
+function authStateAtom() {
+  return state.authState as Atom.Writable<AsyncResult.AsyncResult<ProviderAuthState>>;
+}
+
+function configAtom() {
+  return state.config as Atom.Writable<ServerConfig | null>;
+}
+
+function upsertInstance({
+  input,
+}: {
+  input: { providerInstanceMutation: Extract<ProviderInstanceMutation, { operation: "upsert" }> };
+}) {
+  const { instanceId, instance } = input.providerInstanceMutation;
+  const config = appAtomRegistry.get(configAtom())!;
+  appAtomRegistry.set(configAtom(), {
+    ...config,
+    settings: {
+      ...config.settings,
+      providerInstances: { ...config.settings.providerInstances, [instanceId]: instance },
+    },
+  });
+  return AsyncResult.success(undefined);
+}
+
+function codexSetupMode() {
+  const config = appAtomRegistry.get(configAtom())?.settings.providerInstances[codexId]?.config;
+  return config !== null && typeof config === "object" && "setupMode" in config
+    ? config.setupMode
+    : undefined;
+}
+
+// A signed-out Codex CLI with no Codex entry in settings, as on a fresh install.
+async function mountCodexSignIn() {
+  appAtomRegistry.set(configAtom(), {
+    settings: DEFAULT_SERVER_SETTINGS,
+    cwd: "/projects",
+    environment: { platform: { os: "linux" } },
+    keybindings: [],
+  } as unknown as ServerConfig);
+  appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, [
+    readyClaude,
+    signedOutCodex,
+  ]);
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(await mountWelcome());
+  await vi.waitFor(() => button("Set up"));
+  await click("Set up");
+  await vi.waitFor(() => button("Continue with ChatGPT"));
+  expect(codexSetupMode()).toBeUndefined();
+  await click("Continue with ChatGPT");
+  await vi.waitFor(() => expect(state.startProviderAuth).toHaveBeenCalledOnce());
+  // The server only signs in to its own runtime, so the attempt switches to managed first.
+  expect(codexSetupMode()).toBe("managed");
+  await vi.waitFor(() => button("Cancel"));
+  stack.move();
+  return screen;
+}
+
 // The mocked modules read `state`, so every test starts by replacing all of it.
 // Returns the clock spy so each test can `using` it; the spy would otherwise outlive the test.
 function setup() {
@@ -304,6 +414,21 @@ function setup() {
   state.projects = Atom.make<ReadonlyArray<Project>>([]).pipe(Atom.keepAlive);
   state.providers = Atom.make<ReadonlyArray<ServerProvider>>([readyClaude]).pipe(Atom.keepAlive);
   state.config = Atom.make(null).pipe(Atom.keepAlive);
+  state.authState = Atom.make(AsyncResult.success(authState("idle"))).pipe(Atom.keepAlive);
+  state.installState = Atom.make(
+    AsyncResult.success<ProviderInstallState>({
+      driver: ProviderDriverKind.make("codex"),
+      operationId: null,
+      phase: "idle",
+      downloadedBytes: 0,
+      totalBytes: null,
+      version: "0.163.0",
+      installedVersion: "0.163.0",
+      source: "managed",
+      canRemove: true,
+      message: null,
+    }),
+  ).pipe(Atom.keepAlive);
   state.candidates = Atom.make<ReadonlyArray<AgentSessionProjectCandidate>>([
     candidate("/projects/first"),
     candidate("/projects/second"),
@@ -315,6 +440,21 @@ function setup() {
     .mockReset()
     .mockResolvedValue(AsyncResult.success({ importedCount: 1, skippedCount: 0 }));
   state.refreshProviders.mockReset().mockResolvedValue(AsyncResult.success(undefined));
+  state.mutateProviderInstance
+    .mockReset()
+    .mockImplementation(async (input) => upsertInstance(input));
+  state.startProviderAuth.mockReset().mockImplementation(async () => {
+    const waiting = authState("waiting", "Complete sign-in in your browser.");
+    appAtomRegistry.set(authStateAtom(), AsyncResult.success(waiting));
+    return AsyncResult.success(waiting);
+  });
+  state.cancelProviderAuth.mockReset().mockImplementation(async () => {
+    appAtomRegistry.set(
+      authStateAtom(),
+      AsyncResult.success(authState("cancelled", "Sign-in cancelled.")),
+    );
+    return AsyncResult.success(undefined);
+  });
   state.completeOnboarding.mockReset().mockResolvedValue(undefined);
   state.onDone.mockReset();
   state.scan.mockReset();
@@ -742,4 +882,60 @@ it("says the phone is set up only once this computer is shared with the signed-i
   await share({ status: "reachable", checkedAt, readyConnections: 4, protocol: "quic" });
   await vi.waitFor(() => expect(pageText()).toContain("Your phone can reach this computer."));
   expect(pageText()).not.toContain("Check T3 Connect");
+});
+
+it("restores the Codex setup mode when ChatGPT sign-in is cancelled", async () => {
+  using _now = setup();
+  await using _screen = await mountCodexSignIn();
+
+  await click("Cancel");
+  expect(state.cancelProviderAuth).toHaveBeenCalledOnce();
+  await vi.waitFor(() =>
+    expect(codexSetupMode(), "a cancelled sign-in must not leave Codex managed").toBeUndefined(),
+  );
+});
+
+it("restores the Codex setup mode onto current settings when ChatGPT sign-in fails", async () => {
+  using _now = setup();
+  await using _screen = await mountCodexSignIn();
+  // Another client edits Codex while sign-in is pending.
+  const config = appAtomRegistry.get(configAtom())!;
+  appAtomRegistry.set(configAtom(), {
+    ...config,
+    settings: {
+      ...config.settings,
+      providerInstances: {
+        ...config.settings.providerInstances,
+        [codexId]: { ...config.settings.providerInstances[codexId]!, displayName: "Work" },
+      },
+    },
+  });
+
+  await act(async () =>
+    appAtomRegistry.set(
+      authStateAtom(),
+      AsyncResult.success(authState("failed", "ChatGPT sign-in was declined.")),
+    ),
+  );
+  await vi.waitFor(() =>
+    expect(codexSetupMode(), "a failed sign-in must not leave Codex managed").toBeUndefined(),
+  );
+  expect(appAtomRegistry.get(configAtom())?.settings.providerInstances[codexId]?.displayName).toBe(
+    "Work",
+  );
+  await vi.waitFor(() => expect(pageText()).toContain("ChatGPT sign-in was declined."));
+});
+
+it("keeps the Codex setup mode managed when sign-in succeeds before Cancel reaches the server", async () => {
+  using _now = setup();
+  await using _screen = await mountCodexSignIn();
+  state.cancelProviderAuth.mockImplementationOnce(async () => {
+    appAtomRegistry.set(authStateAtom(), AsyncResult.success(authState("succeeded")));
+    return AsyncResult.failure(Cause.fail(new Error("This sign-in is no longer active.")));
+  });
+
+  await click("Cancel");
+  await vi.waitFor(() => expect(pageText()).toContain("This sign-in is no longer active."));
+  expect(state.mutateProviderInstance).toHaveBeenCalledOnce();
+  expect(codexSetupMode()).toBe("managed");
 });

@@ -10,6 +10,7 @@ import type {
   ChatGptHandoffInput,
   ChatGptTransferredProfile,
   EnvironmentId,
+  ProviderAuthState,
   ProviderInstanceId,
   ServerProvider,
 } from "@t3tools/contracts";
@@ -53,6 +54,7 @@ import {
   settleAuthorizationPage,
   settleHandoffAuthorizationPage,
   settleProviderInstall,
+  settleSignIn,
 } from "./CodexSetupSection.logic";
 
 const noop = () => undefined;
@@ -103,10 +105,15 @@ interface CodexSetupSectionProps {
   readonly displayName?: string | undefined;
   readonly onAutoStartConsumed?: () => void;
   readonly onSignInCancelled?: (() => void) | undefined;
+  /** A setup or sign-in ended without signing in; `failure` is `null` when the user cancelled. */
+  readonly onSignInUnfinished?: ((failure: string | null) => void) | undefined;
+  readonly onSignInFinished?: (() => void) | undefined;
 }
 
 export function CodexSetupSection(props: CodexSetupSectionProps) {
   const [requested, setRequested] = useState(false);
+  // Outlives the managed card, which unmounts when an unfinished attempt restores the setup mode.
+  const [failure, setFailure] = useState<string | null>(null);
   // A policy that owns Codex's launch settings also rules out ChatGPT's own runtime.
   const codexLocks = managedInstanceLocks(
     useManagedPolicy(props.environmentId),
@@ -163,6 +170,7 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
                 size="sm"
                 disabled={props.readOnly}
                 onClick={() => {
+                  setFailure(null);
                   setRequested(true);
                   props.onModeChange("managed");
                 }}
@@ -184,7 +192,13 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
             </Button>
           ) : null
         }
-      />
+      >
+        {failure && !existingReady && !existingAuthenticated && !existingChecking ? (
+          <p role="alert" className="text-xs text-destructive">
+            {failure}
+          </p>
+        ) : null}
+      </CodexWelcomeCard>
     ) : props.mode === "existing" ? null : !props.provider?.setup?.canAuthenticate ? (
       props.presentation === "onboarding" ? (
         <CodexWelcomeCard
@@ -213,6 +227,13 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
           setRequested(false);
           props.onAutoStartConsumed?.();
         }}
+        onSignInUnfinished={
+          props.onSignInUnfinished &&
+          ((message) => {
+            setFailure(message);
+            props.onSignInUnfinished?.(message);
+          })
+        }
       />
     );
   return content;
@@ -269,6 +290,8 @@ function ManagedCodexSetup({
   presentation,
   displayName,
   onSignInCancelled,
+  onSignInUnfinished,
+  onSignInFinished,
 }: CodexSetupSectionProps & {
   readonly autoStart: boolean;
   readonly onAutoStartConsumed: () => void;
@@ -387,6 +410,7 @@ function ManagedCodexSetup({
   const run = async <A, E>(
     request: () => Promise<AtomCommandResult<A, E>>,
     onSuccess?: (value: A) => void,
+    onFailure?: (message: string) => void,
   ) => {
     if (pendingRef.current) return false;
     pendingRef.current = true;
@@ -398,7 +422,10 @@ function ManagedCodexSetup({
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           const failure = squashAtomCommandFailure(result);
-          setError(failure instanceof Error ? failure.message : "Codex setup failed. Try again.");
+          const message =
+            failure instanceof Error ? failure.message : "Codex setup failed. Try again.";
+          setError(message);
+          onFailure?.(message);
         }
       } else {
         succeeded = true;
@@ -406,6 +433,7 @@ function ManagedCodexSetup({
       }
     } catch {
       setError("Codex setup failed. Try again.");
+      onFailure?.("Codex setup failed. Try again.");
     }
     pendingRef.current = false;
     setPending(false);
@@ -423,6 +451,7 @@ function ManagedCodexSetup({
     if (succeeded) {
       setAwaitingProvider("handoff");
       setHandoff(null);
+      onSignInFinished?.();
     }
     setTransferFailed(!succeeded);
   };
@@ -454,7 +483,7 @@ function ManagedCodexSetup({
     setAwaitingProvider(null);
     if (handoff) {
       setHandoff(null);
-      return Promise.resolve();
+      return Promise.resolve(true);
     }
     return run(() => cancelAuth({ environmentId, input: { instanceId, flowId: auth!.flowId! } }));
   };
@@ -489,6 +518,13 @@ function ManagedCodexSetup({
     }
   };
 
+  const reportSignInEnd = (ended: ProviderAuthState | null | undefined) => {
+    if (ended?.phase === "succeeded") onSignInFinished?.();
+    else if (ended?.phase === "failed")
+      onSignInUnfinished?.(ended.message ?? "ChatGPT sign-in could not finish. Try again.");
+    else if (ended?.phase === "cancelled") onSignInUnfinished?.(null);
+  };
+
   const signIn = async (methodId: string, signal: AbortSignal) => {
     if (pendingRef.current) return;
     setTransferFailed(false);
@@ -515,15 +551,36 @@ function ManagedCodexSetup({
             },
           };
           setHandoff(nextHandoff);
+          const handoffState = serverEnvironment.chatGptHandoffState(nextHandoff);
           void waitForQuerySettled({
             registry: appAtomRegistry,
-            atom: serverEnvironment.chatGptHandoffState(nextHandoff),
+            atom: handoffState,
             settle: settleHandoffAuthorizationPage,
             signal,
           }).then((page) => {
             if (page && !signal.aborted) void openPage(page, null, false);
           });
+          void waitForQuerySettled({
+            registry: appAtomRegistry,
+            atom: handoffState,
+            settle: (state) =>
+              state === null
+                ? undefined
+                : state.phase === "finished"
+                  ? null
+                  : settleSignIn(state.state, null),
+            signal,
+          }).then((ended) => {
+            // Without an abort, `undefined` means the handoff query failed.
+            if (ended === undefined && !signal.aborted)
+              onSignInUnfinished?.(
+                "ChatGPT sign-in on the primary environment was interrupted. Try again.",
+              );
+            // Success counts once this environment has imported the profile.
+            else if (ended?.phase !== "succeeded") reportSignInEnd(ended);
+          });
         },
+        onSignInUnfinished,
       );
       return;
     }
@@ -541,6 +598,13 @@ function ManagedCodexSetup({
       (started) => {
         setAwaitingProvider("sign-in");
         const startedFlowId = started.flowId;
+        if (startedFlowId !== null)
+          void waitForQuerySettled({
+            registry: appAtomRegistry,
+            atom: serverEnvironment.providerAuthState(target),
+            settle: (state) => settleSignIn(state, startedFlowId),
+            signal,
+          }).then(reportSignInEnd);
         // A remote browser cannot receive the callback, so the user opens the page from the card.
         if (remoteWeb || startedFlowId === null) return;
         const startedPage = settleAuthorizationPage(started, startedFlowId);
@@ -557,6 +621,7 @@ function ManagedCodexSetup({
           if (page && !signal.aborted) void openPage(page, startedFlowId, clientCallback);
         });
       },
+      onSignInUnfinished,
     );
   };
 
@@ -573,12 +638,20 @@ function ManagedCodexSetup({
         void waitForQuerySettled({
           registry: appAtomRegistry,
           atom: serverEnvironment.providerInstallState(target),
-          settle: (current) => settleProviderInstall(started, current),
+          settle: (current) => {
+            const ready = settleProviderInstall(started, current);
+            return ready === undefined
+              ? undefined
+              : { ready, message: current?.message ?? started.message };
+          },
           signal,
-        }).then((ready) => {
-          if (ready && !signal.aborted) void signIn(methodId, signal);
+        }).then((settled) => {
+          if (!settled || signal.aborted) return;
+          if (settled.ready) void signIn(methodId, signal);
+          else onSignInUnfinished?.(settled.message ?? "Codex setup failed. Try again.");
         });
       },
+      onSignInUnfinished,
     );
   };
 
@@ -892,14 +965,21 @@ function ManagedCodexSetup({
                 disabled={pending || readOnly}
                 onClick={() => {
                   abortOperation();
-                  if (handoff || (authActive && auth?.flowId)) void cancelSignIn();
-                  else if (installation?.operationId)
-                    void run(() =>
-                      cancelInstall({
-                        environmentId,
-                        input: { instanceId, operationId: installation.operationId! },
-                      }),
-                    );
+                  void (
+                    handoff || (authActive && auth?.flowId)
+                      ? cancelSignIn()
+                      : installation?.operationId
+                        ? run(() =>
+                            cancelInstall({
+                              environmentId,
+                              input: { instanceId, operationId: installation.operationId! },
+                            }),
+                          )
+                        : Promise.resolve(true)
+                  ).then((cancelled) => {
+                    // A rejected cancel can mean the flow already succeeded.
+                    if (cancelled) onSignInUnfinished?.(null);
+                  });
                 }}
               >
                 Cancel

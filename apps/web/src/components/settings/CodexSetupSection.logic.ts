@@ -53,6 +53,18 @@ export function settleAuthorizationPage(
   return url ?? undefined;
 }
 
+/** A sign-in flow's final state, `undefined` while it runs. `flowId` as above. */
+export function settleSignIn(
+  state: ProviderAuthState | null,
+  flowId: string | null,
+): ProviderAuthState | undefined {
+  if (state === null || state.flowId === null) return undefined;
+  if (flowId !== null && state.flowId !== flowId) return undefined;
+  return state.phase === "succeeded" || state.phase === "failed" || state.phase === "cancelled"
+    ? state
+    : undefined;
+}
+
 export function settleHandoffAuthorizationPage(
   state: ChatGptHandoffState | null,
 ): string | null | undefined {
