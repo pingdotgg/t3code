@@ -123,6 +123,8 @@ export function HtmlRenderWebView(props: {
         key={generation}
         ref={webView}
         source={source}
+        // iOS asks about subframe loads too, and the default list cancels a srcdoc iframe.
+        originWhitelist={["http://*", "https://*", "about:srcdoc"]}
         accessibilityLabel={props.title}
         style={{ flex: 1, backgroundColor: "transparent" }}
         allowsInlineMediaPlayback
