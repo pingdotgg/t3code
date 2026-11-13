@@ -356,13 +356,22 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const writeDescriptionFile = (cwd: string, body: string) =>
-    fileSystem.makeTempFileScoped({ prefix: "t3code-pr-body-", suffix: ".md" }).pipe(
-      Effect.tap((file) => fileSystem.writeFileString(file, body)),
-      Effect.mapError(
-        (cause) => new AzureDevOpsDescriptionFileError({ command: "az", cwd, cause }),
+  const writeDescriptionFile = Effect.fn("AzureDevOpsPullRequestCli.writeDescriptionFile")(
+    function* (cwd: string, body: string) {
+      const file = yield* fileSystem.makeTempFileScoped({
+        prefix: "t3code-pr-body-",
+        suffix: ".md",
+      });
+      yield* fileSystem.writeFileString(file, body);
+      return file;
+    },
+    (effect, cwd) =>
+      effect.pipe(
+        Effect.mapError(
+          (cause) => new AzureDevOpsDescriptionFileError({ command: "az", cwd, cause }),
+        ),
       ),
-    );
+  );
 
   /** Azure's items route requires a leading slash. */
   const toItemPath = (path: string) => (path.startsWith("/") ? path : `/${path}`);
