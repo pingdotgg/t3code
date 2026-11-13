@@ -1651,7 +1651,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             task.taskId === allTasks[index]?.taskId &&
             task.description === allTasks[index]?.description &&
             task.awaited === allTasks[index]?.awaited &&
-            task.parentTaskId === allTasks[index]?.parentTaskId &&
             (task.kind === "subagent" ? task.childThreadId : undefined) ===
               (allTasks[index]?.kind === "subagent" ? allTasks[index]?.childThreadId : undefined),
         )
@@ -1792,95 +1791,74 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* syncRosterAncestors(shell.state);
     });
 
-    const recoveredShell = (owner: ThreadState, id: string, command: string) => {
-      const target = requestTurn(owner.sessionId);
-      return {
-        state: owner,
-        ...(target === undefined
-          ? {
-              recoveredRunId:
-                owner.providerThread.lastRunOrdinal === null
-                  ? null
-                  : idAllocator.derive.run({
-                      threadId: owner.providerThread.appThreadId ?? input.threadId,
-                      ordinal: owner.providerThread.lastRunOrdinal,
-                    }),
-            }
-          : {
-              turn: target.turn,
-              toolId: id,
-              tool: { name: "shell", input: { command } },
-            }),
-        command,
-        awaited:
-          owner.providerThread.pendingBackgroundTasks?.some(
-            (task) => task.taskId === id && task.awaited === true,
-          ) === true,
-        running: true,
-        output: "",
-        cursor: 0,
-      };
-    };
-
     const recoverShells = Effect.fn("OpenCode2Adapter.recoverShells")(
       function* (state: ThreadState) {
         if (compareSemverVersions(connection.version, "2.2.1") < 0) return;
-        // Inventory failure is not evidence that a saved awaited shell has ended.
-        for (const task of state.providerThread.pendingBackgroundTasks ?? []) {
-          if (task.kind === "command" && task.awaited === true && !shells.has(task.taskId)) {
-            state.sessionScopedBackground = true;
-            shells.set(
-              task.taskId,
-              recoveredShell(state, task.taskId, task.command ?? task.description ?? ""),
-            );
+        const jobs =
+          compareSemverVersions(connection.version, "2.2.6") >= 0 &&
+          connection.shellJobs !== undefined
+            ? yield* connection.shellJobs(state.sessionId).pipe(Effect.option)
+            : undefined;
+        const data =
+          jobs?._tag === "Some"
+            ? jobs.value.data.map((job) => ({
+                id: Shell.ID.make(job.shellID),
+                command: job.command,
+                metadata: { sessionID: job.sessionID },
+              }))
+            : (yield* client.shell.list({ location: { directory: state.directory } })).data;
+        for (const info of data) {
+          const sessionId = stringField(info.metadata, "sessionID");
+          const owner =
+            sessionId === undefined
+              ? undefined
+              : (threads.get(sessionId) ??
+                ownerOf(sessionId) ??
+                (jobs?._tag === "Some" ? state : undefined));
+          if (owner === undefined || !sessionsOf(state).includes(owner)) continue;
+          if (!shells.has(info.id)) {
+            if (state.active === undefined && !hasBackground(state)) {
+              state.sessionScopedBackground = true;
+              delete state.publishedBackgroundWork;
+            }
+            const target = requestTurn(owner.sessionId);
+            shells.set(info.id, {
+              state: owner,
+              ...(target === undefined
+                ? {
+                    recoveredRunId:
+                      owner.providerThread.lastRunOrdinal === null
+                        ? null
+                        : idAllocator.derive.run({
+                            threadId: owner.providerThread.appThreadId ?? input.threadId,
+                            ordinal: owner.providerThread.lastRunOrdinal,
+                          }),
+                  }
+                : {
+                    turn: target.turn,
+                    toolId: info.id,
+                    tool: { name: "shell", input: { command: info.command } },
+                  }),
+              command: info.command,
+              awaited:
+                state.providerThread.pendingBackgroundTasks?.some(
+                  (task) => task.taskId === info.id && task.awaited === true,
+                ) === true,
+              running: true,
+              output: "",
+              cursor: 0,
+            });
           }
         }
-        yield* Effect.gen(function* () {
-          const jobs =
-            compareSemverVersions(connection.version, "2.2.6") >= 0 &&
-            connection.shellJobs !== undefined
-              ? yield* connection.shellJobs(state.sessionId).pipe(Effect.option)
-              : undefined;
-          const data =
-            jobs?._tag === "Some"
-              ? jobs.value.data.map((job) => ({
-                  id: Shell.ID.make(job.shellID),
-                  command: job.command,
-                  metadata: { sessionID: job.sessionID },
-                }))
-              : (yield* client.shell.list({ location: { directory: state.directory } })).data;
-          for (const info of data) {
-            const sessionId = stringField(info.metadata, "sessionID");
-            const owner =
-              sessionId === undefined
-                ? undefined
-                : (threads.get(sessionId) ??
-                  ownerOf(sessionId) ??
-                  (jobs?._tag === "Some" ? state : undefined));
-            if (owner === undefined || !sessionsOf(state).includes(owner)) continue;
-            const existing = shells.get(info.id);
-            if (existing === undefined) {
-              if (state.active === undefined && !hasBackground(state)) {
-                state.sessionScopedBackground = true;
-                delete state.publishedBackgroundWork;
-              }
-              shells.set(info.id, recoveredShell(owner, info.id, info.command));
-            } else if (existing.state !== owner) {
-              shells.set(info.id, {
-                ...recoveredShell(owner, info.id, info.command),
-                awaited: existing.awaited === true,
-                output: existing.output,
-                cursor: existing.cursor,
-              });
-            }
-          }
-        }).pipe(Effect.timeout(INVENTORY_TIMEOUT), Effect.ignore({ log: true }));
         for (const [id, shell] of shells) {
           if (!shell.running || !sessionsOf(state).includes(shell.state)) continue;
           yield* Effect.gen(function* () {
             const found = yield* client.shell
               .get({ id: Shell.ID.make(id), location: { directory: shell.state.directory } })
-              .pipe(Effect.catchTags({ ShellNotFoundError: () => Effect.undefined }));
+              .pipe(
+                Effect.timeout(INVENTORY_TIMEOUT),
+                Effect.catchTags({ ShellNotFoundError: () => Effect.undefined }),
+              );
             if (found === undefined) {
               shell.running = false;
               yield* emitShell(id, "interrupted");
@@ -1888,7 +1866,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               return;
             }
             const info = found.data;
-            shell.command = info.command;
             shell.startedAt = DateTime.makeUnsafe(info.time.started);
             yield* readShellOutput(id, info.status !== "running").pipe(
               Effect.ignore({ log: true }),
@@ -1907,7 +1884,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             );
             if (!shell.running) shells.delete(id);
           }).pipe(
-            Effect.timeout(INVENTORY_TIMEOUT),
             Effect.catch((cause) =>
               Effect.logWarning("Could not recover an OpenCode shell.", cause).pipe(
                 Effect.andThen(emitShell(id, "running")),
@@ -1919,8 +1895,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       (effect, state) =>
         lock.withPermit(
           effect.pipe(
-            // Allow status checks after inventory timeout without exhausting the wait command's deadline.
-            Effect.timeout("10 seconds"),
+            Effect.timeout(INVENTORY_TIMEOUT),
             Effect.ensuring(
               Effect.gen(function* () {
                 for (const [id, shell] of shells) {
