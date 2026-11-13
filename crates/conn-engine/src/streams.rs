@@ -5,7 +5,7 @@
 //! from the store, so a slow client never makes the engine buffer items, and a snapshot and the
 //! updates after it can never overlap or leave a gap: both are read by sequence.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use conn_contract::{
     GetShellSnapshotError, GetThreadProjectionError, ShellStreamItem, ThreadStreamItem, from_json,
@@ -145,6 +145,8 @@ pub(crate) async fn subscribe_thread(
     let thread_id = input["threadId"].as_str().unwrap_or_default().to_owned();
     let after = input["afterSequence"].as_u64();
     let marker = input["requestCompletionMarker"] == true;
+    let dedupe = input["acceptDedupedBodies"] == true;
+    let omit_local = input["acceptCompactTurnItems"] == true;
     let mut wake = inner.notify.subscribe();
     let id = thread_id.clone();
     let first = inner
@@ -162,9 +164,7 @@ pub(crate) async fn subscribe_thread(
             }
             let projection = store.thread_projection(&id)?.unwrap_or(Value::Null);
             Ok(Some((
-                vec![
-                    json!({"kind": "snapshot", "snapshotSequence": high, "projection": projection}),
-                ],
+                vec![snapshot_item(projection, high, dedupe, omit_local)],
                 high,
             )))
         })
@@ -219,6 +219,90 @@ pub(crate) async fn subscribe_thread(
         }
     });
     Ok(rx)
+}
+
+/// The thread snapshot item, compacted for clients that opted in: a turn item's text that its
+/// message carries is blanked and marked (`acceptDedupedBodies`), and `turnItems` leaves out
+/// the items `visibleTurnItems` already holds (`acceptCompactTurnItems`). Clients undo both
+/// with `boundedSnapshotProjection` on every snapshot. Either roughly halves a long thread's
+/// snapshot, as each item otherwise travels twice and each message three times.
+fn snapshot_item(mut projection: Value, high: u64, dedupe: bool, omit_local: bool) -> Value {
+    if dedupe {
+        let index = |collection: &str| -> HashMap<String, usize> {
+            projection[collection]
+                .as_array()
+                .map(|rows| {
+                    rows.iter()
+                        .enumerate()
+                        .filter_map(|(i, r)| r["id"].as_str().map(|id| (id.to_owned(), i)))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let (messages, subagents) = (index("messages"), index("subagents"));
+        let text_of = |id: &Value| {
+            let at = *messages.get(id.as_str()?)?;
+            Some(projection["messages"][at]["text"].clone())
+        };
+        let subagent_of = |id: &Value| {
+            let row = &projection["subagents"][*subagents.get(id.as_str()?)?];
+            Some((row["prompt"].clone(), row["result"].clone()))
+        };
+        let mut changes: Vec<(usize, Value)> = vec![];
+        if let Some(rows) = projection["visibleTurnItems"].as_array() {
+            for (index, row) in rows.iter().enumerate() {
+                let mut item = row["item"].clone();
+                let mut changed = false;
+                match item["type"].as_str() {
+                    Some("user_message" | "assistant_message")
+                        if item["text"] != ""
+                            && text_of(&item["messageId"]).as_ref() == Some(&item["text"]) =>
+                    {
+                        item["text"] = json!("");
+                        item["textOmitted"] = json!(true);
+                        changed = true;
+                    }
+                    Some("subagent") => {
+                        if let Some((prompt, result)) = subagent_of(&item["subagentId"]) {
+                            if item["prompt"] != "" && item["prompt"] == prompt {
+                                item["prompt"] = json!("");
+                                item["promptOmitted"] = json!(true);
+                                changed = true;
+                            }
+                            if !item["result"].is_null() && item["result"] == result {
+                                item["result"] = Value::Null;
+                                item["resultOmitted"] = json!(true);
+                                changed = true;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                if changed {
+                    changes.push((index, item));
+                }
+            }
+        }
+        let items = index("turnItems");
+        for (row, item) in changes {
+            if let Some(at) = item["id"].as_str().and_then(|id| items.get(id)) {
+                projection["turnItems"][*at] = item.clone();
+            }
+            projection["visibleTurnItems"][row]["item"] = item;
+        }
+    }
+    let mut snapshot = json!({"kind": "snapshot", "snapshotSequence": high});
+    // Every turn item of this engine is a local visible row, so all of them leave `turnItems`.
+    if omit_local
+        && projection["turnItems"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty())
+    {
+        projection["turnItems"] = json!([]);
+        snapshot["turnItemsOmitLocalVisible"] = json!(true);
+    }
+    snapshot["projection"] = projection;
+    snapshot
 }
 
 fn event_item((sequence, event): (u64, Value)) -> Value {

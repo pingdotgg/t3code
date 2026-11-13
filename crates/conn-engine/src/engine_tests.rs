@@ -1772,3 +1772,31 @@ async fn stopping_a_parent_stops_its_children_without_a_wake() {
         "a stopped parent gets no wake"
     );
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn compact_snapshots_for_clients_that_opt_in() {
+    let db = TempDb::new("compact");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "hello")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let mut thread = engine
+        .subscribe_thread(
+            from_json(json!({"threadId": "t1", "acceptDedupedBodies": true, "acceptCompactTurnItems": true}))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let snapshot = next(&mut thread).await;
+    assert_eq!(snapshot["turnItemsOmitLocalVisible"], true);
+    assert_eq!(snapshot["projection"]["turnItems"], json!([]));
+    let rows = snapshot["projection"]["visibleTurnItems"]
+        .as_array()
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    for row in rows {
+        assert_eq!(row["item"]["text"], "");
+        assert_eq!(row["item"]["textOmitted"], true);
+    }
+    assert_eq!(snapshot["projection"]["messages"][1]["text"], "echo: hello");
+}
