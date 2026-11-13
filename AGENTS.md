@@ -86,6 +86,14 @@ See [00_development.md](docs/operations/00_development.md) for setup, ports, see
 
 `evals/` checks how real models behave with T3 Code's model-facing text: agent instructions, MCP tool descriptions and schemas, and generated titles. Before changing that text, read [evals/README.md](evals/README.md) and run the evals it names. When fixing a model behavior bug, add a case that fails before the fix.
 
+## Commits
+
+- Commit as you go, not once at the end. Each finished, verified step of medium size or larger gets its own commit right away: a bug fix, a feature slice, a refactor, a test suite, a doc update. Fold small edits (a typo, a rename, a review nit) into the step they belong to.
+- One commit is one idea. If the title needs "and", split it. Every commit should build and pass the checks for the files it touches, so `git bisect` and `git revert` work on it alone.
+- Title: conventional commit, as for PRs. Body: why the change exists, what it changes, and its origin, the issue, PR, review finding, or thread link that asked for it, or the user's request in one line. A reader of `git log` or `git blame` should reach the reason without the chat.
+- Commit worker or delegate output only after you review and check it. Push after each commit on a task branch so the work is never only local.
+- Never commit to `main` directly. Never rewrite commits that are already pushed unless the developer asks.
+
 ## Pull requests
 
 - Never make a PR unless the developer explicitly asks you to do so.
@@ -94,6 +102,7 @@ See [00_development.md](docs/operations/00_development.md) for setup, ports, see
 - Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
 - UI changes need before/after images; motion or timing needs a short video. Upload PR evidence to GitHub—never commit PR-only screenshots or assets.
 - One request is one PR. Split only when asked. Outside contributions follow [CONTRIBUTING.md](CONTRIBUTING.md#one-problem).
+- Merge with a merge commit (`gh pr merge --merge`) so the per-step commits stay in `main`'s history. Squash only when the maintainer asks.
 - When babysitting: call `watch_pull_request` and end your turn. Do not poll or sleep. Verify each bot finding against the source, fix real ones, dismiss false positives with a written reason. Stay quiet when nothing is new; stop when bots are green on the latest commit.
 
 ## Documentation
