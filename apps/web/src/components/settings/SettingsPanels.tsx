@@ -2155,6 +2155,12 @@ export function MaintenanceSettingsPanel() {
   const environmentId = environment?.environmentId ?? null;
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
   const hasServerTargets = connectedEnvironments.length > 0;
+  // Older servers drop the setting, so a switch there would do nothing.
+  const supportsAgentFeedback =
+    hasServerTargets &&
+    connectedEnvironments.every(
+      (target) => target.serverConfig?.environment.capabilities.agentFeedback === true,
+    );
 
   return (
     <SettingsPageContainer>
@@ -2282,32 +2288,34 @@ export function MaintenanceSettingsPanel() {
             </Button>
           }
         />
-        <SettingsRow
-          {...searchableSetting("agent-feedback")}
-          serverScoped
-          settingKeys={["agentFeedback"]}
-          description="Let agents send short reports about T3 Code problems they hit to the T3 team."
-          resetAction={
-            settings.agentFeedback.enabled !== DEFAULT_UNIFIED_SETTINGS.agentFeedback.enabled ? (
-              <SettingResetButton
-                label="agent feedback"
-                onClick={() =>
-                  updateSettings({ agentFeedback: DEFAULT_UNIFIED_SETTINGS.agentFeedback })
+        {supportsAgentFeedback ? (
+          <SettingsRow
+            {...searchableSetting("agent-feedback")}
+            serverScoped
+            settingKeys={["agentFeedback"]}
+            description="Let agents send short reports about T3 Code problems they hit to the T3 team."
+            resetAction={
+              settings.agentFeedback.enabled !== DEFAULT_UNIFIED_SETTINGS.agentFeedback.enabled ? (
+                <SettingResetButton
+                  label="agent feedback"
+                  onClick={() =>
+                    updateSettings({ agentFeedback: DEFAULT_UNIFIED_SETTINGS.agentFeedback })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <ScopedSwitch
+                settingKeys={["agentFeedback"]}
+                checked={settings.agentFeedback.enabled}
+                onCheckedChange={(checked) =>
+                  updateSettings({ agentFeedback: { enabled: Boolean(checked) } })
                 }
+                aria-label="Agent feedback"
               />
-            ) : null
-          }
-          control={
-            <ScopedSwitch
-              settingKeys={["agentFeedback"]}
-              checked={settings.agentFeedback.enabled}
-              onCheckedChange={(checked) =>
-                updateSettings({ agentFeedback: { enabled: Boolean(checked) } })
-              }
-              aria-label="Agent feedback"
-            />
-          }
-        />
+            }
+          />
+        ) : null}
       </SettingsSection>
     </SettingsPageContainer>
   );
