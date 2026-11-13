@@ -950,11 +950,12 @@ server.listen(0, "127.0.0.1", () => {
 `;
 
 /**
- * A real HTML server with an agent's environment, started the way an agent's tool shell starts a
- * job: under a detached shell with job control, in a group of its own. Release kills only the pids
- * it started.
+ * A real HTML server with an agent's environment. `job` starts it the way an agent's tool shell
+ * starts a job: under a detached shell with job control, in a group of its own. `cli` starts it the
+ * way an adapter launches the agent CLI itself, as a direct child of this server. Release kills
+ * only the pids it started.
  */
-const agentServer = () =>
+const agentServer = (launch: "job" | "cli" = "job") =>
   Effect.acquireRelease(
     Effect.callback<{
       readonly child: NodeChildProcess.ChildProcess;
@@ -964,11 +965,17 @@ const agentServer = () =>
     }>((resume) => {
       const env = { ...process.env, [PortScanner.AGENT_THREAD_ENV]: "thread-live" };
       // dash ignores `set -m` without a terminal; bash, like agent tool shells, honors it.
-      const child = NodeChildProcess.spawn(
-        "bash",
-        ["-c", 'set -m; "$0" -e "$1" & wait', process.execPath, AGENT_SERVER_SCRIPT],
-        { detached: true, env, stdio: ["ignore", "pipe", "ignore"] },
-      );
+      const child =
+        launch === "job"
+          ? NodeChildProcess.spawn(
+              "bash",
+              ["-c", 'set -m; "$0" -e "$1" & wait', process.execPath, AGENT_SERVER_SCRIPT],
+              { detached: true, env, stdio: ["ignore", "pipe", "ignore"] },
+            )
+          : NodeChildProcess.spawn(process.execPath, ["-e", AGENT_SERVER_SCRIPT], {
+              env,
+              stdio: ["ignore", "pipe", "ignore"],
+            });
       const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
       child.once("error", (error) => resume(Effect.die(error)));
       child.stdout?.once("data", (chunk) => {
@@ -1022,6 +1029,36 @@ effectIt.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       // The shell waits on its job, so it exits once the job has.
       yield* Effect.promise(() => job.exited);
       expect(isRunning(job.pid)).toBe(false);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        PortScanner.layer.pipe(
+          Layer.provide(ProcessRunner.layer),
+          Layer.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
+        ),
+      ),
+    ),
+);
+
+// A Claude CLI whose plugin registers a tool holds a loopback port of its own.
+effectIt.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "does not list the agent CLI's own listener as a server its thread started",
+  () =>
+    Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      yield* Effect.acquireRelease(Effect.sync(scanner.trackAgent), (release) =>
+        Effect.sync(release),
+      );
+      const cli = yield* agentServer("cli");
+      const job = yield* agentServer("job");
+
+      const servers = yield* scanner.scan();
+      expect(servers).toEqual(
+        expect.arrayContaining([expect.objectContaining({ pid: job.pid, port: job.port })]),
+      );
+      expect(servers).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ pid: cli.pid })]),
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
