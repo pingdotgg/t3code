@@ -4637,6 +4637,29 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("does not report a default branch the remote deleted after the clone", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-origin-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["branch", "-M", "development"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "origin", "development", "development:main"]);
+        yield* git(cwd, ["remote", "set-head", "origin", "development"]);
+        yield* git(remote, ["--git-dir=.", "symbolic-ref", "HEAD", "refs/heads/main"]);
+        yield* git(cwd, ["push", "origin", "--delete", "development"]);
+        yield* git(cwd, ["fetch", "--prune", "origin"]);
+
+        const defaultBranch = yield* (yield* GitVcsDriver.GitVcsDriver).resolveDefaultBranchName(
+          cwd,
+          "origin",
+        );
+
+        assert.notEqual(defaultBranch, "development");
+      }),
+    );
+
     it.effect.each(["checkout", "bare-backed worktree"] as const)(
       "uses the only remote's HEAD for default-branch detection without origin in a %s",
       (layout) =>
