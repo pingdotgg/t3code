@@ -151,6 +151,17 @@ it("waits for T3 to remap and cancels that wait when disabled", async () => {
   expect(shell.mapped.size).toBe(0);
 });
 
+it("cancels every overlapping activation wait when disabled", async () => {
+  const { feedback } = begin();
+  const waits = [feedback.activate(":1.23", "T3"), feedback.activate(":1.23", "T3")];
+  const settled = Promise.allSettled(waits);
+  expect(shell.mapped.size).toBe(2);
+  feedback.dispose();
+  expect(shell.mapped.size).toBe(0);
+  expect(shell.timers.size).toBe(0);
+  expect((await settled).map(({ status }) => status)).toEqual(["rejected", "rejected"]);
+});
+
 it("rejects another sender and locked-session activation", async () => {
   shell.windows = [target()];
   const { feedback } = begin();
