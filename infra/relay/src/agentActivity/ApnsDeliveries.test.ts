@@ -1217,6 +1217,42 @@ describe("fast completion delivery", () => {
       ).toBe(true);
     }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs, currentTargets: [device] })));
   });
+  it.effect("alerts a fresh completion right after Live Activity registration", () => {
+    const queuedJobs: SignedApnsDeliveryJob[] = [];
+    const completed = { ...state, phase: "completed" as const, headline: "Done" };
+    const done = {
+      ...aggregate,
+      activeCount: 0,
+      activities: [{ ...aggregate.activities[0]!, phase: "completed" as const, status: "Done" }],
+    };
+    // Registration resets the stored baseline, as it does on every app foreground.
+    const device = { ...target, push_token: "push-token", last_aggregate_json: null };
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.sendForTarget({
+        target: device,
+        aggregate: done,
+        state: completed,
+        nowMs: 0,
+      });
+      expect(
+        queuedJobs.some(
+          (job) =>
+            job.payload.kind === "push_notification" ||
+            (job.payload.alert !== null && job.payload.alert !== undefined),
+        ),
+      ).toBe(true);
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts: [],
+          queuedJobs,
+          currentTargets: [device],
+          activityStates: [completed],
+        }),
+      ),
+    );
+  });
   it.effect("replays a newly visible completion without alerting", () => {
     const queuedJobs: SignedApnsDeliveryJob[] = [];
     const done = {
