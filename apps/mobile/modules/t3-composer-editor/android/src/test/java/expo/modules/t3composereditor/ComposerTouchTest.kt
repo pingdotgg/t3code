@@ -38,65 +38,27 @@ class ComposerTouchTest {
     shadowOf(Looper.getMainLooper()).idle()
   }
 
-  private fun touch(action: Int, x: Float, y: Float) {
-    val pointer = MotionEvent.PointerProperties().apply {
-      id = 0
-      toolType = MotionEvent.TOOL_TYPE_FINGER
-    }
-    val coords = MotionEvent.PointerCoords().apply {
-      this.x = x
-      this.y = y
-      pressure = 1f
-      size = 1f
-    }
-    val event = MotionEvent.obtain(
-      downTime,
-      SystemClock.uptimeMillis(),
-      action,
-      1,
-      arrayOf(pointer),
-      arrayOf(coords),
-      0,
-      0,
-      1f,
-      1f,
-      0,
-      0,
-      InputDevice.SOURCE_TOUCHSCREEN,
-      0,
-    )
-    editor.dispatchTouchEvent(event)
-    event.recycle()
-  }
-
-  // A second finger lands while the first is still down, so the event carries both pointers.
-  private fun secondFingerDown(firstX: Float, firstY: Float, x: Float, y: Float) {
-    val pointers = Array(2) { id ->
+  // Each pair is one finger's position, in pointer id order.
+  private fun touch(action: Int, vararg fingers: Pair<Float, Float>) {
+    val pointers = Array(fingers.size) { id ->
       MotionEvent.PointerProperties().apply {
         this.id = id
         toolType = MotionEvent.TOOL_TYPE_FINGER
       }
     }
-    val coords = arrayOf(
+    val coords = Array(fingers.size) { index ->
       MotionEvent.PointerCoords().apply {
-        this.x = firstX
-        this.y = firstY
+        x = fingers[index].first
+        y = fingers[index].second
         pressure = 1f
         size = 1f
-      },
-      MotionEvent.PointerCoords().apply {
-        this.x = x
-        this.y = y
-        pressure = 1f
-        size = 1f
-      },
-    )
-    val action = MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT)
+      }
+    }
     val event = MotionEvent.obtain(
       downTime,
       SystemClock.uptimeMillis(),
       action,
-      2,
+      fingers.size,
       pointers,
       coords,
       0,
@@ -124,8 +86,8 @@ class ComposerTouchTest {
     assertNotEquals(0, bottom)
     val slop = ViewConfiguration.get(activity).scaledTouchSlop
 
-    touch(MotionEvent.ACTION_DOWN, 40f, 250f)
-    touch(MotionEvent.ACTION_MOVE, 40f, 250f - slop * 3)
+    touch(MotionEvent.ACTION_DOWN, 40f to 250f)
+    touch(MotionEvent.ACTION_MOVE, 40f to 250f - slop * 3)
     holdPastLongPressTimeout()
 
     assertEquals(bottom, editor.scrollY)
@@ -139,9 +101,13 @@ class ComposerTouchTest {
     val slop = ViewConfiguration.get(activity).scaledTouchSlop
     val movedY = 250f - slop * 3
 
-    touch(MotionEvent.ACTION_DOWN, 40f, 250f)
-    touch(MotionEvent.ACTION_MOVE, 40f, movedY)
-    secondFingerDown(40f, movedY, 120f, 250f)
+    touch(MotionEvent.ACTION_DOWN, 40f to 250f)
+    touch(MotionEvent.ACTION_MOVE, 40f to movedY)
+    touch(
+      MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+      40f to movedY,
+      120f to 250f,
+    )
     holdPastLongPressTimeout()
 
     assertEquals(bottom, editor.scrollY)
@@ -152,7 +118,7 @@ class ComposerTouchTest {
   fun stillLongPressSelectsAWord() {
     scrolledToBottom()
 
-    touch(MotionEvent.ACTION_DOWN, 40f, 250f)
+    touch(MotionEvent.ACTION_DOWN, 40f to 250f)
     holdPastLongPressTimeout()
 
     assertNotEquals(editor.selectionStart, editor.selectionEnd)
