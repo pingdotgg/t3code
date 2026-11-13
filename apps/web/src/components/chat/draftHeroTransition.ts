@@ -1,3 +1,5 @@
+import { flushSync } from "react-dom";
+
 export const DRAFT_HERO_TRANSITION_ANIMATION_ID = "t3-draft-hero-transition";
 export const DRAFT_HERO_TRANSITION_EASING = "cubic-bezier(0.4, 0, 0.2, 1)";
 export const MOBILE_COMPOSER_VIEW_TRANSITION_NAME = "t3-mobile-composer";
@@ -35,12 +37,18 @@ export async function waitForDraftHeroTransition(): Promise<void> {
   ]);
 }
 
-export async function runMobileComposerTransition(
-  update: () => void | Promise<void>,
+/**
+ * Applies a composer layout change. On a mobile viewport with motion allowed, `update` runs once
+ * inside a view transition, committed synchronously so the new snapshot shows it, and the returned
+ * promise resolves once it has run. Otherwise `update` runs inline with no flush, so its state
+ * updates batch with the caller's, and nothing is returned. A failing update never blocks the caller.
+ */
+export function runMobileComposerTransition(
+  update: () => void,
   options: { active: boolean; durationMs: number },
-): Promise<void> {
+): Promise<void> | undefined {
   if (typeof document === "undefined" || typeof window === "undefined") {
-    await update();
+    runInlineUpdate(update);
     return;
   }
 
@@ -48,46 +56,58 @@ export async function runMobileComposerTransition(
   const mobileViewport = window.matchMedia?.("(max-width: 639px)").matches ?? false;
   const prefersReducedMotion =
     window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-  if (
-    !options.active ||
-    !mobileViewport ||
-    prefersReducedMotion ||
-    !transitionDocument.startViewTransition
-  ) {
-    await update();
+  const startViewTransition = transitionDocument.startViewTransition?.bind(transitionDocument);
+  if (!options.active || !mobileViewport || prefersReducedMotion || !startViewTransition) {
+    runInlineUpdate(update);
     return;
   }
 
-  let updateStarted = false;
-  const runUpdate = async () => {
-    if (updateStarted) return;
-    updateStarted = true;
-    await update();
-  };
-  let transitionFinished: Promise<void> | null = null;
-  transitionDocument.documentElement.style.setProperty(
-    MOBILE_COMPOSER_TRANSITION_DURATION_PROPERTY,
-    `${String(options.durationMs)}ms`,
-  );
-  transitionDocument.documentElement.dataset.mobileComposerRouteTransition = "true";
+  return new Promise<void>((resolveUpdated) => {
+    let updateStarted = false;
+    const runUpdate = () => {
+      if (updateStarted) return;
+      updateStarted = true;
+      try {
+        flushSync(update);
+      } finally {
+        resolveUpdated();
+      }
+    };
+    void runViewTransition(startViewTransition, runUpdate, options.durationMs);
+  });
+}
+
+function runInlineUpdate(update: () => void) {
   try {
-    const transition = transitionDocument.startViewTransition(runUpdate);
+    update();
+  } catch {}
+}
+
+async function runViewTransition(
+  startViewTransition: (update: () => void) => ComposerViewTransition,
+  runUpdate: () => void,
+  durationMs: number,
+) {
+  const root = document.documentElement;
+  let transitionFinished: Promise<void> | null = null;
+  root.style.setProperty(MOBILE_COMPOSER_TRANSITION_DURATION_PROPERTY, `${String(durationMs)}ms`);
+  root.dataset.mobileComposerRouteTransition = "true";
+  try {
+    const transition = startViewTransition(runUpdate);
     transitionFinished = transition.finished.catch(() => undefined);
     activeMobileComposerTransition = transitionFinished;
     try {
       await transition.finished;
     } catch {
-      await runUpdate();
+      runInlineUpdate(runUpdate);
     }
   } catch {
-    await runUpdate();
+    runInlineUpdate(runUpdate);
   } finally {
     if (activeMobileComposerTransition === transitionFinished) {
       activeMobileComposerTransition = null;
     }
-    delete transitionDocument.documentElement.dataset.mobileComposerRouteTransition;
-    transitionDocument.documentElement.style.removeProperty(
-      MOBILE_COMPOSER_TRANSITION_DURATION_PROPERTY,
-    );
+    delete root.dataset.mobileComposerRouteTransition;
+    root.style.removeProperty(MOBILE_COMPOSER_TRANSITION_DURATION_PROPERTY);
   }
 }
