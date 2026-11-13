@@ -105,6 +105,7 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
         engine: Some(engine.clone()),
         providers,
         environment: Some(environment.clone()),
+        ..Deps::default()
     };
     let state = AppState {
         table: Arc::new(method_table(&deps)),

@@ -14,7 +14,7 @@ mod orchestration;
 pub mod provider;
 pub mod server;
 mod terminal;
-mod vcs;
+pub mod vcs;
 
 /// Services handlers may use. `None` until the owning track wires it in `main.rs`.
 #[derive(Clone, Default)]
@@ -23,6 +23,7 @@ pub struct Deps {
     pub providers: Vec<Arc<dyn Provider>>,
     /// Set by `main.rs`; without it the server config streams are not registered.
     pub environment: Option<Arc<Environment>>,
+    pub vcs: vcs::VcsShared,
 }
 
 pub fn register_all(table: &mut MethodTable, deps: &Deps) {
