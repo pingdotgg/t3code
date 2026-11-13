@@ -919,6 +919,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
     initial: Record<string, string>,
     configSchema: AnyProviderDriver["configSchema"] = Schema.Unknown,
     config: unknown = {},
+    otherInstances: ProviderInstanceConfigMap = {},
   ) {
     const vault = new Map(Object.entries(initial));
     const reads: Array<ReadonlyArray<string>> = [];
@@ -963,6 +964,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
           { name: "BASE_URL", value: "https://example.test", sensitive: false },
         ],
       },
+      ...otherInstances,
     };
     const makeGated = makeProviderInstanceRegistry({ drivers: [driver], configMap }).pipe(
       Effect.provide(resolver),
@@ -1100,6 +1102,42 @@ describe("ProviderInstanceRegistry secret environment", () => {
       expect(fixture.created).toHaveLength(1);
     });
   });
+
+  it.effect(
+    "rebuilds a driver's live instances with the secrets they hold, reading no vault",
+    () => {
+      const plain = ProviderInstanceId.make("fake_plain");
+      const fixture = setup(
+        { [secret.reference]: "sk-live" },
+        Schema.Unknown,
+        {},
+        {
+          [plain]: { driver: driverKind },
+        },
+      );
+      return Effect.gen(function* () {
+        const { registry, mutator } = yield* fixture.makeGated;
+
+        // The vault is still locked: only the instance that is running restarts.
+        yield* mutator.rebuildDriver(driverKind);
+        expect(fixture.created).toEqual([[], []]);
+        expect(fixture.reads).toEqual([]);
+        expect((yield* registry.listUnavailable).map((entry) => entry.unavailableReason)).toEqual([
+          "Reading secrets…",
+        ]);
+
+        const changes = yield* registry.subscribeChanges;
+        yield* Deferred.succeed(fixture.gate, undefined);
+        yield* PubSub.take(changes);
+        const reads = fixture.reads.length;
+        yield* mutator.rebuildDriver(driverKind);
+        expect(fixture.reads).toHaveLength(reads);
+        expect(fixture.created.slice(-2)).toEqual([fixture.created[2], []]);
+        expect(fixture.created[2]?.[0]?.value).toBe("sk-live");
+        expect(yield* registry.getInstance(instanceId)).toBeDefined();
+      });
+    },
+  );
 
   it.effect("starts without waiting for secrets to be read", () => {
     const fixture = setup({ [secret.reference]: "sk-live" });

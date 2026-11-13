@@ -175,6 +175,8 @@ export class DesktopTelemetryReceiver extends Context.Service<
       never,
       Scope.Scope
     >;
+    /** Emits after each desktop shell snapshot has been applied to the host environment. */
+    readonly subscribeShellEnvironment: Effect.Effect<Stream.Stream<void>, never, Scope.Scope>;
     readonly health: Effect.Effect<DesktopTelemetryReceiverHealth>;
     readonly subscribeHealth: Effect.Effect<
       {
@@ -418,6 +420,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
   );
   const changes = yield* PubSub.sliding<DesktopHostTelemetrySnapshot>(8);
   const healthChanges = yield* PubSub.sliding<DesktopTelemetryReceiverHealth>(4);
+  const shellEnvironmentChanges = yield* PubSub.sliding<void>(1);
   const latestUpdateReport = yield* Ref.make(Option.none<DesktopUpdateStatusReport>());
   const updateReportChanges = yield* PubSub.sliding<DesktopUpdateStatusReport>(16);
   const controlMutex = yield* Semaphore.make(1);
@@ -597,7 +600,10 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
         }
 
         if (message.type === "shellEnvironment") {
-          return recordContact.pipe(Effect.andThen(applyShellSnapshot(message)));
+          return recordContact.pipe(
+            Effect.andThen(applyShellSnapshot(message)),
+            Effect.andThen(PubSub.publish(shellEnvironmentChanges, undefined)),
+          );
         }
 
         if (message.type === "desktopUpdateStatus") {
@@ -714,6 +720,9 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
         };
       }),
     ),
+    subscribeShellEnvironment: PubSub.subscribe(shellEnvironmentChanges).pipe(
+      Effect.map(Stream.fromSubscription),
+    ),
     health: Ref.get(health),
     subscribeHealth: subscribeBeforeSnapshotWithoutMutex(healthChanges, Ref.get(health)),
     setDiagnosticsDemand,
@@ -775,6 +784,8 @@ export const layerTest = (
             changes,
           })),
         ),
+      subscribeShellEnvironment:
+        overrides.subscribeShellEnvironment ?? Effect.succeed(Stream.empty),
       health,
       subscribeHealth:
         overrides.subscribeHealth ??

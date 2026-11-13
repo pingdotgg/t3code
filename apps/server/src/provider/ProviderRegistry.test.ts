@@ -67,6 +67,7 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import * as ProviderInstallationGate from "./ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistryHydration from "./ProviderInstanceRegistryHydration.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
+import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -3556,6 +3557,7 @@ it.layer(
               Layer.provide(
                 Layer.mergeAll(
                   PortScanner.layerTest,
+                  DesktopTelemetryReceiver.layerTest(),
                   ProviderInstallationGate.layer,
                   SqlitePersistence.layerMemory,
                 ),
@@ -3682,6 +3684,7 @@ it.layer(
               Layer.provide(
                 Layer.mergeAll(
                   PortScanner.layerTest,
+                  DesktopTelemetryReceiver.layerTest(),
                   ProviderInstallationGate.layer,
                   SqlitePersistence.layerMemory,
                 ),
@@ -3825,6 +3828,7 @@ it.layer(
           Layer.provide(
             Layer.mergeAll(
               PortScanner.layerTest,
+              DesktopTelemetryReceiver.layerTest(),
               ProviderInstallationGate.layer,
               SqlitePersistence.layerMemory,
             ),

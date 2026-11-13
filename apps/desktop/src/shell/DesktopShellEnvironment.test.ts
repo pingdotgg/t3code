@@ -211,12 +211,15 @@ describe("DesktopShellEnvironment", () => {
               SSH_AUTH_SOCK: "/old-session.sock",
               JAVA_HOME: "/old/java",
               SSL_CERT_FILE: "/old/cert.pem",
+              CLAUDE_CODE_OAUTH_TOKEN: "old-token",
             }),
         });
         const cachePath = `${stateDir}/shell-environment-cache.json`;
         const cached = yield* fs.readFileString(cachePath).pipe(Effect.flatMap(decodeCache));
         assert.equal(cached.environment.PATH, "/old/bin:/usr/bin");
         assert.notProperty(cached.environment, "SSH_AUTH_SOCK");
+        // A cached credential would come back on a launch whose profile no longer exports it.
+        assert.notProperty(cached.environment, "CLAUDE_CODE_OAUTH_TOKEN");
         const started = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
         const env: NodeJS.ProcessEnv = {
@@ -253,6 +256,7 @@ describe("DesktopShellEnvironment", () => {
               yield* service.installIntoProcess;
               assert.equal(env.PATH, "/old/bin:/usr/bin:/launcher/bin");
               assert.equal(env.SSH_AUTH_SOCK, "/current-session.sock");
+              assert.isUndefined(env.CLAUDE_CODE_OAUTH_TOKEN);
               const replay = yield* Stream.runHead(service.updates);
               assert.isTrue(Option.isSome(replay));
               if (Option.isSome(replay))
@@ -554,7 +558,7 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
-  it.effect("hydrates missing CA trust variables from the login shell", () =>
+  it.effect("hydrates missing CA trust variables and the Claude token from the login shell", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
         SHELL: "/bin/zsh",
@@ -571,12 +575,14 @@ describe("DesktopShellEnvironment", () => {
             SSL_CERT_FILE: "/opt/zerobrew/etc/ca-certificates/cacert.pem",
             SSL_CERT_DIR: "/opt/zerobrew/etc/ca-certificates",
             NODE_EXTRA_CA_CERTS: "/Users/me/corp-root.pem",
+            CLAUDE_CODE_OAUTH_TOKEN: "profile-token",
           }),
       });
 
       assert.equal(env.SSL_CERT_FILE, "/opt/zerobrew/etc/ca-certificates/cacert.pem");
       assert.equal(env.SSL_CERT_DIR, "/etc/ssl/certs");
       assert.equal(env.NODE_EXTRA_CA_CERTS, "/Users/me/corp-root.pem");
+      assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "profile-token");
     }),
   );
 

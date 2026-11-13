@@ -1,5 +1,6 @@
 /** Reconcile closes removed/replaced scopes before creating replacements: at most one live instance per id. */
 import type {
+  ProviderDriverKind,
   ProviderInstanceConfigMap,
   ProviderInstanceId,
   SecretReference,
@@ -11,6 +12,11 @@ export interface ProviderInstanceRegistryMutatorShape {
   readonly reconcile: (configMap: ProviderInstanceConfigMap) => Effect.Effect<void>;
   /** Re-reads the secrets of every instance, or one, and rebuilds those whose secrets changed. */
   readonly reloadSecrets: (instanceId?: ProviderInstanceId) => Effect.Effect<void>;
+  /**
+   * Rebuilds the live instances of `driver` with the secrets they hold, for host environment they
+   * copied when built. It reads no vault and leaves unavailable instances as they are.
+   */
+  readonly rebuildDriver: (driver: ProviderDriverKind) => Effect.Effect<void>;
   /**
    * Rebuilds the instances that read `reference` with `value`, keeping the other secrets a live
    * instance holds, and returns them. A parked instance reads its other secrets from the resolver.

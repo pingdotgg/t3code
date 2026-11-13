@@ -111,6 +111,7 @@ const LOGIN_SHELL_ENV_NAMES = [
   "T3CODE_GITHUB_APP_CLIENT_ID",
   "__MISE_DIFF",
   "JAVA_HOME",
+  "CLAUDE_CODE_OAUTH_TOKEN",
 ] as const;
 const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
 const LOCALE_ENV_NAMES = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
@@ -522,6 +523,8 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       "JAVA_HOME",
       "T3CODE_TELEMETRY_ENABLED",
       "T3CODE_GITHUB_APP_CLIENT_ID",
+      // `claude setup-token` users export this from a profile that a Dock launch never reads.
+      "CLAUDE_CODE_OAUTH_TOKEN",
     ] as const) {
       if (!config.env[name] && shellEnvironment[name]) {
         config.env[name] = shellEnvironment[name];
@@ -601,6 +604,7 @@ const ShellEnvironmentCache = Schema.fromJsonString(
 const encodeCacheKey = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 const decodeCache = Schema.decodeUnknownEffect(ShellEnvironmentCache);
 const encodeCache = Schema.encodeEffect(ShellEnvironmentCache);
+// Credentials stay out: a replayed token would outlive its removal from the profile.
 const CACHED_ENV_NAMES = [
   "PATH",
   "__MISE_DIFF",
