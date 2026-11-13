@@ -49,7 +49,9 @@ cloud, or remote host), run `vp run mobile:install <ios|android> --session <s>
 gateway refuses the install, wrongly saying agent-device is too old. It installs
 the cached build into that session (`--abi arm64-v8a` for an ARM Android device;
 pool Android emulators are x86_64, the default; `--metro <url>` also opens it
-against Metro).
+against Metro). Without a cached build for this checkout it builds first, which can
+outlast the lease, so run `vp run mobile:install <ios|android> --prepare` (with
+the same `--abi`) before you open the device.
 
 Start `vp run dev:client` from `apps/mobile`, or reuse a healthy Metro belonging
 to this checkout. Open its printed development-client URL with AgentDevice
