@@ -1,4 +1,5 @@
 import {
+  broadestRuntimeModeWithin,
   isRuntimeModeAbove,
   managedRuntimeModeCeilingMessage,
   ModelSelection,
@@ -92,11 +93,9 @@ function providerRuntimeMode(
   runtimeMode: RuntimeMode,
   supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined,
 ): RuntimeMode {
-  return supportedRuntimeModes === undefined ||
-    supportedRuntimeModes.length === 0 ||
-    supportedRuntimeModes.includes(runtimeMode)
+  return supportedRuntimeModes === undefined || supportedRuntimeModes.length === 0
     ? runtimeMode
-    : "approval-required";
+    : (broadestRuntimeModeWithin(runtimeMode, supportedRuntimeModes) ?? "approval-required");
 }
 
 const refuseAboveCeiling = (
