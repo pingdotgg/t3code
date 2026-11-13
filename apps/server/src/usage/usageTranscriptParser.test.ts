@@ -105,7 +105,7 @@ const captureWarnings = (warnings: unknown[]) =>
   );
 
 describe("makeTranscriptParser", () => {
-  it("loads each driver's own transcript format in workers", () => {
+  it("gives workers every built-in driver's transcript format", () => {
     for (const driver of BUILT_IN_USAGE_DRIVERS) {
       if (driver.usage?.kind !== "transcripts") continue;
       assert.strictEqual(TRANSCRIPT_FORMAT_MAP.get(driver.usage.provider), driver.usage.format);
@@ -131,7 +131,7 @@ describe("makeTranscriptParser", () => {
         const parser = yield* makeTranscriptParser.pipe(
           Effect.provideService(HostProcess.Environment, preload(recordPid(log))),
         );
-        const read = (path: string, format: "codex" | "claude", resumeFrom?: never) =>
+        const read = (path: string, format: "codex" | "claude") =>
           Effect.promise(() => NodeFSP.stat(path)).pipe(
             Effect.flatMap(({ size }) =>
               parser.read({
@@ -139,7 +139,7 @@ describe("makeTranscriptParser", () => {
                 size,
                 provider: format,
                 format: TRANSCRIPT_FORMATS[format],
-                resumeFrom,
+                resumeFrom: undefined,
               }),
             ),
           );

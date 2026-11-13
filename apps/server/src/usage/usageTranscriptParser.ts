@@ -119,10 +119,10 @@ export const makeTranscriptParser = Effect.gen(function* () {
       },
     );
     return new Promise((resolve) => {
-      let markExited = () => {};
+      const exited = Promise.withResolvers<void>();
       const worker: Worker = {
         child,
-        exited: new Promise((resolveExit) => (markExited = resolveExit)),
+        exited: exited.promise,
         reply: undefined,
         idleTimer: undefined,
       };
@@ -138,7 +138,7 @@ export const makeTranscriptParser = Effect.gen(function* () {
         worker.reply = undefined;
         reply?.(undefined);
         resolve(undefined);
-        markExited();
+        exited.resolve();
       };
       const readyTimer = setTimeout(() => child.kill(), WORKER_READY_MS);
       readyTimer.unref();
