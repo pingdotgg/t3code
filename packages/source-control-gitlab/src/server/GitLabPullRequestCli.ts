@@ -1063,8 +1063,8 @@ export const make = Effect.gen(function* () {
 
   // A GitLab served below a URL prefix has that prefix in every web path, which is where a linked
   // merge request's repository comes from, and in no API project path. glab learns the prefix from
-  // `subfolder` or from a path on `api_host`. A path GitLab knows as written is used as written,
-  // so a real group named like the prefix keeps its projects.
+  // `subfolder` or from a path on `api_host`. A path starting with the prefix is the web path
+  // of the project below it; only when GitLab has none is it a group named like the prefix.
   const apiProjects = yield* Cache.makeWith(
     (key: string) => {
       const [cwd, host, repository] = JSON.parse(key) as [string, string, string];
@@ -1086,16 +1086,17 @@ export const make = Effect.gen(function* () {
           ) {
             return Effect.succeed(repository);
           }
+          const belowPrefix = repository.slice(prefix.length);
           return api({
             cwd,
             host,
-            path: `projects/${projectPath(repository)}?license=false`,
+            path: `projects/${projectPath(belowPrefix)}?license=false`,
           }).pipe(
-            Effect.as(repository),
+            Effect.as(belowPrefix),
             Effect.catchTags({
               GitLabCliCommandError: (error) =>
                 isVcsProcessExitError(error.cause) && error.cause.failureKind === "not-found"
-                  ? Effect.succeed(repository.slice(prefix.length))
+                  ? Effect.succeed(repository)
                   : Effect.fail(error),
             }),
           );

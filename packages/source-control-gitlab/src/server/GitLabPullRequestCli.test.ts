@@ -1340,10 +1340,10 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
   it.effect.each([
     {
-      name: "drops the installation prefix a web path carries when GitLab has no such project",
+      name: "drops the installation prefix a web path carries, also from a group named like it",
       host: "prefixed.example",
       settings: { subfolder: "gitlab" },
-      known: ["team/sub/project"],
+      known: ["team/sub/project", "gitlab/team/sub/project"],
       asked: "projects/team%2Fsub%2Fproject?license=false",
     },
     {
@@ -1354,10 +1354,10 @@ layer("GitLabPullRequestCli.layer", (it) => {
       asked: "projects/team%2Fsub%2Fproject?license=false",
     },
     {
-      name: "keeps a path GitLab knows as written, whose group is named like the prefix",
+      name: "keeps the path of a group named like the prefix when nothing is below the prefix",
       host: "grouped.example",
       settings: { subfolder: "/gitlab/" },
-      known: ["gitlab/team/sub/project", "team/sub/project"],
+      known: ["gitlab/team/sub/project"],
       asked: "projects/gitlab%2Fteam%2Fsub%2Fproject?license=false",
     },
     {
