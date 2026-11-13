@@ -543,6 +543,7 @@ async fn ws(
         context: CallContext {
             headers: Vec::new(),
             principal: Some(Arc::new(principal)),
+            ..CallContext::default()
         },
     };
     let table = state.table.clone();

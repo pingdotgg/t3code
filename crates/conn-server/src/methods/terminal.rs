@@ -4,29 +4,21 @@
 //! Inputs are checked against the contract's bounds here, as Effect's schema does in the T3
 //! server: a payload outside them is a defect, not a typed error.
 
-use std::{
-    future::Future,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-};
+use std::future::Future;
 
 use conn_contract::{
     TerminalAttachInput, TerminalAttachStreamEvent, TerminalClearInput, TerminalCloseInput,
     TerminalMetadataStreamEvent, TerminalOpenInput, TerminalResizeInput, TerminalWriteInput,
     to_json,
 };
-use conn_terminal::{
-    MetadataSubscription, Subscription, TerminalConfig, TerminalManager, ViewerId,
-};
+use conn_terminal::{MetadataSubscription, Subscription, TerminalConfig, TerminalManager};
 use serde::Serialize;
 use tokio::sync::mpsc;
 
 use super::Deps;
 use crate::{
     environment::CONTRACT_SERVER_VERSION,
-    table::{CallContext, Failure, ItemStream, MethodTable},
+    table::{Failure, ItemStream, MethodTable},
 };
 
 /// Values a stream may have waiting for the session. With at most 16 KiB of output per value,
@@ -59,7 +51,7 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             check_session(&input.thread_id, &input.terminal_id)?;
             check_grid(input.cols, input.rows)?;
             let sub = m
-                .attach(input, viewer(&ctx))
+                .attach(input, ctx.connection_id)
                 .map_err(|e| Failure::fail(&e))?;
             Ok(forward(sub))
         }
@@ -94,7 +86,7 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         async move {
             check_session(&input.thread_id, &input.terminal_id)?;
             check_grid(Some(input.cols), Some(input.rows))?;
-            m.resize(input, Some(viewer(&ctx)))
+            m.resize(input, Some(ctx.connection_id))
                 .map_err(|e| Failure::fail(&e))
         }
     });
@@ -125,16 +117,6 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             async move { Ok(forward(sub)) }
         },
     );
-}
-
-/// The connection a call came on. The session builds one `Principal` per socket, so its
-/// address names the connection while the socket lives; calls without one each get their own.
-fn viewer(ctx: &CallContext) -> ViewerId {
-    static ANONYMOUS: AtomicU64 = AtomicU64::new(1 << 63);
-    match &ctx.principal {
-        Some(principal) => Arc::as_ptr(principal) as usize as u64,
-        None => ANONYMOUS.fetch_add(1, Ordering::Relaxed),
-    }
 }
 
 /// A terminal or metadata subscription.
@@ -206,7 +188,7 @@ fn check_grid(cols: Option<i64>, rows: Option<i64>) -> Result<(), Failure> {
 mod tests {
     //! The terminal methods through a real session, with a real shell, as the client sees them.
 
-    use std::time::Duration;
+    use std::{sync::Arc, time::Duration};
 
     use conn_wire::ack_window;
     use serde_json::{Value, json};

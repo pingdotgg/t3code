@@ -59,6 +59,7 @@ fn with_scopes(scopes: &[&str]) -> CallContext {
             scopes: scopes.iter().map(|s| (*s).to_owned()).collect(),
             expires_at_ms: u64::MAX,
         })),
+        ..CallContext::default()
     }
 }
 

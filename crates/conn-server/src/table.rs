@@ -20,6 +20,9 @@ use crate::scopes;
 /// What a handler knows about its call. Grows with auth (track a) without changing handlers.
 #[derive(Clone, Debug, Default)]
 pub struct CallContext {
+    /// Names the WebSocket connection the call came on, unique per process. `session::run`
+    /// sets it; it is zero for a call made outside a session (tests, fixtures).
+    pub connection_id: u64,
     /// The request headers merged with the WebSocket upgrade headers, as Effect does.
     pub headers: Vec<(String, String)>,
     /// The session that authenticated the WebSocket upgrade.

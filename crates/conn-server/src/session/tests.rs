@@ -416,6 +416,34 @@ async fn large_replies_go_out_in_parts_when_asked() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn each_connection_has_its_own_id_for_all_its_calls() {
+    let whoami = || {
+        let mut t = MethodTable::new();
+        t.unary("server.getConfig", |ctx, _: Value| async move {
+            Ok(json!(ctx.connection_id))
+        });
+        t
+    };
+    let mut ids = Vec::new();
+    for mut client in [
+        Client::connect(whoami(), options()),
+        Client::connect(whoami(), options()),
+    ] {
+        client.request(1, "server.getConfig", json!({}));
+        client.request(2, "server.getConfig", json!({}));
+        let values: Vec<u64> = client
+            .frames()
+            .await
+            .iter()
+            .map(|f| f["exit"]["value"].as_u64().unwrap())
+            .collect();
+        assert_eq!(values[0], values[1]);
+        ids.push(values[0]);
+    }
+    assert!(ids[0] != 0 && ids[1] != 0 && ids[0] != ids[1], "{ids:?}");
+}
+
+#[tokio::test(start_paused = true)]
 async fn joins_client_parts_and_closes_on_oversized_messages() {
     let mut table = MethodTable::new();
     table.unary("server.probe", |_, _: Value| async { Ok(json!({})) });
