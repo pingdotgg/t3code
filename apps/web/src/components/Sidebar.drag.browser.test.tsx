@@ -51,8 +51,11 @@ it("keeps the title when dragging a search result from a collapsed folder", asyn
   });
   const folder = page.getByRole("button", { name: /^render/ });
   await expect.element(folder).toHaveAttribute("aria-expanded", "true");
+  // A removed row fades out as a clone without its test id, so match the live row only.
+  const secondRow = page.getByTestId("sidebar-row-folder").filter({ hasText: second.title });
+  await expect.element(secondRow).toBeInTheDocument();
   await userEvent.click(folder);
-  await expect.element(page.getByText(second.title, { exact: true })).not.toBeInTheDocument();
+  await expect.element(secondRow).not.toBeInTheDocument();
   await userEvent.fill(page.getByRole("combobox", { name: "Search threads" }), "search-target");
   const result = page.getByRole("option", { name: /Thread search-target/ });
   await expect.element(result).toBeVisible();
