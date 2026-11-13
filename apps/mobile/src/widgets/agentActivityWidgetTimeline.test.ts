@@ -5,6 +5,7 @@ import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay"
 
 import {
   AGENT_ACTIVITY_WIDGET_STALE_AFTER_MS,
+  agentActivityWidgetSnapshot,
   agentActivityWidgetTimeline,
 } from "./agentActivityWidgetTimeline";
 
@@ -68,5 +69,38 @@ describe("agentActivityWidgetTimeline", () => {
 
     expect(timeline).toHaveLength(1);
     expect(timeline[0]?.props.activities[0]?.phase).toBe("failed");
+  });
+
+  it("leads the Android snapshot with the thread that needs the user and carries the stale rows", () => {
+    const snapshot = agentActivityWidgetSnapshot(
+      {
+        kind: "snapshot",
+        aggregate: aggregate([
+          row("completed", "Done"),
+          row("running", "Working"),
+          row("waiting_for_approval", "Approval"),
+        ]),
+      },
+      now,
+    );
+
+    expect(snapshot.activities.map((entry) => entry.phase)).toEqual([
+      "waiting_for_approval",
+      "running",
+      "completed",
+    ]);
+    expect(snapshot.stale?.at).toBe(now + AGENT_ACTIVITY_WIDGET_STALE_AFTER_MS);
+    expect(snapshot.stale?.activities.map((entry) => entry.status)).toEqual([
+      "Out of date",
+      "Out of date",
+      "Done",
+    ]);
+  });
+
+  it("gives the Android snapshot no stale rows when nothing is in flight", () => {
+    const snapshot = agentActivityWidgetSnapshot({ kind: "signed-out" }, now);
+
+    expect(snapshot.subtitle).toBe("Sign in to T3 Connect to see agents");
+    expect(snapshot.stale).toBeUndefined();
   });
 });
