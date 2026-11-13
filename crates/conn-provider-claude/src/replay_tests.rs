@@ -9,6 +9,7 @@ use conn_contract::{from_json, to_json};
 use conn_provider::{ProviderEvent, RuntimeRequestResponse, TurnInput, TurnMessage};
 use serde_json::{Value, json};
 
+use crate::DRIVER;
 use crate::ids::{self, FixedEnv};
 use crate::mapper::{Mapper, Out};
 use crate::protocol::Inbound;
@@ -25,7 +26,7 @@ struct Replay {
 
 fn provider_thread(native: &str) -> Value {
     json!({
-        "id": ids::provider_thread_id(native), "driver": "claudeAgent",
+        "id": ids::provider_thread_id(DRIVER, native), "driver": "claudeAgent",
         "providerInstanceId": "claudeAgent", "providerSessionId": SESSION,
         "appThreadId": THREAD, "ownerNodeId": null,
         "nativeThreadRef": {"driver": "claudeAgent", "nativeId": native, "strength": "strong"},

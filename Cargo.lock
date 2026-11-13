@@ -192,6 +192,7 @@ version = "0.1.0"
 dependencies = [
  "conn-contract",
  "conn-provider",
+ "conn-provider-support",
  "serde",
  "serde_json",
  "sha2",

@@ -548,7 +548,10 @@ async fn live_idle_close_then_resume() {
     // The live test waits on the real idle timer; nothing else can signal it.
     tokio::time::sleep(Duration::from_secs(5)).await;
     assert_eq!(session.live_pid(), None, "the idle child was closed");
-    assert!(!crate::process::pid_alive(first), "the idle child exited");
+    assert!(
+        !conn_provider_support::process::pid_alive(first),
+        "the idle child exited"
+    );
     let seen = run_turn(
         &session,
         &mut events,
