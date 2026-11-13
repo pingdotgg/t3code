@@ -111,6 +111,7 @@ import {
   FILE_LINK_REVEAL_ATTRIBUTE,
   FILE_LINK_REVEAL_UNSAFE_CSS,
   FILE_SURFACE_SUBHEADER_CLASS,
+  FilePrintAction,
   FileSurfaceAction,
   FileSurfaceFailure,
   FileSurfaceLoading,
@@ -1260,6 +1261,20 @@ export default function FilePreviewPanel({
       : relativePath && attachment === undefined
         ? resolvePathLinkTarget(relativePath, cwd)
         : null;
+  const printResource =
+    previewPath !== null && absolutePath !== null && (isImage || isPdf)
+      ? workspaceAssetResource({
+          kind: "media-file",
+          threadRef,
+          draft,
+          workspaceRoot: cwd,
+          absolutePath,
+        })
+      : null;
+  const resolvePrintUrl = useAssetUrlRefresh(
+    printResource === null ? null : environmentId,
+    printResource,
+  );
   const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
   // Mounting the file read under the workspace mutation id refetches it after each mutation.
   useAtomMount(
@@ -1411,6 +1426,13 @@ export default function FilePreviewPanel({
             >
               <WrapTextIcon className="size-3.5" />
             </FileSurfaceAction>
+          ) : null}
+          {printResource !== null && previewPath !== null ? (
+            <FilePrintAction
+              name={previewPath.split(/[\\/]/).at(-1) || previewPath}
+              kind={isPdf ? "pdf" : "image"}
+              resolveUrl={resolvePrintUrl}
+            />
           ) : null}
           {canOpenInBrowser ? (
             <FileSurfaceAction label="Open file in preview browser" onPress={handleOpenInBrowser}>

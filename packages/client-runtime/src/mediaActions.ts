@@ -12,4 +12,5 @@ export type MediaActionId =
   | "open-file"
   | "save"
   | "save-image"
-  | "copy-image";
+  | "copy-image"
+  | "print";

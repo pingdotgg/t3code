@@ -29,6 +29,7 @@ import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { downloadMedia, readMediaPng } from "./mediaContent";
+import { printMedia } from "./printMedia";
 
 export interface MediaActionSource {
   readonly kind: "image" | "video";
@@ -95,6 +96,9 @@ export function useMediaActions(source: MediaActionSource) {
   const save = async () => {
     await downloadMedia(await actionUrl(), mediaFileName(source));
   };
+  const print = async () => {
+    await printMedia(await actionUrl(), mediaFileName(source), "image");
+  };
   const copyImage = async () => {
     assertCanReadMedia();
     if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
@@ -107,7 +111,7 @@ export function useMediaActions(source: MediaActionSource) {
       new ClipboardItem({ "image/png": actionUrl().then(readMediaPng) }),
     ]);
   };
-  return { save, copyImage, canReadMedia, assertCanReadMedia };
+  return { save, copyImage, print, canReadMedia, assertCanReadMedia };
 }
 
 export function MediaActions({
@@ -119,7 +123,7 @@ export function MediaActions({
   children: ReactElement;
   showTooltip?: boolean;
 }) {
-  const { save, copyImage, canReadMedia, assertCanReadMedia } = useMediaActions(source);
+  const { save, copyImage, print, canReadMedia, assertCanReadMedia } = useMediaActions(source);
   const [tooltipOpen, setTooltipOpen] = useState(false);
   const menuOpen = useRef(false);
   const reference = source.reference;
@@ -156,6 +160,7 @@ export function MediaActions({
           label: "Copy image",
           disabled: unavailable || !canCopyImage,
         });
+        items.push({ id: "print", label: "Print image", disabled: unavailable });
       }
 
       const action = await api.contextMenu.show(items, position);
@@ -190,6 +195,10 @@ export function MediaActions({
           type: "success",
           title: action === "save" ? "Download started" : "Image copied",
         });
+      } else if (action === "print") {
+        progressToast = toastManager.add({ type: "loading", title: "Preparing image to print…" });
+        await print();
+        toastManager.close(progressToast);
       }
     });
     if (AsyncResult.isFailure(result)) {
