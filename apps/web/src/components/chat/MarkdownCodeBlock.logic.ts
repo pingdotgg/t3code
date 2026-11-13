@@ -10,6 +10,10 @@ export function extractFenceLanguage(className: string | undefined): string {
   return highlighterLanguageOf(match?.[1] ?? "text");
 }
 
+export function hasFenceLanguage(className: string | undefined): boolean {
+  return CODE_FENCE_LANGUAGE_REGEX.test(className ?? "");
+}
+
 export function highlighterLanguageOf(language: string): string {
   // Shiki doesn't bundle a gitignore grammar; ini is a close match.
   return language === "gitignore" ? "ini" : language;

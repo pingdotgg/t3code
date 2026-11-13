@@ -42,6 +42,7 @@ const THREAD_FIND_IGNORE_PROPS = {
 export function MarkdownCodeBlockFrame({
   as: Wrapper = "div",
   language,
+  labelLanguage = true,
   fenceTitle,
   theme,
   wrapped = true,
@@ -52,6 +53,8 @@ export function MarkdownCodeBlockFrame({
 }: {
   as?: React.ElementType;
   language: string;
+  /** False for a fence with no language, which highlights as "text" but names none. */
+  labelLanguage?: boolean;
   fenceTitle: string | null;
   theme: "light" | "dark";
   wrapped?: boolean;
@@ -79,6 +82,7 @@ export function MarkdownCodeBlockFrame({
             <MarkdownCodeBlockTitleContent
               fenceTitle={fenceTitle}
               language={language}
+              labelLanguage={labelLanguage}
               theme={theme}
             />
           </span>
@@ -93,10 +97,12 @@ export function MarkdownCodeBlockFrame({
 function MarkdownCodeBlockTitleContent({
   fenceTitle,
   language,
+  labelLanguage,
   theme,
 }: {
   fenceTitle: string | null;
   language: string;
+  labelLanguage: boolean;
   theme: "light" | "dark";
 }) {
   if (fenceTitle) {
@@ -108,8 +114,7 @@ function MarkdownCodeBlockTitleContent({
     );
   }
 
-  // Fences without a language highlight as "text"; a label would only echo that default.
-  if (language === "text") return null;
+  if (!labelLanguage) return null;
 
   const fileName = syntheticFileNameForLanguageId(language);
   if (!hasSpecificPierreIconForFileName(fileName)) {
@@ -132,6 +137,7 @@ function MarkdownCodeBlockTitleContent({
 export function MarkdownCodeBlock({
   code,
   language,
+  labelLanguage = true,
   fenceTitle,
   theme,
   onRunShellCommand,
@@ -143,6 +149,7 @@ export function MarkdownCodeBlock({
 }: {
   code: string;
   language: string;
+  labelLanguage?: boolean;
   fenceTitle: string | null;
   theme: "light" | "dark";
   onRunShellCommand?: ((command: string) => void) | undefined;
@@ -217,6 +224,7 @@ export function MarkdownCodeBlock({
   return (
     <MarkdownCodeBlockFrame
       language={language}
+      labelLanguage={labelLanguage}
       fenceTitle={fenceTitle}
       theme={theme}
       wrapped={wrapped}
