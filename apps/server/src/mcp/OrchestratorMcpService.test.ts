@@ -4024,6 +4024,8 @@ describe("OrchestratorMcpService thread list", () => {
         snoozed: true,
       });
       assert.equal(listed.projectId, null);
+      // A list without environmentId must say which environment it covers.
+      assert.propertyVal(listed, "environmentId", client.environmentId);
       assert.deepStrictEqual(
         listed.threads.map((thread) => [thread.threadId, thread.projectId]),
         [
