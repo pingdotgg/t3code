@@ -1869,3 +1869,95 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
+
+// 2026-07-28 tools/list may vary with authorization, never with earlier requests on the connection.
+it.effect("keeps a 2026-07-28 deferring client's tool list independent of tool_search", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const token = "modernDeferringToken";
+      const scope: McpInvocationContext.McpThreadInvocationScope = {
+        environmentId,
+        requestNamespace: token,
+        thread: {
+          threadId: ThreadId.make("thread-modern"),
+          providerSessionId: token,
+          providerInstanceId: ProviderInstanceId.make("copilot"),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+      const ProbeToolkit = Toolkit.make(
+        Tool.make("schema_probe", {
+          description: "Synthetic probe.",
+          success: Schema.Struct({ ok: Schema.Boolean }),
+        }),
+      );
+      const serverLayer = McpHttpServer.layerMcpTransport(
+        Layer.mergeAll(
+          McpHttpServer.toolkitRegistration(
+            ProbeToolkit,
+            McpToolAccess.toLayer(ProbeToolkit, {
+              schema_probe: McpToolAccess.reads(() => Effect.succeed({ ok: true })),
+            }),
+          ),
+          McpHttpServer.layerToolSearch,
+        ),
+      ).pipe(
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(
+          Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+            resolve: (presented) => Effect.succeed(presented === token ? scope : undefined),
+          }),
+        ),
+      );
+      yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+        Layer.build,
+      );
+      const httpClient = yield* HttpClient.HttpClient;
+      const rpc = (
+        method: string,
+        params: { readonly name?: string; readonly arguments?: object },
+      ) =>
+        httpClient
+          .post("/mcp", {
+            headers: {
+              accept: "application/json, text/event-stream",
+              authorization: `Bearer ${token}`,
+              "t3-tool-exposure": "deferred",
+              "mcp-method": method,
+              "mcp-protocol-version": "2026-07-28",
+              ...(params.name === undefined ? {} : { "mcp-name": params.name }),
+            },
+            body: HttpBody.text(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                method,
+                params: {
+                  ...params,
+                  _meta: {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": { name: "probe", version: "1.0.0" },
+                  },
+                },
+              }),
+              "application/json",
+            ),
+          })
+          .pipe(Effect.flatMap((response) => response.json));
+      const listed = rpc("tools/list", {}).pipe(
+        Effect.map((body) =>
+          (body as { result: { tools: ReadonlyArray<{ name: string }> } }).result.tools
+            .map((tool) => tool.name)
+            .sort(),
+        ),
+      );
+
+      const before = yield* listed;
+      yield* rpc("tools/call", { name: "tool_search", arguments: { query: "schema_probe" } });
+      expect(yield* listed).toEqual(before);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
