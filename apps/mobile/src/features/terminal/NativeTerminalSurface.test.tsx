@@ -164,18 +164,18 @@ it.each([null, 1])(
       expect(mocks.write).not.toHaveBeenCalled();
       expect(mocks.initialBuffers).toEqual(["retained", "ined-new"]);
       // An older binary recreates its emulator unless the next buffer extends the last one.
-      let cleared = applyTerminalAttachStreamEvent(state, {
-        type: "output",
-        threadId: "thread",
-        terminalId: "term-1",
-        data: "\u001b[?1049h",
-      });
+      // The buffer is full here, so the erase must not push the earlier output out.
+      let cleared = applyTerminalAttachStreamEvent(
+        state,
+        { type: "output", threadId: "thread", terminalId: "term-1", data: "\u001b[?1049h" },
+        16,
+      );
       await harness.render(cleared);
-      cleared = applyTerminalAttachStreamEvent(cleared, {
-        type: "cleared",
-        threadId: "thread",
-        terminalId: "term-1",
-      });
+      cleared = applyTerminalAttachStreamEvent(
+        cleared,
+        { type: "cleared", threadId: "thread", terminalId: "term-1" },
+        16,
+      );
       await harness.render(cleared);
       expect(mocks.initialBuffers.slice(2)).toEqual([
         "ined-new\u001b[?1049h",

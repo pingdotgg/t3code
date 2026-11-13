@@ -256,7 +256,14 @@ const CLEAR_TERMINAL_TEXT = "\u001b[H\u001b[2J\u001b[3J";
 
 /** Earlier output stays retained so a replay from the start restores those modes. */
 function clearOutput(current: TerminalOutputState, maxBufferBytes: number): TerminalOutputState {
-  const cleared = appendOutput(current, CLEAR_TERMINAL_TEXT, maxBufferBytes);
+  // The erase rides over the budget: trimming here would evict the output that set those modes.
+  const cleared = appendOutput(
+    current,
+    CLEAR_TERMINAL_TEXT,
+    maxBufferBytes <= 0
+      ? maxBufferBytes
+      : Math.max(maxBufferBytes, current.retainedBytes + CLEAR_TERMINAL_TEXT.length),
+  );
   return { ...cleared, textStartOffset: cleared.nextOffset };
 }
 
