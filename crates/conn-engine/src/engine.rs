@@ -38,6 +38,9 @@ pub struct EngineConfig {
     pub providers: Vec<Arc<dyn Provider>>,
     /// How long streamed assistant text may wait before it is written. Default 100 ms.
     pub stream_flush: Duration,
+    /// A provider session with no turn for this long is closed, ending its process (a
+    /// `claude` child holds about 140 MiB). Default 10 minutes; `None` keeps sessions open.
+    pub idle_session: Option<Duration>,
 }
 
 impl EngineConfig {
@@ -48,6 +51,7 @@ impl EngineConfig {
             projects: vec![],
             providers: vec![],
             stream_flush: Duration::from_millis(100),
+            idle_session: Some(Duration::from_secs(600)),
         }
     }
 }
@@ -117,14 +121,25 @@ impl SqliteEngine {
                 home,
             }),
         };
-        // Continuations start once the caller's runtime runs; `open` itself never blocks on one.
-        if !effects.is_empty() {
-            match tokio::runtime::Handle::try_current() {
-                Ok(_) => effects
-                    .into_iter()
-                    .for_each(|e| engine.inner.spawn_effect(e)),
-                Err(_) => eprintln!("conn-engine: no runtime, so restarted turns do not continue"),
+        // Continuations and the reaper start on the caller's runtime; `open` never blocks.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            effects
+                .into_iter()
+                .for_each(|e| engine.inner.spawn_effect(e));
+            if let Some(idle) = config.idle_session {
+                let inner = Arc::downgrade(&engine.inner);
+                tokio::spawn(async move {
+                    let every = (idle / 2).max(Duration::from_millis(10));
+                    loop {
+                        tokio::time::sleep(every).await;
+                        // The engine is gone: stop.
+                        let Some(inner) = inner.upgrade() else { return };
+                        inner.reap_idle(idle).await;
+                    }
+                });
             }
+        } else if !effects.is_empty() {
+            eprintln!("conn-engine: no runtime, so restarted turns do not continue");
         }
         Ok(engine)
     }
@@ -502,6 +517,13 @@ impl Engine for SqliteEngine {
                 .await
                 .map_err(EngineError::Internal)
         })
+    }
+}
+
+#[cfg(test)]
+impl Inner {
+    pub(crate) fn live_count(&self) -> usize {
+        self.live.lock().map_or(0, |live| live.len())
     }
 }
 

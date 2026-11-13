@@ -5,7 +5,10 @@
 //! `stream_flush` and only their newest version is written, as TS coalesces them on the wire.
 //! When the turn ends, every row gets a final version and the streaming versions leave the log.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex, MutexGuard},
+    time::Duration,
+};
 
 use conn_contract::{ProviderThread, ProviderTurnId, from_json, to_json};
 use conn_provider::{
@@ -26,6 +29,11 @@ use crate::store::Draft;
 pub(crate) struct LiveThread {
     session: Arc<dyn Session>,
     state: Mutex<LiveState>,
+    /// When the session last did anything; the idle reaper closes it after `idle_session`.
+    last_used: Mutex<Instant>,
+    /// Ends the event pump. The pump holds this thread, whose session may hold the event
+    /// sender, so a closed channel alone would never end it.
+    closed: tokio::sync::Notify,
 }
 
 #[derive(Default)]
@@ -42,12 +50,28 @@ struct ActiveRun {
 }
 
 impl LiveThread {
+    fn touch(&self) {
+        *lock(&self.last_used) = Instant::now();
+    }
+
+    /// Idle: no run and no provider event for `idle`.
+    pub(crate) fn idle_for(&self, idle: Duration) -> bool {
+        lock(&self.state).active.is_none() && lock(&self.last_used).elapsed() >= idle
+    }
+
     fn active(&self) -> Option<ActiveRun> {
         self.state.lock().unwrap().active.clone()
     }
     fn take_active(&self) -> Option<ActiveRun> {
         self.state.lock().unwrap().active.take()
     }
+}
+
+/// A poisoned lock still holds consistent data here: every critical section only swaps values.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// What a turn start needs from the store.
@@ -219,6 +243,8 @@ impl Inner {
                 let live = Arc::new(LiveThread {
                     session: Arc::from(opened.session),
                     state: Mutex::new(LiveState::default()),
+                    last_used: Mutex::new(Instant::now()),
+                    closed: tokio::sync::Notify::new(),
                 });
                 self.live
                     .lock()
@@ -232,6 +258,7 @@ impl Inner {
             }
         };
 
+        live.touch();
         let known = live.state.lock().unwrap().provider_thread.clone();
         let provider_thread = match (known, context.provider_thread) {
             (Some(provider_thread), _) => provider_thread,
@@ -390,15 +417,20 @@ impl Inner {
             let event = match deadline {
                 Some(at) => tokio::select! {
                     event = events.recv() => event,
-                    _ = sleep_until(at) => {
+                    () = live.closed.notified() => None,
+                    () = sleep_until(at) => {
                         deadline = None;
                         self.commit(std::mem::take(&mut held).into_iter().map(|(_, d)| d).collect()).await;
                         continue;
                     }
                 },
-                None => events.recv().await,
+                None => tokio::select! {
+                    event = events.recv() => event,
+                    () = live.closed.notified() => None,
+                },
             };
             let Some(event) = event else { break };
+            live.touch();
             let active = live.active();
             let run_id = active.as_ref().map(|a| a.run_id.clone());
             match translate(&thread_id, active.as_ref(), event) {
@@ -674,10 +706,25 @@ impl Inner {
         }
     }
 
+    /// Closes provider sessions idle for `idle`, so an idle thread does not keep a provider
+    /// process. The next turn opens a session and resumes the stored provider thread.
+    pub(crate) async fn reap_idle(&self, idle: Duration) {
+        let idle_threads: Vec<String> = lock(&self.live)
+            .iter()
+            .filter(|(_, live)| live.idle_for(idle))
+            .map(|(id, _)| id.clone())
+            .collect();
+        for thread_id in idle_threads {
+            self.close_session(&thread_id).await;
+        }
+    }
+
     pub(crate) async fn close_session(&self, thread_id: &str) {
         let live = self.live.lock().unwrap().remove(thread_id);
         if let Some(live) = live {
             live.session.close().await;
+            // `notify_one` keeps a permit, so a pump not yet waiting still sees it.
+            live.closed.notify_one();
         }
     }
 }

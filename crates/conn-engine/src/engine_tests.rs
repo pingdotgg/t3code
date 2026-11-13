@@ -1857,3 +1857,34 @@ async fn compact_snapshots_for_clients_that_opt_in() {
     }
     assert_eq!(snapshot["projection"]["messages"][1]["text"], "echo: hello");
 }
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn an_idle_session_closes_and_the_next_turn_resumes_it() {
+    let db = TempDb::new("idle");
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![provider.clone()];
+    config.idle_session = Some(Duration::from_secs(60));
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "first")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(engine.inner().live_count(), 1);
+
+    // The paused clock jumps past the idle limit; the reaper closes the session.
+    tokio::time::sleep(Duration::from_secs(120)).await;
+    assert_eq!(engine.inner().live_count(), 0);
+
+    dispatch(&engine, message("t1", "c3", "second")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(p["runs"][1]["status"], "completed");
+    assert_eq!(p["runs"][1]["providerThreadId"], "provider-thread:t1");
+    assert_eq!(
+        provider.sessions.load(std::sync::atomic::Ordering::SeqCst),
+        2
+    );
+}

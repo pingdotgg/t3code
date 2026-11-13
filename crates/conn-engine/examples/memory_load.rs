@@ -6,7 +6,9 @@
 //! and a thread subscription open as a client would have. Prints the process RSS (from `ps`)
 //! every tenth of the run, then again after closing every provider session.
 
-use std::{sync::Arc, time::Duration};
+use std::{alloc::System, sync::Arc, time::Duration};
+
+use stats_alloc::{INSTRUMENTED_SYSTEM, StatsAlloc};
 
 use conn_contract::{from_json, to_json};
 use conn_engine::{Engine, EngineConfig, ProjectConfig, SqliteEngine, fake::FakeProvider};
@@ -26,6 +28,20 @@ fn rss_kib() -> u64 {
         .unwrap_or(0)
 }
 
+// Counts live heap bytes, so the run reports what is allocated, not what the OS allocator
+// keeps after a free (macOS keeps freed pages in RSS).
+#[global_allocator]
+static ALLOCATOR: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
+
+fn heap_kib() -> usize {
+    let stats = ALLOCATOR.stats();
+    // A realloc already counts in `bytes_allocated` or `bytes_deallocated`.
+    stats
+        .bytes_allocated
+        .saturating_sub(stats.bytes_deallocated)
+        / 1024
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let mut args = std::env::args().skip(1);
@@ -41,6 +57,14 @@ async fn main() {
     }];
     config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
     config.stream_flush = Duration::from_millis(5);
+    // `IDLE_MS` closes provider sessions idle that long (default: the engine's 10 minutes).
+    let idle = std::env::var("IDLE_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .map(Duration::from_millis);
+    if idle.is_some() {
+        config.idle_session = idle;
+    }
     let engine = SqliteEngine::open(config).unwrap();
     let project = SqliteEngine::project_id_for(ROOT);
 
@@ -66,8 +90,11 @@ async fn main() {
     // Drain the shell as the client would, in the background.
     tokio::spawn(async move { while shell.recv().await.is_some() {} });
 
-    let start = rss_kib();
-    println!("turns={turns} threads={threads} start_rss_kib={start}");
+    println!(
+        "turns={turns} threads={threads} start_rss_kib={} heap_kib={}",
+        rss_kib(),
+        heap_kib()
+    );
     // `REOPEN=0` keeps one thread view open for the whole run instead of reopening it per turn.
     let reopen = std::env::var("REOPEN").map_or(true, |v| v != "0");
     let mut kept = None;
@@ -116,7 +143,12 @@ async fn main() {
             kept = None;
         }
         if (n + 1) % (turns / 10).max(1) == 0 {
-            println!("turn={} rss_kib={}", n + 1, rss_kib());
+            println!(
+                "turn={} rss_kib={} heap_kib={}",
+                n + 1,
+                rss_kib(),
+                heap_kib()
+            );
         }
     }
     let size = std::fs::metadata(dir.join("engine.sqlite"))
@@ -129,8 +161,12 @@ async fn main() {
         snapshot.to_string().len()
     );
     drop(snapshot);
+    if let Some(idle) = idle {
+        tokio::time::sleep(idle * 3).await;
+        println!("after_idle rss_kib={} heap_kib={}", rss_kib(), heap_kib());
+    }
     drop(engine);
     tokio::time::sleep(Duration::from_millis(200)).await;
-    println!("after_close rss_kib={}", rss_kib());
+    println!("after_close rss_kib={} heap_kib={}", rss_kib(), heap_kib());
     let _ = std::fs::remove_dir_all(&dir);
 }
