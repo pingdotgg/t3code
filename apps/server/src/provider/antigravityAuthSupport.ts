@@ -558,16 +558,10 @@ export const parseAntigravitySignInLink = Effect.fn("parseAntigravitySignInLink"
   link: string,
 ) {
   if (link.startsWith("http:")) {
-    if (!/^http:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}\/$/.test(link)) {
+    const match = /^http:\/\/127\.0\.0\.1:([1-9][0-9]{3,4})\/$/.exec(link);
+    const port = Number(match?.[1]);
+    if (!match || port < 1024 || port > 65535) {
       return yield* authSupportError("Antigravity returned an invalid license-selection URL.");
-    }
-    const parsed = yield* decodeUrl(link).pipe(
-      Effect.mapError(() =>
-        authSupportError("Antigravity returned an invalid license-selection URL."),
-      ),
-    );
-    if (Number(parsed.port) < 1024) {
-      return yield* authSupportError("Antigravity returned an invalid license-selection port.");
     }
     return { authorizationUrl: link, callback: null };
   }

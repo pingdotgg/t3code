@@ -812,8 +812,21 @@ it.effect("handles Enterprise license prompts interactively and rejects them hea
       const failure = yield* makeAntigravityStderrHandler()(line).pipe(Effect.flip);
       expect(isAntigravitySignInRequiredError(failure)).toBe(true);
     }
+    for (const url of ["http://127.0.0.1:1024/", "http://127.0.0.1:65535/"]) {
+      const received: string[] = [];
+      const handler = makeAntigravityStderrHandler({
+        onAuthorizationUrl: (link) =>
+          Effect.sync(() => {
+            received.push(link);
+          }),
+      });
+      yield* handler(`${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeUnknownJson(url)}\n`);
+      expect(received).toEqual([url]);
+    }
     for (const url of [
       "http://127.0.0.1:80/",
+      "http://127.0.0.1:1023/",
+      "http://127.0.0.1:65536/",
       "http://127.0.0.1:49152/?token=x",
       "http://127.0.0.1:49152/path",
       "http://localhost:49152/",
