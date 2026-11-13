@@ -13018,6 +13018,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
 
     if (providerTurn === undefined) {
+      if (command.holdQueue === true && otherProviderInterrupts.length > 0) {
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          runId: run.id,
+          nodeId: rootNode.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: interruptRequestItem,
+        });
+        yield* stopRemainingWork();
+        yield* Ref.update(effects, (existing) => [...existing, ...otherProviderInterrupts]);
+        return undefined;
+      }
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
