@@ -608,10 +608,10 @@ describe("ThreadPullRequestServiceV2 reads", () => {
         yield* Deferred.succeed(activation, undefined);
 
         // Startup backfill sweep, then periodic sweeps: a branch without a pull request
-        // is reread after five minutes, not on every sweep.
+        // is reread after half an hour, not on every sweep.
         yield* Queue.take(sweeps);
         yield* service.drain;
-        for (let minute = 1; minute <= 4; minute += 1) {
+        for (let minute = 1; minute <= 29; minute += 1) {
           yield* TestClock.adjust("1 minute");
           yield* Queue.take(sweeps);
           yield* service.drain;

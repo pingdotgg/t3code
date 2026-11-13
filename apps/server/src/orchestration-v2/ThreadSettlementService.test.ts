@@ -1747,7 +1747,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
       yield* Effect.gen(function* () {
         const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
         yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
-        for (let minute = 1; minute <= 4; minute += 1) {
+        for (let minute = 1; minute <= 29; minute += 1) {
           yield* TestClock.adjust("1 minute");
           yield* Queue.take(fixture.snapshotReads);
           yield* reactor.drain;

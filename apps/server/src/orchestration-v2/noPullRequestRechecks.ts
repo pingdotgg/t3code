@@ -1,4 +1,4 @@
-const RECHECK_MIN_MS = 5 * 60 * 1_000;
+const RECHECK_MIN_MS = 30 * 60 * 1_000;
 const RECHECK_MAX_MS = 24 * 60 * 60 * 1_000;
 const RECHECK_IDLE_DIVISOR = 12;
 
@@ -9,7 +9,7 @@ const RECHECK_IDLE_DIVISOR = 12;
 export function makeNoPullRequestRechecks() {
   const readAtMs = new Map<string, number>();
   return {
-    /** A thread idle for a day is reread every two hours; one idle twelve days or more, daily. */
+    /** Reread every half hour at first, every two hours after a day idle, daily after twelve days. */
     waiting: (key: string, nowMs: number, activityAtMs: number): boolean => {
       const lastReadAtMs = readAtMs.get(key);
       if (lastReadAtMs === undefined) return false;
