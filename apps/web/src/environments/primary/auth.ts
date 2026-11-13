@@ -6,18 +6,28 @@ import type {
   AuthSessionId,
   AuthSessionState,
 } from "@t3tools/contracts";
-import { EnvironmentHttpCommonError, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
+import {
+  EnvironmentDatabaseUpgradeStatus,
+  EnvironmentHttpCommonError,
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
+} from "@t3tools/contracts";
 import type { EnvironmentHttpCommonError as EnvironmentHttpCommonErrorType } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClientError } from "effect/http";
 
+import {
+  type DatabaseMigrationProgress,
+  formatDatabaseUpgradeProgress,
+} from "@t3tools/shared/databaseMigrationLog";
 import {
   getPairingTokenFromUrl,
   stripPairingTokenFromUrl as stripPairingTokenUrl,
 } from "@t3tools/shared/remote";
 
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
+import { resolvePrimaryEnvironmentHttpUrl } from "./target";
 import { runPrimaryHttp } from "../../lib/runtime";
 
 const PrimaryEnvironmentRequestOperation = Schema.Literals([
@@ -263,6 +273,46 @@ async function waitForAuthenticatedSessionAfterBootstrap(): Promise<AuthSessionS
 const TRANSIENT_BOOTSTRAP_STATUS_CODES = new Set([502, 503, 504]);
 const BOOTSTRAP_RETRY_TIMEOUT_MS = 15_000;
 const BOOTSTRAP_RETRY_STEP_MS = 500;
+const DATABASE_UPGRADE_POLL_MS = 1_000;
+const decodeDatabaseUpgradeStatus = Schema.decodeUnknownOption(EnvironmentDatabaseUpgradeStatus);
+
+// A server running startup migrations answers this public endpoint with a 503 that names the one in progress.
+async function readDatabaseUpgradeProgress(): Promise<DatabaseMigrationProgress | null> {
+  try {
+    const response = await fetch(resolvePrimaryEnvironmentHttpUrl("/.well-known/t3/environment"), {
+      cache: "no-store",
+    });
+    if (response.status !== 503) return null;
+    return (
+      Option.getOrNull(decodeDatabaseUpgradeStatus(await response.json()))?.databaseMigration ??
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Desktop's token request waits for the backend without failing, so progress cannot come from
+ * a failed request. Starts after a delay so an ordinary startup sends nothing extra.
+ */
+function showDatabaseUpgradeOnBootSplash(): () => void {
+  const status = document.getElementById("boot-shell-status");
+  if (!status) return () => undefined;
+  let stopped = false;
+  const poll = async () => {
+    const progress = await readDatabaseUpgradeProgress();
+    if (stopped) return;
+    status.textContent = progress === null ? "" : formatDatabaseUpgradeProgress(progress);
+    timer = setTimeout(poll, DATABASE_UPGRADE_POLL_MS);
+  };
+  let timer = setTimeout(poll, DATABASE_UPGRADE_POLL_MS);
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+    status.textContent = "";
+  };
+}
 
 async function retryTransientBootstrap<T>(operation: () => Promise<T>): Promise<T> {
   const startedAt = Date.now();
@@ -274,7 +324,11 @@ async function retryTransientBootstrap<T>(operation: () => Promise<T>): Promise<
         throw error;
       }
 
-      if (Date.now() - startedAt >= BOOTSTRAP_RETRY_TIMEOUT_MS) {
+      // An upgrade of a large database outlasts the budget; the server is working, not gone.
+      if (
+        Date.now() - startedAt >= BOOTSTRAP_RETRY_TIMEOUT_MS &&
+        (await readDatabaseUpgradeProgress()) === null
+      ) {
         throw error;
       }
 
@@ -346,6 +400,15 @@ export async function submitServerAuthCredential(credential: string): Promise<vo
 }
 
 export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGateState> {
+  const stopShowingDatabaseUpgrade = showDatabaseUpgradeOnBootSplash();
+  try {
+    return await resolveServerAuthGateState();
+  } finally {
+    stopShowingDatabaseUpgrade();
+  }
+}
+
+async function resolveServerAuthGateState(): Promise<ServerAuthGateState> {
   // Preserve explicit grant replacement across the auth-gate reload triggered by token removal.
   if (window.location.pathname.replace(/\/+$/, "") !== "/pair") {
     explicitPairingRequested = false;

@@ -12,3 +12,13 @@ export function isRunningDatabaseMigrations(output: string): boolean {
     ) > output.lastIndexOf(DATABASE_MIGRATIONS_FINISHED_MESSAGE)
   );
 }
+
+export interface DatabaseMigrationProgress {
+  readonly current: number;
+  readonly total: number;
+}
+
+/** What every client shows while a server upgrades its database on startup. */
+export function formatDatabaseUpgradeProgress({ current, total }: DatabaseMigrationProgress) {
+  return `Upgrading database (${current} of ${total})`;
+}

@@ -3,6 +3,12 @@
 import type * as NodeHttp from "node:http";
 import type * as NodeStream from "node:stream";
 
+import type { EnvironmentDatabaseUpgradeStatus } from "@t3tools/contracts";
+import {
+  type DatabaseMigrationProgress,
+  formatDatabaseUpgradeProgress,
+} from "@t3tools/shared/databaseMigrationLog";
+
 export function guardHttpResponseWriteErrors<T extends NodeHttp.Server>(
   server: T,
   onError?: (error: unknown) => void,
@@ -46,14 +52,43 @@ export function keepIdleConnections<T extends NodeHttp.Server>(server: T): T {
   return server;
 }
 
+// A browser opening the app gets a page that reloads itself instead of its own HTTP 503 error.
+const databaseUpgradePage = (progress: DatabaseMigrationProgress) =>
+  `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="refresh" content="2"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>T3 Code</title><style>html,body{height:100%;margin:0}body{display:flex;align-items:center;justify-content:center;font:14px system-ui,sans-serif}</style></head><body><p>${formatDatabaseUpgradeProgress(progress)}</p></body></html>`;
+
 /**
  * NodeHttpServer listens before serve() attaches its handlers, so requests in
  * between would hang. Install this after the write-error guards so only the
- * serving handlers trigger the handoff.
+ * serving handlers trigger the handoff. Startup migrations run in that gap for
+ * minutes, so the 503 says which one is running.
  */
-export function rejectRequestsUntilServing<T extends NodeHttp.Server>(server: T): T {
-  const rejectRequest = (_request: NodeHttp.IncomingMessage, response: NodeHttp.ServerResponse) => {
-    response.writeHead(503, { "retry-after": "1", connection: "close" }).end();
+export function rejectRequestsUntilServing<T extends NodeHttp.Server>(
+  server: T,
+  databaseMigration: () => DatabaseMigrationProgress | undefined = () => undefined,
+): T {
+  const rejectRequest = (request: NodeHttp.IncomingMessage, response: NodeHttp.ServerResponse) => {
+    const headers = { "retry-after": "1", connection: "close" };
+    const progress = databaseMigration();
+    if (progress === undefined) {
+      response.writeHead(503, headers).end();
+      return;
+    }
+    const wantsPage = request.headers.accept?.includes("text/html") === true;
+    response
+      .writeHead(503, {
+        ...headers,
+        "cache-control": "no-store",
+        // The body holds no secret, and the web app reads it from another origin on desktop and app.t3.codes.
+        "access-control-allow-origin": "*",
+        "content-type": wantsPage ? "text/html; charset=utf-8" : "application/json",
+      })
+      .end(
+        wantsPage
+          ? databaseUpgradePage(progress)
+          : JSON.stringify({
+              databaseMigration: progress,
+            } satisfies EnvironmentDatabaseUpgradeStatus),
+      );
   };
   const rejectUpgrade = (_request: NodeHttp.IncomingMessage, socket: NodeStream.Duplex) => {
     socket.end(

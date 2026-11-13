@@ -553,6 +553,15 @@ export const AuthOtherClientSessionsRevokeResult = Schema.Struct({
 });
 export type AuthOtherClientSessionsRevokeResult = typeof AuthOtherClientSessionsRevokeResult.Type;
 
+/** Body of the 503 a server answers with while startup migrations run, before it serves the API. */
+export const EnvironmentDatabaseUpgradeStatus = Schema.Struct({
+  databaseMigration: Schema.Struct({
+    current: Schema.Number,
+    total: Schema.Number,
+  }),
+});
+export type EnvironmentDatabaseUpgradeStatus = typeof EnvironmentDatabaseUpgradeStatus.Type;
+
 class EnvironmentMetadataHttpApi extends HttpApiGroup.make("metadata").add(
   HttpApiEndpoint.get("descriptor", "/.well-known/t3/environment", {
     success: ExecutionEnvironmentDescriptor,

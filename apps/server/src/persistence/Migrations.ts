@@ -1,7 +1,9 @@
 import * as Migrator from "effect/sql/Migrator";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import {
+  type DatabaseMigrationProgress,
   DATABASE_MIGRATION_PROGRESS_MESSAGE,
   DATABASE_MIGRATIONS_FINISHED_MESSAGE,
   DATABASE_MIGRATIONS_STARTED_MESSAGE,
@@ -268,6 +270,13 @@ export const hasPendingMigrations = Effect.fn("hasPendingMigrations")(function* 
 
 const run = Migrator.make({});
 
+/** Told which pending migration is running, then `undefined` once none is; the server answers startup requests with it. */
+export const DatabaseMigrationProgressReporter = Context.Reference<
+  (progress: DatabaseMigrationProgress | undefined) => void
+>("t3/persistence/Migrations/DatabaseMigrationProgressReporter", {
+  defaultValue: () => () => undefined,
+});
+
 export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
 }
@@ -301,8 +310,10 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   // One transaction per migration: an index build on a large database can take minutes, and a
   // restart then resumes after the last finished migration instead of rolling all of them back.
   const executedMigrations: Array<readonly [id: number, name: string]> = [...previewMigrations];
+  const reportProgress = yield* DatabaseMigrationProgressReporter;
   for (const [index, [id, name]] of pending.entries()) {
     if (latestRecordedId > 0) {
+      reportProgress({ current: index + 1, total: pending.length });
       yield* Effect.log(DATABASE_MIGRATION_PROGRESS_MESSAGE).pipe(
         Effect.annotateLogs({
           migration: `${id}_${name}`,
@@ -312,6 +323,7 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     }
     executedMigrations.push(...(yield* run({ loader: makeMigrationLoader(id) })));
   }
+  reportProgress(undefined);
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")

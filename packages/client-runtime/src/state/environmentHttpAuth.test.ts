@@ -289,6 +289,23 @@ describe("authenticated environment HTTP requests", () => {
     }),
   );
 
+  it.effect("names the database upgrade a starting server reports in its 503", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() =>
+        Response.json({ databaseMigration: { current: 2, total: 7 } }, { status: 503 }),
+      );
+      const error = yield* fetchEnvironmentShellSnapshot(harness.input).pipe(
+        Effect.provide(harness.httpLayer),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({
+        _tag: "RemoteEnvironmentAuthUndeclaredStatusError",
+        status: 503,
+        message: "The environment is not ready yet: Upgrading database (2 of 7).",
+      });
+    }),
+  );
+
   it.effect.each(LOADERS)("uses current relay authorization and endpoint for $name", (loader) =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json(loader.response));

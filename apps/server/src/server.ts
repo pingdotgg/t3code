@@ -52,6 +52,8 @@ import { speechHttpApiLayer } from "./speech/http.ts";
 import { speechStreamRouteLayer } from "./speech/stream.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import type { DatabaseMigrationProgress } from "@t3tools/shared/databaseMigrationLog";
+import { DatabaseMigrationProgressReporter } from "./persistence/Migrations.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
 import * as PullRequestReviewGuides from "./persistence/PullRequestReviewGuides.ts";
@@ -265,10 +267,20 @@ const layerProviderEventLoggers = Layer.effect(
 
 const layerPtyAdapter = NodePtyAdapter.layer;
 
+// The listener answers requests before the database layer is built, so it reads the running migration from here.
+let startupDatabaseMigration: DatabaseMigrationProgress | undefined;
+const layerSqlitePersistence = SqlitePersistence.layerConfig.pipe(
+  Layer.provide(
+    Layer.succeed(DatabaseMigrationProgressReporter, (progress) => {
+      startupDatabaseMigration = progress;
+    }),
+  ),
+);
+
 const layerServerSettings = ServerSettings.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
   Layer.provideMerge(ManagedPolicy.layer),
-  Layer.provideMerge(SqlitePersistence.layerConfig),
+  Layer.provideMerge(layerSqlitePersistence),
 );
 
 const layerNativeTelemetry = NativeTelemetryClient.layer.pipe(
@@ -360,6 +372,7 @@ const layerHttpServer = Layer.unwrap(
       () => {
         const server = rejectRequestsUntilServing(
           keepIdleConnections(guardHttpResponseWriteErrors(NodeHttp.createServer())),
+          () => startupDatabaseMigration,
         );
         if (config.privateNetworkOnly) {
           server.on("connection", (socket) => {
@@ -388,7 +401,7 @@ const layerPlatformServices = DocumentText.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
-const layerPersistence = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.layerConfig));
+const layerPersistence = Layer.empty.pipe(Layer.provideMerge(layerSqlitePersistence));
 
 const layerVcsDriverRegistry = VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer));
 
@@ -712,7 +725,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ),
   Layer.provideMerge(ProviderRegistry.layer),
   Layer.provideMerge(
-    ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(SqlitePersistence.layerConfig)),
+    ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(layerSqlitePersistence)),
   ),
   // One gate for the server, below hydration so the Claude adapter sees it: layers memoize by
   // reference, so the runtime layer shares it.

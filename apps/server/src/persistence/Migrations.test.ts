@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import type { DatabaseMigrationProgress } from "@t3tools/shared/databaseMigrationLog";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -7,7 +8,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { migrationManifest, runMigrations } from "./Migrations.ts";
+import {
+  DatabaseMigrationProgressReporter,
+  migrationManifest,
+  runMigrations,
+} from "./Migrations.ts";
 
 const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
 const newerMigrationId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
@@ -72,7 +77,19 @@ describe("runMigrations", () => {
   it.effect("upgrades a database at exactly 54", () =>
     Effect.gen(function* () {
       yield* runMigrations({ toMigrationInclusive: 54 });
-      assert.deepStrictEqual(yield* runMigrations(), v2Migrations);
+      const reported: Array<DatabaseMigrationProgress | undefined> = [];
+      assert.deepStrictEqual(
+        yield* runMigrations().pipe(
+          Effect.provideService(DatabaseMigrationProgressReporter, (progress) => {
+            reported.push(progress);
+          }),
+        ),
+        v2Migrations,
+      );
+      assert.deepStrictEqual(reported, [
+        ...v2Migrations.map((_, index) => ({ current: index + 1, total: v2Migrations.length })),
+        undefined,
+      ]);
       assert.deepStrictEqual(yield* history, migrationManifest);
       assert.isAbove(yield* v2TableCount, 0);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),

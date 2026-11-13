@@ -59,6 +59,26 @@ function fetchResponse(
   });
 }
 
+function fetchBody(
+  port: number,
+  accept: string,
+): Promise<{ readonly response: NodeHttp.IncomingMessage; readonly body: string }> {
+  return new Promise((resolve, reject) => {
+    const request = NodeHttp.get(
+      { host: "127.0.0.1", port, path: "/", agent: false, headers: { accept } },
+      (response) => {
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("error", reject);
+        response.on("data", (chunk: string) => (body += chunk));
+        response.on("end", () => resolve({ response, body }));
+      },
+    );
+    requests.push(request);
+    request.on("error", reject);
+  });
+}
+
 function fetchStatus(port: number, path: string): Promise<number> {
   return fetchResponse(port, path).then((response) => response.statusCode ?? 0);
 }
@@ -238,5 +258,29 @@ describe("rejectRequestsUntilServing", () => {
     expect(servingUpgrade.statusCode).toBe(101);
     expect(servingUpgrade.headers["retry-after"]).toBeUndefined();
     expect(writeErrors).toEqual([]);
+  });
+
+  it("names the running database migration in the early 503 and says nothing without one", async () => {
+    let progress: { current: number; total: number } | undefined;
+    const port = await listen(
+      HttpResponseErrorGuard.rejectRequestsUntilServing(NodeHttp.createServer(), () => progress),
+    );
+
+    const starting = await fetchBody(port, "*/*");
+    expect(starting.response.statusCode).toBe(503);
+    expect(starting.body).toBe("");
+
+    progress = { current: 2, total: 7 };
+    const upgrading = await fetchBody(port, "*/*");
+    expect(upgrading.response.statusCode).toBe(503);
+    expect(upgrading.response.headers["retry-after"]).toBe("1");
+    // The web app reads this from another origin on desktop and app.t3.codes.
+    expect(upgrading.response.headers["access-control-allow-origin"]).toBe("*");
+    expect(JSON.parse(upgrading.body)).toEqual({ databaseMigration: { current: 2, total: 7 } });
+
+    const page = await fetchBody(port, "text/html,*/*;q=0.8");
+    expect(page.response.statusCode).toBe(503);
+    expect(page.response.headers["content-type"]).toContain("text/html");
+    expect(page.body).toContain("Upgrading database (2 of 7)");
   });
 });

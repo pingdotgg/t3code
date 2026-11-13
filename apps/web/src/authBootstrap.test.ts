@@ -8,6 +8,7 @@ import {
 import { createBrowserHistory } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { installEnvironmentHttpTest } from "../test/environmentHttpTest";
@@ -70,10 +71,11 @@ function installTestBrowser(url: string) {
     },
   };
 
+  const bootStatus = { textContent: "" };
   vi.stubGlobal("window", testWindow);
-  vi.stubGlobal("document", { title: "T3 Code" });
+  vi.stubGlobal("document", { title: "T3 Code", getElementById: () => bootStatus });
 
-  return testWindow;
+  return Object.assign(testWindow, { bootStatus });
 }
 
 function sequence<A>(...values: ReadonlyArray<A>) {
@@ -163,6 +165,39 @@ describe("resolveInitialServerAuthGateState", () => {
 
     expect(testApi.calls.session).toBe(2);
     expect(testApi.calls.browserSession).toEqual([{ credential: "desktop-bootstrap-token" }]);
+  });
+
+  it("names the server's database upgrade on the boot splash and waits it out", async () => {
+    vi.useFakeTimers();
+    const testWindow = installTestBrowser("http://localhost/");
+    let upgrading = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      upgrading
+        ? Response.json({ databaseMigration: { current: 2, total: 7 } }, { status: 503 })
+        : Response.json({}),
+    );
+    const request = HttpClientRequest.get("http://localhost/api/auth/session");
+    const unavailable = new HttpClientError.HttpClientError({
+      reason: new HttpClientError.StatusCodeError({
+        request,
+        response: HttpClientResponse.fromWeb(request, new Response(null, { status: 503 })),
+      }),
+    });
+    __setPrimaryHttpRunnerForTests((() =>
+      upgrading
+        ? Promise.reject(unavailable)
+        : Promise.resolve(authenticatedSession(LOOPBACK_AUTH))) as never);
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    const gate = resolveInitialServerAuthGateState();
+    // Past the 15 second budget a server that is merely unreachable gets.
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(testWindow.bootStatus.textContent).toBe("Upgrading database (2 of 7)");
+
+    upgrading = false;
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(gate).resolves.toEqual({ status: "authenticated" });
+    expect(testWindow.bootStatus.textContent).toBe("");
   });
 
   it("takes a pairing token from the location hash and strips it immediately", async () => {

@@ -1,4 +1,5 @@
 import {
+  EnvironmentDatabaseUpgradeStatus,
   EnvironmentHttpApi,
   EnvironmentHttpCommonError,
   type EnvironmentAuthInvalidError,
@@ -8,6 +9,7 @@ import {
   type EnvironmentResourceNotFoundError,
   type EnvironmentScopeRequiredError,
 } from "@t3tools/contracts";
+import { formatDatabaseUpgradeProgress } from "@t3tools/shared/databaseMigrationLog";
 import * as HttpObservability from "@t3tools/shared/httpObservability";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -18,6 +20,7 @@ import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
+const decodeDatabaseUpgradeStatus = Schema.decodeUnknownOption(EnvironmentDatabaseUpgradeStatus);
 
 export class RemoteEnvironmentAuthFetchError extends Schema.TaggedError<RemoteEnvironmentAuthFetchError>()(
   "RemoteEnvironmentAuthFetchError",
@@ -40,9 +43,13 @@ export class RemoteEnvironmentAuthUndeclaredStatusError extends Schema.TaggedErr
   {
     status: Schema.Number,
     requestUrl: Schema.String,
+    databaseMigration: Schema.optional(EnvironmentDatabaseUpgradeStatus.fields.databaseMigration),
   },
 ) {
   override get message(): string {
+    if (this.databaseMigration !== undefined) {
+      return `The environment is not ready yet: ${formatDatabaseUpgradeProgress(this.databaseMigration)}.`;
+    }
     return `Remote environment endpoint ${this.requestUrl} returned undeclared status ${this.status}.`;
   }
 }
@@ -133,6 +140,22 @@ const failRemoteRequest = (
   }
   if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
     const response = cause.response;
+    if (response.status === 503) {
+      // A server still running startup migrations says so in the body of its 503.
+      return response.json.pipe(
+        Effect.map(decodeDatabaseUpgradeStatus),
+        Effect.orElseSucceed(() => Option.none()),
+        Effect.flatMap((upgrade) =>
+          Effect.fail(
+            new RemoteEnvironmentAuthUndeclaredStatusError({
+              requestUrl,
+              status: response.status,
+              databaseMigration: Option.getOrUndefined(upgrade)?.databaseMigration,
+            }),
+          ),
+        ),
+      );
+    }
     if (response.status < 200 || response.status >= 300) {
       return Effect.fail(
         new RemoteEnvironmentAuthUndeclaredStatusError({ requestUrl, status: response.status }),

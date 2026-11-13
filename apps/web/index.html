@@ -439,6 +439,20 @@
         object-fit: contain;
       }
 
+      /* Empty unless startup waits on the server, so the logo stays centered either way. */
+      #boot-shell-status {
+        position: absolute;
+        top: calc(50% + 64px);
+        right: 0;
+        left: 0;
+        margin: 0;
+        padding: 0 24px;
+        font-size: 13px;
+        line-height: 1.4;
+        text-align: center;
+        opacity: 0.7;
+      }
+
       /* App CSS locks body and #root scrolling once main loads, so the error screen scrolls itself. */
       #boot-shell:has(> #boot-error) {
         height: 100%;
@@ -683,6 +697,7 @@
         <div id="boot-shell-card" aria-label="T3 Code splash screen">
           <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="T3 Code" />
         </div>
+        <p id="boot-shell-status" role="status"></p>
       </div>
     </div>
     <script type="module" src="/src/bootstrap.ts"></script>
