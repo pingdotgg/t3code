@@ -10839,8 +10839,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         "runtimeRequests",
         "subagents",
       ],
-      // User messages measure a restart's model switch.
-      { turnItemTypes: ["user_message"], messageRoles: ["user"] },
+      // User messages measure a restart's model switch. Steering reads root and live nodes only.
+      { turnItemTypes: ["user_message"], messageRoles: ["user"], omitSettledLeafNodes: true },
     );
     if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
       return yield* new OrchestratorDispatchError({
@@ -12644,6 +12644,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           "reasoning",
         ],
         turnItemStatuses: ["pending", "running", "waiting"],
+        // Stop reads root nodes and ends open ones; a settled leaf has nothing left to end.
+        omitSettledLeafNodes: true,
       },
     );
     const run = projection.runs.find((candidate) => candidate.id === command.runId);
