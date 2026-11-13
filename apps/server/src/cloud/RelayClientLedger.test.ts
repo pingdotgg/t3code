@@ -22,7 +22,13 @@ const isAlive = (pid: number) => {
 
 const spawnSleep = Effect.acquireRelease(
   Effect.gen(function* () {
-    const child = NodeChildProcess.spawn("sleep", ["600"], { stdio: "ignore" });
+    const child = NodeChildProcess.spawn(
+      process.execPath,
+      ["-e", "setTimeout(() => {}, 600_000)"],
+      {
+        stdio: "ignore",
+      },
+    );
     const pid = child.pid;
     if (pid === undefined) return yield* Effect.die("spawn failed");
     const exited = yield* Deferred.make<void>();
@@ -47,7 +53,11 @@ const entryNames = (stateDir: string) =>
 const hostPlatform = HostProcess.Platform.defaultValue();
 // procps accepts the same `ps` flags as macOS, so Linux also covers the macOS path.
 const observedPlatforms: ReadonlyArray<NodeJS.Platform> =
-  hostPlatform === "linux" ? ["linux", "darwin"] : hostPlatform === "darwin" ? ["darwin"] : [];
+  hostPlatform === "linux"
+    ? ["linux", "darwin"]
+    : hostPlatform === "darwin" || hostPlatform === "win32"
+      ? [hostPlatform]
+      : [];
 
 describe.each(observedPlatforms)("RelayClientLedger observing as %s", (platform) => {
   const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
