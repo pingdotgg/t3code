@@ -3,6 +3,7 @@
 // A `browser` request never touches disk: it waits in memory, at most a minute, for its one fill.
 import {
   CommandId,
+  SECRET_REF_PATTERN,
   SecretRef,
   SecretRequestError,
   type OrchestrationV2TurnItem,
@@ -33,7 +34,6 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 
 const SECRET_REF_PREFIX = "secret-ref:";
 const storeName = (ref: SecretRef) => `secret-request-${ref.slice(SECRET_REF_PREFIX.length)}`;
-const REF_PATTERN = /^secret-ref:[0-9a-f]{32}$/;
 const SECRET_REF_TTL_MS = 24 * 60 * 60 * 1000;
 /** The waiting fill polls every half second, so a value left this long has no taker. */
 export const BROWSER_VALUE_TTL_MS = 60 * 1000;
@@ -313,7 +313,7 @@ const make = Effect.gen(function* () {
     readonly ref: SecretRef;
     readonly projectId: ProjectId;
   }) {
-    if (!REF_PATTERN.test(input.ref))
+    if (!SECRET_REF_PATTERN.test(input.ref))
       return yield* new SecretRequestError({ reason: "invalid_ref" });
     const stored = yield* store
       .get(storeName(input.ref))
