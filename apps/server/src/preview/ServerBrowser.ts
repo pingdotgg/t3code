@@ -377,10 +377,16 @@ interface ServerTab {
   desktopResize: PromiseWithResolvers<void>;
   loading: boolean;
   loadError: PreviewAutomationLoadError | undefined;
+  /** The renderer crash this page died of, or the one the page it replaced died of. */
+  crash: PreviewAutomationLoadError | undefined;
+  /** What Reload loads after a crash; the reported URL is shortened and drops data payloads. */
+  crashedUrl: string | undefined;
   closing: boolean;
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
+  pendingInitialRequestUrl: string | null;
   navigationGeneration: number;
+  stoppedGeneration: number | null;
 
   abortedNavigation: {
     readonly url: string;
@@ -584,6 +590,51 @@ const make = Effect.gen(function* () {
     },
   });
 
+  // Playwright cannot reload a crashed page, so a fresh page takes over its tab.
+  const reopenCrashedTab = async (tab: ServerTab) => {
+    if (tab.desktop) return dropTab(tab, true);
+    const key = tabKey(tab.threadId, tab.tabId);
+    if (tabs.get(key) !== tab) return;
+    const crash = {
+      url: ServerBrowserPage.withoutDataPayload(tab.page.url()).slice(0, 2048),
+      code: -2,
+      description: "Page crashed",
+    };
+    tab.crash = crash;
+    const reopening = (async () => {
+      // The session must name the crash before a new page reads it, or it would load the URL again.
+      await runPromise(
+        manager
+          .reportStatus({
+            threadId: tab.threadId,
+            tabId: tab.tabId,
+            serverControlled: true,
+            navStatus: { _tag: "LoadFailed", title: "", ...crash },
+            canGoBack: false,
+            canGoForward: false,
+          })
+          .pipe(Effect.ignore),
+      );
+      dropTab(tab, false, true);
+      // A context that is still closing would take the new page down with it.
+      if (tab.isolatedContext) await tab.page.context().close().catch(constVoid);
+      const { sessions } = await runPromise(manager.list({ threadId: tab.threadId }));
+      const snapshot = sessions.find(
+        (session) => session.tabId === tab.tabId && session.runtime === "server",
+      );
+      if (!snapshot) {
+        throw new ServerBrowserTabNotFoundError({ threadId: tab.threadId, tabId: tab.tabId });
+      }
+      return createTab(snapshot, tab.page.url());
+    })().finally(() => {
+      pendingTabs.delete(key);
+      closedPendingTabs.delete(key);
+    });
+    // Reserved before the dead page leaves, so a lookup in between waits for its replacement.
+    pendingTabs.set(key, { agentId: tab.control.agentId, promise: reopening });
+    await reopening.catch(constVoid);
+  };
+
   const dialogStatus = (tab: ServerTab) =>
     tab.dialog
       ? {
@@ -636,6 +687,8 @@ const make = Effect.gen(function* () {
       .send("Page.getNavigationHistory")
       .catch(() => null)
       .then((history) => {
+        // A status the dead page still had in flight must not replace the crash.
+        if (tab.crash) return;
         const index = history?.currentIndex ?? 0;
         const count = history?.entries.length ?? 0;
         runFork(
@@ -830,7 +883,7 @@ const make = Effect.gen(function* () {
     clearTimeout(timeout);
   };
 
-  const dropTab = (tab: ServerTab, closeSession: boolean) => {
+  const dropTab = (tab: ServerTab, closeSession: boolean, reopening = false) => {
     const key = tabKey(tab.threadId, tab.tabId);
     if (tabs.get(key) !== tab) return;
     tabs.delete(key);
@@ -838,7 +891,8 @@ const make = Effect.gen(function* () {
     tab.viewerAttached?.resolve();
     clearAbortedNavigation(tab);
     // A desktop page outlives the connection unless its session closed with it.
-    const end = tab.desktop && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
+    const end =
+      (tab.desktop || reopening) && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
     for (const viewer of tab.viewers) viewer.push({ _tag: end });
     void tab.control.close().catch(constVoid);
     if (tab.desktop) void tab.desktop.close().catch(constVoid);
@@ -853,7 +907,8 @@ const make = Effect.gen(function* () {
       const forceClose = setTimeout(() => void page.close().catch(constVoid), PAGE_CLOSE_GRACE_MS);
       void closed.then(() => clearTimeout(forceClose));
       void page
-        .close({ runBeforeUnload: tab.dialog === null })
+        // A crashed page never answers `beforeunload`, so that close would not finish.
+        .close({ runBeforeUnload: tab.dialog === null && tab.crash === undefined })
         .catch(() => page.close())
         .catch(constVoid);
       if (tab.isolatedContext) void closed.then(() => page.context().close()).catch(constVoid);
@@ -905,10 +960,13 @@ const make = Effect.gen(function* () {
     }
   };
 
-  const createTab = async (snapshot: PreviewSessionSnapshot): Promise<ServerTab> => {
+  const createTab = async (
+    snapshot: PreviewSessionSnapshot,
+    crashedUrl?: string,
+  ): Promise<ServerTab> => {
     const opened: Array<() => Promise<void>> = [];
     try {
-      return await setUpTab(snapshot, opened);
+      return await setUpTab(snapshot, opened, crashedUrl);
     } catch (cause) {
       // An unpublished tab is in no list, so nothing else would ever close it.
       for (const close of opened.reverse()) await close().catch(constVoid);
@@ -919,6 +977,7 @@ const make = Effect.gen(function* () {
   const setUpTab = async (
     snapshot: PreviewSessionSnapshot,
     opened: Array<() => Promise<void>>,
+    crashedUrl: string | undefined,
   ): Promise<ServerTab> => {
     const adopted = adoptedPages.get(tabKey(snapshot.threadId, snapshot.tabId));
     adoptedPages.delete(tabKey(snapshot.threadId, snapshot.tabId));
@@ -1007,11 +1066,23 @@ const make = Effect.gen(function* () {
       desktopResize: Promise.withResolvers<void>(),
       loading: false,
       loadError: undefined,
+      // The page a crash left behind is blank; the session still names what crashed.
+      crash:
+        !desktop && !adopted && snapshot.navStatus._tag === "LoadFailed"
+          ? {
+              url: snapshot.navStatus.url,
+              code: snapshot.navStatus.code,
+              description: snapshot.navStatus.description,
+            }
+          : undefined,
+      crashedUrl,
       closing: false,
       recording: null,
       recordingStart: null,
       initialNavigation: null,
+      pendingInitialRequestUrl: null,
       navigationGeneration: 0,
+      stoppedGeneration: null,
       abortedNavigation: null,
       captureLock: Promise.resolve(),
       capturing: 0,
@@ -1047,10 +1118,22 @@ const make = Effect.gen(function* () {
     const navigationGenerations = new WeakMap<object, number>();
     page.on("request", (request) => {
       if (!isMainNavigation(request)) return;
+      // Playwright can deliver the first request after Stop has already settled its navigation.
+      const stoppedInitialRequest =
+        request.url() === tab.pendingInitialRequestUrl &&
+        tab.stoppedGeneration === tab.navigationGeneration;
+      tab.pendingInitialRequestUrl = null;
       navigationGenerations.set(request, ++tab.navigationGeneration);
       clearAbortedNavigation(tab);
       tab.loading = true;
       tab.loadError = undefined;
+      tab.crash = undefined;
+      tab.crashedUrl = undefined;
+      if (stoppedInitialRequest) {
+        tab.stoppedGeneration = tab.navigationGeneration;
+        settleStoppedNavigation(tab, tab.navigationGeneration);
+        return;
+      }
       report(tab, {
         _tag: "Loading",
         url: ServerBrowserPage.withoutDataPayload(request.url()).slice(0, 2048),
@@ -1058,6 +1141,7 @@ const make = Effect.gen(function* () {
       });
     });
     page.on("load", () => {
+      tab.pendingInitialRequestUrl = null;
       tab.loading = false;
       void reportLoaded(tab);
     });
@@ -1090,6 +1174,10 @@ const make = Effect.gen(function* () {
       if (generation !== tab.navigationGeneration) return;
       // An aborted navigation is usually a download; its `download` event settles the status.
       if (errorText.includes("ERR_ABORTED")) {
+        if (tab.stoppedGeneration === generation) {
+          settleStoppedNavigation(tab, generation);
+          return;
+        }
         const url = request.url();
         const navigationGeneration = tab.navigationGeneration;
         clearAbortedNavigation(tab);
@@ -1139,14 +1227,13 @@ const make = Effect.gen(function* () {
     updateFileChooserInterception(tab);
     // Popups become tabs and keep `window.opener`, so sign-in popups can report back.
     page.on("popup", (popup) => void adoptPopup(tab, popup));
-    // Playwright cannot reload a crashed page, so it must leave the tab list.
     const key = tabKey(tab.threadId, tab.tabId);
     if (closedPendingTabs.delete(key)) {
       await control.close().catch(constVoid);
       throw new ServerBrowserTabNotFoundError({ threadId: tab.threadId, tabId: tab.tabId });
     }
     page.on("close", () => dropTab(tab, true));
-    page.on("crash", () => dropTab(tab, true));
+    page.on("crash", () => reopenCrashedTab(tab));
     tabs.set(key, tab);
     reportLiveTabs();
     // A desktop page navigates on its own and can finish loading before these listeners attach.
@@ -1156,6 +1243,10 @@ const make = Effect.gen(function* () {
       snapshot.navStatus._tag === "Loading" &&
       ((!adopted && !desktop) || isPdfAssetUrl(snapshot.navStatus.url))
     ) {
+      tab.loading = true;
+      const initialUrl = URL.parse(snapshot.navStatus.url);
+      if (initialUrl) initialUrl.hash = "";
+      tab.pendingInitialRequestUrl = initialUrl?.href ?? null;
       const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
       tab.initialNavigation = (
         (desktop || adopted) && page.url() === snapshot.navStatus.url
@@ -1191,6 +1282,14 @@ const make = Effect.gen(function* () {
   const clearAbortedNavigation = (tab: ServerTab) => {
     if (tab.abortedNavigation !== null) clearTimeout(tab.abortedNavigation.timer);
     tab.abortedNavigation = null;
+  };
+
+  const settleStoppedNavigation = (tab: ServerTab, generation: number) => {
+    if (tab.navigationGeneration !== generation || !tab.loading) return;
+    clearAbortedNavigation(tab);
+    tab.loading = false;
+    if (tab.page.url() === "about:blank") report(tab, { _tag: "Idle" });
+    else void reportLoaded(tab);
   };
 
   const settleAbortedNavigation = (
@@ -1797,6 +1896,7 @@ const make = Effect.gen(function* () {
   };
 
   const loadErrorOf = (tab: ServerTab): PreviewAutomationLoadError | undefined => {
+    if (tab.crash) return tab.crash;
     if (!tab.page.url().startsWith("chrome-error://")) return undefined;
     // A desktop failure from before CDP attached is superseded by any navigation we observe.
     if (tab.loadError || !tab.desktop || tab.navigationGeneration > 0) return tab.loadError;
@@ -1923,6 +2023,7 @@ const make = Effect.gen(function* () {
     readiness: "load" | "domContentLoaded" | "none",
     timeout: number,
   ) => {
+    tab.pendingInitialRequestUrl = null;
     const startedAt = performance.now();
     const navigation = tab.page.goto(url, { timeout, waitUntil: "commit" });
     if (readiness === "none") {
@@ -1986,24 +2087,37 @@ const make = Effect.gen(function* () {
         const opened = await tab.page.context().newCDPSession(tab.page);
         session = opened;
         const framesInFlight = new Set<Promise<void>>();
+        // Chrome withholds frames while acks are outstanding, so ack on arrival and let a
+        // slow encoder skip to the newest frame instead of throttling the capture.
+        let pendingFrame: readonly [string, number] | null = null;
+        const deliverPending = async () => {
+          while (pendingFrame) {
+            const next = pendingFrame;
+            pendingFrame = null;
+            const accepted = await encoder
+              .evaluate(
+                ([data, width]) =>
+                  (globalThis as unknown as EncoderWindow).__t3Recorder.frame(data, width),
+                next,
+              )
+              .catch(() => true);
+            if (!accepted) {
+              pendingFrame = null;
+              await opened.send("Page.stopScreencast").catch(constVoid);
+            }
+          }
+        };
         opened.on("Page.screencastFrame", (frame) => {
+          void opened
+            .send("Page.screencastFrameAck", { sessionId: frame.sessionId })
+            .catch(constVoid);
           const cssWidth = tab.page.viewportSize()?.width ?? frame.metadata.deviceWidth;
-          const delivered: Promise<void> = encoder
-            .evaluate(
-              ([data, width]) =>
-                (globalThis as unknown as EncoderWindow).__t3Recorder.frame(data, width),
-              [frame.data, cssWidth] as const,
-            )
-            .then(async (accepted) => {
-              if (!accepted) await opened.send("Page.stopScreencast");
-            })
-            .catch(constVoid)
-            .finally(() => {
-              framesInFlight.delete(delivered);
-              void opened
-                .send("Page.screencastFrameAck", { sessionId: frame.sessionId })
-                .catch(constVoid);
-            });
+          const delivering = framesInFlight.size > 0;
+          pendingFrame = [frame.data, cssWidth];
+          if (delivering) return;
+          const delivered: Promise<void> = deliverPending().finally(() =>
+            framesInFlight.delete(delivered),
+          );
           framesInFlight.add(delivered);
         });
         await opened.send("Page.startScreencast", RECORDING_SCREENCAST);
@@ -2581,7 +2695,11 @@ const make = Effect.gen(function* () {
         return loadError ? { ...snapshot, url: loadError.url, loadError } : snapshot;
       }
       case "click": {
-        const clickInput = input as PreviewAutomationClickInput;
+        // Time spent queued behind other work on this tab counts against the broker's deadline.
+        const clickInput = {
+          ...(input as PreviewAutomationClickInput),
+          timeoutMs: Math.max(1, Math.floor(deadlineMs - performance.now())),
+        };
         await recordAction(tab, "click", () =>
           ServerBrowserPage.click(tab.page, clickInput, pointerFor(tab)),
         );
@@ -2692,7 +2810,10 @@ const make = Effect.gen(function* () {
             const request = event.request;
             if (request?.clear === "cookies") await tab.cdp.send("Network.clearBrowserCookies");
             if (request?.clear === "cache") await tab.cdp.send("Network.clearBrowserCache");
-            if (request?.hardReload) await tab.cdp.send("Page.reload", { ignoreCache: true });
+            if (request?.hardReload) {
+              tab.pendingInitialRequestUrl = null;
+              await tab.cdp.send("Page.reload", { ignoreCache: true });
+            }
           })
           .catch((cause: unknown) =>
             runFork(Effect.logWarning("server preview could not apply a tab setting", { cause })),
@@ -2834,17 +2955,34 @@ const make = Effect.gen(function* () {
       case "navigate":
         if (typeof message.url === "string") {
           const url = normalizePreviewUrl(message.url);
+          tab.pendingInitialRequestUrl = null;
           tab.control.trackUntilHandoff(tab.page.goto(url, VIEWER_NAVIGATION_OPTIONS));
         }
         return;
       case "history":
+        tab.pendingInitialRequestUrl = null;
         tab.control.trackUntilHandoff(
           num(message.delta) < 0
             ? tab.page.goBack(VIEWER_NAVIGATION_OPTIONS)
             : tab.page.goForward(VIEWER_NAVIGATION_OPTIONS),
         );
         return;
+      case "stopLoading": {
+        const generation = tab.navigationGeneration;
+        tab.stoppedGeneration = generation;
+        await session.send("Page.stopLoading");
+        // Stopping a committed document need not emit Playwright's load or requestfailed events.
+        settleStoppedNavigation(tab, generation);
+        return;
+      }
       case "reload":
+        tab.pendingInitialRequestUrl = null;
+        if (tab.crash) {
+          tab.control.trackUntilHandoff(
+            tab.page.goto(tab.crashedUrl ?? tab.crash.url, VIEWER_NAVIGATION_OPTIONS),
+          );
+          return;
+        }
         if (message.ignoreCache === true) {
           await session.send("Page.reload", { ignoreCache: true });
           return;
