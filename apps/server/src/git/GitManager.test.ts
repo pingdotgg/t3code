@@ -5339,14 +5339,18 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       });
 
       expect(result.branch).toBe("feature/no-pull-ref");
-      const marker = (yield* runGit(result.worktreePath as string, [
-        "rev-parse",
-        "--git-path",
-        GitManager.UNSENT_PULL_REQUEST_CHECKOUT_FILE,
-      ])).stdout.trim();
+      const worktreePath = result.worktreePath as string;
       expect(
-        NodeFS.readFileSync(NodePath.resolve(result.worktreePath as string, marker), "utf8"),
-      ).toBe(repoDir);
+        JSON.parse(
+          NodeFS.readFileSync(
+            NodePath.join(
+              NodePath.dirname(worktreePath),
+              `.${NodePath.basename(worktreePath)}.t3-pull-request-checkout`,
+            ),
+            "utf8",
+          ),
+        ),
+      ).toEqual({ projectRoot: repoDir, branch: "feature/no-pull-ref" });
       const worktreeHead = (yield* runGit(result.worktreePath as string, [
         "rev-parse",
         "HEAD",

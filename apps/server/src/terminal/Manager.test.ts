@@ -465,6 +465,8 @@ it.layer(
     { method: "open", location: "subdirectory" },
     { method: "open", location: "unmanaged" },
     { method: "open", location: "no-worktree" },
+    // Storage cleanup removed a pull request checkout whose draft was never sent.
+    { method: "open", location: "draft" },
   ] as const)(
     "recovers $method with a $location cwd without a cleanup gap",
     ({ method, location }) =>
@@ -480,13 +482,29 @@ it.layer(
         const cwd = location === "subdirectory" ? path.join(worktreePath, "src") : worktreePath;
         const cleanupQueued = yield* Deferred.make<Fiber.Fiber<void>>();
         let creations = 0;
+        const checkoutRecord = path.join(
+          path.dirname(worktreePath),
+          ".feature.t3-pull-request-checkout",
+        );
+        if (location === "draft") {
+          yield* fs.makeDirectory(path.dirname(worktreePath), { recursive: true });
+          yield* fs.writeFileString(
+            checkoutRecord,
+            JSON.stringify({ projectRoot: baseDir, branch: "feature" }),
+          );
+          yield* fs.utimes(checkoutRecord, 1, 1);
+        }
         const prepareLaunch = yield* makePrepareTerminalLaunch(() =>
-          Effect.succeed({
-            id: ThreadId.make("thread-1"),
-            projectId: ProjectId.make("project-1"),
-            worktreePath: location === "no-worktree" ? null : worktreePath,
-            branch: "feature",
-          }),
+          Effect.succeed(
+            location === "draft"
+              ? null
+              : {
+                  id: ThreadId.make("thread-1"),
+                  projectId: ProjectId.make("project-1"),
+                  worktreePath: location === "no-worktree" ? null : worktreePath,
+                  branch: "feature",
+                },
+          ),
         ).pipe(
           Effect.provide(
             Layer.mergeAll(
@@ -541,6 +559,10 @@ it.layer(
         assert.equal(creations, 1);
         assert.equal(ptyAdapter.spawnInputs.length, 1);
         assert.isTrue(yield* fs.exists(cwd));
+        if (location === "draft") {
+          const used = Option.getOrThrow((yield* fs.stat(checkoutRecord)).mtime);
+          assert.isAbove(used.getTime(), 1_000);
+        }
       }),
   );
 

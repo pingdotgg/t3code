@@ -53,6 +53,7 @@ import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirect
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { isNonRepositoryGitStderr } from "./vcs/GitVcsDriverCore.ts";
 import { removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
+import { makeUnsentCheckouts } from "./workspace/unsentCheckout.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -325,6 +326,7 @@ const make = Effect.gen(function* () {
   const terminals = yield* TerminalManager.TerminalManager;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const unsentCheckouts = yield* makeUnsentCheckouts;
   const liveTerminals = new Map<string, Map<string, TerminalSummary>>();
   const orphanSizes = new Map<string, number | null>();
   const noteTerminal = (terminal: TerminalSummary) => {
@@ -1093,19 +1095,12 @@ const make = Effect.gen(function* () {
       return false;
     });
     // A pull request checkout whose draft never became a thread has no row for the rules above.
-    // Sending the draft later restores the folder from its branch, which removal leaves alone.
+    // Its record and branch stay, so the draft's terminal or first turn restores the folder.
     const removeUnsentCheckout = Effect.fn("StorageCleanup.removeUnsentCheckout")(
       function* (worktreePath: string) {
-        const located = yield* git.execute({
-          operation: "StorageCleanup.unsentCheckout",
-          cwd: worktreePath,
-          args: ["rev-parse", "--git-path", GitManager.UNSENT_PULL_REQUEST_CHECKOUT_FILE],
-        });
-        const marker = path.resolve(worktreePath, located.stdout.trim());
-        if (!(yield* fs.exists(marker))) return false;
-        const markedAt = Option.getOrNull((yield* fs.stat(marker)).mtime);
-        if (markedAt === null || markedAt.getTime() > now - UNSENT_CHECKOUT_GRACE_MS) return false;
-        const projectKey = yield* canonical((yield* fs.readFileString(marker)).trim());
+        const checkout = yield* unsentCheckouts.read(worktreePath);
+        if (checkout === null || checkout.recordedAt > now - UNSENT_CHECKOUT_GRACE_MS) return false;
+        const projectKey = yield* canonical(checkout.projectRoot);
         const projectKeys = yield* Effect.forEach(snapshot.projects, (candidate) =>
           canonical(candidate.workspaceRoot),
         );
@@ -1126,14 +1121,8 @@ const make = Effect.gen(function* () {
           if (bindingKeys.includes(worktreeKey)) return true;
           if ((yield* hasTerminal(worktreePaths)) || (yield* hasLiveSession(worktreePaths)))
             return true;
-          // Commits on a detached HEAD are reachable only through this worktree.
-          const head = yield* git.execute({
-            operation: "StorageCleanup.unsentCheckout",
-            cwd: worktreePath,
-            args: ["symbolic-ref", "--quiet", "HEAD"],
-            allowNonZeroExit: true,
-          });
-          if (head.exitCode !== 0) return true;
+          // The record's branch is what a restore checks out; a detached HEAD's commits would be lost.
+          if (yield* branchChanged(worktreePath, checkout.branch)) return true;
           return (yield* localChangesReason(worktreePath, settings)) !== null;
         });
         if (yield* blocked()) return false;

@@ -34,6 +34,7 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { CodexProviderCapabilitiesV2 } from "./orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ServerActivation } from "./serverActivation.ts";
+import { makeUnsentCheckouts } from "./workspace/unsentCheckout.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -1868,9 +1869,16 @@ describe("orphan worktree reports", () => {
           fixture.setThreads([]);
           const checkout = `${fixture.config.worktreesDir}/repository/checkout`;
           yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "checkout", checkout]);
-          const marker = `${fixture.repo}/.git/worktrees/checkout/${GitManager.UNSENT_PULL_REQUEST_CHECKOUT_FILE}`;
-          yield* fixture.fs.writeFileString(marker, fixture.repo);
-          if (state !== "fresh") yield* fixture.fs.utimes(marker, 1, 1);
+          yield* (yield* makeUnsentCheckouts).record(checkout, {
+            projectRoot: fixture.repo,
+            branch: "checkout",
+          });
+          if (state !== "fresh")
+            yield* fixture.fs.utimes(
+              `${fixture.config.worktreesDir}/repository/.checkout.t3-pull-request-checkout`,
+              1,
+              1,
+            );
           if (state === "edited")
             yield* fixture.fs.writeFileString(`${checkout}/tracked.txt`, "edited\n");
           yield* fixture.fs.utimes(checkout, 1, 1);
@@ -1888,7 +1896,7 @@ describe("orphan worktree reports", () => {
             ),
           ]);
           expect(yield* fixture.fs.exists(checkout)).toBe(!removed);
-          // Sending the draft later restores the folder from this branch.
+          // The draft's terminal or first turn restores the folder from this branch.
           expect(
             (yield* fixture.command(fixture.repo, ["branch", "--list", "checkout"])).stdout,
           ).toContain("checkout");

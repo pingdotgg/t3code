@@ -11,6 +11,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
+import { makeUnsentCheckouts } from "./unsentCheckout.ts";
 import { withWorkspaceLease } from "./workspaceLease.ts";
 import { TerminalCwdRecovery } from "../terminal/Manager.ts";
 
@@ -45,6 +46,11 @@ interface WorktreeThread {
   readonly worktreePath: string | null;
   readonly branch: string | null;
 }
+
+// A draft's pull request checkout has no thread, so its record names the project.
+type RestoreTarget =
+  | WorktreeThread
+  | (Omit<WorktreeThread, "projectId"> & { readonly projectRoot: string });
 
 export const makeRestoreMissingWorktree = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -141,17 +147,20 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
     });
   });
 
-  return Effect.fn("restoreMissingWorktree")(function* (thread: WorktreeThread) {
+  return Effect.fn("restoreMissingWorktree")(function* (thread: RestoreTarget) {
     const { worktreePath, branch } = thread;
     if (worktreePath === null || branch === null) return;
     const exists = yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true));
     const leftover = exists && (yield* isLeftoverFolder(worktreePath));
     if ((exists && !leftover) || !(yield* isManagedWorktreePath(worktreePath))) return;
-    const project = yield* projects.getById(thread.projectId).pipe(
-      Effect.map(Option.getOrUndefined),
-      Effect.orElseSucceed(() => undefined),
-    );
-    if (project === undefined) return;
+    const projectRoot =
+      "projectRoot" in thread
+        ? thread.projectRoot
+        : yield* projects.getById(thread.projectId).pipe(
+            Effect.map((project) => Option.getOrUndefined(project)?.workspaceRoot),
+            Effect.orElseSucceed(() => undefined),
+          );
+    if (projectRoot === undefined) return;
     yield* Effect.logWarning("recreating missing worktree", {
       threadId: thread.id,
       worktreePath,
@@ -159,7 +168,7 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
     });
     // `git worktree add` refuses a non-empty target.
     yield* (leftover ? fileSystem.remove(worktreePath, { recursive: true }) : Effect.void).pipe(
-      Effect.andThen(recreateMissingWorktree({ cwd: project.workspaceRoot, worktreePath, branch })),
+      Effect.andThen(recreateMissingWorktree({ cwd: projectRoot, worktreePath, branch })),
       Effect.mapError((cause) =>
         cause._tag === "WorktreeRecreateNoBaseError"
           ? cause
@@ -202,6 +211,7 @@ export const makePrepareTerminalLaunch = Effect.fn(
 ) {
   const path = yield* Path.Path;
   const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
+  const unsentCheckouts = yield* makeUnsentCheckouts;
   return Effect.fn("restoreMissingWorktree.prepareTerminalLaunch")(function* <
     Input extends {
       readonly threadId: string;
@@ -209,9 +219,17 @@ export const makePrepareTerminalLaunch = Effect.fn(
       readonly worktreePath?: string | null | undefined;
     },
   >(input: Input) {
-    const thread = yield* getThreadShell(ThreadId.make(input.threadId)).pipe(
+    const shell = yield* getThreadShell(ThreadId.make(input.threadId)).pipe(
       Effect.orElseSucceed(() => null),
     );
+    // Storage cleanup removes a checkout whose draft was never sent; the draft may still be open.
+    const draftPath = shell === null ? (input.worktreePath ?? input.cwd ?? null) : null;
+    const checkout = draftPath === null ? null : yield* unsentCheckouts.read(draftPath);
+    const thread: RestoreTarget | null =
+      shell ??
+      (checkout === null
+        ? null
+        : { id: ThreadId.make(input.threadId), worktreePath: draftPath, ...checkout });
     const worktreePath = thread?.worktreePath ?? null;
     if (
       thread === null ||
@@ -222,6 +240,10 @@ export const makePrepareTerminalLaunch = Effect.fn(
     }
     const recover = (error: TerminalCwdNotFoundError) =>
       restoreMissingWorktree(thread).pipe(
+        // Using the checkout again restarts storage cleanup's wait.
+        Effect.andThen(
+          checkout === null ? Effect.void : unsentCheckouts.record(worktreePath, checkout),
+        ),
         Effect.catch((cause) =>
           Effect.logWarning("failed to recreate missing worktree", {
             threadId: thread.id,
