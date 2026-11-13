@@ -104,10 +104,10 @@ export function resolveGitHubRepository(input: {
 }
 
 /**
- * The name of the fork an `owner:branch` head lives in when that owner also owns the base, where
+ * The `owner/name` of the fork an `owner:branch` head lives in when that owner also owns the base, where
  * the head alone names no repository. Null when the remotes name no single such repository.
  */
-export function selectGitHubHeadRepositoryName(input: {
+export function selectGitHubHeadRepositoryNameWithOwner(input: {
   readonly remotes: string;
   readonly base: GitHubRepositoryLocator;
   readonly headOwner: string;
@@ -119,7 +119,7 @@ export function selectGitHubHeadRepositoryName(input: {
     if (gitHubApiHostForRemote(remote.url) !== input.base.host) continue;
     const [remoteOwner, name, ...rest] = normalizeGitRemoteUrl(remote.url).split("/").slice(1);
     if (!remoteOwner || !name || rest.length > 0 || remoteOwner.toLowerCase() !== owner) continue;
-    if (name.toLowerCase() !== input.base.name.toLowerCase()) names.add(name);
+    if (name.toLowerCase() !== input.base.name.toLowerCase()) names.add(`${remoteOwner}/${name}`);
   }
   const [name, ...others] = names;
   return name !== undefined && others.length === 0 ? name : null;

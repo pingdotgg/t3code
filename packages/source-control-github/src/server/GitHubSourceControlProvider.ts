@@ -41,7 +41,7 @@ import {
   parseGitHubRepositorySelector,
   parsePullRequestReference,
   resolveGitHubRepository,
-  selectGitHubHeadRepositoryName,
+  selectGitHubHeadRepositoryNameWithOwner,
   type GitHubRepositoryLocator,
 } from "./gitHubRepositoryResolution.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
@@ -1075,7 +1075,7 @@ export const make = Effect.gen(function* () {
         const headRepository =
           headOwner === undefined
             ? null
-            : selectGitHubHeadRepositoryName({
+            : selectGitHubHeadRepositoryNameWithOwner({
                 remotes: (yield* readRemotes(input.cwd)).remotes,
                 base: locator,
                 headOwner,

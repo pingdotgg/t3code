@@ -615,7 +615,7 @@ describe("GitHubSourceControlProvider writes", () => {
       assert.deepStrictEqual(requests[0]!.body, {
         base: "main",
         head: "acme:feature",
-        head_repo: "web-fork",
+        head_repo: "acme/web-fork",
         title: "Title",
         body: "Body",
         maintainer_can_modify: true,
