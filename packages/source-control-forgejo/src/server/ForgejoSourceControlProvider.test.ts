@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -1029,6 +1030,72 @@ it.effect("reads a Gitea pull request list at most once for branches that have n
                     };
                   });
             return encodeJsonEffect(items).pipe(Effect.orDie, Effect.map(processOutput));
+          },
+        }),
+      ),
+    ),
+  );
+});
+
+it.effect("reads only the changed front of a Gitea pull request list it has read before", () => {
+  const repo = { full_name: "maria/project", owner: { login: "maria" } };
+  const fork = { full_name: "alice/renamed", owner: { login: "alice" } };
+  const pull = (number: number, updatedSecond: number, head: string, state = "open") => ({
+    number,
+    title: `PR ${number}`,
+    html_url: `https://forgejo.test/maria/project/pulls/${number}`,
+    state,
+    merged: false,
+    updated_at: `2026-10-12T00:0${Math.floor(updatedSecond / 60)}:${String(updatedSecond % 60).padStart(2, "0")}Z`,
+    base: { ref: number === 5 ? "release" : "main", label: "main", sha: "base", repo },
+    head: { ref: head, label: head, sha: "h", repo: number === 5 ? fork : repo },
+  });
+  // Newest update first, as `sort=recentupdate` returns them. PR 5 sits on the last page.
+  let pulls = Array.from({ length: 120 }, (_, index) =>
+    pull(120 - index, 120 - index, 120 - index === 5 ? "feature" : `other-${120 - index}`),
+  );
+  let requests = 0;
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoSourceControlProvider.make;
+    const find = (headSelector: string) =>
+      provider
+        .listChangeRequests({ cwd: "/repo", headSelector, state: "all" })
+        .pipe(Effect.map((found) => found.map((pr) => [pr.number, pr.state])));
+
+    assert.deepStrictEqual(yield* find("alice:feature"), [[5, "open"]]);
+    assert.strictEqual(requests, 4);
+
+    yield* TestClock.adjust("6 seconds");
+    pulls = [pull(121, 202, "later"), pull(5, 201, "feature", "closed"), ...pulls].filter(
+      (entry, index, all) => all.findIndex((other) => other.number === entry.number) === index,
+    );
+    assert.deepStrictEqual(yield* find("later"), [[121, "open"]]);
+    assert.deepStrictEqual(yield* find("alice:feature"), [[5, "closed"]]);
+    assert.strictEqual(requests, 5);
+
+    yield* TestClock.adjust("1 hour");
+    pulls = pulls.filter((entry) => entry.number !== 121);
+    assert.deepStrictEqual(yield* find("later"), []);
+    assert.strictEqual(requests, 9);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+        TestSourceControlHost.layer({ process: {} }),
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          resolveRepository: () =>
+            Effect.succeed({
+              login: "work",
+              repository: "maria/project",
+              baseUrl: "https://forgejo.test",
+            }),
+          api: (input) => {
+            requests++;
+            const page = Number(new URLSearchParams(input.path.split("?")[1]).get("page"));
+            return encodeJsonEffect(pulls.slice((page - 1) * 50, page * 50)).pipe(
+              Effect.orDie,
+              Effect.map(processOutput),
+            );
           },
         }),
       ),
