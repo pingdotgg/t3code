@@ -192,6 +192,7 @@ describe("resolveBranchSelectionTarget", () => {
       checkoutCwd: "/repo",
       nextWorktreePath: "/repo",
       reuseExistingWorktree: true,
+      staysInActiveCheckout: false,
     });
     expect(
       resolveBranchSelectionTarget({
@@ -206,6 +207,7 @@ describe("resolveBranchSelectionTarget", () => {
       checkoutCwd: "/repo/.t3/worktrees/feature-b",
       nextWorktreePath: "/repo/.t3/worktrees/feature-b",
       reuseExistingWorktree: true,
+      staysInActiveCheckout: false,
     });
   });
 
@@ -233,6 +235,8 @@ describe("resolveBranchSelectionTarget", () => {
         checkoutCwd: "/repo",
         nextWorktreePath: null,
         reuseExistingWorktree: true,
+        // A ref listed in the thread's own checkout may be stale, so it is checked out, not assumed.
+        staysInActiveCheckout: activeWorktreePath === null,
       });
     }
   });
@@ -251,6 +255,7 @@ describe("resolveBranchSelectionTarget", () => {
       checkoutCwd: "/repo/.t3/worktrees/feature-a",
       nextWorktreePath: "/repo/.t3/worktrees/feature-a",
       reuseExistingWorktree: false,
+      staysInActiveCheckout: true,
     });
   });
 });
