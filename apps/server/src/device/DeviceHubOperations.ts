@@ -173,7 +173,11 @@ export const makeDeviceHubOperations = (options: {
         .split(/\r?\n/)
         .map((line) => line.trim())
         .filter(Boolean)) {
-        if (!devices.some((device) => device.platform === "android" && device.name === name)) {
+        if (
+          !devices.some(
+            (device) => device.platform === "android" && !device.physical && device.name === name,
+          )
+        ) {
           devices.push({
             id: name,
             name,
