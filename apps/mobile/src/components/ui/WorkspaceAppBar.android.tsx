@@ -41,6 +41,7 @@ export interface WorkspaceAppBarProps {
     readonly customized: boolean;
     readonly actions: MenuAction[];
     readonly onSelect: (id: string) => void;
+    readonly renderLeadingIcon?: (action: MenuAction) => ReactNode;
   };
 }
 
@@ -136,6 +137,7 @@ function WorkspaceAppBarView(props: WorkspaceAppBarProps) {
     <AndroidAnchoredMenu
       actions={filter.actions}
       onPressAction={({ nativeEvent }) => filter.onSelect(nativeEvent.event)}
+      renderLeadingIcon={filter.renderLeadingIcon}
     >
       {(open) =>
         searching ? (

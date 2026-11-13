@@ -139,6 +139,8 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
                 customized: icon?.endsWith(".fill") === true,
                 actions: menuActionsFromAppBarItems(menu.items),
                 onSelect: (id) => selectMenuItem(menu.items, id),
+                renderLeadingIcon: (action) =>
+                  action.id ? findAppBarMenuItem(menu.items, action.id)?.leading : null,
               }
             : undefined
         }

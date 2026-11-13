@@ -38,6 +38,7 @@ export type AndroidAnchoredMenuProps = {
   readonly actions: readonly MenuAction[];
   readonly title?: string;
   readonly onPressAction?: MenuComponentProps["onPressAction"];
+  readonly renderLeadingIcon?: (action: MenuAction) => ReactNode;
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
   readonly children: ReactNode | ((open: () => void) => ReactNode);
@@ -180,6 +181,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                 onPress={onPressItem}
                 onBack={() => setPath((current) => current.slice(0, -1))}
                 onClose={close}
+                renderLeadingIcon={props.renderLeadingIcon}
               />
             ) : (
               <View
@@ -211,6 +213,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                     onPress={onPressItem}
                     onBack={() => setPath((current) => current.slice(0, -1))}
                     onClose={close}
+                    renderLeadingIcon={props.renderLeadingIcon}
                   />
                 </ScrollView>
               </View>

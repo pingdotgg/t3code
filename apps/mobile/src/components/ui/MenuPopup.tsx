@@ -1,4 +1,5 @@
 import type { MenuAction } from "@react-native-menu/menu";
+import type { ReactNode } from "react";
 
 export interface MenuPopupProps {
   readonly menuWidth: number;
@@ -15,6 +16,7 @@ export interface MenuPopupProps {
   readonly onBack: () => void;
   readonly onClose: () => void;
   readonly inline?: boolean;
+  readonly renderLeadingIcon?: (action: MenuAction) => ReactNode;
 }
 
 export function MenuPopup(_props: MenuPopupProps) {

@@ -48,6 +48,7 @@ import { requestThreadMessageJump } from "./threadMessageJump";
 import { useThreadListSearchMatches } from "./useThreadListSearchMatches";
 import { useHomeListOptions } from "../home/home-list-options";
 import { buildHomeListFilterMenuItems } from "../home/home-list-filter-menu";
+import { ProjectFilterMenuIcon } from "../home/ProjectFilterMenuIcon";
 import { buildHomeProjectScopes } from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
@@ -190,6 +191,10 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const projectFilterOptions = pickableProjectGroups(projectScopes).map((scope) => ({
     key: scope.key,
     label: scope.title,
+    isScratch: scope.representative.isScratch,
+    leading: scope.representative.isScratch ? null : (
+      <ProjectFilterMenuIcon project={scope.representative} />
+    ),
   }));
   const projectTitleByProjectKey = useMemo(
     () =>
