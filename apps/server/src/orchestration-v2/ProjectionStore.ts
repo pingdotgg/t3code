@@ -5023,7 +5023,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const JAVASCRIPT_TRIM_WHITESPACE =
       "char(32, 9, 10, 13, 11, 12, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288, 65279)";
     const COMPACT_COMMAND_TEXT = `lower(trim(json_extract(payload_json, '$.text'), ${JAVASCRIPT_TRIM_WHITESPACE})) = '/compact'`;
-    // Must match migration 087's partial index exactly for SQLite to use it.
+    // Must match migration 088's partial index exactly for SQLite to use it.
     const TURN_START_COMMAND_MESSAGE = sql.literal(
       `role = 'user' AND (
       ${COMPACT_COMMAND_TEXT}
