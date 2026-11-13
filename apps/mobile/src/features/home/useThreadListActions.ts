@@ -228,6 +228,7 @@ export function useThreadListActions(): {
   ) => Promise<boolean>;
   readonly renameThread: (thread: EnvironmentThreadShell) => void;
   readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly markThreadUnread: (thread: EnvironmentThreadShell) => Promise<boolean>;
 } {
   const executeAction = useThreadActionExecutor();
   const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
@@ -241,6 +242,9 @@ export function useThreadListActions(): {
     reportFailure: false,
   });
   const regenerateTitle = useAtomCommand(threadEnvironment.regenerateTitle, {
+    reportFailure: false,
+  });
+  const markUnreadMutation = useAtomCommand(threadEnvironment.markUnread, {
     reportFailure: false,
   });
   const snoozeInFlightThreadKeys = useRef(new Set<string>());
@@ -515,6 +519,31 @@ export function useThreadListActions(): {
     }
     return true;
   };
+  const markThreadUnread = async (thread: EnvironmentThreadShell) => {
+    if (!environmentConfigLoaded(thread.environmentId)) {
+      Dialog.alert(
+        "Could not mark thread unread",
+        "This environment's server does not support read markers yet. Update the server to use Mark unread.",
+      );
+      return false;
+    }
+    selectionHaptic();
+    const result = await markUnreadMutation({
+      environmentId: thread.environmentId,
+      input: { threadId: thread.id },
+    });
+    if (result._tag === "Failure") {
+      const error = Cause.squash(result.cause);
+      Dialog.alert(
+        "Could not mark thread unread",
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "The thread could not be marked unread.",
+      );
+      return false;
+    }
+    return true;
+  };
   const regenerateThreadTitle = async (thread: EnvironmentThreadShell) => {
     if (!checkThreadOperationPermission(thread, "Could not regenerate title")) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
@@ -753,6 +782,7 @@ export function useThreadListActions(): {
     moveThread,
     renameThread: (thread) => renameThread(liveThread(thread)),
     regenerateThreadTitle: (thread) => regenerateThreadTitle(liveThread(thread)),
+    markThreadUnread: (thread) => markThreadUnread(liveThread(thread)),
   };
 }
 

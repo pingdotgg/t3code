@@ -671,6 +671,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onNewThreadOnBranch: (thread: EnvironmentThreadShell) => void;
   readonly onRenameThread: (thread: EnvironmentThreadShell) => void;
   readonly onRegenerateThreadTitle: (thread: EnvironmentThreadShell) => void;
+  readonly onMarkThreadUnread: (thread: EnvironmentThreadShell) => void;
   readonly onSettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onSnoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => void;
   readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => void;
@@ -718,6 +719,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onDeleteThread,
     onRenameThread,
     onRegenerateThreadTitle,
+    onMarkThreadUnread,
     onNewThreadOnBranch,
     onSettleThread,
     onSnoozeThread,
@@ -802,6 +804,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleRegenerateTitle = useCallback(
     () => onRegenerateThreadTitle(thread),
     [onRegenerateThreadTitle, thread],
+  );
+  const handleMarkUnread = useCallback(
+    () => onMarkThreadUnread(thread),
+    [onMarkThreadUnread, thread],
   );
   const handleSettle = useCallback(() => onSettleThread(thread), [onSettleThread, thread]);
   const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
@@ -926,6 +932,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         supported: props.titleRegenerationSupported,
         isRegenerating: isRegeneratingTitle,
       }),
+      { id: "mark-unread", title: "Mark unread", image: "envelope.badge" },
       ...(canTurnIntoProject
         ? [
             {
@@ -1039,6 +1046,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "rename") handleRename();
       if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
+      if (nativeEvent.event === "mark-unread") handleMarkUnread();
       if (nativeEvent.event === "turn-into-project") void turnThreadIntoProject(thread);
       if (nativeEvent.event === "copy-thread") {
         const target = threadChipCopyTarget(
@@ -1077,6 +1085,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       thread,
       handleArchive,
       handleDelete,
+      handleMarkUnread,
       handleRegenerateTitle,
       handleRename,
       handleMoveDown,
