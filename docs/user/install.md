@@ -57,7 +57,7 @@ the nightly train, run your installed `t3` (for example `t3 connect`), not
 
 There is no `t3` executable for Intel Macs (the desktop app is available). To
 run a server there, build it from source with `vp`, which provides the Node version it needs
-([Install vp](https://github.com/pingdotgg/t3code#install-vp)):
+([Install vp](../operations/development.md#first-checkout)):
 
 ```bash
 git clone https://github.com/pingdotgg/t3code
@@ -76,6 +76,7 @@ or use a package manager:
 | Platform           | Install                                                      |
 | ------------------ | ------------------------------------------------------------ |
 | Windows            | `winget install T3Tools.T3Code`                              |
+| Windows (Scoop)    | `scoop install extras/t3code`                                |
 | macOS              | `brew install --cask t3-code`                                |
 | Debian, Ubuntu     | `sudo apt install ./T3-Code-*.deb`                           |
 | Arch Linux         | `yay -S t3code-bin`                                          |
@@ -158,6 +159,13 @@ Pass a path, such as `t3 app ../my-project`, to open another directory. It requi
 the desktop app, so a standalone server or an SSH session is not enough. If the
 command cannot reach the app, start or update the desktop app and try again.
 
+### Drop a folder on the sidebar
+
+Drag one or more folders from Finder, Explorer, or your file manager onto the
+sidebar. Each one opens as a project on this computer, the same as `t3 app`.
+Files dropped on a thread still attach to that thread. Browsers do not share
+folder paths, so in the web app use **Add project** instead.
+
 ## Mobile app
 
 Install T3 Code from the
@@ -225,6 +233,10 @@ Cursor and Antigravity update with T3 Code. Homebrew and Chocolatey installs
 compare against the version their package manager offers, which can trail the
 npm release; update Claude installed with Chocolatey through Chocolatey.
 
+The managed runtimes for Antigravity and for Codex connected through ChatGPT
+first install the release T3 Code tested. When T3 Code finds a newer compatible
+release, their setup in **Settings → Providers** offers an update.
+
 Add another provider instance for a separate account or configuration. Each
 instance can have its own environment variables, such as API keys or a custom
 base URL. Mark secret values as sensitive; after saving, T3 Code does not display
@@ -234,6 +246,47 @@ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
 [Antigravity](./providers-antigravity.md), [Kiro](./providers-kiro.md),
 [Pi](./providers-pi.md), [Muse Code](./providers-muse.md), and [fx](./providers-fx.md).
+
+### Provider check timeouts
+
+If a provider works in its CLI but T3 Code reports a timeout while checking it,
+allow more time in the T3 server's environment. For example, give Codex and
+Claude readiness checks 60 seconds:
+
+```bash
+T3CODE_CODEX_PROBE_TIMEOUT_MS=60000 T3CODE_CLAUDE_PROBE_TIMEOUT_MS=60000 t3 serve
+```
+
+For a remote environment, set these on the machine running the T3 server.
+Keep them in your launcher or service configuration to retain them across
+updates, then restart the server. For systemd, add
+`Environment=T3CODE_CODEX_PROBE_TIMEOUT_MS=60000` under `[Service]` in a service
+override, reload systemd, and restart the service. Provider instances can also
+set their own overrides in Settings → Providers.
+
+Each variable extends that provider's readiness-probe deadlines; a phase whose
+default is already longer keeps its default. Providers with several phases can
+take longer than one deadline in total. Values must be whole milliseconds no
+greater than 2147483647; unset or invalid values keep the defaults.
+
+| Provider            | Environment variable                   |
+| ------------------- | -------------------------------------- |
+| Codex               | `T3CODE_CODEX_PROBE_TIMEOUT_MS`        |
+| Claude              | `T3CODE_CLAUDE_PROBE_TIMEOUT_MS`       |
+| Cursor              | `T3CODE_CURSOR_PROBE_TIMEOUT_MS`       |
+| Antigravity         | `T3CODE_ANTIGRAVITY_PROBE_TIMEOUT_MS`  |
+| Grok                | `T3CODE_GROK_PROBE_TIMEOUT_MS`         |
+| Kiro                | `T3CODE_KIRO_PROBE_TIMEOUT_MS`         |
+| fx                  | `T3CODE_FX_PROBE_TIMEOUT_MS`           |
+| Pi                  | `T3CODE_PI_PROBE_TIMEOUT_MS`           |
+| Muse Code           | `T3CODE_MUSE_PROBE_TIMEOUT_MS`         |
+| OpenCode            | `T3CODE_OPENCODE_PROBE_TIMEOUT_MS`     |
+| ACP Registry agents | `T3CODE_ACP_REGISTRY_PROBE_TIMEOUT_MS` |
+
+Longer deadlines also take longer to report a stalled check. These overrides
+cover readiness and discovery, including OpenCode server startup. Usage and
+config enrichment retain their own shorter limits. Turn execution, package
+installation, update checks, and shutdown limits keep their existing behavior.
 
 ## Next steps
 

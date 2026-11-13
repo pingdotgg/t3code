@@ -16,6 +16,7 @@ const makeTarget = (
   title: () => "Fixture",
   userAgent: () => "Electron",
   setDownloadDirectory,
+  receivesScreencast: () => true,
 });
 
 const makeRelay = (target: CdpRelayTarget, write: (raw: string) => void) =>

@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -119,6 +120,20 @@ interface PinnedRuntimeInstallInput {
   readonly onProgress?: (progress: PinnedRuntimeProgress) => void;
 }
 
+// GitHub release downloads intermittently answer 5xx during incidents; a retry usually lands.
+const DOWNLOAD_RETRY = { times: 3, schedule: Schedule.exponential("2 seconds") } as const;
+
+const isTransientDownloadFailure = (
+  error: HttpClientError.HttpClientError | Cause.TimeoutError,
+): boolean => {
+  // No answer or a stall means the host cannot reach the release source; retrying only delays that.
+  if (error._tag === "TimeoutError") return false;
+  // Body bytes are read raw, so a DecodeError is a body that failed after the host answered.
+  if (error.reason._tag === "DecodeError") return true;
+  const status = error.response?.status;
+  return status !== undefined && (status >= 500 || status === 429 || status === 408);
+};
+
 const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(function* (
   httpClient: HttpClient.HttpClient,
   url: string,
@@ -161,6 +176,7 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
         return bytes;
       }),
     ),
+    Effect.retry({ ...DOWNLOAD_RETRY, while: isTransientDownloadFailure }),
     Effect.mapError(
       (cause) =>
         new PinnedRuntimeInstallError({
@@ -430,6 +446,34 @@ export function launcherOwnsVersionsDir(
   const relative = path.relative(versionsDir, path.resolve(candidate));
   return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
+
+/** Node preserves argv0's spelling; resolve bare names on PATH to find the launcher symlink. */
+export const resolveLauncherPath = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const invokedAs = yield* HostProcess.InvokedAs;
+  const cwd = yield* HostProcess.WorkingDirectory;
+  const environment = yield* HostProcess.Environment;
+  const platform = yield* HostProcess.Platform;
+  if (invokedAs.includes("/") || invokedAs.includes("\\")) {
+    return path.resolve(cwd, invokedAs);
+  }
+  const delimiter = platform === "win32" ? ";" : ":";
+  for (const directory of (environment["PATH"] ?? "").split(delimiter)) {
+    if (directory.length === 0) continue;
+    const candidate = path.resolve(cwd, directory, invokedAs);
+    const info = yield* fs.stat(candidate).pipe(Effect.option);
+    // Like the shell, pass over directories and non-executable files named the same.
+    if (
+      Option.isSome(info) &&
+      info.value.type === "File" &&
+      (platform === "win32" || (info.value.mode & 0o111) !== 0)
+    ) {
+      return candidate;
+    }
+  }
+  return undefined;
+});
 
 /**
  * `t3 update` repoints the launcher it was started through, which may be on neither PATH nor the

@@ -36,4 +36,9 @@ describe("pull requests route search", () => {
     expect(matchedSearch("/pull-requests?q=fix")?.q).toBe("fix");
     expect(matchedSearch("/pull-requests?q=%224089%22")?.q).toBe("4089");
   });
+
+  it("drops an author or labels the URL parser turned into a number", () => {
+    expect(matchedSearch("/pull-requests?author=4089")?.author).toBeUndefined();
+    expect(matchedSearch("/pull-requests?labels=4089")?.labels).toBeUndefined();
+  });
 });
