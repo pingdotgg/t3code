@@ -3,6 +3,7 @@ Read CONTRIBUTING.md before opening a PR. Review capacity is limited, and meetin
 the requirements does not guarantee review or merging. Solve one underlying problem.
 The same requirements apply to drafts. Draft status does not defer triage or closure.
 Use a conventional commit title in plain language, such as "fix(web): new threads no longer spike CPU".
+Keep one step per commit, and say in each commit body why it exists and where it came from.
 -->
 
 ## Problem
