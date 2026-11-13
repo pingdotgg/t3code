@@ -48,7 +48,7 @@ describe("buildRuntimeInstructions", () => {
     );
     assert.include(
       instructions,
-      "For PR waits, no sleep, loops, gh --watch, Monitor or ScheduleWakeup.",
+      "For PR waits, no sleep, loops, gh --watch, Monitor or ScheduleWakeup, unless watch_pull_request refuses the PR: then follow its checks with the project's own tools.",
     );
     assert.include(instructions, "call unwatch_pull_request");
   });
