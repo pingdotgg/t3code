@@ -307,7 +307,7 @@ async fn live_interrupt_then_continue() {
     let (tx, mut events) = mpsc::channel(crate::session::EVENT_CAPACITY);
     let config = provider().config().clone();
     let helper = crate::Helper::new(config.helper.clone());
-    let session = ClaudeSession::open("provider-session-live".into(), config, helper, tx);
+    let session = ClaudeSession::open("provider-session-live".into(), "claudeAgent", config, helper, tx);
     let thread = new_thread(&session, "full-access", &scratch.cwd()).await;
     session
         .start_turn(turn(
@@ -452,7 +452,13 @@ fn concrete(config: ClaudeConfig) -> (ClaudeSession, crate::Helper, mpsc::Receiv
     let (tx, events) = mpsc::channel(crate::session::EVENT_CAPACITY);
     let helper = crate::Helper::new(config.helper.clone());
     (
-        ClaudeSession::open("provider-session-live".into(), config, helper.clone(), tx),
+        ClaudeSession::open(
+            "provider-session-live".into(),
+            "claudeAgent",
+            config,
+            helper.clone(),
+            tx,
+        ),
         helper,
         events,
     )

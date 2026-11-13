@@ -57,6 +57,8 @@ pub struct ClaudeSession {
 }
 
 struct Inner {
+    /// The provider instance (`providerInstanceId` on threads).
+    instance_id: String,
     config: ClaudeConfig,
     helper: Helper,
     state: Mutex<State>,
@@ -109,12 +111,14 @@ struct Live {
 impl ClaudeSession {
     pub(crate) fn open(
         id: ProviderSessionId,
+        instance_id: &str,
         config: ClaudeConfig,
         helper: Helper,
         events: mpsc::Sender<ProviderEvent>,
     ) -> Self {
         let mapper = Mapper::new(SystemEnv, id.as_str());
         let inner = Arc::new(Inner {
+            instance_id: instance_id.to_string(),
             config,
             helper,
             state: Mutex::new(State {
@@ -1109,6 +1113,7 @@ impl ClaudeSession {
 }
 
 fn new_thread(
+    instance_id: &str,
     session: &str,
     app_thread_id: Value,
     native: &str,
@@ -1120,7 +1125,7 @@ fn new_thread(
     json!({
         "id": ids::provider_thread_id(DRIVER, native),
         "driver": DRIVER,
-        "providerInstanceId": DRIVER,
+        "providerInstanceId": instance_id,
         "providerSessionId": session,
         "appThreadId": app_thread_id,
         "ownerNodeId": owner,
@@ -1155,6 +1160,7 @@ impl Session for ClaudeSession {
             }
             let native = SystemEnv.uuid();
             let thread = new_thread(
+                &self.inner.instance_id,
                 self.id.as_str(),
                 json!(input.thread_id.as_str()),
                 &native,
@@ -1378,6 +1384,7 @@ impl Session for ClaudeSession {
                 RollbackTarget::ThreadStart { .. } => {
                     // A new native session; the old transcript stays on disk.
                     let mut fresh = new_thread(
+                        &self.inner.instance_id,
                         self.id.as_str(),
                         thread["appThreadId"].clone(),
                         &SystemEnv.uuid(),
@@ -1495,6 +1502,7 @@ impl Session for ClaudeSession {
                 forked_from["providerTurnId"] = json!(turn_id.as_str());
             }
             let thread = new_thread(
+                &self.inner.instance_id,
                 self.id.as_str(),
                 json!(input.target_thread_id.as_str()),
                 &native,

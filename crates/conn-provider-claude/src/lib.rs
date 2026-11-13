@@ -119,6 +119,7 @@ impl Provider for ClaudeProvider {
                 .map_err(|_| ProviderError::SessionStopped)?;
             let session = ClaudeSession::open(
                 input.provider_session_id,
+                self.instance_id.as_str(),
                 self.config.clone(),
                 self.helper.clone(),
                 tx,
