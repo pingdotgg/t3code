@@ -5,6 +5,11 @@ import {
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
   DesktopTelemetryControlMessage,
 } from "@t3tools/contracts";
+import {
+  DATABASE_MIGRATION_PROGRESS_MESSAGE,
+  DATABASE_MIGRATIONS_FINISHED_MESSAGE,
+  DATABASE_MIGRATIONS_STARTED_MESSAGE,
+} from "@t3tools/shared/databaseMigrationLog";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -421,7 +426,7 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
-  it.effect("starts the configured backend and closes the scoped process on stop", () =>
+  it.effect("stops the scoped process with output still pending", () =>
     Effect.scoped(
       Effect.gen(function* () {
         let startCount = 0;
@@ -458,6 +463,7 @@ describe("DesktopBackendManager", () => {
               yield* Scope.addFinalizer(scope, close);
 
               return makeProcess({
+                stdout: Stream.never,
                 exitCode: Deferred.await(closed).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
                 kill: () => close,
               });
@@ -687,12 +693,21 @@ describe("DesktopBackendManager", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const reports = yield* Queue.unbounded<DesktopBackendManager.BackendStartupFailure>();
-        const startInstance = (status: Ref.Ref<number>, onReady?: Effect.Effect<void>) =>
+        const startInstance = (
+          status: Ref.Ref<number>,
+          onReady?: Effect.Effect<void>,
+          stdout = "",
+        ) =>
           makeTestInstance({
             spawnerLayer: Layer.succeed(
               ChildProcessSpawner.ChildProcessSpawner,
               ChildProcessSpawner.make(() =>
-                Effect.succeed(makeProcess({ exitCode: Effect.never })),
+                Effect.succeed(
+                  makeProcess({
+                    exitCode: Effect.never,
+                    stdout: Stream.make(new TextEncoder().encode(stdout)),
+                  }),
+                ),
               ),
             ),
             httpClientLayer: layerHttpClient((request) =>
@@ -711,12 +726,87 @@ describe("DesktopBackendManager", () => {
         yield* Deferred.await(ready);
         assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
 
-        yield* startInstance(yield* Ref.make(503));
+        const migratingStatus = yield* Ref.make(503);
+        const migrated = yield* Deferred.make<void>();
+        yield* startInstance(
+          migratingStatus,
+          Deferred.succeed(migrated, undefined).pipe(Effect.asVoid),
+          // Enough progress lines that the start line scrolls out of the output tail.
+          `INFO ${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n` +
+            Array.from(
+              { length: 80 },
+              (_, index) =>
+                `INFO ${DATABASE_MIGRATION_PROGRESS_MESSAGE} migration=${index}_Migration progress="${index + 1} of 80"\n`,
+            ).join(""),
+        );
+        yield* TestClock.adjust(Duration.minutes(10));
+        assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
+        yield* Ref.set(migratingStatus, 200);
+        yield* TestClock.adjust(Duration.millis(100));
+        yield* Deferred.await(migrated);
+
+        yield* startInstance(
+          yield* Ref.make(503),
+          undefined,
+          `${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n${DATABASE_MIGRATIONS_FINISHED_MESSAGE}\n`,
+        );
         yield* TestClock.adjust(Duration.seconds(179));
         assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
         yield* TestClock.adjust(Duration.seconds(1));
         const failure = yield* Queue.take(reports);
         assert.equal(failure.reason, "The server started but did not become ready in time.");
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("the quit stop keeps waiting for a backend that outlasts its deadline", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const spawned = yield* Deferred.make<void>();
+        const teardownStarted = yield* Deferred.make<void>();
+        const teardownFinished = yield* Deferred.make<void>();
+        const instance = yield* makeTestInstance({
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.gen(function* () {
+                const scope = yield* Scope.Scope;
+                yield* Deferred.succeed(spawned, undefined);
+                yield* Scope.addFinalizer(
+                  scope,
+                  Deferred.succeed(teardownStarted, undefined).pipe(
+                    Effect.andThen(Effect.sleep(Duration.seconds(10))),
+                    Effect.andThen(Deferred.succeed(teardownFinished, undefined)),
+                    Effect.asVoid,
+                  ),
+                );
+                return makeProcess({
+                  exitCode: Deferred.await(teardownFinished).pipe(
+                    Effect.as(ChildProcessSpawner.ExitCode(0)),
+                  ),
+                });
+              }),
+            ),
+          ),
+          httpClientLayer: layerHttpClient(() => Effect.never),
+        });
+        yield* instance.start;
+        yield* Deferred.await(spawned);
+
+        // App quit and the updater stop every backend with this deadline.
+        const quitDone = yield* Deferred.make<void>();
+        const quitFiber = yield* instance
+          .stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT })
+          .pipe(Effect.andThen(Deferred.succeed(quitDone, undefined)), Effect.forkChild);
+
+        yield* Deferred.await(teardownStarted);
+        // Past the quit deadline, quit must still wait for the backend to exit.
+        yield* TestClock.adjust(Duration.seconds(9));
+        assert.isFalse(yield* Deferred.isDone(quitDone));
+
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* Fiber.join(quitFiber);
+        assert.isTrue(yield* Deferred.isDone(teardownFinished));
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );
