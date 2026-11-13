@@ -238,6 +238,49 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("hydrates a missing OLLAMA_API_KEY from the login shell", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            OLLAMA_API_KEY: "from-zshrc",
+          }),
+      });
+
+      assert.equal(env.OLLAMA_API_KEY, "from-zshrc");
+    }),
+  );
+
+  it.effect("keeps an OLLAMA_API_KEY already on the process", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        OLLAMA_API_KEY: "already-set",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            OLLAMA_API_KEY: "from-zshrc",
+          }),
+      });
+
+      assert.equal(env.OLLAMA_API_KEY, "already-set");
+    }),
+  );
+
   it.effect("keeps mise's PATH record with the login shell PATH", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
