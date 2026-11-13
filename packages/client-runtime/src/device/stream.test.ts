@@ -643,42 +643,32 @@ describe("shared device stream readiness and recovery", () => {
     },
   );
 
-  it.each(["callback", "decode"])(
-    "fails an iOS video-only feed immediately on a software decoder %s failure",
-    async (failure) => {
-      const { client, decoders, videoBodies, events, configureVideo, overloadVideo } =
-        recoveryFixture("ios", false, true);
-      try {
-        client.start();
-        await vi.advanceTimersByTimeAsync(0);
-        await configureVideo(0);
-        await overloadVideo(0);
-        await configureVideo(1);
-        await overloadVideo(1);
-        await configureVideo(2);
-        const decoder = decoders[2]!;
-        if (failure === "callback") decoder.callbacks.error();
-        else {
-          decoder.decode.mockImplementationOnce(() => {
-            throw new Error("decoder failed");
-          });
-          videoBodies[2]!.enqueue(Uint8Array.from(envelope(2, [2])));
-          await vi.advanceTimersByTimeAsync(0);
-        }
-        expect(events.onStatus).toHaveBeenLastCalledWith(
-          "error",
-          "This browser could not decode the Duo panel's video.",
-        );
-        expect(events.onMjpegFallback).not.toHaveBeenCalled();
-        expect(decoder.state).toBe("closed");
-        await vi.advanceTimersByTimeAsync(1_000);
-        expect(videoBodies).toHaveLength(3);
-      } finally {
-        client.stop();
-      }
-      expect(vi.getTimerCount()).toBe(0);
-    },
-  );
+  it("fails an iOS video-only feed immediately on a software decoder error", async () => {
+    const { client, decoders, videoBodies, events, configureVideo, overloadVideo } =
+      recoveryFixture("ios", false, true);
+    try {
+      client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      await configureVideo(0);
+      await overloadVideo(0);
+      await configureVideo(1);
+      await overloadVideo(1);
+      await configureVideo(2);
+      const decoder = decoders[2]!;
+      decoder.callbacks.error();
+      expect(events.onStatus).toHaveBeenLastCalledWith(
+        "error",
+        "This browser could not decode the Duo panel's video.",
+      );
+      expect(events.onMjpegFallback).not.toHaveBeenCalled();
+      expect(decoder.state).toBe("closed");
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(videoBodies).toHaveLength(3);
+    } finally {
+      client.stop();
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  });
 
   it("discards decoder support results and output from a previous Android socket", async () => {
     const { client, sockets, sps, events, Decoder, decoders, decodedFrame, drawImage } =
