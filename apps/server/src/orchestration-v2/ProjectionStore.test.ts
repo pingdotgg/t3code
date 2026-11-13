@@ -4333,7 +4333,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         workCursor = page.nextCursor;
       }
       assert.strictEqual(workIds.size, 999);
-      for (const toolName of ["t3-code.delegate_task", "mcp__t3_code__delegate_task"]) {
+      for (const toolName of [
+        "t3-code.delegate_task",
+        "mcp__t3_code__delegate_task",
+        "mcp__t3-code__send_to_user",
+      ]) {
         yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'dynamic_tool',
           payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', ${toolName})
           WHERE thread_id = ${threadId} AND ordinal = 2`;

@@ -221,7 +221,12 @@ export function sentMessageFromToolItem(item: {
   readonly toolName: string | null | undefined;
   readonly output?: unknown;
 }): string | undefined {
-  if (resolveT3McpToolId(item.toolName) !== SEND_TO_USER_TOOL_NAME) return undefined;
+  if (
+    item.toolName !== OPENCODE_CODE_MODE_TOOL_NAME &&
+    resolveT3McpToolId(item.toolName) !== SEND_TO_USER_TOOL_NAME
+  ) {
+    return undefined;
+  }
   const output = compactDynamicToolOutput(item.output);
   return output?.isError ? undefined : output?.sentMessage;
 }
