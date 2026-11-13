@@ -62,7 +62,10 @@ const approvalPrompts = createApprovalPromptQueue<QueuedApprovalPrompt>((prompt,
         ]);
       }
       Dialog.alert(failure, "The request is still waiting. Try again.", [
-        { text: "OK", onPress: () => answer("retry") },
+        {
+          text: "OK",
+          onPress: () => answer(watchedEnvironments.has(prompt.environmentId) ? "retry" : "done"),
+        },
       ]);
     });
   Dialog.alert(
