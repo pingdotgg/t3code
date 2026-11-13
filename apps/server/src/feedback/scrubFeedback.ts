@@ -53,7 +53,9 @@ const looksRandom = (value: string) =>
 const redactAll = (text: string, patterns: ReadonlyArray<RegExp>) => {
   const spans = patterns
     .flatMap((pattern) =>
-      Array.from(text.matchAll(pattern), (match) => [match.index, match.index + match[0].length]),
+      Array.from(text.matchAll(pattern))
+        .filter((match) => pattern !== LONG_RUN || looksRandom(match[0]))
+        .map((match) => [match.index, match.index + match[0].length]),
     )
     .sort(([a = 0], [b = 0]) => a - b);
   let result = "";
@@ -83,9 +85,8 @@ export function scrubFeedback(text: string, sensitive: ReadonlyArray<string>): s
     .filter((value) => value.length >= 3)
     .map((value) => new RegExp(`(?<![A-Za-z0-9_])${escapeRegExp(value)}(?![A-Za-z0-9_])`, "gu"));
   // Secrets and known values on the original text, before either can break the other's match.
-  scrubbed = redactAll(scrubbed, [CREDENTIAL_URL, TOKEN_PREFIX, JWT, EMAIL, ...known])
+  scrubbed = redactAll(scrubbed, [CREDENTIAL_URL, TOKEN_PREFIX, JWT, EMAIL, LONG_RUN, ...known])
     .replaceAll(QUOTED_PATH, (quoted) => `${quoted[0]}${REDACTED}${quoted[0]}`)
-    .replaceAll(PATH, REDACTED)
-    .replaceAll(LONG_RUN, (value) => (looksRandom(value) ? REDACTED : value));
+    .replaceAll(PATH, REDACTED);
   return Array.from(scrubbed).slice(0, FEEDBACK_TEXT_MAX_CHARS).join("");
 }

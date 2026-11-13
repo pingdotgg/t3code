@@ -112,6 +112,12 @@ describe("scrubFeedback", () => {
       "Mail [redacted] with [redacted] from [redacted]",
     ],
     [
+      "a random run with a known value inside it",
+      "Key AbCd1234EfGh5678-proj-QrSt9012UvWx3456 leaked",
+      ["proj"],
+      "Key [redacted] leaked",
+    ],
+    [
       "UNC paths",
       `Opened \\\\fileserver\\finance\\payroll.xlsx\nand "\\\\fs\\My Share\\a.txt" then`,
       [],
