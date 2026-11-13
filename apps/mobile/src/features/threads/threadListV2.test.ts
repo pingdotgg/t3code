@@ -1433,6 +1433,51 @@ describe("cross-section thread drops", () => {
       snoozedAt: NOW,
       snoozedUntil: "2099-01-01T00:00:00.000Z",
     });
+    const active = ["h", "z"].map((activeOrderKey, index) =>
+      makeThread({
+        id: ThreadId.make(`active-${index}`),
+        title: `Active ${index}`,
+        activeOrderKey,
+      }),
+    );
+    const input = {
+      ordered: active,
+      allThreads: [...active, thread],
+      section: "active" as const,
+      reorderableEnvironmentIds: new Set([environmentId]),
+      reorderWithinSectionEnabled: false,
+    };
+    const planner = createThreadMovePlanner(input);
+    const destination = {
+      section: "active" as const,
+      targetId: null,
+      placement: "before" as const,
+    };
+    expect(planner(`${environmentId}:parked`, destination)).toHaveLength(1);
+    expect(planner(`${environmentId}:active-0`, "down")).toBeNull();
+    expect(planner(`${environmentId}:active-1`, "up")).toBeNull();
+    expect(
+      planner(`${environmentId}:active-0`, {
+        ...destination,
+        targetId: `${environmentId}:active-1`,
+        placement: "after",
+      }),
+    ).toBeNull();
+    expect(
+      createThreadMovePlanner({ ...input, ordered: [] })(`${environmentId}:parked`, destination),
+    ).toHaveLength(1);
+    expect(
+      createThreadMovePlanner({ ...input, reorderableEnvironmentIds: new Set() })(
+        `${environmentId}:parked`,
+        destination,
+      ),
+    ).toBeNull();
+    expect(
+      createThreadMovePlanner({ ...input, reorderWithinSectionEnabled: true })(
+        `${environmentId}:active-0`,
+        "down",
+      ),
+    ).toHaveLength(1);
     expect(threadDropLifecycle(thread, "active", NOW)).toEqual({
       pin: false,
       unpin: true,

@@ -241,9 +241,8 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
         reorderableEnvironmentIds:
           section === "pinned"
             ? listEnvironments.pinReorderEnvironmentIds
-            : activeReorderEnabled
-              ? listEnvironments.activeReorderEnvironmentIds
-              : new Set(),
+            : listEnvironments.activeReorderEnvironmentIds,
+        reorderWithinSectionEnabled: section === "pinned" || activeReorderEnabled,
       });
     return { pinned: planner("pinned"), active: planner("active") };
   }, [sections, threads, listEnvironments, activeReorderEnabled]);
