@@ -2201,6 +2201,54 @@ it.effect("routes a hosted reference to another repository through a project on 
   }),
 );
 
+// regression: #16455 handoffs checked the pull request out in the project that lent the read
+it.effect("names a project to check out in, never the one that only lent the read", () =>
+  Effect.gen(function* () {
+    const seen: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "unrelated",
+          title: "unrelated",
+          workspaceRoot: "/unrelated",
+          repository: "acme/unrelated",
+        }),
+        project({ id: "app", title: "app", workspaceRoot: "/app", repository: "acme/app" }),
+        project({ id: "web", title: "web", workspaceRoot: "/web", repository: "acme/web" }),
+        project({ id: "inbox", title: "Inbox", workspaceRoot: "/home/alex" }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: (input) =>
+            Effect.sync(() => {
+              seen.push(`${input.cwd} ${input.repository}`);
+              // The host follows a rename and answers under the repository's current name.
+              const repository = input.repository === "old-org/app" ? "acme/app" : input.repository;
+              return {
+                ...hostedChangeRequest("Body"),
+                url: `https://github.com/${repository}/pull/1`,
+              };
+            }),
+        }),
+      ],
+    });
+    const read = (projectId: string, repository: string) =>
+      service
+        .detail({ projectId: projectId as ProjectId, host: "github.com", repository, number: 1 })
+        .pipe(Effect.map((detail) => [detail.projectId, detail.workspaceRoot]));
+
+    // No checkout of the repository: the reference's own project, read through the lender.
+    assert.deepStrictEqual(yield* read("web", "acme/api"), ["web", "/web"]);
+    assert.deepStrictEqual(yield* read("inbox", "acme/api"), ["inbox", "/home/alex"]);
+    // A renamed repository: its checkout, from its own thread and from another project's.
+    assert.deepStrictEqual(yield* read("app", "old-org/app"), ["app", "/app"]);
+    assert.deepStrictEqual(yield* read("web", "old-org/app"), ["app", "/app"]);
+    assert.deepStrictEqual(seen, ["/unrelated acme/api", "/unrelated old-org/app"]);
+    // A checkout under the linked name is still the one named.
+    assert.deepStrictEqual(yield* read("inbox", "acme/app"), ["app", "/app"]);
+  }),
+);
+
 it.effect("an uncached summary reaches the host despite a cached read in another project", () =>
   Effect.gen(function* () {
     const caller = project({

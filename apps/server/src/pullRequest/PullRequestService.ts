@@ -347,6 +347,8 @@ export interface SupportedProject {
   /** Unlike Azure repository names, remotes are unique across an organization. */
   readonly remote: string;
   readonly repositoryKey: string | null;
+  /** Set when `project` is not a checkout of the repository and only lends its credentials. */
+  readonly lentTo?: OrchestrationProjectShell;
 }
 
 interface WorkspaceProjects {
@@ -1034,6 +1036,16 @@ export const make = Effect.gen(function* () {
             }),
           );
         }
+        const selectedProject = projects.getShell(ref.projectId).pipe(
+          Effect.mapError(
+            (cause) =>
+              new PullRequestOperationError({
+                operation: "resolveRepository",
+                detail: "The selected project could not be read.",
+                cause,
+              }),
+          ),
+        );
         const referenceKey = `${host}/${repository}`.toLowerCase();
         const repositoryKey = sourceControlDefinitions.canonicalRepositoryKey(referenceKey);
         // A host that spells one repository several ways (Azure's SSH and legacy clone hosts)
@@ -1060,16 +1072,7 @@ export const make = Effect.gen(function* () {
                 const publicHost = sourceControlDefinitions.findByPublicHost(host);
                 const api = publicHost === undefined ? null : registry.get(publicHost.kind);
                 if (api?.readsPublicHostWithoutCheckout) {
-                  const selected = yield* projects.getShell(ref.projectId).pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new PullRequestOperationError({
-                          operation: "resolveRepository",
-                          detail: "The selected project could not be read.",
-                          cause,
-                        }),
-                    ),
-                  );
+                  const selected = yield* selectedProject;
                   if (Option.isSome(selected)) {
                     return {
                       cursorKey: listCursorKey(host, repository),
@@ -1087,17 +1090,23 @@ export const make = Effect.gen(function* () {
                 return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
               });
             }
-            return Effect.succeed(
+            if (
               route.repositoryKey !== null ||
-                route.repository.toLowerCase() === repository.toLowerCase()
-                ? route
-                : {
-                    ...route,
-                    repository,
-                    remote: sourceControlDefinitions.repositoryKeyFromRemote(
-                      `https://${host}/${repository}`,
-                    ),
-                  },
+              route.repository.toLowerCase() === repository.toLowerCase()
+            ) {
+              return Effect.succeed(route);
+            }
+            const lent = {
+              ...route,
+              repository,
+              remote: sourceControlDefinitions.repositoryKeyFromRemote(
+                `https://${host}/${repository}`,
+              ),
+            };
+            return (own === undefined ? selectedProject : Effect.succeedSome(own.project)).pipe(
+              Effect.map((selected) =>
+                Option.isSome(selected) ? { ...lent, lentTo: selected.value } : lent,
+              ),
             );
           }),
         );
@@ -1106,8 +1115,8 @@ export const make = Effect.gen(function* () {
 
   const canonicalRef = Effect.fn("PullRequestService.canonicalRef")(function* <
     I extends PullRequestRef,
-  >(input: I) {
-    const project = yield* requireProject(input);
+  >(input: I, route?: SupportedProject) {
+    const project = route ?? (yield* requireProject(input));
     return {
       ...input,
       projectId: project.project.id,
@@ -3755,10 +3764,11 @@ export const make = Effect.gen(function* () {
   const credentialCached =
     <I extends PullRequestRef, Args extends ReadonlyArray<unknown>, A, E>(
       read: (input: I, ...args: Args) => Effect.Effect<A, E>,
+      route?: SupportedProject,
     ) =>
     (input: I, ...args: Args) =>
       Effect.gen(function* () {
-        const ref = yield* canonicalRef(input);
+        const ref = yield* canonicalRef(input, route);
         const credential = yield* routingCredential;
         return yield* read(
           credential === null
@@ -3767,6 +3777,32 @@ export const make = Effect.gen(function* () {
           ...args,
         );
       });
+
+  // Clients check a pull request out in the project its detail names. A project that only lent
+  // its credentials is an unrelated repository, so name a checkout of the repository the host
+  // answered with (a renamed one answers under its new name), else the reference's own project.
+  const detailInCheckoutProject: PullRequestService["Service"]["detail"] = Effect.fn(
+    "PullRequestService.detailInCheckoutProject",
+  )(function* (input) {
+    const route = yield* requireProject(input);
+    const value = yield* credentialCached(detail, route)(input);
+    if (route.lentTo === undefined) return value;
+    const answered = sourceControlDefinitions.parseChangeRequestUrl(value.url)?.link.repository;
+    const checkout =
+      answered === undefined || answered.toLowerCase() === route.repository.toLowerCase()
+        ? undefined
+        : yield* requireProject({ ...input, repository: answered }).pipe(
+            Effect.map((renamed) => (renamed.lentTo === undefined ? renamed.project : undefined)),
+            Effect.orElseSucceed(() => undefined),
+          );
+    const project = checkout ?? route.lentTo;
+    return {
+      ...value,
+      projectId: project.id,
+      projectTitle: project.title,
+      workspaceRoot: project.workspaceRoot,
+    };
+  });
 
   // Cache small filename lists even when patches exceed limits, avoiding diff refetches on file expansion.
   const diffFiles = (() => {
@@ -3900,7 +3936,7 @@ export const make = Effect.gen(function* () {
     ),
     notifyLinkedThreadsChanged,
     refreshAfterTurn,
-    detail: credentialCached(detail),
+    detail: detailInCheckoutProject,
     checks: credentialCached((input) => Cache.get(checksCache, refCacheKey(input))),
     watchFingerprint: credentialCached((input) =>
       Cache.get(watchFingerprintCache, refCacheKey(input)),
