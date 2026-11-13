@@ -21,7 +21,6 @@ import {
   renderBootServiceUnit,
 } from "./cloud/bootService.ts";
 import {
-  backupDatabaseOnce,
   databaseBackupBlocker,
   Launcher,
   main,
@@ -1631,48 +1630,9 @@ process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: paths.dat
         [],
       );
       assert.deepEqual(yield* Effect.promise(() => readServiceState(statePath)), pending);
-    }),
-  );
-
-  it.effect("resumes a stopped database backup only while the database is unchanged", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-backup-resume-" });
-      const dbPath = path.join(root, "userdata", "state.sqlite");
-      yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
-      yield* fs.writeFileString(dbPath, "0123456789");
-      const pending = (id: string) =>
-        ({ id, fromVersion: "1.0.0", targetVersion: "1.1.0", dbPath, status: "pending" }) as const;
-      const backupDir = (id: string) => path.join(root, "runtime", "db-backup", id);
-      const stopped = AbortSignal.abort();
-      const backUp = (id: string, signal = new AbortController().signal) =>
-        Effect.promise(() =>
-          backupDatabaseOnce(root, pending(id), signal).then(
-            () => "done",
-            () => "stopped",
-          ),
-        );
-
-      // A distinct prefix shows the second run kept the stopped copy instead of starting over.
-      assert.equal(yield* backUp("resume", stopped), "stopped");
-      yield* fs.writeFileString(path.join(`${backupDir("resume")}.staging`, "database"), "ABCDE");
-      assert.equal(yield* backUp("resume"), "done");
-      assert.equal(
-        yield* fs.readFileString(path.join(backupDir("resume"), "database")),
-        // Elsewhere the copier may preallocate, so a partial file's length proves nothing.
-        (yield* HostProcess.Platform) === "linux" ? "ABCDE56789" : "0123456789",
-      );
-      assert.deepEqual(yield* fs.readDirectory(backupDir("resume")), ["database"]);
-
-      assert.equal(yield* backUp("changed", stopped), "stopped");
-      yield* fs.writeFileString(path.join(`${backupDir("changed")}.staging`, "database"), "ABCDE");
-      yield* fs.writeFileString(dbPath, "changed database");
-      assert.equal(yield* backUp("changed"), "done");
-      assert.equal(
-        yield* fs.readFileString(path.join(backupDir("changed"), "database")),
-        "changed database",
-      );
+      const backupDir = path.join(root, "runtime", "db-backup", "update-1");
+      assert.isFalse(yield* fs.exists(backupDir));
+      assert.isFalse(yield* fs.exists(`${backupDir}.staging`));
     }),
   );
 
