@@ -1210,6 +1210,15 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
       omittedItemIds: Schema.optional(Schema.Array(TurnItemId)),
     }),
   ),
+  /** On a resume-fallback handoff: the unfinished goal of the native session it replaced. */
+  displacedGoal: Schema.optional(
+    Schema.Struct({
+      driver: ProviderDriverKind,
+      nativeThreadId: Schema.NullOr(Schema.String),
+      goal: OrchestrationV2ProviderGoal,
+      asOf: Schema.String,
+    }),
+  ),
   detailInTurnItem: Schema.optional(Schema.Literal(true)),
   createdByProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   createdAt: Schema.DateTimeUtc,

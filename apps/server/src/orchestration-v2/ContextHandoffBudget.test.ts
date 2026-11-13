@@ -26,7 +26,7 @@ import {
   historicalMessage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { projectContextHandoffForWire } from "./WireProjection.ts";
-import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
+import { deliverContextHandoffs, type GoalOwnershipSources } from "./ContextHandoffDelivery.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeHandoff = Schema.decodeUnknownSync(OrchestrationV2ContextHandoff);
@@ -92,6 +92,14 @@ const handoff: OrchestrationV2ContextHandoff = {
   createdAt: now,
   updatedAt: now,
 };
+
+const goalSources = (sources: Partial<GoalOwnershipSources>): GoalOwnershipSources => ({
+  providerThreads: [],
+  contextHandoffs: [],
+  runs: [],
+  messages: [],
+  ...sources,
+});
 
 describe("handoff budget", () => {
   it("keeps old preview handoffs readable and delivery history off the wire", () => {
@@ -670,7 +678,7 @@ describe("handoff delivery", () => {
         const result = yield* deliverContextHandoffs({
           handoffs: [handoff],
           providerThread,
-          goalOwners: [providerThread, owner],
+          goalSources: goalSources({ providerThreads: [providerThread, owner] }),
           budget,
           alreadyDeliveredItemIds: new Set(),
           inject: (value) =>
@@ -704,34 +712,83 @@ describe("handoff delivery", () => {
   it.effect("names only goals that are unfinished now and held by another native session", () =>
     Effect.gen(function* () {
       const goal = { objective: "Ship ZEBRA", status: "active" as const };
-      const context = (goalOwners: ReadonlyArray<OrchestrationV2ProviderThread>) =>
+      const context = (
+        sources: Partial<GoalOwnershipSources>,
+        handoffs: ReadonlyArray<OrchestrationV2ContextHandoff> = [handoff],
+      ) =>
         deliverContextHandoffs({
-          handoffs: [handoff],
+          handoffs,
           providerThread,
-          goalOwners,
+          goalSources: goalSources(sources),
           budget: 16_000,
           alreadyDeliveredItemIds: new Set(),
           persist: () => Effect.void,
         }).pipe(Effect.map((result) => result.context));
       const other = { ...providerThread, id: ProviderThreadId.make("provider-thread:source") };
-      // A goal cleared or finished after an earlier handoff recorded it is not repeated.
-      assert.notInclude(yield* context([{ ...other, goal: null }]), "ZEBRA");
+      // A goal cleared or finished after an earlier handoff is not repeated.
+      assert.notInclude(yield* context({ providerThreads: [{ ...other, goal: null }] }), "ZEBRA");
       assert.notInclude(
-        yield* context([{ ...other, goal: { ...goal, status: "complete" } }]),
+        yield* context({ providerThreads: [{ ...other, goal: { ...goal, status: "complete" } }] }),
         "ZEBRA",
       );
-      assert.notInclude(yield* context([{ ...providerThread, goal }]), "ZEBRA");
-      // A failed resume replaced the native session, so the stored row names the previous owner.
-      assert.include(
-        yield* context([
-          {
-            ...providerThread,
-            nativeThreadRef: { ...providerThread.nativeThreadRef!, nativeId: "native:lost" },
-            goal,
-          },
-        ]),
-        "native-session=native:lost; status=active; as-of=2026-09-17T00:00:00.000Z; objective: Ship ZEBRA",
+      assert.notInclude(
+        yield* context({ providerThreads: [{ ...providerThread, goal }] }),
+        "ZEBRA",
       );
+
+      // A failed resume replaced the owner's native session and rewrote its row without the goal.
+      const recovery: OrchestrationV2ContextHandoff = {
+        ...handoff,
+        id: ContextHandoffId.make("handoff:recovery"),
+        targetRunId: RunId.make("run:recovery"),
+        toProviderThreadId: other.id,
+        displacedGoal: {
+          driver: other.driver,
+          nativeThreadId: "native:lost",
+          goal,
+          asOf: "2026-09-16T00:00:00.000Z",
+        },
+      };
+      const run = (id: string, ordinal: number) =>
+        ({
+          id: RunId.make(id),
+          ordinal,
+          providerThreadId: other.id,
+        }) as GoalOwnershipSources["runs"][number];
+      const goalMessage = (text: string) =>
+        ({
+          role: "user",
+          text,
+          attachments: [],
+          runId: RunId.make("run:later"),
+        }) as unknown as GoalOwnershipSources["messages"][number];
+      const replaced = {
+        providerThreads: [{ ...other, goal: null }],
+        runs: [run("run:recovery", 2), run("run:later", 3)],
+      };
+      const displacedOwner =
+        "provider-thread=provider-thread:source native-session=native:lost (replaced after a failed resume); status=active; as-of=2026-09-16T00:00:00.000Z; objective: Ship ZEBRA";
+      // The recovery turn itself, then a later switch to another provider.
+      assert.include(yield* context(replaced, [recovery]), displacedOwner);
+      assert.include(yield* context({ ...replaced, contextHandoffs: [recovery] }), displacedOwner);
+      assert.include(
+        yield* context({
+          ...replaced,
+          contextHandoffs: [recovery],
+          messages: [goalMessage("/goal pause")],
+        }),
+        displacedOwner,
+      );
+      for (const text of ["/goal clear", "/goal Ship something else"]) {
+        assert.notInclude(
+          yield* context({
+            ...replaced,
+            contextHandoffs: [recovery],
+            messages: [goalMessage(text)],
+          }),
+          "ZEBRA",
+        );
+      }
     }),
   );
 

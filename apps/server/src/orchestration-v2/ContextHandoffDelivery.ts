@@ -1,6 +1,8 @@
-import type {
-  OrchestrationV2ContextHandoff,
-  OrchestrationV2ProviderThread,
+import {
+  parseGoalCommand,
+  type OrchestrationV2ContextHandoff,
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { ContextHandoffBudgetError } from "@t3tools/provider-core/server/failure";
@@ -17,22 +19,67 @@ import { compactText } from "./ContextHandoffService.ts";
 // Bounds the notice so it always fits beside the coverage marker; history is trimmed first.
 const GOAL_OBJECTIVE_MAX_CHARS = 400;
 
+/** What delivery reads to find the unfinished goals other native sessions still own. */
+export type GoalOwnershipSources = Pick<
+  OrchestrationV2ThreadProjection,
+  "providerThreads" | "contextHandoffs" | "runs" | "messages"
+>;
+
 /**
- * Names the unfinished goals other native sessions of the thread still own. Read from live
- * provider threads at delivery, never from the handoff record, so a cleared goal is not repeated.
+ * Names the unfinished goals other native sessions of the thread still own. A live session's goal
+ * is read from its provider thread at delivery, so a cleared goal is not repeated. A session a
+ * failed resume replaced is read from the recovery handoff that recorded it, until a later
+ * `/goal` objective or `/goal clear` on that provider decides it.
  */
 function goalOwnershipNotice(
-  owners: ReadonlyArray<OrchestrationV2ProviderThread>,
+  sources: GoalOwnershipSources,
+  pending: ReadonlyArray<OrchestrationV2ContextHandoff>,
   target: OrchestrationV2ProviderThread,
 ): string {
-  const targetNativeId = target.nativeThreadRef?.nativeId;
-  const lines = owners.flatMap((owner) => {
-    const goal = owner.goal;
-    const ownerNativeId = owner.nativeThreadRef?.nativeId;
-    if (goal == null || goal.status === "complete" || owner.ownerNodeId !== null) return [];
-    // The target's own row still names the previous native session when a failed resume replaced it.
-    if (owner.id === target.id && (ownerNativeId === undefined || ownerNativeId === targetNativeId))
-      return [];
+  const runs = new Map(sources.runs.map((run) => [run.id, run]));
+  const displaced = new Map<string, OrchestrationV2ContextHandoff>();
+  for (const handoff of [...sources.contextHandoffs, ...pending]) {
+    if (handoff.displacedGoal !== undefined) displaced.set(handoff.toProviderThreadId, handoff);
+  }
+  for (const [providerThreadId, handoff] of displaced) {
+    const since = runs.get(handoff.targetRunId)?.ordinal ?? 0;
+    const decided = sources.messages.some((message) => {
+      const run = message.runId === null ? undefined : runs.get(message.runId);
+      const command = message.role === "user" ? parseGoalCommand(message) : null;
+      return (
+        run?.providerThreadId === providerThreadId &&
+        run.ordinal >= since &&
+        (command?.type === "set" || command?.type === "clear")
+      );
+    });
+    if (decided) displaced.delete(providerThreadId);
+  }
+  const owners = [
+    ...Array.from(displaced.values(), (handoff) => ({
+      ...handoff.displacedGoal!,
+      providerThreadId: handoff.toProviderThreadId,
+      replaced: true,
+    })),
+    ...sources.providerThreads.flatMap((owner) =>
+      owner.goal == null ||
+      owner.ownerNodeId !== null ||
+      owner.id === target.id ||
+      displaced.has(owner.id)
+        ? []
+        : [
+            {
+              driver: owner.driver,
+              providerThreadId: owner.id,
+              nativeThreadId: owner.nativeThreadRef?.nativeId ?? null,
+              goal: owner.goal,
+              asOf: DateTime.formatIso(owner.updatedAt),
+              replaced: false,
+            },
+          ],
+    ),
+  ];
+  const lines = owners.flatMap(({ goal, ...owner }) => {
+    if (goal.status === "complete") return [];
     const accounting = [
       ...(goal.tokensUsed === undefined
         ? []
@@ -43,7 +90,7 @@ function goalOwnershipNotice(
       ...(goal.checks === undefined ? [] : [`checks=${goal.checks}`]),
     ];
     return [
-      `- owner=${owner.driver} provider-thread=${owner.id} native-session=${ownerNativeId ?? "none"}; status=${goal.status}; ${accounting.length === 0 ? "" : `${accounting.join(", ")}; `}as-of=${DateTime.formatIso(owner.updatedAt)}; objective: ${compactText(goal.objective, GOAL_OBJECTIVE_MAX_CHARS)}`,
+      `- owner=${owner.driver} provider-thread=${owner.providerThreadId} native-session=${owner.nativeThreadId ?? "none"}${owner.replaced ? " (replaced after a failed resume)" : ""}; status=${goal.status}; ${accounting.length === 0 ? "" : `${accounting.join(", ")}; `}as-of=${owner.asOf}; objective: ${compactText(goal.objective, GOAL_OBJECTIVE_MAX_CHARS)}`,
     ];
   });
   return lines.length === 0
@@ -64,8 +111,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
   function* <InjectError = never, PersistError = never, BudgetError = never>(input: {
     readonly handoffs: ReadonlyArray<OrchestrationV2ContextHandoff>;
     readonly providerThread: OrchestrationV2ProviderThread;
-    /** The thread's provider threads as read before this turn replaced any native session. */
-    readonly goalOwners?: ReadonlyArray<OrchestrationV2ProviderThread>;
+    readonly goalSources?: GoalOwnershipSources;
     readonly budget: number | Effect.Effect<number, BudgetError>;
     readonly deferInline?: boolean;
     readonly alreadyDeliveredItemIds: ReadonlySet<string>;
@@ -97,7 +143,10 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       const strategies = Array.from(new Set(pending.map((handoff) => handoff.strategy)));
       coverage = `Context handoff (${strategies.join(", ")}). ${pending.length} handoff records; detailed coverage references omitted. Recover an omitted item only when the request needs it, with t3_thread_read({threadId:"${input.providerThread.appThreadId ?? pending[0]!.threadId}",view:"activity",itemId:"<omitted item ID>",maxCharsPerItem:4000}); continue long text with textOffset=nextTextOffset until null. Follow fork/handoff source references in activity. Items included below need no read.`;
     }
-    const goalNotice = goalOwnershipNotice(input.goalOwners ?? [], input.providerThread);
+    const goalNotice =
+      input.goalSources === undefined
+        ? ""
+        : goalOwnershipNotice(input.goalSources, pending, input.providerThread);
     if (goalNotice !== "") coverage = `${coverage}\n${goalNotice}`;
     const seen = new Set(input.alreadyDeliveredItemIds);
     const messages = pending

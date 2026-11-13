@@ -988,7 +988,7 @@ export const layer: Layer.Layer<
             type: "provider_resume_fallback",
           });
           const createdAt = yield* DateTime.now;
-          const handoff = yield* contextHandoffService.prepareProviderHandoff({
+          const prepared = yield* contextHandoffService.prepareProviderHandoff({
             threadId: projection.thread.id,
             targetRunId: run.id,
             transferId,
@@ -1008,6 +1008,19 @@ export const layer: Layer.Layer<
             ),
             createdAt,
           });
+          // The replacement overwrites this provider thread row, so the goal's owner is kept here.
+          const handoff: OrchestrationV2ContextHandoff =
+            providerThread.goal == null || providerThread.goal.status === "complete"
+              ? prepared
+              : {
+                  ...prepared,
+                  displacedGoal: {
+                    driver: providerThread.driver,
+                    nativeThreadId: providerThread.nativeThreadRef?.nativeId ?? null,
+                    goal: providerThread.goal,
+                    asOf: DateTime.formatIso(providerThread.updatedAt),
+                  },
+                };
           return { handoff, transferId, createdAt };
         },
       );
@@ -1258,7 +1271,7 @@ export const layer: Layer.Layer<
           const fits = yield* deliverContextHandoffs({
             handoffs: [...handoffs, ...resumedRetryHandoff],
             providerThread: { ...resumed.success, id: providerThread.id },
-            goalOwners: projection.providerThreads,
+            goalSources: projection,
             budget: context.budget,
             deferInline: isCompactionCommandMessage(message) || goalCommand,
             alreadyDeliveredItemIds: context.deliveredItemIds,
@@ -1274,7 +1287,7 @@ export const layer: Layer.Layer<
           const fitsFresh = yield* deliverContextHandoffs({
             handoffs: withRecoveryHandoff(handoff),
             providerThread: freshThread,
-            goalOwners: projection.providerThreads,
+            goalSources: projection,
             budget: freshContext.budget,
             alreadyDeliveredItemIds: freshContext.deliveredItemIds,
             persist: () => Effect.void,
@@ -1617,7 +1630,7 @@ export const layer: Layer.Layer<
             handoffs: [...effectiveHandoffs, ...retryHandoff],
             deferInline: compact || goalCommand,
             providerThread: runningProviderThread,
-            goalOwners: projection.providerThreads,
+            goalSources: projection,
             budget,
             alreadyDeliveredItemIds: deliveredItemIds,
             ...(session.injectHistory === undefined
