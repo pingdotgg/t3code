@@ -22,6 +22,7 @@ const POWERLINE_SOLID_RIGHT = "\ue0b0";
 const POWERLINE_SOLID_LEFT = "\ue0b2";
 const POWERLINE_ROUND_RIGHT = "\ue0b4";
 const POWERLINE_ROUND_LEFT = "\ue0b6";
+const FULL_BLOCK = "\u2588";
 
 function cssColor(color: GhosttyColor): string {
   return `rgb(${color.r}, ${color.g}, ${color.b})`;
@@ -81,6 +82,13 @@ function fillSolidPowerlineSeparator(
   context.fill();
 }
 
+// Box-drawing and block elements (U+2500-259F) must tile from row to row, but fonts
+// draw them to their own glyph box, which is shorter than a terminal row.
+function isBoxDrawingOrBlock(text: string): boolean {
+  const code = text.length === 1 ? text.charCodeAt(0) : 0;
+  return code >= 0x2500 && code <= 0x259f;
+}
+
 function ghosttyTextRunEnd(
   cells: readonly GhosttyCell[],
   start: number,
@@ -94,7 +102,14 @@ function ghosttyTextRunEnd(
       end += 1;
       continue;
     }
-    if (next.text.length === 0 || isSolidPowerlineSeparator(next.text) || !sameStyle(next)) break;
+    if (
+      next.text.length === 0 ||
+      isSolidPowerlineSeparator(next.text) ||
+      isBoxDrawingOrBlock(next.text) !== isBoxDrawingOrBlock(cells[start]?.text ?? "") ||
+      !sameStyle(next)
+    ) {
+      break;
+    }
     end += 1;
   }
   return end;
@@ -147,6 +162,60 @@ function fillGhosttyRunText(
     context.textAlign = "start";
     segment = segmentEnd + 2;
   }
+}
+
+const fullBlockExtents = new Map<string, { ascent: number; descent: number } | null>();
+
+// Canvas rounds glyph bounds out to whole pixels, so measure at a large size and scale down.
+function fullBlockExtent(
+  context: CanvasRenderingContext2D,
+  cell: GhosttyCell,
+  fontSize: number,
+  fontFamily: string,
+): { ascent: number; descent: number } | null {
+  const font = fontForCell(cell, fontSize, fontFamily);
+  let extent = fullBlockExtents.get(font);
+  if (extent === undefined) {
+    context.font = fontForCell(cell, 1000, fontFamily);
+    const box = context.measureText(FULL_BLOCK);
+    context.font = font;
+    const ascent = (box.actualBoundingBoxAscent * fontSize) / 1000;
+    const descent = (box.actualBoundingBoxDescent * fontSize) / 1000;
+    extent = ascent + descent > 0 ? { ascent, descent } : null;
+    fullBlockExtents.set(font, extent);
+  }
+  return extent;
+}
+
+// Box-drawing runs are stretched so the font's full block spans the row exactly,
+// which makes vertical lines and blocks meet the rows above and below.
+function fillGhosttyCellsText(
+  context: CanvasRenderingContext2D,
+  cells: readonly GhosttyCell[],
+  start: number,
+  end: number,
+  text: string,
+  left: number,
+  top: number,
+  height: number,
+  metrics: GhosttyCellMetrics,
+  fontSize: number,
+  fontFamily: string,
+): void {
+  const cell = cells[start];
+  const box =
+    cell && isBoxDrawingOrBlock(cell.text)
+      ? fullBlockExtent(context, cell, fontSize, fontFamily)
+      : null;
+  if (box) {
+    context.save();
+    context.translate(0, top);
+    context.scale(1, height / (box.ascent + box.descent));
+    fillGhosttyRunText(context, cells, start, end, text, left, box.ascent, metrics.width);
+    context.restore();
+    return;
+  }
+  fillGhosttyRunText(context, cells, start, end, text, left, top + metrics.baseline, metrics.width);
 }
 
 function fontForCell(cell: GhosttyCell, fontSize: number, fontFamily: string): string {
@@ -327,15 +396,18 @@ export function renderGhosttySnapshot(options: {
         context.clip();
         context.font = fontForCell(first, fontSize, fontFamily);
         context.fillStyle = cssColor(first.foreground);
-        fillGhosttyRunText(
+        fillGhosttyCellsText(
           context,
           row.cells,
           runStart,
           runEnd,
           text,
           padding + runStart * metrics.width,
-          top + metrics.baseline,
-          metrics.width,
+          top,
+          height,
+          metrics,
+          fontSize,
+          fontFamily,
         );
         context.restore();
       }
@@ -389,14 +461,19 @@ export function renderGhosttySnapshot(options: {
           fillSolidPowerlineSeparator(context, cell.text, left, top, metrics.width, height, 0);
         } else {
           context.font = fontForCell(cell, fontSize, fontFamily);
-          context.textAlign = wide ? "center" : "start";
-          context.fillText(
+          fillGhosttyCellsText(
+            context,
+            cells,
+            snapshot.cursorX,
+            snapshot.cursorX + 1,
             cell.text,
-            wide ? left + metrics.width : left,
-            top + metrics.baseline,
-            width,
+            left,
+            top,
+            height,
+            metrics,
+            fontSize,
+            fontFamily,
           );
-          context.textAlign = "start";
         }
       }
     }
