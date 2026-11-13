@@ -83,6 +83,8 @@ macOS and Ctrl elsewhere). Press again, or the check mark, to finish; `Esc`
 discards the recording and leaves your draft unchanged. Recordings last up to
 five minutes. Text is inserted at the cursor or replaces the selection you had
 when recording started, and the editor is read-only while dictation runs.
+Changes that reach the draft meanwhile, such as a cited message, are kept;
+the text then goes after your selection instead of replacing it.
 
 Pressing Send while dictating finishes the recording and sends the draft once
 the transcript has been inserted. Cancelling also cancels that queued send. In
@@ -142,12 +144,15 @@ the model hears the cue as a dictionary hint.
 
 ## Test and troubleshoot
 
-In **Settings → Voice**, **Test microphone** beside the microphone selector
-records up to ten seconds and plays it back in your browser;
-the audio stays on this device and is never transcribed, so silent playback
+In **Settings → Voice**, voice input uses the first connected microphone in the
+**Microphone** list. A microphone joins the list below System default the first
+time it is seen, so nothing changes until you move it up. If a preferred
+microphone is unplugged, the next connected one is used.
+
+**Test microphone** records from that microphone for up to ten seconds and
+plays it back in your browser; the audio stays on this device and is never transcribed, so silent playback
 points at the microphone. **Test model** on the selected model shows a transcript using the
 same environment, language, and dictionary as the composer, but skips transcript
 cleanup even when it is on, so you see what the model heard. Browser recording
 needs HTTPS or localhost and microphone permission; for a remote server over
-plain HTTP, use the desktop app. If the selected microphone is missing, choose
-another or the system default.
+plain HTTP, use the desktop app.
