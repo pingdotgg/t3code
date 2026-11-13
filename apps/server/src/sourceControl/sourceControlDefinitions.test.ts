@@ -31,6 +31,7 @@ it.each([
   ['gh pr merge 19 --squash --subject "Release 20"', [19]],
   [`/bin/zsh -lc "gh pr merge 19 --subject 'Release 20'"`, [19]],
   ["gh pr merge 19 --body 'see https://github.com/o/r/pull/20'", [19]],
+  ["gh pr merge 19 --body https://github.com/o/r/pull/20", [19]],
   ["gh pr merge 19 # then 20", [19]],
   ["gh pr merge --squash --match-head-commit 3b2f958 #19", [19]],
   ["gh pr close https://github.com/o/r/pull/19 && gh pr merge 20", [19, 20]],
