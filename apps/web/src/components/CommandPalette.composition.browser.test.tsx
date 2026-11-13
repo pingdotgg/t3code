@@ -12,7 +12,10 @@ import { openCommandPalette } from "../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../state/server";
 
 const commands = vi.hoisted(() => ({
-  run: vi.fn(async (_input: unknown) => ({ _tag: "Success", value: undefined })),
+  run: vi.fn(async (_input: unknown) => ({
+    _tag: "Success",
+    value: { projectId: "project-cloned" },
+  })),
   createNew: vi.fn(async (_input: unknown) => true),
   query: vi.fn<(_input: unknown) => Promise<{ _tag: "Success"; value: unknown }>>(async () => ({
     _tag: "Success",
@@ -102,7 +105,12 @@ vi.mock("../state/environments", async (original) => ({
         serverConfig: {
           newProjectsRoot: "/workspace/",
           environment: { platform: { os: "linux" }, capabilities: { projectCloneTracking: true } },
-          settings: { addProjectBaseDirectory: "/workspace/" },
+          settings: {
+            addProjectBaseDirectory: "/workspace/",
+            offeredSourceControlProviders: Object.fromEntries(
+              sourceControlClients.definitions.map(({ kind }) => [kind, true]),
+            ),
+          },
         },
       }),
     ),
