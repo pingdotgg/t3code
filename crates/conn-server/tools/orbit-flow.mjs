@@ -2,7 +2,8 @@
 // Orbit's container flow (DROP-IN.md §1) against a Conn Server binary. The turn is one Haiku
 // turn with `conn-server`, and the scripted fake provider with `examples/replay_server`.
 // Usage: node orbit-flow.mjs <conn-server> [port]. The port defaults to a free one. The home is
-// a temporary T3CODE_HOME, never ~/.t3. Needs no monorepo.
+// a temporary T3CODE_HOME, never ~/.t3. Needs no monorepo. The server binds 0.0.0.0 as Orbit
+// starts it; ORBIT_FLOW_HOST=127.0.0.1 binds loopback only (on a shared host).
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
@@ -16,11 +17,12 @@ const { McpSession } = await import(
 );
 
 const binary = NodePath.resolve(process.argv[2] ?? "");
+const host = process.env.ORBIT_FLOW_HOST || "0.0.0.0";
 const freePort = () =>
   new Promise((resolve) => {
     const probe = NodeNet.createServer();
-    // The server binds 0.0.0.0, so probe the same address.
-    probe.listen(0, "0.0.0.0", () => {
+    // Probe the address the server binds.
+    probe.listen(0, host, () => {
       const { port } = probe.address();
       probe.close(() => resolve(port));
     });
@@ -97,10 +99,10 @@ NodeChildProcess.execFileSync(
   { cwd: workspace },
 );
 
-step(`start: ${NodePath.basename(binary)} serve --host=0.0.0.0 --port=${port} --no-browser`);
+step(`start: ${NodePath.basename(binary)} serve --host=${host} --port=${port} --no-browser`);
 const server = NodeChildProcess.spawn(
   binary,
-  ["serve", "--host=0.0.0.0", `--port=${port}`, "--no-browser"],
+  ["serve", `--host=${host}`, `--port=${port}`, "--no-browser"],
   { env, cwd: root, stdio: ["ignore", "pipe", "pipe"] },
 );
 let output = "";
