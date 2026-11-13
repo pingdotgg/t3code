@@ -2454,17 +2454,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     return colorScheme === "system" ? ((yield* theme.systemColorScheme) ?? "") : colorScheme;
   });
 
-  const sendColorScheme = (
+  const sendColorScheme = Effect.fn("PreviewManager.sendColorScheme")(function (
     tabId: string,
     wc: Electron.WebContents,
     control: BrowserControlSession,
     value: string,
-  ) =>
-    attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>
+  ) {
+    return attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>
       control.debugger.sendCommand("Emulation.setEmulatedMedia", {
         features: [{ name: "prefers-color-scheme", value }],
       }),
     );
+  });
 
   // Media emulation belongs to the debugger session and must be restored after every reattach.
   const applyColorScheme = Effect.fn("PreviewManager.applyColorScheme")(function* (
