@@ -35,6 +35,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -2810,7 +2811,7 @@ describe("UsageService", () => {
           bad,
         ].join("\n");
         // A fixed whole-second mtime, so rewriting the file restores its exact cache identity.
-        const writtenAt = new Date("2026-08-01T10:00:00Z");
+        const writtenAt = BEFORE_NARROW_WINDOW;
         const writeKeepingMtime = (contents: string) =>
           Effect.promise(async () => {
             await NodeFSP.writeFile(transcript, contents);
@@ -3460,6 +3461,30 @@ describe("UsageService", () => {
           assert.strictEqual(totalOutputTokens(yield* service.readSummary(WINDOW)), 12);
         }).pipe(
           Effect.provide(layerService({ prefix: "usage-service-stale-read-test", home, settings })),
+        );
+      }),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "interrupts a running scan and its callers when the service closes",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        const hold = NodePath.join(NodePath.dirname(transcript), "hold.jsonl");
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+        yield* makeGate(hold, BEFORE_NARROW_WINDOW);
+        yield* Effect.gen(function* () {
+          const scope = yield* Scope.make();
+          const service = yield* UsageService.make.pipe(Scope.provide(scope));
+          const reading = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
+          // Opening the write end waits for the scan to open the gate; held open, its read waits.
+          const writer = yield* Effect.promise(() => NodeFSP.open(hold, "w"));
+          yield* Scope.close(scope, Exit.void);
+          yield* Effect.promise(() => writer.close());
+          assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(reading)));
+          assert.isTrue(Exit.hasInterrupts(yield* Effect.exit(service.readSummary(WINDOW))));
+        }).pipe(
+          Effect.provide(layerService({ prefix: "usage-service-close-test", home, settings })),
         );
       }),
   );

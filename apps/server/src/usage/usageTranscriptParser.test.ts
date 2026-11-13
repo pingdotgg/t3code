@@ -249,22 +249,19 @@ describe("makeTranscriptParser", () => {
             Effect.provideService(HostProcess.Environment, preload(silent)),
             Scope.provide(scope),
           );
-          const reading = yield* parser
-            .read({
-              path,
-              size,
-              provider: "codex",
-              format: TRANSCRIPT_FORMATS.codex,
-              resumeFrom: undefined,
-            })
-            .pipe(Effect.forkChild);
+          const read = parser.read({
+            path,
+            size,
+            provider: "codex",
+            format: TRANSCRIPT_FORMATS.codex,
+            resumeFrom: undefined,
+          });
+          const reading = yield* read.pipe(Effect.forkChild);
           if (ending === "closing the scope") {
             yield* Scope.close(scope, Exit.void);
-            // The read the closed pool abandoned finishes in process.
-            assert.deepStrictEqual(
-              yield* Fiber.join(reading),
-              yield* Effect.promise(() => readTranscriptRecords(path, TRANSCRIPT_FORMATS.codex)),
-            );
+            // A closed parser reads nothing more, in a worker or in process.
+            assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(reading)));
+            assert.isTrue(Exit.hasInterrupts(yield* Effect.exit(read)));
           } else {
             yield* Fiber.interrupt(reading);
             yield* Scope.close(scope, Exit.void);

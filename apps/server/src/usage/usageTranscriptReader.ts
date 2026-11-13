@@ -209,7 +209,7 @@ export async function readTranscriptRecords<State>(
   filePath: string,
   format: TranscriptUsageFormat<State>,
   resumeFrom?: TranscriptParsePosition,
-  options?: { readonly streamingThresholdBytes?: number },
+  options?: { readonly streamingThresholdBytes?: number; readonly signal?: AbortSignal },
 ): Promise<TranscriptParseResult | null> {
   const streamingThresholdBytes = options?.streamingThresholdBytes ?? STREAMING_THRESHOLD_BYTES;
   const compressed = filePath.endsWith(".jsonl.zst");
@@ -301,6 +301,7 @@ export async function readTranscriptRecords<State>(
       decoder = undefined;
     };
     for await (const chunk of readChunks(handle, start, compressed)) {
+      if (options?.signal?.aborted) return null;
       let lineStart = 0;
       while (lineStart < chunk.length) {
         const newlineIndex = chunk.indexOf(NEWLINE, lineStart);

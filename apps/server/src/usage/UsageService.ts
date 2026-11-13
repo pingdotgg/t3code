@@ -17,7 +17,6 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -69,8 +68,6 @@ const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const CACHE_RETENTION_DAYS = 92;
 const STALE_TEMP_DIRECTORY_MS = 60 * 60 * 1000;
-
-const TRANSCRIPT_READ_CONCURRENCY = 4;
 
 const transcriptReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
   driver.usage?.kind === "transcripts" ? [{ driver, reader: driver.usage }] : [],
@@ -157,6 +154,7 @@ export const make = Effect.gen(function* () {
   const hostEnvironment = yield* HostProcess.Environment;
   const hostname = yield* HostProcess.Hostname;
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
+  const serviceScope = yield* Effect.scope;
   const transcriptParser = yield* makeTranscriptParser;
 
   const fileCache: ScanCache = new Map();
@@ -672,7 +670,7 @@ export const make = Effect.gen(function* () {
         readFileRecords(file.path, file.size, file.mtimeMs, provider, format).pipe(
           Effect.map((result) => ({ path: file.path, ...result })),
         ),
-      { concurrency: TRANSCRIPT_READ_CONCURRENCY },
+      { concurrency: transcriptParser.concurrency },
     );
     const parsedFiles = read.map(({ path, records, malformedRecords, update }) => {
       if (update === undefined) return { path, records, malformedRecords };
@@ -1127,17 +1125,17 @@ export const make = Effect.gen(function* () {
         // Register and fork atomically so cancellation cannot leave a Deferred without a scan.
         const created = Deferred.makeUnsafe<UsageSummary, UsageReadError>();
         inflightScans.set(key, created);
-        // Detach so caller departure cannot cancel shared scans; finished scans warm the cache.
-        // Register writes before releasing waiters, but start writing after delivering their summary.
-        yield* readWindow(input, settings, provisional).pipe(
-          Effect.onExit((exit) =>
-            Effect.sync(() => inflightScans.delete(key)).pipe(
-              Effect.andThen(Exit.isSuccess(exit) ? schedulePersist : Effect.void),
-              Effect.andThen(Deferred.done(created, exit)),
-            ),
-          ),
-          Effect.forkDetach,
+        // The service owns shared scans, so caller departure cannot cancel one; finished scans warm
+        // the cache. Register writes before releasing waiters, but start writing after delivering
+        // their summary. Closing the service interrupts its scans, and their waiters with them.
+        const scan = yield* readWindow(input, settings, provisional).pipe(
+          Effect.tap(() => schedulePersist),
+          Effect.forkIn(serviceScope),
         );
+        scan.addObserver((exit) => {
+          inflightScans.delete(key);
+          Deferred.doneUnsafe(created, exit);
+        });
         return created;
       }),
     );
