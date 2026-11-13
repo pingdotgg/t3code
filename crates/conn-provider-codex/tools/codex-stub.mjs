@@ -114,6 +114,10 @@ const canned = (frame) => {
         thread: { id: params.threadId, createdAt: 0, updatedAt: 0, turns: [] },
         model: params.model ?? null,
       };
+    // A subagent's child thread: the TS test kit answers these reads itself
+    // (`withCodexReplayChildMetadata`); the stub answers the same way.
+    case "thread/read":
+      return { thread: { id: params.threadId }, model: null };
     case "thread/unsubscribe":
     case "thread/unarchive":
     case "thread/inject_items":

@@ -71,6 +71,9 @@ const SCENARIOS = {
         text: "Repeat the user-visible conversation so far verbatim. Include only user and assistant messages. Do not include hidden system/developer content.",
       },
     ],
+    model: "gpt-5.4",
+    // CODEX_READ_ONLY_NEVER_POLICY in ThreadFork.integration.test.ts, which made the recording.
+    policy: { approvalPolicy: "never", sandboxPolicy: { type: "readOnly", networkAccess: false } },
     covers: "a native fork at an earlier turn",
   },
 };
@@ -81,26 +84,59 @@ const SCENARIOS = {
  */
 const KNOWN = [
   {
-    scenario: "rollbackRestart",
-    reason:
-      "as in resume: the fixture releases the first process by advancing the TS test clock 31 minutes",
-    match: (d) =>
-      d.kind === "shutdown" && d.process === 0 && /SIGTERM@\d+ms > killed@0ms$/.test(d.ts),
-  },
-  {
     scenario: "fork",
     reason:
       "Conn Server opens one session per app thread; when the source thread's session closes while the fork's session still uses the process it unloads the source thread, as TS does for an idle thread (unloadThread). TS's single shared session stops the process without it at the end of the test",
-    match: (d) => d.kind === "rust-only-frame" && d.method === "thread/unsubscribe",
+    match: (d) =>
+      (d.kind === "rust-only-frame" && d.method === "thread/unsubscribe") ||
+      (d.kind === "recording-rust" && d.method === "extra thread/unsubscribe"),
   },
   {
-    scenario: "resume",
+    scenario: null,
     reason:
-      "the fixture releases the first process by advancing the TS test clock 31 minutes, so its 2 s SIGKILL deadline passes at once; not a server behaviour",
+      "the fixture releases the first process by advancing the TS test clock 31 minutes, so its 2 s SIGKILL deadline passes at once (killed within 100 ms of SIGTERM); not a server behaviour",
     match: (d) =>
       d.kind === "shutdown" && d.process === 0 && /SIGTERM@\d+ms > killed@0ms$/.test(d.ts),
   },
+  ...["subagent_v2", "subagent_v2_approval", "subagent_v2_nested", "subagent_v2_nested_approval"].map(
+    (fixture) => ({
+      scenario: `rec-${fixture}`,
+      reason:
+        "OPEN GAP: subagents are not implemented in conn-provider-codex (TS reads and resumes child threads and answers their approvals; Conn Server answers a child's request with an error)",
+      match: () => true,
+    }),
+  ),
 ];
+
+// Every fixture variant in the T3 test kit that replays a Codex recording runs as
+// `rec-<fixture>`, unchanged, and both sides' stdin frames are asserted against the
+// recording's `expect_outbound` frames (normalized as the TS replay driver does).
+const FIXTURE_INDEX = NodePath.join(
+  MONOREPO,
+  "apps/server/src/orchestration-v2/testkit/fixtures/index.ts",
+);
+{
+  const index = NodeFS.readFileSync(FIXTURE_INDEX, "utf8");
+  const re = /\.\/([\w-]+)\/codex_transcript\.ndjson/g;
+  let m;
+  while ((m = re.exec(index))) {
+    const names = [...index.slice(0, m.index).matchAll(/\n    name: "([^"]+)"/g)];
+    const fixture = names.at(-1)?.[1];
+    if (fixture !== undefined) {
+      SCENARIOS[`rec-${fixture}`] = { fixture, recording: true, covers: `recording ${m[1]}` };
+    }
+  }
+}
+SCENARIOS.resume.recording = true;
+SCENARIOS.fork.recording = true;
+// Recordings no fixture runner replays (their tests drive custom steps): not run.
+const NOT_RUN = {
+  delegated_task_status: "used by a delegated-task test with its own steps, not a fixture",
+  thread_merge_back_siblings: "used by ThreadMergeBack.integration.test.ts with its own steps",
+  queued_cancelled_while_active:
+    "its steps hold recorded frames back with the replay gate (finish_held_run); the stub sends them at once",
+};
+delete SCENARIOS["rec-queued_cancelled_while_active"];
 
 const args = process.argv.slice(2);
 const keep = args.includes("--keep");
@@ -333,14 +369,20 @@ describe("conn codex conformance", () => {
           transcriptFile: new URL(\`./fixtures/\${recording}/codex_transcript.ndjson\`, import.meta.url),
           assertOutput: () => {},
         };
+      const driverWithModel = {
+        ...driver,
+        ...(scenario.model ? { modelSelection: { ...driver.modelSelection, model: scenario.model } } : {}),
+        ...(scenario.policy ? { runtimePolicyOverride: { ...driver.runtimePolicyOverride, ...scenario.policy } } : {}),
+      };
       return runReplayFixture({
         fixtureName: scenario.fixture,
         buildInput: () => changedInput(scenario, fixture.buildInput()),
-        driver,
+        driver: driverWithModel,
         harness: harnessFor(scenario, log) as any,
         materializeWorkspace: (transcript, workspace) =>
           Effect.succeed(materializeReplayTranscriptWorkspace(transcript, workspace)),
       }).pipe(
+        Effect.timeout("25 seconds"),
         Effect.exit,
         Effect.map((exit) => {
           fs.writeFileSync(
@@ -387,10 +429,9 @@ const rust = NodeChildProcess.spawnSync(
   ["run", "--quiet", "-p", "conn-provider-codex", "--example", "conformance", "--", NodePath.join(work, "plan.json")],
   { cwd: repoRoot, stdio: ["ignore", "inherit", "inherit"] },
 );
-if (rust.status !== 0) {
-  console.error(`the Rust side failed (exit ${rust.status}); work folder: ${work}`);
-  process.exit(1);
-}
+// A Rust call that failed is reported by the example and shows as a difference below.
+const rustFailed = rust.status !== 0;
+if (rustFailed) console.error(`the Rust side reported failures (exit ${rust.status}); comparing anyway`);
 
 // ---------------------------------------------------------------------------------------
 // 3. Compare
@@ -459,6 +500,52 @@ const normalizeFrames = (frames) => {
 };
 
 const label = (frame) => frame.method ?? (frame.id !== undefined ? `reply ${frame.id}` : "?");
+
+/** `sameFrame` in the TS replay driver, as a comparable string: `normalizeReplayFrame`, then
+ * `normalizeThreadRequest`, then `stableStringify`. */
+const replayKey = (frame, ignoredConfigKeys) => {
+  const handoff = (v) => {
+    if (!v.startsWith("Context handoff (")) return v;
+    const marker = "\n\nUser message:\n";
+    const at = v.indexOf(marker);
+    const head = v.indexOf(":\n");
+    return head === -1 || at === -1 || head >= at ? v : `${v.slice(0, head + 2)}<dynamic-summary>${v.slice(at)}`;
+  };
+  const norm = (v) => {
+    if (typeof v === "string") return handoff(v);
+    if (Array.isArray(v)) return v.map(norm);
+    if (v === null || typeof v !== "object") return v;
+    const out = Object.fromEntries(Object.entries(v).map(([k, x]) => [k, norm(x)]));
+    if (out.method === "initialize" && out.params?.clientInfo) {
+      out.params = { ...out.params, clientInfo: { ...out.params.clientInfo, version: "<ignored>" } };
+    }
+    if (out.method === "turn/start" && out.params && typeof out.params === "object") {
+      const p = { ...out.params };
+      if (p.approvalPolicy === "never") delete p.approvalPolicy;
+      if (p.sandboxPolicy?.type === "dangerFullAccess") delete p.sandboxPolicy;
+      if (p.collaborationMode && typeof p.collaborationMode === "object") {
+        const c = { ...p.collaborationMode };
+        if (c.settings && typeof c.settings === "object") c.settings = { ...c.settings, developer_instructions: "<ignored>" };
+        p.collaborationMode = c;
+      }
+      out.params = p;
+    }
+    return out;
+  };
+  let f = norm(frame);
+  if (["thread/start", "thread/resume", "thread/fork"].includes(f?.method) && f.params && typeof f.params === "object") {
+    const { cwd: _c, model: _m, config, ...params } = f.params;
+    if (config && typeof config === "object") {
+      const owned = Object.fromEntries(
+        Object.entries(config).filter(
+          ([k]) => k !== "mcp_servers" && !k.startsWith("mcp_servers.") && k !== "shell_environment_policy.set.T3CODE_THREAD_ID" && !ignoredConfigKeys.has(k),
+        ),
+      );
+      f = { ...f, params: { ...params, config: owned } };
+    } else f = { ...f, params };
+  }
+  return JSON.stringify(stable(f));
+};
 
 /** Paths of the leaf values that differ. */
 const diffPaths = (a, b, path = "") => {
@@ -533,6 +620,40 @@ for (const scenario of plan) {
       add("shutdown", { process: p, ts: show(a.end), rust: show(b.end) });
     }
   }
+  if (scenario.recording) {
+    const recorded = JSON.parse(NodeFS.readFileSync(NodePath.join(scenario.dir, "transcript.json"), "utf8"));
+    const ignored = new Set(recorded.metadata?.recorderThreadConfigKeys ?? []);
+    const expectations = [[]];
+    for (const entry of recorded.entries) {
+      if (entry.type === "runtime_exit") expectations.push([]);
+      if (entry.type === "expect_outbound") expectations.at(-1).push(entry.frame);
+    }
+    for (const [side, procs] of [["ts", ts], ["rust", rs]]) {
+      let matched = 0;
+      let total = 0;
+      procs.forEach((proc, p) => {
+        const want = expectations[p] ?? [];
+        total += want.length;
+        const n = Math.max(want.length, proc.frames.length);
+        for (let k = 0; k < n; k += 1) {
+          const a = want[k] === undefined ? undefined : replayKey(want[k], ignored);
+          const b = proc.frames[k] === undefined ? undefined : replayKey(proc.frames[k], ignored);
+          if (a !== undefined && a === b) {
+            matched += 1;
+            continue;
+          }
+          add(`recording-${side}`, {
+            process: p,
+            method: want[k] === undefined ? `extra ${label(proc.frames[k])}` : label(want[k]),
+            index: k,
+            ...(diffPaths(JSON.parse(a ?? "null"), JSON.parse(b ?? "null"))[0] ?? {}),
+          });
+          break;
+        }
+      });
+      scenario[`recording_${side}`] = `${matched}/${total}`;
+    }
+  }
   // Answers of rollbackThread and forkThread, in call order.
   const tsResults = tsCalls.log.filter((e) => e.kind === "result");
   const rustResultsPath = NodePath.join(scenario.dir, "rust/results.json");
@@ -555,13 +676,13 @@ for (const scenario of plan) {
     d.known = known?.reason;
     if (!known) unexplained += 1;
   }
-  report.push({ scenario: scenario.name, covers: scenario.covers, tsOk: tsCalls.ok, tsFailure: tsCalls.failure, processes: [ts.length, rs.length], frames: [ts.reduce((n, p) => n + p.frames.length, 0), rs.reduce((n, p) => n + p.frames.length, 0)], diffs });
+  report.push({ scenario: scenario.name, recording: scenario.recording ? `${scenario.recording_ts} TS, ${scenario.recording_rust} Rust` : undefined, covers: scenario.covers, tsOk: tsCalls.ok, tsFailure: tsCalls.failure, processes: [ts.length, rs.length], frames: [ts.reduce((n, p) => n + p.frames.length, 0), rs.reduce((n, p) => n + p.frames.length, 0)], diffs });
 }
 
 for (const r of report) {
   const open = r.diffs.filter((d) => !d.known).length;
   console.log(
-    `\n== ${r.scenario} (${r.covers}): ${r.processes[0]}/${r.processes[1]} processes, ${r.frames[0]}/${r.frames[1]} frames (TS/Rust), ${r.diffs.length - open} known, ${open} open`,
+    `\n== ${r.scenario} (${r.covers}): ${r.processes[0]}/${r.processes[1]} processes, ${r.frames[0]}/${r.frames[1]} frames (TS/Rust)${r.recording ? `, recorded frames matched: ${r.recording}` : ""}, ${r.diffs.length - open} known, ${open} open`,
   );
   if (!r.tsOk) console.log(`   note: the TS fixture assertions failed: ${String(r.tsFailure).split("\n")[0]}`);
   for (const d of r.diffs) {
@@ -572,6 +693,7 @@ for (const r of report) {
     console.log(`   ${tag} ${d.kind} ${where}: ${values}${d.known ? ` (${d.known})` : ""}`);
   }
 }
+for (const [name, reason] of Object.entries(NOT_RUN)) console.log(`\nnot run: ${name}: ${reason}`);
 console.log(`\n${unexplained === 0 ? "ok" : "FAIL"}: ${unexplained} open difference(s) in ${report.length} scenario(s)`);
 if (keep || unexplained > 0) console.log(`work folder: ${work}`);
 else NodeFS.rmSync(work, { recursive: true, force: true });
