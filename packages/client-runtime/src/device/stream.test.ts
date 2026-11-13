@@ -709,6 +709,47 @@ describe("shared device stream readiness and recovery", () => {
     client.stop();
   });
 
+  it("does not replay the old session's frames when a restart comes during the configuration", async () => {
+    const { client, sockets, sps, decoders, Decoder, events } = recoveryFixture("android");
+    let resolveSupport!: (support: { supported: boolean }) => void;
+    Decoder.isConfigSupported.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSupport = resolve;
+        }),
+    );
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.onopen?.();
+    // The hub announces the video session.
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({ type: "video-session", size: { width: 400, height: 800 } }),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    // The key frame starts the decoder configuration.
+    sockets[0]!.onmessage?.({ data: sps });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(decoders).toHaveLength(0);
+    events.onStatus.mockClear();
+    // The encoder restarts at the same size while the configuration is pending.
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({ type: "video-session", size: { width: 400, height: 800 } }),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    // The configuration completes now.
+    resolveSupport({ supported: true });
+    await vi.advanceTimersByTimeAsync(0);
+    // The frame the old session kept is not submitted to the decoder.
+    expect(decoders[0]!.decode).not.toHaveBeenCalled();
+    // The first frame timeout still guards the new session.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(events.onStatus).toHaveBeenCalledWith(
+      "error",
+      expect.stringContaining("No video received"),
+    );
+    client.stop();
+  });
+
   it("rebuilds the decoder when the encoder restarts at another size", async () => {
     const { client, sockets, sps, decoders, decodedFrame } = recoveryFixture("android");
     client.start();

@@ -1339,6 +1339,9 @@ export function createDeviceStreamClient(
             // The frames the old session left in the decoder arrive before the
             // new session's first frame, so they belong to the old one.
             staleFrames = queuedFrames;
+            // The frames kept for a pending configuration belong to the old
+            // session too, and the new one brings its own key frame.
+            pendingSequence = [];
           }
           awaitingKeyframe = true;
           connecting();
