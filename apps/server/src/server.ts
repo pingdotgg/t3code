@@ -836,7 +836,7 @@ const layerMakeRoutes = Layer.mergeAll(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
   ),
   // Continue on another machine, from the thread menu.
-  Layer.provide(ContinueOnEnvironment.layer),
+  Layer.provide(ContinueOnEnvironment.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   // delegate_task to a linked environment, from /mcp and the follower above.
   Layer.provide(RemoteDelegation.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   // Work files sent to and received from linked environments.

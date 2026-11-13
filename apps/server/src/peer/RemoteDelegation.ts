@@ -355,11 +355,11 @@ const make = Effect.gen(function* () {
       // A retry of a recorded task launched it already, and its files went first.
       const recordedBefore =
         input.clientRequestId !== undefined &&
-        (yield* threads.getThreadRecords(scope.thread.threadId, ["subagents"]).pipe(
-          Effect.map(({ subagents }) => {
-            const taskId = IdAllocator.derive.delegatedTaskNode({ commandId });
-            return subagents.some((task) => task.id === taskId);
-          }),
+        (yield* readTask(
+          scope.thread.threadId,
+          IdAllocator.derive.delegatedTaskNode({ commandId }),
+        ).pipe(
+          Effect.map(({ task }) => task !== undefined),
           Effect.orElseSucceed(() => false),
         ));
       if (input.workFiles === "transfer" && !recordedBefore) {

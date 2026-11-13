@@ -25,6 +25,8 @@ import * as Schema from "effect/Schema";
 import type * as Tool from "effect/ai/Tool";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { readForkHistoryItems } from "../orchestration-v2/ContextHandoffService.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import { WorkFilesReceiveTool } from "../mcp/toolkits/workFiles/tools.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -64,6 +66,7 @@ const encodeReceiveInput = Schema.encodeSync(WorkFilesReceiveTool.parametersSche
 
 const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectService.ProjectService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const peers = yield* PeerMcpClient.PeerMcpClient;
@@ -74,7 +77,7 @@ const make = Effect.gen(function* () {
 
   const loadThread = Effect.fn("ContinueOnEnvironment.loadThread")(function* (threadId: ThreadId) {
     const records = yield* threads
-      .getThreadRecords(threadId, ["turnItems", "runs"])
+      .getThreadRecords(threadId, ["runs", "attempts"])
       .pipe(Effect.mapError(() => refused("This thread was not found.")));
     const project = yield* projects.getById(records.thread.projectId).pipe(
       Effect.map(Option.getOrUndefined),
@@ -151,6 +154,14 @@ const make = Effect.gen(function* () {
       ),
     );
 
+    // Asked before any files go, so a refusal here leaves the checkout there as it was.
+    const capabilities = yield* call("orchestrator_capabilities", {}, CapabilitiesResult).pipe(
+      Effect.mapError(there),
+    );
+    const sameInstance = capabilities.providers.some(
+      (provider) => provider.providerInstanceId === thread.modelSelection.instanceId,
+    );
+
     const transferred =
       input.workFiles === "transfer"
         ? yield* transfer
@@ -168,20 +179,16 @@ const make = Effect.gen(function* () {
             .pipe(Effect.mapError(there))
         : { files: 0, deletions: 0 };
 
-    // The same instance there keeps the thread's model; otherwise the project there picks one.
-    const capabilities = yield* call("orchestrator_capabilities", {}, CapabilitiesResult).pipe(
-      Effect.mapError(there),
-    );
-    const sameInstance = capabilities.providers.some(
-      (provider) => provider.providerInstanceId === thread.modelSelection.instanceId,
-    );
-
     const filesLine =
       input.workFiles === "transfer"
         ? `Its working files were copied into this checkout (${transferred.files} files written, ${transferred.deletions} deleted).`
-        : "Its working files were not copied; this checkout has only what is committed.";
+        : "Its working files were not copied here.";
+    // What the thread shows: its fork ancestors' rows, then its own, without rolled-back runs.
+    const history = yield* readForkHistoryItems(projectionStore, records, {
+      ordinal: Number.POSITIVE_INFINITY,
+    }).pipe(Effect.mapError(() => refused("This thread's conversation could not be read.")));
     const selected = selectHistory({
-      messages: records.turnItems.flatMap((item) => {
+      messages: history.flatMap((item) => {
         const message = historicalMessage(item);
         return message === null ? [] : [message];
       }),
@@ -193,17 +200,28 @@ const make = Effect.gen(function* () {
     });
     const message = `${renderHistory(selected.messages, selected.context)}\n\nContinue the work from where it stopped.`;
 
-    const launched = yield* call(
-      "t3_thread_launch",
-      {
-        projectId,
-        title: thread.title,
-        ...(sameInstance ? { modelSelection: encodeModelSelection(thread.modelSelection) } : {}),
-        message,
-        clientRequestId: `continue:${thread.id}:${yield* random.uuidV4()}`,
-      },
-      LaunchResult,
-    ).pipe(Effect.mapError(there));
+    const clientRequestId = `continue:${thread.id}:${yield* random.uuidV4()}`;
+    const launch = (keepModel: boolean) =>
+      call(
+        "t3_thread_launch",
+        {
+          projectId,
+          title: thread.title,
+          ...(keepModel ? { modelSelection: encodeModelSelection(thread.modelSelection) } : {}),
+          message,
+          clientRequestId,
+        },
+        LaunchResult,
+      );
+    // The same instance there keeps the thread's model. Otherwise, or when that instance
+    // does not have the model, the project there picks one, since the files are there now.
+    const launched = yield* launch(sameInstance).pipe(
+      Effect.catchIf(
+        (error) => sameInstance && error.code === "model_unavailable",
+        () => launch(false),
+      ),
+      Effect.mapError(there),
+    );
     return {
       environmentId: input.environmentId as EnvironmentId,
       threadId: launched.threadId,
