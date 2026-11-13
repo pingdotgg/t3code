@@ -537,14 +537,18 @@ const readCodexModelsCacheFetchedAt = Effect.fn("readCodexModelsCacheFetchedAt")
 });
 
 // Discovery gets its own budget from `initialize`, so a slow start still lists models, and must
-// finish before the outer timeout can discard the account result.
+// finish before the outer timeout can discard the account result. A raised probe timeout extends it.
 export const codexDiscoveryDeadlineMs = (
   spawnedAtMs: number,
   initializedAtMs: number,
   probeTimeoutMs: number,
 ) =>
-  Math.min(spawnedAtMs + probeTimeoutMs, initializedAtMs + CODEX_DISCOVERY_BUDGET_MS) -
-  CODEX_DISCOVERY_MARGIN_MS;
+  Math.min(
+    spawnedAtMs + probeTimeoutMs,
+    initializedAtMs +
+      CODEX_DISCOVERY_BUDGET_MS +
+      Math.max(0, probeTimeoutMs - CODEX_APP_SERVER_PROBE_TIMEOUT_MS),
+  ) - CODEX_DISCOVERY_MARGIN_MS;
 
 const withCodexDiscoveryDeadline = Effect.fnUntraced(function* <A, E, R>(
   effect: Effect.Effect<A, E, R>,
