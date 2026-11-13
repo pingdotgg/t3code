@@ -174,3 +174,9 @@ export const isPublicFaviconHost = (host: string): boolean => {
   if (first === 0x3fff && (ipv6[1]! & 0xf000) === 0) return false;
   return true;
 };
+
+export const isWildcardHost = (host: string | undefined): boolean =>
+  host === "0.0.0.0" || host === "::" || host === "[::]";
+
+export const formatHostForUrl = (host: string): string =>
+  host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
