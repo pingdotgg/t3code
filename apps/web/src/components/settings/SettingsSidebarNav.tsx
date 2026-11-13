@@ -323,7 +323,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           </SidebarGroup>
         }
       >
-        <SidebarGroup>
+        <SidebarGroup className={cn(!compactSearchOpen && "max-md:mt-(--sidebar-content-inset)")}>
           <div className="flex flex-col gap-2">
             {isSearching && results.length === 0 ? (
               <p
