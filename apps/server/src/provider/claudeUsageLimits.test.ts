@@ -1,6 +1,16 @@
+import { it as effectIt } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 import { describe, expect, it } from "vite-plus/test";
 
-import { claudeRateLimitEventToUpdate, claudeUsageResponseToLimits } from "./claudeUsageLimits.ts";
+import {
+  claudeRateLimitEventToUpdate,
+  claudeUsageResponseToLimits,
+  makeClaudeScopedLimitNames,
+  recordClaudeRateLimitEvent,
+  recordClaudeUsageResponse,
+  rememberClaudeListedWindows,
+} from "./claudeUsageLimits.ts";
 
 const checkedAt = "2026-07-18T10:00:00.000Z";
 const noNames = { overageIncluded: undefined } as const;
@@ -268,4 +278,118 @@ describe("claudeRateLimitEventToUpdate", () => {
       ],
     });
   });
+});
+
+// Captured from a verified Ultra account on 2026-10-31: the headers list only the week, while
+// `get_usage` still reports the 5-hour window at 0% with a running reset clock.
+const ultraEvent = {
+  status: "allowed",
+  resetsAt: 1_793_563_200,
+  rateLimitType: "seven_day",
+  ...({
+    unifiedWindows: {
+      seven_day: { utilization: 0.56, resetsAt: 1_793_563_200, status: "allowed" },
+    },
+  } as object),
+} as const;
+const maxEvent = {
+  status: "allowed",
+  resetsAt: 1_793_463_600,
+  rateLimitType: "five_hour",
+  utilization: 0.05,
+  ...({
+    unifiedWindows: {
+      five_hour: { utilization: 0.05, resetsAt: 1_793_463_600 },
+      seven_day: { utilization: 0.47, resetsAt: 1_793_563_200 },
+    },
+  } as object),
+} as const;
+const ultraUsage = {
+  rate_limits_available: true,
+  rate_limits: {
+    five_hour: { utilization: 0, resets_at: "2026-10-31T16:19:59.509959+00:00" },
+    seven_day: { utilization: 47, resets_at: "2026-11-01T19:59:59.509976+00:00" },
+    ...({
+      model_scoped: [
+        { display_name: "Fable", utilization: 4, resets_at: "2026-11-01T19:59:59.510080+00:00" },
+      ],
+    } as object),
+  },
+};
+const weeklyOnly = { overageIncluded: undefined, enforcedWindows: new Set(["seven_day"]) };
+
+describe("rememberClaudeListedWindows", () => {
+  it("keeps the windows the headers list and restores one they list again", () => {
+    const weekly = rememberClaudeListedWindows(noNames, ultraEvent);
+    expect([...weekly.enforcedWindows!]).toEqual(["seven_day"]);
+    const restored = rememberClaudeListedWindows(weekly, maxEvent);
+    expect([...restored.enforcedWindows!].toSorted()).toEqual(["five_hour", "seven_day"]);
+  });
+
+  it("counts the representative claim as listed when its window lapsed at a reset boundary", () => {
+    // Captured 2026-10-17T22:00:01Z, one second after the 5-hour reset the claim still names.
+    const lapsed = {
+      status: "allowed",
+      resetsAt: 1_792_274_400,
+      rateLimitType: "five_hour",
+      ...({
+        unifiedWindows: { seven_day: { utilization: 0.66, resetsAt: 1_792_353_600 } },
+      } as object),
+    } as const;
+    const names = rememberClaudeListedWindows(noNames, lapsed);
+    expect([...names.enforcedWindows!].toSorted()).toEqual(["five_hour", "seven_day"]);
+  });
+
+  it("learns nothing from an event without a usable listing", () => {
+    expect(rememberClaudeListedWindows(noNames, { status: "allowed" })).toBe(noNames);
+    expect(
+      rememberClaudeListedWindows(noNames, {
+        status: "allowed",
+        ...({ unifiedWindows: { five_hour: null, seven_day: { utilization: "56" } } } as object),
+      }),
+    ).toBe(noNames);
+  });
+});
+
+describe("claudeRateLimitEventToUpdate with retired windows", () => {
+  it("removes the session row even when the event names no top-level utilization", () => {
+    expect(claudeRateLimitEventToUpdate(ultraEvent, noNames)).toBeUndefined();
+    expect(claudeRateLimitEventToUpdate(ultraEvent, weeklyOnly)).toEqual({
+      windows: [],
+      removeWindowIds: ["five_hour"],
+    });
+  });
+
+  it("does not let a stale 5-hour claim resurrect a retired row", () => {
+    expect(claudeRateLimitEventToUpdate(maxEvent, weeklyOnly)).toEqual({
+      windows: [],
+      removeWindowIds: ["five_hour"],
+    });
+    expect(claudeRateLimitEventToUpdate(maxEvent, noNames)?.windows.map((w) => w.id)).toEqual([
+      "five_hour",
+    ]);
+  });
+});
+
+describe("recordClaudeRateLimitEvent", () => {
+  effectIt.effect(
+    "drops the idle 5-hour window a verified Ultra account's get_usage keeps reporting",
+    () =>
+      Effect.gen(function* () {
+        const names = yield* makeClaudeScopedLimitNames;
+        const before = yield* recordClaudeUsageResponse(names, { checkedAt, response: ultraUsage });
+        expect(before.windows.map((w) => w.id)).toEqual([
+          "five_hour",
+          "seven_day",
+          "seven_day_fable",
+        ]);
+        expect(yield* recordClaudeRateLimitEvent(names, ultraEvent)).toEqual({
+          windows: [],
+          removeWindowIds: ["five_hour"],
+        });
+        const after = yield* recordClaudeUsageResponse(names, { checkedAt, response: ultraUsage });
+        expect(after.windows.map((w) => w.id)).toEqual(["seven_day", "seven_day_fable"]);
+        expect((yield* Ref.get(names)).overageIncluded).toBe("Fable");
+      }),
+  );
 });
