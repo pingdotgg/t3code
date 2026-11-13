@@ -286,7 +286,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
       const duringLookup = [
         { type: "checkpoint.captured", threadId: thread.id },
         { type: "thread.metadata-updated", threadId: thread.id, payload: thread },
-      ] as Array<OrchestrationV2DomainEvent>;
+      ] as unknown as Array<OrchestrationV2DomainEvent>;
       const activation = yield* Deferred.make<void>();
       const sweepStarted = yield* Deferred.make<void>();
       const turnEndQueued = yield* Deferred.make<void>();
