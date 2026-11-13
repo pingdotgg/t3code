@@ -755,6 +755,60 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
   );
 }
 
+/** One row per subscription: every window it reports, so no account hides inside a pool. */
+function SubscriptionsOverview({
+  pools,
+  now,
+}: {
+  readonly pools: readonly LimitPool[];
+  readonly now: number;
+}) {
+  const rows = pools.flatMap((pool) => pool.accounts.map((account) => ({ pool, account })));
+  if (rows.length === 0) return null;
+  return (
+    <section className="flex flex-col gap-2">
+      <h2 className="text-sm font-medium text-foreground">
+        <T>Subscriptions</T>
+      </h2>
+      <div className="divide-y divide-border/60 rounded-lg border border-border/60">
+        {rows.map(({ pool, account }) => (
+          <div
+            key={account.key}
+            className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-2.5 text-xs"
+          >
+            <span className="flex w-40 min-w-0 shrink-0 items-center gap-2">
+              <ProviderInstanceIcon
+                driverKind={pool.driver}
+                displayName={providerClients.get(pool.driver)?.label ?? String(pool.driver)}
+                indicatorBackground="var(--background)"
+                className="size-4 shrink-0"
+                iconClassName="size-3.5 text-foreground/80"
+              />
+              <AccountName
+                account={account}
+                className="min-w-0 truncate font-medium text-foreground"
+              />
+            </span>
+            {account.limits.windows.map((window) => {
+              const resetsIn = formatResetsIn(window, now);
+              return (
+                <span
+                  key={`${window.kind}:${window.id}`}
+                  className="inline-flex items-center gap-1.5 text-muted-foreground tabular-nums"
+                >
+                  <span>{window.label}</span>
+                  <span className="font-semibold text-foreground">{remainingPercent(window)}%</span>
+                  {resetsIn ? <span>{resetsIn.replace("resets in ", "↻ ")}</span> : null}
+                </span>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function UsageLimitsPooled({
   presentations,
   now,
@@ -782,6 +836,7 @@ export function UsageLimitsPooled({
           <T>No provider on the selected environments reports subscription limits.</T>
         </p>
       ) : null}
+      <SubscriptionsOverview pools={pools} now={now} />
       <SegmentPopoverContext value={segmentPopover}>
         {pools.map((pool) => (
           <Fragment key={pool.driver}>
