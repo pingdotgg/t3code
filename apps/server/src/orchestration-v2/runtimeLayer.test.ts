@@ -10183,6 +10183,19 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
       assert.isNotNull(visited.thread.lastVisitedAt);
       assert.equal(DateTime.formatIso(visited.thread.lastVisitedAt!), visitedAt);
       assert.deepEqual(visited.thread.updatedAt, createdUpdatedAt);
+      const sql = yield* SqlClient.SqlClient;
+      const visitPayloadKeys = (commandId: string) =>
+        sql<{ readonly payload_json: string }>`
+          SELECT payload_json FROM orchestration_events WHERE command_id = ${commandId}
+        `.pipe(
+          Effect.map((rows) =>
+            rows.map((row) => Object.keys(JSON.parse(row.payload_json)).toSorted()),
+          ),
+        );
+      // A visit stores read state, not a copy of the thread.
+      for (const keys of yield* visitPayloadKeys("runtime-layer-visited-thread-visit")) {
+        assert.includeMembers(["lastVisitedAt", "opens", "threadId"], keys);
+      }
 
       yield* orchestrator.dispatch({
         type: "thread.visit",
@@ -10192,6 +10205,8 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
       });
       const afterStaleVisit = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(DateTime.formatIso(afterStaleVisit.thread.lastVisitedAt!), visitedAt);
+      // A stale visit with no open changes nothing, so it stores nothing.
+      assert.deepEqual(yield* visitPayloadKeys("runtime-layer-visited-thread-visit-stale"), []);
 
       const shell = yield* orchestrator.getShellSnapshot();
       const thread = shell.threads.find((candidate) => candidate.id === threadId);
@@ -10208,7 +10223,6 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
         .pipe(Effect.flip);
       assert.instanceOf(markUnread, Orchestrator.OrchestratorDispatchError);
 
-      const sql = yield* SqlClient.SqlClient;
       yield* sql`INSERT INTO orchestration_v2_projection_turn_items (
         turn_item_id, thread_id, ordinal, type, status, updated_at, payload_json
       ) VALUES (
