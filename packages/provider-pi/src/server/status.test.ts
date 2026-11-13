@@ -183,6 +183,7 @@ describe("PiProvider", () => {
       assert.equal(snapshot.status, "error");
       assert.equal(snapshot.installed, false);
       assert.include(snapshot.message ?? "", "Binary path");
+      assert.include(snapshot.message ?? "", "PI_CODING_AGENT_DIR");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
