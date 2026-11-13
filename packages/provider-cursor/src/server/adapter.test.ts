@@ -447,11 +447,15 @@ describe("CursorAdapterV2", () => {
         cacheCreationTokens: 31_955,
         outputTokens: 181,
       },
+      // The checkpoint holds the context fill; billed input counts every step.
+      contextFill: { usedTokens: 8_304, maxTokens: 200_000 },
     },
-  ])("ends the turn with $reason", ({ updates = [], wait, failure, answers, usage }) =>
+  ])("ends the turn with $reason", ({ updates = [], wait, failure, answers, usage, contextFill }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-failure-" });
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "cursor-v2-failure-",
+      });
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-failure-thread");
       const modelSelection = { instanceId, model: "claude-fable-5" };
@@ -470,6 +474,7 @@ describe("CursorAdapterV2", () => {
             Effect.succeed({
               agentId: "native-cursor-failure",
               listMessages: Effect.succeed([]),
+              readContextUsage: Effect.succeed(contextFill),
               close: Effect.void,
               send: (input) =>
                 Effect.gen(function* () {
@@ -565,6 +570,7 @@ describe("CursorAdapterV2", () => {
         );
         assert(completedTurn?.type === "provider_turn.updated");
         assert.deepInclude(completedTurn.providerTurn.turnTokenUsage, usage);
+        assert.deepInclude(completedTurn.providerTurn.tokenUsage, contextFill);
       }
     }).pipe(
       Effect.scoped,
