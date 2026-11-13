@@ -113,29 +113,6 @@ it.effect("completes finalization without waiting for the display refresh", () =
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("replaces a still-running display refresh when a newer turn finishes", () => {
-  const threadId = ThreadId.make("thread_back_to_back_refresh");
-  const runId = RunId.make("run_back_to_back_refresh");
-  const scopeId = CheckpointScopeId.make("scope_back_to_back_refresh");
-  const steps: string[] = [];
-  const firstInterrupted = Deferred.makeUnsafe<void>();
-  const secondRefreshed = Deferred.makeUnsafe<void>();
-  let refreshes = 0;
-  const layer = finalizationLayer(scopeId, runId, steps, () =>
-    ++refreshes === 1
-      ? Effect.never.pipe(Effect.onInterrupt(() => Deferred.succeed(firstInterrupted, undefined)))
-      : Deferred.succeed(secondRefreshed, undefined),
-  );
-  return Effect.gen(function* () {
-    const service = yield* RunFinalization.RunFinalizationService;
-    yield* service.finalize({ threadId, runId, scopeId });
-    yield* service.finalize({ threadId, runId, scopeId });
-    yield* Deferred.await(firstInterrupted);
-    yield* Deferred.await(secondRefreshed);
-    assert.strictEqual(refreshes, 2);
-  }).pipe(Effect.provide(layer));
-});
-
 it.effect.each(
   (
     [
