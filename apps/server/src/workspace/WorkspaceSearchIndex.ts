@@ -392,15 +392,14 @@ function decideByIgnoreFiles(
 /** Places each symlink before the first index result that matches the query less closely. */
 function mergeSymlinkMatches(
   indexed: ProjectSearchEntriesResult,
-  allSymlinks: ReadonlyArray<ProjectEntry>,
+  linkPaths: ReadonlySet<string>,
   symlinks: ReadonlyArray<ProjectEntry>,
   query: string,
   limit: number,
 ): ProjectSearchEntriesResult {
-  if (allSymlinks.length === 0) return indexed;
+  if (linkPaths.size === 0) return indexed;
   // fff's watcher indexes links created after its scan, under a kind of its own choosing, so a
   // path it already returned takes the link's kind (or drops out of a kind-filtered search).
-  const allSymlinkPaths = new Set(allSymlinks.map((entry) => entry.path));
   const symlinkByPath = new Map(symlinks.map((entry) => [entry.path, entry]));
   const score = (entry: ProjectEntry) =>
     scoreSubsequenceMatch(entry.path.toLowerCase(), query) ?? Number.POSITIVE_INFINITY;
@@ -416,7 +415,7 @@ function mergeSymlinkMatches(
   const entries: ProjectEntry[] = [];
   let nextPending = 0;
   for (const indexedEntry of indexed.entries) {
-    const entry = allSymlinkPaths.has(indexedEntry.path)
+    const entry = linkPaths.has(indexedEntry.path)
       ? symlinkByPath.get(indexedEntry.path)
       : indexedEntry;
     if (!entry) continue;
@@ -789,7 +788,13 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     if ((!current.watched || !result.indexComplete) && current.expiresAt === undefined) {
       current.expiresAt = (yield* Clock.currentTimeMillis) + UNWATCHED_SYMLINK_SCAN_TTL_MS;
     }
-    return result.entries;
+    return {
+      // Git's ignore rules hide a link the same way searchVisible hides the files it indexes.
+      entries: result.entries.filter(
+        (entry) => !isIgnoredPath(ignoredPaths, entry.path, hostIsWindows),
+      ),
+      linkPaths: result.linkPaths,
+    };
   });
 
   // Grows the first page until hidden entries can no longer crowd visible ones out of it.
@@ -869,7 +874,9 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       );
       const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES, hostIsWindows);
       const symlinks = yield* listSymlinkEntries();
-      const sortedEntries = withDirectoryAncestors([...mapped.entries, ...symlinks]).toSorted(
+      // fff's watcher can index a link the scan rejected; only accepted links are listed.
+      const indexed = mapped.entries.filter((entry) => !symlinks.linkPaths.has(entry.path));
+      const sortedEntries = withDirectoryAncestors([...indexed, ...symlinks.entries]).toSorted(
         (left, right) => left.path.localeCompare(right.path),
       );
       const entries = sortedEntries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES);
@@ -887,17 +894,17 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     kind: ProjectEntryKind | undefined,
     imageOnly: boolean | undefined,
   ) {
-    const allSymlinks = yield* listSymlinkEntries();
+    const { entries: allSymlinks, linkPaths } = yield* listSymlinkEntries();
     const symlinks = allSymlinks.filter((entry) =>
       imageOnly
         ? entry.kind === "file" && isProjectFaviconPath(entry.path)
         : kind === undefined || entry.kind === kind,
     );
     // Index results that are filtered-out links get dropped in the merge, so fetch past them.
-    const indexLimit = limit + allSymlinks.length - symlinks.length;
+    const indexLimit = limit + linkPaths.size - symlinks.length;
     const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, indexLimit + 1);
     const merge = (indexed: ProjectSearchEntriesResult) =>
-      mergeSymlinkMatches(indexed, allSymlinks, symlinks, query, limit);
+      mergeSymlinkMatches(indexed, linkPaths, symlinks, query, limit);
     if (kind === "file" || imageOnly) {
       const result = yield* searchVisible(
         query,

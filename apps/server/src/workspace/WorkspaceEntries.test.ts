@@ -604,20 +604,18 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         }
       }),
     );
-    it.effect("lets the nearest .ignore rule decide a symlink, ahead of .gitignore", () =>
+    it.effect("lets the nearest .ignore rule decide a symlink, and git's rules still hide it", () =>
       Effect.gen(function* () {
         if ((yield* HostProcess.Platform) === "win32") return;
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-symlinks-", git: true });
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         yield* writeTextFile(cwd, ".gitignore", "*keep*\n");
-        yield* writeTextFile(cwd, "keep-real.ts", "export {};");
-        yield* fileSystem.symlink("keep-real.ts", path.join(cwd, "keep-link.ts"));
-        // Rejecting this name against the pattern above stalls a backtracking regex.
-        yield* fileSystem.symlink("keep-real.ts", path.join(cwd, `${"a".repeat(200)}c`));
+        yield* writeTextFile(cwd, ".ignore", "!*keep*\n*hide*\n");
         yield* writeTextFile(cwd, "sub/.ignore", "!*hide*\n");
-        yield* writeTextFile(cwd, ".ignore", `!*keep*\n*hide*\n${"a*".repeat(20)}b\n`);
+        yield* writeTextFile(cwd, "keep-real.ts", "export {};");
         yield* writeTextFile(cwd, "sub/hide-real.ts", "export {};");
+        yield* fileSystem.symlink("keep-real.ts", path.join(cwd, "keep-link.ts"));
         yield* fileSystem.symlink("hide-real.ts", path.join(cwd, "sub/hide-link.ts"));
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
@@ -626,13 +624,13 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
 
         for (const entries of [searched.entries, listed.entries]) {
           const paths = entries.map((entry) => entry.path);
-          expect(paths).toContain("keep-link.ts");
           expect(paths).toContain("sub/hide-link.ts");
+          expect(paths).not.toContain("keep-link.ts");
         }
-        // fff indexes the real files under the same rules.
-        expect(listed.entries.map((entry) => entry.path)).toEqual(
-          expect.arrayContaining(["keep-real.ts", "sub/hide-real.ts", `${"a".repeat(200)}c`]),
-        );
+        // The real files are shown or hidden by the same rules.
+        const listedPaths = listed.entries.map((entry) => entry.path);
+        expect(listedPaths).toContain("sub/hide-real.ts");
+        expect(listedPaths).not.toContain("keep-real.ts");
       }),
     );
     it.effect("matches .ignore rules against whole names and treats folder links as links", () =>

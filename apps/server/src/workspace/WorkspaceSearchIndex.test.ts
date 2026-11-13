@@ -355,42 +355,48 @@ it.effect("keeps symlinks once the watcher subscribes after starting late", () =
   ).pipe(Effect.provide(testLayer)),
 );
 
-it.effect("lists a symlink the watcher indexed once, with the link's kind", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      if ((yield* HostProcess.Platform) === "win32") return;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-symlink-dupe-" });
-      yield* fileSystem.makeDirectory(path.join(cwd, "src"));
-      yield* fileSystem.symlink("src", path.join(cwd, "src-link"));
-      fakeSymlinkFinder([], {
-        indexed: [
-          { path: "src-link", kind: "file" },
+it.effect(
+  "lists a symlink the watcher indexed once, with the link's kind, and drops rejected ones",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-symlink-dupe-" });
+        const outside = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-outside-" });
+        yield* fileSystem.makeDirectory(path.join(cwd, "src"));
+        yield* fileSystem.symlink("src", path.join(cwd, "src-link"));
+        // A link the scan rejects stays out even when the watcher indexed it.
+        yield* fileSystem.symlink(outside, path.join(cwd, "outside-link"));
+        fakeSymlinkFinder([], {
+          indexed: [
+            { path: "outside-link", kind: "file" },
+            { path: "src-link", kind: "file" },
+            { path: "link-file.ts", kind: "file" },
+          ],
+        });
+
+        const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
+        const searched = yield* searchIndex.search("link", 10);
+        const files = yield* searchIndex.search("link", 1, "file");
+        const listed = yield* searchIndex.list();
+
+        expect(searched.entries).toEqual([
+          { path: "src-link", kind: "directory" },
           { path: "link-file.ts", kind: "file" },
-        ],
-      });
-
-      const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
-      const searched = yield* searchIndex.search("link", 10);
-      const files = yield* searchIndex.search("link", 1, "file");
-      const listed = yield* searchIndex.list();
-
-      expect(searched.entries).toEqual([
-        { path: "src-link", kind: "directory" },
-        { path: "link-file.ts", kind: "file" },
-      ]);
-      // The dropped link does not take the only slot.
-      expect(files).toEqual({
-        entries: [{ path: "link-file.ts", kind: "file" }],
-        truncated: false,
-      });
-      expect(listed.entries).toEqual([
-        { path: "link-file.ts", kind: "file" },
-        { path: "src-link", kind: "directory" },
-      ]);
-    }),
-  ).pipe(Effect.provide(testLayer)),
+        ]);
+        // The dropped link does not take the only slot.
+        expect(files).toEqual({
+          entries: [{ path: "link-file.ts", kind: "file" }],
+          truncated: false,
+        });
+        expect(listed.entries).toEqual([
+          { path: "link-file.ts", kind: "file" },
+          { path: "src-link", kind: "directory" },
+        ]);
+      }),
+    ).pipe(Effect.provide(testLayer)),
 );
 
 it.effect("finds symlinks in folders past the first page of the index", () =>
