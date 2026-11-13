@@ -1625,15 +1625,35 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const listFetchedCommits = Effect.fn("GitVcsDriver.checkpoints.listFetchedCommits")(
         function* () {
           const since = Number(capturedAt);
-          const recentRemoteRefs = (yield* lines([
-            "for-each-ref",
-            "--format=%(committerdate:unix) %(refname)",
-            "refs/remotes",
-          ])).flatMap((line) => {
+          const isRemoteRef = (ref: string) => ref.startsWith("refs/remotes/");
+          const [refLines, worktreeNames] = yield* Effect.all(
+            [
+              lines([
+                "for-each-ref",
+                "--format=%(committerdate:unix) %(refname)",
+                "refs/remotes",
+                "refs/heads",
+              ]),
+              resolveGitCommonDir(input.cwd).pipe(
+                Effect.flatMap((commonDir) =>
+                  fileSystem.readDirectory(path.join(commonDir, "worktrees")),
+                ),
+                Effect.orElseSucceed((): ReadonlyArray<string> => []),
+              ),
+            ],
+            { concurrency: "unbounded" },
+          );
+          const recentRefs = refLines.flatMap((line) => {
             const [committedAt = "", ref = ""] = line.split(" ");
             return Number(committedAt) >= since ? [ref] : [];
           });
-          if (recentRemoteRefs.length === 0) return new Set<string>();
+          if (!recentRefs.some(isRemoteRef)) return new Set<string>();
+          // Local branches and every worktree's HEAD record commits made elsewhere in this repo.
+          const reflogs = [
+            ...recentRefs,
+            "HEAD",
+            ...worktreeNames.map((name) => `worktrees/${name}/HEAD`),
+          ];
 
           const entries = (yield* lines(
             [
@@ -1645,7 +1665,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               "--date=unix",
               "--format=%H %gD %gs",
             ],
-            `${[...recentRemoteRefs, "HEAD"].join("\n")}\n`,
+            `${reflogs.join("\n")}\n`,
           )).map((line) => {
             const [commit = "", selector = "", ...subject] = line.split(" ");
             const at = selector.lastIndexOf("@{");
@@ -1661,7 +1681,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             entries
               .filter(
                 (entry) =>
-                  entry.ref === "HEAD" &&
+                  !isRemoteRef(entry.ref) &&
                   entry.updatedAt >= since &&
                   LOCAL_COMMIT_REFLOG_SUBJECT.test(entry.subject),
               )
@@ -1671,7 +1691,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           const fetchRanges = entries.toReversed().flatMap((entry) => {
             const previous = previousByRef.get(entry.ref);
             previousByRef.set(entry.ref, entry.commit);
-            if (entry.ref === "HEAD") return [];
+            if (!isRemoteRef(entry.ref)) return [];
             if (entry.updatedAt < since || entry.subject === "update by push") return [];
             return [[entry.commit, ...(previous === undefined ? [] : [`^${previous}`])]];
           });

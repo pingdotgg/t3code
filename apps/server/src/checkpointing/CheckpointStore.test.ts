@@ -596,6 +596,36 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         yield* git(tmp, ["fetch", "upstream"], { committedAt: afterCheckpoint });
         expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set(["own.txt"]));
 
+        // Commits from other worktrees, one of them already removed, stay the agent's too.
+        for (const [file, addArgs] of [
+          ["branched.txt", ["-b", "task"]],
+          ["detached.txt", ["--detach"]],
+        ] as const) {
+          const worktree = NodePath.join(yield* makeTmpDir(), "worktree");
+          yield* git(tmp, ["worktree", "add", ...addArgs, worktree]);
+          yield* writeTextFile(NodePath.join(worktree, file), "own\n");
+          yield* git(worktree, ["add", "."]);
+          yield* git(worktree, ["commit", "-m", file], { committedAt: afterCheckpoint });
+          yield* git(worktree, ["push", "upstream", `HEAD:refs/heads/${file}`], {
+            committedAt: afterCheckpoint,
+          });
+          if (file === "branched.txt") yield* git(tmp, ["worktree", "remove", worktree]);
+        }
+        yield* git(upstream, ["checkout", "-q", "detached.txt"]);
+        yield* git(upstream, ["merge", "-q", "--no-edit", "branched.txt"], {
+          committedAt: afterCheckpoint,
+        });
+        yield* git(upstream, ["branch", "integration"]);
+        yield* git(upstream, ["checkout", "-q", "-"]);
+        yield* git(tmp, ["fetch", "upstream"], { committedAt: afterCheckpoint });
+        yield* git(tmp, ["merge", "--ff-only", "upstream/integration"], {
+          committedAt: afterCheckpoint,
+        });
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
+        expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(
+          new Set(["own.txt", "branched.txt", "detached.txt"]),
+        );
+
         yield* writeTextFile(NodePath.join(tmp, "upstream.txt"), "local\n");
         yield* git(tmp, ["add", "."]);
         yield* git(tmp, ["commit", "-m", "local conflict"], { committedAt: afterCheckpoint });
@@ -620,7 +650,7 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         yield* git(tmp, ["fetch", "upstream"], { committedAt: afterCheckpoint });
         yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
         expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(
-          new Set(["own.txt", "upstream.txt"]),
+          new Set(["own.txt", "branched.txt", "detached.txt", "upstream.txt"]),
         );
       }),
     );
