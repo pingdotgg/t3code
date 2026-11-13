@@ -49,6 +49,7 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   readonly runtimeVersion?: string | null;
   /** Conversational sessions only; helpers and probes leave the system prompt untouched. */
   readonly sessionSystemPromptAppend?: string;
+  readonly disableRunWorkflow?: boolean;
   readonly authMethod?: AntigravityAuthMethod;
 }
 
@@ -108,9 +109,13 @@ export const antigravityAppendsSystemPrompt = (
 export function antigravitySessionMeta(
   initializeResult: EffectAcpSchema.InitializeResponse,
   systemPromptAppend?: string,
+  disableRunWorkflow = false,
 ): EffectAcpSchema.NewSessionRequest["_meta"] | undefined {
+  const version = initializeResult.agentInfo?.version;
+  const parsed = parseAntigravityVersion(version);
   const antigravity = {
-    ...(antigravityWritesRunWorkflowSkill(initializeResult.agentInfo?.version)
+    ...(antigravityWritesRunWorkflowSkill(version) ||
+    (disableRunWorkflow && parsed !== undefined && compareVersions(parsed, [1, 4, 2]) >= 0)
       ? { disabledTools: ["run_workflow"] }
       : {}),
     ...(systemPromptAppend !== undefined && antigravityAppendsSystemPrompt(initializeResult)
@@ -144,7 +149,11 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
       cancelBehavior: "wait-for-prompt",
       clientInfo: antigravityClientInfo(input.runtimeVersion),
       sessionMeta: (initializeResult) =>
-        antigravitySessionMeta(initializeResult, input.sessionSystemPromptAppend),
+        antigravitySessionMeta(
+          initializeResult,
+          input.sessionSystemPromptAppend,
+          input.disableRunWorkflow,
+        ),
       clientCapabilities: {
         ...input.clientCapabilities,
         // Advertising writes swaps the agent's diff edits for whole-file client_edit_file.

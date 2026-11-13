@@ -494,6 +494,7 @@ export const AntigravityDriver: ProviderDriver<
         makeRuntime({
           cwd,
           mcpServers: [],
+          disableRunWorkflow: true,
         }),
     });
 
