@@ -467,6 +467,31 @@ describe("scoped settings writes", () => {
     });
   });
 
+  // regression: #35093 client settings saved in project scope overwrote the global default
+  it("refuses client-only keys at project scope", () => {
+    for (const scope of [project, checkout]) {
+      expect(
+        planScopedSettingsPatch(scope, environments, {
+          browserDefaultViewport: { _tag: "freeform", width: 1440, height: 900 },
+        }),
+      ).toMatchObject({
+        clientPatch: {},
+        hasClientWrite: false,
+        serverWrites: [],
+        unavailableReason:
+          "This setting is environment-wide and cannot be overridden by a project.",
+      });
+      expect(
+        planScopedSettingsPatch(
+          scope,
+          environments,
+          { fontSizeInterface: 15 },
+          { deviceOnly: true },
+        ),
+      ).toMatchObject({ clientPatch: { fontSizeInterface: 15 }, unavailableReason: null });
+    }
+  });
+
   it("clears overrides per member and removes an emptied entry", () => {
     const withOverrides = environment("Server", {
       settings: {
