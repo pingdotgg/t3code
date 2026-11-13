@@ -53,6 +53,16 @@ public final class T3NativeControlsModule: Module {
       ViewName("ScrollEdgeBleed")
     }
 
+    AsyncFunction("generateDpopKey") { T3DpopKeys.generate() }
+
+    AsyncFunction("dpopKeyMatches") { (privateKey: Data, publicKey: Data) in
+      try T3DpopKeys.matches(privateKey: privateKey, publicKey: publicKey)
+    }
+
+    AsyncFunction("signDpop") { (privateKey: Data, signingInput: Data) in
+      try T3DpopKeys.sign(privateKey: privateKey, signingInput: signingInput)
+    }
+
     AsyncFunction("presentVideo") { (url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) in
       try self.presentVideo(
         url: url,

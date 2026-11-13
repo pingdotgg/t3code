@@ -4,7 +4,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useState } from "react";
-import { View } from "react-native";
+import { SheetPane } from "../../components/ui/SheetPane";
 
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentPresentation } from "../../state/presentation";
@@ -78,7 +78,7 @@ export function ThreadFileNavigatorPane(props: {
   );
 
   return (
-    <View className="flex-1 ios:bg-sheet android:bg-header">
+    <SheetPane>
       <AppBar
         title="Files"
         subtitle={props.projectName}
@@ -90,6 +90,6 @@ export function ThreadFileNavigatorPane(props: {
         refresh={{ accessibilityLabel: "Refresh files", onPress: entriesQuery.refresh }}
       />
       <ScreenContent insetHorizontal>{fileTree}</ScreenContent>
-    </View>
+    </SheetPane>
   );
 }

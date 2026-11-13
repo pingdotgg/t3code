@@ -20,6 +20,13 @@ import type {
 
 import { createAnnotationIdSource } from "./AnnotationIds.ts";
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
+import {
+  addStrokePoint,
+  openStrokePath,
+  startStroke,
+  strokeBounds,
+  type StrokeGeometry,
+} from "./AnnotationStroke.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
 import { installRecordingCursor } from "./RecordingCursor.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS } from "./RecordingInput.ts";
@@ -33,6 +40,7 @@ import {
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
   MOUSE_NAVIGATE_CHANNEL,
+  PAGE_UNHANDLED_SHORTCUT_CHANNEL,
   RECORDING_CURSOR_CHANNEL,
   RECORDING_POINTER_CHANNEL,
   RECORDING_KEY_CHANNEL,
@@ -49,6 +57,16 @@ const MAX_MARQUEE_ELEMENTS = 20;
 const ELEMENT_CONTEXT_TIMEOUT_MS = 5_000;
 const CONTENT_LAYER_Z_INDEX = 1;
 const CHROME_LAYER_Z_INDEX = 10;
+// Page dialogs (Radix, react-remove-scroll) dismiss, refocus or block scrolling on document events
+// that shadow retargeting attributes to the overlay host.
+const PAGE_ISOLATED_EVENTS = [
+  "pointerdown",
+  "focusin",
+  "focusout",
+  "wheel",
+  "touchstart",
+  "touchmove",
+] as const;
 
 let recordingCursor: ReturnType<typeof installRecordingCursor> | null = null;
 ipcRenderer.on(
@@ -138,6 +156,7 @@ interface AnnotationSession {
   teardown: (notifyMain: boolean) => void;
   applyTheme: (theme: DesktopPreviewAnnotationTheme) => void;
   setSendEnabled: (enabled: boolean) => void;
+  handleOverlayKey: (event: KeyboardEvent) => void;
 }
 
 let activeSession: AnnotationSession | null = null;
@@ -193,6 +212,38 @@ const reportHumanKeyInput = (event: KeyboardEvent): void => {
 
 window.addEventListener("pointerdown", reportHumanPointerInput, true);
 window.addEventListener("keydown", reportHumanKeyInput, true);
+
+// Capture runs before a page can stop the event; the task delay lets every page
+// listener call preventDefault before the host is told the key went unhandled.
+const reportUnhandledShortcut = (event: KeyboardEvent): void => {
+  if (!event.isTrusted || event.repeat || event.isComposing) return;
+  if (!event.metaKey && !event.ctrlKey && !event.altKey && !/^F\d{1,2}$/u.test(event.key)) return;
+  setTimeout(() => {
+    if (event.defaultPrevented) return;
+    ipcRenderer.send(PAGE_UNHANDLED_SHORTCUT_CHANNEL, {
+      key: event.key,
+      code: event.code,
+      metaKey: event.metaKey,
+      ctrlKey: event.ctrlKey,
+      shiftKey: event.shiftKey,
+      altKey: event.altKey,
+    });
+  }, 0);
+};
+
+window.addEventListener("keydown", reportUnhandledShortcut, true);
+
+// Registered before page scripts so their capture listeners never see keys typed into the
+// overlay; the closed shadow root retargets those to the host, hiding that they edit text.
+const isolateOverlayKey = (event: KeyboardEvent): void => {
+  if (!activeSession || !(event.target instanceof Element) || !isAnnotationNode(event.target))
+    return;
+  activeSession.handleOverlayKey(event);
+  event.stopImmediatePropagation();
+};
+
+for (const type of ["keydown", "keypress", "keyup"] as const)
+  window.addEventListener(type, isolateOverlayKey, true);
 
 const MOUSE_BUTTON_BACK = 3;
 const MOUSE_BUTTON_FORWARD = 4;
@@ -500,34 +551,6 @@ function createUnitInput(unit: string, placeholder = "0"): HTMLInputElement {
   input.style.paddingRight = "30px";
   input.dataset.unit = unit;
   return input;
-}
-
-function pathFromPoints(points: ReadonlyArray<PreviewAnnotationPoint>): string {
-  if (points.length === 0) return "";
-  if (points.length === 1) return `M ${points[0]!.x} ${points[0]!.y} l 0.01 0.01`;
-  let path = `M ${points[0]!.x} ${points[0]!.y}`;
-  for (let index = 1; index < points.length - 1; index += 1) {
-    const current = points[index]!;
-    const next = points[index + 1]!;
-    path += ` Q ${current.x} ${current.y} ${(current.x + next.x) / 2} ${(current.y + next.y) / 2}`;
-  }
-  const last = points[points.length - 1]!;
-  path += ` L ${last.x} ${last.y}`;
-  return path;
-}
-
-function strokeBounds(
-  points: ReadonlyArray<PreviewAnnotationPoint>,
-  width: number,
-): PreviewAnnotationRect {
-  const xs = points.map((point) => point.x);
-  const ys = points.map((point) => point.y);
-  const padding = width + 3;
-  const left = Math.min(...xs) - padding;
-  const top = Math.min(...ys) - padding;
-  const right = Math.max(...xs) + padding;
-  const bottom = Math.max(...ys) + padding;
-  return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
 function startAnnotation(
@@ -866,7 +889,12 @@ function startAnnotation(
   }
   let tool: AnnotationTool = isPdf ? "marquee" : "select";
   let dragStart: PreviewAnnotationPoint | null = null;
-  let activeStroke: { target: PreviewAnnotationStrokeTarget; path: SVGPathElement } | null = null;
+  let activeStroke: {
+    target: PreviewAnnotationStrokeTarget;
+    geometry: StrokeGeometry;
+    group: SVGGElement;
+    path: SVGPathElement;
+  } | null = null;
   let pendingCapture = false;
   let editorExpanded = false;
   let editorWasShown = false;
@@ -1466,15 +1494,18 @@ function startAnnotation(
       return;
     }
     if (tool === "draw" && activeStroke) {
-      activeStroke.target.points = [
-        ...activeStroke.target.points,
-        { x: event.clientX, y: event.clientY },
-      ];
-      activeStroke.target.bounds = strokeBounds(
-        activeStroke.target.points,
-        activeStroke.target.width,
-      );
-      activeStroke.path.setAttribute("d", pathFromPoints(activeStroke.target.points));
+      const closedPath = addStrokePoint(activeStroke.geometry, {
+        x: event.clientX,
+        y: event.clientY,
+      });
+      activeStroke.target.bounds = strokeBounds(activeStroke.geometry, activeStroke.target.width);
+      if (closedPath !== null) {
+        activeStroke.path.setAttribute("d", closedPath);
+        activeStroke.path = activeStroke.group.appendChild(
+          document.createElementNS("http://www.w3.org/2000/svg", "path"),
+        );
+      }
+      activeStroke.path.setAttribute("d", openStrokePath(activeStroke.geometry));
     }
   };
 
@@ -1493,23 +1524,27 @@ function startAnnotation(
     }
     dragStart = { x: event.clientX, y: event.clientY };
     if (tool === "draw") {
+      const geometry = startStroke(dragStart);
       const stroke: PreviewAnnotationStrokeTarget = {
         id: nextId("stroke"),
         color: annotationTheme?.primary ?? "#2563eb",
         width: 4,
-        points: [dragStart],
+        points: geometry.points,
         bounds: { x: dragStart.x, y: dragStart.y, width: 1, height: 1 },
       };
-      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.setAttribute(OVERLAY_ATTRIBUTE, "");
-      path.setAttribute("data-stroke-id", stroke.id);
-      path.setAttribute("fill", "none");
-      path.setAttribute("stroke", stroke.color);
-      path.setAttribute("stroke-width", String(stroke.width));
-      path.setAttribute("stroke-linecap", "round");
-      path.setAttribute("stroke-linejoin", "round");
-      svg.appendChild(path);
-      activeStroke = { target: stroke, path };
+      const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      group.setAttribute(OVERLAY_ATTRIBUTE, "");
+      group.setAttribute("data-stroke-id", stroke.id);
+      group.setAttribute("fill", "none");
+      group.setAttribute("stroke", stroke.color);
+      group.setAttribute("stroke-width", String(stroke.width));
+      group.setAttribute("stroke-linecap", "round");
+      group.setAttribute("stroke-linejoin", "round");
+      const path = group.appendChild(
+        document.createElementNS("http://www.w3.org/2000/svg", "path"),
+      );
+      svg.appendChild(group);
+      activeStroke = { target: stroke, geometry, group, path };
     }
   };
 
@@ -1536,7 +1571,7 @@ function startAnnotation(
       }
     } else if (tool === "draw" && activeStroke) {
       if (activeStroke.target.points.length > 1) strokes.push(activeStroke.target);
-      else activeStroke.path.remove();
+      else activeStroke.group.remove();
       activeStroke = null;
     }
     dragStart = null;
@@ -1547,6 +1582,13 @@ function startAnnotation(
     if (isAnnotationNode(event.target as Element)) return;
     event.preventDefault();
     event.stopPropagation();
+  };
+
+  const stopAtOverlay = (event: Event): void => event.stopPropagation();
+  // Focus moving from the page into the overlay targets the page element, so the host never sees it.
+  const onFocusOutToOverlay = (event: FocusEvent): void => {
+    if (event.relatedTarget instanceof Element && isAnnotationNode(event.relatedTarget))
+      event.stopPropagation();
   };
 
   const onPointerOut = (event: PointerEvent): void => {
@@ -1592,6 +1634,8 @@ function startAnnotation(
     dragHandle.removeEventListener("pointermove", onEditorPointerMove);
     dragHandle.removeEventListener("pointerup", onEditorPointerUp);
     dragHandle.removeEventListener("pointercancel", onEditorPointerUp);
+    for (const type of PAGE_ISOLATED_EVENTS) host.removeEventListener(type, stopAtOverlay);
+    document.documentElement.removeEventListener("focusout", onFocusOutToOverlay);
     if (editorLayoutFrame !== null) window.cancelAnimationFrame(editorLayoutFrame);
     ipcRenderer.off(CANCEL_PICK_CHANNEL, onCancel);
     ipcRenderer.off(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
@@ -1633,13 +1677,13 @@ function startAnnotation(
         return;
       }
     }
-    if (isAnnotationNode(event.target as Element) && event.key !== "Escape") return;
-    if (event.key === "Escape") {
+    if (event.key === "Escape" && !event.isComposing) {
       event.preventDefault();
       event.stopPropagation();
       teardown(true);
       return;
     }
+    if (shadowRoot.activeElement?.matches("input, textarea, select")) return;
     if (event.key === "v") tool = "select";
     else if (event.key === "r") tool = "marquee";
     else if (event.key === "d") tool = "draw";
@@ -1722,15 +1766,17 @@ function startAnnotation(
       });
   };
   submit.addEventListener("click", () => submitAnnotation("attach"));
-  root.addEventListener("keydown", (event) => {
+  const handleOverlayKey = (event: KeyboardEvent): void => {
+    if (event.type === "keyup") onVoiceKeyUp(event);
+    if (event.type !== "keydown") return;
+    onKeyDown(event);
+    if (event.cancelBubble) return;
     const submission =
-      event.target === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
-    // Bubble phase lets editor inputs handle events before hiding them from the page.
-    event.stopImmediatePropagation();
+      shadowRoot.activeElement === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
     if (!submission) return;
     event.preventDefault();
     submitAnnotation(submission);
-  });
+  };
 
   window.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
   window.addEventListener("pointerdown", onPointerDown, { capture: true, passive: false });
@@ -1743,6 +1789,10 @@ function startAnnotation(
   window.addEventListener("keyup", onVoiceKeyUp, { capture: true });
   window.addEventListener("scroll", repaint, { capture: true, passive: true });
   window.addEventListener("resize", repaint, { passive: true });
+  // Bubble phase, so the overlay's own handlers still see these events.
+  for (const type of PAGE_ISOLATED_EVENTS)
+    host.addEventListener(type, stopAtOverlay, { passive: true });
+  document.documentElement.addEventListener("focusout", onFocusOutToOverlay);
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
   if (voice) ipcRenderer.on(ANNOTATION_VOICE_STATE_CHANNEL, onVoiceState);
@@ -1762,6 +1812,7 @@ function startAnnotation(
       sendEnabled = enabled;
       updateSendHint();
     },
+    handleOverlayKey,
   };
 }
 
