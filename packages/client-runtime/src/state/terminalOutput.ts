@@ -260,7 +260,8 @@ function clearOutput(current: TerminalOutputState, maxBufferBytes: number): Term
   return { ...cleared, textStartOffset: cleared.nextOffset };
 }
 
-function terminalOutputReplay(output: TerminalOutputState): string {
+/** Everything retained, for an emulator that is fed the whole history. */
+export function terminalOutputReplay(output: TerminalOutputState): string {
   return output.chunks.map((chunk) => chunk.data).join("");
 }
 
