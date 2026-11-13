@@ -79,7 +79,12 @@ export function resolveAgentFileLinkPath(
 ): string | null {
   const subdirectory =
     agentCwd && workspaceRoot ? resolveWorkspaceRelativeFilePath(workspaceRoot, agentCwd) : null;
-  if (subdirectory === null || isAbsolutePath(targetPath) || targetPath.startsWith("~")) {
+  if (
+    subdirectory === null ||
+    isAbsolutePath(targetPath) ||
+    targetPath.startsWith("~/") ||
+    targetPath.startsWith("~\\")
+  ) {
     return resolveFileLinkPath(workspaceRoot, targetPath);
   }
   return normalizeRelativePath(`${subdirectory}/${targetPath}`);

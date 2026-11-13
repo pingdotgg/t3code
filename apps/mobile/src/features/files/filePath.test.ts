@@ -16,6 +16,8 @@ describe("resolveAgentFileLinkPath", () => {
     ["/wt/ios", "/wt", "../shared/file.ts", "shared/file.ts"],
     ["/wt/ios", "/wt", "../../etc/passwd", null],
     ["/wt/ios", "/wt", "/wt/README.md", "/wt/README.md"],
+    ["/wt/ios", "/wt", "~notes.md", "ios/~notes.md"],
+    ["/home/maria/wt/ios", "/home/maria/wt", "~/notes.md", "/home/maria/notes.md"],
     ["/wt", "/wt", "src/a.ts", "src/a.ts"],
     [null, "/wt", "src/a.ts", "src/a.ts"],
   ])("resolves a link from %s in %s: %s", (agentCwd, workspaceRoot, path, expected) => {
