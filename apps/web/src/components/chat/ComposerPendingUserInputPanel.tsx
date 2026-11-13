@@ -13,6 +13,7 @@ import { cn } from "~/lib/utils";
 import { isInSideChatPane } from "~/lib/sideChatPane";
 import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
+import { OPTION_TEXT_PLUGINS } from "./ComposerPendingUserInputPanel.logic";
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
@@ -293,14 +294,14 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     </span>
                     <div className="min-w-0 flex-1 flex flex-col gap-0.5">
                       <span className="text-sm font-medium" dir={textDirection(option.label)}>
-                        {option.label}
+                        <OptionText text={option.label} />
                       </span>
                       {option.description && option.description !== option.label ? (
                         <span
                           className="text-secondary-label text-2xs"
                           dir={textDirection(option.description)}
                         >
-                          {option.description}
+                          <OptionText text={option.description} />
                         </span>
                       ) : null}
                     </div>
@@ -344,6 +345,18 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     </Collapsible>
   );
 });
+
+function OptionText({ text }: { text: string }) {
+  return (
+    <ChatMarkdown
+      inline
+      text={text}
+      cwd={undefined}
+      parseRawHtml={false}
+      extraRemarkPlugins={OPTION_TEXT_PLUGINS}
+    />
+  );
+}
 
 // Drawn with ui/radio-group's look instead of using its Radio: Radio only checks inside a
 // RadioGroup, whose arrow keys select options and would trip the single-select auto-advance.
