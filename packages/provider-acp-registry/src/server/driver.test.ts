@@ -532,6 +532,52 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `;
 
+// Mirrors Factory Droid: the effort option is reported only for the current
+// model, and every model offers one.
+const perModelEffortAgentSource = `
+import { createInterface } from "node:readline";
+const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+let currentModel = "model-a";
+const configOptions = () => [
+  {
+    id: "model",
+    name: "Model",
+    category: "model",
+    type: "select",
+    currentValue: currentModel,
+    options: [
+      { value: "model-a", name: "model-a" },
+      { value: "model-b", name: "model-b" },
+    ],
+  },
+  {
+    id: "reasoning_effort",
+    name: "Reasoning Effort",
+    category: "thought_level",
+    type: "select",
+    currentValue: "high",
+    options: [
+      { value: "low", name: "Low" },
+      { value: "high", name: "High" },
+    ],
+  },
+];
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const { id, method, params } = JSON.parse(line);
+  if (id === undefined) return;
+  if (method === "initialize") {
+    send({ id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] } });
+  } else if (method === "session/new") {
+    send({ id, result: { sessionId: "probe-session", configOptions: configOptions() } });
+  } else if (method === "session/set_config_option") {
+    if (params.configId === "model") currentModel = params.value;
+    send({ id, result: { configOptions: configOptions() } });
+  } else {
+    send({ id, result: {} });
+  }
+});
+`;
+
 const driverLayer = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(AcpRegistryRuntimeCoordinator.layer),
   Layer.provideMerge(IdAllocator.layer),
@@ -695,6 +741,52 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       expect(effortBySlug(yield* instance.snapshot.getSnapshot)).toBe(
         "model-a:effort,model-b:effort",
       );
+    }),
+  );
+
+  it.effect("gives every model the options the agent reports for it after a probe", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-" });
+      const agentPath = path.join(directory, "agent.mjs");
+      yield* fileSystem.writeFileString(agentPath, perModelEffortAgentSource);
+
+      const instance = yield* AcpRegistryDriver.create({
+        instanceId: identity.instanceId,
+        displayName: identity.displayName,
+        enabled: true,
+        environment: [],
+        config: decodeSettings({ agentId: "test-agent" }),
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+          ...catalogWithInspection({
+            status: "ready",
+            agentId: "test-agent",
+            version: "1.0.0",
+            distribution: "npx",
+          }),
+          resolve: () =>
+            Effect.succeed({
+              distribution: "npx" as const,
+              spawn: { command: process.execPath, args: [agentPath] },
+            }),
+        }),
+      );
+      const probed = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.models.length === 2),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* instance.snapshot.refresh;
+      const snapshot = Option.getOrThrow(yield* Fiber.join(probed));
+
+      expect(
+        snapshot.models.map(
+          (model) =>
+            `${model.slug}:${(model.capabilities?.optionDescriptors ?? []).map((option) => option.id).join("+")}`,
+        ),
+      ).toEqual(["model-a:reasoning_effort", "model-b:reasoning_effort"]);
     }),
   );
 });
