@@ -38,6 +38,7 @@ export type SettingsPath =
   | "/settings/secrets"
   | "/settings/maintenance"
   | "/settings/labs"
+  | "/settings/tips"
   | "/settings/about"
   | "/settings/archived";
 
@@ -113,6 +114,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/secrets": msg("Secrets"),
   "/settings/maintenance": msg("Maintenance"),
   "/settings/labs": msg("Labs"),
+  "/settings/tips": msg("Tips"),
   "/settings/about": msg("About"),
   "/settings/voice": msg("Voice"),
   "/settings/archived": msg("Archive"),
@@ -162,7 +164,13 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
   {
     heading: msg("More"),
     headingHidden: true,
-    paths: ["/settings/maintenance", "/settings/labs", "/settings/about", "/settings/archived"],
+    paths: [
+      "/settings/maintenance",
+      "/settings/labs",
+      "/settings/tips",
+      "/settings/about",
+      "/settings/archived",
+    ],
   },
 ];
 
@@ -888,6 +896,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "new-thread-tips",
+    title: "Tips on new threads",
+    to: "/settings/tips",
+    searchTerms: ["hints help getting started onboarding learn features tried checklist"],
+  },
+  {
     id: "mobile-app",
     title: "Mobile app",
     to: "/settings/about",
@@ -1388,6 +1402,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/scheduled-tasks": null,
   "/settings/maintenance": null,
   "/settings/labs": null,
+  "/settings/tips": null,
   "/settings/about": null,
   "/settings/archived": "project-defaults",
 };
@@ -1496,6 +1511,12 @@ export function searchableSetting(id: SettingsSearchItemId): {
 } {
   const { id: anchorId, title } = SEARCH_ITEMS_BY_ID.get(id)!;
   return { id: anchorId, title };
+}
+
+/** The hash that opens a setting the way search does, which may be its section. */
+export function settingsSearchHash(id: SettingsSearchItemId): string {
+  const item: SettingsSearchItem = SEARCH_ITEMS_BY_ID.get(id)!;
+  return item.targetId ?? item.id;
 }
 
 export function filterAvailableSettingsSearchItems(

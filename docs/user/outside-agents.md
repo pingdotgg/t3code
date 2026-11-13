@@ -3,8 +3,8 @@
 Agents that T3 Code did not start can work with an environment through its MCP
 server. They can read projects and threads, start and message threads, and
 check which providers and models are available. This covers Claude Code or
-Codex in your own terminal, ChatGPT, and bots that support MCP. Each agent signs
-in once, and you choose what it may do.
+Codex in your own terminal, ChatGPT, and bots that support MCP, such as Poke
+and Grok Bot. Each agent signs in once, and you choose what it may do.
 
 ## Add T3 Code to an assistant app
 

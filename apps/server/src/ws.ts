@@ -2700,6 +2700,15 @@ export const layerWsRpc = (
               ),
             ),
           ),
+        // Analytics failures never reach the tip strip; it does not wait on them.
+        [WS_METHODS.serverRecordTipEvent]: (input) => {
+          const { event, ...tip } = input;
+          const { id, at, ...properties } =
+            "tip" in tip ? tip : { ...tip, id: undefined, at: undefined };
+          return analytics
+            .record(`tip.${event}`, { ...properties, ...originProps }, { uuid: id, capturedAt: at })
+            .pipe(Effect.ignore);
+        },
         [WS_METHODS.cloudGetRelayClientStatus]: (_input) => relayClient.resolve,
         [WS_METHODS.cloudInstallRelayClient]: (_input) =>
           Stream.callback<RelayClientInstallProgressEvent, RelayClientInstallFailedError>((queue) =>

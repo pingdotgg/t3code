@@ -57,6 +57,8 @@ export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   // Access picks its environment on the page itself.
   "/settings/access",
   "/settings/about",
+  // Tips and their progress live on this device.
+  "/settings/tips",
 ]);
 
 interface SettingsScopeMenuProps {

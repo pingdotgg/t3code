@@ -32,6 +32,7 @@ const pendingRpcAckRequests = new Map<string, PendingRpcAckRequest>();
 const untrackedRpcAckMethods = new Set<string>([
   WS_METHODS.serverGetUsageSummary,
   WS_METHODS.serverReportClientActivity,
+  WS_METHODS.serverRecordTipEvent,
   WS_METHODS.sourceControlSignInWait,
 ]);
 const longRunningRpcAckMethods = new Set<string>([

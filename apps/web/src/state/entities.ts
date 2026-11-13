@@ -332,6 +332,13 @@ export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | 
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
 }
 
+export function subscribeThreadShell(
+  ref: ScopedThreadRef,
+  listener: (shell: EnvironmentThreadShell | null) => void,
+): () => void {
+  return appAtomRegistry.subscribe(environmentThreadShells.threadShellAtom(ref), listener);
+}
+
 export function waitForThreadShell(ref: ScopedThreadRef, timeoutMs = 5_000): Promise<boolean> {
   return waitForAtomValue({
     registry: appAtomRegistry,

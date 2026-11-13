@@ -42,6 +42,8 @@ import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { preferredSpeechLanguages } from "./preferredSpeechLanguages";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { bindAudioGrant, readCleanupGrant, useAudioChoice } from "./voiceConsent";
+import { markTipDone } from "../tips/tipsStorage";
+import { voiceUseCredit } from "../tips/tipsState";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 const WAITING_STATE: VoiceInputState = { phase: "preparing", error: null, errorAction: null };
@@ -206,10 +208,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     submit: (text: string) => void;
     text?: string;
   } | null>(null);
-  const latestRef = useRef({ input, clientSettings, cleanupPrepared, projectWords });
+  // The tip is about local models; cloud dictation does not show the user one.
+  const transcribedOn = destination.cloudProvider === undefined ? destination.environmentId : null;
+  const latestRef = useRef({ input, clientSettings, cleanupPrepared, projectWords, transcribedOn });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed props and settings to the asynchronous recording controller
   useEffect(() => {
-    latestRef.current = { input, clientSettings, cleanupPrepared, projectWords };
+    latestRef.current = { input, clientSettings, cleanupPrepared, projectWords, transcribedOn };
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the recording controller bound to the consented destination; it is disposed with the consent
   useEffect(() => {
@@ -330,6 +334,15 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         if (latestRef.current.input.disabled) return;
         latestRef.current.input.commitDraft(text, selection);
         if (pendingSubmissionRef.current) pendingSubmissionRef.current.text = text;
+        // A transcript reached the draft: voice input was really used, not just set up.
+        const { transcribedOn, input: draft } = latestRef.current;
+        const credit = voiceUseCredit(transcribedOn, draft.environmentId);
+        if (transcribedOn !== null) {
+          markTipDone(
+            "voice-input",
+            credit === "unreported" ? { unreported: true } : { on: credit.on },
+          );
+        }
       },
       onStateChange: (value) => {
         if (disposed) return;

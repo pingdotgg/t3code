@@ -7,7 +7,10 @@ Claude accounts when you are signed in, and a random identifier for each device 
 event and forwards events to PostHog. Events include the provider, model, reasoning effort,
 permission mode, turn and request results, duration, release channel, and token counts when
 available. Child-agent token counts are reported separately from the main agent's. Model names
-are sent only when they appear in a provider's public model list.
+are sent only when they appear in a provider's public model list. Events also record which
+new-thread [tips](./tips.md) you saw, opened, hid, brought back, or tried, and when you turn tips
+on or off. Events about a tip go only to the environment tied to that tip, usually the one where
+you first saw it.
 
 Product events do not include prompts, responses, file contents, authentication tokens, conversation IDs,
 raw provider events, or child-agent output.

@@ -67,6 +67,7 @@ const SentBatch = Schema.fromJsonString(
         uuid: Schema.String,
         event: Schema.String,
         distinct_id: Schema.String,
+        timestamp: Schema.optionalKey(Schema.String),
         properties: Schema.Struct({
           telemetryChannel: Schema.String,
           installId: Schema.optionalKey(Schema.String),
@@ -239,6 +240,46 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
       const sentUuids = new Set(batches.map((batch) => batch.map(({ uuid }) => uuid).join()));
       assert.equal(sentUuids.size, 1);
       assert.equal(batches[0]?.length, 20);
+    }),
+  );
+
+  it.effect("keeps a caller's event id so a retried event is stored once", () =>
+    Effect.gen(function* () {
+      const id = "0195f0c4-1f2a-7b3c-8d4e-5f6a7b8c9d0e";
+      const batches = yield* sendFor(
+        1,
+        respondWithStatus(204),
+        Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          yield* analytics.record("tip.shown", {}, { uuid: id });
+          yield* analytics.record("tip.shown", {}, { uuid: "not-a-uuid" });
+        }),
+      );
+      const uuids = batches.flat().map((event) => event.uuid);
+      assert.equal(uuids[0], id);
+      assert.notEqual(uuids[1], "not-a-uuid");
+    }),
+  );
+
+  it.effect("keeps when a retried event happened, within a week", () =>
+    Effect.gen(function* () {
+      let now = 0;
+      const batches = yield* sendFor(
+        1,
+        respondWithStatus(204),
+        Effect.gen(function* () {
+          now = yield* Clock.currentTimeMillis;
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          yield* analytics.record("tip.shown", {}, { capturedAt: now - 60_000 });
+          yield* analytics.record("tip.shown", {}, { capturedAt: now + 60_000 });
+          yield* analytics.record("tip.shown", {}, { capturedAt: now - 8 * 24 * 60 * 60_000 });
+        }),
+      );
+      const times = batches.flat().map((event) => Date.parse(event.timestamp ?? ""));
+      assert.equal(times[0], now - 60_000);
+      // Times in the future or older than a week are not trusted.
+      assert.equal(times[1], now);
+      assert.equal(times[2], now);
     }),
   );
 

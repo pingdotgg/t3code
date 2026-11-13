@@ -291,6 +291,12 @@ export function formatRelativeTimeLabel(isoDate: string, nowMs: number = Date.no
   return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
 }
 
+/** A relative label short enough for a sidebar row: "now", "5m", "3h". */
+export function compactSidebarTimeLabel(label: string): string {
+  if (label === "just now") return "now";
+  return label.endsWith(" ago") ? label.slice(0, -4) : label;
+}
+
 export function formatElapsedDurationLabel(isoDate: string, nowMs: number = Date.now()): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";

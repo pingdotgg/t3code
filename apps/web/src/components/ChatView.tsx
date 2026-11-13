@@ -203,6 +203,7 @@ import { newMessageId } from "~/lib/utils";
 import { isInSideChatPane, type SideChatParentPanel } from "~/lib/sideChatPane";
 import {
   NO_PROVIDER_MODEL_SELECTION,
+  isProviderInstancePickerReady,
   providerInstanceEntriesFor,
   resolveProjectDefaultProviderModelSelection,
   shouldShowInstanceBadge,
@@ -271,6 +272,8 @@ import {
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
+import { NewThreadTips } from "./chat/NewThreadTips";
+import { useTurnItemTipEvidence } from "~/tips/tipsStore";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
 import {
   BranchRestoreConfirmHost,
@@ -541,6 +544,11 @@ export default function ChatView(props: ChatViewProps) {
     activeProviderThread,
   );
   const serverVisibleTurnItems = useQuietThreadVisibleTurnItems(routeThreadDetailRef);
+  useTurnItemTipEvidence(
+    environmentId,
+    serverVisibleTurnItems,
+    serverThreadProjection?.projection.runs ?? EMPTY_RUNS,
+  );
   const serverThreadHistory = useThreadHistory(routeThreadDetailRef);
   const threadHistoryControls = (() => {
     if (routeThreadDetailRef === null || !shouldShowLoadEarlierControl(serverThreadHistory)) {
@@ -1870,6 +1878,11 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const scheduleComposerFocusStable = useStableCallback(scheduleComposerFocus);
+  const insertTipPrompt = (prompt: string) => {
+    const composer = composerRef.current;
+    if (composer?.insertTextAtEnd(prompt, { ensureLeadingBoundary: true })) composer.focusAtEnd();
+  };
+  const insertTipPromptStable = useStableCallback(insertTipPrompt);
   const insertArtifactTemplate = (template: CodexArtifactTemplate) => {
     const composer = composerRef.current;
     if (!composer) return;
@@ -3837,6 +3850,37 @@ export default function ChatView(props: ChatViewProps) {
                         // would fall off-screen, so there it takes space and lifts the composer.
                         <div className="absolute inset-x-0 top-full flex flex-col gap-1 pt-4 [@media(max-height:34rem)]:static">
                           <ComposerBannerStack items={composerBannerItems} detached />
+                        </div>
+                      ) : isDraftHeroState &&
+                        !embedded &&
+                        !rightPanelMaximized &&
+                        !(shouldUsePlanSidebarSheet && rightPanelPresent) &&
+                        !terminalUiState.terminalOpen ? (
+                        // A notice outranks tips, and a panel sheet or the terminal drawer covers
+                        // them. The section hides itself where it has no room. It sits further
+                        // down than a notice, so its header does not read as composer details.
+                        <div className="absolute inset-x-0 top-full pt-8">
+                          <NewThreadTips
+                            environmentId={environmentId}
+                            projectId={activeProject?.id ?? null}
+                            readyDrivers={
+                              providerEnvironmentId === undefined ||
+                              !providersByEnvironment.has(providerEnvironmentId)
+                                ? undefined
+                                : providerInstanceEntries
+                                    .filter(isProviderInstancePickerReady)
+                                    .map((entry) => entry.driverKind)
+                                    .join(",")
+                            }
+                            composerDriver={
+                              // The composer refuses text until a project is chosen; copy instead.
+                              isLocalDraftThread && activeProject === null
+                                ? null
+                                : (selectedProviderEntry?.driverKind ?? null)
+                            }
+                            onTryPrompt={insertTipPromptStable}
+                            onEmpty={scheduleComposerFocusStable}
+                          />
                         </div>
                       ) : null}
                     </div>
