@@ -28,7 +28,7 @@ fn main() {
     server::register(&mut table, &Deps::default());
     let env = environment.clone();
     table.stream("subscribeServerConfig", move |_, _: Value| {
-        let config = server::server_config(&env);
+        let config = server::server_config(&env, Vec::new());
         async move {
             let (tx, rx) = mpsc::channel::<Result<Value, Failure>>(1);
             tokio::spawn(async move {

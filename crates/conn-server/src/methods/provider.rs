@@ -23,7 +23,6 @@ use crate::table::MethodTable;
 pub fn register(_table: &mut MethodTable, _deps: &Deps) {}
 
 /// `ServerConfig.providers` entries for the configured providers. `checked_at` is ISO-8601.
-#[allow(dead_code)] // Track (a) calls it when it builds the server config.
 pub fn server_providers(deps: &Deps, checked_at: &str) -> Vec<Value> {
     deps.providers
         .iter()
@@ -48,6 +47,7 @@ mod tests {
                 "claudeAgent".into(),
                 ClaudeConfig::default(),
             ))],
+            ..Deps::default()
         };
         let entries = server_providers(&deps, "2026-11-13T00:00:00.000Z");
         assert_eq!(entries.len(), 1);

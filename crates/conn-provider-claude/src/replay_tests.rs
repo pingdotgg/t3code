@@ -38,7 +38,17 @@ fn provider_thread(native: &str) -> Value {
 fn turn_input(n: u32, thread: &Value, text: &str, runtime_mode: &str) -> TurnInput {
     let attempt = format!("attempt-{n}");
     TurnInput {
-        app_thread: from_json(json!({"id": THREAD, "title": "Claude attachment test"})).unwrap(),
+        app_thread: from_json(json!({
+            "createdBy": "user", "creationSource": "web", "id": THREAD, "projectId": "project-1",
+            "title": "Claude attachment test", "providerInstanceId": "claudeAgent",
+            "modelSelection": {"instanceId": "claudeAgent", "model": "claude-sonnet-4-6"},
+            "runtimeMode": runtime_mode, "interactionMode": "default", "branch": null,
+            "worktreePath": null, "activeProviderThreadId": null,
+            "lineage": {"parentThreadId": null, "relationshipToParent": null, "rootThreadId": THREAD},
+            "forkedFrom": null, "createdAt": "1970-01-01T00:00:00.000Z",
+            "updatedAt": "1970-01-01T00:00:00.000Z", "archivedAt": null,
+        }))
+        .unwrap(),
         thread_id: THREAD.into(),
         run_id: format!("run-{attempt}").as_str().into(),
         run_ordinal: 1,

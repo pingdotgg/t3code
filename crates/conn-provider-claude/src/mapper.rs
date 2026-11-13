@@ -23,6 +23,8 @@ use crate::protocol::{
 };
 
 /// What the session must do after feeding the mapper.
+// Short-lived: each value moves straight into the event channel, so boxing buys nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Out {
     Event(ProviderEvent),

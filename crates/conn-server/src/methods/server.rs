@@ -57,8 +57,10 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         return;
     };
     let env = environment.clone();
+    let deps = deps.clone();
     table.stream("subscribeServerConfig", move |_, _: Value| {
-        let config = server_config(&env);
+        let providers = super::provider::server_providers(&deps, &iso8601(auth::now_ms()));
+        let config = server_config(&env, providers);
         async move {
             Ok(open_stream(vec![
                 json!({ "version": 1, "type": "snapshot", "config": config }),
@@ -72,8 +74,8 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
 }
 
 /// `ServerConfig` with every optional field left out. `settings: {}` decodes to the
-/// defaults. `providers` stays empty until the provider track reports Claude here.
-pub fn server_config(environment: &Environment) -> Value {
+/// defaults. `providers` comes from `provider::server_providers`.
+pub fn server_config(environment: &Environment, providers: Vec<Value>) -> Value {
     let state_dir = environment.state_dir.display();
     json!({
         "environment": environment.descriptor,
@@ -82,7 +84,7 @@ pub fn server_config(environment: &Environment) -> Value {
         "keybindingsConfigPath": format!("{state_dir}/keybindings.json"),
         "keybindings": [],
         "issues": [],
-        "providers": [],
+        "providers": providers,
         "availableEditors": [],
         "observability": {
             "logsDirectoryPath": format!("{state_dir}/logs"),

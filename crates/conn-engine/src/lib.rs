@@ -153,9 +153,11 @@ mod tests {
         ) -> BoxFuture<'_, Result<DispatchCommandResult, EngineError<DispatchCommandError>>>
         {
             Box::pin(async move {
-                if command.0["type"] != "thread.create" {
+                if to_json(&command)["type"] != "thread.create" {
                     return Err(EngineError::Rejected(
-                        from_json(json!({"_tag": "OrchestrationV2DispatchCommandError"})).unwrap(),
+                        from_json(json!({"_tag": "OrchestrationV2DispatchCommandError",
+                            "commandId": "c", "commandType": "x", "message": "toy"}))
+                        .unwrap(),
                     ));
                 }
                 let sequence = {
@@ -163,8 +165,9 @@ mod tests {
                     *s += 1;
                     *s
                 };
-                let item = json!({"kind": "thread.updated", "sequence": sequence,
-                                  "thread": {"id": command.0["threadId"]}});
+                // A real engine sends `thread.updated` with the full summary.
+                let item = json!({"kind": "thread.removed", "sequence": sequence,
+                                  "location": "active", "threadId": to_json(&command)["threadId"]});
                 let _ = self.live.send(from_json(item).unwrap());
                 Ok(from_json(json!({ "sequence": sequence })).unwrap())
             })
@@ -185,7 +188,7 @@ mod tests {
                 let mut live = self.live.subscribe();
                 tokio::spawn(async move {
                     for item in [
-                        json!({"kind": "snapshot", "snapshot": {}}),
+                        json!({"kind": "snapshot-required"}),
                         json!({"kind": "synchronized"}),
                     ] {
                         if tx.send(Ok(from_json(item).unwrap())).await.is_err() {
@@ -214,7 +217,9 @@ mod tests {
         > {
             Box::pin(async {
                 Err(EngineError::Rejected(
-                    from_json(json!({"_tag": "OrchestrationV2GetThreadProjectionError"})).unwrap(),
+                    from_json(json!({"_tag": "OrchestrationV2GetThreadProjectionError",
+                                "threadId": "t", "message": "toy"}))
+                    .unwrap(),
                 ))
             })
         }
@@ -231,14 +236,19 @@ mod tests {
             .await
             .unwrap();
         let kind = |item: Result<ShellStreamItem, _>| to_json(&item.unwrap())["kind"].clone();
-        assert_eq!(kind(shell.recv().await.unwrap()), "snapshot");
+        assert_eq!(kind(shell.recv().await.unwrap()), "snapshot-required");
         assert_eq!(kind(shell.recv().await.unwrap()), "synchronized");
 
-        let command = json!({"type": "thread.create", "commandId": "c1", "threadId": "t1"});
+        let command = json!({
+            "type": "thread.create", "commandId": "c1", "threadId": "t1", "projectId": "p1",
+            "title": "T", "modelSelection": {"instanceId": "claudeAgent", "model": "m"},
+            "runtimeMode": "full-access", "interactionMode": "default", "branch": null,
+            "worktreePath": null, "createdBy": "user", "creationSource": "web",
+        });
         let result = engine.dispatch(from_json(command).unwrap()).await.unwrap();
         assert_eq!(to_json(&result), json!({"sequence": 1}));
         let update = to_json(&shell.recv().await.unwrap().unwrap());
-        assert_eq!(update["thread"]["id"], "t1");
+        assert_eq!(update["threadId"], "t1");
 
         let bad = json!({"type": "thread.stop", "commandId": "c2", "threadId": "t1"});
         assert!(matches!(

@@ -10,7 +10,7 @@ use conn_provider::Provider;
 use crate::table::MethodTable;
 
 mod orchestration;
-mod provider;
+pub mod provider;
 pub mod server;
 
 /// Services handlers may use. `None` until the owning track wires it in `main.rs`.

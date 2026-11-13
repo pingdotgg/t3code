@@ -123,6 +123,7 @@ mod tests {
         let deps = Deps {
             engine: Some(engine),
             providers: vec![],
+            ..Deps::default()
         };
         let mut table = MethodTable::new();
         register(&mut table, &deps);
@@ -152,7 +153,7 @@ mod tests {
         );
         let Err(Failure::Fail(error)) = dispatch(
             CallContext::default(),
-            json!({"type": "thread.fork", "commandId": "c2"}),
+            json!({"type": "thread.stop", "commandId": "c2", "threadId": "nope"}),
         )
         .await
         else {

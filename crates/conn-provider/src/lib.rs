@@ -310,8 +310,10 @@ impl std::error::Error for ProviderError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use conn_contract::from_json;
+    use conn_contract::{from_json, to_json};
     use serde_json::json;
+
+    const NOW: &str = "2026-11-13T00:00:00.000Z";
 
     /// A provider that answers every turn with one assistant message and a terminal.
     struct EchoProvider {
@@ -359,7 +361,15 @@ mod tests {
             input: EnsureThreadInput,
         ) -> BoxFuture<'_, ProviderResult<ProviderThread>> {
             Box::pin(async move {
-                Ok(from_json(json!({"id": format!("native-{}", input.thread_id)})).unwrap())
+                Ok(from_json(json!({
+                    "id": format!("native-{}", input.thread_id), "driver": "echo",
+                    "providerInstanceId": "claude", "providerSessionId": self.id,
+                    "appThreadId": input.thread_id, "ownerNodeId": null,
+                    "nativeThreadRef": null, "nativeConversationHeadRef": null,
+                    "status": "active", "firstRunOrdinal": null, "lastRunOrdinal": null,
+                    "handoffIds": [], "forkedFrom": null, "createdAt": NOW, "updatedAt": NOW,
+                }))
+                .unwrap())
             })
         }
         fn resume_thread(
@@ -370,7 +380,12 @@ mod tests {
         }
         fn start_turn(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
             Box::pin(async move {
-                let message = json!({"id": "m1", "role": "assistant", "text": input.message.text});
+                let message = json!({
+                    "createdBy": "agent", "creationSource": "provider", "id": "m1",
+                    "threadId": input.thread_id, "runId": input.run_id, "nodeId": null,
+                    "role": "assistant", "text": input.message.text, "attachments": [],
+                    "streaming": false, "createdAt": NOW, "updatedAt": NOW,
+                });
                 let send = |event| self.events.send(event);
                 send(ProviderEvent::MessageUpdated {
                     message: from_json(message).unwrap(),
@@ -440,7 +455,16 @@ mod tests {
             .unwrap();
         session
             .start_turn(TurnInput {
-                app_thread: from_json(json!({"id": "t1"})).unwrap(),
+                app_thread: from_json(json!({
+                    "createdBy": "user", "creationSource": "web", "id": "t1", "projectId": "p1",
+                    "title": "T", "providerInstanceId": "claude",
+                    "modelSelection": to_json(&model), "runtimeMode": "full-access",
+                    "interactionMode": "default", "branch": null, "worktreePath": null,
+                    "activeProviderThreadId": null,
+                    "lineage": {"parentThreadId": null, "relationshipToParent": null, "rootThreadId": "t1"},
+                    "forkedFrom": null, "createdAt": NOW, "updatedAt": NOW, "archivedAt": null,
+                }))
+                .unwrap(),
                 thread_id: "t1".into(),
                 run_id: "r1".into(),
                 run_ordinal: 1,
@@ -462,7 +486,7 @@ mod tests {
         let ProviderEvent::MessageUpdated { message } = events.recv().await.unwrap() else {
             panic!("expected a message")
         };
-        assert_eq!(message.0["text"], "hi");
+        assert_eq!(to_json(&message)["text"], "hi");
         let terminal = events.recv().await.unwrap();
         assert_eq!(
             serde_json::to_value(&terminal).unwrap()["type"],
