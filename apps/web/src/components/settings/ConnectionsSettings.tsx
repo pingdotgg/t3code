@@ -1003,6 +1003,9 @@ function ConnectionsSettingsContent({
     );
   };
 
+  const isTailscaleServeOn = tailscaleHttpsEndpoint
+    ? tailscaleHttpsEndpoint.status === "available"
+    : desktopServerExposureState?.tailscaleServeEnabled === true;
   const renderTailscaleRow = () => (
     <SettingsRow
       title={searchableSetting("tailscale-https").title}
@@ -1014,27 +1017,15 @@ function ConnectionsSettingsContent({
           : missingTailscaleEndpointDescription(desktopServerExposureState)
       }
       control={
-        tailscaleHttpsEndpoint ? (
+        tailscaleHttpsEndpoint ||
+        isTailscaleServeOn ||
+        isTailscaleDetectionSkipped(desktopServerExposureState) ? (
           <Switch
-            checked={tailscaleHttpsEndpoint.status === "available"}
+            checked={isTailscaleServeOn}
             disabled={isUpdatingTailscaleServe}
             onCheckedChange={(checked) => {
               if (checked) {
                 handleStartTailscaleServeSetup(tailscaleHttpsEndpoint);
-                return;
-              }
-              handleStartTailscaleServeDisable(tailscaleHttpsEndpoint);
-            }}
-            aria-label="Enable Tailscale HTTPS"
-          />
-        ) : desktopServerExposureState?.tailscaleServeEnabled ||
-          isTailscaleDetectionSkipped(desktopServerExposureState) ? (
-          <Switch
-            checked={desktopServerExposureState?.tailscaleServeEnabled === true}
-            disabled={isUpdatingTailscaleServe}
-            onCheckedChange={(checked) => {
-              if (checked) {
-                handleStartTailscaleServeSetup(null);
                 return;
               }
               setDisableTailscaleServeDialogOpen(true);
@@ -1043,7 +1034,7 @@ function ConnectionsSettingsContent({
           />
         ) : null
       }
-      managed={tailscaleHttpsEndpoint?.status === "available" ? undefined : remoteClientsDenial}
+      managed={isTailscaleServeOn ? undefined : remoteClientsDenial}
     />
   );
   const newestPairingLink = visibleDesktopPairingLinks.find(
