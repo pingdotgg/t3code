@@ -10,7 +10,7 @@ import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Order from "effect/Order";
 
-export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
+export type ReviewSectionKind = "turn" | "working-tree" | "unstaged" | "branch-range";
 
 const CHANGES_SECTION_ID = "git:branch-range";
 const CHANGES_TITLE = "Changes";
@@ -135,6 +135,9 @@ const readyCheckpointOrder = Order.make<ThreadCheckpointSummary>(
 function gitSubtitle(section: ReviewDiffPreviewSource): string | null {
   if (section.kind === "working-tree") {
     return UNCOMMITTED_SUBTITLE;
+  }
+  if (section.kind === "unstaged") {
+    return "Unstaged and untracked files";
   }
   if (section.baseRef) {
     return `${section.baseRef} ... ${section.headRef ?? "HEAD"}`;

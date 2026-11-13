@@ -3038,6 +3038,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
         const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
+        const unstaged = yield* driver.getReviewDiffPreview({
+          cwd,
+          file: { path: "after.ts", previousPath: "before.ts", sourceKind: "unstaged" },
+        });
+        const unstagedSource = unstaged.sources.find((source) => source.kind === "unstaged")!;
+        assert.equal(unstagedSource.diff, diff);
         const indexHashAfter = yield* git(cwd, ["hash-object", indexPath]);
         const sharedIndexesAfter = (yield* fileSystem.readDirectory(gitDir))
           .filter((entry) => entry.startsWith("sharedindex."))
@@ -3132,6 +3138,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
           for (const text of expected) assert.include(diff, text);
           assert.notInclude(diff, "new file mode");
+          const unstaged = preview.sources.find((source) => source.kind === "unstaged")!;
+          assert.deepStrictEqual(unstaged.files, [
+            { path: "removed.txt", previousPath: null, additions: 1, deletions: 0 },
+          ]);
+          assert.include(unstaged.diff, "+remove me");
+          const selected = yield* driver.getReviewDiffPreview({ cwd, sourceKind: "unstaged" });
+          assert.deepStrictEqual(selected.sources, [unstaged]);
         }),
     );
 
@@ -3368,6 +3381,94 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.include(dirty.diff, "b/staged.txt");
         assert.include(dirty.diff, "b/untracked.txt");
       }),
+    );
+
+    it.effect.each(["committed", "unborn"] as const)(
+      "reviews unstaged changes against the index without changing staged files (%s)",
+      (state) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          if (state === "committed") yield* initRepoWithCommit(cwd);
+          else yield* git(cwd, ["init"]);
+          yield* writeTextFile(cwd, "README.md", "# staged\n");
+          yield* writeTextFile(cwd, "staged-only.txt", "staged only\n");
+          yield* writeTextFile(cwd, "binary.dat", "binary\0data");
+          yield* git(cwd, ["add", "."]);
+          yield* writeTextFile(cwd, "README.md", "# unstaged\n");
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.utimes(path.join(cwd, "staged-only.txt"), 1_700_000_001, 1_700_000_001);
+          yield* fs.utimes(path.join(cwd, "binary.dat"), 1_700_000_001, 1_700_000_001);
+          const indexPath = path.join(cwd, ".git", "index");
+          yield* fs.utimes(indexPath, 1_700_000_000, 1_700_000_000);
+          const indexBytesBefore = yield* fs.readFile(indexPath);
+          const indexMtimeBefore = (yield* fs.stat(indexPath)).mtime;
+          const indexBefore = yield* git(cwd, ["ls-files", "--stage"]);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const input = { cwd, sourceKind: "unstaged" as const };
+          for (const options of [
+            {},
+            { metadataOnly: true },
+            { metadataOnly: true, trackedOnly: true },
+          ]) {
+            const tracked = yield* driver.getReviewDiffPreview({ ...input, ...options });
+            assert.deepStrictEqual(tracked.sources[0]!.files, [
+              { path: "README.md", previousPath: null, additions: 1, deletions: 1 },
+            ]);
+            assert.deepStrictEqual(yield* fs.readFile(indexPath), indexBytesBefore);
+            assert.deepStrictEqual((yield* fs.stat(indexPath)).mtime, indexMtimeBefore);
+          }
+          yield* writeTextFile(cwd, "untracked.txt", "untracked\n");
+          const preview = yield* driver.getReviewDiffPreview(input);
+          const source = preview.sources.find((source) => source.kind === "unstaged")!;
+          assert.isDefined(source);
+          assert.deepStrictEqual(source.files, [
+            { path: "README.md", previousPath: null, additions: 1, deletions: 1 },
+            { path: "untracked.txt", previousPath: null, additions: 1, deletions: 0 },
+          ]);
+          assert.include(source.diff, "-# staged");
+          assert.include(source.diff, "+# unstaged");
+          assert.notInclude(source.diff, "staged-only.txt");
+          const metadata = yield* driver.getReviewDiffPreview({ ...input, metadataOnly: true });
+          assert.deepStrictEqual(metadata.sources[0]!.files, source.files);
+          assert.isTrue(metadata.sources[0]!.patchesDeferred);
+          assert.isEmpty(metadata.sources[0]!.diff);
+          for (const file of source.files!) {
+            const patch = yield* driver.getReviewDiffPreview({
+              ...input,
+              file: { ...file, sourceKind: "unstaged" },
+            });
+            assert.deepStrictEqual(patch.sources[0]!.files, [file]);
+            const contents = yield* driver.getReviewDiffFileContents(
+              makeReviewDiffFileContentsInput(cwd, {
+                sourceKind: "unstaged",
+                baseRef: source.baseRef,
+                oldPath: file.path,
+                newPath: file.path,
+                changeType: file.path === "untracked.txt" ? "new" : "change",
+              }),
+            );
+            assert.deepStrictEqual(contents, {
+              oldContents: file.path === "untracked.txt" ? "" : "# staged\n",
+              newContents: file.path === "untracked.txt" ? "untracked\n" : "# unstaged\n",
+            });
+          }
+          assert.strictEqual(yield* git(cwd, ["ls-files", "--stage"]), indexBefore);
+          yield* writeTextFile(cwd, "binary.dat", "binary\0changed");
+          const binary = yield* driver.getReviewDiffPreview({
+            ...input,
+            file: { path: "binary.dat", previousPath: null, sourceKind: "unstaged" },
+          });
+          assert.deepStrictEqual(binary.sources[0]!.files, [
+            { path: "binary.dat", previousPath: null, additions: 0, deletions: 0 },
+          ]);
+          assert.include(
+            binary.sources[0]!.diff,
+            "Binary files a/binary.dat and b/binary.dat differ",
+          );
+          assert.deepStrictEqual(yield* fs.readFile(indexPath), indexBytesBefore);
+          assert.deepStrictEqual((yield* fs.stat(indexPath)).mtime, indexMtimeBefore);
+        }),
     );
 
     it.effect("loads full file contents for working-tree diff expansion", () =>
