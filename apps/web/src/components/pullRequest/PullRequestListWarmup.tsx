@@ -10,7 +10,7 @@ import { pullRequestBaselineTargets, usePullRequestScope } from "./usePullReques
 /** Fills an empty saved list for the scope the PRs page opens on, so its first visit paints. */
 export function PullRequestListWarmup() {
   const [preferences] = useState(readPullRequestListPreferences);
-  const scope = usePullRequestScope(preferences);
+  const scope = usePullRequestScope(preferences, new Map());
   // Before the projects load the page asks with another key, which would cost a second read.
   if (!scope.projectsKnown) return null;
   return pullRequestBaselineTargets(preferences, scope).map((target) => (

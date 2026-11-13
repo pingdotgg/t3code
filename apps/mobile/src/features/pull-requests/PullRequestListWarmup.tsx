@@ -2,6 +2,7 @@ import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, PullRequestListInput } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 
+import { useProjects } from "../../state/entities";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnabledNavigationTabs } from "../layout/workspace/navigation-tabs";
@@ -17,7 +18,14 @@ export function PullRequestListWarmup() {
 
 function WarmLists() {
   const { targets } = usePullRequestListTargets("");
-  return targets.map((target) => <WarmList key={target.environmentId} target={target} />);
+  const projects = useProjects();
+  return targets
+    .filter((target) =>
+      projects.some(
+        (project) => project.environmentId === target.environmentId && !project.isScratch,
+      ),
+    )
+    .map((target) => <WarmList key={target.environmentId} target={target} />);
 }
 
 function WarmList(props: {

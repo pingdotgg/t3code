@@ -119,7 +119,7 @@ export function usePullRequestDetail(
   const sharedSummary = newestDisplayedPullRequestSummary(
     resolvedCoreDetail,
     liveDetail === null,
-    newestPullRequestSummary(observedSummary, listSummary),
+    newestPullRequestSummary(listSummary, observedSummary),
   );
   const coreDetail =
     resolvedCoreDetail === null || sharedSummary === null || sharedSummary === resolvedCoreDetail
@@ -184,6 +184,9 @@ export function usePullRequestDetail(
           ),
           commentsTruncated: activity?.commentsTruncated ?? false,
           reviewThreads: activity?.reviewThreads ?? [],
+          ...(activity?.overviewThreads === undefined
+            ? {}
+            : { overviewThreads: activity.overviewThreads }),
           commits: activity?.commits ?? [],
           reactions: activity?.reactions ?? [],
         };
