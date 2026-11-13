@@ -198,8 +198,14 @@ export class PullRequestService extends Context.Service<
     ) => Effect.Effect<A, E | PullRequestError, R>;
     readonly summary: (
       input: PullRequestRef,
-      options?: { readonly recoverTransientFailure?: boolean },
+      options?: {
+        readonly recoverTransientFailure?: boolean;
+        /** Registration preflights must reach the provider despite a successful cached read. */
+        readonly bypassCache?: boolean;
+      },
     ) => Effect.Effect<PullRequestSummary, PullRequestError>;
+    /** Whether the reference's host batches summary reads; false when it cannot be resolved. */
+    readonly batchesReads: (input: PullRequestRef) => Effect.Effect<boolean>;
     readonly stack: (
       input: PullRequestRef,
       options?: { readonly includeDetails?: boolean },
@@ -536,6 +542,7 @@ function withRateLimitBackoff(
     ...(api.readsPublicHostWithoutCheckout === undefined
       ? {}
       : { readsPublicHostWithoutCheckout: api.readsPublicHostWithoutCheckout }),
+    ...(api.batchesReads === undefined ? {} : { batchesReads: api.batchesReads }),
     getViewer:
       options?.viewerAllowsPause === true
         ? interactive("getViewer", api.getViewer)
@@ -1905,6 +1912,9 @@ export const make = Effect.gen(function* () {
             ...(changeRequest.workflowApprovalsRequired === undefined
               ? {}
               : { workflowApprovalsRequired: changeRequest.workflowApprovalsRequired }),
+            ...(changeRequest.mergeQueueRemoval === undefined
+              ? {}
+              : { mergeQueueRemoval: changeRequest.mergeQueueRemoval }),
           })),
         ),
       ),
@@ -3061,18 +3071,32 @@ export const make = Effect.gen(function* () {
 
   const summary: PullRequestService["Service"]["summary"] = (input, options) => {
     const key = refCacheKey(input);
-    const cached = persistedRead(input, "summary", summaryCodec, summaryUncached(input));
+    const read =
+      options?.bypassCache === true
+        ? summaryUncached(input)
+        : persistedRead(input, "summary", summaryCodec, summaryUncached(input));
     const held = lastGoodSummary.peek(key);
-    return held !== undefined &&
+    return options?.bypassCache !== true &&
+      held !== undefined &&
       input.allowStale !== false &&
       (options?.recoverTransientFailure !== false || held.state === "merged")
       ? Effect.succeed(held)
-      : cached.pipe(
+      : read.pipe(
           Effect.tap((value) =>
             shouldReplaceHeldSummary(key, value) ? lastGoodSummary.record(key, value) : Effect.void,
           ),
         );
   };
+
+  const batchesReads: PullRequestService["Service"]["batchesReads"] = Effect.fn(
+    "PullRequestService.batchesReads",
+  )(
+    function* (input) {
+      const project = yield* requireProject(input);
+      return project.api.batchesReads === true;
+    },
+    Effect.orElseSucceed(() => false),
+  );
 
   const stack: PullRequestService["Service"]["stack"] = (input, options) =>
     persistedRead(
@@ -3850,6 +3874,7 @@ export const make = Effect.gen(function* () {
       return yield* listStats({ ...input, refs: refs.flatMap(Option.toArray) });
     }),
     summary: credentialCached(summary),
+    batchesReads,
     stack: credentialCached(stack),
     subscribeMerges: PubSub.subscribe(mergedPullRequests).pipe(
       Effect.map((subscription) => Stream.fromSubscription(subscription)),

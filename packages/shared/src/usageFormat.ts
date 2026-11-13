@@ -63,13 +63,18 @@ export function formatCount(value: number): string {
   return INTEGER.format(Math.round(value));
 }
 
+const TOKEN_SUFFIXES = ["K", "M", "B", "T"] as const;
+
 export function formatTokens(value: number): string {
-  const abs = Math.abs(value);
-  if (abs >= 1e12) return `${trim(value / 1e12)}T`;
-  if (abs >= 1e9) return `${trim(value / 1e9)}B`;
-  if (abs >= 1e6) return `${trim(value / 1e6)}M`;
-  if (abs >= 1e3) return `${trim(value / 1e3)}K`;
-  return INTEGER.format(Math.round(value));
+  if (Math.abs(Math.round(value)) < 1e3) return INTEGER.format(Math.round(value));
+  let scaled = value / 1e3;
+  let unit = 0;
+  // Choose the unit after rounding, so 999,999 reads 1M rather than 1000K.
+  while (Math.abs(Number(trim(scaled))) >= 1e3 && unit < TOKEN_SUFFIXES.length - 1) {
+    scaled /= 1e3;
+    unit += 1;
+  }
+  return `${trim(scaled)}${TOKEN_SUFFIXES[unit]}`;
 }
 
 function trim(value: number): string {

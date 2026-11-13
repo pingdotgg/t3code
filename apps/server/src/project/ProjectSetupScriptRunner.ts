@@ -155,12 +155,13 @@ function stripTerminalControl(text: string): string {
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
 }
 
-type CompletionShell = "posix" | "fish" | "powershell";
+type CompletionShell = "posix" | "fish" | "nushell" | "powershell";
 
 function resolveCompletionShell(shell: string): CompletionShell | null {
   const name = (shell.split(/[/\\]/).at(-1) ?? shell).toLowerCase().replace(/\.exe$/, "");
   if (name === "cmd") return null;
   if (name === "fish") return "fish";
+  if (name === "nu") return "nushell";
   if (name === "pwsh" || name === "powershell") return "powershell";
   return "posix";
 }
@@ -177,6 +178,20 @@ function wrapCommandForCompletion(
       return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
     case "fish":
       return `begin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
+    case "nushell": {
+      const escaped = command.replace(/["\\\x00-\x1f]/g, (char) =>
+        char === '"' || char === "\\" ? `\\${char}` : `\\u{${char.charCodeAt(0).toString(16)}}`,
+      );
+      // Nu resolves imports before running cd; source a file rooted in the worktree.
+      return [
+        "$env.LAST_EXIT_CODE = 0",
+        "let __t3f = try { mktemp --tmpdir-path $env.T3CODE_WORKTREE_PATH --suffix .nu .t3-setup-XXXXXXXX } catch {|e| print -e $e.msg; null }",
+        `if $__t3f == null { $env.LAST_EXIT_CODE = 1 } else { try { [$"rm --permanent ($__t3f | to nuon)" "${escaped}"] | str join (char newline) | save --force --raw $__t3f; ^$nu.current-exe --login --commands $"cd $env.T3CODE_WORKTREE_PATH; source ($__t3f | to nuon)" } catch {|e| if $e != null and $e.exit_code? == null { print -e $e.msg }; if $env.LAST_EXIT_CODE == 0 { $env.LAST_EXIT_CODE = 1 } } }`,
+        "let __t3c = $env.LAST_EXIT_CODE",
+        "try { if $__t3f != null and ($__t3f | path exists) { rm --permanent $__t3f } } catch {|e| print -e $e.msg }",
+        `print $"\\n${sentinel}($__t3c)"`,
+      ].join("; ");
+    }
     case "posix":
       return `( ${body}\r); printf '\\n${sentinel}%s\\n' "$?"`;
   }
@@ -468,9 +483,9 @@ export const make = Effect.gen(function* () {
     // Return once the terminal exists so callers can show it while a startup prompt waits.
     // PowerShell and cmd have no line-editor signal.
     yield* (
-      completionShell === "posix" || completionShell === "fish"
-        ? readiness.wait
-        : Effect.succeed("ready" as const)
+      completionShell === "powershell" || completionShell === null
+        ? Effect.succeed("ready" as const)
+        : readiness.wait
     ).pipe(
       Effect.flatMap((shell) =>
         shell === "exited" || commandLine === null

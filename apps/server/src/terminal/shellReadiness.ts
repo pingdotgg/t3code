@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 
 import type { TerminalEvent } from "@t3tools/contracts";
 
-// Line editors (zsh, fish, bash 5.1+) enable bracketed paste when they start reading a command.
+// Line editors (zsh, fish, nu, bash 5.1+) enable bracketed paste when they start reading a command.
 const BRACKETED_PASTE_ON = "\x1b[?2004h";
 const BRACKETED_PASTE_OFF = "\x1b[?2004l";
 // Longer than one subprocess poll plus its ps timeout, so a startup prompt is seen as busy first.
