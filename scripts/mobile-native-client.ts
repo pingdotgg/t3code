@@ -1098,6 +1098,7 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
   session: string,
   abi: string,
   metro: string | undefined,
+  config: string | undefined,
 ) {
   const started = yield* Clock.currentTimeMillis;
   const path = yield* Path.Path;
@@ -1108,6 +1109,8 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
   );
   // agent-device scopes session ownership to the workspace (working directory) it runs in.
   const workspace = yield* HostProcess.WorkingDirectory;
+  // A session behind a gateway (a device pool) is reachable only with the config that opened it.
+  const target = ["--session", session, ...(config ? ["--config", config] : [])];
   const deviceAbi = platform === "android" ? abi : null;
   const task = deviceAbi ? `native-client:android-${deviceAbi}` : `native-client:${platform}`;
   const current = yield* fingerprint(platform);
@@ -1118,15 +1121,7 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
   const downloadOnDevice = source
     ? command(
         node,
-        [
-          agentDevice,
-          "install-from-source",
-          source.url,
-          "--header",
-          source.header,
-          "--session",
-          session,
-        ],
+        [agentDevice, "install-from-source", source.url, "--header", source.header, ...target],
         true,
         workspace,
       ).pipe(
@@ -1150,7 +1145,7 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
         yield* Console.error(`Installing into agent-device session ${session}...`);
         yield* command(
           node,
-          [agentDevice, "install", bundleId, local.file, "--session", session],
+          [agentDevice, "install", bundleId, local.file, ...target],
           true,
           workspace,
         );
@@ -1165,8 +1160,7 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
         "open",
         bundleId,
         `t3code-dev://expo-development-client/?url=${url}&disableOnboarding=1&disableFab=1&disableAutoLaunch=1`,
-        "--session",
-        session,
+        ...target,
       ],
       true,
       workspace,
@@ -1213,6 +1207,12 @@ const main = Command.make(
       Flag.withDescription("With --session, open the dev client against this Metro URL."),
       Flag.optional,
     ),
+    config: Flag.String("config").pipe(
+      Flag.withDescription(
+        "With --session, the agent-device config the session was opened with (T3 Code's device_open returns it in targetArgs). Needed for a device pool behind a gateway.",
+      ),
+      Flag.optional,
+    ),
     prepare: Flag.Boolean("prepare").pipe(
       Flag.withDescription(
         "Fetch or build the client for this checkout without a device (Android: for --abi). Run it before leasing a device: a build can outlast the lease.",
@@ -1233,6 +1233,7 @@ const main = Command.make(
     session,
     abi: sessionAbi,
     metro,
+    config,
     prepare,
     expectFingerprint,
   }) {
@@ -1280,6 +1281,7 @@ const main = Command.make(
         session.value,
         sessionAbi,
         Option.getOrUndefined(metro),
+        Option.getOrUndefined(config),
       );
     }
     const target = yield* resolveDevice(platform, Option.getOrUndefined(requested));
