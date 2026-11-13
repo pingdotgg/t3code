@@ -117,7 +117,7 @@ describe("makeTranscriptParser", () => {
     }
   });
 
-  it.live("parses large transcripts in workers with the in-process result", () => {
+  it.live("parses large transcripts in workers when the server reports watch dependencies", () => {
     const warnings: unknown[] = [];
     return withTempDir((dir) =>
       Effect.gen(function* () {
@@ -135,7 +135,10 @@ describe("makeTranscriptParser", () => {
           await NodeFSP.writeFile(small, claudeLine(4, 10));
         });
         const parser = yield* makeWorkerParser.pipe(
-          Effect.provideService(HostProcess.Environment, preload(recordPid(log))),
+          Effect.provideService(HostProcess.Environment, {
+            ...preload(recordPid(log)),
+            WATCH_REPORT_DEPENDENCIES: "1",
+          }),
         );
         const read = (path: string, format: "codex" | "claude") =>
           Effect.promise(() => NodeFSP.stat(path)).pipe(

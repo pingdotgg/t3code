@@ -11,17 +11,18 @@ export const serverSubcommand = Effect.fn("serverSubcommand")(function* (
   const executable = yield* HostProcess.ExecutablePath;
   const isExecutable = yield* HostProcess.IsExecutable;
   const environment = yield* HostProcess.Environment;
-  // Bundling places this module in bin.mjs; source execution resolves from src/cli.
+  // Bundled chunks sit beside bin.mjs; source execution resolves from src/cli.
   const entry = NodeURL.fileURLToPath(
     new URL(import.meta.url.endsWith(".ts") ? "../bin.ts" : "./bin.mjs", import.meta.url),
   );
+  const env = { ...environment };
+  // Node watch sends loader messages over IPC, which belongs to the subprocess protocol.
+  delete env.WATCH_REPORT_DEPENDENCIES;
+  env.ELECTRON_RUN_AS_NODE = "1";
+  env.NODE_OPTIONS = `${environment.NODE_OPTIONS ?? ""} --max-old-space-size=${heapMb}`;
   return {
     executable,
     args: [...(isExecutable ? [] : [entry]), command],
-    env: {
-      ...environment,
-      ELECTRON_RUN_AS_NODE: "1",
-      NODE_OPTIONS: `${environment.NODE_OPTIONS ?? ""} --max-old-space-size=${heapMb}`,
-    },
+    env,
   };
 });
