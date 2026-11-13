@@ -902,7 +902,8 @@ export function hubRoutes(
     sources.flatMap((source) => source.accounts.filter(listed).map((account) => account.driver)),
   );
   // Model ids such as "opus" are aliases no hub lists, so no listing falls back to the driver.
-  if (serving.size === 0) return (account) => account.driver === driver;
+  if (serving.size === 0)
+    return (account) => account.driver === driver && account.models?.length !== 0;
   // An account whose model list was unreadable may serve the model too.
   return (account) => (account.models ? listed(account) : serving.has(account.driver));
 }

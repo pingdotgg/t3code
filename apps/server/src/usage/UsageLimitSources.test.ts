@@ -217,6 +217,10 @@ it("waits for the first refill only when every pooled account of the driver is s
   expect(UsageLimitSources.hubPoolResetAt(hub(spent), claude, "claude-fable-5-2", now)).toBe(
     "2026-11-06T14:00:00.000Z",
   );
+  const idle = account("idle", [session(20, "2026-11-06T15:00:00.000Z")], []);
+  expect(UsageLimitSources.hubPoolResetAt(hub([...spent, idle]), claude, "opus", now)).toBe(
+    "2026-11-06T13:00:00.000Z",
+  );
   const withRoom = [...spent, account("c", [session(40, "2026-11-06T15:00:00.000Z")])];
   expect(UsageLimitSources.hubPoolResetAt(hub(withRoom), claude, null, now)).toBeNull();
   const unread = {
