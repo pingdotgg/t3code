@@ -73,43 +73,22 @@ const make = Effect.gen(function* () {
           nowMs: input.nowMs,
         })
       : null;
-    const notificationOnlyAggregate =
-      input.deliveryUser.notificationsEnabled &&
-      !input.deliveryUser.liveActivitiesEnabled &&
-      input.state !== null
-        ? makeAggregateState({
-            activeStates: isTerminalPhase(input.state) ? [] : [input.state],
-            terminalState: isTerminalPhase(input.state) ? input.state : null,
-            nowMs: input.nowMs,
-          })
-        : null;
     const targets = yield* liveActivities.listTargets({ userId: input.deliveryUser.userId });
-    const deliveriesByTarget = yield* Effect.forEach(
+    return yield* Effect.forEach(
       targets,
       Effect.fnUntraced(function* (target) {
         if (target.platform === "android") {
-          return [yield* fcmDeliveries.enqueue({ target, state: input.state })];
+          return yield* fcmDeliveries.enqueue({ target, state: input.state });
         }
-        return yield* Effect.all(
-          [
-            apnsDeliveries.sendForTarget({
-              target,
-              aggregate: liveActivityAggregate,
-              nowMs: input.nowMs,
-            }),
-            notificationOnlyAggregate === null
-              ? Effect.succeed(null)
-              : apnsDeliveries.sendPushNotificationForTarget({
-                  target,
-                  aggregate: notificationOnlyAggregate,
-                }),
-          ],
-          { concurrency: 2 },
-        );
+        return yield* apnsDeliveries.sendForTarget({
+          target,
+          aggregate: liveActivityAggregate,
+          state: input.deliveryUser.notificationsEnabled ? input.state : null,
+          nowMs: input.nowMs,
+        });
       }),
       { concurrency: 4 },
     );
-    return deliveriesByTarget.flat();
   });
 
   return AgentActivityPublisher.of({
