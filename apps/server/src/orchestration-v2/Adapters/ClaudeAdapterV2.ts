@@ -215,10 +215,7 @@ import {
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
-import {
-  AGENT_FEEDBACK_INSTRUCTIONS,
-  buildRuntimeInstructions,
-} from "@t3tools/provider-core/server/runtimeInstructions";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
   mcpToolPresentation,
   normalizeMcpText,
@@ -1977,12 +1974,13 @@ Text you write before a tool call may reach the user only as a one-line summary.
 `;
 
 // Native subagents start from their task, not this session's system prompt.
-const subagentInstructions =
-  (additionalContext: string): HookCallback =>
-  () =>
-    Promise.resolve({
-      hookSpecificOutput: { hookEventName: "SubagentStart", additionalContext },
-    });
+const subagentDeviceInstructions: HookCallback = () =>
+  Promise.resolve({
+    hookSpecificOutput: {
+      hookEventName: "SubagentStart",
+      additionalContext: T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
+    },
+  });
 
 const CLAUDE_CODE_MODEL_ALIASES = new Set(["opus", "sonnet", "haiku", "fable"]);
 
@@ -2097,10 +2095,6 @@ export function makeClaudeQueryOptions(input: {
         } as ClaudeSdkSettings);
   const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
   const agentFeedback = input.mcpServers !== undefined && input.agentFeedbackEnabled === true;
-  const subagentContext = [
-    ...(deviceInstructions ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH] : []),
-    ...(agentFeedback ? [AGENT_FEEDBACK_INSTRUCTIONS] : []),
-  ].join("\n\n");
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
     // T3 names threads; a supplied title skips Claude's redundant naming request.
@@ -2169,9 +2163,9 @@ export function makeClaudeQueryOptions(input: {
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
-    ...(subagentContext === ""
-      ? {}
-      : { hooks: { SubagentStart: [{ hooks: [subagentInstructions(subagentContext)] }] } }),
+    ...(deviceInstructions
+      ? { hooks: { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } }
+      : {}),
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   const additionalDirectories = [

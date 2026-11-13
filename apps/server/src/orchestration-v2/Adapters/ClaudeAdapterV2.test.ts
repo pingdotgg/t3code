@@ -830,24 +830,16 @@ describe("ClaudeAdapterV2 T3 tool instructions", () => {
     ]);
     assert.deepEqual(await subagentContext({ mcp: true, deviceToolsAvailable: false }), []);
     assert.deepEqual(await subagentContext({ mcp: false, deviceToolsAvailable: true }), []);
-    assert.deepEqual(
-      await subagentContext({ mcp: true, deviceToolsAvailable: true, agentFeedbackEnabled: true }),
-      [
-        {
-          hookSpecificOutput: {
-            hookEventName: "SubagentStart",
-            additionalContext: `${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n\n${AGENT_FEEDBACK_INSTRUCTIONS}`,
-          },
-        },
-      ],
-    );
-    assert.deepEqual(
-      await subagentContext({
-        mcp: false,
-        deviceToolsAvailable: false,
-        agentFeedbackEnabled: true,
-      }),
-      [],
+    // A custom subagent can lack T3 tools even when this session has them.
+    assert.notInclude(
+      JSON.stringify(
+        await subagentContext({
+          mcp: true,
+          deviceToolsAvailable: true,
+          agentFeedbackEnabled: true,
+        }),
+      ),
+      "t3_feedback",
     );
   });
 });
