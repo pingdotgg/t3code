@@ -2582,22 +2582,24 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
-      const settings = yield* loadSettings;
       // A target that names no provider or model inherits one, and an inherited model that is
       // out of usage gives way to the configured fallback, as it does for a new thread.
-      const inherited =
+      const inheritsTarget =
+        !isRetryOfAcceptedDelegation &&
         input.target?.providerInstanceId === undefined &&
         input.target?.driverKind === undefined &&
-        input.target?.model === undefined
-          ? resolveNewThreadModelSelection({
-              defaultSelection: parent.thread.modelSelection,
-              fallbackSelection: settings.fallbackModelSelection,
-              providers,
-              now: yield* Clock.currentTimeMillis,
-              settings,
-              projectId: parent.thread.projectId,
-            }).selection
-          : null;
+        input.target?.model === undefined;
+      const settings = inheritsTarget ? yield* loadSettings : null;
+      const inherited = settings
+        ? resolveNewThreadModelSelection({
+            defaultSelection: parent.thread.modelSelection,
+            fallbackSelection: settings.fallbackModelSelection,
+            providers,
+            now: yield* Clock.currentTimeMillis,
+            settings,
+            projectId: parent.thread.projectId,
+          }).selection
+        : null;
       // The receipt replays the committed task and ignores this payload, so a retry resolves nothing.
       const target = isRetryOfAcceptedDelegation
         ? { modelSelection: parent.thread.modelSelection, supportedRuntimeModes: undefined }
