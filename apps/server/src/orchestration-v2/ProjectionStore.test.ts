@@ -10559,10 +10559,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const heldAttemptId = RunAttemptId.make(`attempt:${prefix}:held`);
         const answeredRunId = RunId.make(`run:${prefix}:answered`);
 
-        for (const [threadId, forkedFrom] of [
-          [sourceThreadId, null],
-          [targetThreadId, { type: "run", threadId: sourceThreadId, runId: answeredRunId }],
-        ] as const) {
+        const createThread = Effect.fn("test.createForkHeldQueueThread")(function* (
+          threadId: ThreadId,
+        ) {
+          const forkedFrom =
+            threadId === sourceThreadId
+              ? null
+              : { type: "run" as const, threadId: sourceThreadId, runId: answeredRunId };
           yield* projectionStore.apply({
             id: EventId.make(`event:${threadId}:created`),
             type: "thread.created",
@@ -10596,7 +10599,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
               deletedAt: null,
             },
           });
-        }
+        });
+        yield* createThread(sourceThreadId);
 
         const applyRun = (
           runId: RunId,
@@ -10712,6 +10716,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           text: "delivered steer",
           inputIntent: "queued_turn",
         });
+        yield* createThread(targetThreadId);
         // Enough local turns for a turn-limited window to count inherited rows in SQL.
         for (let index = 0; index < THREAD_HISTORY_PAGE_POLICY.maxUserTurns; index += 1) {
           yield* applyUserItem({
