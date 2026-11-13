@@ -452,29 +452,92 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
   });
 
-  it.each(["V keyup", "blur", "Meta keyup without V keyup"])(
-    "accepts a later identical menu paste after %s",
-    async (end) => {
-      const harness = createHarness();
-      const read = Promise.resolve("echo hi");
-      vi.stubGlobal("navigator", {
-        platform: "MacIntel",
-        clipboard: { readText: () => read },
-      });
-      const surface = await harness.create({ beforeKey: () => true });
-
-      key(surface, "v", "KeyV", { metaKey: true });
-      await read;
-      expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
-      if (end === "blur") surface.input.dispatchEvent(new Event("blur"));
-      else if (end === "V keyup") key(surface, "v", "KeyV", { metaKey: true }, "keyup");
-      // macOS can omit V keyup while Command is held.
-      else key(surface, "Meta", "MetaLeft", {}, "keyup");
-      paste(surface, "echo hi");
-
-      expect(harness.onData.mock.calls).toEqual([["echo hi"], ["echo hi"]]);
+  // Steps: "press" is Cmd+V with a pending clipboard read, "read N text" resolves the Nth one,
+  // "native text" is Chromium's paste event, "menu text" is the context menu's Paste,
+  // "wait N" advances the clock by N ms.
+  it.each([
+    {
+      name: "once when a synthetic Cmd+V releases V before the native paste",
+      steps: ["press", "keyup", "read 0 echo hi", "native echo hi"],
+      pasted: ["echo hi"],
     },
-  );
+    {
+      name: "once when the clipboard changed between the read and the native paste",
+      steps: ["press", "read 0 You said it", "native you said it"],
+      pasted: ["You said it"],
+    },
+    {
+      name: "each press once when an older native paste arrives after a blur and a newer press",
+      steps: ["press", "blur", "press", "read 1 new", "native old", "native new", "read 0 old"],
+      pasted: ["new", "old"],
+    },
+    {
+      name: "each press once when a blur took the older press's native paste",
+      steps: ["press", "blur", "press", "read 1 new", "native new", "read 0 old"],
+      pasted: ["new", "old"],
+    },
+    {
+      name: "the read alone after an empty native paste",
+      steps: ["press", "native ", "read 0 echo hi"],
+      pasted: ["echo hi"],
+    },
+    {
+      name: "once when the native paste is 1999 ms late",
+      steps: ["press", "read 0 echo hi", "wait 1999", "native echo hi"],
+      pasted: ["echo hi"],
+    },
+    {
+      name: "a menu paste 2001 ms after a shortcut paste",
+      steps: ["press", "read 0 echo hi", "wait 2001", "native echo hi"],
+      pasted: ["echo hi", "echo hi"],
+    },
+    {
+      name: "a menu paste instead of a shortcut read still pending after 2001 ms",
+      steps: ["press", "wait 2001", "native menu", "read 0 stale"],
+      pasted: ["menu"],
+    },
+    {
+      name: "the context menu's text instead of a pending shortcut read",
+      steps: ["press", "menu picked", "read 0 stale"],
+      pasted: ["picked"],
+    },
+  ])("pastes $name", async ({ steps, pasted }) => {
+    const harness = createHarness();
+    const reads: { promise: Promise<string>; resolve: (text: string) => void }[] = [];
+    vi.stubGlobal("navigator", {
+      platform: "MacIntel",
+      clipboard: {
+        readText: () => {
+          let resolve: (text: string) => void = () => {};
+          const promise = new Promise<string>((done) => {
+            resolve = done;
+          });
+          reads.push({ promise, resolve });
+          return promise;
+        },
+      },
+    });
+    const surface = await harness.create({ beforeKey: () => true });
+
+    for (const step of steps) {
+      const [action, ...rest] = step.split(" ");
+      if (action === "press") key(surface, "v", "KeyV", { metaKey: true });
+      else if (action === "keyup") key(surface, "v", "KeyV", { metaKey: true }, "keyup");
+      else if (action === "blur") {
+        surface.input.dispatchEvent(new Event("blur"));
+        surface.input.dispatchEvent(new Event("focus"));
+      } else if (action === "wait") vi.advanceTimersByTime(Number(rest[0]));
+      else if (action === "native") paste(surface, rest.join(" "));
+      else if (action === "menu") await surface.pasteFromClipboard(async () => rest.join(" "));
+      else {
+        const read = reads[Number(rest[0])]!;
+        read.resolve(rest.slice(1).join(" "));
+        await read.promise;
+      }
+    }
+
+    expect(harness.onData.mock.calls).toEqual(pasted.map((text) => [text]));
+  });
 
   it("keeps a selection through redraws until the selected text changes", async () => {
     const harness = createHarness();
