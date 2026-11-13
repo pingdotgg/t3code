@@ -78,8 +78,18 @@ class ComposerTouchTest {
       }
     }
     val coords = arrayOf(
-      MotionEvent.PointerCoords().apply { this.x = firstX; this.y = firstY; pressure = 1f; size = 1f },
-      MotionEvent.PointerCoords().apply { this.x = x; this.y = y; pressure = 1f; size = 1f },
+      MotionEvent.PointerCoords().apply {
+        this.x = firstX
+        this.y = firstY
+        pressure = 1f
+        size = 1f
+      },
+      MotionEvent.PointerCoords().apply {
+        this.x = x
+        this.y = y
+        pressure = 1f
+        size = 1f
+      },
     )
     val action = MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT)
     val event = MotionEvent.obtain(
