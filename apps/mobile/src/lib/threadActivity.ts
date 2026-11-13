@@ -1103,23 +1103,18 @@ function feedEntryFoldRunId(entry: ThreadFeedEntry, runlessKey: RunId | null): R
     : null;
 }
 
-function answersBeforeSteers(feed: ReadonlyArray<ThreadFeedEntry>): ReadonlySet<MessageId> {
-  const ids = new Set<MessageId>();
-  let previous: ThreadFeedEntry | undefined;
-  for (const entry of feed) {
-    if (
+// Steers and same-run continuations can follow a final answer, so every one stays visible, as on web.
+function finalAnswerIds(feed: ReadonlyArray<ThreadFeedEntry>): ReadonlySet<MessageId> {
+  return new Set(
+    feed.flatMap((entry) =>
       entry.type === "message" &&
-      isSteerMessage(entry.message) &&
-      previous?.type === "message" &&
-      previous.message.role === "assistant" &&
-      previous.message.projectedItem?.item.type === "assistant_message" &&
-      previous.message.projectedItem.item.phase === "final_answer"
-    ) {
-      ids.add(previous.message.id);
-    }
-    previous = entry;
-  }
-  return ids;
+      entry.message.role === "assistant" &&
+      entry.message.projectedItem?.item.type === "assistant_message" &&
+      entry.message.projectedItem.item.phase === "final_answer"
+        ? [entry.message.id]
+        : [],
+    ),
+  );
 }
 
 function deriveThreadFeedRunFolds(
@@ -1129,7 +1124,7 @@ function deriveThreadFeedRunFolds(
   feedFailedRunIds: ReadonlySet<RunId>,
 ): ReadonlyMap<string, ThreadFeedRunFold> {
   const terminalAssistantMessageIdByRun = new Map<RunId, string>();
-  const retainedAnswerIds = answersBeforeSteers(feed);
+  const retainedAnswerIds = finalAnswerIds(feed);
   const interruptedRunIds = new Set<RunId>();
   const failedRunIds = new Set(feedFailedRunIds);
   const promptIndexByRunId = new Map<RunId, number>();
@@ -1523,7 +1518,7 @@ function zenAnswerMessageIds(
 ): ReadonlySet<MessageId> {
   const replies: Array<{ readonly message: ThreadFeedMessage; readonly index: number }> = [];
   const lastReplyByResponse = new Map<string, MessageId>();
-  const steerAnswers = new Set(answersBeforeSteers(feed));
+  const keptAnswers = new Set(finalAnswerIds(feed));
   let userMessages = 0;
   let awaitingReply = false;
   let candidate: MessageId | null = null;
@@ -1538,7 +1533,7 @@ function zenAnswerMessageIds(
     }
     const reply =
       entry.type === "message" && entry.message.role === "assistant" ? entry.message : null;
-    if (candidate !== null && reply !== null) steerAnswers.add(candidate);
+    if (candidate !== null && reply !== null) keptAnswers.add(candidate);
     candidate = null;
     if (answering && startsResponse(entry)) answeringFrom = index + 1;
     if (entry.type === "message" && entry.message.role === "user") {
@@ -1558,7 +1553,7 @@ function zenAnswerMessageIds(
     replies
       .filter(
         ({ message, index }) =>
-          steerAnswers.has(message.id) ||
+          keptAnswers.has(message.id) ||
           (terminal.has(message.id) &&
             index < answeringFrom &&
             (answeringRunId === null || message.runId !== answeringRunId)),

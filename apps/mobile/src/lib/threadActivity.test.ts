@@ -1456,17 +1456,19 @@ describe("buildThreadFeed", () => {
     expect(rows([user, commentary, steer, final], "zen")).toEqual(["user", "steer", "final"]);
     for (const phase of ["commentary", "partial_answer", "final_answer", undefined] as const) {
       const partial = { ...answer, ...(phase === undefined ? {} : { phase }) };
-      const interrupted = buildThreadFeed(
-        [user, passed, partial, steer, final].map((item, index) => projected(item, index)),
-      );
-      expect(
-        deriveThreadFeedPresentation(interrupted, null, new Set()).some(
-          (row) => row.type === "message" && row.message.id === answer.messageId,
-        ),
-      ).toBe(phase === "final_answer");
-      expect(rows([user, partial, steer, final], "zen").includes("answer")).toBe(
-        phase === "final_answer",
-      );
+      // A run can also continue past a final answer without a steer, as a Codex goal does.
+      for (const continued of [
+        [user, passed, partial, steer, final],
+        [user, partial, passed, final],
+      ]) {
+        const feed = buildThreadFeed(continued.map((item, index) => projected(item, index)));
+        expect(
+          deriveThreadFeedPresentation(feed, null, new Set()).some(
+            (row) => row.type === "message" && row.message.id === answer.messageId,
+          ),
+        ).toBe(phase === "final_answer");
+        expect(rows(continued, "zen").includes("answer")).toBe(phase === "final_answer");
+      }
     }
     expect(rows([user, steer, step, passed, final], "zen")).toEqual(["user", "steer", "final"]);
     expect(rows([user, steer, answer, step], "zen", running)).toEqual([
