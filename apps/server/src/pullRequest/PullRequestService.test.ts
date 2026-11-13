@@ -422,6 +422,9 @@ it.effect("lists GitHub Enterprise PRs for a stored unknown repository after hos
       result.entries.map(({ host, number }) => [host, number]),
       [["code.example.test", 42]],
     );
+    // Agents get the forge tools only where the host is one T3 reads.
+    assert.isTrue(yield* service.servesProject("p1" as ProjectId));
+    assert.isFalse(yield* service.servesProject("p2" as ProjectId));
   }),
 );
 

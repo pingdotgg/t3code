@@ -141,6 +141,8 @@ export interface McpInvocationScope {
   readonly client: McpClientCaller | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
+  /** False when the calling thread's project is on no forge T3 reads; `/mcp` reads it per request. */
+  readonly forge?: boolean;
 }
 
 /**
@@ -180,6 +182,13 @@ export const hiddenWhileLinksOff = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.linkedEnvironments !== false;
+};
+
+/** `McpSchema.EnabledWhen` for tools that act on the thread's forge, hidden where it has none. */
+export const hiddenWithoutForge = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.forge !== false;
 };
 
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"

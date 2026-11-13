@@ -247,6 +247,8 @@ export class PullRequestService extends Context.Service<
     ) => Effect.Effect<PullRequestActivity, PullRequestError>;
     /** Emits when the host reports a change; empty where the host has no event feed. */
     readonly changes: (input: PullRequestRef) => Stream.Stream<void>;
+    /** Whether the project's checkout is on a forge T3 reads change requests from. */
+    readonly servesProject: (projectId: ProjectId) => Effect.Effect<boolean>;
     readonly threadComments: (
       input: PullRequestThreadCommentsInput,
     ) => Effect.Effect<PullRequestThreadCommentsResult, PullRequestError>;
@@ -1111,6 +1113,13 @@ export const make = Effect.gen(function* () {
       repository: project.repository,
     };
   });
+
+  // A failed read keeps the tools: their calls report the failure.
+  const servesProject: PullRequestService["Service"]["servesProject"] = (projectId) =>
+    listWorkspaceProjects({ projectId }).pipe(
+      Effect.map(({ supported }) => supported.length > 0),
+      Effect.orElseSucceed(() => true),
+    );
 
   const changes: PullRequestService["Service"]["changes"] = (input) =>
     Stream.unwrap(
@@ -3922,6 +3931,7 @@ export const make = Effect.gen(function* () {
     ),
     activity: credentialCached(activity),
     changes,
+    servesProject,
     preview: credentialCached(preview),
     threadComments,
     diff: credentialCached(diff),
