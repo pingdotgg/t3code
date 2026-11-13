@@ -14,6 +14,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopDiskSpace from "./DesktopDiskSpace.ts";
 import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
@@ -29,7 +30,7 @@ export interface UpdatesHarnessOptions {
   readonly beforeSetUpdateChannel?: Effect.Effect<void>;
   readonly setUpdateChannelError?: DesktopAppSettings.DesktopSettingsWriteError;
   readonly setDisableDifferentialDownload?: Effect.Effect<void>;
-  readonly downloadUpdate?: Effect.Effect<void>;
+  readonly downloadUpdate?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterDownloadUpdateError>;
   readonly quitAndInstall?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>;
   readonly stopBackend?: Effect.Effect<void>;
   readonly startBackend?: Effect.Effect<void>;
@@ -145,6 +146,12 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     syncAllAppearance: () => Effect.void,
   } satisfies ElectronWindow.ElectronWindow["Service"]);
 
+  const layerSshEnvironment = Layer.mock(DesktopSshEnvironment.DesktopSshEnvironment, {
+    closeAllTunnels: Effect.sync(() => {
+      installSteps.push("closeSshTunnels");
+    }),
+  });
+
   let backendDesiredRunning = options.backendDesiredRunning ?? true;
   const stubBackendInstance: DesktopBackendPool.DesktopBackendInstance = {
     id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
@@ -247,6 +254,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
 
   const diskSpace = options.diskSpace;
   const updateRestartMarkers = new Set<string>();
+  const updateMarkerContents = new Map<string, string>();
   const installRecords = new Map<string, string>();
   let previousInstallRecord = options.installRecord;
   const isInstallRecord = (path: string) =>
@@ -280,11 +288,21 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     writeFileString: (path, data) =>
       Effect.sync(() => {
         if (isInstallRecord(path)) installRecords.set(path, data);
-        else updateRestartMarkers.add(path);
+        else {
+          if (path.endsWith("/desktop-update-restart")) updateRestartMarkers.add(path);
+          updateMarkerContents.set(path, data);
+        }
+      }),
+    rename: (from, to) =>
+      Effect.sync(() => {
+        const contents = updateMarkerContents.get(from);
+        if (contents !== undefined) updateMarkerContents.set(to, contents);
+        updateMarkerContents.delete(from);
       }),
     remove: (path) =>
       Effect.sync(() => {
         updateRestartMarkers.delete(path);
+        updateMarkerContents.delete(path);
         installRecords.delete(path);
         if (isInstallRecord(path)) previousInstallRecord = undefined;
       }),
@@ -315,6 +333,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     Layer.provideMerge(layerUpdater),
     Layer.provideMerge(layerWindow),
     Layer.provideMerge(layerBackend),
+    Layer.provideMerge(layerSshEnvironment),
     Layer.provideMerge(DesktopState.layer),
     Layer.provideMerge(layerSettings),
     Layer.provideMerge(
@@ -335,6 +354,8 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     quitAndInstalls: () => quitAndInstallCount,
     installSteps,
     updateRestartMarkers,
+    updateInProgressMarker: () =>
+      [...updateMarkerContents].find(([path]) => path.endsWith("/desktop-update-in-progress"))?.[1],
     installRecords,
     previousInstallRecord: () => previousInstallRecord,
     downloadCount: () => downloadCount,
