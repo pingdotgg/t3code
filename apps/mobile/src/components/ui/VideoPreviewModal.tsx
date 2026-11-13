@@ -3,6 +3,7 @@ import { requireNativeModule } from "expo";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import { useEffect, useEffectEvent, useId } from "react";
+import { AppState } from "react-native";
 
 import { loadLocalAttachmentPreview } from "../../lib/localAttachmentPreview";
 import { usePreviewPresentation, videoPreviewKey } from "../../lib/previewPresentation";
@@ -92,6 +93,12 @@ function NativeVideoPreview(props: {
       } else release();
     });
     let ready = false;
+    // Like inline playback, returning to the app must not start a video interrupted while loading.
+    const appState = AppState.addEventListener("change", (state) => {
+      if (ready || state === "active" || controller.signal.aborted) return;
+      controller.abort();
+      onRequestClose();
+    });
     fullscreenVideoOpened();
     void (async () => {
       const file =
@@ -139,6 +146,7 @@ function NativeVideoPreview(props: {
       controller.abort();
       fullscreenVideoClosed();
       subscription.remove();
+      appState.remove();
       release();
       void NativeControls.dismissVideo(identifier).catch(() => undefined);
     };
