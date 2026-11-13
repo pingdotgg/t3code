@@ -8664,9 +8664,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           >;
           readonly completedAt: DateTime.Utc;
           readonly failure?: OrchestrationV2ProviderFailure;
+          // Reports the turn as failed without the cleanup a stopped turn gets: the process and its background work live on.
+          readonly reportedFailure?: OrchestrationV2ProviderFailure;
           readonly threadDisposition?: "reusable" | "broken";
           readonly result?: SDKResultMessage;
         }) {
+          const reportedStatus = input.reportedFailure === undefined ? input.status : "failed";
           input.context.steersClosed = true;
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           if (input.status === "completed") {
@@ -8866,7 +8869,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           const threadDisposition = input.threadDisposition ?? "reusable";
           const terminalEvent: ProviderAdapter.ProviderAdapterV2Event =
-            input.status === "failed"
+            reportedStatus === "failed"
               ? {
                   type: "turn.terminal",
                   driver: CLAUDE_PROVIDER,
@@ -8877,8 +8880,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     input.context,
                     `terminal-failure:${input.context.providerTurnId}`,
                   ),
-                  status: input.status,
-                  failure: input.failure ?? makeProviderFailure({ class: "provider_error" }),
+                  status: reportedStatus,
+                  failure:
+                    input.reportedFailure ??
+                    input.failure ??
+                    makeProviderFailure({ class: "provider_error" }),
                   ...(providerRetry === undefined
                     ? {}
                     : {
@@ -8893,7 +8899,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   providerThreadId: input.context.input.providerThread.id,
                   providerTurnId: input.context.providerTurnId,
                   runOrdinal: input.context.input.runOrdinal,
-                  status: input.status,
+                  status: reportedStatus,
                   failure: null,
                   threadDisposition,
                 };
@@ -8905,7 +8911,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 providerTurn: {
                   ...providerTurnPayload({
                     context: input.context,
-                    status: input.status,
+                    status: reportedStatus,
                     completedAt: input.completedAt,
                   }),
                   turnTokenUsage: normalizeClaudeTurnTokenUsage(
@@ -11266,16 +11272,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ? cliPermissionDenialFailure(message, context.hostDecidedToolUseIds)
                 : null;
             const terminalFailure =
-              permissionDenialFailure ??
-              (resultFailure?.class === "usage_limit"
+              resultFailure?.class === "usage_limit"
                 ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }
-                : resultFailure);
+                : resultFailure;
             yield* finalizeActiveTurn({
               context,
-              status: permissionDenialFailure === null ? resultStatus : "failed",
+              status: resultStatus,
               completedAt,
               result: message,
               ...(terminalFailure === null ? {} : { failure: terminalFailure }),
+              ...(permissionDenialFailure === null
+                ? {}
+                : { reportedFailure: permissionDenialFailure }),
             });
           }
         });

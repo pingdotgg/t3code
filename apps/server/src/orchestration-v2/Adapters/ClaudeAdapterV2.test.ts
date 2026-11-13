@@ -7383,6 +7383,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attachments: [],
         }),
       );
+      yield* harness.offerAndWait(wakeTaskStarted);
       // Auto mode denies inside the CLI, so T3 never sees a permission request;
       // the denial only shows up on the result.
       yield* Queue.offer(
@@ -7404,6 +7405,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.notEqual(terminal.status, "completed");
       assert.equal(terminal.failure?.class, "permission_error");
       assert.include(terminal.failure?.message, "Bash: printf T3_DENIAL_PROBE_ok");
+      // The process still runs its background shell, so the turn keeps tracking it.
+      assert.isTrue(yield* harness.hasPendingBackgroundWork);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
