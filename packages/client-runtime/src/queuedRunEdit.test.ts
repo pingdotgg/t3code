@@ -21,13 +21,23 @@ function setup(initialRuns: ReadonlyArray<QueuedRunStatus> | null = queued()) {
     label: "test-queued-run-edits",
   });
   const exits: Array<{ threadKey: string; text: string }> = [];
+  const holds = { taken: 0, released: 0 };
   const begin = () =>
     store.begin(
       "env:thread",
       { runId: RUN, text: "draft" },
-      { runs, onRunLeftQueue: (threadKey, edit) => exits.push({ threadKey, text: edit.text }) },
+      {
+        runs,
+        onRunLeftQueue: (threadKey, edit) => exits.push({ threadKey, text: edit.text }),
+        holdRun: () => {
+          holds.taken += 1;
+          return () => {
+            holds.released += 1;
+          };
+        },
+      },
     );
-  return { registry, runs, store, exits, begin };
+  return { registry, runs, store, exits, holds, begin };
 }
 
 describe("resolveQueuedEditExit", () => {
@@ -163,6 +173,20 @@ describe("makeQueuedRunEditStore", () => {
 
   // The runs read the thread's detail, a live server subscription; a thread
   // with no edit open must not keep it.
+  it.each([
+    ["cancel", (s: ReturnType<typeof setup>) => s.store.end("env:thread")],
+    ["a saved edit", (s: ReturnType<typeof setup>) => s.store.startSave("env:thread")?.(true)],
+    ["the run leaving the queue", (s: ReturnType<typeof setup>) => s.registry.set(s.runs, [])],
+    ["another edit beginning", (s: ReturnType<typeof setup>) => s.begin()],
+  ])("holds the run from begin until %s, through a failed save", (_, finish) => {
+    const s = setup();
+    s.begin();
+    s.store.startSave("env:thread")?.(false);
+    expect(s.holds).toEqual({ taken: 1, released: 0 });
+    finish(s);
+    expect(s.holds.released).toBe(1);
+  });
+
   it("holds the thread's runs only while an edit is open and watching", () => {
     // The registry removes idle nodes in a scheduled task; the test runs those tasks itself.
     const tasks: Array<() => void> = [];
@@ -189,7 +213,11 @@ describe("makeQueuedRunEditStore", () => {
       label: "test-queued-run-edits",
     });
     const begin = () =>
-      store.begin("env:thread", { runId: RUN }, { runs, onRunLeftQueue: () => {} });
+      store.begin(
+        "env:thread",
+        { runId: RUN },
+        { runs, onRunLeftQueue: () => {}, holdRun: () => () => {} },
+      );
 
     begin();
     expect(mounted).toBe(1);
@@ -241,7 +269,11 @@ describe("makeQueuedRunsAtom", () => {
       label: "test-queued-run-edits",
     });
     const exits: Array<string> = [];
-    store.begin("env:thread", { runId: RUN }, { runs, onRunLeftQueue: (key) => exits.push(key) });
+    store.begin(
+      "env:thread",
+      { runId: RUN },
+      { runs, onRunLeftQueue: (key) => exits.push(key), holdRun: () => () => {} },
+    );
     return {
       registry,
       snapshot,

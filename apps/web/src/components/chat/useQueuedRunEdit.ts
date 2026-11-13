@@ -50,6 +50,7 @@ import { readFileAsDataUrl } from "../../lib/imageCompression";
 import type { TerminalContextDraft } from "../../lib/terminalContext";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { orchestrationEnvironment } from "../../state/orchestration";
 import { environmentServerConfigsAtom } from "../../state/server";
 import {
   environmentThreadDetails,
@@ -284,6 +285,13 @@ export function useQueuedRunEdit(input: {
               get(environmentThreadDetails.quietThreadAtom(threadRef))?.projection.runs ?? null,
           ),
         }),
+        holdRun: () =>
+          appAtomRegistry.mount(
+            orchestrationEnvironment.v2.queuedRunEditHold({
+              environmentId,
+              input: { threadId: activeThreadId, runId: request.runId },
+            }),
+          ),
         // The run started or was cancelled from another client. A changed
         // edit moves into the thread's own draft when that draft is empty;
         // otherwise it is dropped. Edits outlive navigation, so the toast is

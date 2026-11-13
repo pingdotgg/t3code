@@ -385,6 +385,12 @@ export interface OrchestratorV2DispatchResult {
 
 export interface OrchestratorV2Shape {
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
+  /**
+   * Keeps a queued run, and the runs behind it, from starting while a client has
+   * it open for editing. The hold lasts as long as the stream, so it cannot
+   * outlive the client's connection.
+   */
+  readonly holdQueuedRunForEdit: (threadId: ThreadId, runId: RunId) => Stream.Stream<never>;
   readonly recoverDelegatedTasks: Effect.Effect<void>;
   readonly recoverDelegatedTask: (
     threadId: ThreadId,
@@ -2289,6 +2295,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return true;
   });
 
+  // Open edit holds per run. In memory on purpose: a hold belongs to a live connection.
+  const queuedRunEditHolds = new Map<RunId, number>();
+
   const startNextQueuedRun = Effect.fn("Orchestrator.startNextQueuedRun")(
     function* (
       threadId: ThreadId,
@@ -2421,6 +2430,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               payload: { ...run, queueHeld: true },
             })),
         );
+        return;
+      }
+      // An unsaved edit would miss its own message; Send now still starts the run it names.
+      if (options?.queuedRunId === undefined && queuedRunEditHolds.has(queuedRun.id)) {
         return;
       }
       // Move queued ordinals after runs that started while they waited to preserve transcript and checkpoint order.
@@ -3225,6 +3238,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       })),
     );
   });
+
+  const holdQueuedRunForEdit: OrchestratorV2Shape["holdQueuedRunForEdit"] = (threadId, runId) =>
+    Stream.unwrap(
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          queuedRunEditHolds.set(runId, (queuedRunEditHolds.get(runId) ?? 0) + 1);
+        }),
+        () =>
+          Effect.suspend(() => {
+            const remaining = (queuedRunEditHolds.get(runId) ?? 1) - 1;
+            if (remaining > 0) {
+              queuedRunEditHolds.set(runId, remaining);
+              return Effect.void;
+            }
+            queuedRunEditHolds.delete(runId);
+            return threadDispatch.withLock(threadId, startNextQueuedRun(threadId)).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to start queued V2 run after its edit ended", {
+                  threadId,
+                  cause,
+                }),
+              ),
+            );
+          }),
+      ).pipe(Effect.as(Stream.never)),
+    );
 
   const resumeQueuedRuns = Effect.gen(function* () {
     const threadIds = yield* projectionStore.getRecoveryThreadIds("queued-runs");
@@ -15259,11 +15298,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       command.type === "queue.resume" ||
       command.type === "queued-run.start" ||
-      (command.type === "thread.runtime-mode.set" && runtimeModeCeiling !== undefined)
+      (command.type === "thread.runtime-mode.set" && runtimeModeCeiling !== undefined) ||
+      // The cancelled run was the one an open edit kept the queue waiting on.
+      (command.type === "queued-run.cancel" && queuedRunEditHolds.has(command.runId))
     ) {
       yield* mapDispatchError(command)(
         startNextQueuedRun(command.threadId, {
-          userStarted: command.type !== "thread.runtime-mode.set",
+          userStarted: command.type === "queue.resume" || command.type === "queued-run.start",
           ...(command.type === "queued-run.start" ? { queuedRunId: command.runId } : {}),
         }),
       );
@@ -15793,6 +15834,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   return OrchestratorV2.of({
     resumeQueuedRuns,
+    holdQueuedRunForEdit,
     recoverDelegatedTasks,
     recoverDelegatedTask,
     cancelDelegatedTask,

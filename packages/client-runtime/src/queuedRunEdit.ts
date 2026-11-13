@@ -76,6 +76,8 @@ interface ExitWatch<E> {
   readonly runs: QueuedRunsAtom;
   readonly runId: RunId;
   readonly onRunLeftQueue: (threadKey: string, edit: E) => void;
+  /** Ends the server's hold on the run; called once, however the edit ends. */
+  readonly releaseRun: () => void;
   cancel: (() => void) | null;
 }
 
@@ -137,6 +139,7 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
       if (!runLeftQueue(runs, watch.runId)) return;
       unsubscribe(watch);
       watches.delete(threadKey);
+      watch.releaseRun();
       const edit = get(threadKey);
       if (edit === null || edit.runId !== watch.runId) return;
       write(threadKey, null);
@@ -151,6 +154,7 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
     if (watch === undefined) return;
     unsubscribe(watch);
     watches.delete(threadKey);
+    watch.releaseRun();
   };
 
   return {
@@ -169,11 +173,19 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
       watch: {
         readonly runs: QueuedRunsAtom;
         readonly onRunLeftQueue: (threadKey: string, edit: E) => void;
+        /** Keeps the run queued on its server until the returned release runs. */
+        readonly holdRun: () => () => void;
       },
     ) {
       stopWatch(threadKey);
       write(threadKey, edit);
-      const next: ExitWatch<E> = { ...watch, runId: edit.runId, cancel: null };
+      const next: ExitWatch<E> = {
+        runs: watch.runs,
+        onRunLeftQueue: watch.onRunLeftQueue,
+        releaseRun: watch.holdRun(),
+        runId: edit.runId,
+        cancel: null,
+      };
       watches.set(threadKey, next);
       subscribe(threadKey, next);
     },

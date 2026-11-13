@@ -3791,6 +3791,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   subscribeThread: "orchestration.subscribeThread",
   subscribeCommandOutput: "orchestration.subscribeCommandOutput",
   subscribePromptSuggestion: "orchestration.subscribePromptSuggestion",
+  holdQueuedRunEdit: "orchestration.holdQueuedRunEdit",
 } as const;
 
 export const OrchestrationV2SubscribeCommandOutputInput = Schema.Struct({
@@ -3822,6 +3823,12 @@ export class OrchestrationV2CommandOutputError extends Schema.TaggedError<Orches
 
 export const OrchestrationV2SubscribePromptSuggestionInput = Schema.Struct({
   threadId: ThreadId,
+});
+
+/** Open while a client edits a queued message: the run stays queued until the stream closes. */
+export const OrchestrationV2HoldQueuedRunEditInput = Schema.Struct({
+  threadId: ThreadId,
+  runId: RunId,
 });
 
 /** Unpersisted predicted next prompt for the run that produced it; null when there is none. */
@@ -4517,6 +4524,10 @@ export const OrchestrationV2RpcSchemas = {
   subscribePromptSuggestion: {
     input: OrchestrationV2SubscribePromptSuggestionInput,
     output: OrchestrationV2PromptSuggestion,
+  },
+  holdQueuedRunEdit: {
+    input: OrchestrationV2HoldQueuedRunEditInput,
+    output: Schema.Never,
   },
 } as const;
 

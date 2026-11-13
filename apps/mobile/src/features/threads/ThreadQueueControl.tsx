@@ -32,7 +32,9 @@ import { Menu } from "../../components/ui/Menu";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useAssetUrl } from "../../state/assets";
+import { appAtomRegistry } from "../../state/atom-registry";
 import { useQuietThreadShell } from "../../state/entities";
+import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { assetImageSource } from "../../lib/assetImageSource";
@@ -181,6 +183,13 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
             (get) => get(environmentThreadDetails.quietThreadAtom(target))?.projection.runs ?? null,
           ),
         }),
+        () =>
+          appAtomRegistry.mount(
+            orchestrationEnvironment.v2.queuedRunEditHold({
+              environmentId: target.environmentId,
+              input: { threadId: target.threadId, runId },
+            }),
+          ),
       );
       navigation.goBack();
       return;

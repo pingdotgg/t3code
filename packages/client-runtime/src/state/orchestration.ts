@@ -179,6 +179,12 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
         tag: ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion,
         idleTtlMs: 0,
       }),
+      // Mounted while a queued message is open in the composer, so its run waits for the edit.
+      queuedRunEditHold: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+        label: "environment-data:orchestration-v2:queued-run-edit-hold",
+        tag: ORCHESTRATION_V2_WS_METHODS.holdQueuedRunEdit,
+        idleTtlMs: 0,
+      }),
     },
     turnDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-diff",

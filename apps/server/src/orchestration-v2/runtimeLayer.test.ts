@@ -9480,6 +9480,129 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(cancelAgainError._tag, "OrchestratorDispatchError");
     }),
   );
+
+  it.effect.each([
+    { ending: "cancel-edit", edited: "starting", behind: "queued", text: "Original." },
+    { ending: "save", edited: "starting", behind: "queued", text: "Edited." },
+    { ending: "send-now", edited: "starting", behind: "queued", text: "Original." },
+    { ending: "removed-elsewhere", edited: "cancelled", behind: "starting", text: "Original." },
+  ] as const)(
+    "a queued message open for editing waits for the edit: $ending",
+    ({ ending, edited, behind, text }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const events = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`queued-edit-hold-${ending}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId: ProjectId.make(`${threadId}:project`),
+          title: "Edit queued work",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: `/tmp/${threadId}`,
+        });
+        const send = (name: string, queued: boolean) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`${threadId}:${name}`),
+            threadId,
+            messageId: MessageId.make(`${threadId}:${name}`),
+            text: name === "edited" ? "Original." : name,
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: queued ? "queue_after_active" : "start_immediately" },
+          });
+        yield* send("active", false);
+        yield* send("edited", true);
+        yield* send("behind", true);
+        const [active, editedRun, behindRun] = (yield* orchestrator.getThreadProjection(threadId))
+          .runs;
+        assert.isDefined(active);
+        assert.isDefined(editedRun);
+        assert.isDefined(behindRun);
+
+        const hold = yield* Stream.runDrain(
+          orchestrator.holdQueuedRunForEdit(threadId, editedRun.id),
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        const now = yield* DateTime.now;
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:active-done`),
+              type: "run.updated",
+              threadId,
+              runId: active.id,
+              occurredAt: now,
+              payload: { ...active, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.resumeQueuedRuns;
+        const held = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          held.runs.slice(1).map((run) => [run.status, run.queueHeld === true]),
+          [
+            ["queued", false],
+            ["queued", false],
+          ],
+        );
+
+        if (ending === "save") {
+          yield* orchestrator.dispatch({
+            type: "queued-run.edit",
+            commandId: CommandId.make(`${threadId}:save`),
+            threadId,
+            runId: editedRun.id,
+            text: "Edited.",
+          });
+        }
+        if (ending === "send-now") {
+          yield* orchestrator.dispatch({
+            type: "queued-run.start",
+            commandId: CommandId.make(`${threadId}:send-now`),
+            threadId,
+            runId: editedRun.id,
+          });
+        }
+        if (ending === "removed-elsewhere") {
+          yield* orchestrator.dispatch({
+            type: "queued-run.cancel",
+            commandId: CommandId.make(`${threadId}:remove`),
+            threadId,
+            runId: editedRun.id,
+          });
+        }
+        const statuses = orchestrator
+          .getThreadProjection(threadId)
+          .pipe(
+            Effect.map((projection) =>
+              [editedRun, behindRun].map(
+                (queued) => projection.runs.find((run) => run.id === queued.id)?.status,
+              ),
+            ),
+          );
+        // Send now and a removal move the queue at once; the editor may stay open elsewhere.
+        if (ending === "send-now" || ending === "removed-elsewhere") {
+          assert.deepEqual(yield* statuses, [edited, behind]);
+        }
+        yield* Fiber.interrupt(hold);
+
+        assert.deepEqual(yield* statuses, [edited, behind]);
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          after.messages.find((message) => message.id === editedRun.userMessageId)?.text,
+          text,
+        );
+      }),
+  );
 });
 
 it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (it) => {
