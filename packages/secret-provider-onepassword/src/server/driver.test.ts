@@ -177,6 +177,6 @@ describe("1Password driver", () => {
       yield* TestClock.adjust("5 minutes");
 
       assert.isAtMost(yield* Fiber.join(reading), 45_000);
-    }).pipe(Effect.provide(templateFile), Effect.provide(op.layer));
+    }).pipe(Effect.provide(Layer.merge(op.layer, templateFile)));
   });
 });
