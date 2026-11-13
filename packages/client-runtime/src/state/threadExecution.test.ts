@@ -553,7 +553,14 @@ describe("deriveRunlessWorkStartedAt", () => {
   };
 
   it("times a provider-native subagent from its runless root turn while it works", () => {
-    const projection = { ...nativeChild, nodes: [rootTurn("running", later)] };
+    const projection = {
+      ...nativeChild,
+      thread: {
+        ...nativeChild.thread,
+        activeProviderThreadId: ProviderThreadId.make("native-child"),
+      },
+      nodes: [rootTurn("running", later)],
+    };
     expect(deriveRunlessWorkStartedAt(projection)).toBe("2026-07-28T10:05:00.000Z");
     expect(deriveThreadRuntime(projection)).toBeNull();
   });
