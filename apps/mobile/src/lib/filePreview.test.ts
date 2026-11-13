@@ -64,6 +64,10 @@ const audio = vi.hoisted(() => ({
   navigate: vi.fn(),
   query: vi.fn(),
 }));
+vi.mock("../features/read-aloud/ReadAloudButton", () => ({ ReadAloudButton: () => null }));
+vi.mock("../features/read-aloud/playback", () => ({
+  readAloudController: { getSnapshot: () => ({ id: null }), stop: vi.fn() },
+}));
 vi.mock("expo-audio", () => ({
   AudioModule: { setAudioSessionOwner: audio.setSessionOwner },
   useAudioPlayer: () => audio.player,
