@@ -30,10 +30,13 @@ import {
   type PendingUserInputDraftAnswer,
 } from "@t3tools/client-runtime/state/pending-user-input";
 import {
+  applyPendingUserInputOptionKeys,
   carryDisplacedCustomAnswerIntoPrompt,
   withdrawDisplacedCustomAnswerFromPrompt,
   derivePendingUserInputProgress,
   projectPendingUserInputAnswer,
+  removePendingUserInputOptionKey,
+  setPendingUserInputAnswerText,
   threadContextsReferencedByAnswer,
 } from "../../pendingUserInput";
 import {
@@ -68,6 +71,7 @@ function makePendingCustomAnswerSetter(input: {
   readonly setPendingUserInputAnswersByRequestId: (
     update: SetStateAction<Record<string, Record<string, PendingUserInputDraftAnswer>>>,
   ) => void;
+  readonly setAnswer: typeof setPendingUserInputAnswerText;
 }) {
   return (questionId: string, value: string) => {
     const { activePendingUserInput, activePendingRequestKey } = input;
@@ -75,7 +79,7 @@ function makePendingCustomAnswerSetter(input: {
       return;
     }
     const question = activePendingUserInput.questions.find((entry) => entry.id === questionId);
-    if (!question || question.allowCustomAnswer === false) {
+    if (!question) {
       return;
     }
     input.writePrompt(value);
@@ -84,7 +88,7 @@ function makePendingCustomAnswerSetter(input: {
       ...existing,
       [activePendingRequestKey]: {
         ...existing[activePendingRequestKey],
-        [questionId]: setPendingUserInputCustomAnswer(
+        [questionId]: input.setAnswer(
           question,
           existing[activePendingRequestKey]?.[questionId],
           value,
@@ -225,7 +229,10 @@ export function usePendingThreadRequests(input: {
             return [
               question.id,
               {
-                ...activePendingAnswerDrafts[question.id],
+                ...applyPendingUserInputOptionKeys(
+                  question,
+                  activePendingAnswerDrafts[question.id],
+                ),
                 attachmentCount: attachments.length,
                 attachmentsBlocked:
                   (attachments.length > 0 && !supportsQuestionAttachments) ||
@@ -393,9 +400,16 @@ export function usePendingThreadRequests(input: {
     if (!activePendingUserInput) {
       return;
     }
+    const clickedQuestion = activePendingUserInput.questions.find(
+      (entry) => entry.id === questionId,
+    );
     // The option replaces the custom answer. Anything typed there is the
     // user's text, so it goes back to the thread draft instead of vanishing.
-    const displacedAnswer = activePendingAnswerDrafts[questionId]?.customAnswer;
+    // Option keys are picks, not text.
+    const displacedAnswer = clickedQuestion
+      ? applyPendingUserInputOptionKeys(clickedQuestion, activePendingAnswerDrafts[questionId])
+          ?.customAnswer
+      : undefined;
     const currentPrompt =
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.prompt ?? "";
     const nextPrompt = carryDisplacedCustomAnswerIntoPrompt(currentPrompt, displacedAnswer);
@@ -445,7 +459,10 @@ export function usePendingThreadRequests(input: {
           ...existing[activePendingRequestKey],
           [questionId]: togglePendingUserInputOptionSelection(
             question,
-            existing[activePendingRequestKey]?.[questionId],
+            applyPendingUserInputOptionKeys(
+              question,
+              existing[activePendingRequestKey]?.[questionId],
+            ),
             optionValue,
           ),
         },
@@ -487,13 +504,45 @@ export function usePendingThreadRequests(input: {
     );
     if (nextPrompt !== currentPrompt) setComposerDraftPrompt(composerDraftTarget, nextPrompt);
   });
+  // Typing continues the option keys the answer field hides; a choice-only question
+  // takes the keys and nothing else.
   const onChangeActivePendingUserInputCustomAnswer = makePendingCustomAnswerSetter({
     activePendingUserInput,
     activePendingRequestKey,
     writePrompt,
     withdrawRestoredAnswer,
     setPendingUserInputAnswersByRequestId,
+    setAnswer: setPendingUserInputAnswerText,
   });
+  // Edits made for the user, such as dictation, replace the text the field shows and
+  // drop the option keys behind it.
+  const onReplaceActivePendingUserInputCustomAnswer = makePendingCustomAnswerSetter({
+    activePendingUserInput,
+    activePendingRequestKey,
+    writePrompt,
+    withdrawRestoredAnswer,
+    setPendingUserInputAnswersByRequestId,
+    setAnswer: setPendingUserInputCustomAnswer,
+  });
+
+  /** Takes back the last option key typed for the question; false when there is none. */
+  const onRemoveActivePendingUserInputOptionKey = (questionId: string) => {
+    const question = activePendingUserInput?.questions.find((entry) => entry.id === questionId);
+    if (!question) return false;
+    const next = removePendingUserInputOptionKey(
+      question,
+      usePendingUserInputAnswers.getState()[activePendingRequestKey]?.[questionId],
+    );
+    if (next === null) return false;
+    setPendingUserInputAnswersByRequestId((existing) => ({
+      ...existing,
+      [activePendingRequestKey]: { ...existing[activePendingRequestKey], [questionId]: next },
+    }));
+    return true;
+  };
+  const onRemoveActivePendingUserInputOptionKeyStable = useStableCallback(
+    onRemoveActivePendingUserInputOptionKey,
+  );
 
   const onAdvanceActivePendingUserInput = () => {
     if (
@@ -539,6 +588,8 @@ export function usePendingThreadRequests(input: {
     onDismissUserInput: onDismissUserInputStable,
     onSelectActivePendingUserInputOption: onSelectActivePendingUserInputOptionStable,
     onChangeActivePendingUserInputCustomAnswer,
+    onReplaceActivePendingUserInputCustomAnswer,
+    onRemoveActivePendingUserInputOptionKey: onRemoveActivePendingUserInputOptionKeyStable,
     onAdvanceActivePendingUserInput,
     onAdvanceActivePendingUserInputStable,
     onPreviousActivePendingUserInputQuestion: onPreviousActivePendingUserInputQuestionStable,

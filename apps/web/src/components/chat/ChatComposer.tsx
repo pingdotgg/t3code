@@ -210,7 +210,10 @@ import {
 } from "./ComposerAttachmentStrip";
 import { CollapsedComposerStopAction, ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
-import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
+import {
+  ComposerPendingUserInputPanel,
+  type PendingQuestionKeyHandler,
+} from "./ComposerPendingUserInputPanel";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
 import { getComposerPromptInjectionState, getComposerReasoningStep } from "./composerProviderState";
@@ -298,6 +301,8 @@ export interface ChatComposerHandle {
     options?: { ensureLeadingBoundary?: boolean; clipboardData?: DataTransfer },
   ) => boolean;
   pasteTextAtEnd: (text: string, options?: { bypassAutoAttachment?: boolean }) => boolean;
+  /** Offers a key to the open question: 1-9 pick options, Backspace takes one back, Enter confirms. */
+  handlePendingQuestionKey: PendingQuestionKeyHandler;
   citeAssistantText: (
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
@@ -475,6 +480,10 @@ export interface ChatComposerProps {
     expandedCursor: number,
     cursorAdjacentToMention: boolean,
   ) => void;
+  /** Replaces the question's answer with text the user did not type, keeping no option numbers. */
+  onReplaceActivePendingUserInputCustomAnswer: (questionId: string, value: string) => void;
+  /** Takes back the last option number typed for the question; false when there is none. */
+  onRemoveActivePendingUserInputOptionKey: (questionId: string) => boolean;
 
   onProviderModelSelect: (
     instanceId: ProviderInstanceId,
@@ -572,6 +581,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onDismissActivePendingUserInput,
     onPreviousActivePendingUserInputQuestion,
     onChangeActivePendingUserInputCustomAnswer,
+    onReplaceActivePendingUserInputCustomAnswer,
+    onRemoveActivePendingUserInputOptionKey,
     onProviderModelSelect,
     onOpenProviderSetup,
     getModelDisabledReason,
@@ -1020,6 +1031,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
   const pasteAsTextShortcutUntilRef = useRef(0);
   const composerFormRef = useRef<HTMLFormElement>(null);
+  const pendingQuestionKeyHandlerRef = useRef<PendingQuestionKeyHandler | null>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const providerInputRejectedRef = useRef(false);
   const composerSelectLockRef = useRef(false);
@@ -1750,13 +1762,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     promptRef.current = next.text;
     const activePendingQuestion = activePendingProgress?.activeQuestion;
     if (activePendingQuestion && activePendingUserInput) {
-      onChangeActivePendingUserInputCustomAnswer(
-        activePendingQuestion.id,
-        next.text,
-        nextCursor,
-        nextExpandedCursor,
-        isLiteralPendingAnswer,
-      );
+      onReplaceActivePendingUserInputCustomAnswer(activePendingQuestion.id, next.text);
     } else {
       setPrompt(next.text);
       onTypingGuardDraftChange();
@@ -2179,6 +2185,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return true;
   };
   const submitComposerStable = useStableCallback(submitComposer);
+  // An option number goes into the answer field's text, which shows it only once
+  // other text follows. Focus lands in the field as any typed key would put it there.
+  const onPendingQuestionOptionKey = (questionId: string, key: string) => {
+    onChangeActivePendingUserInputCustomAnswer(questionId, key, 0, 0, false);
+    promptRef.current = "";
+    const editorRoot = composerFormRef.current?.querySelector('[data-testid="composer-editor"]');
+    if (!editorRoot?.contains(document.activeElement)) composerEditorRef.current?.focusAtEnd();
+  };
+  const onPendingQuestionOptionKeyStable = useStableCallback(onPendingQuestionOptionKey);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed submission handler to the asynchronous dictation completion
   useLayoutEffect(() => {
     submitComposerRef.current = (mode, intent) => submitComposerStable(undefined, mode, intent);
@@ -2971,6 +2986,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         countPreparingComposerImages(attachmentTargetKey) > 0 ||
         pendingDraftWork.has(attachmentTargetKey),
       insertTextAtEnd: insertComposerTextAtEndStable,
+      handlePendingQuestionKey: (event, target) =>
+        pendingQuestionKeyHandlerRef.current?.(event, target) ?? false,
       pasteTextAtEnd: (text: string, options) => {
         const shortcutArmed = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
         const bypassAutoAttachment = options?.bypassAutoAttachment === true || shortcutArmed;
@@ -3348,8 +3365,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     answers={activePendingDraftAnswers}
                     questionIndex={activePendingQuestionIndex}
+                    keyHandlerRef={pendingQuestionKeyHandlerRef}
                     onToggleOption={onSelectActivePendingUserInputOption}
+                    onOptionKey={onPendingQuestionOptionKeyStable}
+                    onRemoveOptionKey={onRemoveActivePendingUserInputOptionKey}
                     onAdvance={onAdvanceActivePendingUserInput}
+                    onConfirm={submitComposerStable}
                     onDismiss={onDismissActivePendingUserInput}
                   />
                 ) : null}

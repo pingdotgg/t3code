@@ -11,7 +11,7 @@ import { isInSideChatPane } from "../../lib/sideChatPane";
 import { getTerminalFocusOwner, type TerminalFocusOwner } from "../../lib/terminalFocus";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { BranchToolbarHandle } from "../BranchToolbar";
-import { shouldTypeToFocusComposer } from "./composerFocusRedirect";
+import { pendingQuestionKeyTarget, shouldTypeToFocusComposer } from "./composerFocusRedirect";
 import { composerShortcutCommands } from "./composerShortcuts";
 
 /** Returning false lets the key event through untouched. */
@@ -53,6 +53,17 @@ interface ChatShortcutsInput {
 export function useChatShortcuts(input: ChatShortcutsInput) {
   const embedded = input.embedded === true;
   const composerElement = embedded ? (input.composerElement ?? null) : null;
+  /** An open question takes its 1-9 and Enter before type-to-focus would type them. */
+  const offerKeyToPendingQuestion = (
+    event: KeyboardEvent,
+    context: { readonly terminalFocus: boolean; readonly modelPickerOpen: boolean },
+  ) => {
+    if (context.terminalFocus || context.modelPickerOpen) return false;
+    const target = pendingQuestionKeyTarget(event);
+    return (
+      target !== null && input.composerRef.current?.handlePendingQuestionKey(event, target) === true
+    );
+  };
   const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
     const { keybindings } = input;
     if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
@@ -68,6 +79,12 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     const terminalFocusOwner = getTerminalFocusOwner();
     if (event.defaultPrevented && terminalFocusOwner === null) return;
     const shortcutContext = input.getShortcutContext(event.target);
+
+    if (offerKeyToPendingQuestion(event, shortcutContext)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
 
     if (
       !shortcutContext.terminalFocus &&
@@ -110,8 +127,14 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
   });
   const handleComposerShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || isCommandPaletteOpen()) return;
+    const shortcutContext = input.getShortcutContext(event.target);
+    if (offerKeyToPendingQuestion(event, shortcutContext)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const command = resolveChatShortcutCommand(event, input.keybindings, input.scriptKeybindings, {
-      context: input.getShortcutContext(event.target),
+      context: shortcutContext,
     });
     const run = command
       ? composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command]
