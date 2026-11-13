@@ -500,7 +500,7 @@ const dependencies = Layer.mergeAll(
       ),
     ),
     isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
-    isBackground: () => Effect.sync(() => desktopBackground),
+    isBackground: () => desktopBackground,
     isShown: (key) => shownDesktopTabs.has(key.tabId),
     loadFailure: (key) => desktopLoadFailures.get(key.tabId),
     endpoint: (key) =>

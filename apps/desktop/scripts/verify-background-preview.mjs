@@ -1,8 +1,5 @@
-// Proves agent preview tabs still paint while the app window is hidden or
-// minimized, using the exact window options the preview manager ships.
-// Agents open tabs whenever they like; a tab that cannot paint makes every
-// screenshot of it time out. Unit tests mock Electron, so only a real one can
-// catch this.
+// Proves agent preview tabs still paint while the app window is hidden or minimized,
+// using the window options the preview manager ships. Unit tests mock Electron.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";

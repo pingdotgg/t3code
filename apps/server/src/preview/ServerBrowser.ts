@@ -954,12 +954,12 @@ const make = Effect.gen(function* () {
           .pipe(Scope.provide(scope)),
       );
       const connected = await contexts.connectDesktopPage(endpoint);
-      const background = await Effect.runPromise(
-        desktopChannel.isBackground({ threadId: snapshot.threadId, tabId: snapshot.tabId }),
-      );
       return {
         page: connected.page,
-        background,
+        background: desktopChannel.isBackground({
+          threadId: snapshot.threadId,
+          tabId: snapshot.tabId,
+        }),
         close: async () => {
           await connected.browser.close().catch(constVoid);
           await runPromise(Scope.close(scope, Exit.void));

@@ -46,7 +46,7 @@ export class DesktopBrowserChannel extends Context.Service<
     readonly attached: Stream.Stream<DesktopTabKey>;
     readonly isAttached: (key: DesktopTabKey) => Effect.Effect<boolean>;
     /** The tab lives in a never-shown desktop window, so no panel sizes it. */
-    readonly isBackground: (key: DesktopTabKey) => Effect.Effect<boolean>;
+    readonly isBackground: (key: DesktopTabKey) => boolean;
     /** Whether a desktop window draws the tab on screen, which no streamed viewer counts. */
     readonly isShown: (key: DesktopTabKey) => boolean;
     /** A load failure the desktop saw, possibly before the server connected to the tab. */
@@ -94,7 +94,7 @@ const make = Effect.gen(function* () {
       pointer: Effect.fn("DesktopBrowserChannel.pointer")(function () {
         return Effect.void;
       }),
-      isBackground: () => Effect.succeed(false),
+      isBackground: () => false,
       isShown: () => false,
       loadFailure: () => undefined,
     });
@@ -256,9 +256,7 @@ const make = Effect.gen(function* () {
     isAttached: Effect.fn("DesktopBrowserChannel.isAttached")(function (key) {
       return Effect.sync(() => attachedTabs.has(keyOf(key)));
     }),
-    isBackground: Effect.fn("DesktopBrowserChannel.isBackground")(function (key) {
-      return Effect.sync(() => attachedTabs.get(keyOf(key)) === true);
-    }),
+    isBackground: (key) => attachedTabs.get(keyOf(key)) === true,
     isShown: (key) => shownTabs.get(keyOf(key)) ?? true,
     loadFailure: (key) => loadFailures.get(keyOf(key)),
     endpoint,
