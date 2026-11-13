@@ -15331,6 +15331,108 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect(
+    "does not fail a continuation on a replayed wake usage limit whose reset has passed",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const resetsAt = Math.floor(DateTime.toEpochMillis(now) / 1000) + 1_800;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-stale-limit-1"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+
+        // Claude Code opens the wake turn itself and is refused by the 5-hour limit.
+        yield* Queue.offer(harness.sdkMessages, wakeNotification);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "rate_limit_event",
+            rate_limit_info: { status: "rejected", rateLimitType: "five_hour", resetsAt },
+            uuid: "00000000-0000-4000-8000-000000000641",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "<synthetic>",
+              id: "00000000-0000-4000-8000-000000000642",
+              type: "message",
+              role: "assistant",
+              content: [{ type: "text", text: "You've hit your 5-hour limit" }],
+              stop_reason: "stop_sequence",
+              stop_sequence: "",
+              usage: {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+              },
+            },
+            parent_tool_use_id: null,
+            error: "rate_limit",
+            uuid: "00000000-0000-4000-8000-000000000642",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000643",
+            result: "You've hit your 5-hour limit",
+            terminalReason: "api_error",
+            isError: true,
+            apiErrorStatus: 429,
+            origin: { kind: "task-notification" },
+          }),
+        );
+        assert.lengthOf(harness.continuationRequests, 1);
+
+        // The continuation only starts after the limit has reset.
+        yield* TestClock.adjust("1 hour");
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-stale-limit-2"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.isFalse(terminal.status === "failed" && terminal.failure.class === "usage_limit");
+        assert.isFalse(
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+          ),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
   it.effect("leaves buffered wake messages for the continuation queued behind a user turn", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
