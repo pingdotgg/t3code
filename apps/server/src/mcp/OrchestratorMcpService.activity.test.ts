@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   NodeId,
+  type OrchestratorMcpThreadReadResult,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   ProjectId,
@@ -490,6 +491,133 @@ it("readThread returns the newest items that fit the response budget", async () 
     expect(first.hasMore).toBe(true);
     expect(first.nextPosition).toBe(first.items.at(-1)?.position);
     expect(fromStart.items[0]?.position).toBe(0);
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("readThread keeps an activity page within an MCP client's output limit and pages the rest", async () => {
+  const projection = {
+    thread: baseThread({
+      threadId: parentThreadId,
+      title: "Parent",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
+    visibleTurnItems: [],
+    providerTurns: [],
+    runtimeRequests: [],
+    messages: [],
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+  const rows = Array.from({ length: 60 }, (_, position) => ({
+    position,
+    visibility: "visible",
+    sourceThreadId: parentThreadId,
+    sourceItemId: TurnItemId.make(`turn-item-mcp-reasoning-${position}`),
+    item: {
+      type: "reasoning",
+      runId: activeRunId,
+      status: "completed",
+      // Command titles can carry a whole command.
+      title: position === 1 ? "標".repeat(60_000) : null,
+      text: position === 0 ? "😀a".repeat(30_000) : `${position} `.padEnd(3_000, "x"),
+      updatedAt: now,
+    },
+  }));
+
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getTimelinePage: (_threadId, options) => {
+            const after =
+              options.itemId === undefined
+                ? rows.filter((row) => row.position > (options.afterPosition ?? -1))
+                : rows.filter((row) => row.sourceItemId === options.itemId);
+            return Effect.succeed({
+              items: after.slice(
+                0,
+                options.limit,
+              ) as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
+              totalItems: rows.length,
+              hasMore: after.length > options.limit,
+              hasEarlier: false,
+            });
+          },
+          getThreadRecords: () => Effect.succeed(projection),
+          getProjectThreadRecords: () => Effect.succeed(projection),
+          getThreadShell: () =>
+            Effect.succeed(projection.thread as unknown as OrchestrationV2ThreadShell),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [] }),
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const positions: Array<number> = [];
+    let afterPosition: number | undefined;
+    for (let page = 0; page < rows.length; page++) {
+      const result = yield* service.readThread(makeScope(), {
+        threadId: parentThreadId,
+        view: "activity",
+        limit: 100,
+        maxCharsPerItem: 1_500,
+        afterPosition: afterPosition ?? -1,
+      });
+      // Claude Code rejects MCP results over 25k tokens; CJK text is about a token per char.
+      expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(50_000);
+      if (page === 0) expect(result.hasMore).toBe(true);
+      positions.push(...result.items.map((item) => item.position));
+      if (!result.hasMore) break;
+      afterPosition = result.nextPosition ?? undefined;
+    }
+    expect(positions).toEqual(rows.map((row) => row.position));
+
+    const longText = rows[0]!.item.text;
+    const pages: Array<string> = [];
+    let textOffset: number | null = 0;
+    while (textOffset !== null) {
+      const result: OrchestratorMcpThreadReadResult = yield* service.readThread(makeScope(), {
+        threadId: parentThreadId,
+        view: "activity",
+        itemId: rows[0]!.sourceItemId,
+        textOffset,
+        maxCharsPerItem: 50_000,
+      });
+      expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(50_000);
+      const [item] = result.items;
+      expect(item?.text?.isWellFormed()).toBe(true);
+      pages.push(item!.text!);
+      textOffset = item!.nextTextOffset ?? null;
+    }
+    expect(pages.length).toBeGreaterThan(1);
+    expect(pages.join("")).toBe(longText);
+
+    (projection.thread as { title: string }).title = "標".repeat(30_000);
+    const underHugeTitle = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+      itemId: rows[0]!.sourceItemId,
+      maxCharsPerItem: 50_000,
+    });
+    expect(underHugeTitle.items[0]?.text?.length).toBeGreaterThan(1_000);
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 

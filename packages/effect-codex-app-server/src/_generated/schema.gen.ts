@@ -2782,33 +2782,10 @@ export const ServerNotification__HookOutputEntryKind = Schema.Literals([
   "error",
 ]).annotate({ identifier: "ServerNotification__HookOutputEntryKind" });
 
-export type ServerNotification__HookEventName =
-  | "preToolUse"
-  | "permissionRequest"
-  | "postToolUse"
-  | "preCompact"
-  | "postCompact"
-  | "sessionStart"
-  | "sessionEnd"
-  | "userPromptSubmit"
-  | "subagentStart"
-  | "subagentStop"
-  | "stop"
-  | "interrupt";
-export const ServerNotification__HookEventName = Schema.Literals([
-  "preToolUse",
-  "permissionRequest",
-  "postToolUse",
-  "preCompact",
-  "postCompact",
-  "sessionStart",
-  "sessionEnd",
-  "userPromptSubmit",
-  "subagentStart",
-  "subagentStop",
-  "stop",
-  "interrupt",
-]).annotate({ identifier: "ServerNotification__HookEventName" });
+export type ServerNotification__HookEventName = string;
+export const ServerNotification__HookEventName = Schema.String.annotate({
+  identifier: "ServerNotification__HookEventName",
+});
 
 export type ServerNotification__HookExecutionMode = "sync" | "async";
 export const ServerNotification__HookExecutionMode = Schema.Literals(["sync", "async"]).annotate({
@@ -5653,33 +5630,10 @@ export const V2HookCompletedNotification__HookOutputEntryKind = Schema.Literals(
   "error",
 ]).annotate({ identifier: "V2HookCompletedNotification__HookOutputEntryKind" });
 
-export type V2HookCompletedNotification__HookEventName =
-  | "preToolUse"
-  | "permissionRequest"
-  | "postToolUse"
-  | "preCompact"
-  | "postCompact"
-  | "sessionStart"
-  | "sessionEnd"
-  | "userPromptSubmit"
-  | "subagentStart"
-  | "subagentStop"
-  | "stop"
-  | "interrupt";
-export const V2HookCompletedNotification__HookEventName = Schema.Literals([
-  "preToolUse",
-  "permissionRequest",
-  "postToolUse",
-  "preCompact",
-  "postCompact",
-  "sessionStart",
-  "sessionEnd",
-  "userPromptSubmit",
-  "subagentStart",
-  "subagentStop",
-  "stop",
-  "interrupt",
-]).annotate({ identifier: "V2HookCompletedNotification__HookEventName" });
+export type V2HookCompletedNotification__HookEventName = string;
+export const V2HookCompletedNotification__HookEventName = Schema.String.annotate({
+  identifier: "V2HookCompletedNotification__HookEventName",
+});
 
 export type V2HookCompletedNotification__HookExecutionMode = "sync" | "async";
 export const V2HookCompletedNotification__HookExecutionMode = Schema.Literals([
@@ -5760,33 +5714,10 @@ export const V2HooksListResponse__HookErrorInfo = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2HooksListResponse__HookErrorInfo" });
 
-export type V2HooksListResponse__HookEventName =
-  | "preToolUse"
-  | "permissionRequest"
-  | "postToolUse"
-  | "preCompact"
-  | "postCompact"
-  | "sessionStart"
-  | "sessionEnd"
-  | "userPromptSubmit"
-  | "subagentStart"
-  | "subagentStop"
-  | "stop"
-  | "interrupt";
-export const V2HooksListResponse__HookEventName = Schema.Literals([
-  "preToolUse",
-  "permissionRequest",
-  "postToolUse",
-  "preCompact",
-  "postCompact",
-  "sessionStart",
-  "sessionEnd",
-  "userPromptSubmit",
-  "subagentStart",
-  "subagentStop",
-  "stop",
-  "interrupt",
-]).annotate({ identifier: "V2HooksListResponse__HookEventName" });
+export type V2HooksListResponse__HookEventName = string;
+export const V2HooksListResponse__HookEventName = Schema.String.annotate({
+  identifier: "V2HooksListResponse__HookEventName",
+});
 
 export type V2HooksListResponse__HookSource =
   | "system"
@@ -5843,33 +5774,10 @@ export const V2HookStartedNotification__HookOutputEntryKind = Schema.Literals([
   "error",
 ]).annotate({ identifier: "V2HookStartedNotification__HookOutputEntryKind" });
 
-export type V2HookStartedNotification__HookEventName =
-  | "preToolUse"
-  | "permissionRequest"
-  | "postToolUse"
-  | "preCompact"
-  | "postCompact"
-  | "sessionStart"
-  | "sessionEnd"
-  | "userPromptSubmit"
-  | "subagentStart"
-  | "subagentStop"
-  | "stop"
-  | "interrupt";
-export const V2HookStartedNotification__HookEventName = Schema.Literals([
-  "preToolUse",
-  "permissionRequest",
-  "postToolUse",
-  "preCompact",
-  "postCompact",
-  "sessionStart",
-  "sessionEnd",
-  "userPromptSubmit",
-  "subagentStart",
-  "subagentStop",
-  "stop",
-  "interrupt",
-]).annotate({ identifier: "V2HookStartedNotification__HookEventName" });
+export type V2HookStartedNotification__HookEventName = string;
+export const V2HookStartedNotification__HookEventName = Schema.String.annotate({
+  identifier: "V2HookStartedNotification__HookEventName",
+});
 
 export type V2HookStartedNotification__HookExecutionMode = "sync" | "async";
 export const V2HookStartedNotification__HookExecutionMode = Schema.Literals([
@@ -7530,33 +7438,10 @@ export const V2PluginReadResponse__AppSummary = Schema.Struct({
   identifier: "V2PluginReadResponse__AppSummary",
 });
 
-export type V2PluginReadResponse__HookEventName =
-  | "preToolUse"
-  | "permissionRequest"
-  | "postToolUse"
-  | "preCompact"
-  | "postCompact"
-  | "sessionStart"
-  | "sessionEnd"
-  | "userPromptSubmit"
-  | "subagentStart"
-  | "subagentStop"
-  | "stop"
-  | "interrupt";
-export const V2PluginReadResponse__HookEventName = Schema.Literals([
-  "preToolUse",
-  "permissionRequest",
-  "postToolUse",
-  "preCompact",
-  "postCompact",
-  "sessionStart",
-  "sessionEnd",
-  "userPromptSubmit",
-  "subagentStart",
-  "subagentStop",
-  "stop",
-  "interrupt",
-]).annotate({ identifier: "V2PluginReadResponse__HookEventName" });
+export type V2PluginReadResponse__HookEventName = string;
+export const V2PluginReadResponse__HookEventName = Schema.String.annotate({
+  identifier: "V2PluginReadResponse__HookEventName",
+});
 
 export type V2PluginReadResponse__AbsolutePathBuf = string;
 export const V2PluginReadResponse__AbsolutePathBuf = Schema.String.annotate({
