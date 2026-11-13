@@ -1323,7 +1323,10 @@ function sanitizeTerminalHistoryChunk(
       if (escapeSequenceEndIndex === null) {
         return { visibleText, pendingControlSequence: input.slice(index) };
       }
-      append(input.slice(index, escapeSequenceEndIndex));
+      // ESC Z (DECID) is the legacy primary device attributes query.
+      if (nextCodePoint !== 0x5a) {
+        append(input.slice(index, escapeSequenceEndIndex));
+      }
       index = escapeSequenceEndIndex;
       continue;
     }
