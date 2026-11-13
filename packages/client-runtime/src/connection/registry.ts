@@ -52,6 +52,8 @@ import {
   hasSavedBearerRoute,
   mergeLearnedRoutes,
   routesAfterRemoving,
+  routesWithCopiedLabel,
+  routesWithHostLabel,
   upsertRoute,
   type ReportedEndpoint,
 } from "./routes.ts";
@@ -585,7 +587,13 @@ export const make = Effect.gen(function* () {
             connectionRouteId(sameAddress.target) === connectionRouteId(route.target)
               ? existing
               : routesAfterRemoving(existing, connectionRouteId(sameAddress.target));
-          const next = withRoutes(previous, upsertRoute(routes, route));
+          const upserted = upsertRoute(routes, route);
+          const next = withRoutes(
+            previous,
+            registration._tag === "RelayConnectionRegistration"
+              ? upserted
+              : (routesWithCopiedLabel(upserted, registered.target.label) ?? upserted),
+          );
           if (next.addressesChanged) {
             yield* forgetRoutingTrust(environmentId, "register-connection");
           }
@@ -918,12 +926,13 @@ export const make = Effect.gen(function* () {
 
   /**
    * Learned routes reuse the active route's credential, so they do not revoke pull request routing
-   * trust the way a newly paired address does.
+   * trust the way a newly paired address does. The host's name is saved the same way.
    */
   const learnRoutes = Effect.fn("EnvironmentRegistry.learnRoutes")(function* (input: {
     readonly environmentId: EnvironmentId;
     readonly activeRoute: ConnectionRoute;
-    readonly reported: ReadonlyArray<ReportedEndpoint>;
+    readonly reported: ReadonlyArray<ReportedEndpoint> | undefined;
+    readonly label: string;
   }) {
     return yield* withLeaseLock(
       input.environmentId,
@@ -933,12 +942,17 @@ export const make = Effect.gen(function* () {
         }
         const entry = (yield* SubscriptionRef.get(entries)).get(input.environmentId);
         if (entry === undefined) return Option.none<ConnectionCatalogEntry>();
-        const routes = mergeLearnedRoutes({
-          entry,
-          activeRoute: input.activeRoute,
-          reported: input.reported,
-          allowInsecure: allowInsecureRoutes,
-        });
+        const learned =
+          input.reported === undefined
+            ? null
+            : mergeLearnedRoutes({
+                entry,
+                activeRoute: input.activeRoute,
+                reported: input.reported,
+                allowInsecure: allowInsecureRoutes,
+              });
+        const routes =
+          routesWithHostLabel(learned ?? connectionRoutes(entry), input.label) ?? learned;
         if (routes === null) return Option.none<ConnectionCatalogEntry>();
         const next = entryWithRoutes(entry, routes);
         const previousProfiles = new Map(

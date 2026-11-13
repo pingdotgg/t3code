@@ -168,6 +168,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     ) => Effect.Effect<ConnectionBlockedError | undefined>;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
     readonly directEndpoints?: ServerConfig["directEndpoints"];
+    readonly serverLabel?: string;
   },
 ) {
   const storedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>(initialTargets);
@@ -423,7 +424,10 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
               : Stream.make({
                   version: 1 as const,
                   type: "snapshot" as const,
-                  config: { directEndpoints: options.directEndpoints } as ServerConfig,
+                  config: {
+                    directEndpoints: options.directEndpoints,
+                    environment: { label: options.serverLabel ?? "Registry test server" },
+                  } as ServerConfig,
                 }),
           ready: Effect.void,
           probe: Effect.void,
@@ -2105,6 +2109,31 @@ describe("EnvironmentRegistry routes", () => {
     }),
   );
 
+  it.effect("renaming a paired address renames the environment when T3 Connect is first", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [RELAY_TARGET, LAN_TARGET],
+        [LAN_PROFILE],
+        [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const renamed = new BearerConnectionTarget({ ...LAN_TARGET, label: "Studio" });
+        yield* registry.register(
+          lanRegistration(
+            renamed,
+            new BearerConnectionProfile({ ...LAN_PROFILE, label: "Studio" }),
+          ),
+        );
+
+        expect(routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId)).toEqual([
+          new RelayConnectionTarget({ ...RELAY_TARGET, label: "Studio" }),
+          renamed,
+        ]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("re-pairing at another loopback address prefers the new route", () =>
     Effect.gen(function* () {
       const loopback = (connectionId: string, host: string) =>
@@ -2330,6 +2359,40 @@ describe("EnvironmentRegistry routes", () => {
           learned: true,
           httpBaseUrl,
         });
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a T3 Connect environment takes its host's name; a paired one keeps its own", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [RELAY_TARGET, BEARER_TARGET],
+        [BEARER_PROFILE],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+        {
+          directEndpoints: [{ kind: "lan", httpBaseUrl: "https://lan.example.test/" }],
+          serverLabel: "Renamed host",
+        },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        const entries = yield* SubscriptionRef.changes(registry.entries).pipe(
+          Stream.filter((current) =>
+            [RELAY_TARGET, BEARER_TARGET].every(
+              (target) => current.get(target.environmentId)?.alternateRoutes !== undefined,
+            ),
+          ),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+
+        expect(
+          routesOf(yield* Ref.get(harness.storedTargets), RELAY_TARGET.environmentId).map(
+            (target) => target.label,
+          ),
+        ).toEqual(["Renamed host", "Renamed host"]);
+        expect(entries.get(BEARER_TARGET.environmentId)?.target.label).toBe(BEARER_TARGET.label);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
