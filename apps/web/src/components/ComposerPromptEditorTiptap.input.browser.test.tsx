@@ -26,6 +26,22 @@ import {
   type ComposerPromptEditorProps,
 } from "./ComposerPromptEditorTiptap";
 
+vi.mock(import("../state/server"), async (original) => {
+  const { Atom } = await import("effect/reactivity");
+  const { compileResolvedKeybindingsConfig, DEFAULT_KEYBINDINGS } =
+    await import("@t3tools/shared/keybindings");
+  return {
+    ...(await original()),
+    primaryServerKeybindingsAtom: Atom.make(
+      compileResolvedKeybindingsConfig([
+        ...DEFAULT_KEYBINDINGS,
+        { key: "mod+arrowup", command: "thread.previous" },
+        { key: "mod+arrowdown", command: "thread.next" },
+      ]),
+    ),
+  };
+});
+
 const babysit: ServerProviderSkill = {
   name: "babysit",
   path: "/skills/babysit/SKILL.md",
@@ -270,6 +286,29 @@ it.each([
     await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe(value));
   },
 );
+
+// The mocked server keybindings bind Command-Up and Command-Down to thread navigation.
+it("leaves Command-arrow thread navigation bindings to the app on macOS", async () => {
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  await using screen = await mountEditor("first\nsecond");
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.focus("end");
+  });
+  await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+  const reachedApp: string[] = [];
+  const onWindowKeyDown = (event: KeyboardEvent) => {
+    if (!event.defaultPrevented && event.key.startsWith("Arrow")) reachedApp.push(event.key);
+  };
+  window.addEventListener("keydown", onWindowKeyDown);
+  using _listener = {
+    [Symbol.dispose]: () => window.removeEventListener("keydown", onWindowKeyDown),
+  };
+
+  await userEvent.keyboard("{Meta>}{ArrowUp}{ArrowDown}{/Meta}");
+
+  expect(reachedApp).toEqual(["ArrowUp", "ArrowDown"]);
+});
 
 it.each([
   ["e", false, false],
