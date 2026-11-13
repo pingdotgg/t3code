@@ -63,6 +63,14 @@ describe("HtmlRenderFrame", () => {
     expect(document.querySelector('iframe[title="Report"]')).toBe(inlinePage);
   });
 
+  it("closes the enlarged page when focus leaves it, so Tab cannot reach the hidden timeline", async () => {
+    await using _screen = await renderExpanded();
+    page.getByRole("button", { name: "Zoom in" }).element().focus();
+    await userEvent.tab();
+    await vi.waitFor(() => expect(document.querySelector(":popover-open")).toBeNull());
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
   it("opens a page's image above the enlarged page, and Escape closes only the image", async () => {
     await using _screen = await renderExpanded();
     const frame = document.querySelector("iframe")!;

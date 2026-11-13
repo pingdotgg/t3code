@@ -6,7 +6,7 @@ import {
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
 import { Maximize2Icon, MinusIcon, PlusIcon, XIcon } from "lucide-react";
-import { type MouseEvent, type ToggleEvent, useEffect, useState } from "react";
+import { type FocusEvent, type MouseEvent, type ToggleEvent, useEffect, useState } from "react";
 
 import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
 import { cn } from "~/lib/utils";
@@ -90,6 +90,10 @@ export function HtmlRenderFrame(props: {
   const onBoxToggle = (event: ToggleEvent<HTMLDivElement>) => {
     if (event.newState === "closed") collapse();
   };
+  const onBoxBlur = (event: FocusEvent<HTMLDivElement>) => {
+    const next = event.relatedTarget;
+    if (expanded && next instanceof Node && !event.currentTarget.contains(next)) collapse();
+  };
   const onBackdropClick = (event: MouseEvent<HTMLDivElement>) => {
     if (expanded && event.target === event.currentTarget) collapse();
   };
@@ -106,6 +110,7 @@ export function HtmlRenderFrame(props: {
             // Preserve the frame's parent to avoid reloads; the top layer escapes timeline containment.
             popover="auto"
             onToggle={onBoxToggle}
+            onBlur={onBoxBlur}
             onClick={onBackdropClick}
             {...(expanded
               ? { role: "dialog", "aria-modal": true, "aria-label": `Expanded ${title} preview` }
