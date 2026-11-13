@@ -663,7 +663,8 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
       surfaceCreationFailed = true
       return
     }
-    loadThemeConfig(into: config)
+    // Creation proceeds without the file, as before; font_size is also set on the surface config.
+    _ = loadThemeConfig(into: config)
     ghostty_config_finalize(config)
     defer { ghostty_config_free(config) }
 
@@ -954,7 +955,6 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     terminalViewport.backgroundColor = backgroundColorValue
   }
 
-  @discardableResult
   private func loadThemeConfig(into config: ghostty_config_t) -> Bool {
     guard let path = writeThemeConfigFile() else { return false }
     path.withCString { cString in
