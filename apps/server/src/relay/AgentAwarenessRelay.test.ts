@@ -238,6 +238,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getThreadHistoryPage: () => Effect.die("unused"),
     getTimelinePage: () => Effect.die("Unused timeline read"),
     getMessageCount: () => Effect.die("unused message count"),
+    getMessagesById: () => Effect.die("unused messages by id"),
     getTurnItem: () => Effect.die("unused turn item read"),
     getThreadRecords: () => Effect.die("unused record read"),
     getThreadProjection: unused,
@@ -261,6 +262,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     stopDelegatedTasks: unused,
     getThreadEventSequence: unused,
     recoverDelegatedTask: unused,
+    cancelDelegatedTask: unused,
     delegatedTaskResultPending: unused,
     streamStoredEvents: Stream.empty,
     streamStoredEventsFrom: () => Stream.empty,
@@ -376,6 +378,160 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect("publishes the parent as needing input when its subagent raises a secret card", () =>
+    Effect.gen(function* () {
+      const now = DateTime.makeUnsafe(NOW);
+      const child = waitingChild({
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("child-secret-card"),
+          kind: "user_input",
+          createdAt: now,
+          blocking: true,
+          userOnly: true,
+        },
+      });
+      const parent = shell({ status: "completed" });
+      const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+      const pulls = yield* Queue.unbounded<void>();
+      const { relay, publications } = yield* makeTestRelay({
+        readShell: (threadId) => Effect.succeed(threadId === child.id ? child : parent),
+        domainEvents: Stream.fromEffectRepeat(
+          Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
+        ),
+      });
+      yield* relay.start();
+      yield* Queue.take(pulls);
+      const runId = RunId.make("run:child-secret-card");
+      // Recording a secret card emits only this event for the child.
+      yield* Queue.offer(events, {
+        id: EventId.make("event:child-secret-card"),
+        type: "turn-item.updated",
+        threadId: CHILD_THREAD_ID,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("child-secret-card"),
+          threadId: CHILD_THREAD_ID,
+          runId,
+          nodeId: NodeId.make("node:child-secret-card"),
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "waiting",
+          title: "SMS code",
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "secret_request",
+          label: "SMS code",
+          reason: "The agent needs the code.",
+          secretStatus: "pending",
+        },
+      });
+      yield* Queue.take(pulls);
+      yield* relay.drain;
+      assert.equal(publications.length, 1);
+      assert.isTrue(publications[0]?.url.includes(`/threads/${THREAD_ID}/`) ?? false);
+      assert.equal(publications[0]?.state?.phase, "waiting_for_input");
+    }),
+  );
+
+  it.effect(
+    "clears the parent's input wait when the user steers its subagent past a link card",
+    () =>
+      Effect.gen(function* () {
+        const now = DateTime.makeUnsafe(NOW);
+        let child = waitingChild({
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("child-link-card"),
+            kind: "user_input",
+            createdAt: now,
+            blocking: true,
+            userOnly: true,
+          },
+        });
+        const parent = shell({ status: "completed" });
+        const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+        const pulls = yield* Queue.unbounded<void>();
+        const { relay, publications } = yield* makeTestRelay({
+          readShell: (threadId) => Effect.succeed(threadId === child.id ? child : parent),
+          domainEvents: Stream.fromEffectRepeat(
+            Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
+          ),
+        });
+        yield* relay.start();
+        yield* Queue.take(pulls);
+        const runId = RunId.make("run:child-link-card");
+        const item = {
+          threadId: CHILD_THREAD_ID,
+          runId,
+          nodeId: NodeId.make("node:child-link-card"),
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          title: null,
+          startedAt: now,
+          updatedAt: now,
+        } as const;
+        yield* Queue.offer(events, {
+          id: EventId.make("event:child-link-card"),
+          type: "turn-item.updated",
+          threadId: CHILD_THREAD_ID,
+          runId,
+          occurredAt: now,
+          payload: {
+            ...item,
+            id: TurnItemId.make("child-link-card"),
+            ordinal: 1,
+            status: "waiting",
+            completedAt: null,
+            type: "link_request",
+            url: "https://example.com/login",
+            label: "Sign in",
+            reason: "The agent needs you to sign in.",
+            linkStatus: "pending",
+          },
+        });
+        yield* Queue.take(pulls);
+        yield* relay.drain;
+        assert.equal(publications[0]?.state?.phase, "waiting_for_input");
+
+        // Steering a running child records only these events for it; the
+        // projection then stops counting the link card as pending.
+        child = waitingChild({ pendingRuntimeRequest: null });
+        yield* Queue.offer(events, {
+          id: EventId.make("event:child-steer"),
+          type: "turn-item.updated",
+          threadId: CHILD_THREAD_ID,
+          runId,
+          occurredAt: now,
+          payload: {
+            ...item,
+            id: TurnItemId.make("child-steer"),
+            ordinal: 2,
+            status: "completed",
+            completedAt: now,
+            createdBy: "user",
+            creationSource: "web",
+            type: "user_message",
+            messageId: MessageId.make("message:child-steer"),
+            inputIntent: "steer",
+            text: "Skip the login.",
+            attachments: [],
+          },
+        });
+        yield* Queue.take(pulls);
+        // The relay confirms a move into completed before publishing it.
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.equal(publications.length, 2);
+        assert.equal(publications[1]?.state?.phase, "completed");
+      }),
+  );
+
   it.effect("republishes a completed parent for its waiting child after a relink", () =>
     Effect.gen(function* () {
       const parent = shell({ status: "completed" });
@@ -399,7 +555,7 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.drain;
       assert.equal(publications.length, 2);
       assert.equal(publications[1]?.state?.phase, "waiting_for_approval");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps a child's alert time when the parent's own request comes and goes", () =>
@@ -567,7 +723,7 @@ describe("AgentAwarenessRelay", () => {
         yield* relay.drain;
         assert.equal(publications.length, 3);
         assert.equal(publications[2]?.state, null);
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("holds a completion through a continuation gap, then publishes it once", () =>
@@ -1015,5 +1171,5 @@ it.effect("catches up after startup without polling after success", () =>
     assert.equal(catchUp.activitySnapshotReads, 3);
     assert.equal(publications.length, 2);
     assert.equal(publications[1]?.state?.threadId, THREAD_ID);
-  }).pipe(Effect.scoped),
+  }),
 );
