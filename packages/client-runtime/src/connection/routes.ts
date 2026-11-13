@@ -340,17 +340,43 @@ export function mergeLearnedRoutes(input: {
 // A paired token goes to a plain HTTP address outside the tailnet only when
 // it was paired that way, so a token paired over HTTPS, loopback, or the
 // tailnet keeps to the transports it was issued for.
+function pairedOverPlainHttp(route: ConnectionRoute): boolean {
+  const kind = connectionRouteKind(route);
+  return (
+    routeHttpBaseUrl(route)?.startsWith("http:") === true && (kind === "lan" || kind === "public")
+  );
+}
+
 function tokenAllowsPlainHttp(
   routes: ReadonlyArray<ConnectionRoute>,
   credentialId: string,
 ): boolean {
   const credentialRoute = routes.find((route) => connectionRouteId(route.target) === credentialId);
-  return (
-    credentialRoute !== undefined &&
-    routeHttpBaseUrl(credentialRoute)?.startsWith("http:") === true &&
-    (connectionRouteKind(credentialRoute) === "lan" ||
-      connectionRouteKind(credentialRoute) === "public")
-  );
+  return credentialRoute !== undefined && pairedOverPlainHttp(credentialRoute);
+}
+
+/**
+ * The paired addresses of `paired`'s environment that take the login just issued over it. The
+ * server accepts a login at every address, and learned routes borrow one of these. A plain HTTP
+ * address gets it only under the rule learned routes follow.
+ */
+export function routesSharingLogin(
+  routes: ReadonlyArray<ConnectionRoute>,
+  paired: ConnectionRoute,
+): ReadonlyArray<ConnectionRoute> {
+  const inClear = pairedOverPlainHttp(paired);
+  return routes.filter((route) => {
+    if (route.target._tag !== "BearerConnectionTarget" || isLearned(route)) return false;
+    if (connectionRouteId(route.target) === connectionRouteId(paired.target)) return true;
+    const profile = Option.getOrNull(route.profile);
+    if (profile?._tag !== "BearerConnectionProfile") return false;
+    return (
+      inClear ||
+      !profile.httpBaseUrl.startsWith("http:") ||
+      profile.network === "tailscale" ||
+      connectionRouteKind(route) === "loopback"
+    );
+  });
 }
 
 /**

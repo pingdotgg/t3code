@@ -1,5 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
@@ -8,6 +9,7 @@ import {
   ConnectionProfile,
 } from "../connection/catalog.ts";
 import { type ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
+import { routesSharingLogin } from "../connection/routes.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
 import { StoredPullRequestRoutingPermission } from "../connection/pullRequestRoutingPermissions.ts";
 
@@ -134,7 +136,43 @@ export function registerConnectionInCatalog(
   switch (registration._tag) {
     case "RelayConnectionRegistration":
       return next;
-    case "BearerConnectionRegistration":
+    case "BearerConnectionRegistration": {
+      const { connectionId } = registration.target;
+      const profiles = replaceCatalogValue(
+        next.profiles,
+        (value) => value.connectionId,
+        registration.profile,
+      );
+      // An edit registers the login it already has, which must not overwrite the other addresses'.
+      const isNewLogin =
+        document.credentials.find((value) => value.connectionId === connectionId)?.credential
+          .token !== registration.credential.token;
+      const owners = new Set([
+        connectionId,
+        ...(isNewLogin
+          ? routesSharingLogin(
+              routes.map((target) => ({
+                target,
+                profile: Option.fromUndefinedOr(
+                  profiles.find((profile) => profile.connectionId === connectionIdOf(target)),
+                ),
+              })),
+              { target: registration.target, profile: Option.some(registration.profile) },
+            ).flatMap((route) => connectionIdOf(route.target) ?? [])
+          : []),
+      ]);
+      return {
+        ...next,
+        profiles,
+        credentials: [
+          ...next.credentials.filter((value) => !owners.has(value.connectionId)),
+          ...Array.from(owners, (owner) => ({
+            connectionId: owner,
+            credential: registration.credential,
+          })),
+        ],
+      };
+    }
     case "SshConnectionRegistration":
       return {
         ...next,
