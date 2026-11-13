@@ -806,9 +806,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
-    effectiveEnvMode: checkoutThread.worktreePath === null ? "local" : "worktree",
-    activeWorktreePath: checkoutThread.worktreePath,
-    activeThreadBranch: checkoutThread.branch,
+    effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
+    activeWorktreePath: thread.worktreePath,
+    activeThreadBranch: thread.branch,
     currentGitBranch: visibleGitStatus?.refName ?? null,
   });
   const prStatus = prStatusIndicator(pr, linkedPullRequestStatus?.sourceControlProvider);
@@ -1689,9 +1689,9 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
   );
   const checkoutThread = withoutRemovedCheckout(thread, visibleGitStatus);
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
-    effectiveEnvMode: checkoutThread.worktreePath === null ? "local" : "worktree",
-    activeWorktreePath: checkoutThread.worktreePath,
-    activeThreadBranch: checkoutThread.branch,
+    effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
+    activeWorktreePath: thread.worktreePath,
+    activeThreadBranch: thread.branch,
     currentGitBranch: visibleGitStatus?.refName ?? null,
   });
   const modelInstanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
