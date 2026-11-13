@@ -256,6 +256,29 @@ function upsertVisibleTurnItem(
   return updated;
 }
 
+// A user item retained for a queued run stays hidden until the run leaves the
+// queue, and its update can arrive before or after that run update. Items in
+// `turnItems` were loaded or streamed, so they skip the partial-window check;
+// items never received stay absent.
+function restoreQueuedUserItems(
+  projection: OrchestrationV2ThreadProjection,
+  runId: OrchestrationV2Run["id"],
+): OrchestrationV2ThreadProjection["visibleTurnItems"] {
+  let visibleTurnItems = projection.visibleTurnItems;
+  for (const item of projection.turnItems) {
+    if (item.runId !== runId || item.type !== "user_message" || item.inputIntent !== "queued_turn")
+      continue;
+    if (!shouldShowLocalTurnItem(projection, item)) continue;
+    visibleTurnItems = upsertVisibleTurnItem(
+      { ...projection, visibleTurnItems },
+      item,
+      false,
+      null,
+    );
+  }
+  return visibleTurnItems;
+}
+
 export function applyOrchestrationV2ProjectionEvent(
   projection: OrchestrationV2ThreadProjection | null,
   event: OrchestrationV2DomainEvent,
@@ -293,14 +316,21 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.provider-switched":
     case "thread.guest-share-updated":
       return { ...base, thread: event.payload };
-    // Visited tracking is read state, not activity: skip the updatedAt bump.
+    // Visited tracking and tags are not activity: skip the updatedAt bump.
     case "thread.visited":
+    case "thread.tags-updated":
     case "thread.marked-unread":
       return { ...projection, thread: event.payload };
     case "run.created":
     case "run.updated": {
       const next = { ...base, runs: upsertEntity(base.runs, event.payload) };
-      return { ...next, visibleTurnItems: activeVisibleTurnItems(next) };
+      const visible = { ...next, visibleTurnItems: activeVisibleTurnItems(next) };
+      const wasQueued = base.runs.some(
+        (run) => run.id === event.payload.id && run.status === "queued",
+      );
+      return wasQueued && event.payload.status !== "queued"
+        ? { ...visible, visibleTurnItems: restoreQueuedUserItems(visible, event.payload.id) }
+        : visible;
     }
     case "run.background-work-cancelled":
       return {
@@ -370,12 +400,15 @@ export function applyOrchestrationV2ProjectionEvent(
     case "plan.updated":
       return { ...base, plans: upsertEntity(base.plans, event.payload) };
     case "turn-item.updated": {
-      const payload = restoreTurnItemBodies(event.payload, latestBodies(projection));
+      let payload = restoreTurnItemBodies(event.payload, latestBodies(projection));
       // Streamed updates land on the newest items, so search from the end.
       let itemIndex = projection.turnItems.length - 1;
       while (itemIndex >= 0 && projection.turnItems[itemIndex]!.id !== payload.id) {
         itemIndex -= 1;
       }
+      const deferredWork =
+        itemIndex === -1 ? undefined : projection.turnItems[itemIndex]?.deferredWork;
+      if (deferredWork !== undefined) payload = { ...payload, deferredWork };
       if (
         partialTimeline &&
         itemIndex === -1 &&

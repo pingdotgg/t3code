@@ -2,11 +2,14 @@
 import { AbsolutePath, Location, Model, Provider, Session } from "@opencode/client/effect";
 import { TextGenerationError } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import * as NodeURL from "node:url";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { isProviderNativeImageAttachment } from "@t3tools/provider-core/server/attachmentPrompt";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as OpenCode2Server from "./OpenCode2Server.ts";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
@@ -29,6 +32,7 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
   input: TextGenerationOperations.Request<Schema.Top>,
 ) {
   const { resolveAttachmentPath } = yield* ProviderHost.ProviderHost;
+  const fileSystem = yield* FileSystem.FileSystem;
   const { client } = connection;
   const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(input.modelSelection.model);
   if (parsed === null) {
@@ -112,38 +116,52 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
     ),
     Effect.forkScoped,
   );
-  const session = yield* client.session.create({
-    title: `T3 Code ${input.operation}`,
-    location: Location.PublicRef.make({ directory: AbsolutePath.make(input.cwd) }),
-    model: Model.Ref.make({
-      providerID: Provider.ID.make(parsed.providerID),
-      id: Model.ID.make(parsed.modelID),
-      ...(variant === undefined ? {} : { variant: Model.VariantID.make(variant) }),
-    }),
-    permissions: GENERATION_PERMISSIONS,
+  // The limit covers creating the session and sending the prompt as well, since
+  // either request can stall while the event stream stays connected.
+  const generate = Effect.gen(function* () {
+    const session = yield* client.session.create({
+      title: `T3 Code ${input.operation}`,
+      location: Location.PublicRef.make({ directory: AbsolutePath.make(input.cwd) }),
+      model: Model.Ref.make({
+        providerID: Provider.ID.make(parsed.providerID),
+        id: Model.ID.make(parsed.modelID),
+        ...(variant === undefined ? {} : { variant: Model.VariantID.make(variant) }),
+      }),
+      permissions: GENERATION_PERMISSIONS,
+    });
+    sessionId = session.id;
+    yield* Effect.addFinalizer(() =>
+      client.session
+        .remove({ sessionID: session.id })
+        .pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true })),
+    );
+    const images: Array<{ uri: string; name: string }> = [];
+    // As in the adapter: an external server may not share T3's attachment directory, and
+    // OpenCode rejects the whole prompt if an attached file is missing.
+    for (const attachment of connection.external ? [] : (input.attachments ?? [])) {
+      if (!isProviderNativeImageAttachment(attachment)) continue;
+      const path = resolveAttachmentPath(attachment);
+      if (path === null) continue;
+      const exists = yield* fileSystem.exists(path).pipe(Effect.orElseSucceed(() => false));
+      if (exists) images.push({ uri: NodeURL.pathToFileURL(path).href, name: attachment.name });
+    }
+    yield* client.session.prompt({
+      sessionID: session.id,
+      text: input.prompt,
+      ...(images.length === 0 ? {} : { files: images }),
+    });
+    return yield* Deferred.await(outcome);
   });
-  sessionId = session.id;
-  yield* Effect.addFinalizer(() =>
-    client.session
-      .remove({ sessionID: session.id })
-      .pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true })),
-  );
-  const images = (input.attachments ?? []).flatMap((attachment) => {
-    if (attachment.type !== "image") return [];
-    const path = resolveAttachmentPath(attachment);
-    return path === null ? [] : [{ uri: `file://${path}`, name: attachment.name }];
-  });
-  yield* client.session.prompt({
-    sessionID: session.id,
-    text: input.prompt,
-    ...(images.length === 0 ? {} : { files: images }),
-  });
-  const result = yield* Deferred.await(outcome).pipe(
+  const result = yield* generate.pipe(
     Effect.timeoutOrElse({
       duration: GENERATION_TIMEOUT,
       orElse: () =>
-        client.session.interrupt({ sessionID: Session.ID.make(session.id) }).pipe(
-          Effect.ignore,
+        (sessionId === undefined
+          ? Effect.void
+          : client.session
+              .interrupt({ sessionID: Session.ID.make(sessionId) })
+              .pipe(Effect.timeout("5 seconds"), Effect.ignore)
+        ).pipe(
           Effect.as<Outcome>({
             _tag: "failed",
             detail: "OpenCode did not finish generating in time.",
@@ -170,11 +188,13 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
 export const make = Effect.fn("OpenCode2TextGeneration.make")(function* () {
   const server = yield* OpenCode2Server.OpenCode2Server;
   const host = yield* ProviderHost.ProviderHost;
+  const fileSystem = yield* FileSystem.FileSystem;
   const run: TextGenerationOperations.Runner = (input) =>
     server
       .withConnection((connection) => runOnServer(connection, input))
       .pipe(
         Effect.provideService(ProviderHost.ProviderHost, host),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.mapError((cause) =>
           isTextGenerationError(cause)
             ? cause

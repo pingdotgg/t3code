@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -236,9 +237,9 @@ function recorderThreadConfigKeys(transcript: CodexAppServerReplayTranscript): R
 }
 
 /**
- * `cwd`, `model` and host-supplied MCP servers (machine-local URLs, short-lived
- * authorization headers) vary per machine, and recorder-only keys are not the
- * client's.
+ * `cwd`, `model`, host-supplied MCP servers (machine-local URLs, short-lived
+ * authorization headers) and the T3 thread id vary per machine or run, and
+ * recorder-only keys are not the client's.
  */
 function normalizeThreadRequest(frame: unknown, ignoredConfigKeys: ReadonlySet<string>): unknown {
   if (typeof frame !== "object" || frame === null) return frame;
@@ -256,7 +257,10 @@ function normalizeThreadRequest(frame: unknown, ignoredConfigKeys: ReadonlySet<s
   if (typeof config !== "object" || config === null) return { ...record, params };
   const owned = Object.fromEntries(
     Object.entries(config as Record<string, unknown>).filter(
-      ([key]) => key !== "mcp_servers" && !key.startsWith("mcp_servers."),
+      ([key]) =>
+        key !== "mcp_servers" &&
+        !key.startsWith("mcp_servers.") &&
+        key !== "shell_environment_policy.set.T3CODE_THREAD_ID",
     ),
   );
   for (const key of ignoredConfigKeys) delete owned[key];
@@ -269,7 +273,11 @@ function sameFrame(
   ignoredConfigKeys: ReadonlySet<string> = new Set(),
 ): boolean {
   const normalize = (frame: unknown) =>
-    stableStringify(normalizeThreadRequest(normalizeReplayFrame(frame), ignoredConfigKeys));
+    pipe(
+      normalizeReplayFrame(frame),
+      (request) => normalizeThreadRequest(request, ignoredConfigKeys),
+      stableStringify,
+    );
   return normalize(left) === normalize(right);
 }
 

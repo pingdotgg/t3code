@@ -46,23 +46,67 @@ export function parseRange(a1: string): CellRange | undefined {
 
 /** Grows a range until it covers every merged cell it touches, as Excel selects. */
 export function coverMerges(range: CellRange, merges: readonly CellRange[]): CellRange {
-  const grown = merges.reduce(
-    (current, merge) =>
-      overlaps(current, merge)
-        ? {
-            top: Math.min(current.top, merge.top),
-            left: Math.min(current.left, merge.left),
-            bottom: Math.max(current.bottom, merge.bottom),
-            right: Math.max(current.right, merge.right),
-          }
-        : current,
-    range,
-  );
+  let grown = range;
+  for (let pass = 0; pass < 2; pass++) {
+    const next = merges.reduce(
+      (current, merge) =>
+        overlaps(current, merge)
+          ? {
+              top: Math.min(current.top, merge.top),
+              left: Math.min(current.left, merge.left),
+              bottom: Math.max(current.bottom, merge.bottom),
+              right: Math.max(current.right, merge.right),
+            }
+          : current,
+      grown,
+    );
+    if (same(next, grown)) return next;
+    grown = next;
+  }
 
-  // A merge the range grew into can touch another one it did not reach before.
-  if (same(grown, range)) return grown;
+  // Each overlap inequality becomes true only once as the selection grows. Sweep sorted
+  // edges so a chain of merges cannot force repeated full scans or recursive stack growth.
+  const sweeps = (
+    [
+      { mergeEdge: "top", rangeEdge: "bottom", direction: 1 },
+      { mergeEdge: "bottom", rangeEdge: "top", direction: -1 },
+      { mergeEdge: "left", rangeEdge: "right", direction: 1 },
+      { mergeEdge: "right", rangeEdge: "left", direction: -1 },
+    ] as const
+  ).map(({ mergeEdge, rangeEdge, direction }) => ({
+    rangeEdge,
+    direction,
+    position: 0,
+    edges: merges
+      .map((merge, index) => ({ index, value: direction * merge[mergeEdge] }))
+      .sort((a, b) => a.value - b.value),
+  }));
+  const crossed = new Uint8Array(merges.length);
+  let changed;
+  do {
+    changed = false;
+    for (const sweep of sweeps) {
+      let edge = sweep.edges[sweep.position];
+      while (edge && edge.value <= sweep.direction * grown[sweep.rangeEdge]) {
+        const index = edge.index;
+        crossed[index] = crossed[index]! + 1;
+        if (crossed[index] === 4) {
+          const merge = merges[index]!;
+          const next = {
+            top: Math.min(grown.top, merge.top),
+            left: Math.min(grown.left, merge.left),
+            bottom: Math.max(grown.bottom, merge.bottom),
+            right: Math.max(grown.right, merge.right),
+          };
+          changed ||= !same(grown, next);
+          grown = next;
+        }
+        edge = sweep.edges[++sweep.position];
+      }
+    }
+  } while (changed);
 
-  return coverMerges(grown, merges);
+  return grown;
 }
 
 /**

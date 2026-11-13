@@ -73,7 +73,7 @@ A [peer link](../../apps/server/src/peer/PeerLinks.ts) lets one environment's
 agents work in another. The linking environment signs in to the other's `/mcp`
 as an outside MCP client, with a pairing code from it, and keeps that session's
 token in its own secret store. The other environment needs nothing new: it
-sees one more OAuth client, lists it in Connections, and revokes it there.
+sees one more OAuth client, lists it in Sharing & access, and revokes it there.
 Unlinking on the linking side only forgets the token.
 
 - **The Linked environments beta (`linkedEnvironmentsEnabled`) gates both
@@ -94,9 +94,15 @@ Unlinking on the linking side only forgets the token.
   `T3-Mode-Limit`, which the receiving `/mcp` only ever narrows the client's
   approved access with. A plan-mode agent therefore cannot start full-access
   work through a full-access link.
-- **The token goes only to an address that proves it is the linked
-  environment**: its descriptor must report the linked environment id. A LAN
-  address that now belongs to another machine never receives it.
+- **A descriptor's environment id filters addresses; it does not prove
+  identity.** The token goes only to an address that reports the linked id, so
+  a LAN address that now reports another machine's never receives it. Anything can
+  report any id, though, so only addresses from the user's client count as a
+  machine's, and never a loopback one, which names whichever machine opens
+  it. An address an agent gives is recorded alone, and
+  [`linkRequestTarget`](../../packages/client-runtime/src/linkRequest.ts) names
+  a machine for it only when the client already reaches exactly one machine
+  there. An address alone never moves an unexpired link to another address.
 - **All callers on one side share the link's single session on the other**,
   so idempotency keys are hashed with the caller's namespace before they
   leave. Without that, two agents reusing a key would collide on the far side.

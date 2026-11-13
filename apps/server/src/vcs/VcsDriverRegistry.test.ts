@@ -1,10 +1,12 @@
 import { assert, it, describe } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/process";
+import { VcsProcessExitError } from "@t3tools/contracts";
 
 import * as VcsProcess from "./VcsProcess.ts";
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
@@ -21,10 +23,12 @@ const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
 const normalizeGitArgs = (args: ReadonlyArray<string>): ReadonlyArray<string> =>
   args[0] === "-C" && args.length >= 2 ? args.slice(2) : args;
 
+const DETECT_COMMAND = "rev-parse --is-inside-work-tree --show-toplevel --git-common-dir";
+
 describe("VcsDriverRegistry", () => {
   const makeDiskBackedLayer = (rootDir: string, calls: string[]) =>
     Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
-      Layer.provide(NodeServices.layer),
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       Layer.provide(
         Layer.mock(VcsProjectConfig.VcsProjectConfig)({
           resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
@@ -49,13 +53,16 @@ describe("VcsDriverRegistry", () => {
                   stderr: "fatal: not a git repository",
                 };
               }
-              if (command === "rev-parse --is-inside-work-tree") return processOutput("true\n");
-              if (command === "rev-parse --show-toplevel") return processOutput(`${repoDir}\n`);
-              if (command === "rev-parse --git-common-dir") {
-                return processOutput(`${path.relative(input.cwd, path.join(repoDir, ".git"))}\n`);
+              if (command === DETECT_COMMAND) {
+                return processOutput(
+                  `true\n${repoDir}\n${path.relative(input.cwd, path.join(repoDir, ".git"))}\n`,
+                );
               }
               return processOutput("");
-            }).pipe(Effect.provide(NodeServices.layer), Effect.orDie),
+            }).pipe(
+              Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+              Effect.orDie,
+            ),
         }),
       ),
     );
@@ -75,9 +82,9 @@ describe("VcsDriverRegistry", () => {
         yield* fs.remove(path.join(repoDir, ".git"), { recursive: true });
 
         assert.equal(yield* registry.detect({ cwd: repoDir }), null);
-        assert.equal(calls.filter((call) => call === "rev-parse --is-inside-work-tree").length, 2);
+        assert.equal(calls.filter((call) => call === DETECT_COMMAND).length, 2);
       }).pipe(Effect.provide(makeDiskBackedLayer(repoDir, calls)));
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("detects again when git init creates a repository inside a cached one", () =>
@@ -101,7 +108,7 @@ describe("VcsDriverRegistry", () => {
           projectDir,
         );
       }).pipe(Effect.provide(makeDiskBackedLayer(parentDir, calls)));
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("detects a repository created after a negative lookup", () =>
@@ -118,8 +125,57 @@ describe("VcsDriverRegistry", () => {
         yield* fs.makeDirectory(path.join(repoDir, ".git"));
 
         assert.equal((yield* registry.detect({ cwd: repoDir }))?.repository.rootPath, repoDir);
-        assert.equal(calls.filter((call) => call === "rev-parse --is-inside-work-tree").length, 2);
+        assert.equal(calls.filter((call) => call === DETECT_COMMAND).length, 2);
       }).pipe(Effect.provide(makeDiskBackedLayer(repoDir, calls)));
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+  const makeFailingLayer = (detectOutput: VcsProcess.VcsProcessOutput) =>
+    Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      Layer.provide(
+        Layer.mock(VcsProjectConfig.VcsProjectConfig)({
+          resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: (input) =>
+            normalizeGitArgs(input.args).join(" ") === DETECT_COMMAND
+              ? Effect.succeed(detectOutput)
+              : Effect.fail(
+                  new VcsProcessExitError({
+                    operation: input.operation,
+                    command: "git",
+                    cwd: input.cwd,
+                    exitCode: 128,
+                    detail: "fatal: bad config line 1 in file .git/config",
+                  }),
+                ),
+        }),
+      ),
+    );
+
+  it.effect("reads only a failed work-tree probe as no repository", () =>
+    Effect.gen(function* () {
+      const probeFailure = yield* VcsDriverRegistry.VcsDriverRegistry.pipe(
+        Effect.flatMap((registry) => registry.detect({ cwd: "/repo" })),
+        Effect.provide(
+          makeFailingLayer({
+            ...processOutput(""),
+            exitCode: ChildProcessSpawner.ExitCode(128),
+            stderr: "fatal: bad config line 1 in file .git/config",
+          }),
+        ),
+      );
+      assert.equal(probeFailure, null);
+
+      // A newline in the root path makes detection ask for it again, and main surfaced that failure.
+      const fallbackFailure = yield* VcsDriverRegistry.VcsDriverRegistry.pipe(
+        Effect.flatMap((registry) => registry.detect({ cwd: "/repo" })),
+        Effect.provide(makeFailingLayer(processOutput("true\n/re\npo\n.git\n"))),
+        Effect.flip,
+      );
+      assert.equal(fallbackFailure._tag, "VcsProcessExitError");
+    }),
   );
 });
