@@ -165,11 +165,13 @@ function planRead(
   if (last === undefined || group.targets.some((target) => !last.watches.has(watchKey(target)))) {
     return { detail: true, activity: true };
   }
-  // Nothing on the host changes when the no-checks deadline passes, so it alone prompts a read.
+  // Nothing on the host changes when the no-checks deadline passes, or when a push to another
+  // branch clears a watch's answer, so either alone prompts a read.
   const checksDue = group.targets.some(
     ({ watch }) =>
-      watch.checksAwaitedSince != null &&
-      now - Date.parse(watch.checksAwaitedSince) >= PULL_REQUEST_WATCH_NO_CHECKS_MS,
+      watch.checksPending === undefined ||
+      (watch.checksAwaitedSince != null &&
+        now - Date.parse(watch.checksAwaitedSince) >= PULL_REQUEST_WATCH_NO_CHECKS_MS),
   );
   if (fingerprint === null) {
     const read =
@@ -189,6 +191,10 @@ function planRead(
   };
 }
 
+// Lets the orchestrator tell that a push cleared the answer while this read was in flight.
+const checksPendingBeforeOf = ({ watch }: WatchTarget) =>
+  watch.checksPending === undefined ? {} : { checksPendingBefore: watch.checksPending };
+
 function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatch): boolean {
   return (
     left.startedAt === right.startedAt &&
@@ -202,8 +208,11 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     left.remarksThrough === right.remarksThrough &&
     left.remarkIds.join("\n") === right.remarkIds.join("\n") &&
     left.conflicting === right.conflicting &&
+    left.mergeQueueRemovalId === right.mergeQueueRemovalId &&
     left.wakes === right.wakes &&
-    left.checksAwaitedSince === right.checksAwaitedSince
+    left.awaitingBaseline === right.awaitingBaseline &&
+    left.checksAwaitedSince === right.checksAwaitedSince &&
+    left.checksPending === right.checksPending
   );
 }
 
@@ -312,6 +321,7 @@ export const make = Effect.gen(function* () {
       ...identityOf(target.link),
       startedAt: target.watch.startedAt,
       watch: next,
+      ...checksPendingBeforeOf(target),
       ...(endedWatch === undefined ? {} : { endedWatch }),
       ...(wake === undefined
         ? {}
@@ -453,11 +463,13 @@ export const make = Effect.gen(function* () {
       ...identityOf(first.target.link),
       startedAt: first.target.watch.startedAt,
       watch: first.next,
+      ...checksPendingBeforeOf(first.target),
       ...(first.endedWatch === undefined ? {} : { endedWatch: first.endedWatch }),
       others: rest.map((item) => ({
         ...identityOf(item.target.link),
         startedAt: item.target.watch.startedAt,
         watch: item.next,
+        ...checksPendingBeforeOf(item.target),
         ...(item.endedWatch === undefined ? {} : { endedWatch: item.endedWatch }),
         ...(item.wake.includesRemarks === true ? { includesRemarks: true } : {}),
       })),
