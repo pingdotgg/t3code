@@ -1728,7 +1728,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
       }),
   );
 
-  it.effect("reads a quiet open branch pull request less often than every minute", () =>
+  it.effect("reads a quiet open branch pull request every 5 minutes", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(NOW));
       const fixture = yield* makeHarness({
@@ -1764,9 +1764,12 @@ describe("ThreadSettlementServiceV2 worker", () => {
           yield* Queue.take(fixture.snapshotReads);
           yield* reactor.drain;
         }
-
-        // Each read is an `az` process on Azure DevOps; the sync reactor reads quiet PRs every 5 minutes.
         assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+
+        yield* TestClock.adjust("1 minute");
+        yield* Queue.take(fixture.snapshotReads);
+        yield* reactor.drain;
+        assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
       }).pipe(Effect.provide(fixture.layer));
     }),
   );
