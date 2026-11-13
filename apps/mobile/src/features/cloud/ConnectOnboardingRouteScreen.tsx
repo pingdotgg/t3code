@@ -5,7 +5,8 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { useAuth } from "@clerk/expo";
 import { useNavigation } from "@react-navigation/native";
 import { useState } from "react";
-import { RefreshControl, View } from "react-native";
+import { View } from "react-native";
+import { RefreshControl } from "../../components/ui/RefreshControl";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { reportAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";

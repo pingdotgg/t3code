@@ -60,6 +60,8 @@ export class GitWorkflowService extends Context.Service<
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
+    /** The checkout's own HEAD file, inside a linked worktree's admin directory when there is one. */
+    readonly headPath: (cwd: string) => Effect.Effect<string | null, never>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
     readonly runStackedAction: (
       input: GitRunStackedActionInput,
@@ -93,6 +95,7 @@ export class GitWorkflowService extends Context.Service<
       readonly remoteName: string;
       readonly refName: string;
     }) => Effect.Effect<boolean, GitCommandError>;
+    readonly resolvePrimaryRemoteName: (cwd: string) => Effect.Effect<string, GitCommandError>;
     readonly resolveRemoteTrackingCommit: (input: {
       readonly cwd: string;
       readonly refName: string;
@@ -370,6 +373,19 @@ export const make = Effect.gen(function* () {
     invalidateLocalStatus: gitManager.invalidateLocalStatus,
     invalidateRemoteStatus: gitManager.invalidateRemoteStatus,
     invalidateStatus: gitManager.invalidateStatus,
+    headPath: Effect.fn("GitWorkflowService.headPath")(function (cwd) {
+      return git
+        .execute({
+          operation: "GitWorkflowService.headPath",
+          cwd,
+          args: ["rev-parse", "--path-format=absolute", "--git-path", "HEAD"],
+          allowNonZeroExit: true,
+        })
+        .pipe(
+          Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() || null : null)),
+          Effect.orElseSucceed(() => null),
+        );
+    }),
     pullCurrentBranch: Effect.fn("GitWorkflowService.pullCurrentBranch")(function (cwd) {
       return ensureGitCommand("GitWorkflowService.pullCurrentBranch", cwd).pipe(
         Effect.andThen(git.pullCurrentBranch(cwd)),
@@ -435,6 +451,13 @@ export const make = Effect.gen(function* () {
         Effect.andThen(git.remoteBranchExists(input)),
       );
     }),
+    resolvePrimaryRemoteName: Effect.fn("GitWorkflowService.resolvePrimaryRemoteName")(
+      function (cwd) {
+        return ensureGitCommand("GitWorkflowService.resolvePrimaryRemoteName", cwd).pipe(
+          Effect.andThen(git.resolvePrimaryRemoteName(cwd)),
+        );
+      },
+    ),
     resolveRemoteTrackingCommit: Effect.fn("GitWorkflowService.resolveRemoteTrackingCommit")(
       function (input) {
         return ensureGitCommand("GitWorkflowService.resolveRemoteTrackingCommit", input.cwd).pipe(
