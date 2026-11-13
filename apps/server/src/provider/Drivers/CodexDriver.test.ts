@@ -603,6 +603,9 @@ it.layer(layerTest)("CodexDriver", (it) => {
         expect(yield* fs.readLink(NodePath.join(shadowHome, "config.toml"))).toBe(
           NodePath.join(codexHome, "config.toml"),
         );
+        expect(yield* fs.readLink(NodePath.join(shadowHome, "sessions"))).toBe(
+          NodePath.join(codexHome, "sessions"),
+        );
       }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
         Effect.scoped,
