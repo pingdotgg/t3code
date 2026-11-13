@@ -19,7 +19,7 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { CircleArrowUpIcon } from "lucide-react";
+import { CircleArrowUpIcon, InfoIcon } from "lucide-react";
 import { type ComponentProps, useRef, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
@@ -351,7 +351,25 @@ export function ServerUpdateAction({
   }
 
   if (selfUpdate === null && isDesktopSshLaunched(serverConfig)) {
-    return <span className="text-muted-foreground text-xs">{DESKTOP_SSH_LAUNCH_UPDATE_NOTE}</span>;
+    return appearance === "icon" ? (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              role="img"
+              tabIndex={0}
+              aria-label={DESKTOP_SSH_LAUNCH_UPDATE_NOTE}
+              className="inline-flex size-7 items-center justify-center text-muted-foreground sm:size-6"
+            />
+          }
+        >
+          <InfoIcon className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">{DESKTOP_SSH_LAUNCH_UPDATE_NOTE}</TooltipPopup>
+      </Tooltip>
+    ) : (
+      <span className="text-muted-foreground text-xs">{DESKTOP_SSH_LAUNCH_UPDATE_NOTE}</span>
+    );
   }
 
   if (refusedCrossing({ selfUpdate, targetVersion, channel }, serverVersion)) {
