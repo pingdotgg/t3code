@@ -74,17 +74,27 @@ function entryOf(
 
 const PULL_REQUEST_LIST_PAGE_SIZE = 50;
 
+// A total order that survives unlinking: the cursor names a position, not an index, so removing
+// PRs already returned cannot skip later ones. PRs linked in one call share `linkedAt`.
+function pullRequestListPosition(link: ThreadPullRequestLink): string {
+  return [link.linkedAt, link.host, link.repository, String(link.number).padStart(10, "0")].join(
+    " ",
+  );
+}
+
 export function listThreadPullRequests(
   thread: Pick<OrchestrationV2ThreadShell, "pullRequests">,
-  cursor = 0,
+  cursor?: string,
 ): ListThreadPullRequestsResult {
   const chains = resolveThreadPullRequestChains(thread.pullRequests ?? []);
-  const visible = visibleThreadPullRequests(thread.pullRequests ?? []);
-  const end = cursor + PULL_REQUEST_LIST_PAGE_SIZE;
-  const page = visible.slice(cursor, end);
-  const pageKeys = new Set(page.map(threadPullRequestKeyOf));
+  const after = visibleThreadPullRequests(thread.pullRequests ?? [])
+    .map((link) => ({ link, position: pullRequestListPosition(link) }))
+    .filter(({ position }) => cursor === undefined || position > cursor)
+    .toSorted((left, right) => (left.position < right.position ? -1 : 1));
+  const page = after.slice(0, PULL_REQUEST_LIST_PAGE_SIZE);
+  const pageKeys = new Set(page.map(({ link }) => threadPullRequestKeyOf(link)));
   return {
-    pullRequests: page.map((link) => entryOf(link, chains)),
+    pullRequests: page.map(({ link }) => entryOf(link, chains)),
     // Stacks with a pull request on this page, whole.
     chains: chains
       .filter((chain) => chain.layers.some((layer) => pageKeys.has(threadPullRequestKeyOf(layer))))
@@ -92,7 +102,7 @@ export function listThreadPullRequests(
         kind: chain.kind,
         numbers: chain.layers.map((layer) => layer.number),
       })),
-    nextCursor: end < visible.length ? end : null,
+    nextCursor: after.length > page.length ? page.at(-1)!.position : null,
   };
 }
 

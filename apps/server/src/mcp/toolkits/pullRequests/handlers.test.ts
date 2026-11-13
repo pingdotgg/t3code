@@ -537,8 +537,8 @@ describe("pull request toolkit handlers", () => {
         ]),
       });
       const result = yield* harness.call("list_thread_pull_requests", {});
-      expect(result.pullRequests.map((entry) => entry.number)).toEqual([3, 1, 2, 10]);
-      expect(result.pullRequests[0]).toEqual({
+      expect(result.pullRequests.map((entry) => entry.number)).toEqual([1, 2, 3, 10]);
+      expect(result.pullRequests[2]).toEqual({
         host: "github.com",
         repository: "t3tools/t3code",
         number: 3,
@@ -587,8 +587,8 @@ describe("listThreadPullRequests", () => {
       ],
     });
     expect(result.pullRequests.map((entry) => [entry.number, entry.stack])).toEqual([
-      [2, { kind: "native", position: 2, size: 2 }],
       [1, { kind: "native", position: 1, size: 2 }],
+      [2, { kind: "native", position: 2, size: 2 }],
     ]);
     expect(result.chains).toEqual([{ kind: "native", numbers: [1, 2] }]);
   });
@@ -632,6 +632,14 @@ describe("listThreadPullRequests", () => {
       [],
       [stack],
     ]);
+
+    // Unlinking the first page must not shift the cursor past PRs not yet seen.
+    const remaining = { pullRequests: thread.pullRequests.slice(50) };
+    expect(
+      listThreadPullRequests(remaining, pages[0]!.nextCursor!).pullRequests.map(
+        (entry) => entry.number,
+      ),
+    ).toEqual(Array.from({ length: 50 }, (_, index) => index + 51));
   });
 });
 
