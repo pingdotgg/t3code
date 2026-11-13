@@ -58,4 +58,24 @@ describe("offline pull request cache", () => {
       }),
     ),
   );
+
+  it.effect("drops the older copy when an answer grows too large to keep", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* Effect.promise(sqliteDatabase);
+        const database = yield* MobileDatabase.make;
+        yield* database.saveCache(environmentId, "pull-request", "v1:diff", 1, "small");
+        yield* database.saveCache(
+          environmentId,
+          "pull-request",
+          "v1:diff",
+          1,
+          "x".repeat(4 * 1024 * 1024 + 1),
+        );
+        expect(yield* database.loadCache(environmentId, "pull-request", "v1:diff")).toEqual(
+          Option.none(),
+        );
+      }),
+    ),
+  );
 });
