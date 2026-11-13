@@ -23,3 +23,18 @@ export function writeBrowserClientSettings(settings: ClientSettings): void {
 
   setLocalStorageItem(CLIENT_SETTINGS_STORAGE_KEY, settings, ClientSettingsSchema);
 }
+
+/** Storage events fire only for other tabs' writes; a null key means storage was cleared. */
+export function subscribeBrowserClientSettingsWrites(onChange: () => void): () => void {
+  if (!hasWindow()) {
+    return () => undefined;
+  }
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key === CLIENT_SETTINGS_STORAGE_KEY || event.key === null) {
+      onChange();
+    }
+  };
+  const target = window;
+  target.addEventListener("storage", handleStorage);
+  return () => target.removeEventListener("storage", handleStorage);
+}
