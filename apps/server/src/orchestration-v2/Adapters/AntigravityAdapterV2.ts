@@ -263,8 +263,10 @@ export function makeAntigravityAcpAdapterFlavor(
         }),
     },
     // Native Auto has already reviewed these requests and still requires the user's decision.
-    permissionDisposition: (policy, request) =>
-      policy.runtimeMode === "auto" ? "ask" : acpPermissionDisposition(policy, request),
+    permissionDisposition: (policy, request) => {
+      const disposition = acpPermissionDisposition(policy, request);
+      return policy.runtimeMode === "auto" && disposition !== "deny" ? "ask" : disposition;
+    },
     approvalOptions: antigravityApprovalOptions,
     extractPermissionQuestion: (request) => {
       const question = extractAntigravityUserInputQuestion(request);
