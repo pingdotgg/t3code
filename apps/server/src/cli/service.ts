@@ -47,14 +47,37 @@ export const upsertServiceEnv = (
   entries: Readonly<Record<string, string | undefined>>,
 ): string => {
   const written = new Set<string>();
-  const lines = contents.split("\n").flatMap((line) => {
-    const key = SERVICE_ENV_KEY.exec(line)?.[1];
-    if (key === undefined || !Object.hasOwn(entries, key)) return [line];
+  const source = contents.split("\n");
+  const lines: string[] = [];
+  for (let index = 0, offset = 0; index < source.length;) {
+    const line = source[index]!;
+    const match = SERVICE_ENV_KEY.exec(line);
+    let end = index + 1;
+    if (match !== null) {
+      // util.parseEnv lets a quoted value run to its closing quote across lines,
+      // skipping only spaces, tabs and CRs before the opening quote.
+      const rest = line.slice(match[0].length).replace(/^[ \t\r]+/u, "");
+      const quote = rest[0];
+      if ((quote === '"' || quote === "'" || quote === "`") && !rest.includes(quote, 1)) {
+        const closing = contents.indexOf(quote, offset + line.length);
+        if (closing !== -1) {
+          end += contents.slice(offset + line.length, closing).split("\n").length - 1;
+        }
+      }
+    }
+    const span = source.slice(index, end);
+    offset += span.reduce((length, part) => length + part.length + 1, 0);
+    index = end;
+    const key = match?.[1];
+    if (key === undefined || !Object.hasOwn(entries, key)) {
+      lines.push(span.join("\n"));
+      continue;
+    }
     const value = entries[key];
-    if (value === undefined || written.has(key)) return [];
+    if (value === undefined || written.has(key)) continue;
     written.add(key);
-    return [`${key}=${value}`];
-  });
+    lines.push(`${key}=${value}`);
+  }
   while (lines.at(-1) === "") lines.pop();
   for (const [key, value] of Object.entries(entries)) {
     if (value !== undefined && !written.has(key)) lines.push(`${key}=${value}`);
