@@ -3,7 +3,6 @@
 //! | RPC method                        | Engine call             |
 //! |-----------------------------------|-------------------------|
 //! | `orchestration.dispatchCommand`   | [`Engine::dispatch`]     |
-//! | `orchestration.launchThread`      | [`Engine::launch_thread`] |
 //! | `orchestration.subscribeShell`    | [`Engine::subscribe_shell`]  |
 //! | `orchestration.subscribeThread`   | [`Engine::subscribe_thread`] |
 //!
@@ -11,16 +10,34 @@
 //! server passes them through without knowing their shape. The engine owns the event store,
 //! the projections, and the providers it drives (`conn-provider`).
 //!
-//! Track (d) implements this trait in this crate. The trait itself is fixed: change it only
-//! with the integrator.
+//! [`SqliteEngine`] implements it on SQLite. The three stream and dispatch signatures are
+//! fixed; the other methods back `orchestration.launchThread`, `getThreadProjection` and the
+//! HTTP snapshots, and use JSON until `conn-contract` has their types.
+
+#![recursion_limit = "256"]
 
 use std::{future::Future, pin::Pin};
 
+mod commands;
+mod engine;
+#[cfg(test)]
+mod engine_tests;
+#[cfg(any(test, feature = "fake-provider"))]
+pub mod fake;
+mod runner;
+mod shell;
+mod store;
+mod streams;
+mod time;
+
+pub use engine::{EngineConfig, ProjectConfig, SqliteEngine};
+
 use conn_contract::{
     Command, DispatchCommandError, DispatchCommandResult, GetShellSnapshotError,
-    GetThreadProjectionError, ShellStreamItem, SubscribeShellInput, SubscribeThreadInput,
-    ThreadLaunchError, ThreadLaunchInput, ThreadLaunchResult, ThreadStreamItem,
+    GetThreadProjectionError, ShellStreamItem, SubscribeShellInput, SubscribeThreadInput, ThreadId,
+    ThreadStreamItem,
 };
+use serde_json::Value;
 use tokio::sync::mpsc;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -49,18 +66,8 @@ pub trait Engine: Send + Sync {
         command: Command,
     ) -> BoxFuture<'_, Result<DispatchCommandResult, EngineError<DispatchCommandError>>>;
 
-    /// Creates a thread (or reuses one with `reuseExistingThread`) and dispatches its first
-    /// message. Clients call this, not `dispatch`, when they start a thread from the composer.
-    fn launch_thread(
-        &self,
-        input: ThreadLaunchInput,
-    ) -> BoxFuture<'_, Result<ThreadLaunchResult, EngineError<ThreadLaunchError>>>;
-
-    /// The shell stream: projects and thread summaries. Send a full `snapshot` (its
-    /// `snapshotSequence` is the client's cursor), then `synchronized` (clients always set
-    /// `requestCompletionMarker`; without it the sidebar stays "synchronizing"), then live
-    /// `project.*`/`thread.*` items with increasing `sequence`. Ignoring `afterSequence` and
-    /// always sending a full snapshot is valid. Never end the stream on its own.
+    /// The shell stream: projects and thread summaries. Starts with a `snapshot` item (or
+    /// replays from `afterSequence`), then `synchronized`, then live updates.
     fn subscribe_shell(
         &self,
         input: SubscribeShellInput,
@@ -72,10 +79,8 @@ pub trait Engine: Send + Sync {
         >,
     >;
 
-    /// One thread's stream: a `snapshot` with `snapshotSequence` and the full `projection`, then
-    /// `synchronized`, then `event` items with a per-thread `sequence` above it. Clients always
-    /// set `requestCompletionMarker` and `acceptDedupedBodies`, and often the bounded/compact
-    /// flags; all may be ignored (send full bodies, plain ids, no `idTable`, no history cursor).
+    /// One thread's stream: a `snapshot` of its projection (or a replay from
+    /// `afterSequence`), then `synchronized`, then live `event` items.
     fn subscribe_thread(
         &self,
         input: SubscribeThreadInput,
@@ -86,6 +91,45 @@ pub trait Engine: Send + Sync {
             EngineError<GetThreadProjectionError>,
         >,
     >;
+
+    /// `orchestration.launchThread`: creates a thread and sends its first message in one call,
+    /// which is how a client starts a new thread. Input `OrchestrationV2ThreadLaunchInput`,
+    /// result `OrchestrationV2ThreadLaunchResult`, error `OrchestrationV2ThreadLaunchError`.
+    fn launch_thread(&self, _input: Value) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
+        unsupported("orchestration.launchThread")
+    }
+
+    /// `orchestration.getThreadProjection`: `OrchestrationV2ThreadProjection`.
+    fn get_thread_projection(
+        &self,
+        _thread_id: ThreadId,
+    ) -> BoxFuture<'_, Result<Value, EngineError<GetThreadProjectionError>>> {
+        unsupported("orchestration.getThreadProjection")
+    }
+
+    /// `GET /api/orchestration/shell`: `OrchestrationV2ShellSnapshot`.
+    fn shell_snapshot(&self) -> BoxFuture<'_, Result<Value, EngineError<GetShellSnapshotError>>> {
+        unsupported("the shell snapshot")
+    }
+
+    /// `GET /api/orchestration/threads/:threadId`: `OrchestrationV2ThreadDetailSnapshot`, or
+    /// `None` for an unknown thread (404).
+    fn thread_snapshot(
+        &self,
+        _thread_id: ThreadId,
+    ) -> BoxFuture<'_, Result<Option<Value>, EngineError<GetThreadProjectionError>>> {
+        unsupported("the thread snapshot")
+    }
+}
+
+fn unsupported<T: Send + 'static, E: Send + 'static>(
+    what: &'static str,
+) -> BoxFuture<'static, Result<T, EngineError<E>>> {
+    Box::pin(async move {
+        Err(EngineError::Internal(format!(
+            "this engine does not support {what}"
+        )))
+    })
 }
 
 #[cfg(test)]
@@ -124,13 +168,6 @@ mod tests {
                 let _ = self.live.send(from_json(item).unwrap());
                 Ok(from_json(json!({ "sequence": sequence })).unwrap())
             })
-        }
-
-        fn launch_thread(
-            &self,
-            _input: ThreadLaunchInput,
-        ) -> BoxFuture<'_, Result<ThreadLaunchResult, EngineError<ThreadLaunchError>>> {
-            Box::pin(async { Err(EngineError::Internal("not in the toy engine".into())) })
         }
 
         fn subscribe_shell(

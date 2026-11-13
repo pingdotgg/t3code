@@ -1,0 +1,269 @@
+//! A scripted provider for tests and the client check. The user's text picks the script:
+//! - `hang`: the turn starts and waits for an interrupt.
+//! - `ask`: the turn asks for a command approval, then answers once approved.
+//! - `fail`: the turn fails.
+//! - anything else: streams `echo: <text>` in three chunks and completes.
+
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
+
+use conn_contract::{
+    ProviderCapabilities, ProviderInstanceId, ProviderSessionId, ProviderThread, from_json,
+};
+use conn_provider::{
+    BoxFuture, EnsureThreadInput, InterruptInput, OpenSessionInput, OpenedSession, Provider,
+    ProviderError, ProviderEvent, ProviderResult, ResumeThreadInput, RuntimeRequestResponse,
+    Session, ThreadDisposition, TurnInput, TurnStatus, TurnTerminal,
+};
+use serde_json::{Value, json};
+use tokio::sync::mpsc;
+
+use crate::time::now_iso;
+
+pub struct FakeProvider {
+    id: ProviderInstanceId,
+    /// Sessions opened so far.
+    pub sessions: Arc<AtomicUsize>,
+}
+
+impl FakeProvider {
+    pub fn new(instance_id: &str) -> Self {
+        Self {
+            id: instance_id.into(),
+            sessions: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+}
+
+struct Turn {
+    thread_id: String,
+    run_id: String,
+    root: String,
+    provider_thread_id: String,
+    ordinal: u32,
+}
+
+struct FakeSession {
+    id: ProviderSessionId,
+    driver: String,
+    events: mpsc::Sender<ProviderEvent>,
+    turn: Arc<Mutex<Option<Turn>>>,
+}
+
+impl Provider for FakeProvider {
+    fn instance_id(&self) -> &ProviderInstanceId {
+        &self.id
+    }
+    fn driver(&self) -> &str {
+        "claudeAgent"
+    }
+    fn capabilities(&self) -> BoxFuture<'_, ProviderResult<ProviderCapabilities>> {
+        Box::pin(async { Ok(from_json(json!({})).expect("placeholder")) })
+    }
+    fn open_session(
+        &self,
+        input: OpenSessionInput,
+    ) -> BoxFuture<'_, ProviderResult<OpenedSession>> {
+        Box::pin(async move {
+            self.sessions.fetch_add(1, Ordering::SeqCst);
+            let (tx, rx) = mpsc::channel(64);
+            Ok(OpenedSession {
+                session: Box::new(FakeSession {
+                    id: input.provider_session_id,
+                    driver: self.driver().to_owned(),
+                    events: tx,
+                    turn: Arc::new(Mutex::new(None)),
+                }),
+                events: rx,
+            })
+        })
+    }
+}
+
+fn event(value: Value) -> ProviderEvent {
+    serde_json::from_value(value).expect("fake provider event")
+}
+
+fn assistant(turn: &Turn, id: &str, text: &str, streaming: bool) -> [ProviderEvent; 2] {
+    let now = now_iso();
+    [
+        event(json!({"type": "message.updated", "message": {
+            "createdBy": "agent", "creationSource": "provider",
+            "id": format!("message:{id}"), "threadId": turn.thread_id, "runId": turn.run_id,
+            "nodeId": null, "role": "assistant", "text": text, "attachments": [],
+            "streaming": streaming, "createdAt": now, "updatedAt": now,
+        }})),
+        event(json!({"type": "turn_item.updated", "turnItem": {
+            "id": format!("turn-item:{id}"), "threadId": turn.thread_id, "runId": turn.run_id,
+            "nodeId": null, "providerThreadId": turn.provider_thread_id,
+            "providerTurnId": format!("turn:{}", turn.run_id), "nativeItemRef": null,
+            "parentItemId": null, "ordinal": 0,
+            "status": if streaming { "running" } else { "completed" }, "title": null,
+            "startedAt": now, "completedAt": if streaming { Value::Null } else { json!(now) },
+            "updatedAt": now, "type": "assistant_message", "messageId": format!("message:{id}"),
+            "text": text, "streaming": streaming,
+        }})),
+    ]
+}
+
+fn provider_turn(turn: &Turn, status: &str) -> ProviderEvent {
+    let now = now_iso();
+    event(
+        json!({"type": "provider_turn.updated", "threadId": turn.thread_id, "providerTurn": {
+            "id": format!("turn:{}", turn.run_id), "providerThreadId": turn.provider_thread_id,
+            "nodeId": turn.root, "runAttemptId": format!("{}:attempt:1", turn.run_id),
+            "nativeTurnRef": null, "ordinal": turn.ordinal, "status": status,
+            "startedAt": now, "completedAt": if status == "running" { Value::Null } else { json!(now) },
+        }}),
+    )
+}
+
+fn terminal(turn: &Turn, status: TurnStatus, failure: Option<Value>) -> ProviderEvent {
+    ProviderEvent::TurnTerminal(TurnTerminal {
+        provider_thread_id: turn.provider_thread_id.as_str().into(),
+        provider_turn_id: format!("turn:{}", turn.run_id).as_str().into(),
+        run_ordinal: turn.ordinal,
+        status,
+        failure: failure.map(|f| from_json(f).expect("failure")),
+        retry: None,
+        thread_disposition: ThreadDisposition::Reusable,
+    })
+}
+
+async fn emit(tx: &mpsc::Sender<ProviderEvent>, events: impl IntoIterator<Item = ProviderEvent>) {
+    for event in events {
+        let _ = tx.send(event).await;
+    }
+}
+
+impl Session for FakeSession {
+    fn provider_session_id(&self) -> &ProviderSessionId {
+        &self.id
+    }
+
+    fn ensure_thread(
+        &self,
+        input: EnsureThreadInput,
+    ) -> BoxFuture<'_, ProviderResult<ProviderThread>> {
+        Box::pin(async move {
+            let now = now_iso();
+            Ok(from_json(json!({
+                "id": format!("provider-thread:{}", input.thread_id), "driver": self.driver,
+                "providerInstanceId": "claudeAgent", "providerSessionId": self.id,
+                "appThreadId": input.thread_id, "ownerNodeId": null,
+                "nativeThreadRef": {"driver": self.driver, "nativeId": "native-1", "strength": "strong"},
+                "nativeConversationHeadRef": null, "status": "active", "firstRunOrdinal": null,
+                "lastRunOrdinal": null, "handoffIds": [], "forkedFrom": null,
+                "createdAt": now, "updatedAt": now,
+            }))
+            .expect("provider thread"))
+        })
+    }
+
+    fn resume_thread(
+        &self,
+        input: ResumeThreadInput,
+    ) -> BoxFuture<'_, ProviderResult<ProviderThread>> {
+        Box::pin(async move { Ok(input.provider_thread) })
+    }
+
+    fn start_turn(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
+        Box::pin(async move {
+            let provider_thread_id = conn_contract::to_json(&input.provider_thread)["id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
+            let turn = Turn {
+                thread_id: input.thread_id.0.clone(),
+                run_id: input.run_id.0.clone(),
+                root: input.root_node_id.0.clone(),
+                provider_thread_id,
+                ordinal: input.run_ordinal,
+            };
+            let text = input.message.text.clone();
+            let tx = self.events.clone();
+            let mut started = vec![provider_turn(&turn, "running")];
+            match text.as_str() {
+                "hang" => {}
+                "ask" => started.push(event(json!({"type": "runtime_request.updated",
+                    "threadId": turn.thread_id, "runtimeRequest": {
+                    "id": "request:1", "nodeId": turn.root, "providerTurnId": format!("turn:{}", turn.run_id),
+                    "nativeRequestRef": null, "kind": "command", "status": "pending",
+                    "responseCapability": {"type": "live", "providerSessionId": self.id},
+                    "createdAt": now_iso(), "resolvedAt": null,
+                }}))),
+                "fail" => started.push(terminal(
+                    &turn,
+                    TurnStatus::Failed,
+                    Some(json!({"class": "provider_error", "message": "The fake provider failed.", "code": null, "retryable": false})),
+                )),
+                _ => {
+                    let reply = format!("echo: {text}");
+                    let cut = |n: usize| reply.chars().take(n).collect::<String>();
+                    let len = reply.chars().count();
+                    for part in [len / 3, 2 * len / 3, len] {
+                        started.extend(assistant(&turn, &format!("{}:a", turn.run_id), &cut(part), true));
+                    }
+                    started.extend(assistant(&turn, &format!("{}:a", turn.run_id), &reply, false));
+                    started.push(provider_turn(&turn, "completed"));
+                    started.push(terminal(&turn, TurnStatus::Completed, None));
+                }
+            }
+            *self.turn.lock().unwrap() = Some(turn);
+            tokio::spawn(async move { emit(&tx, started).await });
+            Ok(())
+        })
+    }
+
+    fn interrupt_turn(&self, _input: InterruptInput) -> BoxFuture<'_, ProviderResult<()>> {
+        Box::pin(async move {
+            let event = {
+                let turn = self.turn.lock().unwrap();
+                let turn = turn.as_ref().ok_or(ProviderError::SessionStopped)?;
+                vec![
+                    provider_turn(turn, "interrupted"),
+                    terminal(turn, TurnStatus::Interrupted, None),
+                ]
+            };
+            emit(&self.events, event).await;
+            Ok(())
+        })
+    }
+
+    fn respond_to_runtime_request(
+        &self,
+        input: RuntimeRequestResponse,
+    ) -> BoxFuture<'_, ProviderResult<()>> {
+        Box::pin(async move {
+            let events = {
+                let turn = self.turn.lock().unwrap();
+                let turn = turn.as_ref().ok_or(ProviderError::SessionStopped)?;
+                let decision = conn_contract::to_json(&input.decision);
+                let mut events = vec![event(json!({"type": "runtime_request.updated",
+                    "threadId": turn.thread_id, "runtimeRequest": {
+                    "id": input.request_id, "nodeId": turn.root, "providerTurnId": format!("turn:{}", turn.run_id),
+                    "nativeRequestRef": null, "kind": "command", "status": "resolved",
+                    "responseCapability": {"type": "live", "providerSessionId": self.id},
+                    "createdAt": now_iso(), "resolvedAt": now_iso(), "decision": decision,
+                }}))];
+                events.extend(assistant(
+                    turn,
+                    &format!("{}:a", turn.run_id),
+                    &format!("approval: {}", decision.as_str().unwrap_or("none")),
+                    false,
+                ));
+                events.push(provider_turn(turn, "completed"));
+                events.push(terminal(turn, TurnStatus::Completed, None));
+                events
+            };
+            emit(&self.events, events).await;
+            Ok(())
+        })
+    }
+
+    fn close(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
+}
