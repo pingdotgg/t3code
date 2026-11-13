@@ -1390,6 +1390,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       });
       // An empty index and checkpoint have nothing for git restore's pathspec to match.
       if (tracked.stdout.length > 0) {
+        const sparseConfig = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["config", "--bool", "core.sparseCheckout"],
+          allowNonZeroExit: true,
+        });
+        // Restore skips skip-worktree paths by default; in a sparse checkout
+        // the override would also write out-of-cone files.
+        const ignoreSkipWorktree =
+          sparseConfig.stdout.trim() === "true" ? [] : ["--ignore-skip-worktree-bits"];
         yield* execute({
           operation,
           cwd: input.cwd,
@@ -1400,6 +1410,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             commitOid,
             "--worktree",
             "--staged",
+            ...ignoreSkipWorktree,
             "--",
             ".",
           ],
