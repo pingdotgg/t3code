@@ -14,15 +14,18 @@ import {
   ProviderInstanceId,
   ThreadId,
   type PreviewAutomationLoadError,
+  type PreviewAutomationResizeResult,
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
@@ -63,7 +66,7 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       return context as unknown as BrowserContext;
     }
     async scratchPage() {
-      return makeEncoderPage() as unknown as Page;
+      return encoderPageOverride ?? (makeEncoderPage() as unknown as Page);
     }
     async connectDesktopPage(endpoint: string) {
       const context = makeContext(undefined, desktopPageUrl);
@@ -111,6 +114,7 @@ function makeSession(
       if (method === "Page.getNavigationHistory") return { currentIndex: 0, entries: [{}] };
       if (method === "Page.getLayoutMetrics") return { cssVisualViewport: { pageX: 0, pageY: 0 } };
       if (method === "Page.captureScreenshot") {
+        if ((input as { format: string }).format === "jpeg" && heldStill) await heldStill();
         // A snapshot sizes its screenshot from the PNG header; viewers get JPEG frames as-is.
         return { data: (input as { format: string }).format === "png" ? PNG_HEADER : "ZnJhbWU=" };
       }
@@ -377,9 +381,11 @@ function makeEncoderPage() {
 }
 
 const contexts: ReturnType<typeof makeContext>[] = [];
+let encoderPageOverride: Page | undefined;
 const encoderStreams: Array<{ frameRate: number | undefined; bitsPerSecond: number }> = [];
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
+let heldStill: (() => Promise<void>) | null = null;
 let pageCopy = "";
 let keyCopy = "";
 let focusedFrame: ReturnType<typeof makeFrame> | null = null;
@@ -560,9 +566,11 @@ const openDesktopViewer = Effect.gen(function* () {
 
 beforeEach(() => {
   contexts.length = 0;
+  encoderPageOverride = undefined;
   encoderStreams.length = 0;
   contextRequests.length = 0;
   contextGate = null;
+  heldStill = null;
   contextFailure = null;
   pageSetupFailure = null;
   initialNavigation = null;
@@ -742,6 +750,26 @@ it.effect("a tab the desktop does not draw is marked headless, so the desktop st
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a server started without the desktop browser channel marks its tabs headless", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+
+      expect(sessions.find((session) => session.tabId === tabId)?.headless).toBe(true);
+    }),
+  ).pipe(
+    // A WSL-only desktop starts its backend without the browser fds.
+    Effect.provide(
+      ServerBrowser.layer.pipe(
+        Layer.provide(DesktopChannel.layer),
+        Layer.provideMerge(dependencies),
+      ),
+    ),
+  ),
+);
+
 it.effect("an agent's tab the reloaded desktop dropped goes back to the desktop", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -916,6 +944,64 @@ it.live.each([
     ).pipe(Effect.provide(layer)),
 );
 
+it.live.each([{ truncated: false }, { truncated: true }])(
+  "saves a large recording as a binary download and removes its staged file (truncated: $truncated)",
+  ({ truncated }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        const fs = yield* FileSystem.FileSystem;
+        const bytes = 8 * 1024 * 1024;
+        const payload = Buffer.alloc(bytes, 0x5a);
+        let stagedPath: string | undefined;
+        const download = Promise.withResolvers<{ saveAs: (path: string) => Promise<void> }>();
+        const sandbox = NodeVM.createContext({
+          __t3Recorder: {
+            frame: async () => true,
+            stop: async () => ({ mimeType: "video/webm", count: 1, bytes }),
+            chunk: async () => {
+              throw new Error("Large recording used Base64 export");
+            },
+            download: () =>
+              download.resolve({
+                saveAs: async (path) => {
+                  stagedPath = path;
+                  await NodeFSP.writeFile(path, truncated ? payload.subarray(1) : payload);
+                },
+              }),
+          },
+        });
+        encoderPageOverride = {
+          ...makeContext().page,
+          evaluate: async (script: string | ((arg: unknown) => unknown), arg?: unknown) =>
+            typeof script === "function"
+              ? NodeVM.runInContext(`(${script.toString()})`, sandbox)(arg)
+              : undefined,
+          waitForEvent: () => download.promise,
+        } as unknown as Page;
+
+        yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+        const stop = broker.invoke<{ path: string; sizeBytes: number }>({
+          scope,
+          tabId,
+          operation: "recordingStop",
+          input: {},
+        });
+        if (truncated) {
+          expect(yield* stop.pipe(Effect.flip)).toMatchObject({
+            _tag: "PreviewAutomationExecutionError",
+          });
+        } else {
+          const artifact = yield* stop;
+          expect(artifact.sizeBytes).toBe(bytes);
+          expect(Buffer.from(yield* fs.readFile(artifact.path)).equals(payload)).toBe(true);
+        }
+        expect(stagedPath).toBeDefined();
+        expect(yield* fs.exists(stagedPath!)).toBe(false);
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
 it.live.each([
   { refreshFails: false, expected: "final frame" },
   { refreshFails: true, expected: "frame" },
@@ -1019,6 +1105,62 @@ it.live("enforces provider ownership and explicit targets when a session has mul
       });
       expect(result).toBe("evaluated");
       expect(contexts).toHaveLength(2);
+
+      const manager = yield* Manager.PreviewManager;
+      const unclaimed = yield* manager.open({
+        threadId: scope.thread.threadId,
+        runtime: "server",
+      });
+      const closeUnclaimed = yield* broker
+        .invoke<void>({
+          scope,
+          tabId: PreviewTabId.make(unclaimed.tabId),
+          operation: "close",
+          input: {},
+        })
+        .pipe(Effect.flip);
+      expect(closeUnclaimed).toMatchObject({
+        _tag: "PreviewAutomationControlInterruptedError",
+        reason: "unclaimedTab",
+      });
+      expect(closeUnclaimed.message).toBe(
+        "This tab has no agent owner. Ask the user to close it in the browser panel.",
+      );
+      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toContainEqual(
+        expect.objectContaining({ tabId: unclaimed.tabId }),
+      );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a first still that never returns does not stall the tab's later captures", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      const capturing = Promise.withResolvers<void>();
+      const stuck = Promise.withResolvers<void>();
+      heldStill = () => {
+        heldStill = null;
+        capturing.resolve();
+        return stuck.promise;
+      };
+      yield* Effect.addFinalizer(() => Effect.sync(() => stuck.resolve()));
+      yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* Effect.promise(() => capturing.promise);
+      const snapshotting = yield* broker
+        .invoke<PreviewAutomationSnapshot>({ scope, tabId, operation: "snapshot", input: {} })
+        .pipe(Effect.forkScoped);
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(2_000));
+      const snapshot = yield* Fiber.join(snapshotting);
+      expect(snapshot.accessibilityTree).toContain("delete");
+      const second = yield* browser.attachViewer(viewerInput(tabId, false));
+      const frame = yield* Stream.fromQueue(second.output).pipe(
+        Stream.filter((output) => output._tag === "frame"),
+        Stream.runHead,
+      );
+      expect(Option.isSome(frame)).toBe(true);
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -1041,7 +1183,10 @@ it.live("streams to a read-only viewer without allowing takeover, input, or view
         yield* viewer.input(message);
       expect(page.setViewportSize).not.toHaveBeenCalled();
       expect(session.send.mock.calls.some(([method]) => method.startsWith("Input."))).toBe(false);
-      const outputs = yield* Queue.takeAll(viewer.output);
+      const outputs = yield* Stream.fromQueue(viewer.output).pipe(
+        Stream.takeUntil((output) => output._tag === "frame"),
+        Stream.runCollect,
+      );
       expect(outputs).toContainEqual(
         expect.objectContaining({ _tag: "frame", data: Buffer.from("frame") }),
       );
@@ -2299,6 +2444,134 @@ it.effect(
     ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a desktop tab reports the size the desktop draws after a resize", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const failReads = () => Promise.reject(new Error("Cannot find context with specified id"));
+      desktopSizeAnswer = failReads;
+      desktopRendersNext = true;
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      const tabId = PreviewTabId.make(opened.tabId!);
+      const { context } = desktopConnections.at(-1)!;
+      const cdp = context.sessions[0]!;
+      const events = yield* manager.subscribeEvents;
+      const status = broker
+        .invoke<PreviewAutomationStatus>({ scope, tabId, operation: "status", input: {} })
+        .pipe(Effect.map((result) => result.viewport));
+      // The desktop draws the new size once the session update reaches it.
+      const resize = (input: Record<string, unknown>, width: number, height: number) =>
+        Effect.gen(function* () {
+          const result = yield* broker
+            .invoke<PreviewAutomationResizeResult>({ scope, tabId, operation: "resize", input })
+            .pipe(Effect.forkScoped);
+          let event = yield* PubSub.take(events);
+          while (event.type !== "resized" || event.tabId !== tabId) {
+            event = yield* PubSub.take(events);
+          }
+          Object.assign(context.cssViewport, { width, height });
+          yield* Effect.promise(() => cdp.emitAsync("Page.frameResized"));
+          return (yield* Fiber.join(result)).viewport;
+        });
+
+      // A size no read measured after the resize is unknown, never a default or the last one.
+      expect(
+        yield* resize({ mode: "freeform", width: 900, height: 600 }, 900, 600),
+      ).toBeUndefined();
+      desktopSizeAnswer = null;
+      expect(yield* resize({ mode: "freeform", width: 1280, height: 760 }, 1280, 760)).toEqual({
+        width: 1280,
+        height: 760,
+      });
+      desktopSizeAnswer = failReads;
+      expect(yield* status).toEqual({ width: 1280, height: 760 });
+      expect(
+        yield* resize({ mode: "freeform", width: 1000, height: 700 }, 1000, 700),
+      ).toBeUndefined();
+      desktopSizeAnswer = null;
+      // A page can keep another size than the fixed one asked for; both report the page's.
+      expect(yield* resize({ mode: "freeform", width: 844, height: 390 }, 560, 760)).toEqual({
+        width: 560,
+        height: 760,
+      });
+      expect(yield* status).toEqual({ width: 560, height: 760 });
+      expect(yield* resize({ mode: "fill" }, 1234, 700)).toEqual({ width: 1234, height: 700 });
+      // No page resize or load since that read, so status answers without reading again.
+      let reads = 0;
+      desktopSizeAnswer = async () => {
+        reads += 1;
+        return { result: { value: { width: 1, height: 1 } } };
+      };
+      expect(yield* status).toEqual({ width: 1234, height: 700 });
+      expect(reads).toBe(0);
+      // A status during a read waits for it rather than answer the size before it.
+      const pending = yield* Queue.unbounded<PromiseWithResolvers<Record<string, unknown>>>();
+      const heldAnswer = () => {
+        const read = Promise.withResolvers<Record<string, unknown>>();
+        Queue.offerUnsafe(pending, read);
+        return read.promise;
+      };
+      desktopSizeAnswer = heldAnswer;
+      const answer = (width: number, height: number) => ({ result: { value: { width, height } } });
+      const refill = broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: { mode: "fill" },
+        })
+        .pipe(
+          Effect.map((result) => result.viewport),
+          Effect.forkScoped,
+        );
+      // Status reads the URL just before it picks the size.
+      const url = context.page.url();
+      using urlRead = vi.spyOn(context.page, "url");
+      const startStatus = Effect.gen(function* () {
+        const started = Promise.withResolvers<void>();
+        urlRead.mockImplementationOnce(() => {
+          started.resolve();
+          return url;
+        });
+        const fiber = yield* Effect.forkScoped(status);
+        yield* Effect.promise(() => started.promise);
+        return fiber;
+      });
+      const filled = yield* refill;
+      const read = yield* Queue.take(pending);
+      const during = yield* startStatus;
+      read.resolve(answer(1100, 650));
+      expect(yield* Fiber.join(during)).toEqual({ width: 1100, height: 650 });
+      expect(yield* Fiber.join(filled)).toEqual({ width: 1100, height: 650 });
+      // A page resize during that read makes its answer old: status reads again, and the
+      // resize result has no size.
+      const outdated = yield* refill;
+      const oldRead = yield* Queue.take(pending);
+      const later = yield* startStatus;
+      yield* Effect.promise(() => cdp.emitAsync("Page.frameResized"));
+      desktopSizeAnswer = async () => answer(1000, 600);
+      oldRead.resolve(answer(1100, 650));
+      expect(yield* Fiber.join(later)).toEqual({ width: 1000, height: 600 });
+      expect(yield* Fiber.join(outdated)).toBeUndefined();
+      // So does a load during that read, which may have measured the page before it.
+      desktopSizeAnswer = heldAnswer;
+      const reloaded = yield* refill;
+      const pageRead = yield* Queue.take(pending);
+      const navigated = yield* startStatus;
+      yield* Effect.promise(() => cdp.emitAsync("Page.loadEventFired"));
+      desktopSizeAnswer = async () => answer(900, 560);
+      pageRead.resolve(answer(1000, 600));
+      expect(yield* Fiber.join(navigated)).toEqual({ width: 900, height: 560 });
+      expect(yield* Fiber.join(reloaded)).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("a stalled desktop viewer still gets its size, control and reconnect", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -2593,6 +2866,201 @@ it.live(
         });
       }),
     ).pipe(Effect.provide(layer)),
+);
+
+// Holds the next profile save at its temp-file cleanup, after the rename, until released.
+const gateSaveCleanup = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const cleanupStarted = yield* Deferred.make<void>();
+  const releaseCleanup = yield* Deferred.make<void>();
+  let paused = false;
+  return {
+    cleanupStarted,
+    releaseCleanup,
+    pauseNext: () => {
+      paused = true;
+    },
+    fs: FileSystem.FileSystem.of({
+      ...fs,
+      remove: (target, options) =>
+        fs.remove(target, options).pipe(
+          Effect.tap(() => {
+            if (!paused) return Effect.void;
+            paused = false;
+            return Deferred.succeed(cleanupStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseCleanup)),
+            );
+          }),
+        ),
+    }),
+  };
+});
+
+it.live("an agent opens a reported profile after a restart, before any client reports again", () =>
+  Effect.gen(function* () {
+    const gate = yield* gateSaveCleanup;
+    const persistent = (name: string) =>
+      ({ id: `profile-${name.toLowerCase()}`, name, kind: "persistent" }) as const;
+    // Together the two clients report more profiles than one report may hold.
+    const fromA = [
+      persistent("Work"),
+      ...Array.from({ length: 12 }, (_, n) => persistent(`A${n}`)),
+    ];
+    const fromB = [
+      persistent("Shared"),
+      ...Array.from({ length: 12 }, (_, n) => persistent(`B${n}`)),
+    ];
+    yield* Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const clientA = yield* Scope.make();
+      const reportFromA = yield* browser.profileReporter.pipe(
+        Effect.provideService(Scope.Scope, clientA),
+      );
+      const reportFromB = yield* browser.profileReporter;
+      const reportFromC = yield* browser.profileReporter;
+      yield* reportFromA({ profiles: fromA, defaultProfileId: "profile-work" });
+      gate.pauseNext();
+      const savingB = yield* reportFromB({
+        profiles: fromB,
+        defaultProfileId: "profile-shared",
+      }).pipe(Effect.forkScoped({ startImmediately: true }));
+      // A save that ends without reaching the gate fails the test instead of hanging it.
+      yield* Effect.raceFirst(
+        Deferred.await(gate.cleanupStarted),
+        Fiber.join(savingB).pipe(
+          Effect.andThen(Effect.die("save finished before the cleanup gate")),
+        ),
+      );
+      // C's save waits behind B's while the client that reported Work disconnects, as at shutdown.
+      const savingC = yield* reportFromC({ profiles: [], defaultProfileId: "profile-shared" }).pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* Scope.close(clientA, Exit.void);
+      yield* Deferred.succeed(gate.releaseCleanup, undefined);
+      yield* Fiber.join(savingB);
+      yield* Fiber.join(savingC);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.fresh(ServerBrowser.layer).pipe(
+          Layer.provide(Layer.succeed(FileSystem.FileSystem, gate.fs)),
+        ),
+      ),
+    );
+
+    const restarted = yield* Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      return yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false, profileId: "Work" },
+      });
+    }).pipe(Effect.provide(Layer.fresh(ServerBrowser.layer)));
+
+    expect(contextRequests).toEqual([{ profileId: "profile-work", isolated: false }]);
+    expect(restarted.tabs).toMatchObject([{ profileId: "profile-work" }]);
+    expect(restarted).toMatchObject({
+      defaultProfileId: "profile-shared",
+      profiles: [
+        { id: "default", name: "Default" },
+        { id: "incognito", name: "Incognito", incognito: true },
+        ...[...fromA, ...fromB].map(({ id, name }) => ({ id, name })),
+      ],
+    });
+  }).pipe(Effect.provide(dependencies)),
+);
+
+it.live("warns at startup about a saved profile catalog it cannot read or decode", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const { stateDir } = yield* ServerConfig.ServerConfig;
+    const savedPath = path.join(stateDir, "server-browser", "reported-profiles.json");
+    const startupWarnings = (saved: "missing" | "empty" | "invalid" | "unreadable") =>
+      Effect.gen(function* () {
+        const messages: string[] = [];
+        yield* fs.remove(savedPath, { recursive: true, force: true });
+        yield* fs.makeDirectory(path.dirname(savedPath), { recursive: true });
+        if (saved === "empty") yield* fs.writeFileString(savedPath, "");
+        if (saved === "invalid") yield* fs.writeFileString(savedPath, "{");
+        if (saved === "unreadable") yield* fs.makeDirectory(savedPath);
+        const logger = Logger.make(({ message }) => {
+          messages.push(String(message));
+        });
+        yield* ServerBrowser.ServerBrowser.pipe(
+          Effect.provide(
+            Layer.fresh(ServerBrowser.layer).pipe(
+              Layer.provide(Logger.layer([logger], { mergeWithExisting: false })),
+            ),
+          ),
+        );
+        return messages.filter((message) => message.includes("saved browser profiles"));
+      });
+
+    expect(yield* startupWarnings("missing")).toEqual([]);
+    expect(yield* startupWarnings("empty")).toEqual([]);
+    expect(yield* startupWarnings("invalid")).toEqual([
+      expect.stringContaining("ignoring invalid saved browser profiles"),
+    ]);
+    expect(yield* startupWarnings("unreadable")).toEqual([
+      expect.stringContaining("failed to read saved browser profiles"),
+    ]);
+  }).pipe(Effect.provide(dependencies)),
+);
+
+it.live("a report interrupted while an earlier save holds the lock is still saved", () =>
+  Effect.gen(function* () {
+    const gate = yield* gateSaveCleanup;
+    const work = { id: "profile-work", name: "Work", kind: "persistent" } as const;
+    const late = { id: "profile-late", name: "Late", kind: "persistent" } as const;
+    yield* Effect.gen(function* () {
+      const report = yield* (yield* ServerBrowser.ServerBrowser).profileReporter;
+      gate.pauseNext();
+      const saving = yield* report({ profiles: [work], defaultProfileId: "profile-work" }).pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* Effect.raceFirst(
+        Deferred.await(gate.cleanupStarted),
+        Fiber.join(saving).pipe(
+          Effect.andThen(Effect.die("save finished before the cleanup gate")),
+        ),
+      );
+      // The client disconnects while its report waits for the save in progress.
+      const waiting = yield* report({
+        profiles: [work, late],
+        defaultProfileId: "profile-late",
+      }).pipe(Effect.forkScoped({ startImmediately: true }));
+      waiting.interruptUnsafe();
+      yield* Deferred.succeed(gate.releaseCleanup, undefined);
+      yield* Fiber.join(saving);
+      yield* Fiber.await(waiting);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.fresh(ServerBrowser.layer).pipe(
+          Layer.provide(Layer.succeed(FileSystem.FileSystem, gate.fs)),
+        ),
+      ),
+    );
+
+    const restarted = yield* Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      return yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false, profileId: "Late" },
+      });
+    }).pipe(Effect.provide(Layer.fresh(ServerBrowser.layer)));
+
+    expect(restarted).toMatchObject({
+      defaultProfileId: "profile-late",
+      tabs: [{ profileId: "profile-late" }],
+    });
+  }).pipe(Effect.provide(dependencies)),
 );
 
 it.live("profiles reported by one client survive another client's report", () =>

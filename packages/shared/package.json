@@ -267,6 +267,10 @@
       "types": "./src/composerTrigger.ts",
       "import": "./src/composerTrigger.ts"
     },
+    "./triagePrompt": {
+      "types": "./src/triagePrompt.ts",
+      "import": "./src/triagePrompt.ts"
+    },
     "./pullRequestComposerTrigger": {
       "types": "./src/pullRequestComposerTrigger.ts",
       "import": "./src/pullRequestComposerTrigger.ts"
@@ -366,6 +370,10 @@
     "./testing/symlinks": {
       "types": "./src/testing/symlinks.ts",
       "import": "./src/testing/symlinks.ts"
+    },
+    "./databaseMigrationLog": {
+      "types": "./src/databaseMigrationLog.ts",
+      "import": "./src/databaseMigrationLog.ts"
     },
     "./httpReadiness": {
       "types": "./src/httpReadiness.ts",
