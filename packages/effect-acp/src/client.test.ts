@@ -388,6 +388,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           clientCapabilities: {
             fs: { readTextFile: false, writeTextFile: false },
             terminal: false,
+            elicitation: { form: {} },
           },
           clientInfo: {
             name: "effect-acp-test",
@@ -486,6 +487,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
             clientCapabilities: {
               fs: { readTextFile: false, writeTextFile: false },
               terminal: false,
+              elicitation: { form: {} },
             },
             clientInfo: {
               name: "effect-acp-test",
@@ -541,7 +543,10 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           Ref.update(updates, (current) => [...current, notification]),
         );
 
-        yield* acp.agent.initialize({ protocolVersion: 2 });
+        yield* acp.agent.initialize({
+          protocolVersion: 2,
+          clientCapabilities: { elicitation: { form: {} } },
+        });
         yield* acp.agent.authenticate({ methodId: "cursor_login" });
         const session = yield* acp.agent.createSession({ cwd: process.cwd(), mcpServers: [] });
         yield* acp.agent.prompt({
@@ -664,6 +669,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           clientCapabilities: {
             fs: { readTextFile: false, writeTextFile: false },
             terminal: false,
+            elicitation: { form: {} },
           },
           clientInfo: {
             name: "effect-acp-test",
@@ -1533,7 +1539,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         );
         yield* acp.agent.initialize({
           protocolVersion: 2,
-          clientCapabilities: {},
+          clientCapabilities: { elicitation: { form: {} } },
           clientInfo: { name: "effect-acp-test", version: "0.0.0" },
         });
         const session = yield* acp.agent.createSession({ cwd: process.cwd(), mcpServers: [] });
@@ -1580,7 +1586,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         );
         yield* acp.agent.initialize({
           protocolVersion: 2,
-          clientCapabilities: {},
+          clientCapabilities: { elicitation: { form: {} } },
           clientInfo: { name: "effect-acp-test", version: "0.0.0" },
         });
         const session = yield* acp.agent.createSession({ cwd: process.cwd(), mcpServers: [] });
