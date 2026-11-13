@@ -2179,14 +2179,18 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         authRequiredError: EffectAcpErrors.AcpError,
       ): Effect.fn.Return<void, EffectAcpErrors.AcpError> {
         const configuredAuthMethodId = options.authMethodId?.trim();
-        // v2 defines an omitted list as no authentication; v1 agents may omit it and still accept login.
-        const authMethods =
-          initializeResult.authMethods ?? (initializeResult.protocolVersion >= 2 ? [] : undefined);
-        const authMethod = selectAcpAgentAuthMethod(authMethods, configuredAuthMethodId);
-        if (configuredAuthMethodId && authMethods !== undefined && authMethod === undefined) {
+        const authMethod = selectAcpAgentAuthMethod(
+          initializeResult.authMethods,
+          configuredAuthMethodId,
+        );
+        if (
+          configuredAuthMethodId &&
+          initializeResult.authMethods !== undefined &&
+          authMethod === undefined
+        ) {
           return yield* new EffectAcpErrors.AcpTransportError({
             detail: `ACP agent did not advertise configured authentication method "${configuredAuthMethodId}"`,
-            cause: { configuredAuthMethodId, authMethods },
+            cause: { configuredAuthMethodId, authMethods: initializeResult.authMethods },
           });
         }
         if (
