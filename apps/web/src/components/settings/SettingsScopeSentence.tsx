@@ -152,7 +152,6 @@ function ScopeMenu({
       <span className="min-w-0 truncate">{label}</span>
       <ChevronDownIcon
         aria-hidden
-        strokeWidth={1.75}
         className="-me-0.5 size-3.5 shrink-0 text-muted-foreground opacity-70"
       />
     </Trigger>

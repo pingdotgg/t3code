@@ -1723,11 +1723,48 @@ body {
   font-variant-ligatures: none;
 }
 
-/* Lighter default icon stroke. In the base layer so stroke-* utilities still win; any
-   CSS beats lucide's stroke-width="2" attribute. */
+/* Small lucide icons draw a line of --icon-stroke; a hand-built svg joins with class lucide and
+   stroke-width="2". A strokeWidth prop other than 2, or stroke-1, stroke-2 or an arbitrary
+   stroke width class on the icon, scales instead. Any other stroke width, including one set
+   from a parent selector, draws unscaled. Base layer, so utilities win. */
 @layer base {
-  :where(svg.lucide[stroke-width="2"]) {
-    stroke-width: 1.75;
+  :root {
+    --icon-stroke: 1.05px;
+  }
+
+  :where(
+    svg.lucide[stroke-width="2"]:not(
+        [class*="stroke-1"],
+        [class*="stroke-2"],
+        [class*="stroke-["],
+        [class*="stroke-width"]
+      )
+  ) {
+    stroke-width: var(--icon-stroke);
+    --icon-vector-effect: non-scaling-stroke;
+  }
+
+  /* With a size class of 20px or more the line grows with the icon (size / 16), so large icons
+     are not hairlines. Scaled, the length is in grid units; 1.5 of them equal the line at 16px. */
+  :where(
+    svg.lucide[stroke-width="2"]:is(
+        [class*="size-5"],
+        [class*="size-6"],
+        [class*="size-7"],
+        [class*="size-8"],
+        [class*="size-9"],
+        [class*="size-10"],
+        [class*="size-12"]
+      )
+  ) {
+    stroke-width: calc(var(--icon-stroke) * 1.5);
+    --icon-vector-effect: none;
+  }
+
+  /* The effect reaches the shapes through a variable: a child selector under the attribute
+     selectors above makes Chromium restyle a whole subtree on any ancestor class change. */
+  :where(svg.lucide) > * {
+    vector-effect: var(--icon-vector-effect);
   }
 }
 

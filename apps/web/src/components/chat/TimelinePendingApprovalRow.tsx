@@ -49,7 +49,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
         <ToolActivityIconView
           icon={undefined}
           fallbackName={presentation.icon}
-          className="block size-4 shrink-0 stroke-2 text-icon-muted"
+          className="block size-4 shrink-0 text-icon-muted"
           muted
         />
       }

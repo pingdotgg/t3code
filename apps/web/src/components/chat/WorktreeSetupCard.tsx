@@ -64,7 +64,7 @@ function Elapsed({
 }
 
 function StageIcon({ status }: { status: WorktreeSetupStage["status"] }) {
-  const className = "size-4 shrink-0 stroke-2";
+  const className = "size-4 shrink-0";
   switch (status) {
     case "done":
       return <CheckIcon aria-hidden className={className} />;

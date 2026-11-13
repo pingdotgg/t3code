@@ -183,8 +183,8 @@ function createIconElement(name: string, tone: "neutral" | "destructive"): SVGSV
   svg.setAttribute(
     "class",
     tone === "destructive"
-      ? "size-4.5 shrink-0 sm:size-4"
-      : "size-4.5 shrink-0 text-muted-foreground sm:size-4",
+      ? "lucide size-4.5 shrink-0 sm:size-4"
+      : "lucide size-4.5 shrink-0 text-muted-foreground sm:size-4",
   );
   for (const node of paths) {
     const child = document.createElementNS(SVG_NS, node.tag);
