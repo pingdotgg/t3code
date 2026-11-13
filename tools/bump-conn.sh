@@ -47,6 +47,9 @@ new="$(git -C "$mono" rev-parse --verify --quiet "${target:-HEAD}^{commit}")" ||
   die "CONN_MONOREPO is at ${head:0:10}, not ${new:0:10}: run tools/conn-checkout --commit $new --dest $mono"
 git -C "$mono" diff --quiet HEAD -- ||
   printf 'bump-conn: warning: %s has changes to tracked files; the generated files follow them\n' "$mono" >&2
+untracked="$(git -C "$mono" ls-files --others --exclude-standard -- apps packages | head -n 5)"
+[ -z "$untracked" ] ||
+  printf 'bump-conn: warning: %s has untracked files the generators may read, for example:\n%s\n' "$mono" "$untracked" >&2
 
 old="$(head -n 1 conn.pin 2>/dev/null | tr -d '[:space:]')"
 [ -n "$old" ] || die "no commit in conn.pin"

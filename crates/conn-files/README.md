@@ -51,10 +51,10 @@ files.attachments.release(&claimed)
 
 ## Not done
 
-- **Sending attachments.** Uploads, previews and claims work; the engine must call `claim` on
-  `message.dispatch`/`launchThread`, and the Claude provider must pass the files to the CLI.
-  Until then the environment descriptor does not advertise `attachmentUploads`, so clients
-  hide the attach button.
+- **Sending attachments to the agent.** Uploads, previews and claims work, and the
+  descriptor advertises `attachmentUploads` and `fileAttachments`: the message that sends an
+  upload claims it (`crates/conn-server/src/host.rs`). Whether each provider passes every file
+  kind on to its CLI is in that provider crate's README.
 - `tool-output-image` assets (turn item outputs are not stored yet), `github-media` (needs
   source control credentials; answers "not supported"), native app icons (desktop only).
 - Extracted text of uploaded documents (`DocumentText`), `.t3` project file icons.

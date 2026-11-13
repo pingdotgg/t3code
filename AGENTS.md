@@ -96,8 +96,11 @@ a fork of T3 Code). This repository pins one Conn commit in `conn.pin`.
 - Run every tool from this repository. The Node tools take the monorepo root from
   `CONN_MONOREPO`, a Conn checkout at the pin after `vp i`. There is no default path.
 - Generated files: `crates/conn-contract/src/generated.rs` and `methods.json`, the `/mcp` tool
-  catalog and instruction texts in `crates/conn-mcp/src`, and the keybinding defaults. Never
-  edit one by hand; change its generator and regenerate.
+  catalog and instruction texts in `crates/conn-mcp/src`, the keybinding defaults, and the
+  upstream tables from `tools/gen-upstream.mjs` (`crates/conn-server/src/scopes/generated.rs`,
+  `crates/conn-server/src/settings/generated.rs`, `crates/conn-contract/src/upstream.rs` with
+  `T3_SERVER_VERSION`, `tools/upkeep/http-routes.json`). Never edit one by hand; change its
+  generator and regenerate.
 - `docs/upkeep.md` says how the pin moves and what to do when a bump is red. A nightly bot
   merges upstream T3 Code into Conn; the Conn Server follows with `tools/bump-conn.sh`.
 - Do not change TypeScript in the Conn monorepo for Conn Server work.
@@ -106,11 +109,14 @@ a fork of T3 Code). This repository pins one Conn commit in `conn.pin`.
 
 | To add | Put it in | Then |
 | --- | --- | --- |
-| An RPC method in an existing area | that area's file in `crates/conn-server/src/methods/` | the method table checks the tag, the kind and the scope against the contract at start |
+| An RPC method in an existing area | that area's file in `crates/conn-server/src/methods/` | the method table checks the tag, the kind and the scope against the contract at start; add a call to `crates/conn-server/tools/effect-client.mjs`, or the `decode coverage` check fails |
 | A new area | a new file there, and one line in `methods/mod.rs` | |
 | An engine command or event | `crates/conn-engine` (`commands.rs`, `runner.rs`, `store.rs`) | prove it with `crates/conn-engine/tools/client-check.mjs` |
 | An `/mcp` tool | `crates/conn-mcp/src/tools/` | `gen-tools.mjs --check` and `parity.mjs` |
 | A provider | a crate that implements `Provider` and `Session` from `crates/conn-provider`; shared parts go in `crates/conn-provider-support` | replay tests against the T3 adapter's events, and the comparison in [Providers](#providers) |
+| A settings rule | `crates/conn-server/src/settings.rs` | add a case to `crates/conn-server/tools/settings-cases.json`; `settings-diff.mjs` runs it against the T3 server's own functions |
+| A capability or `ServerConfig` flag | `capabilities` / `config_flags` in `crates/conn-server/src/environment.rs` | advertise only what the server serves |
+| A part that follows upstream files | a pathspec in `tools/upkeep/followed-files.txt` | the bump report then prints that part's upstream commits |
 | A dependency | the workspace `Cargo.toml` | state why and what it costs; `cargo deny` must pass |
 
 ## Skills
