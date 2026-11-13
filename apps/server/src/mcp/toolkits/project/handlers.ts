@@ -32,6 +32,7 @@ import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
+import { assertExplicitAgentModel } from "../../explicitAgentModel.ts";
 
 const isAboveCeilingError = Schema.is(OrchestratorRuntimeModeAboveCeilingError);
 
@@ -138,6 +139,21 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "scratch:true picks its own project and folder; omit projectId and workspaceStrategy.",
           });
+        const accepted =
+          input.clientRequestId === undefined
+            ? null
+            : yield* context.threads.getThreadShell(threadId).pipe(Effect.mapError(unavailable));
+        const acceptedModel =
+          accepted === null || accepted.deletedAt !== null ? undefined : accepted.modelSelection;
+        if (acceptedModel === undefined) {
+          yield* assertExplicitAgentModel(
+            input.modelSelection?.model,
+            "modelSelection.model",
+            input.delegatedFrom === undefined
+              ? undefined
+              : (input.delegatedFrom.modelOrigin ?? "unknown"),
+          );
+        }
         const projectId =
           input.scratch === true
             ? (yield* ManagedProjectFolders.ManagedProjectFolders.pipe(
@@ -154,12 +170,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // A retry of an accepted launch replays it: it keeps the model it started
         // with and skips the checks only a new launch needs, which the project
         // may no longer pass, such as a base branch deleted since.
-        const launched =
-          input.clientRequestId === undefined
-            ? null
-            : yield* context.threads.getThreadShell(threadId).pipe(Effect.mapError(unavailable));
-        const launchedModel =
-          launched === null || launched.deletedAt !== null ? undefined : launched.modelSelection;
+        const launchedModel = acceptedModel;
         const replaying = launchedModel !== undefined;
         const project = replaying
           ? undefined

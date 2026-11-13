@@ -284,6 +284,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["name icon emoji image checkout remove delete"],
   },
   {
+    id: "require-explicit-agent-model",
+    title: "Require explicit model for agent-created runs",
+    to: "/settings/threads",
+    scope: "environment-defaults",
+    environmentOnly: true,
+    searchTerms: ["subagent delegation inherit model explicit agent launch CLI fork"],
+  },
+  {
     id: "default-model",
     title: "Default model",
     to: "/settings/threads",

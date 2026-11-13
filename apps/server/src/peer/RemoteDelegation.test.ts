@@ -946,6 +946,7 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
         environmentId: laptop.environmentId,
         threadId: parentThreadId,
         title: "Laptop parent",
+        modelOrigin: "explicit",
       });
       // A retry with the same key launches nothing new and records nothing new.
       const retried = yield* delegateToBox(a);
@@ -1244,6 +1245,91 @@ it.effect("a task named only by environment inherits the parent's model, within 
       expect(broader.isError).toBe(true);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect.each([false, true])(
+  "a linked destination applies its own explicit-model policy (strict=%s)",
+  (requireExplicitAgentModel) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        yield* b.settings.updateSettings({ requireExplicitAgentModel });
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const a = yield* makeLaptop(database, offers);
+        yield* linkTo(a.links, b, "auto-accept-edits");
+        yield* seedParent(a);
+        const request = {
+          task: "Run the suite on the box.",
+          target: { environmentId: box.environmentId },
+          clientRequestId: "destination-policy",
+        };
+        const inherited = yield* a.call("delegate_task", request);
+        if (requireExplicitAgentModel) {
+          expect(inherited.isError).toBe(true);
+          expect(JSON.stringify(inherited.content)).toContain("invalid_request");
+          expect(yield* Ref.get(thread.launched)).toBeNull();
+          expect(
+            (yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents,
+          ).toHaveLength(0);
+          for (const model of [null, "", " ", "auto", "inherit", "inherit-parent", " AUTO "]) {
+            const refused = yield* a
+              .call("delegate_task", {
+                ...request,
+                target: { ...request.target, model },
+                clientRequestId: `unaccepted-${model}`,
+              })
+              .pipe(
+                Effect.match({
+                  onFailure: (error) => {
+                    expect(error).toMatchObject({ _tag: "InvalidParams", code: -32602 });
+                    return { isError: true, content: [] };
+                  },
+                  onSuccess: (result) => result,
+                }),
+              );
+            expect(refused.isError, JSON.stringify(refused.content)).toBe(true);
+            expect(yield* Ref.get(thread.launched)).toBeNull();
+            expect(
+              (yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents,
+            ).toHaveLength(0);
+          }
+          const explicit = yield* a.call("delegate_task", {
+            ...request,
+            target: { ...request.target, model: "gpt-5.4" },
+          });
+          expect(explicit.isError, JSON.stringify(explicit.content)).toBe(false);
+        } else {
+          expect(inherited.isError, JSON.stringify(inherited.content)).toBe(false);
+        }
+        expect(yield* Ref.get(thread.delegatedFrom)).toMatchObject({
+          modelOrigin: requireExplicitAgentModel ? "explicit" : "inherited",
+        });
+        expect(yield* Ref.get(thread.launchedWith)).toEqual({
+          modelSelection,
+          runtimeMode: "auto-accept-edits",
+          interactionMode: "default",
+        });
+        const childThreadId = yield* Ref.get(thread.launched);
+        const retry = yield* a.call("delegate_task", request);
+        expect(retry.isError, JSON.stringify(retry.content)).toBe(false);
+        expect(yield* Ref.get(thread.launched)).toBe(childThreadId);
+        expect((yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents).toHaveLength(
+          1,
+        );
+
+        const broader = yield* a.call("delegate_task", {
+          ...request,
+          target: { ...request.target, model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          clientRequestId: "broader",
+        });
+        expect(broader.isError).toBe(true);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a task naming another driver there never runs its model on the parent's instance", () =>

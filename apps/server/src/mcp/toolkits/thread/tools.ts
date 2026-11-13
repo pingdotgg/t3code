@@ -28,6 +28,7 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
@@ -165,10 +166,12 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
 
 const ThreadTransferTool = Tool.make("t3_thread_transfer", {
   ...commandTool,
+  dependencies: [...commandTool.dependencies, ServerSettings.ServerSettingsService],
   description:
-    "Move context between threads. Omit `threadId` for this thread. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project. status: its context transfers.",
+    "Move context between threads. Omit `threadId` for this thread. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. Pass modelSelection matching the source provider and model when explicit models are required. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project. status: its context transfers.",
   parameters: Schema.Struct({
     action: Schema.Literals(["fork", "merge_back", "status"]),
+    modelSelection: Schema.optional(ModelSelection),
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
     sourcePoint: Schema.optional(OrchestrationV2ThreadForkSourcePoint),

@@ -49,6 +49,7 @@ import { ProjectToolkit } from "./tools.ts";
 
 const clientLaunchHarness = (input: {
   readonly requireExplicitAgentModel?: boolean;
+  readonly scratchProjects?: Array<string>;
   readonly runtimeModeCeiling: RuntimeMode;
   readonly defaultRuntimeMode?: RuntimeMode;
   readonly fallbackModel?: ModelSelection;
@@ -170,7 +171,13 @@ const clientLaunchHarness = (input: {
         ),
     }),
     Layer.mock(PeerForwarding.PeerForwarding)({}),
-    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      namedProjectsRoot: "/projects",
+      ensureScratchProject: Effect.sync(() => {
+        input.scratchProjects?.push("created");
+        return { projectId };
+      }),
+    }),
     DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
   ).pipe(
     Layer.provideMerge(GitVcsDriver.layer),
@@ -449,33 +456,79 @@ it.effect("a launch retried with the same clientRequestId replays the first one"
   }),
 );
 
-it.effect("strict launches require an explicit model before creating a thread", () =>
+it.effect("strict launches require an explicit model before creating a thread or workspace", () =>
   Effect.gen(function* () {
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const scratchProjects: Array<string> = [];
+    const checkedWorktrees: Array<string> = [];
     const { projectId, modelSelection, dependencies } = clientLaunchHarness({
       runtimeModeCeiling: "auto",
       requireExplicitAgentModel: true,
       launched,
+      scratchProjects,
+      checkWorktreeBase: ({ projectId }) =>
+        Effect.sync(() => {
+          checkedWorktrees.push(projectId);
+        }),
     });
     const toolkit = yield* ProjectToolkit.pipe(
       Effect.provide(
         McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
       ),
     );
-    const launch = (model?: ModelSelection) =>
+    const launch = (input: typeof ProjectToolkit.tools.t3_thread_launch.parametersSchema.Type) =>
       toolkit
-        .handle("t3_thread_launch", {
-          title: "Fix",
-          projectId,
-          ...(model === undefined ? {} : { modelSelection: model }),
-        })
+        .handle("t3_thread_launch", input)
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
-    const refused = (yield* launch()).at(-1)?.result;
-    expect(refused).toMatchObject({ code: "invalid_request" });
+    for (const model of [undefined, "", " ", "auto", "inherit", "inherit-parent"]) {
+      const refused = (yield* launch({
+        title: "Fix",
+        projectId,
+        clientRequestId: `unaccepted-${model}`,
+        workspaceStrategy: { type: "worktree", baseRef: "main" },
+        ...(model === undefined ? {} : { modelSelection: { ...modelSelection, model } }),
+      })).at(-1)?.result;
+      expect(refused).toMatchObject(
+        model === "" || model === " "
+          ? { _tag: "AiError", reason: { _tag: "ToolParameterValidationError" } }
+          : { code: "invalid_request" },
+      );
+    }
+    expect((yield* launch({ title: "Scratch", scratch: true })).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+    });
     expect(launched).toHaveLength(0);
-    yield* launch(modelSelection);
+    expect(scratchProjects).toHaveLength(0);
+    expect(checkedWorktrees).toHaveLength(0);
+    yield* launch({ title: "Fix", projectId, modelSelection, clientRequestId: "accepted" });
     expect(launched).toHaveLength(1);
     expect(launched[0]?.modelSelection).toEqual(modelSelection);
+    expect(
+      (yield* launch({ title: "Fix", projectId, clientRequestId: "accepted" })).at(-1)?.result,
+    ).toMatchObject({ modelSelection });
+    expect(launched[1]?.threadId).toEqual(launched[0]?.threadId);
+
+    for (const modelOrigin of [undefined, "inherited", "explicit"] as const) {
+      const before = launched.length;
+      const result = (yield* launch({
+        title: "Remote child",
+        projectId,
+        modelSelection,
+        delegatedFrom: {
+          environmentId: EnvironmentId.make("remote"),
+          threadId: ThreadId.make("remote-parent"),
+          title: "Parent",
+          ...(modelOrigin === undefined ? {} : { modelOrigin }),
+        },
+      })).at(-1)?.result;
+      if (modelOrigin === "explicit") {
+        expect(launched).toHaveLength(before + 1);
+        expect(launched.at(-1)?.modelSelection).toEqual(modelSelection);
+      } else {
+        expect(result).toMatchObject({ code: "invalid_request" });
+        expect(launched).toHaveLength(before);
+      }
+    }
   }),
 );
 
@@ -555,7 +608,16 @@ it.effect("a launch binds only an existing checkout that is one of the project's
     const git = yield* GitVcsDriver.GitVcsDriver.pipe(Effect.provide(dependencies));
     for (const args of [
       ["init", "-b", "main"],
-      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
+      [
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "init\n\nFound-by: self during launch fixture setup",
+      ],
       ["worktree", "add", "-b", "feature", worktree],
     ]) {
       yield* git.execute({ operation: "test.setupRepo", cwd: repo, args });

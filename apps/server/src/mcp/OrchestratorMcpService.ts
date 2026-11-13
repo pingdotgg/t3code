@@ -116,6 +116,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { explicitAgentModelFailure } from "./explicitAgentModel.ts";
 import {
   clientModeCeiling,
   type McpInvocationScope,
@@ -2587,6 +2588,15 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
+      if (!isRetryOfAcceptedDelegation) {
+        const launchPolicy = yield* serverSettings.getSettings.pipe(
+          Effect.mapError(threadManagementFailure),
+        );
+        if (launchPolicy.requireExplicitAgentModel) {
+          const issue = explicitAgentModelFailure(input.target?.model, "target.model");
+          if (issue !== undefined) return yield* issue;
+        }
+      }
       const target = yield* resolveTargetRechecking({
         parent,
         target: input.target,
@@ -2933,6 +2943,25 @@ const make = Effect.gen(function* () {
         const parentNodeId = parentRun.rootNodeId;
         const providers = yield* loadProviders;
         const key = yield* requestKey(input.clientRequestId);
+        const launchPolicy = yield* serverSettings.getSettings.pipe(
+          Effect.mapError(threadManagementFailure),
+        );
+        if (launchPolicy.requireExplicitAgentModel) {
+          for (const [index, request] of input.threads.entries()) {
+            const commandId = stableCommandId({
+              scope,
+              requestKey: key,
+              operation: "create-thread",
+              index,
+            });
+            if (yield* threadManagement.hasReceipt(commandId)) continue;
+            const issue = explicitAgentModelFailure(
+              request.target?.model,
+              `threads[${index}].target.model`,
+            );
+            if (issue !== undefined) return yield* issue;
+          }
+        }
         const created = yield* Effect.forEach(
           input.threads,
           (request, index) =>
