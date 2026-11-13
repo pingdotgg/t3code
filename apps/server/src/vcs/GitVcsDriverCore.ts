@@ -4008,6 +4008,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           fileError("fs.readFile", `Could not read diff file '${input.newPath}'.`, cause),
         ),
       );
+    // Git diffs a working-tree-encoding file as UTF-8, so decode its disk bytes the same way.
+    const [, , encoding = "unspecified"] = (yield* runGitStdout(
+      "GitVcsDriver.getReviewDiffFileContents.workingTree.checkAttr",
+      repositoryRoot,
+      ["check-attr", "-z", "working-tree-encoding", "--", input.newPath],
+    )).split("\0");
+    if (!["unspecified", "unset", "set"].includes(encoding)) {
+      // Git also accepts e.g. UTF-16LE-BOM, and its plain UTF-16 can carry a big-endian BOM.
+      const normalized = encoding.toLowerCase().replace(/-bom$/, "");
+      const label =
+        normalized === "utf-16" && bytes[0] === 0xfe && bytes[1] === 0xff ? "utf-16be" : normalized;
+      return yield* Effect.try({
+        try: () => new TextDecoder(label).decode(bytes),
+        catch: (cause) =>
+          fileError(
+            "fs.readFile",
+            `Cannot expand '${input.newPath}' with working-tree-encoding '${encoding}'.`,
+            cause,
+          ),
+      });
+    }
     if (bytes.includes(0)) {
       return yield* fileError("fs.readFile", `Cannot expand binary file '${input.newPath}'.`);
     }
