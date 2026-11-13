@@ -1362,14 +1362,15 @@ const make = Effect.gen(function* () {
           return yield* withWorkspaceLease(
             worktreePath,
             Effect.gen(function* () {
+              // Walked again under the lease: a repository deleted with the folder is gone for good.
+              const finalInspection = yield* measureWorktree(worktreePath, "plain-folder");
+              if (finalInspection.reason !== null) return keep(finalInspection.reason);
+              // The walk takes time, so the cheap checks run last, right before removal.
               const blockedWhileMeasuring =
                 (yield* scratchKeepReason(worktreePath, threadIds, settings)) ??
                 (yield* blockedSinceCheck());
               if (blockedWhileMeasuring !== null) return keep(blockedWhileMeasuring);
               if (yield* settingsChangedSinceCheck) return keep("settings changed since check");
-              // Walked again under the lease: a repository deleted with the folder is gone for good.
-              const finalInspection = yield* measureWorktree(worktreePath, "plain-folder");
-              if (finalInspection.reason !== null) return keep(finalInspection.reason);
               yield* fs.remove(worktreePath, { recursive: true });
               entries.push({
                 ...entry,
