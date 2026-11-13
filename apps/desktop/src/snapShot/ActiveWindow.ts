@@ -28,6 +28,10 @@ export type ActiveWindow = {
 const MAC_LOOKUP_TIMEOUT_MS = 5_000;
 
 const MAC_HELPER_STRIP_MAX_THICKNESS_RATIO = 0.25;
+// macOS 26 puts a titled sharing indicator (66x20 or 31x20) in a captured app's window list.
+// Its position is undocumented, so only its size identifies it: shorter than any title bar.
+const MAC_INDICATOR_MAX_WIDTH = 100;
+const MAC_INDICATOR_MAX_HEIGHT = 28;
 
 const MacActiveWindowLookup = Schema.Struct({
   owner: Schema.Struct({
@@ -113,9 +117,15 @@ async function macActiveWindow(): Promise<ActiveWindow | undefined> {
   const output = (await runMacLookup()).trim();
   if (!output) return undefined;
   const lookup = decodeMacActiveWindowLookup(output);
-  const visible = lookup.windows.filter(
+  const onScreen = lookup.windows.filter(
     (window) => window.alpha > 0 && window.bounds.width > 0 && window.bounds.height > 0,
   );
+  const contentSized = onScreen.filter(
+    (window) =>
+      window.bounds.width >= MAC_INDICATOR_MAX_WIDTH ||
+      window.bounds.height >= MAC_INDICATOR_MAX_HEIGHT,
+  );
+  const visible = contentSized.length > 0 ? contentSized : onScreen;
   // Helpers belong to the content behind them, which may not be the app's largest window.
   const window = visible.find((candidate, index) => {
     if (candidate.title.trim() !== "") return true;
