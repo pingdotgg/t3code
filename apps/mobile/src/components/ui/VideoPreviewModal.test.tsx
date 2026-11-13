@@ -43,37 +43,45 @@ vi.mock("../../lib/audioSession", () => ({
 
 import { VideoPreviewModal } from "./VideoPreviewModal";
 
-it("does not present a video whose loading was interrupted by leaving the app", async () => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  const signed = Promise.withResolvers<string | null>();
-  mocks.refresh.mockReturnValue(signed.promise);
-  mocks.presentVideo.mockResolvedValue();
-  const onRequestClose = vi.fn();
-  const root = createRoot(document.createElement("div"));
-  act(() =>
-    root.render(
-      <VideoPreviewModal
-        source={{
-          type: "media",
-          name: "clip.mp4",
-          mimeType: "video/mp4",
-          environmentId: EnvironmentId.make("test"),
-          resource: {
-            _tag: "github-media",
-            cwd: "/project",
-            url: "https://github.com/user-attachments/assets/video",
-          },
-        }}
-        onRequestClose={onRequestClose}
-      />,
-    ),
-  );
-  act(() => {
-    for (const state of ["background", "active"] as const)
-      for (const listener of mocks.appStateListeners) listener(state);
-  });
-  await act(async () => signed.resolve("https://media.example/clip.mp4"));
-  expect(mocks.presentVideo).not.toHaveBeenCalled();
-  expect(onRequestClose).toHaveBeenCalled();
-  act(() => root.unmount());
-});
+it.each(["leaving the app", "scrolling the video away"] as const)(
+  "does not present a video whose loading was interrupted by %s",
+  async (interruption) => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const signed = Promise.withResolvers<string | null>();
+    mocks.refresh.mockReset().mockReturnValue(signed.promise);
+    mocks.presentVideo.mockReset().mockResolvedValue();
+    const onRequestClose = vi.fn();
+    const root = createRoot(document.createElement("div"));
+    const render = (visible: boolean) =>
+      act(() =>
+        root.render(
+          <VideoPreviewModal
+            source={{
+              type: "media",
+              name: "clip.mp4",
+              mimeType: "video/mp4",
+              environmentId: EnvironmentId.make("test"),
+              resource: {
+                _tag: "github-media",
+                cwd: "/project",
+                url: "https://github.com/user-attachments/assets/video",
+              },
+            }}
+            visible={visible}
+            onRequestClose={onRequestClose}
+          />,
+        ),
+      );
+    render(true);
+    if (interruption === "leaving the app")
+      act(() => {
+        for (const state of ["background", "active"] as const)
+          for (const listener of mocks.appStateListeners) listener(state);
+      });
+    else render(false);
+    await act(async () => signed.resolve("https://media.example/clip.mp4"));
+    expect(mocks.presentVideo).not.toHaveBeenCalled();
+    expect(onRequestClose).toHaveBeenCalled();
+    act(() => root.unmount());
+  },
+);

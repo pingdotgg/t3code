@@ -53,7 +53,11 @@ export function ThreadMarkdownVideo(props: {
         onPressPlay={Platform.OS === "ios" ? () => setFullscreen(true) : undefined}
       />
       {fullscreen ? (
-        <VideoPreviewModal source={source} onRequestClose={() => setFullscreen(false)} />
+        <VideoPreviewModal
+          source={source}
+          visible={visible}
+          onRequestClose={() => setFullscreen(false)}
+        />
       ) : null}
     </>
   );
