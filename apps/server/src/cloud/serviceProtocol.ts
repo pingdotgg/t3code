@@ -63,6 +63,28 @@ export function serviceUnitBaseDirOf(contents: string): string | undefined {
   return task === undefined ? undefined : unquoteWindowsArgument(task);
 }
 
+/**
+ * The user unit directory a systemd manager reads, from its UnitPath property. The persistent
+ * control directory identifies the manager's config root despite UnitPath overrides.
+ */
+export function systemdUnitDirectoryOf(unitPath: ReadonlyArray<string>): string | undefined {
+  const controlDirectory = unitPath.find(
+    (directory) =>
+      directory.startsWith("/") &&
+      directory.endsWith("/systemd/user.control") &&
+      unitPath.includes(directory.slice(0, -".control".length)),
+  );
+  return controlDirectory?.slice(0, -".control".length);
+}
+
+/** The file systemd or launchd appends the service's output to. */
+export function serviceUnitLogPathOf(contents: string): string | undefined {
+  const systemd = /^StandardOutput=append:(.*)$/m.exec(contents)?.[1];
+  if (systemd !== undefined) return unquoteSystemdValue(systemd.trim());
+  const plist = /<key>StandardOutPath<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
+  return plist === undefined ? undefined : unescapeXmlText(plist);
+}
+
 /** The executable an installed unit, plist, or task starts: the launcher's runtime. */
 export function serviceUnitProgramOf(contents: string): string | undefined {
   const systemd = /^ExecStart=("(?:\\.|[^"\\])*"|\S+)/m.exec(contents)?.[1];
