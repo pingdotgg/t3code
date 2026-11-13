@@ -51,6 +51,7 @@ import {
 import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
+  mergeClaudeBaseEnvironment,
   mergeClaudeProcessEnvironment,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
@@ -173,7 +174,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     );
     const textGeneration = yield* makeClaudeTextGeneration(
       effectiveConfig,
-      processEnv,
+      yield* mergeClaudeBaseEnvironment(environment, process.env),
       modelCatalog,
     );
 

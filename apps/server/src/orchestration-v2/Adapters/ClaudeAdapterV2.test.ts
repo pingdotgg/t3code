@@ -4727,6 +4727,65 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
     );
 
+    it.effect("labels a turn from the Claude settings of its working directory", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
+        const project = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-project-" });
+        yield* fileSystem.makeDirectory(path.join(project, ".claude"));
+        const openedEntrypoint = (launchArgs = "") =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const harness = yield* makeWakeHarnessWithOptions({
+                settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: home, launchArgs },
+                environment: {},
+              });
+              yield* harness.runtime.startTurn(
+                makeClaudeTestTurnInput({
+                  threadId: harness.threadId,
+                  providerThread: harness.providerThread,
+                  now: yield* DateTime.now,
+                  attemptId: RunAttemptId.make("attempt-entrypoint"),
+                  text: "Run git status.",
+                  attachments: [],
+                  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+                    ...CLAUDE_TEST_RUNTIME_POLICY,
+                    cwd: project,
+                  }),
+                }),
+              );
+              return harness.getOpenedOptions()?.env?.CLAUDE_CODE_ENTRYPOINT;
+            }),
+          );
+        assert.equal(yield* openedEntrypoint(), "t3-code");
+        assert.isUndefined(
+          yield* openedEntrypoint(`--settings '{"env":{"ANTHROPIC_API_KEY":"key"}}'`),
+        );
+        yield* fileSystem.writeFileString(
+          path.join(project, ".claude", "settings.local.json"),
+          '{"env":{"ANTHROPIC_API_KEY":"key"}}',
+        );
+        assert.isUndefined(yield* openedEntrypoint());
+        // Claude ignores that file when --setting-sources leaves out local settings.
+        assert.equal(yield* openedEntrypoint("--setting-sources user"), "t3-code");
+        // Claude reads project settings from --project-config-root instead of the working directory.
+        const configRoot = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-config-",
+        });
+        assert.equal(yield* openedEntrypoint(`--project-config-root ${configRoot}`), "t3-code");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
     it.effect("pins tool search on when the user's Claude settings choose auto", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;

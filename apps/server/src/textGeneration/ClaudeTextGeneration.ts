@@ -31,6 +31,7 @@ import {
 import {
   hasClaudeManagedMcpConfig,
   makeClaudeEnvironment,
+  resolveClaudeSessionEnvironment,
 } from "../provider/Drivers/ClaudeHome.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
@@ -210,6 +211,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
                 ),
               )
           : cwd;
+      const commandEnvironment = yield* resolveClaudeSessionEnvironment(
+        claudeSettings,
+        claudeEnvironment,
+        workingDirectory,
+      );
       const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
       const spawnCommand = yield* resolveSpawnCommand(
         claudeSettings.binaryPath || "claude",
@@ -241,10 +247,10 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           "--permission-mode",
           "dontAsk",
         ],
-        { env: claudeEnvironment },
+        { env: commandEnvironment },
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: claudeEnvironment,
+        env: commandEnvironment,
         cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {

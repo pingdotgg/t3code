@@ -8,7 +8,12 @@ import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import { readClaudeSettingsEnv } from "./ClaudeSkills.ts";
+import {
+  type ClaudeLaunchArgSettingsScope,
+  type ClaudeSettingsEnv,
+  readClaudeSessionSettingsEnv,
+  readClaudeSettingsEnv,
+} from "./ClaudeSkills.ts";
 
 const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
@@ -62,30 +67,69 @@ const CLAUDE_HOST_SESSION_VARIABLES = [
   "CLAUDE_AGENT_SDK_VERSION",
 ];
 
-/**
- * Base env for the Claude processes T3 Code runs, before `makeClaudeEnvironment`.
- * Claude Code reads its entrypoint from the process env, not its settings `env`, so T3 Code applies that override itself.
- */
+const T3_CODE_ENTRYPOINT = "t3-code";
+
+// Claude Code reads its entrypoint only from the process env, so T3 Code applies settings itself.
+// An API key leaves it unset for the Claude default: subscriber API credits answer `t3-code` with
+// "Credit balance is too low". Settings env beats the process env, so an empty key means no key.
+function withClaudeEntrypoint(
+  environment: NodeJS.ProcessEnv,
+  settings: ClaudeSettingsEnv,
+): NodeJS.ProcessEnv {
+  const { CLAUDE_CODE_ENTRYPOINT: configured, ...rest } = environment;
+  const apiKey = settings.ANTHROPIC_API_KEY ?? environment.ANTHROPIC_API_KEY;
+  const entrypoint =
+    settings.CLAUDE_CODE_ENTRYPOINT || configured || (apiKey ? undefined : T3_CODE_ENTRYPOINT);
+  return entrypoint ? { ...rest, CLAUDE_CODE_ENTRYPOINT: entrypoint } : rest;
+}
+
+/** Host and instance env without the launching session. Its only label is one the instance set. */
+export const mergeClaudeBaseEnvironment = Effect.fn("mergeClaudeBaseEnvironment")(function* (
+  instanceEnvironment: ProviderInstanceEnvironment | undefined,
+  hostEnvironment: NodeJS.ProcessEnv,
+) {
+  // Windows names ignore case, but a copy of process.env does not, and this code reads exact names.
+  const baseEnvironment: NodeJS.ProcessEnv =
+    (yield* HostProcess.Platform) === "win32"
+      ? Object.fromEntries(
+          Object.entries(hostEnvironment).map(([name, value]) => [name.toUpperCase(), value]),
+        )
+      : { ...hostEnvironment };
+  delete baseEnvironment.CLAUDE_CODE_ENTRYPOINT;
+  // Electron apps launched by Claude must run as apps rather than as Node.
+  delete baseEnvironment.ELECTRON_RUN_AS_NODE;
+  for (const name of CLAUDE_HOST_SESSION_VARIABLES) delete baseEnvironment[name];
+  return yield* mergeProviderInstanceEnvironment(instanceEnvironment, baseEnvironment);
+});
+
+/** Env for Claude processes with no session cwd, such as capability probes. */
 export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnvironment")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   instanceEnvironment: ProviderInstanceEnvironment | undefined,
   hostEnvironment: NodeJS.ProcessEnv,
 ) {
-  const baseEnvironment: NodeJS.ProcessEnv = {
-    ...hostEnvironment,
-    CLAUDE_CODE_ENTRYPOINT: "t3-code",
-  };
-  for (const name of CLAUDE_HOST_SESSION_VARIABLES) delete baseEnvironment[name];
-  // The desktop runs the server as Node through Electron. Commands Claude runs inherit its env, so
-  // an Electron app they start (T3 Code itself, VS Code) would run as Node and exit.
-  delete baseEnvironment.ELECTRON_RUN_AS_NODE;
-  const environment = yield* mergeProviderInstanceEnvironment(instanceEnvironment, baseEnvironment);
-  const settingsEntrypoint = (yield* readClaudeSettingsEnv(config, undefined, environment))
-    .CLAUDE_CODE_ENTRYPOINT;
-  return settingsEntrypoint
-    ? { ...environment, CLAUDE_CODE_ENTRYPOINT: settingsEntrypoint }
-    : environment;
+  const environment = yield* mergeClaudeBaseEnvironment(instanceEnvironment, hostEnvironment);
+  return withClaudeEntrypoint(
+    environment,
+    yield* readClaudeSettingsEnv(config, undefined, environment),
+  );
 });
+
+/** Labels `mergeClaudeBaseEnvironment` output for one process in `cwd`, from the settings it loads. */
+export const resolveClaudeSessionEnvironment = Effect.fn("resolveClaudeSessionEnvironment")(
+  function* (
+    config: Pick<ClaudeSettings, "homePath">,
+    environment: NodeJS.ProcessEnv,
+    cwd: string | undefined,
+    launchArgEnv?: Readonly<Record<string, unknown>>,
+    scope?: ClaudeLaunchArgSettingsScope,
+  ) {
+    return withClaudeEntrypoint(
+      environment,
+      yield* readClaudeSessionSettingsEnv(config, cwd, environment, launchArgEnv, scope),
+    );
+  },
+);
 
 /** managed-mcp.json excludes other MCP config and forbids --strict-mcp-config; omit the flag when present. */
 export const hasClaudeManagedMcpConfig = Effect.fn("hasClaudeManagedMcpConfig")(function* () {

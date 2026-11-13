@@ -5,7 +5,7 @@ import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
+import { parseCliArgs, tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { parse as parseYamlDocument } from "yaml";
@@ -106,19 +106,10 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   };
 }
 
-function claudeManagedSettingsPath(
-  path: Path.Path,
-  platform: NodeJS.Platform,
-  environment: NodeJS.ProcessEnv,
-): string | undefined {
-  if (platform === "darwin") {
-    return "/Library/Application Support/ClaudeCode/managed-settings.json";
-  }
-  if (platform === "win32") {
-    const programData = environment.PROGRAMDATA?.trim();
-    return programData ? path.join(programData, "ClaudeCode", "managed-settings.json") : undefined;
-  }
-  return "/etc/claude-code/managed-settings.json";
+function claudeManagedDirectory(path: Path.Path, platform: NodeJS.Platform): string {
+  if (platform === "darwin") return "/Library/Application Support/ClaudeCode";
+  if (platform === "win32") return path.join("C:\\Program Files", "ClaudeCode");
+  return "/etc/claude-code";
 }
 
 /** Claude Code settings files, lowest precedence first. */
@@ -127,10 +118,8 @@ function claudeSettingsPaths(
   configDirPath: string,
   cwd: string | undefined,
   platform: NodeJS.Platform,
-  environment: NodeJS.ProcessEnv,
   repositoryRoot?: string,
 ): ReadonlyArray<string> {
-  const managedPath = claudeManagedSettingsPath(path, platform, environment);
   const root = repositoryRoot !== undefined && repositoryRoot !== cwd ? repositoryRoot : undefined;
   return [
     path.join(configDirPath, "settings.json"),
@@ -141,7 +130,7 @@ function claudeSettingsPaths(
         ]
       : []),
     ...(root ? [path.join(root, ".claude", "settings.local.json")] : []),
-    ...(managedPath ? [managedPath] : []),
+    path.join(claudeManagedDirectory(path, platform), "managed-settings.json"),
   ];
 }
 
@@ -243,7 +232,6 @@ function parseSkillOverride(value: typeof SkillOverrideValue.Type): SkillOverrid
 const readSkillSettings = Effect.fn("readSkillSettings")(function* (
   configDirPath: string,
   cwd: string | undefined,
-  environment: NodeJS.ProcessEnv,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -260,7 +248,6 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
     configDirPath,
     cwd,
     platform,
-    environment,
     repositoryRoot,
   )) {
     const contents = yield* fileSystem
@@ -557,44 +544,210 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
   return path.join(home, ".claude");
 });
 
-const SettingsEnv = Schema.Struct({
-  ANTHROPIC_BASE_URL: Schema.optional(Schema.String),
-  CLAUDE_CODE_ENTRYPOINT: Schema.optional(Schema.String),
-  // Unquoted JSON values must not fail the decode and drop ANTHROPIC_BASE_URL with them.
-  CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: Schema.optional(Schema.Unknown),
-  CLAUDE_CODE_GATEWAY_MODEL_DISCOVERY_TIMEOUT_MS: Schema.optional(Schema.Unknown),
-});
+const SETTINGS_ENV_NAMES = [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_BASE_URL",
+  "CLAUDE_CODE_ENTRYPOINT",
+] as const;
+const GATEWAY_ENV_NAMES = [
+  "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
+  "CLAUDE_CODE_GATEWAY_MODEL_DISCOVERY_TIMEOUT_MS",
+] as const;
+export type ClaudeSettingsEnv = Partial<Record<(typeof SETTINGS_ENV_NAMES)[number], string>> &
+  Partial<Record<(typeof GATEWAY_ENV_NAMES)[number], unknown>>;
+// Strict like Claude Code, which skips a settings file with comments or trailing commas.
 const decodeSettingsEnv = Schema.decodeUnknownEffect(
-  fromLenientJson(Schema.Struct({ env: Schema.optional(SettingsEnv) })),
+  Schema.fromJsonString(
+    Schema.Struct({ env: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)) }),
+  ),
 );
+
+function assignSettingsEnv(
+  target: ClaudeSettingsEnv,
+  env: Readonly<Record<string, unknown>> | undefined,
+): void {
+  for (const name of SETTINGS_ENV_NAMES) {
+    const value = env?.[name];
+    if (typeof value === "string") target[name] = value;
+  }
+  for (const name of GATEWAY_ENV_NAMES) {
+    if (env && name in env) target[name] = env[name];
+  }
+}
+
+const readSettingsFileEnv = Effect.fn("readSettingsFileEnv")(function* (settingsPath: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const contents = yield* fileSystem
+    .readFileString(settingsPath)
+    .pipe(Effect.orElseSucceed(() => undefined));
+  if (contents === undefined) return undefined;
+  const parsed = yield* decodeSettingsEnv(contents).pipe(Effect.orElseSucceed(() => undefined));
+  return parsed?.env;
+});
+
+// Claude Code applies managed-settings.json, then sorted managed-settings.d/*.json, skipping hidden files.
+const assignManagedSettingsEnv = Effect.fn("assignManagedSettingsEnv")(function* (
+  settingsEnv: ClaudeSettingsEnv,
+  managedDirectory: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dropInDirectory = path.join(managedDirectory, "managed-settings.d");
+  const dropIns = yield* fileSystem
+    .readDirectory(dropInDirectory)
+    .pipe(Effect.orElseSucceed(() => []));
+  for (const settingsPath of [
+    path.join(managedDirectory, "managed-settings.json"),
+    ...dropIns
+      .filter((name) => name.endsWith(".json") && !name.startsWith("."))
+      .toSorted()
+      .map((name) => path.join(dropInDirectory, name)),
+  ]) {
+    assignSettingsEnv(settingsEnv, yield* readSettingsFileEnv(settingsPath));
+  }
+});
 
 /** The `env` values T3 Code reads from Claude's user and managed settings; later files win. */
 export const readClaudeSettingsEnv = Effect.fn("readClaudeSettingsEnv")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   cwd: string | undefined,
   environment: NodeJS.ProcessEnv,
-): Effect.fn.Return<typeof SettingsEnv.Type, never, FileSystem.FileSystem | Path.Path> {
-  const fileSystem = yield* FileSystem.FileSystem;
+): Effect.fn.Return<ClaudeSettingsEnv, never, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
-  const settingsEnv: typeof SettingsEnv.Type = {};
-  for (const settingsPath of claudeSettingsPaths(
-    path,
-    configDirPath,
-    undefined,
-    platform,
-    environment,
-  )) {
-    const contents = yield* fileSystem
-      .readFileString(settingsPath)
-      .pipe(Effect.orElseSucceed(() => undefined));
-    if (contents === undefined) continue;
-    const parsed = yield* decodeSettingsEnv(contents).pipe(Effect.orElseSucceed(() => undefined));
-    Object.assign(settingsEnv, parsed?.env);
+  const managedDirectory = claudeManagedDirectory(path, platform);
+  const managedPath = path.join(managedDirectory, "managed-settings.json");
+  const settingsEnv: ClaudeSettingsEnv = {};
+  for (const settingsPath of claudeSettingsPaths(path, configDirPath, undefined, platform)) {
+    if (settingsPath !== managedPath) {
+      assignSettingsEnv(settingsEnv, yield* readSettingsFileEnv(settingsPath));
+    }
   }
+  yield* assignManagedSettingsEnv(settingsEnv, managedDirectory);
   return settingsEnv;
 });
+
+// A worktree's .git file points at <main>/.git/worktrees/<name>, whose commondir leads back to
+// <main>/.git. A bare repository has no main checkout, so its worktree keeps its own file.
+const mainCheckoutRoot = Effect.fn("mainCheckoutRoot")(
+  function* (checkout: string) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const pointer = yield* fileSystem.readFileString(path.join(checkout, ".git"));
+    const gitDir = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
+    if (gitDir === undefined) return checkout;
+    const worktreeGitDir = path.resolve(checkout, gitDir);
+    const commonDir = yield* fileSystem.readFileString(path.join(worktreeGitDir, "commondir"));
+    const common = path.resolve(worktreeGitDir, commonDir.trim());
+    return path.basename(common) === ".git" ? path.dirname(common) : checkout;
+  },
+  (effect, checkout) => effect.pipe(Effect.orElseSucceed(() => checkout)),
+);
+
+// Claude Code requires the root and .git to belong to the current user, and .claude when it exists.
+const isOwnedCheckout = Effect.fn("isOwnedCheckout")(function* (root: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const userId = process.geteuid?.() ?? process.getuid?.();
+  const isOwned = (file: string) =>
+    fileSystem.stat(file).pipe(Effect.map((info) => Option.getOrUndefined(info.uid) === userId));
+  return yield* Effect.gen(function* () {
+    if (userId === undefined || !(yield* isOwned(root))) return false;
+    if (!(yield* isOwned(path.join(root, ".git")))) return false;
+    return (yield* fileSystem.exists(path.join(root, ".claude")))
+      ? yield* isOwned(path.join(root, ".claude"))
+      : true;
+  }).pipe(Effect.orElseSucceed(() => false));
+});
+
+/**
+ * Claude Code keeps .claude/settings.local.json at the repository root, or in cwd outside a
+ * repository, on Windows, when the root is home, or when the user does not own the checkout.
+ */
+export const resolveClaudeLocalSettingsDirectory = Effect.fn("resolveClaudeLocalSettingsDirectory")(
+  function* (cwd: string) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    if ((yield* HostProcess.Platform) === "win32") return cwd;
+    for (let directory = cwd; ; directory = path.dirname(directory)) {
+      const isCheckout = yield* fileSystem
+        .exists(path.join(directory, ".git"))
+        .pipe(Effect.orElseSucceed(() => false));
+      if (isCheckout) {
+        const root = yield* mainCheckoutRoot(directory);
+        if (root === (yield* HostProcess.HomeDirectory)) return cwd;
+        return (yield* isOwnedCheckout(root)) ? root : cwd;
+      }
+      if (path.dirname(directory) === directory) return cwd;
+    }
+  },
+);
+
+export interface ClaudeLaunchArgSettingsScope {
+  readonly settingSources?: ReadonlySet<string>;
+  readonly projectConfigRoot?: string;
+}
+
+/**
+ * The `env` values a Claude process in `cwd` sees: user, project, local, then --settings, with
+ * managed settings over all of them. Reads the files each call so a new session sees edits.
+ */
+export const readClaudeSessionSettingsEnv = Effect.fn("readClaudeSessionSettingsEnv")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  cwd: string | undefined,
+  environment: NodeJS.ProcessEnv,
+  launchArgEnv?: Readonly<Record<string, unknown>>,
+  scope: ClaudeLaunchArgSettingsScope = {},
+): Effect.fn.Return<ClaudeSettingsEnv, never, FileSystem.FileSystem | Path.Path> {
+  const path = yield* Path.Path;
+  const platform = yield* HostProcess.Platform;
+  const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
+  const loads = (source: string) =>
+    scope.settingSources === undefined || scope.settingSources.has(source);
+  const configuredRoot =
+    scope.projectConfigRoot === undefined
+      ? undefined
+      : path.resolve(cwd ?? ".", scope.projectConfigRoot);
+  const projectRoot = configuredRoot ?? cwd;
+  const localDirectory =
+    configuredRoot === undefined && cwd !== undefined
+      ? yield* resolveClaudeLocalSettingsDirectory(cwd)
+      : undefined;
+  const settingsEnv: ClaudeSettingsEnv = {};
+  for (const settingsPath of [
+    ...(loads("user") ? [path.join(configDirPath, "settings.json")] : []),
+    ...(projectRoot !== undefined && loads("project")
+      ? [path.join(projectRoot, ".claude", "settings.json")]
+      : []),
+    ...(projectRoot !== undefined && loads("local")
+      ? [
+          path.join(projectRoot, ".claude", "settings.local.json"),
+          ...(localDirectory !== undefined && localDirectory !== projectRoot
+            ? [path.join(localDirectory, ".claude", "settings.local.json")]
+            : []),
+        ]
+      : []),
+  ]) {
+    assignSettingsEnv(settingsEnv, yield* readSettingsFileEnv(settingsPath));
+  }
+  assignSettingsEnv(settingsEnv, launchArgEnv);
+  yield* assignManagedSettingsEnv(settingsEnv, claudeManagedDirectory(path, platform));
+  return settingsEnv;
+});
+
+/** Launch arguments that decide which settings files load; --settings and managed always apply. */
+export function claudeLaunchArgSettingsScope(launchArgs?: string): ClaudeLaunchArgSettingsScope {
+  const flags = parseCliArgs(launchArgs ?? "").flags;
+  const settingSources = flags["setting-sources"];
+  const projectConfigRoot = flags["project-config-root"];
+  return {
+    ...(typeof settingSources === "string"
+      ? { settingSources: new Set(settingSources.split(",").map((source) => source.trim())) }
+      : {}),
+    ...(projectConfigRoot ? { projectConfigRoot } : {}),
+  };
+}
 
 /** The host of an `ANTHROPIC_BASE_URL` that is not Anthropic's own API. */
 export function customClaudeApiEndpointHost(baseUrl: string | undefined): string | undefined {
@@ -640,7 +793,6 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   const { skillOverrides, enabledPlugins, syncedPluginsHidden } = yield* readSkillSettings(
     configDirPath,
     cwd,
-    env,
   );
   // Most installs have no synced folder; skip reading `.claude.json` for them.
   const hasSyncedPlugins =
