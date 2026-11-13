@@ -27,6 +27,7 @@ import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPick
 import { retainedModelWhileProviderLocked } from "./ProviderModelPicker.logic";
 import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import { isAutoModelSlug } from "@t3tools/shared/autoModel";
 import { describeAutoRoute } from "./autoRoute";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { ModelEsque, getDisplayModelName, getTriggerDisplayModelName } from "./providerIconUtils";
@@ -178,13 +179,18 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     (activeEntry?.driverKind === "opencode" || activeEntry?.driverKind === "antigravity"
       ? undefined
       : selectedInstanceOptions[0]);
-  const isAuto = props.model === "auto";
+  const isAuto = isAutoModelSlug(props.model);
+  const now = Date.parse(nowMinute);
   // Names the model Auto would pick now, at this selection's level (default level elsewhere).
   const autoRoute = describeAutoRoute({
     entries: props.instanceEntries,
+    ...(isAuto ? { model: props.model } : {}),
     ...(isAuto && props.modelSelectionOptions ? { options: props.modelSelectionOptions } : {}),
-    now: Date.parse(nowMinute),
+    now,
   });
+  // Each Auto level row in the list names its own route.
+  const autoRouteFor = (slug: string) =>
+    describeAutoRoute({ entries: props.instanceEntries, model: slug, now });
   const triggerTitle =
     isAuto && autoRoute
       ? `Auto · ${autoRoute.label}`
@@ -316,7 +322,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       workspaceCwd={props.workspaceCwd ?? null}
       activeInstanceId={activeInstanceId}
       model={props.model}
-      autoRoute={autoRoute}
+      autoRouteFor={autoRouteFor}
       {...(props.selectedModels !== undefined ? { selectedModels: props.selectedModels } : {})}
       {...(props.onToggleModel
         ? {
