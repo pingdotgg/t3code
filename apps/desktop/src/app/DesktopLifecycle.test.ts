@@ -2,7 +2,12 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import type * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Ref from "effect/Ref";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -17,6 +22,33 @@ import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+
+function layerSpawner(
+  onSpawn: (command: ChildProcess.StandardCommand) => Effect.Effect<void> = () => Effect.void,
+) {
+  return Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make((command) =>
+      onSpawn(command as ChildProcess.StandardCommand).pipe(
+        Effect.as(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.never,
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      ),
+    ),
+  );
+}
 
 function layerElectronApp(
   appListeners: Map<string, (...args: readonly unknown[]) => void>,
@@ -132,6 +164,7 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(layerDesktopWindow()),
         Layer.provideMerge(layerEnvironment),
         Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(layerSpawner()),
         Layer.provideMerge(DesktopState.layer),
       );
 
@@ -204,6 +237,7 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(layerDesktopWindow({ flushMainWindowBounds })),
         Layer.provideMerge(layerEnvironment),
         Layer.provideMerge(layerDesktopShutdown),
+        Layer.provideMerge(layerSpawner()),
         Layer.provideMerge(DesktopState.layer),
       );
 
@@ -233,6 +267,7 @@ describe("DesktopLifecycle", () => {
       const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
         platform: "linux",
         isDevelopment: false,
+        appImagePath: Option.none(),
       } as DesktopEnvironment.DesktopEnvironment["Service"]);
       const layer = DesktopLifecycle.layer.pipe(
         Layer.provideMerge(
@@ -248,6 +283,7 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(layerDesktopWindow()),
         Layer.provideMerge(layerEnvironment),
         Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(layerSpawner()),
         Layer.provideMerge(DesktopState.layer),
       );
 
@@ -271,6 +307,64 @@ describe("DesktopLifecycle", () => {
     }),
   );
 
+  it.effect(
+    "relaunches an AppImage through its launcher, not the mount that unmounts on exit",
+    () =>
+      Effect.gen(function* () {
+        const spawned = yield* Deferred.make<ChildProcess.StandardCommand>();
+        const exited = yield* Deferred.make<number>();
+        const relaunches = yield* Ref.make(0);
+        const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+          platform: "linux",
+          isDevelopment: false,
+          appImagePath: Option.some("/home/user/Applications/T3-Code.AppImage"),
+        } as DesktopEnvironment.DesktopEnvironment["Service"]);
+        const layer = DesktopLifecycle.layer.pipe(
+          Layer.provideMerge(
+            layerElectronApp(
+              new Map(),
+              Effect.void,
+              (code) => Deferred.succeed(exited, code).pipe(Effect.asVoid),
+              () => Ref.update(relaunches, (count) => count + 1),
+            ),
+          ),
+          Layer.provideMerge(layerElectronTheme),
+          Layer.provideMerge(layerElectronWindow()),
+          Layer.provideMerge(layerDesktopWindow()),
+          Layer.provideMerge(layerEnvironment),
+          Layer.provideMerge(
+            layerSpawner((command) => Deferred.succeed(spawned, command).pipe(Effect.asVoid)),
+          ),
+          Layer.provideMerge(DesktopShutdown.layer),
+          Layer.provideMerge(layerSpawner()),
+          Layer.provideMerge(DesktopState.layer),
+        );
+
+        const command = yield* Effect.gen(function* () {
+          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+          yield* (yield* DesktopShutdown.DesktopShutdown).markComplete;
+          yield* lifecycle.relaunch("serverExposureMode=network-accessible");
+          assert.strictEqual(yield* Deferred.await(exited), 0);
+          return yield* Deferred.await(spawned);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.provideService(HostProcess.ExecutablePath, "/tmp/.mount_T3-CodeAbc123/t3code"),
+          Effect.provideService(HostProcess.Arguments, [
+            "/tmp/.mount_T3-CodeAbc123/t3code",
+            "--no-sandbox",
+          ]),
+        );
+
+        // app.relaunch would give the launcher no_new_privs, which stops its setuid fusermount.
+        assert.strictEqual(yield* Ref.get(relaunches), 0);
+        assert.strictEqual(command.options.detached, true);
+        assert.deepStrictEqual(command.args.slice(-2), [
+          "/home/user/Applications/T3-Code.AppImage",
+          "--no-sandbox",
+        ]);
+      }),
+  );
+
   it.effect("exits on a repeated quit only once shutdown has stalled", () =>
     Effect.gen(function* () {
       const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
@@ -291,6 +385,7 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(layerEnvironment),
         // Nothing marks this shutdown complete, so it stays pending.
         Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(layerSpawner()),
         Layer.provideMerge(DesktopState.layer),
       );
 
@@ -343,6 +438,7 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(layerDesktopWindow({ activate })),
         Layer.provideMerge(layerEnvironment),
         Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(layerSpawner()),
         Layer.provideMerge(DesktopState.layer),
       );
 
