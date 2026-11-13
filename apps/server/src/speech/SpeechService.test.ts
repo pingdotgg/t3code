@@ -103,6 +103,8 @@ const store = Layer.succeed(
     installedPath: (model) =>
       Effect.sync(() => (readyModels.has(model.id) ? "test.gguf" : undefined)),
     download,
+    link: () => Effect.succeed([]),
+    linkedFrom: () => Effect.undefined,
     remove: (model) =>
       Effect.sync(() => {
         readyModels.delete(model.id);
@@ -447,14 +449,15 @@ it.effect("honors exact aliases and phrase boundaries in batch and streamed text
         { term: "GitHub", aliases: [] },
         { term: "McDonald’s", aliases: [] },
         { term: "King’s Cross", aliases: [] },
+        { term: "C#", aliases: [] },
       ],
     };
     const spoken =
       'a test with a i and ay eye. Robert, Roberts. "the publisher" and the publisher. (git hub), git (hub). ' +
-      "git hub's API, git hub’s API, git’s hub, mac donald's menu, king's cross.";
+      "git hub's API, git hub’s API, git’s hub, mac donald's menu, king's cross. vitamin c and plan c.";
     const expected =
       "a test with AI and AI. Bob, Roberts. O'Reilly and the publisher. (GitHub), git (hub). " +
-      "GitHub's API, GitHub’s API, git’s hub, McDonald’s menu, King’s Cross.";
+      "GitHub's API, GitHub’s API, git’s hub, McDonald’s menu, King’s Cross. vitamin c and plan c.";
     native.transcribe.mockResolvedValueOnce({ text: spoken });
     native.finish.mockResolvedValueOnce(spoken);
     expect(yield* speech.transcribe(pcm(), options)).toBe(expected);
@@ -531,6 +534,24 @@ it.effect("unloads after the chosen idle period and reloads on the next recordin
 );
 
 it.effect.each([
+  {
+    cue: undefined,
+    remove: true,
+    text: "First paragraph.\n\nSecond paragraph.",
+    expected: "First paragraph.\n\nSecond paragraph.",
+  },
+  {
+    cue: undefined,
+    remove: true,
+    text: "First um\n\nuh Second.",
+    expected: "First\n\nSecond.",
+  },
+  {
+    cue: undefined,
+    remove: true,
+    text: "First um\r\n\r\nuh Second.",
+    expected: "First\r\n\r\nSecond.",
+  },
   { cue: "um", remove: true, text: "Make it red, um, blue.", expected: "Make it red, um, blue." },
   {
     cue: "uh no",
