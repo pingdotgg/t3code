@@ -323,6 +323,36 @@ describe("makeMcpAppHost", () => {
     expect(declined.sent.find((m) => m.id === 3)?.result).toEqual({ mode: "inline" });
   });
 
+  it("answers a display-mode change whose host tears the document down first", async () => {
+    let host: ReturnType<typeof makeMcpAppHost> | undefined;
+    const sent: Array<Record<string, unknown>> = [];
+    host = setup({
+      post: (message) => {
+        const posted = message as Record<string, unknown>;
+        sent.push(posted);
+        if (posted.method === "ui/resource-teardown") {
+          queueMicrotask(() => host?.receive({ jsonrpc: "2.0", id: posted.id, result: {} }));
+        }
+      },
+      requestDisplayMode: async () => {
+        await host?.teardown();
+        return "fullscreen";
+      },
+    }).host;
+    initialize(host, { availableDisplayModes: ["inline", "fullscreen"] });
+    host.receive({
+      jsonrpc: "2.0",
+      id: "change",
+      method: "ui/request-display-mode",
+      params: { mode: "fullscreen" },
+    });
+    await flush();
+    await flush();
+    await flush();
+    expect(sent.find((m) => m.method === "ui/resource-teardown")).toBeDefined();
+    expect(sent.find((m) => m.id === "change")?.result).toEqual({ mode: "fullscreen" });
+  });
+
   it("forwards model context and download requests, and declares both", async () => {
     const contexts: Array<unknown> = [];
     const downloads: Array<ReadonlyArray<{ readonly name: string }>> = [];
