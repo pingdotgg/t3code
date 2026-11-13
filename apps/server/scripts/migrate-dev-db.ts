@@ -203,6 +203,7 @@ const RECOVERY_KINDS: ReadonlyArray<ProjectionStore.ProjectionRecoveryKind> = [
 ];
 
 const CLEARED_TABLES: ReadonlyArray<string> = [
+  "run_webhook_subscriptions",
   "scheduled_tasks",
   "orchestration_v2_effect_outbox",
   "orchestration_v2_thread_launch_workflows",

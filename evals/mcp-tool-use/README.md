@@ -305,3 +305,17 @@ After the change, the first reference to a file is an absolute link. The remaini
 2. From `evals/`, run `pnpm mcp-tool-use:trim-capture <claude|codex> <capture.json> mcp-tool-use/templates/<claude|codex>.json.gz`. It keeps only what `run.ts` reads, and removes user instructions, the user's own skills and agents, account ids, and home paths.
 3. Read the output for user data before you commit it: `zcat <file> | less`.
 4. Run the full eval on the old and new templates, and compare.
+
+## Run callbacks
+
+`cases/run-webhooks.ndjson` checks outside-client callback registration and cancellation,
+using the shipped tool schema and mock callback responses. It checks that registration
+uses the configured endpoint ID and that cancelling delivery leaves the run alone.
+
+```sh
+pnpm mcp-tool-use --cases mcp-tool-use/cases/run-webhooks.ndjson --dry-run
+pnpm mcp-tool-use --cases mcp-tool-use/cases/run-webhooks.ndjson --samples 3 --out runs/run-webhooks
+```
+
+Network validation, signatures, persistence, retries, and access checks are covered by
+the server tests. These model cases do not exercise an HTTP receiver.
