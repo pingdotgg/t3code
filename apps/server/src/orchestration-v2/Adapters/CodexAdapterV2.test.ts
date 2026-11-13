@@ -31,6 +31,7 @@ import {
   RunId,
   ThreadId,
   TurnItemId,
+  type ServerProviderModel,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as CodexClient from "effect-codex-app-server/client";
@@ -230,6 +231,34 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
+  it.effect("sends the chosen cyber access program, else the model's default", () =>
+    Effect.gen(function* () {
+      const build = (value?: string, cyberAccess?: { defaultProgram: string | undefined }) =>
+        CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-cyber",
+          codexInput: [{ type: "text", text: "test" }],
+          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+            ...(value === undefined ? {} : { options: [{ id: "cyberAccessProgram", value }] }),
+          },
+          cyberAccess,
+        });
+
+      // Custom models offer no Cyber Access, so even an explicit choice is dropped.
+      assert.notProperty(yield* build(), "cyberAccessProgram");
+      assert.notProperty(yield* build("daybreakBlue"), "cyberAccessProgram");
+      const daybreak = { defaultProgram: "daybreakBlue" };
+      assert.equal((yield* build(undefined, daybreak)).cyberAccessProgram, "daybreakBlue");
+      assert.equal((yield* build("standard", daybreak)).cyberAccessProgram, "standard");
+      // An unread config leaves no default, but an explicit Standard still goes.
+      const unknown = { defaultProgram: undefined };
+      assert.notProperty(yield* build(undefined, unknown), "cyberAccessProgram");
+      assert.equal((yield* build("standard", unknown)).cyberAccessProgram, "standard");
+    }),
+  );
+
   it.effect("sends MCP app model context as untrusted Codex context", () =>
     Effect.gen(function* () {
       const policy = { runtimeMode: "full-access", interactionMode: "default", cwd: null } as const;
@@ -281,7 +310,6 @@ describe("CodexAdapterV2 native protocol logging", () => {
       const providerSessionId = ProviderSessionId.make("provider-session-1");
       const protocolLogger = CodexAdapterV2.makeCodexAppServerProtocolLogger({
         nativeEventLogger: logger,
-        threadId,
         providerSessionId,
       });
 
@@ -290,12 +318,52 @@ describe("CodexAdapterV2 native protocol logging", () => {
         return;
       }
 
+      const startThread = (requestId: number, appThreadId: string, nativeThreadId: string) =>
+        Effect.gen(function* () {
+          yield* protocolLogger({
+            direction: "outgoing",
+            stage: "decoded",
+            payload: {
+              id: requestId,
+              method: "thread/start",
+              params: { config: { "shell_environment_policy.set.T3CODE_THREAD_ID": appThreadId } },
+            },
+          });
+          yield* protocolLogger({
+            direction: "incoming",
+            stage: "decoded",
+            payload: { id: requestId, result: { thread: { id: nativeThreadId } } },
+          });
+        });
+      yield* startThread(1, "thread-1", "native-1");
+      yield* startThread(2, "thread-2", "native-2");
+      yield* protocolLogger({
+        direction: "outgoing",
+        stage: "decoded",
+        payload: { id: 3, method: "turn/start", params: { threadId: "native-2" } },
+      });
+      yield* protocolLogger({
+        direction: "incoming",
+        stage: "decoded",
+        payload: { id: 3, result: { turn: { id: "turn-2" } } },
+      });
+      yield* protocolLogger({
+        direction: "incoming",
+        stage: "decoded",
+        payload: { id: 4, result: { userAgent: "codex/1.0.0" } },
+      });
+      assert.deepEqual(
+        writes.splice(0).map((write) => write.threadId),
+        ["thread-1", "thread-1", "thread-2", "thread-2", "thread-2", "thread-2", null],
+      );
+
       yield* protocolLogger({
         direction: "incoming",
         stage: "decoded",
         payload: {
           method: "thread/event",
           params: {
+            threadId: "native-1",
             id: "evt-1",
             http_headers: { Authorization: "Bearer secret-codex-token" },
             usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
@@ -322,6 +390,7 @@ describe("CodexAdapterV2 native protocol logging", () => {
           payload: {
             method: "thread/event",
             params: {
+              threadId: "native-1",
               id: "evt-1",
               http_headers: { Authorization: "[REDACTED]" },
               usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
@@ -1302,6 +1371,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onUsageLimits?: CodexAdapterV2.CodexAdapterV2Options["onUsageLimits"],
     promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
     onNotification: (method: string) => Effect.Effect<void> = () => Effect.void,
+    models?: CodexAdapterV2.CodexAdapterV2Options["models"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1364,6 +1434,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         environment: {},
         clientFactory,
         ...(onUsageLimits ? { onUsageLimits } : {}),
+        ...(models ? { models } : {}),
         digest: yield* Digest.Digest,
         fileSystem,
         idAllocator,
@@ -2325,6 +2396,95 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("returns a Codex question's answer under its native question id", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "question-id-thread";
+        const nativeTurnId = "question-id-turn";
+        const transcript = makeCodexReplayTranscript({
+          scenario: "codex-question-native-id",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Pick one." }),
+            {
+              type: "emit_inbound",
+              label: "question",
+              frame: {
+                id: 100,
+                method: "item/tool/requestUserInput",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  itemId: "question-id-item",
+                  isBlocking: true,
+                  questions: [
+                    {
+                      id: " choice ",
+                      header: "Choice",
+                      question: "Which option?",
+                      options: [{ label: "A", description: "Option A" }],
+                    },
+                  ],
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "answer",
+              frame: { id: 100, result: { answers: { " choice ": { answers: ["A"] } } } },
+            },
+            {
+              type: "emit_inbound",
+              label: "complete",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("question-id-attempt"),
+            text: "Pick one.",
+          }),
+        );
+        const questionItem = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "user_input_request"
+              ? [event.turnItem]
+              : [],
+          )[0];
+        const request = () =>
+          harness.events.flatMap((event) =>
+            event.type === "runtime_request.updated" ? [event.runtimeRequest] : [],
+          )[0];
+        yield* harness.until(() => questionItem() !== undefined && request() !== undefined);
+        const publishedId = questionItem()!.questions[0]!.id;
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: request()!.id,
+          answers: { [publishedId]: ["A"] },
+        });
+        yield* harness.firstTerminal;
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("records the model Codex reports on the root provider turn", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -2705,12 +2865,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.gen(function* () {
         const nativeThreadId = "context-thread";
         const nativeTurnId = "context-turn";
+        // An explicit Standard must reach Codex, or Codex falls back to Daybreak.
+        const modelSelection = {
+          ...CODEX_TEST_MODEL_SELECTION,
+          options: [{ id: "cyberAccessProgram", value: "standard" }],
+        };
         const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
           nativeThreadId,
           codexInput: [{ type: "text", text: "work" }],
           runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
-          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          modelSelection,
           hasT3Mcp: true,
+          cyberAccess: { defaultProgram: "daybreakBlue" },
         });
         assert.include(
           params.additionalContext?.t3_code_orchestration_01?.value ?? "",
@@ -2790,6 +2956,27 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               if (method === "item/completed" || method === "turn/completed")
                 wireOrder.push(method);
             }),
+          Effect.succeed<ReadonlyArray<ServerProviderModel>>([
+            {
+              slug: modelSelection.model,
+              name: modelSelection.model,
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "cyberAccessProgram",
+                    label: "Cyber Access",
+                    type: "select",
+                    options: [
+                      { id: "standard", label: "Standard" },
+                      { id: "daybreakBlue", label: "Daybreak Blue", isDefault: true },
+                    ],
+                    currentValue: "daybreakBlue",
+                  },
+                ],
+              },
+            },
+          ]),
         );
         yield* (yield* McpProviderSessions.McpProviderSessions).set({
           environmentId: EnvironmentId.make("test"),
@@ -2800,15 +2987,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           authorizationHeader: "Bearer test",
           browserToolsAvailable: true,
         });
-        yield* harness.runtime.startTurn(
-          makeCodexTestTurnInput({
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
             threadId: harness.threadId,
             providerThread: harness.providerThread,
             now: yield* DateTime.now,
             attemptId: RunAttemptId.make("context-attempt"),
             text: "work",
           }),
-        );
+          modelSelection,
+        });
         yield* harness.firstTerminal;
         yield* Deferred.await(restoreRequested);
         assert.equal(harness.terminalEvents()[0]?.status, "completed");

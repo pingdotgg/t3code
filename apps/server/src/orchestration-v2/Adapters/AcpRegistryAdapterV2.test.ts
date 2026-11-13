@@ -23,6 +23,7 @@ import * as Stream from "effect/Stream";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
@@ -471,6 +472,7 @@ describe("AcpRegistryAdapterV2", () => {
     const openWithStoredPicks = Effect.fn("openWithStoredPicks")(function* (input: {
       readonly setup: unknown;
       readonly pickFrames: ReadonlyArray<Frame>;
+      readonly agentId?: string;
       readonly customModels?: ReadonlyArray<string>;
       readonly storedModel?: string;
       readonly storedModePick?: string;
@@ -478,6 +480,7 @@ describe("AcpRegistryAdapterV2", () => {
       readonly rejectedModel?: string;
       readonly storedOptions?: ReadonlyArray<{ readonly id: string; readonly value: string }>;
       readonly failsConfiguration?: boolean;
+      readonly liveConfiguration?: AcpRegistryLiveConfiguration;
     }) {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       // Scope release gives the replay agent at most a second to exit, so the status
@@ -524,7 +527,7 @@ describe("AcpRegistryAdapterV2", () => {
         selfInvocation: yield* resolveSelfInvocation(),
         instanceId,
         settings: yield* decodeAcpRegistryAdapterSettings({
-          agentId: "fixture-agent",
+          agentId: input.agentId ?? "fixture-agent",
           authMethodId: "test",
           customModels: input.customModels ?? [],
         }),
@@ -545,6 +548,8 @@ describe("AcpRegistryAdapterV2", () => {
             layerInjectedRuntimeCatalog,
             Layer.mock(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator)({
               withForegroundStartup: (_startupKey, effect) => effect,
+              getLiveConfiguration: () =>
+                Effect.sync(() => Option.fromUndefinedOr(published ?? input.liveConfiguration)),
               publishLiveConfiguration: (_instanceId, configuration) =>
                 Effect.sync(() => {
                   published = configuration;
@@ -797,6 +802,85 @@ describe("AcpRegistryAdapterV2", () => {
             ],
           );
         }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+
+    // Copilot's session/new reports its built-in default, not the model it will run
+    // (github/copilot-cli#5363), so the selected model must be written even when it matches,
+    // and an unset effort gets the value the composer shows.
+    it.effect(
+      "writes the selected Copilot model and the shown effort when session/new reports defaults",
+      () => {
+        const copilotModel = (currentValue: string) => ({
+          ...modelOption("model", currentValue),
+          options: ["claude-sonnet-5.5", "claude-haiku-4.5"].map((value) => ({
+            value,
+            name: value,
+          })),
+        });
+        const effort = (currentValue: string) => ({
+          id: "reasoning_effort",
+          name: "Reasoning effort",
+          category: "thought_level",
+          type: "select",
+          currentValue,
+          options: ["medium", "xhigh"].map((value) => ({ value, name: value })),
+        });
+        return openWithStoredPicks({
+          agentId: "github-copilot-cli",
+          setup: { configOptions: [copilotModel("claude-sonnet-5.5"), effort("medium")] },
+          storedModel: "claude-sonnet-5.5",
+          liveConfiguration: {
+            models: [],
+            currentModelId: null,
+            configOptions: [
+              {
+                id: "reasoning_effort",
+                label: "Reasoning effort",
+                type: "select",
+                role: "reasoning",
+                currentValue: "xhigh",
+                options: [
+                  { id: "medium", label: "medium" },
+                  { id: "xhigh", label: "xhigh" },
+                ],
+              },
+            ],
+          },
+          pickFrames: [
+            // The new session's own update replaces the shared live configuration.
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "notification",
+                method: "session/update",
+                params: {
+                  sessionId: "agent-session",
+                  update: {
+                    sessionUpdate: "config_option_update",
+                    configOptions: [copilotModel("claude-sonnet-5.5"), effort("medium")],
+                  },
+                },
+              },
+            },
+            outbound("session/set_config_option", {
+              sessionId: "agent-session",
+              configId: "model",
+              value: "claude-sonnet-5.5",
+            }),
+            answer("session/set_config_option", {
+              configOptions: [copilotModel("claude-sonnet-5.5"), effort("medium")],
+            }),
+            outbound("session/set_config_option", {
+              sessionId: "agent-session",
+              configId: "reasoning_effort",
+              value: "xhigh",
+            }),
+            answer("session/set_config_option", {
+              configOptions: [copilotModel("claude-sonnet-5.5"), effort("xhigh")],
+            }),
+          ],
+        }).pipe(Effect.provide(layerTest), Effect.scoped);
+      },
     );
 
     it.effect.each([
@@ -1406,7 +1490,7 @@ describe("AcpRegistryAdapterV2", () => {
                   })
                 : "test prompt",
           },
-          runtimeInstructions,
+          ...(ordinal === 1 ? [runtimeInstructions] : []),
         ];
         const echo = (messageId: string, content: ReadonlyArray<unknown>) =>
           claudeFrames.update(CLAUDE_ROOT_SESSION, {
@@ -1427,6 +1511,7 @@ describe("AcpRegistryAdapterV2", () => {
               {
                 type: "text",
                 text: promptText(ordinal),
+                annotations: { audience: ["user"] },
               },
             ]),
             ...(ordering === "before" ? [matching, acknowledgment] : [acknowledgment, matching]),
@@ -2002,6 +2087,69 @@ describe("AcpRegistryAdapterV2", () => {
           (event) => event.type === "message.updated" && event.message.text.includes("onetwo"),
         ),
       );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("replaces streamed root tool output with a later content list", () =>
+    Effect.gen(function* () {
+      const { update } = claudeFrames;
+      const text = (value: string) => [{ type: "content", content: { type: "text", text: value } }];
+      const session = yield* openClaudeReplaySession([
+        ...claudeFrames.open,
+        ...claudeFrames.prompt(1),
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "root-tool",
+          title: "Stream",
+          status: "in_progress",
+          content: text("one"),
+        }),
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_content_chunk",
+          toolCallId: "root-tool",
+          content: { type: "content", content: { type: "text", text: "two" } },
+        }),
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "root-tool",
+          status: "completed",
+          content: text("replacement"),
+        }),
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_content_chunk",
+          toolCallId: "root-tool",
+          content: { type: "content", content: { type: "text", text: "-more" } },
+        }),
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_content_chunk",
+          toolCallId: "root-tool",
+          content: {
+            type: "diff",
+            changes: [{ operation: "add", path: "/a.txt" }],
+            patch: { format: "git_patch", text: "PATCH" },
+          },
+        }),
+        claudeMarker("tools complete"),
+        claudeFrames.idle("end_turn"),
+        claudeFrames.closeRequest,
+        claudeFrames.closed,
+      ]);
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const events = yield* session.throughMarker("tools complete");
+      const outputs = events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.nativeItemRef?.nativeId === "root-tool" &&
+        "output" in event.turnItem
+          ? [event.turnItem.output]
+          : [],
+      );
+      assert.deepEqual(outputs, [
+        text("one"),
+        text("onetwo"),
+        text("replacement"),
+        text("replacement-more"),
+        { type: "Text", text: "replacement-morePATCH" },
+      ]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
