@@ -154,7 +154,6 @@ export function createFilesystemEnvironmentAtoms<R, E>(
       // lists it again. The short TTL only keeps the old listing on screen while it refreshes.
       idleTtlMs: BROWSE_IDLE_TTL_MS,
       staleTimeMs: 0,
-      revalidateOnRemount: true,
     }),
   };
 }
