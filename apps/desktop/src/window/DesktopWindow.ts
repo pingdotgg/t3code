@@ -397,6 +397,8 @@ export const make = Effect.gen(function* () {
   // Backend readiness repeats after every restart, and on macOS the app outlives its last
   // window, so a window the user closed stays closed until they activate the app.
   let mainClosed = false;
+  // A revealing request that arrived while the backend was down opens the window once it is back.
+  let revealWhenReady = false;
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
@@ -1013,6 +1015,7 @@ export const make = Effect.gen(function* () {
     const window = yield* createWindow();
     if (Option.isSome(window)) {
       mainClosed = false;
+      revealWhenReady = false;
       yield* logWindowInfo("main window created");
     }
     return window;
@@ -1109,8 +1112,7 @@ export const make = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return;
     const existingWindow = yield* reveal ? focusedMainWindow : electronWindow.main;
     if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) {
-      // A revealing request asks for the window, so a closed one opens once the backend is back.
-      if (reveal) mainClosed = false;
+      if (reveal) revealWhenReady = true;
       return;
     }
     const window = Option.isSome(existingWindow) ? existingWindow : yield* ensureMain;
@@ -1169,7 +1171,7 @@ export const make = Effect.gen(function* () {
       // A startup failure surfaced the recovery window, which closes only into a main window.
       const recovering =
         (yield* SubscriptionRef.get(desktopState.primaryBackendStartup))._tag === "Failing";
-      if (!mainClosed || recovering) yield* createMainIfBackendReady;
+      if (!mainClosed || revealWhenReady || recovering) yield* createMainIfBackendReady;
     }),
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(
       Effect.withSpan("desktop.window.handleBackendNotReady"),
