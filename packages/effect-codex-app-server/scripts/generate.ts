@@ -145,6 +145,8 @@ const ManualSchemas: Record<string, Schema.Json> = {
 // `account/read` decode and take the provider down with it.
 const DefinitionOverrides: Record<string, Schema.Json> = {
   PlanType: { type: "string" },
+  // Newer Codex releases add hook events (e.g. `preModelRequest`); a closed enum drops their notifications.
+  HookEventName: { type: "string" },
   // Newer custom Codex binaries emit partial answers before additional tools or text.
   MessagePhase: {
     description:
