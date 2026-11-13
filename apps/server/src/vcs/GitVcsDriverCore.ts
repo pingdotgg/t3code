@@ -2859,7 +2859,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       if (mergeBranch && configuredRemoteName && configuredRemoteName !== ".") {
         if (
           mergeBranch === branch ||
-          mergeBranch === (yield* resolvePublishBranchName(cwd, branch))
+          (branch.endsWith(`/${mergeBranch}`) &&
+            `${configuredRemoteName}/${mergeBranch}`.endsWith(`/${branch}`))
         ) {
           goneUpstream = { remoteName: configuredRemoteName, branchName: mergeBranch };
         } else {

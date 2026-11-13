@@ -7534,14 +7534,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     );
 
     it.effect.each([
-      { baseBranch: "dev", local: false },
-      { baseBranch: "dev", local: true },
-      { baseBranch: "feature/base", local: true },
-      { baseBranch: "upstream", local: true },
-      { baseBranch: "upstream/feature/x", local: true },
+      { baseBranch: "dev", local: false, branch: "feature/x", deleted: false },
+      { baseBranch: "dev", local: true, branch: "feature/x", deleted: false },
+      { baseBranch: "feature/base", local: true, branch: "feature/x", deleted: false },
+      { baseBranch: "upstream", local: true, branch: "feature/x", deleted: false },
+      { baseBranch: "upstream/feature/x", local: true, branch: "feature/x", deleted: false },
+      { baseBranch: "dev", local: false, branch: "origin/dev", deleted: false },
+      { baseBranch: "dev", local: false, branch: "origin/dev", deleted: true },
     ])(
-      "publishes a branch tracking $baseBranch (local=$local) under its own name, not the base",
-      ({ baseBranch, local }) =>
+      "publishes $branch tracking $baseBranch (local=$local, deleted=$deleted) without updating the base",
+      ({ baseBranch, local, branch, deleted }) =>
         Effect.gen(function* () {
           const cwd = yield* makeTmpDir();
           const remote = yield* makeTmpDir("git-remote-");
@@ -7566,50 +7568,67 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             "checkout",
             "--track",
             "-b",
-            "feature/x",
+            branch,
             local ? `refs/heads/${baseBranch}` : `refs/remotes/upstream/${baseBranch}`,
           ]);
           assert.equal(
-            yield* driver.readConfigValue(cwd, "branch.feature/x.remote"),
+            yield* driver.readConfigValue(cwd, `branch.${branch}.remote`),
             local ? "." : "upstream",
           );
           yield* writeTextFile(cwd, "feature.txt", "feature\n");
           yield* git(cwd, ["add", "-A"]);
           yield* driver.commit(cwd, "Add feature", "");
+          if (deleted) {
+            yield* git(cwd, ["push", "upstream", "--delete", baseBranch]);
+          }
+          const publishBranch = branch === "origin/dev" ? "dev" : branch;
+          assert.deepEqual(
+            yield* driver.resolvePushTarget(cwd, { branch, hasUpstream: !deleted }),
+            { remoteName: "origin", branchName: publishBranch },
+          );
 
           const pushed = yield* driver.pushCurrentBranch(cwd, null);
 
           assert.deepInclude(pushed, {
             status: "pushed",
-            branch: "feature/x",
-            upstreamBranch: "origin/feature/x",
+            branch,
+            upstreamBranch: `origin/${publishBranch}`,
             setUpstream: true,
           });
           assert.equal(
-            yield* git(remote, ["--git-dir=.", "log", "-1", "--pretty=%s", "feature/x"]),
+            yield* git(remote, ["--git-dir=.", "log", "-1", "--pretty=%s", publishBranch]),
             "Add feature",
           );
+          if (publishBranch !== baseBranch) {
+            assert.equal(
+              yield* git(remote, ["--git-dir=.", "rev-parse", `refs/heads/${baseBranch}`]),
+              devSha,
+            );
+          }
           assert.equal(
-            yield* git(remote, ["--git-dir=.", "rev-parse", `refs/heads/${baseBranch}`]),
-            devSha,
+            yield* git(upstream, [
+              "--git-dir=.",
+              "for-each-ref",
+              "--format=%(objectname)",
+              `refs/heads/${baseBranch}`,
+            ]),
+            deleted ? "" : upstreamDevSha,
           );
           assert.equal(
-            yield* git(upstream, ["--git-dir=.", "rev-parse", `refs/heads/${baseBranch}`]),
-            upstreamDevSha,
+            yield* git(cwd, ["rev-parse", "--symbolic-full-name", "@{upstream}"]),
+            `refs/remotes/origin/${publishBranch}`,
           );
           assert.equal(
-            yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
-            "origin/feature/x",
-          );
-          assert.equal(
-            yield* driver.readConfigValue(cwd, "branch.feature/x.t3-merge-base"),
+            yield* driver.readConfigValue(cwd, `branch.${branch}.t3-merge-base`),
             baseBranch,
           );
           assert.equal(
-            yield* driver.readConfigValue(cwd, "branch.feature/x.t3-merge-base-ref"),
+            yield* driver.readConfigValue(cwd, `branch.${branch}.t3-merge-base-ref`),
             local ? `refs/heads/${baseBranch}` : `refs/remotes/upstream/${baseBranch}`,
           );
           assert.equal(yield* git(cwd, ["rev-parse", `refs/heads/${baseBranch}`]), upstreamDevSha);
+
+          if (deleted) return;
 
           const preview = yield* driver.getReviewDiffPreview({ cwd });
           const changes = preview.sources.find((source) => source.kind === "branch-range")!;
@@ -7758,6 +7777,32 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(
           yield* git(remote, ["--git-dir=.", "log", "-1", "--pretty=%s", "effect-atom"]),
           "Add alias update",
+        );
+
+        yield* git(cwd, ["push", "my-org/upstream", "--delete", "effect-atom"]);
+        assert.deepEqual(
+          yield* driver.resolvePushTarget(cwd, {
+            branch: "upstream/effect-atom",
+            hasUpstream: false,
+          }),
+          { remoteName: "my-org/upstream", branchName: "effect-atom" },
+        );
+        assert.deepInclude(yield* driver.pushCurrentBranch(cwd, null), {
+          upstreamBranch: "my-org/upstream/effect-atom",
+          setUpstream: true,
+        });
+        assert.equal(
+          yield* git(remote, ["--git-dir=.", "rev-parse", "refs/heads/effect-atom"]),
+          yield* git(cwd, ["rev-parse", "HEAD"]),
+        );
+        assert.equal(
+          yield* git(remote, [
+            "--git-dir=.",
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/heads/upstream/",
+          ]),
+          "",
         );
       }),
     );
