@@ -2262,14 +2262,38 @@ describe("PiAdapterV2", () => {
         success: true,
         data: { cancelled: false },
       });
-      const resumed = yield* Fiber.join(switching);
+      yield* Fiber.join(switching);
       assert.isFalse(fake.allRequests().some((sent) => sent["type"] === "extension_ui_response"));
+
+      // Pi cannot replace a session whose run is held, so a second restore declines the run first.
+      fake.deferNextLifecycle("switch_session");
+      const switchingAgain = yield* runtime
+        .resumeThread({ providerThread })
+        .pipe(Effect.forkScoped);
+      const declined = yield* fake.takeRequest("extension_ui_response");
+      assert.deepEqual(
+        { id: declined["id"], confirmed: declined["confirmed"] },
+        { id: "restored-run", confirmed: false },
+      );
+      const requestAgain = yield* fake.takeRequest("switch_session");
+      // The declined run starts and settles aborted; it must not count as unsolicited activity.
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_settled", aborted: true });
+      yield* askAdmission("restored-again");
+      yield* fake.emit({
+        type: "response",
+        id: requestAgain["id"],
+        command: "switch_session",
+        success: true,
+        data: { cancelled: false },
+      });
+      const resumed = yield* Fiber.join(switchingAgain);
 
       yield* startTurn(runtime, resumed);
       const admitted = yield* fake.takeRequest("extension_ui_response");
       assert.deepEqual(
         { id: admitted["id"], confirmed: admitted["confirmed"] },
-        { id: "restored-run", confirmed: true },
+        { id: "restored-again", confirmed: true },
       );
       // Requests are taken in the order Pi read them: the turn's prompt follows the admission.
       assert.equal((yield* fake.takeRequest("prompt"))["message"], "Hello pi");

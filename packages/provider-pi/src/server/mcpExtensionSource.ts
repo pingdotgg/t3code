@@ -261,11 +261,16 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   pi.on("session_start", (event) => {
     if (event.reason === "resume") awaitingAdmission = true;
   });
-  pi.on("before_agent_start", async (_event, ctx) => {
+  // T3 declines when it has to replace the session: Pi waits for a held run, so abort it.
+  const awaitAdmission = async (_event: unknown, ctx: ExtensionContext) => {
     if (!awaitingAdmission) return;
-    await ctx.ui.confirm(RUN_ADMISSION_TITLE, "");
+    const admitted = await ctx.ui.confirm(RUN_ADMISSION_TITLE, "");
     awaitingAdmission = false;
-  });
+    if (!admitted) ctx.abort();
+  };
+  // A run compacts restored history, a model request of its own, before before_agent_start.
+  pi.on("session_before_compact", awaitAdmission);
+  pi.on("before_agent_start", awaitAdmission);
 
   // RPC has no trust prompt, so Pi skips an untrusted folder's protected resources. Session
   // replacement reruns this factory without project_trust, and T3 drops notices outside a turn,

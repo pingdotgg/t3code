@@ -99,11 +99,14 @@ describe("Pi run admission", () => {
       event: unknown,
       ctx: unknown,
     ) => Promise<void>;
-    const asked: Array<{ title: string; answer: () => void }> = [];
+    const compactGate = hooks.first.get("session_before_compact") as typeof gate;
+    const asked: Array<{ title: string; answer: (admitted: boolean) => void }> = [];
+    let aborts = 0;
     const ctx = {
+      abort: () => aborts++,
       ui: {
         confirm: (title: string) =>
-          new Promise<boolean>((resolve) => asked.push({ title, answer: () => resolve(true) })),
+          new Promise<boolean>((resolve) => asked.push({ title, answer: resolve })),
       },
     };
 
@@ -122,10 +125,22 @@ describe("Pi run admission", () => {
       [PI_T3_RUN_ADMISSION_TITLE],
     );
     assert.isFalse(started);
-    asked[0]!.answer();
+    asked[0]!.answer(true);
     await run;
     await gate({}, ctx);
     assert.lengthOf(asked, 1);
+    assert.equal(aborts, 0);
+
+    // Pre-run compaction comes first and is held too; a declined run is aborted, not asked again.
+    sessionStart({ type: "session_start", reason: "resume" });
+    const compacting = compactGate({}, ctx);
+    await Promise.resolve();
+    assert.lengthOf(asked, 2);
+    asked[1]!.answer(false);
+    await compacting;
+    await gate({}, ctx);
+    assert.lengthOf(asked, 2);
+    assert.equal(aborts, 1);
   });
 });
 

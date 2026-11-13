@@ -567,6 +567,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let pendingWake: PiWake | null = null;
       // A resumed session's first run asks before it starts; the next owned turn answers it.
       let heldRunAdmission: string | null = null;
+      // A declined run still starts and settles aborted, without a model request; no turn owns it.
+      let declinedRunSettling = false;
       let extensionStatusReset: {
         previous: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]>;
         readonly touched: Set<string>;
@@ -796,10 +798,21 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         return null;
       };
 
+      const answerRunAdmission = Effect.fn("PiAdapter.answerRunAdmission")(
+        (nativeRequestId: string, confirmed: boolean) =>
+          connection.send({ type: "extension_ui_response", id: nativeRequestId, confirmed }),
+      );
+
       const lifecycleRequest = Effect.fn("PiAdapter.lifecycleRequest")(
         function* (record: PiRpcRecord) {
           if (extensionStatusReset !== null)
             return yield* protocolError("A Pi session lifecycle request is already pending");
+          // Pi replaces a session only once it is idle, and a held run never is.
+          if (heldRunAdmission !== null) {
+            yield* answerRunAdmission(heldRunAdmission, false);
+            heldRunAdmission = null;
+            declinedRunSettling = true;
+          }
           const reset = {
             previous: sessionEntity.extensionStatuses ?? [],
             touched: new Set<string>(),
@@ -1519,9 +1532,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         );
       });
 
-      const admitRun = (nativeRequestId: string) =>
-        connection.send({ type: "extension_ui_response", id: nativeRequestId, confirmed: true });
-
       const handleExtensionUiRequest = Effect.fnUntraced(function* (event: PiRpcRecord) {
         const method = recordString(event, "method");
         const nativeRequestId = recordString(event, "id");
@@ -1550,7 +1560,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         if (nativeRequestId === undefined) return;
         if (method === "confirm" && recordString(event, "title") === PI_T3_RUN_ADMISSION_TITLE) {
           if (threadState?.activeTurn == null) heldRunAdmission = nativeRequestId;
-          else yield* admitRun(nativeRequestId);
+          else yield* answerRunAdmission(nativeRequestId, true);
           return;
         }
         const approvalTitle = recordString(event, "title") ?? "";
@@ -1938,6 +1948,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         // A native wake may wait for a turn owner; status belongs to the live session immediately.
         if (event["type"] === "extension_ui_request" && event["method"] === "setStatus") {
           yield* updateExtensionStatus(event);
+          return;
+        }
+        if (
+          declinedRunSettling &&
+          event["type"] !== "extension_ui_request" &&
+          !String(event["type"]).startsWith("t3.")
+        ) {
+          if (event["type"] === "agent_settled") declinedRunSettling = false;
           return;
         }
         // Model hooks can show dialogs before turn ownership; keep requests session-scoped and buffer output.
@@ -2618,7 +2636,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           lastNativeThreadId = resumeId ?? lastNativeThreadId;
           // Failed lifecycle operations can still change native sessions; invalidate bindings and defaults.
           threadState = null;
-          heldRunAdmission = null;
           appliedModel = null;
           appliedThinking = null;
           appliedSessionName = null;
@@ -2990,7 +3007,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 activeTurn.adoptedWake = wake !== null && !continuation;
                 // The selection is applied and this turn owns the session, so the held run may start.
                 if (heldRunAdmission !== null && !continuation) {
-                  yield* admitRun(heldRunAdmission);
+                  yield* answerRunAdmission(heldRunAdmission, true);
                   heldRunAdmission = null;
                 }
                 if (compactCommand !== null) {
