@@ -25,7 +25,9 @@ import {
   layerSettingsWatcher,
   seedDevReplayInstance,
 } from "./ProviderInstanceRegistryHydration.ts";
+import { ProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 import { ProviderInstanceRegistryMutator } from "./ProviderInstanceRegistryMutator.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 
 const projectId = ProjectId.make("project-a");
 const instanceId = ProviderInstanceId.make("codex_work");
@@ -168,7 +170,6 @@ describe("layerSettingsWatcher", () => {
         reconcile: () => Queue.offer(reconciled, undefined),
         reloadSecrets: () => Effect.sync(() => void reloads++),
         applySecret: () => Effect.succeed([]),
-        rebuildDriver: () => Effect.void,
       });
       yield* Layer.build(
         layerSettingsWatcher(Stream.fromQueue(changes), initial).pipe(Layer.provide(mutator)),
@@ -217,47 +218,48 @@ describe("layerSettingsWatcher", () => {
 });
 
 describe("layerClaudeTokenWatcher", () => {
-  effectIt.effect(
-    "rebuilds Claude when the desktop shell changes the token it was built with",
-    () =>
-      Effect.gen(function* () {
-        const applied = yield* Queue.unbounded<void>();
-        const rebuilds = yield* Queue.unbounded<string | undefined>();
-        // The snapshot landed while the registry was being built, so the first check must catch it.
-        const liveEnvironment: NodeJS.ProcessEnv = { CLAUDE_CODE_OAUTH_TOKEN: "profile" };
-        const driverEnvironment: NodeJS.ProcessEnv = {};
-        yield* Layer.build(
-          layerClaudeTokenWatcher({
-            liveEnvironment,
-            driverEnvironment,
-            builtWithToken: undefined,
-          }).pipe(
-            Layer.provide(
-              Layer.succeed(ProviderInstanceRegistryMutator, {
-                reconcile: () => Effect.void,
-                reloadSecrets: () => Effect.void,
-                applySecret: () => Effect.succeed([]),
-                rebuildDriver: (driver) => {
-                  expect(driver).toBe("claudeAgent");
-                  return Queue.offer(rebuilds, driverEnvironment.CLAUDE_CODE_OAUTH_TOKEN);
-                },
-              }),
-            ),
-            Layer.provide(
-              DesktopTelemetryReceiver.layerTest({
-                subscribeShellEnvironment: Effect.succeed(Stream.fromQueue(applied)),
-              }),
-            ),
+  effectIt.effect("hands instances the token a desktop shell snapshot changed", () =>
+    Effect.gen(function* () {
+      const applied = yield* Queue.unbounded<void>();
+      const handed = yield* Queue.unbounded<readonly [string | undefined, string | undefined]>();
+      // The snapshot landed while the registry was being built, so the first check must catch it.
+      const liveEnvironment: NodeJS.ProcessEnv = { CLAUDE_CODE_OAUTH_TOKEN: "profile" };
+      const driverEnvironment: NodeJS.ProcessEnv = {};
+      const instance = {
+        applyHostVariable: (name: string, value: string | undefined) => {
+          expect(name).toBe("CLAUDE_CODE_OAUTH_TOKEN");
+          return Queue.offer(handed, [value, driverEnvironment.CLAUDE_CODE_OAUTH_TOKEN]);
+        },
+      } as unknown as ProviderInstance;
+      yield* Layer.build(
+        layerClaudeTokenWatcher({
+          liveEnvironment,
+          driverEnvironment,
+          builtWithToken: undefined,
+        }).pipe(
+          Layer.provide(
+            Layer.mock(ProviderInstanceRegistry)({
+              listInstances: Effect.succeed([instance, {} as ProviderInstance]),
+            }),
           ),
-        );
-        expect(yield* Queue.take(rebuilds)).toBe("profile");
+          Layer.provide(
+            DesktopTelemetryReceiver.layerTest({
+              subscribeShellEnvironment: Effect.succeed(Stream.fromQueue(applied)),
+            }),
+          ),
+        ),
+      );
+      expect(yield* Queue.take(handed)).toEqual(["profile", "profile"]);
 
-        // A snapshot that leaves the token alone, such as a PATH change, restarts nothing.
-        yield* Queue.offer(applied, undefined);
-        delete liveEnvironment.CLAUDE_CODE_OAUTH_TOKEN;
-        yield* Queue.offer(applied, undefined);
-        expect(yield* Queue.take(rebuilds)).toBeUndefined();
-        expect(yield* Queue.size(rebuilds)).toBe(0);
-      }).pipe(Effect.scoped),
+      // A snapshot that leaves the token alone, such as a PATH change, hands nothing over: the
+      // next thing handed is the rotated token, once.
+      yield* Queue.offer(applied, undefined);
+      liveEnvironment.CLAUDE_CODE_OAUTH_TOKEN = "rotated";
+      yield* Queue.offer(applied, undefined);
+      expect(yield* Queue.take(handed)).toEqual(["rotated", "rotated"]);
+      delete liveEnvironment.CLAUDE_CODE_OAUTH_TOKEN;
+      yield* Queue.offer(applied, undefined);
+      expect(yield* Queue.take(handed)).toEqual([undefined, undefined]);
+    }).pipe(Effect.scoped),
   );
 });

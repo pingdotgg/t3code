@@ -790,7 +790,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
   );
 
   const makeClaudeCacheFixture = Effect.fnUntraced(function* (
-    state: "ready" | "signed-out" | "usage-failed",
+    state: "ready" | "signed-out" | "token-missing" | "usage-failed",
   ) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -798,6 +798,8 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     const recovered = path.join(fixtures.claudeHomePath, "recovered");
     const probeLog = path.join(fixtures.claudeHomePath, "probes.log");
     const instanceId = ProviderInstanceId.make("claude_cache");
+    // A host variable no machine sets, standing in for the token a desktop shell delivers late.
+    const hostToken = "T3_CLAUDE_TEST_HOST_TOKEN";
     const { registry } = yield* makeProviderInstanceRegistry({
       drivers: [ClaudeDriver],
       configMap: {
@@ -809,14 +811,16 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
             ...(state === "ready"
               ? []
               : [
-                  {
-                    name:
-                      state === "signed-out"
-                        ? "T3_CLAUDE_LOGIN_MARKER"
-                        : "T3_CLAUDE_USAGE_FAILS_UNTIL",
-                    value: recovered,
-                    sensitive: false,
-                  },
+                  state === "token-missing"
+                    ? { name: "T3_CLAUDE_TOKEN_VARIABLE", value: hostToken, sensitive: false }
+                    : {
+                        name:
+                          state === "signed-out"
+                            ? "T3_CLAUDE_LOGIN_MARKER"
+                            : "T3_CLAUDE_USAGE_FAILS_UNTIL",
+                        value: recovered,
+                        sensitive: false,
+                      },
                 ]),
           ],
           config: makeClaudeConfig({
@@ -831,21 +835,26 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     expect(instance).toBeDefined();
     return {
       refresh: instance!.snapshot.refresh,
-      recover: fs.writeFileString(recovered, ""),
+      recover:
+        state === "token-missing"
+          ? instance!.applyHostVariable!(hostToken, "token")
+          : fs.writeFileString(recovered, ""),
       probeLog: fs.readFileString(probeLog),
     };
   });
 
-  for (const state of ["signed-out", "usage-failed"] as const) {
+  for (const state of ["signed-out", "token-missing", "usage-failed"] as const) {
     it.effect.skipIf(windowsHost)(
       state === "signed-out"
         ? "shows Claude usage on the first refresh after signing back in"
-        : "retries Claude usage on the first refresh after a failed usage read",
+        : state === "token-missing"
+          ? "signs Claude in when the host delivers its token after the instance was built"
+          : "retries Claude usage on the first refresh after a failed usage read",
       () =>
         Effect.gen(function* () {
           const fixture = yield* makeClaudeCacheFixture(state);
           const before = yield* fixture.refresh;
-          if (state === "signed-out") {
+          if (state !== "usage-failed") {
             expect(before.auth.status).toBe("unauthenticated");
             expect(before.usageLimits).toBeUndefined();
           } else {
@@ -919,7 +928,6 @@ describe("ProviderInstanceRegistry secret environment", () => {
     initial: Record<string, string>,
     configSchema: AnyProviderDriver["configSchema"] = Schema.Unknown,
     config: unknown = {},
-    otherInstances: ProviderInstanceConfigMap = {},
   ) {
     const vault = new Map(Object.entries(initial));
     const reads: Array<ReadonlyArray<string>> = [];
@@ -964,7 +972,6 @@ describe("ProviderInstanceRegistry secret environment", () => {
           { name: "BASE_URL", value: "https://example.test", sensitive: false },
         ],
       },
-      ...otherInstances,
     };
     const makeGated = makeProviderInstanceRegistry({ drivers: [driver], configMap }).pipe(
       Effect.provide(resolver),
@@ -1102,42 +1109,6 @@ describe("ProviderInstanceRegistry secret environment", () => {
       expect(fixture.created).toHaveLength(1);
     });
   });
-
-  it.effect(
-    "rebuilds a driver's live instances with the secrets they hold, reading no vault",
-    () => {
-      const plain = ProviderInstanceId.make("fake_plain");
-      const fixture = setup(
-        { [secret.reference]: "sk-live" },
-        Schema.Unknown,
-        {},
-        {
-          [plain]: { driver: driverKind },
-        },
-      );
-      return Effect.gen(function* () {
-        const { registry, mutator } = yield* fixture.makeGated;
-
-        // The vault is still locked: only the instance that is running restarts.
-        yield* mutator.rebuildDriver(driverKind);
-        expect(fixture.created).toEqual([[], []]);
-        expect(fixture.reads).toEqual([]);
-        expect((yield* registry.listUnavailable).map((entry) => entry.unavailableReason)).toEqual([
-          "Reading secrets…",
-        ]);
-
-        const changes = yield* registry.subscribeChanges;
-        yield* Deferred.succeed(fixture.gate, undefined);
-        yield* PubSub.take(changes);
-        const reads = fixture.reads.length;
-        yield* mutator.rebuildDriver(driverKind);
-        expect(fixture.reads).toHaveLength(reads);
-        expect(fixture.created.slice(-2)).toEqual([fixture.created[2], []]);
-        expect(fixture.created[2]?.[0]?.value).toBe("sk-live");
-        expect(yield* registry.getInstance(instanceId)).toBeDefined();
-      });
-    },
-  );
 
   it.effect("starts without waiting for secrets to be read", () => {
     const fixture = setup({ [secret.reference]: "sk-live" });

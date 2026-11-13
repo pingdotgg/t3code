@@ -371,17 +371,9 @@ const makeReconcile = <R>(input: {
   rebuild?: ReadonlySet<ProviderInstanceId>,
   deferSecrets?: boolean,
   carried?: ReadonlyMap<ProviderInstanceId, InstanceSecrets>,
-  /** Leaves every unavailable instance as it is, so only `rebuild` runs and no vault is read. */
-  keepUnavailable?: boolean,
 ) => Effect.Effect<void, never, R | SecretResolver.SecretResolver>) => {
   const { state, driversById, blockedReason, parentScope } = input;
-  return (
-    configMap,
-    rebuild = new Set(),
-    deferSecrets = false,
-    carried = new Map(),
-    keepUnavailable = false,
-  ) =>
+  return (configMap, rebuild = new Set(), deferSecrets = false, carried = new Map()) =>
     Effect.gen(function* () {
       const previousEntries = yield* Ref.get(state.entries);
       const previousUnavailable = yield* Ref.get(state.unavailable);
@@ -434,7 +426,6 @@ const makeReconcile = <R>(input: {
           const kept = previousEntries.has(instanceId) && !replacedIds.has(instanceId);
           return kept ||
             carried.has(instanceId) ||
-            (keepUnavailable && previousUnavailable.has(instanceId)) ||
             parkedSnapshot(instanceId, entry) !== undefined ||
             !(yield* isEntryEnabled(driversById, entry))
             ? []
@@ -459,13 +450,6 @@ const makeReconcile = <R>(input: {
         const existing = previousEntries.get(instanceId);
         if (existing !== undefined && !replacedIds.has(instanceId)) {
           builtEntries.set(instanceId, existing);
-          continue;
-        }
-        const unavailable = keepUnavailable ? previousUnavailable.get(instanceId) : undefined;
-        if (unavailable !== undefined) {
-          builtUnavailable.set(instanceId, unavailable);
-          const parkedEntry = previousSecretsUnreadable.get(instanceId);
-          if (parkedEntry !== undefined) builtSecretsUnreadable.set(instanceId, parkedEntry);
           continue;
         }
         const parked = parkedSnapshot(instanceId, entry);
@@ -663,21 +647,6 @@ export const makeProviderInstanceRegistry = Effect.fn(
         { reference, value },
       );
 
-  const rebuildDriver: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["rebuildDriver"] =
-    Effect.fn("ProviderInstanceRegistry.rebuildDriver")(
-      function* (driver) {
-        const carried = new Map<ProviderInstanceId, InstanceSecrets>();
-        for (const [instanceId, live] of yield* Ref.get(entries)) {
-          if (live.entry.driver === driver) carried.set(instanceId, live.secrets);
-        }
-        if (carried.size === 0) return;
-        const configMap = yield* Ref.get(configMapRef);
-        yield* reconcileWithR(configMap, new Set(carried.keys()), false, carried, true);
-      },
-      (effect) => semaphore.withPermits(1)(effect),
-      Effect.provideContext(driverContext),
-    );
-
   // Reading secrets can wait on a vault unlock, so the server does not wait for it to start.
   yield* semaphore.withPermits(1)(
     Ref.set(configMapRef, input.configMap).pipe(
@@ -728,7 +697,6 @@ export const makeProviderInstanceRegistry = Effect.fn(
   const mutator: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape = {
     reconcile,
     reloadSecrets,
-    rebuildDriver,
     applySecret,
   };
 

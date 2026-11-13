@@ -13732,7 +13732,13 @@ export type ClaudeAdapterV2DriverEnv =
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
-    hooks: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "onUsageLimits" | "modelCatalog"> = {},
+    {
+      onEnvironment,
+      ...hooks
+    }: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "onUsageLimits" | "modelCatalog"> & {
+      /** Receives the environment queries launch from, which is read again at each launch. */
+      readonly onEnvironment?: (environment: NodeJS.ProcessEnv) => void;
+    } = {},
   ) {
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -13748,6 +13754,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       hostEnvironment,
     );
     const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
+    onEnvironment?.(claudeEnvironment);
     const path = yield* Path.Path;
     const random = yield* SecureRandom.SecureRandom;
     const binaryPath = yield* resolveClaudeSdkExecutablePath(

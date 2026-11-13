@@ -146,6 +146,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     });
 
     const scopedLimitNames = yield* makeClaudeScopedLimitNames;
+    const launchEnvironments = [processEnv];
     const orchestrationAdapter = yield* createClaudeAdapterV2(
       {
         instanceId,
@@ -159,6 +160,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         scopedLimitNames,
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
         modelCatalog,
+        onEnvironment: (adapterEnvironment) => launchEnvironments.push(adapterEnvironment),
       },
     ).pipe(
       Effect.mapError(
@@ -382,6 +384,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       enabled,
       snapshot,
       invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
+      // Running sessions keep the environment they started with; a value the instance sets wins.
+      applyHostVariable: (name, value) =>
+        environment.some((variable) => variable.name === name)
+          ? Effect.void
+          : Effect.sync(() => {
+              for (const launchEnvironment of launchEnvironments) {
+                if (value === undefined) delete launchEnvironment[name];
+                else launchEnvironment[name] = value;
+              }
+            }).pipe(
+              Effect.andThen(Cache.invalidateAll(capabilitiesProbeCache)),
+              Effect.andThen(snapshot.refresh),
+              Effect.asVoid,
+            ),
       snapshotForCwd: (cwd: string) =>
         snapshot.getSnapshot.pipe(
           Effect.flatMap((machineSnapshot) =>

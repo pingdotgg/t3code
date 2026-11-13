@@ -171,35 +171,40 @@ export const layerSettingsWatcher = (
     }),
   );
 
-const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CLAUDE_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN";
 
 /**
- * Claude copies the host environment when it is built, and the desktop delivers the login shell's
- * `claude setup-token` credential after that, so a changed token rebuilds Claude.
+ * Instances copy the host environment when they are built, and the desktop delivers the login
+ * shell's `claude setup-token` credential after that, so a changed token is handed to them.
+ * Nothing is rebuilt: a rebuild would end the turns an instance is running.
  */
 export const layerClaudeTokenWatcher = (input: {
   /** The environment the desktop's shell snapshots are applied to. */
   readonly liveEnvironment: NodeJS.ProcessEnv;
   /** The environment drivers are built from, which a managed policy makes a copy. */
   readonly driverEnvironment: NodeJS.ProcessEnv;
-  /** The token the registry's Claude instances were built with. */
+  /** The token the registry's instances were built with. */
   readonly builtWithToken: string | undefined;
 }) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
-      const mutator = yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;
+      const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
       const receiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
       // Subscribe before the first check so a snapshot applied in between is not missed.
       const applied = yield* receiver.subscribeShellEnvironment;
       let built = input.builtWithToken;
-      const sync = Effect.suspend(() => {
+      const sync = Effect.gen(function* () {
         const token = input.liveEnvironment[CLAUDE_TOKEN];
-        if (token === built) return Effect.void;
+        if (token === built) return;
         built = token;
+        // Instances built from here on start with the token.
         if (token === undefined) delete input.driverEnvironment[CLAUDE_TOKEN];
         else input.driverEnvironment[CLAUDE_TOKEN] = token;
-        return mutator.rebuildDriver(CLAUDE_DRIVER);
+        yield* Effect.forEach(
+          yield* registry.listInstances,
+          (instance) => instance.applyHostVariable?.(CLAUDE_TOKEN, token) ?? Effect.void,
+          { concurrency: "unbounded", discard: true },
+        );
       });
       yield* sync.pipe(Effect.andThen(Stream.runForEach(applied, () => sync)), Effect.forkScoped);
     }),

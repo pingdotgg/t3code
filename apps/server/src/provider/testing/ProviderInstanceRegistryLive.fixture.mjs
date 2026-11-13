@@ -11,7 +11,10 @@ if (process.argv.includes("--version")) {
   process.exit(0);
 }
 const loginMarker = process.env.T3_CLAUDE_LOGIN_MARKER;
-const signedOut = loginMarker !== undefined && !NodeFS.existsSync(loginMarker);
+const tokenVariable = process.env.T3_CLAUDE_TOKEN_VARIABLE;
+const signedOut =
+  (loginMarker !== undefined && !NodeFS.existsSync(loginMarker)) ||
+  (tokenVariable !== undefined && !process.env[tokenVariable]);
 if (process.env.T3_CLAUDE_PROBE_LOG)
   NodeFS.appendFileSync(process.env.T3_CLAUDE_PROBE_LOG, "probe\n");
 const lines = NodeReadline.createInterface({ input: process.stdin });
