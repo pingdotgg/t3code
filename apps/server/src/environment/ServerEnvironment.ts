@@ -275,6 +275,7 @@ export const make = Effect.gen(function* () {
       projectOrganization: true,
       ignoredFileListing: true,
       ignoredFileSearch: true,
+      base64FileTransfer: true,
       triage: true,
       oneTimeSchedules: true,
       freshContext: true,

@@ -505,6 +505,52 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
   });
 
   describe("writeFile", () => {
+    it.effect("copies a binary file byte for byte through base64", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const source = yield* makeTempDir;
+        const target = yield* makeTempDir;
+        // NUL plus bytes that are not valid UTF-8, which a text read would reject or replace.
+        const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0, 0xff, 0xfe, 0x80, 0x0a]);
+        yield* fileSystem.writeFile(path.join(source, "logo.png"), bytes);
+
+        const read = yield* workspaceFileSystem.readFile({
+          cwd: source,
+          relativePath: "logo.png",
+          encoding: "base64",
+        });
+        expect(read).toMatchObject({ byteLength: bytes.length, truncated: false });
+        yield* workspaceFileSystem.writeFile({
+          cwd: target,
+          relativePath: "assets/logo.png",
+          contents: read.contents,
+          encoding: "base64",
+        });
+
+        const copied = yield* fileSystem.readFile(path.join(target, "assets/logo.png"));
+        expect(Array.from(copied)).toEqual(Array.from(bytes));
+      }),
+    );
+
+    it.effect("rejects malformed base64 without changing the file", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "logo.png", "original");
+
+        const error = yield* workspaceFileSystem
+          .writeFile({ cwd, relativePath: "logo.png", contents: "YWJj!!!!", encoding: "base64" })
+          .pipe(Effect.flip);
+
+        expect(error).toMatchObject({ operation: "write-file" });
+        expect(yield* fileSystem.readFileString(path.join(cwd, "logo.png"))).toBe("original");
+      }),
+    );
+
     it.effect("rejects writes outside a known workspace", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

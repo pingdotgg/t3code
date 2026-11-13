@@ -437,12 +437,17 @@ export class ProjectListEntriesError extends Schema.TaggedError<ProjectListEntri
   }
 }
 
+/** base64 carries a file's exact bytes; the default utf8 is the text preview. */
+export const ProjectFileEncoding = Schema.Literals(["utf8", "base64"]);
+export type ProjectFileEncoding = typeof ProjectFileEncoding.Type;
+
 export const ProjectReadFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   // Workspace-relative or absolute host path; only workspace-relative paths are writable.
   relativePath: Schema.NonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
   // Optional files can be absent without failing the read.
   allowMissing: Schema.optional(Schema.Boolean),
+  encoding: Schema.optional(ProjectFileEncoding),
 });
 export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
 
@@ -517,6 +522,7 @@ export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   relativePath: Schema.NonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
+  encoding: Schema.optional(ProjectFileEncoding),
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 
