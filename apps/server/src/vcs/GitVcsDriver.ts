@@ -587,6 +587,10 @@ const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
     }),
 );
 
+const HEAD_MOVES_SCAN_LIMIT = 512;
+const HEAD_MARK_TRAILER = "T3-Head-Moved-At";
+const HEAD_MARK_TRAILER_PATTERN = new RegExp(`^${HEAD_MARK_TRAILER}: (\\d+) (\\d+)$`, "m");
+
 export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -924,13 +928,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     const headExists = result.exitCode === 0;
     const headChecked = headExists || result.exitCode === 1;
     const lines = result.stdout.split("\n");
-    const [gitCommonDir = "", indexPath = "", prefix = ""] = lines;
+    const [gitCommonDir = "", indexPath = "", prefix = "", head = ""] = lines;
     if (headChecked && lines.length === (headExists ? 5 : 4) && lines.at(-1) === "") {
       return {
         gitCommonDir: gitCommonDir.trim(),
         indexPath: indexPath.trim(),
         prefix,
         headExists,
+        head: headExists ? head : undefined,
       };
     }
     // Git before 2.31 echoes --path-format, and a path containing a newline spans lines.
@@ -946,6 +951,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       indexPath: undefined,
       prefix: prefixResult.stdout.replace(/\n$/, ""),
       headExists: headChecked ? headExists : yield* hasHeadCommit(cwd),
+      head: undefined,
     };
   });
 
@@ -967,6 +973,64 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   // core.longpaths is disabled in the user's Git configuration.
   const longPaths = hostPlatform === "win32" ? ["-c", "core.longpaths=true"] : [];
 
+  // Newest first: the commit each HEAD move landed on, when, and Git's reason for it.
+  const readHeadMoves = (cwd: string) =>
+    execute({
+      operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+      cwd,
+      args: [
+        "-c",
+        "log.showSignature=false",
+        "log",
+        "--walk-reflogs",
+        "-n",
+        String(HEAD_MOVES_SCAN_LIMIT),
+        "--date=unix",
+        "--format=%H %gd %gs",
+        "HEAD",
+        "--",
+      ],
+      allowNonZeroExit: true,
+    }).pipe(
+      Effect.map((result) =>
+        result.exitCode !== 0
+          ? []
+          : result.stdout.split("\n").flatMap((line) => {
+              const [, to, at, reason] = /^([0-9a-f]+) HEAD@\{(\d+)\} (.*)$/.exec(line) ?? [];
+              return to === undefined || at === undefined || reason === undefined
+                ? []
+                : [{ to, at, reason }];
+            }),
+      ),
+      Effect.orElseSucceed(() => []),
+    );
+
+  // A checkpoint taken after a branch switch has a second parent: the checkpoint before it with
+  // the switch applied, which is where that turn started. Other ranges start at `from` itself.
+  const resolveTurnStart = (input: VcsDriver.VcsListAuthoredPathsInput) =>
+    execute({
+      operation: "GitVcsDriver.checkpoints.resolveTurnStart",
+      cwd: input.cwd,
+      args: [
+        "-c",
+        "log.showSignature=false",
+        "log",
+        "--no-walk=unsorted",
+        "--format=%H %P",
+        `${input.fromCheckpointRef}^{commit}`,
+        `${input.toCheckpointRef}^2`,
+      ],
+      allowNonZeroExit: true,
+    }).pipe(
+      Effect.map((result): string => {
+        const [fromLine = "", startLine = ""] = result.stdout.trimEnd().split("\n");
+        const [start = "", , startedFrom] = startLine.split(" ");
+        return result.exitCode === 0 && startedFrom === fromLine.split(" ")[0]
+          ? start
+          : input.fromCheckpointRef;
+      }),
+    );
+
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
       const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
@@ -981,9 +1045,18 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "-c",
         "splitIndex.sharedIndexExpire=never",
       ];
-      const { gitCommonDir, indexPath, prefix, headExists } = yield* resolveCaptureRepository(
+      const { gitCommonDir, indexPath, prefix, headExists, head } = yield* resolveCaptureRepository(
         input.cwd,
       );
+      // Read before the snapshot and pinned to the same HEAD: a switch that lands while files are
+      // being staged then belongs to the next checkpoint instead of being applied to this one.
+      const headMoves = head === undefined ? [] : yield* readHeadMoves(input.cwd);
+      const lastMove = headMoves.at(0);
+      // Moves share a second, so the mark also counts how many of that second it has seen.
+      const headMark =
+        lastMove !== undefined && lastMove.to === head
+          ? `${lastMove.at} ${headMoves.filter((move) => move.at === lastMove.at).length}`
+          : undefined;
       const indexId = yield* random.uuidV4();
       const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
       const hostEnv = yield* HostProcess.Environment;
@@ -1333,8 +1406,137 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
-        const message = `${input.baseline === true ? BASELINE_CHECKPOINT_SUBJECT : "t3 checkpoint"} ref=${input.checkpointRef}`;
-        // HEAD is the parent so listAuthoredPaths can see how HEAD moved between checkpoints.
+        // Switching branches rewrites files the turn never wrote, and only HEAD's reflog tells a
+        // switch from a reset. The trailer marks where that reflog stood for the next checkpoint.
+        const turnStart =
+          headMark === undefined || input.previousCheckpointRef === undefined
+            ? null
+            : yield* Effect.gen(function* () {
+                const previous = yield* execute({
+                  operation,
+                  cwd: input.cwd,
+                  args: [
+                    "-c",
+                    "log.showSignature=false",
+                    "log",
+                    "--no-walk",
+                    "--format=%H %T %ct %P%n%B",
+                    `${input.previousCheckpointRef}^{commit}`,
+                  ],
+                  allowNonZeroExit: true,
+                });
+                if (previous.exitCode !== 0) return null;
+                const [commit = "", tree = "", capturedAt = "", previousHead = ""] = previous.stdout
+                  .slice(0, previous.stdout.indexOf("\n"))
+                  .split(" ");
+                const [, markedAt, markedCount] =
+                  HEAD_MARK_TRAILER_PATTERN.exec(previous.stdout) ?? [];
+                const oldestMarked = headMoves.findLastIndex((move) => move.at === markedAt);
+                // -1 when the scan ended inside the marked second, so the count cannot be placed.
+                const since =
+                  oldestMarked === HEAD_MOVES_SCAN_LIMIT - 1
+                    ? -1
+                    : oldestMarked - Number(markedCount) + 1;
+                if (headMoves[since]?.to !== previousHead) return null;
+                const switches = headMoves
+                  .slice(0, since)
+                  .map((move, index) => ({ ...move, from: headMoves[index + 1]!.to }))
+                  .filter(
+                    (move) =>
+                      move.reason.startsWith("checkout: moving from ") && move.from !== move.to,
+                  )
+                  .toReversed();
+                const landedOn = switches.at(-1)?.to;
+                if (landedOn === undefined) return null;
+
+                yield* execute({
+                  operation,
+                  cwd: input.cwd,
+                  args: [...indexConfig, "-c", "index.sparse=false", "read-tree", tree],
+                  env: commitEnv,
+                });
+                for (const { from, to } of switches) {
+                  const changes = yield* execute({
+                    operation,
+                    cwd: input.cwd,
+                    args: [
+                      "-c",
+                      "core.quotePath=true",
+                      "diff-tree",
+                      "-r",
+                      "--no-renames",
+                      from,
+                      to,
+                    ],
+                    maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+                    outputMode: "error",
+                  });
+                  // A switch succeeds only where the files it replaces were unmodified, so each
+                  // changed path takes the destination's version. Mode 000000 drops the path.
+                  const entries = changes.stdout
+                    .split("\n")
+                    // A switch leaves a submodule's own checkout where it was.
+                    .filter((line) => line !== "" && !/^:(?:160000 |[0-7]{6} 160000 )/.test(line))
+                    .map((line) =>
+                      line.replace(
+                        /^:[0-7]{6} ([0-7]{6}) [0-9a-f]+ ([0-9a-f]+) [A-Z]\t/,
+                        "$1 $2\t",
+                      ),
+                    );
+                  if (entries.length === 0) continue;
+                  yield* execute({
+                    operation,
+                    cwd: input.cwd,
+                    args: [
+                      ...indexConfig,
+                      "-c",
+                      "index.sparse=false",
+                      "update-index",
+                      "--index-info",
+                    ],
+                    stdin: `${entries.join("\n")}\n`,
+                    env: commitEnv,
+                  });
+                }
+                const startTree = (yield* execute({
+                  operation,
+                  cwd: input.cwd,
+                  args: [...indexConfig, ...durableWrite, "write-tree"],
+                  env: commitEnv,
+                })).stdout.trim();
+                if (startTree === "" || startTree === tree) return null;
+                const startCommit = yield* execute({
+                  operation,
+                  cwd: input.cwd,
+                  args: [
+                    ...durableWrite,
+                    "commit-tree",
+                    startTree,
+                    "-p",
+                    landedOn,
+                    "-p",
+                    commit,
+                    "-m",
+                    `t3 checkpoint turn start ref=${input.checkpointRef}`,
+                  ],
+                  // listAuthoredPaths reads commits newer than the start as the turn's own.
+                  env: { ...commitEnv, GIT_COMMITTER_DATE: `${capturedAt} +0000` },
+                });
+                return startCommit.stdout.trim() || null;
+              }).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("checkpoint branch switch turn start failed", {
+                    cwd: input.cwd,
+                    checkpointRef: input.checkpointRef,
+                    cause: String(cause),
+                  }).pipe(Effect.as(null)),
+                ),
+              );
+
+        const message = `${input.baseline === true ? BASELINE_CHECKPOINT_SUBJECT : "t3 checkpoint"} ref=${input.checkpointRef}${
+          headMark === undefined ? "" : `\n\n${HEAD_MARK_TRAILER}: ${headMark}`
+        }`;
+        // HEAD is the first parent so listAuthoredPaths can see how HEAD moved between checkpoints.
         const commitTreeResult = yield* execute({
           operation,
           cwd: input.cwd,
@@ -1342,7 +1544,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             ...durableWrite,
             "commit-tree",
             treeOid,
-            ...(headExists ? ["-p", "HEAD"] : []),
+            ...(headExists ? ["-p", head ?? "HEAD"] : []),
+            ...(turnStart === null ? [] : ["-p", turnStart]),
             "-m",
             message,
           ],
@@ -1409,20 +1612,90 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       });
       // An empty index and checkpoint have nothing for git restore's pathspec to match.
       if (tracked.stdout.length > 0) {
+        const sparseConfig = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["config", "--bool", "core.sparseCheckout"],
+          allowNonZeroExit: true,
+        });
+        const sparseCheckout = sparseConfig.stdout.trim() === "true";
+        const restore = [...longPaths, "restore", "--source", commitOid, "--worktree", "--staged"];
+        // restore leaves skip-worktree paths alone. Outside a sparse checkout every such bit was
+        // set by hand and capture recorded the file, so override them all.
         yield* execute({
           operation,
           cwd: input.cwd,
-          args: [
-            ...longPaths,
-            "restore",
-            "--source",
-            commitOid,
-            "--worktree",
-            "--staged",
-            "--",
-            ".",
-          ],
+          args: [...restore, ...(sparseCheckout ? [] : ["--ignore-skip-worktree-bits"]), "--", "."],
         });
+        if (sparseCheckout) {
+          // Sparse exclusions stay excluded; only skip-worktree paths the rules select are manual.
+          const manual = yield* Effect.gen(function* () {
+            const skipped: string[] = [];
+            let recordStart = true;
+            let keep = false;
+            let record: Uint8Array[] = [];
+            yield* vcsProcess.run({
+              operation,
+              command: "git",
+              cwd: input.cwd,
+              args: ["ls-files", "--full-name", "--sparse", "-v", "-z", "--", "."],
+              maxOutputBytes: 4_096,
+              outputMode: "truncate",
+              // The index can be huge; keep only the "S "/"s " records of the NUL-delimited list.
+              onStdoutChunk: (chunk) => {
+                let start = 0;
+                while (start < chunk.length) {
+                  const end = chunk.indexOf(0, start);
+                  if (recordStart) {
+                    keep = chunk[start] === 83 || chunk[start] === 115;
+                    record = [];
+                  }
+                  if (keep) {
+                    record.push(Buffer.from(chunk.subarray(start, end === -1 ? undefined : end)));
+                    if (end !== -1) {
+                      const entry = Buffer.concat(record).subarray(2);
+                      record = [];
+                      // Sparse directory entries are exclusions; stdin cannot carry non-UTF-8.
+                      if (entry.at(-1) !== 47 && NodeBuffer.isUtf8(entry))
+                        skipped.push(entry.toString("utf8"));
+                    }
+                  }
+                  recordStart = end !== -1;
+                  if (!recordStart) break;
+                  start = end + 1;
+                }
+              },
+            });
+            if (skipped.length === 0) return skipped;
+            const stdin = skipped.join("\0") + "\0";
+            // check-rules echoes a subset of its input, so the input size bounds its output.
+            const rules = yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["sparse-checkout", "check-rules", "-z"],
+              stdin,
+              maxOutputBytes: Buffer.byteLength(stdin),
+              outputMode: "error",
+            });
+            return rules.stdout.split("\0").filter((entry) => entry.length > 0);
+          }).pipe(
+            // A Git without ls-files --sparse or check-rules keeps the plain restore's result.
+            Effect.orElseSucceed((): string[] => []),
+          );
+          if (manual.length > 0) {
+            yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: [
+                ...restore,
+                "--ignore-skip-worktree-bits",
+                "--pathspec-from-file=-",
+                "--pathspec-file-nul",
+              ],
+              stdin: manual.map((entry) => `:(top,literal)${entry}\0`).join(""),
+            });
+          }
+        }
       }
       // Restoring away the last tracked file can remove a nested workspace directory.
       const recreateWorkspace = fileSystem.makeDirectory(input.cwd, { recursive: true }).pipe(
@@ -1520,15 +1793,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "checkpoint.fallback_from_to_head": input.fallbackFromToHead,
       });
 
-      let fromRevision: string = input.fromCheckpointRef;
+      let fromRevision = yield* resolveTurnStart(input);
       if (input.fallbackFromToHead === true) {
         const resolvedFromCommit = yield* resolveCheckpointCommit(
           input.cwd,
           input.fromCheckpointRef,
         );
-        if (resolvedFromCommit) {
-          fromRevision = resolvedFromCommit;
-        } else {
+        if (!resolvedFromCommit) {
           const headCommit = yield* resolveHeadCommit(input.cwd);
           if (!headCommit) {
             return yield* new VcsProcessExitError({
@@ -1589,20 +1860,21 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
     listAuthoredPaths: Effect.fn("GitVcsDriver.checkpoints.listAuthoredPaths")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.listAuthoredPaths";
+      const turnStart = yield* resolveTurnStart(input);
       const heads = yield* execute({
         operation,
         cwd: input.cwd,
         args: [
           "log",
           "--no-walk=unsorted",
-          "--format=%P %ct",
-          `${input.fromCheckpointRef}^{commit}`,
+          "--format=%ct %P",
+          `${turnStart}^{commit}`,
           `${input.toCheckpointRef}^{commit}`,
         ],
       });
       const [fromLine = "", toLine = ""] = heads.stdout.trimEnd().split("\n");
-      const [startHead = "", capturedAt = ""] = fromLine.split(" ");
-      const [endHead = ""] = toLine.split(" ");
+      const [capturedAt = "", startHead = ""] = fromLine.split(" ");
+      const [, endHead = ""] = toLine.split(" ");
       if (startHead === "" || endHead === "" || startHead === endHead) {
         return null;
       }
@@ -1629,7 +1901,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       // Remerge diffs retain merge conflict fixes while excluding clean upstream changes.
       const pathLists = yield* Effect.all(
         [
-          listPaths(["diff", startHead, `${input.fromCheckpointRef}^{commit}`]),
+          listPaths(["diff", startHead, `${turnStart}^{commit}`]),
           listPaths(["diff", endHead, `${input.toCheckpointRef}^{commit}`]),
           listPaths(["log", "--format=", "--diff-merges=remerge", `${endHead}..${startHead}`]),
           listPaths([

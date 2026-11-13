@@ -19,6 +19,8 @@ export interface VcsCaptureCheckpointInput {
    * rolled-back turn ended with under the same ref; this tells them apart.
    */
   readonly baseline?: boolean;
+  /** The checkpoint this one follows, so a turn that switched branches starts where it landed. */
+  readonly previousCheckpointRef?: CheckpointRef;
 }
 
 export interface VcsRestoreCheckpointInput {

@@ -12,6 +12,8 @@ export interface CaptureCheckpointInput {
   readonly checkpointRef: CheckpointRef;
   /** See `VcsCaptureCheckpointInput.baseline`. */
   readonly baseline?: boolean;
+  /** The checkpoint this one follows, so a turn that switched branches starts where it landed. */
+  readonly previousCheckpointRef?: CheckpointRef;
 }
 
 export interface RestoreCheckpointInput {
