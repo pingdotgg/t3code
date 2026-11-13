@@ -1924,6 +1924,7 @@ const FORGE_WRITE_TOOLS = new Set([
   "pull_request_create",
   "pull_request_update",
   "pull_request_respond",
+  "pull_request_review",
   "pull_request_merge",
   "ci_rerun",
 ]);
