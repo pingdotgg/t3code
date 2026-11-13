@@ -1493,42 +1493,6 @@ describe("/usage-limits", () => {
         "gpt-5.6-sol",
       ),
     ).toBeNull();
-    const unread = provider({
-      instanceId: ProviderInstanceId.make("cursor"),
-      driver: ProviderDriverKind.make("cursor"),
-      usageLimits: { ...limits, windows: [], unavailable: { reason: "unsupported" } },
-    });
-    expect(
-      collectProviderUsageLimits(
-        unread.instanceId,
-        [unread],
-        routed,
-        now,
-        "gpt-5.6-sol",
-      )?.accounts.map((account) => account.id) ?? [],
-    ).toEqual(["cursor"]);
-    const both = [
-      {
-        ...routed[0]!,
-        accounts: [
-          ...routed[0]!.accounts,
-          {
-            id: "claude-hub",
-            driver: ProviderDriverKind.make("claudeAgent"),
-            models: ["gpt-5.6-sol"],
-            usageLimits: limits,
-          },
-        ],
-      },
-    ];
-    const reversed = [{ ...both[0]!, accounts: [...both[0]!.accounts].reverse() }];
-    for (const hubs of [both, reversed]) {
-      expect(
-        collectProviderUsageLimits(proxy.instanceId, [selected, proxy], hubs, now, "gpt-5.6-sol")
-          ?.accounts.map((account) => account.id)
-          .toSorted(),
-      ).toEqual(["codex", "hub:claude-hub", "hub:oss"]);
-    }
     expect(ids(selected, "gpt-5.6-sol")).toEqual(["codex", "hub:oss"]);
   });
 

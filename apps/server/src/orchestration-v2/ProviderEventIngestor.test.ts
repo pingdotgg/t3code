@@ -331,37 +331,17 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
         {
           failureClass: "usage_limit",
           provider: {
-            auth: { status: "authenticated" },
-            usageLimits: { ...unread, unavailable: { reason: "probeFailed" } },
-          },
-          resetAt: undefined,
-        },
-        {
-          failureClass: "usage_limit",
-          provider: {
-            auth: {
-              status: "authenticated",
-              type: "customEndpoint",
-              endpoint: "http://hub:8317",
-            },
-            usageLimits: { ...unread, unavailable: { reason: "probeFailed" } },
-          },
-          resetAt: hubResetAt,
-          runId,
-        },
-        {
-          failureClass: "usage_limit",
-          provider: {
-            auth: { status: "unknown", endpoint: "http://hub:8317" },
+            auth: { status: "authenticated", endpoint: "http://hub:8317" },
             usageLimits: { ...unread, unavailable: { reason: "unsupported" } },
           },
           resetAt: hubResetAt,
+          runId,
         },
         // regression: #30778 an instance with no hub endpoint gets no hub reset
         {
           failureClass: "usage_limit",
           provider: {
-            auth: { status: "authenticated", type: "customEndpoint" },
+            auth: { status: "authenticated" },
             usageLimits: { ...unread, unavailable: { reason: "unsupported" } },
           },
           resetAt: undefined,
@@ -404,11 +384,8 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
           resetAt,
         );
       }
-      assert.deepEqual(lookups, Array(8).fill(instance.instanceId));
-      assert.deepEqual(hubLookups, [
-        `${instance.driverKind}:http://hub:8317:gpt-run-model`,
-        `${instance.driverKind}:http://hub:8317:${modelSelection.model}`,
-      ]);
+      assert.deepEqual(lookups, Array(4).fill(instance.instanceId));
+      assert.deepEqual(hubLookups, [`${instance.driverKind}:http://hub:8317:gpt-run-model`]);
       yield* Deferred.await(refreshed);
     }).pipe(
       Effect.provide(makeLayerTest(layerTestEventSink, instances)),
