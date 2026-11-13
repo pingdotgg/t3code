@@ -1,6 +1,7 @@
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
+import * as Deferred from "effect/Deferred";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -8,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FiberHandle from "effect/FiberHandle";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -636,6 +638,25 @@ function fetchFailureDetail(stderr: string): string | undefined {
     return "Git could not update a local reference. Another Git operation or a stale lock may be blocking the fetch; check the repository on the server, then retry.";
   }
   return undefined;
+}
+
+// A signature takes an agent milliseconds unless it is asking a person to approve the key.
+const SSH_KEY_APPROVAL_WINDOW = Duration.seconds(10);
+// OpenSSH logs this at -v just before it asks the agent to sign, then nothing until the answer.
+const SSH_KEY_ACCEPTED_LINE = /^debug1: Server accepts key: /;
+const OPENSSH_COMMAND = /^(?:\S*[\\/])?ssh(?:\.exe)?(?=\s|$)/i;
+
+/**
+ * The ssh command Git would run, with OpenSSH's debug log on. Null leaves Git's own choice alone:
+ * a GIT_SSH program or a wrapper under another name may not take OpenSSH's options.
+ */
+function verboseSshCommand(
+  env: NodeJS.ProcessEnv,
+  configuredSshCommand: string | null,
+): string | null {
+  const command =
+    env.GIT_SSH_COMMAND ?? configuredSshCommand ?? (env.GIT_SSH === undefined ? "ssh" : null);
+  return command !== null && OPENSSH_COMMAND.test(command.trimStart()) ? `${command} -v` : null;
 }
 
 // Git 2.53+ reports ref races as fetching-ref failures; older versions say cannot lock ref.
@@ -4908,23 +4929,56 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchRemote = Effect.fn("fetchRemote")(function* (input: GitVcsDriver.GitFetchRemoteInput) {
     const args = ["fetch", "--quiet", "--", input.remoteName];
+    const sshCommand = verboseSshCommand(
+      yield* HostProcess.Environment,
+      yield* readConfigValue(input.cwd, "core.sshCommand").pipe(Effect.orElseSucceed(() => null)),
+    );
     const options = {
-      env: STATUS_UPSTREAM_REFRESH_ENV,
+      env: {
+        ...STATUS_UPSTREAM_REFRESH_ENV,
+        ...(sshCommand === null ? {} : { GIT_SSH_COMMAND: sshCommand }),
+      },
       fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
     };
     // Another fetch in the same repository, such as the background status
     // poll, can win the race for a remote-tracking ref. The loser fails, but
     // the ref is free again by the time a rerun needs it, so retry once.
     const runFetch = (fetchArgs: readonly string[]) => {
-      const run = executeGitWithStableDiagnostics(
-        "GitVcsDriver.fetchRemote",
-        input.cwd,
-        fetchArgs,
-        {
-          ...options,
-          allowNonZeroExit: true,
-        },
-      );
+      // The prompt env cannot stop an agent that asks a person to approve each signature, so a
+      // fetch still waiting on one after the window fails instead of running out the timeout.
+      const run = Effect.gen(function* () {
+        const approvalWindow = yield* FiberHandle.make<boolean>();
+        const unapproved = yield* Deferred.make<never, GitCommandError>();
+        const failUnapproved = Effect.sleep(SSH_KEY_APPROVAL_WINDOW).pipe(
+          Effect.andThen(
+            Deferred.fail(
+              unapproved,
+              new GitCommandError({
+                ...gitCommandContext({
+                  operation: "GitVcsDriver.fetchRemote",
+                  cwd: input.cwd,
+                  args: fetchArgs,
+                }),
+                detail:
+                  "Git is waiting for SSH key authorization. Approve the request in the SSH agent on the server, then retry.",
+              }),
+            ),
+          ),
+        );
+        return yield* Effect.raceFirst(
+          executeGitWithStableDiagnostics("GitVcsDriver.fetchRemote", input.cwd, fetchArgs, {
+            ...options,
+            allowNonZeroExit: true,
+            progress: {
+              onStderrLine: (line) =>
+                SSH_KEY_ACCEPTED_LINE.test(line)
+                  ? FiberHandle.run(approvalWindow, failUnapproved).pipe(Effect.asVoid)
+                  : FiberHandle.clear(approvalWindow),
+            },
+          }),
+          Deferred.await(unapproved),
+        );
+      }).pipe(Effect.scoped);
       return run.pipe(
         Effect.filterOrElse(
           (result) => !(result.exitCode !== 0 && isRefLockFailure(result.stderr)),
