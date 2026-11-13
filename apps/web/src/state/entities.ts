@@ -328,18 +328,12 @@ export function waitForProjectRemoval(ref: ScopedProjectRef, timeoutMs = 5_000):
   });
 }
 
-/** The loaded timeline above an item: all that can have led to it, in a fork's inherited part too. */
-export function readThreadItemsBefore(
-  ref: ScopedThreadRef,
-  item: Pick<OrchestrationV2ProjectedTurnItem, "sourceThreadId" | "sourceItemId">,
-) {
-  const items =
+/** The thread's loaded timeline, for a handler that reads it once instead of subscribing. */
+export function readThreadTurnItems(ref: ScopedThreadRef) {
+  return (
     appAtomRegistry.get(environmentThreadDetails.quietThreadAtom(ref))?.projection
-      .visibleTurnItems ?? [];
-  const index = items.findIndex(
-    (row) => row.sourceThreadId === item.sourceThreadId && row.sourceItemId === item.sourceItemId,
+      .visibleTurnItems ?? []
   );
-  return items.slice(0, Math.max(0, index));
 }
 
 export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | null {

@@ -118,10 +118,15 @@ describe("chat file links into another project", () => {
 describe("agentWorkingDirectories", () => {
   const directories = (...commands: ReadonlyArray<string>) =>
     agentWorkingDirectories(
-      commands.map((input) => ({ item: { type: "command_execution", input } })),
+      [...commands, "the reply", "cd /work/later"].map((input, index) => ({
+        sourceThreadId: "thread",
+        sourceItemId: `item-${index}`,
+        item: { type: "command_execution", input },
+      })),
+      { sourceThreadId: "thread", sourceItemId: `item-${commands.length}` },
     );
 
-  it("lists the folders commands changed into, the latest first", () => {
+  it("lists the folders commands above the reply changed into, the latest first", () => {
     expect(
       directories(
         "cd /work/repo-c && cd /work/repo-b && git diff",

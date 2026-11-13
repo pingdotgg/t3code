@@ -148,15 +148,27 @@ function literalDirectory(operand: string): string | null {
   return path.includes("\\") && !isWindowsAbsolutePath(path) ? null : path;
 }
 
+interface TimelineItemSource {
+  readonly sourceThreadId: string;
+  readonly sourceItemId: string;
+}
+
 /**
- * The folders the commands in `items` changed into, the latest first. A reply cites paths
- * relative to where the agent worked, which no project has to be rooted at.
+ * The folders the commands above `reply` in a thread's timeline changed into, the latest first.
+ * A reply cites paths relative to where the agent worked, which no project has to be rooted at.
+ * Rows below the reply, a fork's own commands under an inherited one included, came after it.
  */
 export function agentWorkingDirectories(
-  items: ReadonlyArray<{ readonly item: { readonly type: string; readonly input?: unknown } }>,
+  items: ReadonlyArray<
+    TimelineItemSource & { readonly item: { readonly type: string; readonly input?: unknown } }
+  >,
+  reply: TimelineItemSource,
 ): ReadonlyArray<string> {
   const directories = new Set<string>();
-  for (let index = items.length - 1; index >= 0; index--) {
+  const replyIndex = items.findIndex(
+    (row) => row.sourceThreadId === reply.sourceThreadId && row.sourceItemId === reply.sourceItemId,
+  );
+  for (let index = replyIndex - 1; index >= 0; index--) {
     const item = items[index]?.item;
     if (item?.type !== "command_execution" || typeof item.input !== "string") continue;
     for (const match of [...item.input.matchAll(CD_OPERAND)].reverse()) {

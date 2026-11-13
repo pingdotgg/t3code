@@ -28,7 +28,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
-import { readThreadItemsBefore } from "../../state/entities";
+import { readThreadTurnItems } from "../../state/entities";
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
 import { MESSAGE_HEADING_LEVEL, MessageAuthorHeading } from "./TimelineRowParts";
@@ -62,7 +62,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
               cwd={ctx.markdownCwd}
               agentDirectories={() =>
                 ctx.threadRef && row.projectedItem
-                  ? agentWorkingDirectories(readThreadItemsBefore(ctx.threadRef, row.projectedItem))
+                  ? agentWorkingDirectories(readThreadTurnItems(ctx.threadRef), row.projectedItem)
                   : []
               }
               threadRef={ctx.threadRef ?? undefined}
