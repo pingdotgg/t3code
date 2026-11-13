@@ -1,5 +1,6 @@
 import {
   CommandId,
+  isOrchestrationV2WorkActive,
   MessageId,
   type OrchestrationV2Notification,
   type PullRequestActivity,
@@ -8,8 +9,10 @@ import {
   type PullRequestRef,
   type PullRequestThreadCommentsResult,
   type ThreadPullRequestLink,
+  type ThreadId,
   type ThreadPullRequestWatch,
 } from "@t3tools/contracts";
+import { isChangeRequestCloseCommand } from "../sourceControl/sourceControlDefinitions.ts";
 import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeyOf,
@@ -38,6 +41,7 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { isTerminalRunStatus } from "./ThreadManagementService.ts";
 import {
   combinePullRequestWatchWakes,
   evaluatePullRequestWatch,
@@ -287,6 +291,22 @@ export const make = Effect.gen(function* () {
   // A pass reads watches and records new ones, so passes must not overlap.
   const passes = Semaphore.makeUnsafe(1);
   const lastReads = new Map<string, LastRead>();
+  /** When each group's last read that found its pull request open began. */
+  const openAt = new Map<string, number>();
+  /** The merge and close commands each thread's agent ran with its host's CLI. */
+  const agentEnds = new Map<
+    ThreadId,
+    { readonly running: Set<string>; readonly finished: Set<string>; endedAt: number }
+  >();
+  // The agent needs no wake for its own merge or close. Only a command that ran since a read last
+  // found the pull request open can have ended it; a merge that lands later, as with `--auto`, is news.
+  const endedByAgent = (target: WatchTarget, openSince: number | undefined) => {
+    const ends = agentEnds.get(target.thread.id);
+    return (
+      ends !== undefined &&
+      (ends.running.size > 0 || ends.endedAt > (openSince ?? Date.parse(target.watch.startedAt)))
+    );
+  };
   const threadTails = new Map<
     string,
     {
@@ -650,8 +670,16 @@ export const make = Effect.gen(function* () {
     }
     if (detail.state !== "open") {
       lastReads.delete(group.key);
-      return yield* eachTarget(group, (target) => finished(group.key, target, detail));
+      const openSince = openAt.get(group.key);
+      openAt.delete(group.key);
+      const reason = detail.state === "merged" ? "merged" : "closed";
+      return yield* eachTarget(group, (target) =>
+        endedByAgent(target, openSince)
+          ? record(target, null).pipe(Effect.tap(() => ended(target, reason)))
+          : finished(group.key, target, detail),
+      );
     }
+    openAt.set(group.key, now);
 
     // Never advance the remark watermark past comments an incomplete read could have missed.
     const remarks = Option.isSome(activity)
@@ -749,9 +777,12 @@ export const make = Effect.gen(function* () {
     }));
     if (changed === undefined) {
       currentGroups = groups;
-      for (const cache of [readFailures, lastReads, threadTails]) {
+      for (const cache of [readFailures, lastReads, threadTails, openAt]) {
         for (const key of cache.keys()) if (!byPullRequest.has(key)) cache.delete(key);
       }
+      const watching = new Set(targets.map((target) => target.thread.id));
+      for (const threadId of agentEnds.keys())
+        if (!watching.has(threadId)) agentEnds.delete(threadId);
     }
     yield* Effect.forEach(
       ending,
@@ -821,9 +852,68 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("PullRequestWatchReactor.readOnChange"),
     );
 
+  const readThreadWatches = (threadId: ThreadId) =>
+    projections.getThreadsWithPullRequests(threadId).pipe(
+      Effect.flatMap((threads) =>
+        Effect.forEach(
+          new Set(
+            threads.flatMap((thread) =>
+              visibleThreadPullRequests(thread.pullRequests ?? [])
+                .filter((link) => link.watch !== undefined)
+                .map(threadPullRequestKeyOf),
+            ),
+          ),
+          readOnChange,
+          { discard: true },
+        ),
+      ),
+      Effect.catchCause(logFailure("pull request watch read after a merge failed", { threadId })),
+    );
+
   const start: PullRequestWatchReactor["Service"]["start"] = Effect.fn(
     "PullRequestWatchReactor.start",
   )(function* () {
+    // Reading a thread's watches once its agent's merge or close ends lets them end at once, and
+    // without a wake, rather than at the next sweep.
+    const agentReads = yield* FiberMap.make<ThreadId>();
+    const commandEnded = Effect.fn("PullRequestWatchReactor.commandEnded")(function* (
+      threadId: ThreadId,
+    ) {
+      const ends = agentEnds.get(threadId);
+      if (ends !== undefined) ends.endedAt = yield* Clock.currentTimeMillis;
+      yield* FiberMap.run(agentReads, threadId)(readThreadWatches(threadId));
+    });
+    yield* forkParked(
+      Stream.runForEach(engine.streamDomainEvents, (event) => {
+        if (event.type === "run.updated") {
+          const ends = agentEnds.get(event.threadId);
+          // A run can stop before its command reports that it ended.
+          if (ends === undefined || ends.running.size === 0) return Effect.void;
+          if (!isTerminalRunStatus(event.payload.status)) return Effect.void;
+          ends.running.clear();
+          return commandEnded(event.threadId);
+        }
+        if (event.type !== "turn-item.updated") return Effect.void;
+        const item = event.payload;
+        if (item.type !== "command_execution" || !isChangeRequestCloseCommand(item.input)) {
+          return Effect.void;
+        }
+        const ends = agentEnds.get(event.threadId) ?? {
+          running: new Set<string>(),
+          finished: new Set<string>(),
+          endedAt: 0,
+        };
+        agentEnds.set(event.threadId, ends);
+        if (ends.finished.has(item.id)) return Effect.void;
+        if (isOrchestrationV2WorkActive(item.status)) {
+          ends.running.add(item.id);
+          return Effect.void;
+        }
+        ends.running.delete(item.id);
+        ends.finished.add(item.id);
+        return commandEnded(event.threadId);
+      }).pipe(Effect.catchCause(logFailure("pull request watch command stream failed", {}))),
+    );
     // One feed per pull request: the host keeps one subscription per pull request and account.
     const feeds = yield* FiberMap.make<string>();
     const follow = Effect.gen(function* () {
