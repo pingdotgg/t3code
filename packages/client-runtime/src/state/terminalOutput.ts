@@ -17,7 +17,7 @@ export interface TerminalOutputState {
   readonly retainedBytes: number;
   readonly resetVersion: number;
   readonly nextOffset: number;
-  /** Escape-sequence parser state where the retained output starts. */
+  /** Escape-sequence parser state where the retained chunks start. */
   readonly sequenceState: number;
 }
 
@@ -170,14 +170,6 @@ function trimOutputChunkStart(
   };
 }
 
-function sliceOutputChunkStart(chunk: TerminalOutputChunk, offset: number): TerminalOutputChunk {
-  return {
-    startOffset: chunk.startOffset + offset,
-    data: chunk.data.slice(offset),
-    byteLength: chunk.byteLength - textEncoder.encode(chunk.data.slice(0, offset)).byteLength,
-  };
-}
-
 function appendOutput(
   current: TerminalOutputState,
   data: string,
@@ -246,25 +238,6 @@ function appendOutput(
     }
   }
 
-  // Never start retained output inside a sequence whose beginning was evicted.
-  let firstGroundIndex = 0;
-  while (sequenceState !== TERMINAL_SEQUENCE_GROUND && firstGroundIndex < retainedChunks.length) {
-    const first = retainedChunks[firstGroundIndex]!;
-    const exit = terminalSequenceExit(first.data, sequenceState);
-    sequenceState = exit.state;
-    if (exit.index === -1 || exit.index === first.data.length) {
-      retainedBytes -= first.byteLength;
-      firstGroundIndex += 1;
-    } else {
-      const trimmed = sliceOutputChunkStart(first, exit.index);
-      retainedBytes -= first.byteLength - trimmed.byteLength;
-      retainedChunks = retainedChunks.slice(firstGroundIndex);
-      retainedChunks[0] = trimmed;
-      firstGroundIndex = 0;
-    }
-  }
-  if (firstGroundIndex > 0) retainedChunks = retainedChunks.slice(firstGroundIndex);
-
   return {
     generation: current.generation,
     chunks: retainedChunks,
@@ -299,8 +272,12 @@ function resetOutput(
   };
 }
 
+/** Retained output for replay, starting outside any sequence whose beginning was evicted. */
 export function terminalOutputText(output: TerminalOutputState): string {
-  return output.chunks.map((chunk) => chunk.data).join("");
+  const text = output.chunks.map((chunk) => chunk.data).join("");
+  if (output.sequenceState === TERMINAL_SEQUENCE_GROUND) return text;
+  const exit = terminalSequenceExit(text, output.sequenceState);
+  return exit.index === -1 ? "" : text.slice(exit.index);
 }
 
 export function readTerminalOutputUpdate(

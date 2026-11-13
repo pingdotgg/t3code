@@ -182,6 +182,36 @@ describe("terminal session reducers", () => {
     expect(terminalOutputText(fromOutput.output)).toBe("OK");
   });
 
+  it("streams a sequence longer than the buffer to a caught-up renderer without resets", () => {
+    const events = [
+      "KEEP\r\n",
+      "\u001b]0;",
+      ...Array.from({ length: 6 }, () => "x".repeat(8)),
+      "\u0007OK",
+    ];
+    let state = applyTerminalAttachStreamEvent(
+      EMPTY_TERMINAL_BUFFER_STATE,
+      { type: "snapshot", snapshot: { ...BASE_SNAPSHOT, history: "" } },
+      16,
+    );
+    let cursor = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR).cursor;
+    let rendered = "";
+    for (const data of events) {
+      state = applyTerminalAttachStreamEvent(
+        state,
+        { type: "output", threadId: TARGET.threadId, terminalId: TARGET.terminalId, data },
+        16,
+      );
+      const update = readTerminalOutputUpdate(state.output, cursor);
+      expect(update.type).toBe("append");
+      if (update.type === "append") rendered += update.data;
+      cursor = update.cursor;
+    }
+
+    expect(rendered).toBe(events.join(""));
+    expect(terminalOutputText(state.output)).toBe("OK");
+  });
+
   it("delivers all output when several events arrive before a renderer reads", () => {
     const initial = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
       type: "snapshot",
