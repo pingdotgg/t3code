@@ -21,8 +21,9 @@ use crate::{
         self, AccessChange, AuthStore, ClientInfo, ExchangeError, PairingRequest, Principal,
         iso8601, scope_response,
     },
+    scopes,
     session::{self, SessionOptions},
-    table::{CallContext, MethodTable},
+    table::{CallContext, Failure, MethodTable},
 };
 
 pub const ORCHESTRATION_PROTOCOL_VERSION: u32 = 2;
@@ -249,18 +250,24 @@ struct PairingTokenRequest {
     access: Option<String>,
 }
 
+/// The bearer session behind a request, or the 401 refusing it.
+fn authenticated(state: &AppState, headers: &HeaderMap) -> Result<Principal, Box<Response>> {
+    let Some(token) = bearer(headers) else {
+        return Err(Box::new(auth_invalid("missing_credential")));
+    };
+    state
+        .auth
+        .authenticate_bearer(token)
+        .ok_or_else(|| Box::new(auth_invalid("invalid_credential")))
+}
+
 /// The bearer session behind a request that needs `scope`, or the response refusing it.
 fn require_scope(
     state: &AppState,
     headers: &HeaderMap,
     scope: &str,
 ) -> Result<Principal, Box<Response>> {
-    let Some(token) = bearer(headers) else {
-        return Err(Box::new(auth_invalid("missing_credential")));
-    };
-    let Some(principal) = state.auth.authenticate_bearer(token) else {
-        return Err(Box::new(auth_invalid("invalid_credential")));
-    };
+    let principal = authenticated(state, headers)?;
     if !principal.has_scope(scope) {
         return Err(Box::new(scope_required(scope)));
     }
@@ -443,23 +450,7 @@ fn orchestration_access(
             "invalid_command",
         )));
     }
-    let Some(token) = bearer(headers) else {
-        return Err(Box::new(auth_invalid("missing_credential")));
-    };
-    let Some(principal) = state.auth.authenticate_bearer(token) else {
-        return Err(Box::new(auth_invalid("invalid_credential")));
-    };
-    if !principal.has_scope("orchestration:read") {
-        return Err(Box::new(
-            Json(json!({
-                "_tag": "EnvironmentScopeRequiredError",
-                "code": "insufficient_scope",
-                "requiredScope": "orchestration:read",
-                "traceId": trace_id(),
-            }))
-            .with_status(StatusCode::FORBIDDEN),
-        ));
-    }
+    require_scope(state, headers, "orchestration:read")?;
     state
         .engine
         .clone()
@@ -511,40 +502,77 @@ async fn thread_snapshot(
 
 /// `POST /api/projects/mutate`: `projects.mutate` over HTTP, so `conn-server project add`
 /// reaches a running server without a WebSocket (Orbit adds its project this way). The body
-/// is the method's payload; the answer its success or typed error.
+/// is the method's payload. It needs the same scopes as over `/ws`
+/// (`requiredScopesForProjectMutation`): changing scripts, which run on the host, takes
+/// `settings:write` too. Errors answer as `project/http.ts` does.
 async fn projects_mutate(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    let Some(token) = bearer(&headers) else {
-        return auth_invalid("missing_credential");
+    let principal = match authenticated(&state, &headers) {
+        Ok(principal) => principal,
+        Err(response) => return *response,
     };
-    let Some(principal) = state.auth.authenticate_bearer(token) else {
-        return auth_invalid("invalid_credential");
+    let context = CallContext {
+        principal: Some(Arc::new(principal)),
+        ..CallContext::default()
     };
-    if !principal.has_scope("orchestration:operate") {
-        return Json(json!({
-            "_tag": "EnvironmentScopeRequiredError",
-            "code": "insufficient_scope",
-            "requiredScope": "orchestration:operate",
-            "traceId": trace_id(),
-        }))
-        .with_status(StatusCode::FORBIDDEN);
+    if let Err(failure) = scopes::check("projects.mutate", &context, &body) {
+        let (Failure::Fail(error) | Failure::Die(error)) = failure;
+        let scope = error
+            .get("requiredPermission")
+            .and_then(Value::as_str)
+            .unwrap_or("orchestration:operate");
+        return scope_required(scope);
     }
     let Some(engine) = &state.engine else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     match engine.call("projects.mutate", body).await {
         Ok(result) => Json(result).into_response(),
-        Err(EngineError::Rejected(error)) => Json(error).with_status(StatusCode::BAD_REQUEST),
-        Err(EngineError::Internal(message)) => error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "EnvironmentInternalError",
-            "internal_error",
-            &message,
-        ),
+        Err(EngineError::Rejected(error)) if is_invalid_project_command(&error) => error_invalid(),
+        Err(EngineError::Rejected(error)) => {
+            eprintln!("conn-server: project_mutation_failed: {error}");
+            internal_reason("project_mutation_failed")
+        }
+        Err(EngineError::Internal(message)) => {
+            eprintln!("conn-server: project_mutation_failed: {message}");
+            internal_reason("project_mutation_failed")
+        }
     }
+}
+
+/// `failProjectMutation`: a project the request names wrongly is the caller's error.
+fn is_invalid_project_command(error: &Value) -> bool {
+    matches!(
+        error["cause"]["_tag"].as_str(),
+        Some(
+            "ProjectNotFoundError"
+                | "ProjectConflictError"
+                | "ProjectNotEmptyError"
+                | "ProjectInvalidError"
+        )
+    )
+}
+
+fn error_invalid() -> Response {
+    error(
+        StatusCode::BAD_REQUEST,
+        "EnvironmentRequestInvalidError",
+        "invalid_request",
+        "invalid_command",
+    )
+}
+
+/// `EnvironmentInternalError`, 500. The cause goes to the log, never to the client.
+fn internal_reason(reason: &str) -> Response {
+    error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "EnvironmentInternalError",
+        "internal_error",
+        reason,
+    )
 }
 
 async fn ws(
@@ -905,6 +933,80 @@ mod tests {
             .filter_map(|p| p["title"].as_str())
             .collect();
         assert!(titles.contains(&"Added"), "{titles:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `requiredScopesForProjectMutation` holds over HTTP as over `/ws`: scripts run on the
+    /// host, so a session without `settings:write` may not store them.
+    #[tokio::test(flavor = "current_thread")]
+    async fn project_mutations_over_http_need_the_ws_scopes() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-server-http-scopes-{}", auth::random_hex(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
+        let engine: Arc<dyn Engine> = Arc::new(conn_engine::SqliteEngine::open(config).unwrap());
+        let (addr, auth) = serve_with(Some(engine)).await;
+        let session = |scopes: &[&str]| {
+            auth.issue_session(auth::SessionRequest {
+                scopes: scopes.iter().map(|s| s.to_string()).collect(),
+                label: None,
+                subject: None,
+                ttl_ms: auth::SESSION_TTL_MS,
+            })
+            .unwrap()
+            .token
+        };
+        let operate = session(&["orchestration:read", "orchestration:operate"]);
+        let admin = session(&[
+            "orchestration:read",
+            "orchestration:operate",
+            "settings:write",
+        ]);
+        let root = dir.to_string_lossy().into_owned();
+        let project_id = conn_engine::SqliteEngine::project_id_for(&root);
+        let post = |token: &str, body: Value| {
+            let head = format!(
+                "POST /api/projects/mutate HTTP/1.1\r\ncontent-type: application/json\r\nauthorization: Bearer {token}"
+            );
+            async move { call(addr, &head, &body.to_string()).await }
+        };
+        let with_scripts = json!({"type": "project.create", "commandId": "c1",
+            "projectId": project_id, "title": "P", "workspaceRoot": root,
+            "scripts": [{"id": "s", "name": "s", "command": "touch /tmp/x", "icon": "play",
+                         "runOnWorktreeCreate": true}]});
+        let (status, body) = post(&operate, with_scripts.clone()).await;
+        assert_eq!(status, 403, "{body}");
+        let body: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(body["_tag"], "EnvironmentScopeRequiredError");
+        assert_eq!(body["requiredPermission"], "settings:write");
+        assert_eq!(body["requiredScope"], "orchestration:operate");
+        // Without scripts, operate is enough.
+        let plain = json!({"type": "project.create", "commandId": "c2",
+            "projectId": project_id, "title": "P", "workspaceRoot": root});
+        let (status, body) = post(&operate, plain.clone()).await;
+        assert_eq!(status, 200, "{body}");
+        // A conflict is the caller's error, with no internal text.
+        let mut again = plain;
+        again["commandId"] = json!("c3");
+        let (status, body) = post(&admin, again).await;
+        assert_eq!(status, 400, "{body}");
+        let body: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(body["reason"], "invalid_command");
+        assert!(
+            body.get("cause").is_none() && body.get("message").is_none(),
+            "{body}"
+        );
+        // A read-only session gets the same body shape on the snapshot routes.
+        let reader = session(&["access:read"]);
+        let (status, body) = call(
+            addr,
+            &format!("GET /api/orchestration/shell HTTP/1.1\r\nx-t3-orchestration-protocol: 2\r\nauthorization: Bearer {reader}"),
+            "",
+        )
+        .await;
+        assert_eq!(status, 403);
+        let body: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(body["requiredPermission"], "orchestration:read");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
