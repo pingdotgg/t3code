@@ -12,6 +12,7 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2Command as OrchestrationCommand,
+  type OrchestrationV2InternalCommand,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   type OrchestrationProjectShell,
@@ -51,6 +52,10 @@ type SyncCommand = Extract<
   { readonly type: "thread.pull-request-link.sync" }
 >;
 type LinkCommand = Extract<OrchestrationCommand, { readonly type: "thread.pull-request.link" }>;
+type ChecksReopenCommand = Extract<
+  OrchestrationV2InternalCommand,
+  { readonly type: "thread.pull-request-watch.checks-reopen" }
+>;
 
 const testCrypto = SecureRandom.make((size) => new Uint8Array(size).fill(1));
 
@@ -189,6 +194,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
   const shellSnapshotReads = yield* Ref.make(0);
   const syncCommands = yield* Ref.make<ReadonlyArray<SyncCommand>>([]);
   const linkCommands = yield* Ref.make<ReadonlyArray<LinkCommand>>([]);
+  const reopenCommands = yield* Queue.unbounded<ChecksReopenCommand>();
   const summaryCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const stackCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
@@ -220,6 +226,11 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     }
     if (command.type === "thread.pull-request.link") {
       return Ref.update(linkCommands, (recorded) => [...recorded, command]).pipe(
+        Effect.as({ sequence: 1, storedEvents: [] }),
+      );
+    }
+    if (command.type === "thread.pull-request-watch.checks-reopen") {
+      return Queue.offer(reopenCommands, command).pipe(
         Effect.as({ sequence: 1, storedEvents: [] }),
       );
     }
@@ -284,6 +295,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     shellSnapshotReads,
     syncCommands,
     linkCommands,
+    reopenCommands,
     summaryCalls,
     stackCalls,
     domainEvents,
@@ -1875,6 +1887,56 @@ describe("PullRequestSyncReactor", () => {
             ]),
             [[7, "merged"]],
           );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("reopens a watch's checks when its thread's agent pushes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const watch = {
+          startedAt: NOW,
+          headSha: "aaaaaaaaaa",
+          failedChecks: [],
+          passed: true,
+          passedChecks: ["test"],
+          remarksThrough: NOW,
+          remarkIds: [],
+          conflicting: false,
+          wakes: 0,
+        };
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("agent", {
+              pullRequests: [
+                makeLink(7, { state: "open" }, { watch: { ...watch, checksPending: false } }),
+              ],
+            }),
+            makeThread("unread", {
+              pullRequests: [makeLink(8, { state: "open" }, { watch })],
+            }),
+          ]),
+        });
+
+        yield* Effect.gen(function* () {
+          yield* startAndSweep(fixture);
+          const agent = ThreadId.make("agent");
+          yield* Queue.offerAll(fixture.domainEvents, [
+            commandRan(agent, "git status && echo 'then git push'", undefined, "status"),
+            // A watch that has not read its checks yet has no answer to forget.
+            commandRan(ThreadId.make("unread"), "git push", undefined, "unread-push"),
+            commandRan(agent, "cd app && git -C . push --force-with-lease", undefined, "push"),
+            commandRan(agent, '/bin/zsh -lc "gh stack submit --auto"', undefined, "stack"),
+          ]);
+          for (const item of ["push", "stack"]) {
+            const command = yield* Queue.take(fixture.reopenCommands);
+            assert.deepStrictEqual(
+              [command.threadId, command.commandId],
+              [agent, `server:pr-push-checks:agent:item:agent:${item}`],
+            );
+          }
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
