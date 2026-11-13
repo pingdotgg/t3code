@@ -1270,19 +1270,23 @@ function appendContextHandoffId(
 /** A fresh-session schedule run starts a side conversation; the thread's own one continues past it. */
 function isScheduledFreshRun(
   run: Pick<OrchestrationV2Run, "freshContext" | "userMessageId">,
-  messages: OrchestrationV2ThreadProjection["messages"],
+  turnItems: OrchestrationV2ThreadProjection["turnItems"],
 ): boolean {
+  // Turn items, unlike messages, are not narrowed to the runs since the latest compaction.
   return (
     run.freshContext === true &&
-    messages.some(
-      (message) => message.id === run.userMessageId && message.scheduledTaskId !== undefined,
+    turnItems.some(
+      (item) =>
+        item.type === "user_message" &&
+        item.messageId === run.userMessageId &&
+        item.scheduledTaskId !== undefined,
     )
   );
 }
 
 /** Ordinal of the latest started fresh-context run. Runs before it never reach a provider again. */
 function contextBoundaryOrdinal(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems">,
 ): number {
   let boundary = 0;
   for (const run of projection.runs) {
@@ -1291,7 +1295,7 @@ function contextBoundaryOrdinal(
       run.status !== "queued" &&
       !cancelledBeforeStart(run) &&
       run.ordinal > boundary &&
-      !isScheduledFreshRun(run, projection.messages)
+      !isScheduledFreshRun(run, projection.turnItems)
     ) {
       boundary = run.ordinal;
     }
@@ -1303,14 +1307,14 @@ function contextBoundaryOrdinal(
 function conversationProviderThread(
   projection: Pick<
     OrchestrationV2ThreadProjection,
-    "thread" | "providerThreads" | "runs" | "messages"
+    "thread" | "providerThreads" | "runs" | "turnItems"
   >,
 ): OrchestrationV2ProviderThread | undefined {
   const startedByScheduledFreshRun = (providerThread: OrchestrationV2ProviderThread) =>
     projection.runs.some(
       (run) =>
         run.ordinal === providerThread.firstRunOrdinal &&
-        isScheduledFreshRun(run, projection.messages),
+        isScheduledFreshRun(run, projection.turnItems),
     );
   const active = projection.providerThreads.find(
     (candidate) => candidate.id === projection.thread.activeProviderThreadId,
@@ -1336,7 +1340,7 @@ function conversationProviderThread(
 function dispatchProviderThread(
   projection: Pick<
     OrchestrationV2ThreadProjection,
-    "thread" | "providerThreads" | "runs" | "messages"
+    "thread" | "providerThreads" | "runs" | "turnItems"
   >,
   message: Pick<OrchestrationV2ConversationMessage, "notification" | "delegatedCompletion">,
   freshContext: boolean,
@@ -1387,7 +1391,7 @@ function uniqueSessions(
 function rootProviderThreadsForProvider(
   projection: Pick<
     OrchestrationV2ThreadProjection,
-    "providerThreads" | "thread" | "runs" | "messages"
+    "providerThreads" | "thread" | "runs" | "turnItems"
   >,
   providerInstanceId: ModelSelection["instanceId"],
 ): ReadonlyArray<OrchestrationV2ProviderThread> {

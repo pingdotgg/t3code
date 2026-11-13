@@ -3469,11 +3469,51 @@ describe("orchestration v2 provider switching", () => {
           branch: null,
           worktreePath: cwd,
         });
+        const eventSink = yield* EventSink.EventSinkV2;
         for (const [name, scheduled] of [
           ["user-first", false],
           ["scheduled", true],
           ["user-second", false],
+          ["compaction", false],
+          ["scheduled-after-compaction", true],
+          ["user-third", false],
         ] as const) {
+          if (name === "compaction") {
+            // The user's run compacts, so later dispatches no longer read the first scheduled run's message.
+            const run = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+            const compactedAt = yield* DateTime.now;
+            yield* eventSink.write({
+              events: [
+                {
+                  id: EventId.make("event:scheduled-fresh-user-chat:compaction"),
+                  type: "turn-item.updated",
+                  threadId,
+                  runId: run.id,
+                  nodeId: run.rootNodeId!,
+                  occurredAt: compactedAt,
+                  payload: {
+                    id: TurnItemId.make("item:scheduled-fresh-user-chat:compaction"),
+                    threadId,
+                    runId: run.id,
+                    nodeId: run.rootNodeId,
+                    providerThreadId: null,
+                    providerTurnId: null,
+                    nativeItemRef: null,
+                    parentItemId: null,
+                    ordinal: 1_000,
+                    status: "completed",
+                    title: null,
+                    startedAt: compactedAt,
+                    completedAt: compactedAt,
+                    updatedAt: compactedAt,
+                    type: "compaction",
+                    driver: CLAUDE_DRIVER,
+                  },
+                },
+              ],
+            });
+            continue;
+          }
           yield* send(name, scheduled);
           yield* worker.drain();
           yield* waitForIdle(threadId);
@@ -3486,6 +3526,7 @@ describe("orchestration v2 provider switching", () => {
         );
         // The scheduled run's fresh session must not replace the user's conversation.
         assert.equal(turnFor("user-second")!.nativeThreadId, turnFor("user-first")!.nativeThreadId);
+        assert.equal(turnFor("user-third")!.nativeThreadId, turnFor("user-first")!.nativeThreadId);
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
