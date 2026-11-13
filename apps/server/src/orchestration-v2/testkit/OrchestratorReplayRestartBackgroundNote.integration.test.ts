@@ -268,34 +268,30 @@ describe("restart-cancelled background work", () => {
   it.effect.each([false, true])(
     "keeps the thread settled and tells the next user turn once when continuation is %s",
     (continueThreadsAfterServerUpdate) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const projection = yield* runRestart({
-            resumedPrompts: [
-              `${NOTE}\n\nUser message:\n${FIRST_AFTER_RESTART}`,
-              SECOND_AFTER_RESTART,
-            ],
-            userMessagesAfterRestart: [FIRST_AFTER_RESTART, SECOND_AFTER_RESTART],
-            continueThreadsAfterServerUpdate,
-          });
-          assert.deepEqual(
-            projection.runs.map((run) => run.status),
-            ["completed", "completed", "completed"],
-          );
-          assert.isFalse(
-            projection.runs.some((run) => run.restartContinuationOfRunId !== undefined),
-          );
-
-          assert.deepEqual(userTexts(projection), [
-            CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT,
-            FIRST_AFTER_RESTART,
+      Effect.gen(function* () {
+        const projection = yield* runRestart({
+          resumedPrompts: [
+            `${NOTE}\n\nUser message:\n${FIRST_AFTER_RESTART}`,
             SECOND_AFTER_RESTART,
-          ]);
-        }).pipe(
-          provideDeterministicTestRuntime,
-          Effect.provide(
-            Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-          ),
+          ],
+          userMessagesAfterRestart: [FIRST_AFTER_RESTART, SECOND_AFTER_RESTART],
+          continueThreadsAfterServerUpdate,
+        });
+        assert.deepEqual(
+          projection.runs.map((run) => run.status),
+          ["completed", "completed", "completed"],
+        );
+        assert.isFalse(projection.runs.some((run) => run.restartContinuationOfRunId !== undefined));
+
+        assert.deepEqual(userTexts(projection), [
+          CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT,
+          FIRST_AFTER_RESTART,
+          SECOND_AFTER_RESTART,
+        ]);
+      }).pipe(
+        provideDeterministicTestRuntime,
+        Effect.provide(
+          Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
   );

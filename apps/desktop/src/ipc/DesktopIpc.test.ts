@@ -93,5 +93,5 @@ it.effect("answers only the app's own windows' top frames", () =>
       fileWindow: ["rejected", undefined],
       guestOnAppUrl: ["rejected", undefined],
     });
-  }).pipe(Effect.scoped),
+  }),
 );
