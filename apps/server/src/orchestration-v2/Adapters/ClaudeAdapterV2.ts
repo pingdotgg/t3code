@@ -7586,7 +7586,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           if (subagent.childThread === null) {
             const childThread = makeSubagentChildThread({
-              parentThread: input.context.input.appThread,
+              parentThread: input.owner?.childThread ?? input.context.input.appThread,
               childThreadId,
               parentNodeId: nodeId,
               activeProviderThreadId: null,
