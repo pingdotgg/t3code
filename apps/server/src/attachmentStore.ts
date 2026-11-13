@@ -116,6 +116,13 @@ export function chatAttachmentStableKey(
   return `${messageId}:${index}:${digest}`;
 }
 
+/** Content-addressed: the asset reader re-derives it from the file's bytes, so an id that
+ * provider output carried in a stored row can never resolve to a file it did not hash to. */
+export function toolOutputImageAttachmentId(bytes: Uint8Array, extension: string): string {
+  const digest = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+  return `${createDeterministicAttachmentId("tool_output", digest)}${attachmentIdExtensionSuffix(extension)}`;
+}
+
 export function parseThreadSegmentFromAttachmentId(attachmentId: string): string | null {
   const normalizedId = normalizeAttachmentRelativePath(attachmentId);
   if (!normalizedId || normalizedId.includes("/") || normalizedId.includes(".")) {

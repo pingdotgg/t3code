@@ -368,8 +368,8 @@ export function layerWithRegistry<Error>(
         IdAllocator.layer,
         ThreadCommandExecutor.layer,
         GitVcsDriver.layer.pipe(
-          Layer.provide(layerServerConfig),
-          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          Layer.provideMerge(layerServerConfig),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
     ),

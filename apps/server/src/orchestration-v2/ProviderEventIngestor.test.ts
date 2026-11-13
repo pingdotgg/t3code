@@ -69,7 +69,7 @@ const layerTestEventSink = EventSink.layer.pipe(
 );
 
 const layerGit = GitVcsDriver.layer.pipe(
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "ingestor-git-" })),
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "ingestor-git-" })),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
@@ -1547,7 +1547,7 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
-  it.effect("stores tool image bytes only where a tool-output-image asset serves them", () =>
+  it.effect("keeps tool image bytes out of both SQLite tables, served ones included", () =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -1624,17 +1624,22 @@ layer("ProviderEventIngestorV2", (it) => {
       });
 
       assert.equal(storedJson.includes(readBase64), false);
-      assert.equal(storedJson.includes(screenshotBase64), true);
+      assert.equal(storedJson.includes(screenshotBase64), false);
       assert.deepEqual(projectedRead?.type === "dynamic_tool" ? projectedRead.output : null, {
         type: "image",
         file: { type: "image/png", originalSize: 30_000, sizeBytes: 30_000 },
       });
-      assert.deepEqual(
-        toolOutputImages(
-          projectedScreenshot?.type === "dynamic_tool" ? projectedScreenshot.output : null,
-        ),
-        [{ mimeType: "image/png", data: screenshotBase64 }],
+      assert.equal(JSON.stringify(projectedScreenshot).includes(screenshotBase64), false);
+      const [stored] = toolOutputImages(
+        projectedScreenshot?.type === "dynamic_tool" ? projectedScreenshot.output : null,
       );
+      assert.equal(stored?.mimeType, "image/png");
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const storedBytes = yield* fs.readFile(
+        `${config.attachmentsDir}/${stored?.attachmentId ?? "missing"}.png`,
+      );
+      assert.equal(Buffer.from(storedBytes).toString("base64"), screenshotBase64);
     }),
   );
 
