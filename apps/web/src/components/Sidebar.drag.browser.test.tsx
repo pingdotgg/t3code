@@ -54,7 +54,9 @@ it("keeps the title when dragging a search result from a collapsed folder", asyn
   // A removed row fades out as a clone without its test id, so match the live row only.
   const secondRow = page.getByTestId("sidebar-row-folder").filter({ hasText: second.title });
   await expect.element(secondRow).toBeInTheDocument();
-  await userEvent.click(folder);
+  // The shift guard drops pointer presses on a row that appeared under 500ms ago; keys pass.
+  folder.element().focus();
+  await userEvent.keyboard("{Enter}");
   await expect.element(secondRow).not.toBeInTheDocument();
   await userEvent.fill(page.getByRole("combobox", { name: "Search threads" }), "search-target");
   const result = page.getByRole("option", { name: /Thread search-target/ });
