@@ -377,7 +377,10 @@ describe("CLIProxyAPI built-in management API", () => {
     Effect.gen(function* () {
       const test = fixture({
         accounts: [{ ...accounts[0]!, provider: "claude" }],
-        upstream: () => ({ status: 200, body: { five_hour: { utilization: 10 } } }),
+        upstream: () => ({
+          status: 200,
+          body: { five_hour: { utilization: 10, resets_at: null } },
+        }),
       });
       const api = yield* test.api;
       yield* api.readAccounts(config);
@@ -389,12 +392,15 @@ describe("CLIProxyAPI built-in management API", () => {
 
   it.effect("keeps the last Claude reading when a later usage read is rate limited", () =>
     Effect.gen(function* () {
-      let status = 200;
+      let status = 429;
       const test = fixture({
         accounts: [{ ...accounts[0]!, provider: "claude" }],
-        upstream: () => ({ status, body: { five_hour: { utilization: 10 } } }),
+        upstream: () => ({ status, body: { five_hour: { utilization: 10, resets_at: null } } }),
       });
       const api = yield* test.api;
+      const first = yield* api.readAccounts(config);
+      expect(first[0]?.usageLimits.unavailable?.message).toMatch(/rate limiting/);
+      status = 200;
       yield* api.readAccounts(config);
       status = 429;
       yield* TestClock.adjust("2 minutes");

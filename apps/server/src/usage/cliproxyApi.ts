@@ -9,6 +9,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Option from "effect/Option";
@@ -125,6 +126,7 @@ const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexU
 const decodeGrokUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(GrokUsageResponse));
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
+const refusedDetail = (status: number) => `The provider refused the hub request (HTTP ${status}).`;
 
 // Extra CAs can fix untrusted chains; expiry/hostname failures report codes only.
 const UNTRUSTED_CERTIFICATE_CODES = new Set([
@@ -201,6 +203,9 @@ type HubCall = (
 type HubReading = Omit<UsageLimitSourceAccount, "id" | "driver">;
 interface HubProvider {
   readonly driver: ProviderDriverKind;
+  /** Reuse a good reading this long, and keep showing it while the provider answers 429. */
+  readonly readInterval?: Duration.Duration;
+  readonly rateLimitedMessage?: string;
   readonly header: (
     account: AuthFile,
     platform: NodeJS.Platform,
@@ -301,6 +306,9 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
     "claude",
     {
       driver: ProviderDriverKind.make("claudeAgent"),
+      // The OAuth usage endpoint rate limits bursts, so refreshes seconds apart would 429.
+      readInterval: Duration.minutes(1),
+      rateLimitedMessage: "Claude is rate limiting usage reads. Try again soon.",
       header: () => ({
         Authorization: "Bearer $TOKEN$",
         "anthropic-beta": "oauth-2025-04-20",
@@ -454,31 +462,59 @@ export const makeCliproxyApi = Effect.gen(function* () {
     });
     const response = yield* decodeApiResponse(raw);
     if (response.status_code < 200 || response.status_code >= 300) {
-      return yield* new UsageLimitSourceError({
-        detail: `The provider refused the hub request (HTTP ${response.status_code}).`,
-      });
+      return yield* new UsageLimitSourceError({ detail: refusedDetail(response.status_code) });
     }
     return response.body;
   });
+
+  const lastReadings = new Map<string, { readonly at: number; readonly reading: HubReading }>();
 
   const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
     hub: CliproxyHub,
     account: AuthFile,
     provider: HubProvider,
   ) {
-    const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    const now = yield* DateTime.now;
+    const nowMs = DateTime.toEpochMillis(now);
+    const checkedAt = DateTime.formatIso(now);
+    const key = `${hub.url}\u0000${account.id}`;
+    const last = provider.readInterval ? lastReadings.get(key) : undefined;
+    if (
+      last &&
+      provider.readInterval &&
+      nowMs - last.at < Duration.toMillis(provider.readInterval)
+    ) {
+      return { id: account.id, driver: provider.driver, ...last.reading };
+    }
     const call: HubCall = (url, data) =>
       apiCall(hub, account, provider.header(account, platform, architecture), url, data);
     const reading = yield* provider.read({ account, call, checkedAt }).pipe(
       Effect.provideService(Digest.Digest, digest),
-      Effect.orElseSucceed(() => ({
-        ...listedIdentity(account),
-        usageLimits: makeUnavailableUsageLimits({
-          checkedAt,
-          reason: "probeFailed",
-          message: "The hub could not read this account's usage.",
+      Effect.tap((reading) =>
+        Effect.sync(() => {
+          if (provider.readInterval) lastReadings.set(key, { at: nowMs, reading });
         }),
-      })),
+      ),
+      Effect.catch((error) => {
+        const rateLimited =
+          provider.rateLimitedMessage !== undefined &&
+          isUsageLimitSourceError(error) &&
+          error.detail === refusedDetail(429);
+        return Effect.succeed(
+          rateLimited && last
+            ? last.reading
+            : {
+                ...listedIdentity(account),
+                usageLimits: makeUnavailableUsageLimits({
+                  checkedAt,
+                  reason: "probeFailed",
+                  message: rateLimited
+                    ? provider.rateLimitedMessage
+                    : "The hub could not read this account's usage.",
+                }),
+              },
+        );
+      }),
     );
     return { id: account.id, driver: provider.driver, ...reading };
   });
