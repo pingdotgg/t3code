@@ -50,11 +50,24 @@ const CodexMcpServers = Schema.fromJsonString(
 );
 const decodeCodexMcpServers = Schema.decodeEffect(CodexMcpServers);
 
-// mcp_servers={} merges instead of replacing; disable named entries and quote dotted names.
-const codexMcpServersOff = (names: ReadonlyArray<string>): string | null =>
-  names.length === 0
-    ? null
-    : `mcp_servers={${names.map((name) => `${JSON.stringify(name)}={enabled=false}`).join(",")}}`;
+// Codex splits -c keys on every "." and the first "=" without quoting, and a later
+// mcp_servers={...} replaces servers earlier -c flags defined, so only such names use the table.
+const hasUnsplittableKey = (name: string) => /[.=]/.test(name);
+const codexMcpServersOff = (names: ReadonlyArray<string>) => {
+  const tableNames = names.filter(hasUnsplittableKey);
+  return {
+    beforeLaunchArgs:
+      tableNames.length === 0
+        ? []
+        : [
+            "--config",
+            `mcp_servers={${tableNames.map((name) => `${JSON.stringify(name)}={enabled=false}`).join(",")}}`,
+          ],
+    afterLaunchArgs: names
+      .filter((name) => !hasUnsplittableKey(name))
+      .flatMap((name) => ["--config", `mcp_servers.${name}.enabled=false`]),
+  };
+};
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(function* (
   codexConfig: CodexSettings,
@@ -301,10 +314,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         binary,
         [
           "exec",
+          ...mcpServersOff.beforeLaunchArgs,
           ...codexExecLaunchArgs(launchArgs),
           // A user's MCP server could act on the text-generation prompt.
           ...CODEX_NO_PLUGIN_ARGS,
-          ...(mcpServersOff ? ["--config", mcpServersOff] : []),
+          ...mcpServersOff.afterLaunchArgs,
           "--ephemeral",
           "--skip-git-repo-check",
           "-s",

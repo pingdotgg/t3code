@@ -355,17 +355,20 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     withFakeCodexEnv(
       {
         output: JSON.stringify({ title: "Remove default shapes", body: "Removes default shapes." }),
-        launchArgs: "--config 'developer_instructions=\"Use TEAM: as the PR title prefix\"'",
+        launchArgs:
+          "--config 'developer_instructions=\"Use TEAM: as the PR title prefix\"' --config 'mcp_servers.t3-code.url=\"http://127.0.0.1:1/mcp\"'",
         requiredCwd: process.cwd(),
         requireInstructions: "Use TEAM: as the PR title prefix",
         forbidArg: "--config features.shell_tool=false",
         mcpServers: [
           { name: "augmenter", enabled: true },
+          { name: "t3-code", enabled: true },
           { name: "my.server", enabled: true },
+          { name: "key=value", enabled: true },
           { name: "already-off", enabled: false },
         ],
         requireArg:
-          '--config features.plugins=false --config features.apps=false --config mcp_servers={"augmenter"={enabled=false},"my.server"={enabled=false}}',
+          'exec --config mcp_servers={"my.server"={enabled=false},"key=value"={enabled=false}} --config developer_instructions="Use TEAM: as the PR title prefix" --config mcp_servers.t3-code.url="http://127.0.0.1:1/mcp" --config features.plugins=false --config features.apps=false --config mcp_servers.augmenter.enabled=false --config mcp_servers.t3-code.enabled=false --ephemeral',
       },
       (textGeneration) =>
         Effect.gen(function* () {
