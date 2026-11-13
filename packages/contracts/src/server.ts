@@ -83,6 +83,9 @@ export const ServerProviderModel = Schema.Struct({
   isCustom: Schema.Boolean,
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
+  // False when the provider can run this model in sessions but not for
+  // application text generation. Absent means supported.
+  supportsTextGeneration: Schema.optional(Schema.Boolean),
   capabilities: Schema.NullOr(ModelCapabilities),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
@@ -275,8 +278,63 @@ export const ServerProvider = Schema.Struct({
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
+  /**
+   * Stands for the machine slash commands and skills, which are then left out. Sent to clients
+   * that ask for catalog digests; they load both lists with their next cwd snapshot.
+   */
+  catalogDigest: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Set by the client, never sent: the `catalogDigest` its slash commands and skills belong to. */
+  loadedCatalogDigest: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ServerProvider = typeof ServerProvider.Type;
+
+/** A provider without the lists that equal the ones its reader already holds. */
+export const ServerProviderDelta = ServerProvider.mapFields((fields) => ({
+  ...fields,
+  models: Schema.optionalKey(fields.models),
+  // Declared again without the decoding default, which would read as a change to an empty list.
+  slashCommands: Schema.optionalKey(Schema.Array(ServerProviderSlashCommand)),
+  skills: Schema.optionalKey(Schema.Array(ServerProviderSkill)),
+}));
+export type ServerProviderDelta = typeof ServerProviderDelta.Type;
+
+const sameJson = (left: unknown, right: unknown) =>
+  left === right || JSON.stringify(left) === JSON.stringify(right);
+
+/** Leaves each provider's models, slash commands, and skills out when `previous` has the same. */
+export function serverProviderDeltas(
+  previous: ReadonlyArray<ServerProvider>,
+  next: ReadonlyArray<ServerProvider>,
+): ServerProviderDelta[] {
+  const held = new Map(previous.map((provider) => [provider.instanceId, provider]));
+  return next.map((provider) => {
+    const base = held.get(provider.instanceId);
+    if (base === undefined) return provider;
+    const { models, slashCommands, skills, ...rest } = provider;
+    return {
+      ...rest,
+      ...(sameJson(base.models, models) ? {} : { models }),
+      ...(sameJson(base.slashCommands, slashCommands) ? {} : { slashCommands }),
+      ...(sameJson(base.skills, skills) ? {} : { skills }),
+    };
+  });
+}
+
+/** Rebuilds the provider list `serverProviderDeltas` was made from. */
+export function applyServerProviderDeltas(
+  previous: ReadonlyArray<ServerProvider>,
+  deltas: ReadonlyArray<ServerProviderDelta>,
+): ServerProvider[] {
+  const held = new Map(previous.map((provider) => [provider.instanceId, provider]));
+  return deltas.flatMap((delta) => {
+    const base = held.get(delta.instanceId);
+    const models = delta.models ?? base?.models;
+    const slashCommands = delta.slashCommands ?? base?.slashCommands;
+    const skills = delta.skills ?? base?.skills;
+    // A list this reader never held cannot be rebuilt; drop the provider like an unreadable one.
+    return models && slashCommands && skills ? [{ ...delta, models, slashCommands, skills }] : [];
+  });
+}
 
 export const ServerProviders = ForwardCompatibleArray(ServerProvider);
 export type ServerProviders = typeof ServerProviders.Type;
@@ -731,6 +789,13 @@ export const ServerConfigProviderStatusesPayload = Schema.Struct({
 });
 export type ServerConfigProviderStatusesPayload = typeof ServerConfigProviderStatusesPayload.Type;
 
+export const ServerConfigProviderStatusDeltasPayload = Schema.Struct({
+  /** Every provider in order, as `serverProviderDeltas` from the list this client last received. */
+  providers: ForwardCompatibleArray(ServerProviderDelta),
+});
+export type ServerConfigProviderStatusDeltasPayload =
+  typeof ServerConfigProviderStatusDeltasPayload.Type;
+
 export const ServerConfigSettingsUpdatedPayload = Schema.Struct({
   settings: ServerSettings,
 });
@@ -758,6 +823,14 @@ export const ServerConfigStreamProviderStatusesEvent = Schema.Struct({
 });
 export type ServerConfigStreamProviderStatusesEvent =
   typeof ServerConfigStreamProviderStatusesEvent.Type;
+
+export const ServerConfigStreamProviderStatusDeltasEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("providerStatusDeltas"),
+  payload: ServerConfigProviderStatusDeltasPayload,
+});
+export type ServerConfigStreamProviderStatusDeltasEvent =
+  typeof ServerConfigStreamProviderStatusDeltasEvent.Type;
 
 export const ServerConfigStreamSettingsUpdatedEvent = Schema.Struct({
   version: Schema.Literal(1),
@@ -799,6 +872,7 @@ export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSnapshotEvent,
   ServerConfigStreamKeybindingsUpdatedEvent,
   ServerConfigStreamProviderStatusesEvent,
+  ServerConfigStreamProviderStatusDeltasEvent,
   ServerConfigStreamSettingsUpdatedEvent,
   ServerConfigStreamEnvironmentThemesUpdatedEvent,
   ServerConfigStreamUsageLimitSourcesUpdatedEvent,
