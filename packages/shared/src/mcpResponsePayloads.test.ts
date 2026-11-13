@@ -75,7 +75,9 @@ it.effect("reads SSE whatever the case of the media type", () =>
     const response = new Response('data: {"id":1}\n\n', {
       headers: { "content-type": "Text/Event-Stream; charset=utf-8" },
     });
-    const payloads = yield* Stream.runCollect(responsePayloads(response, (cause) => cause));
+    const payloads = yield* Stream.runCollect(
+      responsePayloads(response, (cause) => ({ _tag: "ResponsePayloadError" as const, cause })),
+    );
     expect(Array.from(payloads)).toEqual([{ id: 1 }]);
   }),
 );
