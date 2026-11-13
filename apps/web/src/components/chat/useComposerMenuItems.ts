@@ -334,6 +334,7 @@ export function useComposerMenuItems({
           ? [
               {
                 ...exactPullRequestLookup.data,
+                // Only the host: the URL's full repository path would not match the project's selector.
                 host: legacyThreadPullRequestKey(exactPullRequestLookup.data).host,
               },
             ]

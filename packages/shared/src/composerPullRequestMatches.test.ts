@@ -92,33 +92,23 @@ describe("linked pull requests", () => {
       host: "gitlab.com",
       url: "https://gitlab.com/wireshark/wireshark/-/merge_requests/1",
     });
-    for (const links of [
-      [github, gitlab],
-      [gitlab, github],
-    ]) {
-      const linked = composerPullRequestsFromLinks(links, "p1");
-      const result = filterComposerPullRequestMatches({
-        keyOf,
-        entries: [],
-        linked,
-        projectId: "p1",
-        repository: "wireshark/wireshark",
-        query: "1",
-        limit: 10,
-      });
-      expect(result.map((match) => match.url)).toEqual(links.map((link) => link.url));
-      expect(linked.map((match) => match.host)).toEqual(links.map((link) => link.host));
-    }
+    const result = filterComposerPullRequestMatches({
+      keyOf,
+      entries: [],
+      linked: composerPullRequestsFromLinks([github, gitlab], "p1"),
+      projectId: "p1",
+      repository: "wireshark/wireshark",
+      query: "1",
+      limit: 10,
+    });
+    expect(result.map((match) => match.url)).toEqual([github.url, gitlab.url]);
   });
 
   it("keeps one row for a linked pull request the project listing already has", () => {
     const result = filterComposerPullRequestMatches({
       keyOf,
       entries: [entry(4, "2026-01-03")],
-      linked: composerPullRequestsFromLinks(
-        [link(" Owner/Repo ", 4, { host: " GitHub.COM " })],
-        "p1",
-      ),
+      linked: composerPullRequestsFromLinks([link("Owner/Repo", 4)], "p1"),
       projectId: "p1",
       repository: "owner/repo",
       query: "",

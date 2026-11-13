@@ -152,6 +152,7 @@ export function useComposerPullRequestSearch(input: {
         })
       : null,
   );
+  // Only the host: the URL's full repository path would not match the project's selector.
   const exactEntry = exact.data
     ? { ...exact.data, host: legacyThreadPullRequestKey(exact.data).host }
     : null;
