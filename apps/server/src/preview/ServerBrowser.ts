@@ -379,6 +379,8 @@ interface ServerTab {
   loadError: PreviewAutomationLoadError | undefined;
   /** The renderer crash this page died of, or the one the page it replaced died of. */
   crash: PreviewAutomationLoadError | undefined;
+  /** What Reload loads after a crash; the reported URL is shortened and drops data payloads. */
+  crashedUrl: string | undefined;
   closing: boolean;
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
@@ -623,7 +625,7 @@ const make = Effect.gen(function* () {
       if (!snapshot) {
         throw new ServerBrowserTabNotFoundError({ threadId: tab.threadId, tabId: tab.tabId });
       }
-      return createTab(snapshot);
+      return createTab(snapshot, tab.page.url());
     })().finally(() => {
       pendingTabs.delete(key);
       closedPendingTabs.delete(key);
@@ -958,10 +960,13 @@ const make = Effect.gen(function* () {
     }
   };
 
-  const createTab = async (snapshot: PreviewSessionSnapshot): Promise<ServerTab> => {
+  const createTab = async (
+    snapshot: PreviewSessionSnapshot,
+    crashedUrl?: string,
+  ): Promise<ServerTab> => {
     const opened: Array<() => Promise<void>> = [];
     try {
-      return await setUpTab(snapshot, opened);
+      return await setUpTab(snapshot, opened, crashedUrl);
     } catch (cause) {
       // An unpublished tab is in no list, so nothing else would ever close it.
       for (const close of opened.reverse()) await close().catch(constVoid);
@@ -972,6 +977,7 @@ const make = Effect.gen(function* () {
   const setUpTab = async (
     snapshot: PreviewSessionSnapshot,
     opened: Array<() => Promise<void>>,
+    crashedUrl: string | undefined,
   ): Promise<ServerTab> => {
     const adopted = adoptedPages.get(tabKey(snapshot.threadId, snapshot.tabId));
     adoptedPages.delete(tabKey(snapshot.threadId, snapshot.tabId));
@@ -1069,6 +1075,7 @@ const make = Effect.gen(function* () {
               description: snapshot.navStatus.description,
             }
           : undefined,
+      crashedUrl,
       closing: false,
       recording: null,
       recordingStart: null,
@@ -1121,6 +1128,7 @@ const make = Effect.gen(function* () {
       tab.loading = true;
       tab.loadError = undefined;
       tab.crash = undefined;
+      tab.crashedUrl = undefined;
       if (stoppedInitialRequest) {
         tab.stoppedGeneration = tab.navigationGeneration;
         settleStoppedNavigation(tab, tab.navigationGeneration);
@@ -2970,7 +2978,9 @@ const make = Effect.gen(function* () {
       case "reload":
         tab.pendingInitialRequestUrl = null;
         if (tab.crash) {
-          tab.control.trackUntilHandoff(tab.page.goto(tab.crash.url, VIEWER_NAVIGATION_OPTIONS));
+          tab.control.trackUntilHandoff(
+            tab.page.goto(tab.crashedUrl ?? tab.crash.url, VIEWER_NAVIGATION_OPTIONS),
+          );
           return;
         }
         if (message.ignoreCache === true) {
