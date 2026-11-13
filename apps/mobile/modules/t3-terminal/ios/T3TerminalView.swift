@@ -718,12 +718,15 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     }
     guard let config = ghostty_config_new() else { return }
     defer { ghostty_config_free(config) }
-    loadThemeConfig(into: config)
+    let loaded = loadThemeConfig(into: config)
     ghostty_config_finalize(config)
     ghostty_app_set_color_scheme(app, appearance.ghosttyColorScheme)
     ghostty_surface_set_color_scheme(surface, appearance.ghosttyColorScheme)
     tickApp()
-    ghostty_surface_update_config(surface, config)
+    // Without the file, the config lacks font-size and would reset the surface to defaults.
+    if loaded {
+      ghostty_surface_update_config(surface, config)
+    }
     resizeSurface()
     setNeedsLayout()
   }
@@ -951,11 +954,13 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     terminalViewport.backgroundColor = backgroundColorValue
   }
 
-  private func loadThemeConfig(into config: ghostty_config_t) {
-    guard let path = writeThemeConfigFile() else { return }
+  @discardableResult
+  private func loadThemeConfig(into config: ghostty_config_t) -> Bool {
+    guard let path = writeThemeConfigFile() else { return false }
     path.withCString { cString in
       ghostty_config_load_file(config, cString)
     }
+    return true
   }
 
   private func writeThemeConfigFile() -> String? {
