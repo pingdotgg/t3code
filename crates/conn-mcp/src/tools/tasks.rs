@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 
 use super::{
     Args, Cx, ToolError, ToolResult, fail, projects, str_arg,
-    threads::{self, MAX_WAIT_MS},
+    threads::{self, MAX_WAIT_MS, Until},
 };
 use crate::{Caller, McpService, view};
 
@@ -72,7 +72,7 @@ fn options_array(options: Option<&Value>) -> Option<Value> {
 }
 
 pub async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
-    let caller = cx.require_thread("delegate_task")?.clone();
+    let caller = cx.require_thread("delegate_task")?;
     let parent = cx.projection(&caller.thread_id).await?;
     let parent_thread = &parent["thread"];
     let target = args.get("target").cloned().unwrap_or(Value::Null);
@@ -201,8 +201,14 @@ pub async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
             .map_or(DEFAULT_TASK_WAIT_MS, |ms| {
                 (ms.max(1.0) as u64).min(MAX_WAIT_MS)
             });
-        let (_, timed_out) =
-            threads::wait_for_run(cx, &child, None, Duration::from_millis(timeout), true).await?;
+        let (_, timed_out) = threads::wait_for_run(
+            cx,
+            &child,
+            None,
+            Duration::from_millis(timeout),
+            Until::EndedOrWaiting,
+        )
+        .await?;
         let result = read_task(cx, &caller.thread_id, &task_id, timed_out).await?;
         if timed_out {
             watch(cx.service.clone(), cx.caller.clone(), task_id);
@@ -225,7 +231,7 @@ pub async fn status(cx: &Cx<'_>, args: &Args) -> ToolResult {
 }
 
 pub async fn cancel(cx: &Cx<'_>, args: &Args) -> ToolResult {
-    let caller = cx.require_thread("task_cancel")?.clone();
+    let caller = cx.require_thread("task_cancel")?;
     let task_id = str_arg(args, "taskId").unwrap_or_default();
     let current = read_task(cx, &caller.thread_id, task_id, false).await?;
     if TERMINAL.contains(&current["status"].as_str().unwrap_or_default()) {
@@ -349,11 +355,12 @@ fn watch(service: Arc<McpService>, caller: Caller, task_id: String) {
         let child = child_thread_id(&parent, &task_id);
         // A question leaves the child `waiting`; follow it until it ends.
         let Ok((Some(ended), false)) =
-            threads::wait_for_run(&cx, &child, None, WATCH_CHILD, false).await
+            threads::wait_for_run(&cx, &child, None, WATCH_CHILD, Until::Ended).await
         else {
             return;
         };
-        let Ok((_, false)) = threads::wait_for_run(&cx, &parent, None, WATCH_PARENT, false).await
+        let Ok((_, false)) =
+            threads::wait_for_run(&cx, &parent, None, WATCH_PARENT, Until::Ended).await
         else {
             return;
         };

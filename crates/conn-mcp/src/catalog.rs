@@ -68,7 +68,8 @@ fn argument_order(line: &str) -> Vec<String> {
                 }
                 let is_key = depth == 0 && chars.peek().is_some_and(|(_, c)| *c == ':');
                 if is_key
-                    && let Ok(Value::String(key)) = serde_json::from_str(&rest[start - 1..=end])
+                    && let Ok(Value::String(key)) =
+                        serde_json::from_str(rest.get(start - 1..=end).unwrap_or_default())
                 {
                     keys.push(key);
                 }

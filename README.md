@@ -73,6 +73,7 @@ no model. The `rust-*` scenarios spend about five Haiku turns.
 | `conn-provider`        | `Provider` and `Session` traits, `ProviderEvent`                      |
 | `conn-provider-claude` | The Claude provider over the `claude` CLI's stdio                     |
 | `conn-server`          | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
+| `conn-mcp`             | `/mcp`: T3 tools over MCP Streamable HTTP; see its README             |
 
 Dependencies point one way: `conn-server` → `conn-engine` → `conn-provider` → `conn-contract`;
 `conn-provider-claude` → `conn-provider`; `conn-server` → `conn-wire`. `conn-wire` and
@@ -365,7 +366,7 @@ What a real Conn session hits that this server does not do:
 - **One project set at start:** clients cannot add projects.
 - **Busy thread:** a message sent while a turn runs is refused, not queued or steered.
 - **No title generation:** `generateTitle` is ignored; the title is the first message.
-- **No `/mcp`:** agents cannot reach T3 tools.
+- **`/mcp` serves 16 of 84 T3 tools** (`crates/conn-mcp/README.md`); providers do not pass it to agents yet.
 - **Claude only:** no Codex or other providers. Gaps in the Claude provider are listed in
   `crates/conn-provider-claude/README.md` (subagents, attachments, todo lists, retries).
 - **Auth:** bearer and ticket only. No cookie sessions, DPoP, relay or access management.

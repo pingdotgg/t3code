@@ -112,7 +112,7 @@ pub async fn handle(
     {
         return Reply::empty(StatusCode::NOT_ACCEPTABLE);
     }
-    let message: Value = match serde_json::from_slice(body) {
+    let mut message: Value = match serde_json::from_slice(body) {
         Ok(message) => message,
         Err(_) => {
             let body = json!({"jsonrpc": "2.0", "id": null,
@@ -186,23 +186,29 @@ pub async fn handle(
             "{{\"jsonrpc\":\"2.0\",\"id\":{rpc_id},\"result\":{}}}",
             catalog::list_result()
         ),
-        "tools/call" => call(service, &caller, &rpc_id, &message["params"]).await,
+        "tools/call" => {
+            let params = message
+                .get_mut("params")
+                .map(Value::take)
+                .unwrap_or_default();
+            call(service, &caller, &rpc_id, params).await
+        }
         other => rpc_error(&rpc_id, -32601, &format!("Method not found: {other}")),
     };
     Reply::json(StatusCode::OK, format!("{body}\n")).with(PROTOCOL_HEADER, PROTOCOL_VERSION.into())
 }
 
-async fn call(service: &Arc<McpService>, caller: &Caller, id: &Value, params: &Value) -> String {
+async fn call(service: &Arc<McpService>, caller: &Caller, id: &Value, mut params: Value) -> String {
+    let mut arguments = match params["arguments"].take() {
+        Value::Object(map) => map,
+        Value::Null => Map::new(),
+        _ => return rpc_error(id, -32602, "Invalid method parameters"),
+    };
     let Some(name) = params["name"].as_str() else {
         return rpc_error(id, -32602, "Invalid method parameters");
     };
     let Some((tool, order)) = catalog::tool(name) else {
         return rpc_error(id, -32602, &format!("Tool '{name}' not found"));
-    };
-    let mut arguments = match &params["arguments"] {
-        Value::Object(map) => map.clone(),
-        Value::Null => Map::new(),
-        _ => return rpc_error(id, -32602, "Invalid method parameters"),
     };
     if let Err(problem) = catalog::check_arguments(&tool["inputSchema"], &order, &mut arguments) {
         return rpc_error(

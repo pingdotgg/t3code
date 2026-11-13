@@ -27,9 +27,6 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/mcp", any(mcp))
 }
 
-#[cfg(feature = "rmcp")]
-static SDK: std::sync::OnceLock<conn_mcp::sdk::SdkService> = std::sync::OnceLock::new();
-
 /// The service for these deps, or `None` without an engine and environment.
 pub fn service(deps: &Deps) -> Option<Arc<McpService>> {
     let engine = deps.engine.clone()?;
@@ -106,9 +103,6 @@ async fn mcp(
         )
             .into_response();
     };
-    #[cfg(feature = "rmcp")]
-    return sdk(&service, caller, method, headers, body).await;
-    #[cfg(not(feature = "rmcp"))]
     {
         let reply = service.handle(caller, &method, &headers, &body).await;
         let mut response = Response::new(reply.body.map_or_else(Body::empty, Body::from));
@@ -119,30 +113,6 @@ async fn mcp(
             }
         }
         response
-    }
-}
-
-/// The same request through the SDK's transport (the `rmcp` feature).
-#[cfg(feature = "rmcp")]
-async fn sdk(
-    service: &Arc<McpService>,
-    caller: Caller,
-    method: Method,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
-    use tower::ServiceExt;
-    let sdk = SDK
-        .get_or_init(|| conn_mcp::sdk::service(service.clone()))
-        .clone();
-    let mut request = axum::http::Request::new(Body::from(body));
-    *request.method_mut() = method;
-    *request.headers_mut() = headers;
-    *request.uri_mut() = axum::http::Uri::from_static("/mcp");
-    request.extensions_mut().insert(caller);
-    match sdk.oneshot(request).await {
-        Ok(response) => response.map(Body::new),
-        Err(never) => match never {},
     }
 }
 

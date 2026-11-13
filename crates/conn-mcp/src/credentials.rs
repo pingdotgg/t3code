@@ -13,6 +13,7 @@ const LIVENESS_MS: u128 = 24 * 60 * 60 * 1000;
 /// Live provider sessions on one server; far above what a container runs.
 const MAX_RECORDS: usize = 1024;
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct ThreadCredentialRequest {
     pub thread_id: String,
     pub provider_instance_id: String,

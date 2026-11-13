@@ -105,8 +105,21 @@ pub fn listed_status(shell: &Value) -> Value {
     }
 }
 
+/// Whether a thread read is the first page, which alone lists the thread's pull requests.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Page {
+    First,
+    Later,
+}
+
 /// `OrchestratorMcpThreadDetail` from a projection.
-pub fn thread_detail(config: &McpConfig, caller: &Caller, projection: &Value, now: &str) -> Value {
+pub fn thread_detail(
+    config: &McpConfig,
+    caller: &Caller,
+    projection: &Value,
+    now: &str,
+    page: Page,
+) -> Value {
     let thread = &projection["thread"];
     let id = thread["id"].as_str().unwrap_or_default();
     let title = thread["title"].as_str().unwrap_or_default();
@@ -117,7 +130,7 @@ pub fn thread_detail(config: &McpConfig, caller: &Caller, projection: &Value, no
     let pending = projection["runtimeRequests"]
         .as_array()
         .map_or(0, |r| r.iter().filter(|r| r["status"] == "pending").count());
-    json!({
+    let mut detail = json!({
         "threadId": id,
         "projectId": thread["projectId"],
         "title": title,
@@ -132,7 +145,6 @@ pub fn thread_detail(config: &McpConfig, caller: &Caller, projection: &Value, no
         "runtimeMode": thread["runtimeMode"],
         "interactionMode": thread["interactionMode"],
         "linkedPullRequest": thread.get("linkedPullRequest").cloned().unwrap_or(Value::Null),
-        "pullRequests": [],
         "pullRequestCount": 0,
         "titleRegeneration": null,
         "lastTitleRegeneration": null,
@@ -152,7 +164,11 @@ pub fn thread_detail(config: &McpConfig, caller: &Caller, projection: &Value, no
         "pendingBackgroundTasks": [],
         "createdAt": thread["createdAt"],
         "updatedAt": projection["updatedAt"],
-    })
+    });
+    if page == Page::First {
+        detail["pullRequests"] = json!([]);
+    }
+    detail
 }
 
 /// The model the provider reported for the run's attempt, if any.

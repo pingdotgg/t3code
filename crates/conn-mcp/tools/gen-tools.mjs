@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 // Writes src/catalog.jsonl: the tools in tools.implemented, as apps/server's tools/list sends
 // them, built in process from McpHttpServer.layerTools. `--check` exits 1 on drift;
-// `--all <file>` writes every tool, with `x-conn-hiddenFor` on filtered ones. Needs `vp i`.
+// `--all <file>` writes every tool, with `x-conn-hiddenFor` on filtered ones. Needs `vp i`
+// in the monorepo (`CONN_MONOREPO`).
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import { monorepoRoot } from "./monorepo.mjs";
+
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-const repo = NodePath.resolve(here, "../../../../..");
+const repo = monorepoRoot;
 const server = NodePath.join(repo, "apps/server");
 const out = NodePath.join(here, "..", "src", "catalog.jsonl");
 const implemented = NodeFS.readFileSync(NodePath.join(here, "..", "tools.implemented"), "utf8")

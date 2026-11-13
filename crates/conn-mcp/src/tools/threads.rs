@@ -168,10 +168,7 @@ pub async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
             earlier,
         )
     };
-    let messages: Vec<Value> = projection["messages"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let messages: &[Value] = projection["messages"].as_array().map_or(&[], Vec::as_slice);
     let offset = if item_id.is_some() {
         u64_arg(args, "textOffset").unwrap_or(0) as usize
     } else {
@@ -179,9 +176,14 @@ pub async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
     };
     let mut items: Vec<Value> = page
         .iter()
-        .map(|row| view::timeline_item(row, &messages, max_chars, offset))
+        .map(|row| view::timeline_item(row, messages, max_chars, offset))
         .collect();
-    let thread = view::thread_detail(cx.config(), cx.caller, &projection, &now_iso());
+    let page = if after.is_none() && before.is_none() && item_id.is_none() {
+        view::Page::First
+    } else {
+        view::Page::Later
+    };
+    let thread = view::thread_detail(cx.config(), cx.caller, &projection, &now_iso(), page);
     let mut runs: Vec<&Value> = projection["runs"]
         .as_array()
         .map(|r| r.iter().collect())
@@ -566,7 +568,7 @@ pub async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
             "reason": "Restarted by an agent's message.",
         }))
         .await?;
-        wait_for_run(cx, id, Some(&run_id), Duration::from_secs(30), false).await?;
+        wait_for_run(cx, id, Some(&run_id), Duration::from_secs(30), Until::Ended).await?;
         delivery = "restarted";
     }
     let sender = cx.caller_thread_id().map(str::to_owned);
@@ -603,15 +605,22 @@ pub async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
     }))
 }
 
-/// Waits until a run has ended, or with `until_waiting` also until it waits on a question or
-/// approval. No `run_id`: the thread's latest run. Returns the run, `None` for a thread with
+/// When a wait for a run ends.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Until {
+    Ended,
+    /// Also when it waits on a question or approval: a person must answer.
+    EndedOrWaiting,
+}
+
+/// Waits until a run reaches `until`. No `run_id`: the thread's latest run. Returns the run, `None` for a thread with
 /// no run, and whether the wait timed out.
 pub async fn wait_for_run(
     cx: &Cx<'_>,
     thread: &str,
     run_id: Option<&str>,
     timeout: Duration,
-    until_waiting: bool,
+    until: Until,
 ) -> Result<(Option<Value>, bool), ToolError> {
     let pick = |projection: &Value| -> Result<Option<Value>, ToolError> {
         match run_id {
@@ -628,8 +637,9 @@ pub async fn wait_for_run(
         }
     };
     let settled = |run: &Option<Value>| {
-        run.as_ref()
-            .is_none_or(|r| !view::is_live(r) || (until_waiting && r["status"] == "waiting"))
+        run.as_ref().is_none_or(|r| {
+            !view::is_live(r) || (until == Until::EndedOrWaiting && r["status"] == "waiting")
+        })
     };
     let deadline = tokio::time::Instant::now() + timeout;
     // The stream starts with a snapshot, then carries each committed event.
@@ -675,7 +685,7 @@ pub async fn wait(cx: &Cx<'_>, args: &Args) -> ToolResult {
         id,
         str_arg(args, "runId"),
         Duration::from_millis(timeout),
-        true,
+        Until::EndedOrWaiting,
     )
     .await?;
     Ok(json!({
