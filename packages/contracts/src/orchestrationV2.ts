@@ -45,6 +45,7 @@ import { AuthMcpClientAccess } from "./auth.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
+import { ThreadTitleRegenerationOutcome } from "./threadTitle.ts";
 import {
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
@@ -138,6 +139,18 @@ export const OrchestrationV2DelegatedFrom = Schema.Struct({
   title: Schema.String,
 });
 export type OrchestrationV2DelegatedFrom = typeof OrchestrationV2DelegatedFrom.Type;
+
+/**
+ * The thread in a linked environment whose agent sent this message here, and its title
+ * then, for a client that cannot reach that environment. `senderThreadId` names only a
+ * thread in this environment.
+ */
+export const OrchestrationV2LinkedSender = Schema.Struct({
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  title: Schema.String,
+});
+export type OrchestrationV2LinkedSender = typeof OrchestrationV2LinkedSender.Type;
 
 export const OrchestrationV2NativeRefStrength = Schema.Literals(["strong", "weak", "none"]);
 export type OrchestrationV2NativeRefStrength = typeof OrchestrationV2NativeRefStrength.Type;
@@ -444,6 +457,12 @@ const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
   Schema.catchDecoding(() => Effect.succeedSome(null)),
 );
 
+const OrchestrationV2LastTitleRegeneration = Schema.Struct({
+  ...ThreadTitleRegenerationOutcome.fields,
+  requestId: CommandId,
+  completedAt: Schema.DateTimeUtc,
+});
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -507,6 +526,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
       }),
     ),
   ),
+  lastTitleRegeneration: Schema.optional(Schema.NullOr(OrchestrationV2LastTitleRegeneration)),
   rollbackRequestId: Schema.optional(CommandId),
   rollbackFailure: Schema.optional(
     Schema.NullOr(
@@ -1049,6 +1069,7 @@ export const OrchestrationV2PendingBackgroundTask = kindUnionWithFallback(
 export type OrchestrationV2PendingBackgroundTask = typeof OrchestrationV2PendingBackgroundTask.Type;
 
 export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({
+  cursorStoreCwd: Schema.optional(TrimmedNonEmptyString),
   modelSelection: Schema.optional(ModelSelection),
   title: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   updatedAt: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -1247,6 +1268,28 @@ const SubagentNotificationSource = Schema.Struct({
   childThreadId: Schema.optional(ThreadId),
 });
 const CommandNotificationSource = Schema.Struct({ kind: Schema.Literal("command") });
+const OrchestrationV2NotificationOutcome = Schema.Literals([
+  "completed",
+  "failed",
+  "cancelled",
+  "updated",
+  "unknown",
+]);
+/** One pull request's part of a wake, which stands alone once the others are outdated. */
+const PullRequestWakeSection = Schema.Struct({
+  text: Schema.String,
+  outcome: OrchestrationV2NotificationOutcome,
+  summary: TrimmedNonEmptyString,
+});
+const MonitorPullRequestStamp = Schema.Struct({
+  ...ThreadPullRequestKey.fields,
+  watchStartedAt: IsoDateTime,
+  /** Null when the wake is not about one head, so a newer push does not outdate it. */
+  headSha: Schema.NullOr(TrimmedNonEmptyString),
+  watchEnded: Schema.optional(Schema.Boolean),
+  /** Set on a wake covering several pull requests. */
+  section: Schema.optional(PullRequestWakeSection),
+});
 
 /** Encode legacy background_command/background_task shapes first so older clients accept command/subagent sources. */
 export const OrchestrationV2NotificationSource = kindUnionWithFallback(
@@ -1279,15 +1322,9 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
     CommandNotificationSource,
     Schema.Struct({
       kind: Schema.Literal("monitor"),
-      pullRequest: Schema.optional(
-        Schema.Struct({
-          ...ThreadPullRequestKey.fields,
-          watchStartedAt: IsoDateTime,
-          /** Null when the wake is not about one head, so a newer push does not outdate it. */
-          headSha: Schema.NullOr(TrimmedNonEmptyString),
-          watchEnded: Schema.optional(Schema.Boolean),
-        }),
-      ),
+      pullRequest: Schema.optional(MonitorPullRequestStamp),
+      /** The other pull requests one wake covers; outdated ones leave it before it starts. */
+      otherPullRequests: Schema.optional(Schema.Array(MonitorPullRequestStamp)),
     }),
     Schema.Struct({ kind: Schema.Literal("background_task") }),
     Schema.Struct({ kind: Schema.Literal("system") }),
@@ -1299,7 +1336,7 @@ export type OrchestrationV2NotificationSource = typeof OrchestrationV2Notificati
 
 export const OrchestrationV2Notification = Schema.Struct({
   source: OrchestrationV2NotificationSource,
-  outcome: Schema.Literals(["completed", "failed", "cancelled", "updated", "unknown"]),
+  outcome: OrchestrationV2NotificationOutcome,
   summary: TrimmedNonEmptyString,
   detail: Schema.optional(Schema.String),
 });
@@ -1314,6 +1351,7 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
   ...OrchestrationV2CreationFields,
   scheduledTaskId: Schema.optional(ScheduledTaskId),
   senderThreadId: Schema.optional(ThreadId),
+  linkedSender: Schema.optional(OrchestrationV2LinkedSender),
   idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
   /**
    * The message is the script a provider-native workflow run executes, not prose. Clients show
@@ -1633,6 +1671,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     messageId: MessageId,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
+    linkedSender: Schema.optional(OrchestrationV2LinkedSender),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
     freshContext: OrchestrationV2Run.fields.freshContext,
@@ -2088,6 +2127,8 @@ export const OrchestrationV2PendingRuntimeRequestSummary = Schema.Struct({
   createdAt: Schema.DateTimeUtc,
   /** False for async questions the run keeps working past. Absent from older servers. */
   blocking: Schema.optional(Schema.Boolean),
+  /** Secret and link cards: only the user can answer them, never a coordinating agent. */
+  userOnly: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2PendingRuntimeRequestSummary =
   typeof OrchestrationV2PendingRuntimeRequestSummary.Type;
@@ -2181,6 +2222,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
       }),
     ),
   ),
+  lastTitleRegeneration: Schema.optional(Schema.NullOr(OrchestrationV2LastTitleRegeneration)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
@@ -2261,6 +2303,22 @@ export const OrchestrationV2ShellSnapshot = Schema.Struct({
 });
 export type OrchestrationV2ShellSnapshot = typeof OrchestrationV2ShellSnapshot.Type;
 
+/** The HTTP shell snapshot. `projectIdentities` names its repository identities; see `knownProjectIdentities`. */
+export const OrchestrationV2ShellHttpSnapshot = Schema.Struct({
+  ...OrchestrationV2ShellSnapshot.fields,
+  projectIdentities: Schema.optionalKey(Schema.String),
+});
+export type OrchestrationV2ShellHttpSnapshot = typeof OrchestrationV2ShellHttpSnapshot.Type;
+
+/**
+ * The HTTP shell route's answer to `resumeFrom` when the socket can replay from that cursor:
+ * the client keeps its rows and subscribes from the cursor.
+ */
+export const OrchestrationV2ShellResumable = Schema.Struct({
+  resumable: Schema.Literal(true),
+});
+export type OrchestrationV2ShellResumable = typeof OrchestrationV2ShellResumable.Type;
+
 export const OrchestrationV2ShellStreamItem = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("synchronized"),
@@ -2332,6 +2390,14 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
         requestId: CommandId,
         startedAt: Schema.DateTimeUtcFromString,
       }),
+    ),
+  ),
+  lastTitleRegeneration: Schema.optional(
+    Schema.NullOr(
+      OrchestrationV2LastTitleRegeneration.mapFields((fields) => ({
+        ...fields,
+        completedAt: Schema.DateTimeUtcFromString,
+      })),
     ),
   ),
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -2482,6 +2548,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     messageId: MessageId,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
+    linkedSender: Schema.optional(OrchestrationV2LinkedSender),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
     freshContext: OrchestrationV2Run.fields.freshContext,
@@ -2770,6 +2837,14 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
         requestId: CommandId,
         startedAt: Schema.DateTimeUtcFromString,
       }),
+    ),
+  ),
+  lastTitleRegeneration: Schema.optional(
+    Schema.NullOr(
+      OrchestrationV2LastTitleRegeneration.mapFields((fields) => ({
+        ...fields,
+        completedAt: Schema.DateTimeUtcFromString,
+      })),
     ),
   ),
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -3163,6 +3238,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     requestId: CommandId,
     title: Schema.optional(TrimmedNonEmptyString),
+    outcome: Schema.optional(ThreadTitleRegenerationOutcome),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.runtime-mode.set"),
@@ -3197,6 +3273,7 @@ export const OrchestrationV2Command = Schema.Union([
     ...OrchestrationV2CreationFields,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
+    linkedSender: Schema.optional(OrchestrationV2LinkedSender),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     /** Start a new provider session without the thread's earlier context. Never steers. */
     freshContext: Schema.optional(Schema.Boolean),
@@ -3465,6 +3542,18 @@ const OrchestrationV2InternalCommand = Schema.Union([
     watch: Schema.NullOr(ThreadPullRequestWatch),
     /** With `watch: null`, the state the ended watch keeps instead of its last saved one. */
     endedWatch: Schema.optional(ThreadPullRequestWatch),
+    /** More watches of this thread recorded together, which `wake` also reports on. */
+    others: Schema.optional(
+      Schema.Array(
+        Schema.Struct({
+          ...ThreadPullRequestKey.fields,
+          startedAt: IsoDateTime,
+          watch: Schema.NullOr(ThreadPullRequestWatch),
+          endedWatch: Schema.optional(ThreadPullRequestWatch),
+          includesRemarks: Schema.optional(Schema.Boolean),
+        }),
+      ),
+    ),
     wake: Schema.optional(
       Schema.Struct({
         messageId: MessageId,
@@ -3472,6 +3561,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
         notification: OrchestrationV2Notification,
         /** Comments stay worth reading after a push, so the wake outlives a newer head. */
         includesRemarks: Schema.optional(Schema.Boolean),
+        /** With `others`, each pull request's own part, in the same order. */
+        sections: Schema.optional(Schema.Array(PullRequestWakeSection)),
       }),
     ),
   }),
@@ -3745,6 +3836,11 @@ export const OrchestrationV2SubscribeShellInput = Schema.Struct({
    * a socket snapshot, which clients without transport compression download over gzip HTTP.
    */
   httpSnapshotFallback: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * The `projectIdentities` of the HTTP snapshot whose cursor is `afterSequence`, when the client
+   * changed nothing since. A resume that still has the same identities does not resend them.
+   */
+  knownProjectIdentities: Schema.optionalKey(Schema.String),
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /**
    * Snapshots leave out idle subagent children; read them with `getThreadFamily`. Send only to

@@ -1,4 +1,6 @@
-import { useRef } from "react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useRef, useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, fakeTimers, render } from "../../../test/render";
@@ -6,14 +8,21 @@ import { useFocusComposerOnThreadOpen } from "./useFocusComposerOnThreadOpen";
 
 function ThreadProbe(props: { threadId: string }) {
   const composerRef = useRef<HTMLTextAreaElement>(null);
-  useFocusComposerOnThreadOpen(props.threadId, true, () => composerRef.current?.focus());
+  const [root, setRoot] = useState<HTMLDivElement | null>(null);
+  useFocusComposerOnThreadOpen(
+    scopeThreadRef(EnvironmentId.make("rename"), ThreadId.make(props.threadId)),
+    root,
+    true,
+    false,
+    () => composerRef.current?.focus(),
+  );
   return (
-    <>
+    <div ref={setRoot}>
       <div data-sidebar-row="thread:beta">
         <input aria-label="Thread title" />
       </div>
       <textarea aria-label="Message" ref={composerRef} />
-    </>
+    </div>
   );
 }
 

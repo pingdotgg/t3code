@@ -3255,6 +3255,98 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
   );
 
   it.effect(
+    "starts another thread's turn while every worker holds a start that never returns",
+    () =>
+      Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const key = "foundation-hung-provider-starts";
+        const wedgedThreadIds = [0, 1].map((index) =>
+          ThreadId.make(`thread:${key}:wedged:${index}`),
+        );
+        const otherThreadId = ThreadId.make(`thread:${key}:other`);
+        const wedgedStarted = yield* Deferred.make<void>();
+        const otherStarted = yield* Deferred.make<void>();
+        const wedgedCount = yield* Ref.make(0);
+        yield* outbox.enqueue(
+          wedgedThreadIds.map((threadId, index) => ({
+            id: `effect:${key}:wedged:${index}`,
+            commandId: CommandId.make(`command:${key}:wedged:${index}`),
+            threadId,
+            request: {
+              type: "provider-turn.start",
+              runId: RunId.make(`run:${key}:wedged:${index}`),
+            },
+          })),
+        );
+
+        const layerExecutor = Layer.succeed(
+          EffectWorker.OrchestrationEffectExecutorV2,
+          EffectWorker.OrchestrationEffectExecutorV2.of({
+            execute: (effect) =>
+              effect.threadId === otherThreadId
+                ? Deferred.succeed(otherStarted, undefined)
+                : Ref.updateAndGet(wedgedCount, (count) => count + 1).pipe(
+                    Effect.flatMap((count) =>
+                      count === wedgedThreadIds.length
+                        ? Deferred.succeed(wedgedStarted, undefined)
+                        : Effect.void,
+                    ),
+                    Effect.andThen(Effect.never),
+                  ),
+          }),
+        );
+        const layerWorker = EffectWorker.layerWithOptions({
+          workerId: "hung-provider-starts-worker",
+        }).pipe(
+          Layer.provide(
+            Layer.merge(Layer.succeed(EffectOutbox.EffectOutboxV2, outbox), layerExecutor),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          yield* EffectWorker.runDaemonWithOptions({ concurrency: wedgedThreadIds.length }).pipe(
+            Effect.forkScoped,
+          );
+          yield* Deferred.await(wedgedStarted);
+          yield* outbox.enqueue([
+            {
+              id: `effect:${key}:other`,
+              commandId: CommandId.make(`command:${key}:other`),
+              threadId: otherThreadId,
+              request: { type: "provider-turn.start", runId: RunId.make(`run:${key}:other`) },
+            },
+          ]);
+          yield* outbox.notifyAvailable();
+
+          const other = yield* Deferred.await(otherStarted).pipe(
+            Effect.timeoutOption("1 hour"),
+            Effect.forkChild,
+          );
+          yield* TestClock.adjust("1 hour");
+          assert.isTrue(
+            Option.isSome(yield* Fiber.join(other)),
+            "another thread's provider-turn.start never ran behind starts that never return",
+          );
+        }).pipe(
+          Effect.provide(layerWorker),
+          Effect.scoped,
+          Effect.ensuring(
+            Effect.forEach(
+              [...wedgedThreadIds, otherThreadId],
+              (threadId) =>
+                outbox.cancelUnsettled({
+                  threadId,
+                  effectTypes: ["provider-turn.start"],
+                  reason: "fixture complete",
+                }),
+              { discard: true },
+            ).pipe(Effect.orDie),
+          ),
+        );
+      }),
+  );
+
+  it.effect(
     "persists shutdown continuation intent through the real event sink without domain events",
     () =>
       Effect.gen(function* () {
@@ -3864,6 +3956,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       });
       const afterUpdate = yield* projectionStore.getThreadProjection(threadId);
       assert.equal(afterUpdate.turnItems[0]?.ordinal, ordinals[0]);
+      assert.equal((yield* projectionStore.getThreadShell(threadId))?.itemCount, 151);
       assert.equal((yield* maintenance.verify).valid, true);
 
       yield* sql`
@@ -3878,6 +3971,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       const rebuilt = yield* maintenance.rebuild;
       assert.isTrue(rebuilt.valid);
       assert.lengthOf((yield* projectionStore.getThreadProjection(threadId)).turnItems, 151);
+      assert.equal((yield* projectionStore.getThreadShell(threadId))?.itemCount, 151);
     }),
   );
 });

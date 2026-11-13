@@ -155,7 +155,9 @@ publish it. If Git has no name or email on that machine, the project is created 
 first commit.
 
 Use **Add Project** in the command palette (`Cmd/Ctrl+K`) to clone a repository. Choose a hosting
-provider or paste a Git URL, then choose where to save it. A branch or file page copied from GitHub,
+provider or paste a Git URL, then choose where to save it. Only GitHub is listed at first. To list
+another provider here and in **Publish Repository**, turn on its switch under
+**Settings → Source control**. A branch or file page copied from GitHub,
 GitLab, GitCafe, Codeberg or Bitbucket also works: T3 Code clones that repository's default branch.
 On other hosts, paste the repository's clone URL. The project opens right away while the
 clone runs in the background: you can write your first prompt, and sending waits until the files
@@ -326,7 +328,8 @@ review is terminal. An open or unsynced link keeps it active.
 Ask the agent to watch, monitor, or babysit a pull request and it calls `watch_pull_request`. While
 the thread is active, the server checks the pull request every two minutes and wakes the agent when a
 check fails or waits for a maintainer's approval, the required checks pass, someone else comments or reviews, or the branch starts to
-conflict. Threads in a project that watch the same pull request share one check. On GitHub, a check
+conflict. On github.com it also wakes the agent, with GitHub's reason, when the merge queue drops
+the pull request without merging it. Threads in a project that watch the same pull request share one check. On GitHub, a check
 first asks whether anything changed and reads the pull request only when it did, which keeps
 watching inside GitHub's rate limit. Comments from your own account do not wake it. Watching ends
 when the pull request merges or closes, after 10 wakes in a row that bring only comments, after 8
