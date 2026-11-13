@@ -140,7 +140,7 @@ describe("branch subscriptions", () => {
                 return Stream.concat(
                   Stream.make(
                     branchSupported
-                      ? { refName }
+                      ? { refName, isRepo: true }
                       : { _tag: "snapshot", local: status({ refName }), remote: null },
                   ),
                   Stream.never,
@@ -183,19 +183,19 @@ describe("branch subscriptions", () => {
         const first = yield* Stream.toPull(
           AtomRegistry.toStreamResult(registry, atoms.branch(target)),
         );
-        expect(yield* first).toEqual([{ refName: "main" }]);
+        expect(yield* first).toEqual([{ refName: "main", isRepo: true }]);
         const second = yield* Stream.toPull(
           AtomRegistry.toStreamResult(registry, atoms.branch(target)),
         );
-        expect(yield* second).toEqual([{ refName: "main" }]);
+        expect(yield* second).toEqual([{ refName: "main", isRepo: true }]);
         expect(subscriptions).toBe(1);
         yield* SubscriptionRef.set(
           activeSession,
           Option.some(branchSession("external", !supported)),
         );
         expect(yield* Queue.take(released)).toBe("main");
-        expect(yield* first).toEqual([{ refName: "external" }]);
-        expect(yield* second).toEqual([{ refName: "external" }]);
+        expect(yield* first).toEqual([{ refName: "external", isRepo: true }]);
+        expect(yield* second).toEqual([{ refName: "external", isRepo: true }]);
         registry.dispose();
         expect(yield* Queue.take(released)).toBe("external");
       }).pipe(Effect.scoped),
@@ -463,6 +463,67 @@ describe("cached VCS refs", () => {
         expect(AsyncResult.isSuccess(prepareResult)).toBe(true);
         expect(yield* Ref.get(clears)).toBe(3);
         expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(3);
+      }),
+    ),
+  );
+
+  it.effect("a checkout does not wait behind a picker's local status refresh", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const refreshStarted = yield* Deferred.make<void>();
+        const releaseRefresh = yield* Deferred.make<void>();
+        const client = {
+          [WS_METHODS.vcsRefreshStatus]: () =>
+            Deferred.succeed(refreshStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseRefresh)),
+            ),
+          [WS_METHODS.vcsSwitchRef]: () => Effect.succeed({ refName: "feature" }),
+        } as unknown as WsRpcProtocolClient;
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: TARGET,
+          state: yield* SubscriptionRef.make(CONNECTED_CONNECTION_STATE),
+          session: yield* SubscriptionRef.make(Option.some(session(client))),
+          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+        const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (
+          _environmentId,
+          effect,
+        ) => Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const runtime = Atom.runtime(
+          Layer.merge(
+            Layer.succeed(
+              EnvironmentRegistry.EnvironmentRegistry,
+              EnvironmentRegistry.EnvironmentRegistry.of({
+                run,
+              } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+            ),
+            Layer.succeed(Persistence.EnvironmentCacheStore, cacheWithRefs(Option.none())),
+          ),
+        );
+        const atoms = createVcsEnvironmentAtoms(runtime);
+        const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+          Effect.sync(() => registry.dispose()),
+        );
+        const target = { environmentId: TARGET.environmentId, input: { cwd: "/repo" } };
+
+        const refresh = atoms.refreshLocalStatusForPicker.run(registry, {
+          ...target,
+          input: { cwd: "/repo", localOnly: true },
+        });
+        yield* Deferred.await(refreshStarted);
+        const checkout = yield* Effect.promise(() =>
+          atoms.switchRef.run(registry, {
+            ...target,
+            input: { cwd: "/repo", refName: "feature" },
+          }),
+        );
+
+        expect(AsyncResult.isSuccess(checkout)).toBe(true);
+        yield* Deferred.succeed(releaseRefresh, undefined);
+        expect(AsyncResult.isSuccess(yield* Effect.promise(() => refresh))).toBe(true);
       }),
     ),
   );

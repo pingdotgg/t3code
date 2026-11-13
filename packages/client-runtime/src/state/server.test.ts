@@ -52,6 +52,7 @@ import type { RpcSession } from "../rpc/session.ts";
 import {
   applyServerWelcomeEvent,
   createServerEnvironmentAtoms,
+  type FetchedMachineCatalog,
   makeEnvironmentServerWelcomeState,
   makeEnvironmentServerConfigState,
   isLegacyUpdateHandoffLoss,
@@ -398,6 +399,7 @@ describe("accepted server update recovery", () => {
 
 const makeConfigPersistenceHarness = Effect.fn("test.makeConfigPersistenceHarness")(function* (
   saveServerConfig: Persistence.EnvironmentCacheStore["Service"]["saveServerConfig"],
+  machineCatalogs?: Stream.Stream<ReadonlyArray<FetchedMachineCatalog>>,
 ) {
   const events = yield* Queue.unbounded<ServerConfigStreamEvent>();
   const client = {
@@ -426,10 +428,10 @@ const makeConfigPersistenceHarness = Effect.fn("test.makeConfigPersistenceHarnes
     clearVcsRefs: () => Effect.void,
     clear: () => Effect.void,
   });
-  const state = yield* makeEnvironmentServerConfigState({
-    environmentThemes: true,
-    usageLimitSources: true,
-  }).pipe(
+  const state = yield* makeEnvironmentServerConfigState(
+    { environmentThemes: true, usageLimitSources: true },
+    machineCatalogs,
+  ).pipe(
     Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
     Effect.provideService(Persistence.EnvironmentCacheStore, cache),
   );
@@ -443,7 +445,7 @@ const makeConfigPersistenceHarness = Effect.fn("test.makeConfigPersistenceHarnes
       Effect.map(Option.getOrThrow),
     );
   });
-  return { send };
+  return { send, state };
 });
 
 describe("server state projection", () => {
@@ -603,6 +605,92 @@ describe("server state projection", () => {
         }),
       );
       expect(yield* Ref.get(saved)).toEqual([CONFIG]);
+    }),
+  );
+
+  it.effect("caches the lists a cwd snapshot loaded for a catalog digest", () =>
+    Effect.gen(function* () {
+      const saved = yield* Ref.make<ReadonlyArray<ServerConfig>>([]);
+      const catalogs = yield* Queue.unbounded<ReadonlyArray<FetchedMachineCatalog>>();
+      const instanceId = ProviderInstanceId.make("claudeAgent");
+      const otherInstanceId = ProviderInstanceId.make("codex");
+      const thirdInstanceId = ProviderInstanceId.make("cursor");
+      const slashCommands = [{ name: "compact" }];
+      // What the server sends: a digest in place of the two lists.
+      const snapshot = (catalogDigest = "d1") =>
+        snapshotEvent({
+          ...CONFIG,
+          providers: [
+            { instanceId, slashCommands: [], skills: [], catalogDigest },
+            { instanceId: otherInstanceId, slashCommands: [], skills: [], catalogDigest: "c1" },
+            { instanceId: thirdInstanceId, slashCommands: [], skills: [], catalogDigest: "t1" },
+          ],
+        } as unknown as ServerConfig);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* makeConfigPersistenceHarness(
+            (_id, config) => Ref.update(saved, (values) => [...values, config]),
+            Stream.fromQueue(catalogs),
+          );
+          yield* h.send(snapshot());
+          yield* Queue.offer(catalogs, [{ instanceId, digest: "d1", slashCommands, skills: [] }]);
+          const loaded = yield* SubscriptionRef.changes(h.state).pipe(
+            Stream.map((value) => Option.getOrThrow(value).config.providers[0]),
+            Stream.filter((provider) => provider?.loadedCatalogDigest === "d1"),
+            Stream.runHead,
+          );
+          expect(Option.getOrThrow(loaded)?.slashCommands).toEqual(slashCommands);
+
+          yield* TestClock.adjust("10 seconds");
+          expect((yield* Ref.get(saved)).at(-1)?.providers[0]).toMatchObject({
+            slashCommands,
+            loadedCatalogDigest: "d1",
+          });
+
+          // A reconnect sends the digest again, and the loaded lists stay.
+          const reconnected = yield* h.send(snapshot());
+          expect(reconnected.config.providers[0]).toMatchObject({
+            slashCommands,
+            loadedCatalogDigest: "d1",
+          });
+
+          // A reply for an older catalog that lands late does not replace the current lists.
+          const late = { instanceId, digest: "d0", slashCommands: [{ name: "old" }], skills: [] };
+          yield* Queue.offer(catalogs, [late]);
+          yield* Queue.offer(catalogs, [
+            late,
+            { instanceId: otherInstanceId, digest: "c1", slashCommands: [], skills: [] },
+          ]);
+          const settled = yield* SubscriptionRef.changes(h.state).pipe(
+            Stream.map((value) => Option.getOrThrow(value).config.providers),
+            Stream.filter((providers) => providers[1]?.loadedCatalogDigest === "c1"),
+            Stream.runHead,
+          );
+          expect(Option.getOrThrow(settled)[0]).toMatchObject({
+            slashCommands,
+            loadedCatalogDigest: "d1",
+          });
+
+          // A reply for a newer catalog can land before the config names its digest. It is
+          // kept, and applies when the config does.
+          const newer = { instanceId, digest: "d2", slashCommands: [{ name: "new" }], skills: [] };
+          yield* Queue.offer(catalogs, [
+            newer,
+            { instanceId: thirdInstanceId, digest: "t1", slashCommands: [], skills: [] },
+          ]);
+          const kept = yield* SubscriptionRef.changes(h.state).pipe(
+            Stream.map((value) => Option.getOrThrow(value).config.providers),
+            Stream.filter((providers) => providers[2]?.loadedCatalogDigest === "t1"),
+            Stream.runHead,
+          );
+          expect(Option.getOrThrow(kept)[0]).toMatchObject({ loadedCatalogDigest: "d1" });
+          const advanced = yield* h.send(snapshot("d2"));
+          expect(advanced.config.providers[0]).toMatchObject({
+            slashCommands: newer.slashCommands,
+            loadedCatalogDigest: "d2",
+          });
+        }),
+      );
     }),
   );
 
@@ -1198,6 +1286,23 @@ describe("server state projection", () => {
       ).providers[0]?.workspaceSnapshots,
     ).toBeUndefined();
 
+    // A catalog digest stands for the lists: loading them keeps the snapshot, a new digest retires it.
+    const digested = (catalogDigest: string, slashCommands: ReadonlyArray<{ name: string }> = []) =>
+      ({ ...provider(claude, undefined, slashCommands), catalogDigest }) as ReturnType<
+        typeof provider
+      >;
+    const fetchedByDigest = recordFetchedWorkspaceSnapshot(
+      [],
+      { instanceId: claude, cwd: "/a", fresh: false },
+      [provider(claude, [claudeA])],
+      digested("d1"),
+    );
+    const snapshotsFor = (current: ReturnType<typeof provider>) =>
+      withFetchedWorkspaceSnapshots(configWith(true, [current]), fetchedByDigest).providers[0]
+        ?.workspaceSnapshots;
+    expect(snapshotsFor(digested("d1", [{ name: "loaded" }]))).toEqual([claudeA]);
+    expect(snapshotsFor(digested("d2"))).toBeUndefined();
+
     // Older servers send every snapshot and every drop; their config stands.
     const legacy = configWith(false, [provider(claude)]);
     expect(withFetchedWorkspaceSnapshots(legacy, fetched)).toBe(legacy);
@@ -1665,85 +1770,165 @@ describe("provider setup commands", () => {
       expect(yield* Queue.takeAll(requested)).toEqual(["antigravity"]);
     }).pipe(Effect.scoped),
   );
+
+  it.effect("toggles a provider while another provider's update is still running", () =>
+    Effect.gen(function* () {
+      const updateStarted = yield* Deferred.make<void>();
+      const settingsSaved = yield* Deferred.make<void>();
+      const client = {
+        [WS_METHODS.serverUpdateProvider]: () =>
+          Deferred.succeed(updateStarted, undefined).pipe(Effect.andThen(Effect.never)),
+        [WS_METHODS.serverUpdateSettings]: () =>
+          Deferred.succeed(settingsSaved, undefined).pipe(Effect.as(CONFIG.settings)),
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const runtime = Atom.runtime(
+        Layer.merge(
+          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
+            run: (_environmentId, effect) =>
+              Effect.provideService(
+                effect,
+                EnvironmentSupervisor.EnvironmentSupervisor,
+                supervisor,
+              ),
+          } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+          Layer.succeed(
+            Persistence.EnvironmentCacheStore,
+            {} as Persistence.EnvironmentCacheStore["Service"],
+          ),
+        ),
+      );
+      const atoms = createServerEnvironmentAtoms(runtime, {
+        initialConfigValueAtom: () => Atom.make(CONFIG),
+      });
+      const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+        Effect.sync(() => registry.dispose()),
+      );
+
+      void atoms.updateProvider.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { provider: ProviderDriverKind.make("opencode") },
+      });
+      yield* Deferred.await(updateStarted);
+      void atoms.mutateProviderInstance.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: {
+          patch: {},
+          providerInstanceMutation: {
+            operation: "upsert",
+            instanceId: ProviderInstanceId.make("codex"),
+            instance: { driver: ProviderDriverKind.make("codex"), enabled: false },
+          },
+        },
+      });
+
+      const saved = yield* Deferred.await(settingsSaved).pipe(
+        Effect.as(true),
+        Effect.timeoutOrElse({
+          duration: Duration.seconds(1),
+          orElse: () => Effect.succeed(false),
+        }),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust(Duration.seconds(1));
+      expect(yield* Fiber.join(saved)).toBe(true);
+    }).pipe(Effect.scoped),
+  );
 });
 
 describe("resource telemetry history", () => {
-  it.effect("refreshes an initially empty history while mounted and stops after unmount", () =>
-    Effect.gen(function* () {
-      vi.useFakeTimers();
-      try {
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            let reads = 0;
-            const client = {
-              [WS_METHODS.serverGetResourceTelemetryHistory]: () =>
-                Effect.sync(() => ({
-                  retainedSampleCount: reads++,
-                })),
-            } as unknown as WsRpcProtocolClient;
-            const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-              target: TARGET,
-              state: yield* SubscriptionRef.make<SupervisorConnectionState>({
-                ...AVAILABLE_CONNECTION_STATE,
-                phase: "connected",
-              }),
-              session: yield* SubscriptionRef.make(Option.some(session(client))),
-              prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
-              connect: Effect.void,
-              disconnect: Effect.void,
-              retryNow: Effect.void,
-            });
-            const environments = EnvironmentRegistry.EnvironmentRegistry.of({
-              run: (_id, effect) =>
-                Effect.provideService(
-                  effect,
-                  EnvironmentSupervisor.EnvironmentSupervisor,
-                  supervisor,
+  it.effect.each([
+    ["resourceTelemetryHistory", WS_METHODS.serverGetResourceTelemetryHistory],
+    ["processResourceHistory", WS_METHODS.serverGetProcessResourceHistory],
+  ] as const)(
+    "%s refreshes an initially empty history while mounted and stops after unmount",
+    ([atomKey, method]) =>
+      Effect.gen(function* () {
+        vi.useFakeTimers();
+        try {
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              let reads = 0;
+              const client = {
+                [method]: () =>
+                  Effect.sync(() => ({
+                    retainedSampleCount: reads++,
+                  })),
+              } as unknown as WsRpcProtocolClient;
+              const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+                target: TARGET,
+                state: yield* SubscriptionRef.make<SupervisorConnectionState>({
+                  ...AVAILABLE_CONNECTION_STATE,
+                  phase: "connected",
+                }),
+                session: yield* SubscriptionRef.make(Option.some(session(client))),
+                prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+                connect: Effect.void,
+                disconnect: Effect.void,
+                retryNow: Effect.void,
+              });
+              const environments = EnvironmentRegistry.EnvironmentRegistry.of({
+                run: (_id, effect) =>
+                  Effect.provideService(
+                    effect,
+                    EnvironmentSupervisor.EnvironmentSupervisor,
+                    supervisor,
+                  ),
+                followStream: (_id, stream) =>
+                  Stream.provideService(
+                    stream,
+                    EnvironmentSupervisor.EnvironmentSupervisor,
+                    supervisor,
+                  ),
+              } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+              const runtime = Atom.runtime(
+                Layer.merge(
+                  Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environments),
+                  Layer.succeed(Persistence.EnvironmentCacheStore, {
+                    loadServerConfig: () => Effect.succeedNone,
+                  } as unknown as Persistence.EnvironmentCacheStore["Service"]),
                 ),
-              followStream: (_id, stream) =>
-                Stream.provideService(
-                  stream,
-                  EnvironmentSupervisor.EnvironmentSupervisor,
-                  supervisor,
-                ),
-            } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
-            const runtime = Atom.runtime(
-              Layer.merge(
-                Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environments),
-                Layer.succeed(Persistence.EnvironmentCacheStore, {
-                  loadServerConfig: () => Effect.succeedNone,
-                } as unknown as Persistence.EnvironmentCacheStore["Service"]),
-              ),
-            );
-            const atoms = createServerEnvironmentAtoms(runtime, {
-              initialConfigValueAtom: () => Atom.make(CONFIG),
-            });
-            const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (value) =>
-              Effect.sync(() => value.dispose()),
-            );
-            const history = atoms.resourceTelemetryHistory({
-              environmentId: TARGET.environmentId,
-              input: { windowMs: 900_000, bucketMs: 30_000 },
-            });
-            const unmount = registry.mount(history);
-            const initial = yield* AtomRegistry.getResult(registry, history, {
-              suspendOnWaiting: true,
-            });
-            expect(initial.retainedSampleCount).toBe(0);
-            yield* Effect.promise(() => vi.advanceTimersByTimeAsync(5_000));
-            expect(reads).toBe(2);
-            const updated = yield* AtomRegistry.getResult(registry, history, {
-              suspendOnWaiting: true,
-            });
-            expect(updated.retainedSampleCount).toBe(1);
-            unmount();
-            yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
-            expect(reads).toBe(2);
-          }),
-        );
-      } finally {
-        vi.useRealTimers();
-      }
-    }),
+              );
+              const atoms = createServerEnvironmentAtoms(runtime, {
+                initialConfigValueAtom: () => Atom.make(CONFIG),
+              });
+              const registry = yield* Effect.acquireRelease(
+                Effect.sync(AtomRegistry.make),
+                (value) => Effect.sync(() => value.dispose()),
+              );
+              const history: Atom.Atom<
+                AsyncResult.AsyncResult<{ readonly retainedSampleCount: number }, Error>
+              > = atoms[atomKey]({
+                environmentId: TARGET.environmentId,
+                input: { windowMs: 900_000, bucketMs: 30_000 },
+              });
+              const unmount = registry.mount(history);
+              const initial = yield* AtomRegistry.getResult(registry, history, {
+                suspendOnWaiting: true,
+              });
+              expect(initial.retainedSampleCount).toBe(0);
+              yield* Effect.promise(() => vi.advanceTimersByTimeAsync(5_000));
+              expect(reads).toBe(2);
+              const updated = yield* AtomRegistry.getResult(registry, history, {
+                suspendOnWaiting: true,
+              });
+              expect(updated.retainedSampleCount).toBe(1);
+              unmount();
+              yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
+              expect(reads).toBe(2);
+            }),
+          );
+        } finally {
+          vi.useRealTimers();
+        }
+      }),
   );
 });

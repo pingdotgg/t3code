@@ -76,6 +76,20 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
     ),
   );
 
+  it.effect("tells the user to finish setup when the launcher has not installed its runtime", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // What Muse's launcher prints when a fresh install runs under MUSE_NO_AUTO_UPDATE=1.
+        const binaryPath = yield* fakeCli(
+          'process.stderr.write("muse: installed binary is missing; rerun the installer\\n");process.exit(1);',
+        );
+        const snapshot = yield* checkMuseProviderStatus(settings({ enabled: true, binaryPath }));
+        expect(snapshot.status).toBe("error");
+        expect(snapshot.message).toContain("muse --version");
+      }),
+    ),
+  );
+
   it.effect("discovers the Meta catalog without treating it as authentication proof", () =>
     Effect.scoped(
       Effect.gen(function* () {
