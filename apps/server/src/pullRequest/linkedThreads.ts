@@ -12,6 +12,7 @@ import {
   type ThreadId,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Schema from "effect/Schema";
@@ -73,11 +74,17 @@ export const listLinkedPullRequestThreads = Effect.fn("listLinkedPullRequestThre
 );
 
 // Mirrors the rows and filters of `listLinkedPullRequestThreads`.
-function linkedThreadsView(thread: OrchestrationV2AppThread): string | null {
-  if (thread.deletedAt !== null || thread.lineage.sideChat === true) return null;
-  const keys = visibleThreadPullRequests(thread.pullRequests ?? [])
+function linkedKeys(thread: OrchestrationV2AppThread): ReadonlyArray<string> {
+  if (thread.deletedAt !== null || thread.lineage.sideChat === true) return [];
+  return visibleThreadPullRequests(thread.pullRequests ?? [])
     .map(threadPullRequestKeyOf)
     .toSorted();
+}
+
+function linkedThreadsView(
+  thread: OrchestrationV2AppThread,
+  keys: ReadonlyArray<string>,
+): string | null {
   if (keys.length === 0) return null;
   const settled = thread.settledAt !== null || thread.settledOverride === "settled";
   return JSON.stringify([
@@ -96,13 +103,43 @@ function linkedThreadsView(thread: OrchestrationV2AppThread): string | null {
  */
 export function makeLinkedThreadsChangeDetector() {
   const views = new Map<ThreadId, string | null>();
+  const keysByThread = new Map<ThreadId, ReadonlyArray<string>>();
+  const activeAt = new Map<ThreadId, number>();
+  // Answers order by activity, so activity reorders one only when another thread was newest.
+  const newestByKey = new Map<string, ThreadId>();
+  const reordered = (threadId: ThreadId, at: DateTime.Utc): boolean => {
+    const keys = keysByThread.get(threadId);
+    if (keys === undefined) return false;
+    const millis = DateTime.toEpochMillis(at);
+    const previous = activeAt.get(threadId);
+    if (previous !== undefined && millis <= previous) return false;
+    activeAt.set(threadId, millis);
+    let moved = false;
+    for (const key of keys) {
+      if (newestByKey.get(key) === threadId) continue;
+      newestByKey.set(key, threadId);
+      moved = true;
+    }
+    return moved;
+  };
   return (event: OrchestrationV2DomainEvent): boolean => {
-    if (!event.type.startsWith("thread.") || !("lineage" in event.payload)) return false;
-    const view = linkedThreadsView(event.payload);
+    // The projection stamps every non-thread event as the thread's activity.
+    if (!event.type.startsWith("thread.")) return reordered(event.threadId, event.occurredAt);
+    if (!("lineage" in event.payload)) return false;
+    const thread = event.payload;
+    const keys = linkedKeys(thread);
+    const view = linkedThreadsView(thread, keys);
     const known = views.has(event.threadId) || event.type === "thread.created";
     const previous = views.get(event.threadId) ?? null;
     if (event.type === "thread.deleted") views.delete(event.threadId);
     else views.set(event.threadId, view);
-    return !known || view !== previous;
+    if (view === null) {
+      keysByThread.delete(event.threadId);
+      activeAt.delete(event.threadId);
+    } else {
+      keysByThread.set(event.threadId, keys);
+    }
+    const moved = reordered(event.threadId, thread.updatedAt);
+    return moved || !known || view !== previous;
   };
 }

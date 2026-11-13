@@ -240,6 +240,7 @@ it("signals linked-thread changes only when a linked answer could change", () =>
     settledOverride: null,
     settledAt: null,
     deletedAt: null,
+    updatedAt: now,
   } as unknown as OrchestrationV2AppThread;
   const event = (
     type: OrchestrationV2DomainEvent["type"],
@@ -275,4 +276,51 @@ it("signals linked-thread changes only when a linked answer could change", () =>
       event("thread.deleted", { pullRequests: [], deletedAt: now }),
     ),
   ).toBe(true);
+});
+
+it("signals when activity reorders the threads linked to a pull request", () => {
+  const at = (second: number) => DateTime.makeUnsafe(`2026-11-12T00:00:0${second}.000Z`);
+  const link = {
+    host: "github.com",
+    repository: "acme/web",
+    number: 7,
+    url: "https://github.com/acme/web/pull/7",
+    source: "agent",
+  };
+  const thread = (id: string, second: number) =>
+    ({
+      type: "thread.pull-request-synced",
+      threadId: ThreadId.make(id),
+      payload: {
+        id: ThreadId.make(id),
+        projectId: ProjectId.make("project-a"),
+        title: id,
+        lineage: { rootThreadId: ThreadId.make(id) },
+        pullRequests: [link],
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        deletedAt: null,
+        updatedAt: at(second),
+      },
+    }) as unknown as OrchestrationV2DomainEvent;
+  const activity = (id: string, second: number) =>
+    ({
+      type: "message.updated",
+      threadId: ThreadId.make(id),
+      occurredAt: at(second),
+    }) as unknown as OrchestrationV2DomainEvent;
+  const changed = makeLinkedThreadsChangeDetector();
+  changed(thread("a", 1));
+  changed(thread("b", 2));
+
+  expect(
+    [
+      { ...thread("a", 3), type: "thread.pinned" } as OrchestrationV2DomainEvent,
+      activity("a", 4),
+      activity("b", 5),
+      activity("b", 5),
+      activity("unlinked", 6),
+    ].map(changed),
+  ).toEqual([true, false, true, false, false]);
 });
