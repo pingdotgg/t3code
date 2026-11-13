@@ -3317,6 +3317,11 @@ describe("PiAdapterV2", () => {
         { mode: "workflow", runId: "wf-1", asyncId: "wf-1" },
       );
       yield* launch(
+        "call_parallel",
+        { tasks: [{ agent: "linter" }, { agent: "tester" }], async: true },
+        { mode: "parallel", runId: "par-1", asyncId: "par-1" },
+      );
+      yield* launch(
         "call_status",
         { action: "status", id: "run-1" },
         { mode: "management", asyncId: "run-1" },
@@ -3355,6 +3360,35 @@ describe("PiAdapterV2", () => {
       yield* takeSubagent("scout", "completed");
       yield* takeSubagent("scout", "failed");
 
+      // A parallel run's notice can precede the widget that shows its last child done.
+      yield* widget(2, [
+        { id: "run-1", kind: "subagent", state: "running" },
+        {
+          id: "par-1",
+          kind: "subagent",
+          state: "running",
+          children: [
+            { id: "child-l", kind: "step", state: "failed", agent: "linter" },
+            { id: "child-t", kind: "step", state: "running", agent: "tester" },
+          ],
+        },
+      ]);
+      yield* takeSubagent("linter", "failed");
+      yield* takeSubagent("tester", "running");
+      yield* notice({
+        runId: "par-1",
+        agent: "parallel",
+        status: "failed",
+        childRuns: [
+          { runId: "child-l", agent: "linter", status: "failed" },
+          { runId: "child-t", agent: "tester", status: "completed" },
+        ],
+      });
+      const tester = yield* takeEvent(
+        (event) => event.type === "subagent.updated" && event.subagent.title === "tester",
+      );
+      assert.isTrue(tester.type === "subagent.updated" && tester.subagent.status === "completed");
+
       // Stop asks pi-subagents to end the child; its row waits for the reported outcome.
       yield* runtime.interruptTurn({
         providerThread,
@@ -3364,7 +3398,7 @@ describe("PiAdapterV2", () => {
       const stop = yield* fake.takeRequest("prompt");
       assert.equal(stop["message"], "/t3-stop-subagents run-1");
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
-      yield* widget(2, [{ id: "run-1", kind: "subagent", state: "running" }]);
+      yield* widget(3, [{ id: "run-1", kind: "subagent", state: "running" }]);
       yield* notice({ runId: "run-1", agent: "reviewer", status: "stopped" });
       const stopped = yield* takeEvent((event) => event.type === "subagent.updated");
       assert.isTrue(

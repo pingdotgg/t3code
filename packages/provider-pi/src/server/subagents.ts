@@ -35,6 +35,8 @@ interface BackgroundRun<Owner> {
   readonly asyncId: string;
   readonly workflow: boolean;
   readonly members: Map<string, PiBackgroundSubagent<Owner>>;
+  /** Chain and parallel steps by the run id the widget gave them, which is how a notice names them. */
+  readonly stepKeys: Map<string, string>;
   stopRequested: boolean;
 }
 
@@ -78,6 +80,7 @@ const decodeCompletionNotice = Schema.decodeUnknownOption(
         childRuns: Schema.optional(
           Schema.Array(
             Schema.Struct({
+              runId: Schema.optional(Schema.String),
               workflowKey: Schema.optional(Schema.String),
               agent: Schema.optional(Schema.String),
               status: Schema.optional(Schema.String),
@@ -179,6 +182,7 @@ export function makePiBackgroundSubagents<Owner>() {
       // Workflow steps are named by their key. Chain and parallel steps trade a placeholder id for
       // a run id once they start, so only their position is stable.
       const key = run.workflow ? step.id : String(index);
+      run.stepKeys.set(step.id, key);
       return update(run, key, backgroundStatus(step.state), {
         title: step.agent ?? run.members.get(key)?.title ?? step.label ?? step.id,
         model: step.model,
@@ -216,15 +220,18 @@ export function makePiBackgroundSubagents<Owner>() {
     return notice.runs.flatMap((notified) => {
       const run = notified.runId === undefined ? undefined : runs.get(notified.runId);
       if (run === undefined) return [];
-      const children = run.workflow
-        ? (notified.childRuns ?? []).flatMap((child) =>
-            child.workflowKey === undefined
-              ? []
-              : update(run, child.workflowKey, backgroundStatus(child.status), {
-                  title: child.agent ?? child.workflowKey,
-                }),
-          )
-        : [];
+      const children = (notified.childRuns ?? []).flatMap((child) => {
+        const key = run.workflow
+          ? child.workflowKey
+          : child.runId === undefined
+            ? undefined
+            : run.stepKeys.get(child.runId);
+        return key === undefined
+          ? []
+          : update(run, key, backgroundStatus(child.status), {
+              title: child.agent ?? run.members.get(key)?.title ?? key,
+            });
+      });
       return [...children, ...settleRun(run, backgroundStatus(notified.status))];
     });
   };
@@ -261,6 +268,7 @@ export function makePiBackgroundSubagents<Owner>() {
         asyncId,
         workflow: mode === "workflow",
         members: new Map(),
+        stepKeys: new Map(),
         stopRequested: false,
       };
       runs.set(asyncId, run);
