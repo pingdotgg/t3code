@@ -95,6 +95,19 @@ describe("Claude Agent SDK replay fixtures", () => {
           userFacingDispatchErrorMessage(refused),
           "This subagent is run by its provider and cannot take messages. Message the parent thread instead.",
         );
+        const refusedContinuation = yield* orchestrator
+          .dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make("command:subagent:continue-native-child"),
+            threadId: child.thread.id,
+            title: "Renamed",
+            continuation: {
+              messageId: MessageId.make("message:subagent:continue-native-child"),
+              text: "Also check the tests.",
+            },
+          })
+          .pipe(Effect.flip);
+        assert.equal(refusedContinuation._tag, "OrchestratorSubagentThreadReadOnlyError");
         assert.equal(yield* orchestrator.getThreadEventSequence(child.thread.id), before);
         const after = yield* orchestrator.getThreadProjection(child.thread.id);
         assert.lengthOf(after.runs, 0);

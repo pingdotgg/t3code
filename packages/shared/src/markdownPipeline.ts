@@ -1,5 +1,14 @@
 import { isLocalEditorFileUrl, LOCAL_FILE_LINK_SCHEMES } from "@t3tools/contracts";
-import type { Paragraph, PhrasingContent, Root, RootContent } from "mdast";
+import type {
+  Heading,
+  Link,
+  Paragraph,
+  PhrasingContent,
+  Root,
+  RootContent,
+  TableCell,
+  Text,
+} from "mdast";
 import { remarkKeepWindowsPaths } from "./markdownWindowsPaths.ts";
 import { type PluggableList, type Processor, type Transformer, unified } from "unified";
 import remarkParse from "remark-parse";
@@ -16,7 +25,11 @@ import {
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
   remarkCodexDirectives,
 } from "./codexMarkdownDirectives.ts";
-import { isWindowsDrivePathHref, normalizeMarkdownLinkDestination } from "./markdownLinks.ts";
+import {
+  absoluteFilePathMatches,
+  isWindowsDrivePathHref,
+  normalizeMarkdownLinkDestination,
+} from "./markdownLinks.ts";
 import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 
 export { remarkEnableOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
@@ -67,14 +80,16 @@ function markStandaloneImages(node: MarkdownImageHastNode) {
   });
 }
 
+// Whole tags, attributes, and comments, so closing-anchor text inside them never counts as a tag.
+const RAW_HTML_TAG_PATTERN = /<!--[\s\S]*?(?:-->|$)|<\/?[A-Za-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
+
 function rehypePreserveBareAnchorPlaceholders() {
   return (tree: MarkdownImageHastNode) => {
     const anchors: Array<MarkdownImageHastNode | null> = [];
     let rawTextTag: string | undefined;
     const visit = (node: MarkdownImageHastNode) => {
       if (node.type === "raw" && typeof node.value === "string") {
-        // Scan whole tags, attributes, and comments so embedded closing-anchor text cannot match a placeholder.
-        const tags = /<!--[\s\S]*?(?:-->|$)|<\/?[A-Za-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
+        const tags = new RegExp(RAW_HTML_TAG_PATTERN);
         let offset = 0;
         while (rawTextTag !== "plaintext") {
           // Raw text ends at its closing tag even inside comment-looking text.
@@ -230,7 +245,9 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
+  remarkEndAutolinksAtCjkPunctuation,
   remarkKeepAutolinkSuffixes,
+  remarkLinkAbsoluteFilePaths,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkKeepOrderedListNumbers,
@@ -243,7 +260,9 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkGfm,
+  remarkEndAutolinksAtCjkPunctuation,
   remarkKeepAutolinkSuffixes,
+  remarkLinkAbsoluteFilePaths,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkKeepOrderedListNumbers,
@@ -253,6 +272,12 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkBreaks,
   remarkPreserveCodeMeta,
   remarkNormalizeLinksAndTagInlineCode,
+];
+
+// Users type paths like ~/a and (~/b, which GFM's single-tilde strikethrough hides as <del>.
+// Appended after the base list, this reconfigures its remark-gfm entry; ~~double~~ still strikes.
+export const CHAT_USER_MARKDOWN_REMARK_PLUGINS: PluggableList = [
+  [remarkGfm, { singleTilde: false }],
 ];
 
 // Start tags an HTML parser closes an open `<p>` for.
@@ -445,6 +470,232 @@ function remarkKeepAutolinkSuffixes(): Transformer<Root> {
   };
 }
 
+// Punctuation and symbols from CJK Symbols and Punctuation and from Halfwidth and Fullwidth Forms.
+const CJK_PUNCTUATION = /(?=[　-〿＀-￯])[\p{P}\p{S}]/u;
+
+/**
+ * GFM runs a bare URL on until whitespace, so Chinese and Japanese punctuation joins it, along with
+ * the rest of the sentence and any `**` that should have closed around it. A URL that is ASCII up to
+ * such a mark ends there. Unicode earlier in the URL means the mark may belong to it, so it stays.
+ */
+function cjkPunctuationIndex(link: Link): number {
+  const label = link.children.length === 1 ? link.children[0] : undefined;
+  if (label?.type !== "text" || !/^https?:\/\//i.test(link.url)) return -1;
+  if (link.url !== label.value && link.url !== `http://${label.value}`) return -1;
+  const index = label.value.search(/[^!-~]/u);
+  return index > 0 && CJK_PUNCTUATION.test(label.value.charAt(index)) ? index : -1;
+}
+
+/** GFM's text pass links bare URLs without positions; its tokenizer's links span their URL. */
+function isBareLink(link: Link, source: string): boolean {
+  const start = link.position?.start.offset;
+  const end = link.position?.end.offset;
+  const label = link.children[0];
+  return (
+    !link.position ||
+    (start !== undefined &&
+      end !== undefined &&
+      label?.type === "text" &&
+      source.slice(start, end) === label.value)
+  );
+}
+
+/** Source offsets of the marks that tokenized bare URLs run past. */
+function cjkPunctuationOffsets(node: RootContent, source: string): number[] {
+  if (node.type === "link") {
+    const index = cjkPunctuationIndex(node);
+    const start = node.position?.start.offset;
+    return index > 0 && start !== undefined && isBareLink(node, source) ? [start + index] : [];
+  }
+  return "children" in node && node.type !== "linkReference"
+    ? (node.children as RootContent[]).flatMap((child) => cjkPunctuationOffsets(child, source))
+    : [];
+}
+
+const hasReference = (node: RootContent): boolean =>
+  node.type === "linkReference" ||
+  node.type === "imageReference" ||
+  node.type === "footnoteReference" ||
+  ("children" in node && (node.children as RootContent[]).some(hasReference));
+
+/** How many of the ascending numbers are below `value`. */
+function countBelow(sorted: readonly number[], value: number): number {
+  let low = 0;
+  let high = sorted.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (sorted[middle]! < value) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+/**
+ * Parses the block's text again with a tab before each mark. The tab ends the URL as a space would,
+ * so emphasis around the URL closes and later URLs and code get their own nodes. The tabs are then
+ * dropped and positions mapped back to the source. Returns false and leaves the block alone when its
+ * text would parse differently on its own, as a quote's continuation lines do.
+ */
+function reparseAtCjkPunctuation(
+  processor: Processor,
+  block: Paragraph | Heading | TableCell,
+  source: string,
+  offsets: number[],
+): boolean {
+  // A task item's paragraph starts at its checkbox; its first child starts after it.
+  const from = block.children[0]?.position?.start;
+  const to = block.children.at(-1)?.position?.end;
+  if (from?.offset === undefined || to?.offset === undefined || hasReference(block)) return false;
+  const base = from.offset;
+  const text = source.slice(base, to.offset);
+  // A tab is the marker, a quote's `>` on a later line would read as a new quote, a list's
+  // indentation would join a code span, and only a table unescapes `\|` in code.
+  if (
+    text.includes("\t") ||
+    /[\r\n][ ]*>/.test(text) ||
+    (/[\r\n] /.test(text) && text.includes("`")) ||
+    (block.type === "tableCell" && text.includes("\\|"))
+  ) {
+    return false;
+  }
+  const marks = offsets.map((offset) => offset - base);
+  // Each pass finds the next URL in a run with no spaces, like `http://a，http://b，http://c`.
+  for (let attempt = 0; attempt < 16; attempt++) {
+    marks.sort((a, b) => a - b);
+    const tabs = marks.map((mark, index) => mark + index);
+    const unmarked = (offset: number) => offset - countBelow(tabs, offset);
+    const marked = [0, ...marks]
+      .map((start, index) => text.slice(start, marks[index] ?? text.length))
+      .join("\t");
+    const [paragraph, ...rest] = (processor.parse(marked) as Root).children;
+    if (paragraph?.type !== "paragraph" || rest.length > 0) return false;
+    const more = cjkPunctuationOffsets(paragraph, marked);
+    if (more.length > 0) {
+      marks.push(...more.map(unmarked));
+      continue;
+    }
+
+    let tabCount = 0;
+    const moved = new Set<object>();
+    const restore = (node: RootContent): boolean => {
+      for (const point of node.position ? [node.position.start, node.position.end] : []) {
+        const offset = point.offset;
+        if (offset === undefined || moved.has(point)) continue;
+        moved.add(point);
+        const tabsOnLine = countBelow(tabs, offset) - countBelow(tabs, offset - point.column + 1);
+        point.column = (point.line === 1 ? from.column - 1 : 0) + point.column - tabsOnLine;
+        point.line += from.line - 1;
+        point.offset = base + unmarked(offset);
+      }
+      if (node.type === "text") {
+        tabCount += node.value.split("\t").length - 1;
+        node.value = node.value.replaceAll("\t", "");
+      } else if (
+        ("value" in node && node.value.includes("\t")) ||
+        ("url" in node && node.url.includes("\t"))
+      ) {
+        return false;
+      }
+      if (!("children" in node)) return true;
+      const children = node.children as RootContent[];
+      if (!children.every(restore)) return false;
+      node.children = children.filter(
+        (child) => child.type !== "text" || child.value !== "",
+      ) as typeof node.children;
+      return true;
+    };
+    if (!restore(paragraph) || tabCount !== tabs.length) return false;
+    block.children = paragraph.children;
+    return true;
+  }
+  return false;
+}
+
+/** Ends the bare URLs a reparse could not, and those GFM's text pass linked after emphasis. */
+function splitAtCjkPunctuation(node: RootContent, source: string) {
+  if (!("children" in node) || node.type === "link" || node.type === "linkReference") return;
+  const children = node.children as RootContent[];
+  for (let index = 0; index < children.length; index++) {
+    const child = children[index]!;
+    if (child.type !== "link") {
+      splitAtCjkPunctuation(child, source);
+      continue;
+    }
+    const at = isBareLink(child, source) ? cjkPunctuationIndex(child) : -1;
+    const label = child.children[0];
+    if (at < 0 || label?.type !== "text") continue;
+    // GFM drops this punctuation from the end of a URL; remarkKeepAutolinkSuffixes restores `_` and `~`.
+    const length = label.value.slice(0, at).replace(/[!"'*,.:;?_~]+$/, "").length;
+    const tail: Text = { type: "text", value: label.value.slice(length) };
+    const start = child.position?.start;
+    if (child.position && start?.offset !== undefined) {
+      const end = {
+        line: start.line,
+        column: start.column + length,
+        offset: start.offset + length,
+      };
+      tail.position = { start: end, end: child.position.end };
+      child.position = { start, end };
+      label.position = { start, end };
+    }
+    child.url = child.url.slice(0, child.url.length - label.value.length + length);
+    label.value = label.value.slice(0, length);
+    children.splice(index + 1, 0, tail);
+    index++;
+  }
+}
+
+function remarkEndAutolinksAtCjkPunctuation(this: Processor): Transformer<Root> {
+  return (tree, file) => {
+    const source = String(file);
+    if (!CJK_PUNCTUATION.test(source)) return;
+    const visit = (node: RootContent) => {
+      if (node.type === "paragraph" || node.type === "heading" || node.type === "tableCell") {
+        const offsets = cjkPunctuationOffsets(node, source);
+        if (offsets.length > 0) reparseAtCjkPunctuation(this, node, source, offsets);
+        splitAtCjkPunctuation(node, source);
+      } else if ("children" in node) {
+        (node.children as RootContent[]).forEach(visit);
+      }
+    };
+    tree.children.forEach(visit);
+  };
+}
+
+function remarkLinkAbsoluteFilePaths(): Transformer<Root> {
+  return (tree) => {
+    // Raw `<a>` tags are sibling html nodes, so text inside one is not under a link node.
+    let rawAnchorDepth = 0;
+    const visit = (node: Root | RootContent) => {
+      if (!("children" in node) || node.type === "link" || node.type === "linkReference") return;
+      node.children = node.children.flatMap((child): typeof node.children => {
+        if (child.type === "html") {
+          for (const [tag] of child.value.matchAll(RAW_HTML_TAG_PATTERN)) {
+            if (/^<a[\s/>]/i.test(tag)) rawAnchorDepth += 1;
+            else if (/^<\/a[\s>]/i.test(tag)) rawAnchorDepth = Math.max(0, rawAnchorDepth - 1);
+          }
+        }
+        if (child.type !== "text" || rawAnchorDepth > 0) {
+          visit(child);
+          return [child];
+        }
+        const parts: PhrasingContent[] = [];
+        let offset = 0;
+        for (const { index, path } of absoluteFilePathMatches(child.value)) {
+          if (index > offset) parts.push({ type: "text", value: child.value.slice(offset, index) });
+          parts.push({ type: "link", url: path, children: [{ type: "text", value: path }] });
+          offset = index + path.length;
+        }
+        if (offset === 0) return [child];
+        if (offset < child.value.length)
+          parts.push({ type: "text", value: child.value.slice(offset) });
+        return parts;
+      });
+    };
+    visit(tree);
+  };
+}
+
 function remarkPreserveCodeMeta() {
   return (tree: MarkdownAstNode) => {
     const visit = (node: MarkdownAstNode) => {
@@ -493,6 +744,84 @@ function remarkNormalizeLinksAndTagInlineCode() {
 
 export function shouldPreserveAssistantLineBreaks(text: string): boolean {
   return /^★ Insight(?:\s|─)/mu.test(text);
+}
+
+export function remarkAssistantInsights(this: Processor) {
+  return (tree: Root, file: { value: unknown }) => {
+    const source = String(file.value);
+    if (!source.includes("★ Insight")) return;
+    const protectedRanges: { start: number; end: number; code: boolean }[] = [];
+    const inspect = (node: RootContent | PhrasingContent) => {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (start !== undefined && end !== undefined) {
+        const code =
+          node.type === "code" ||
+          node.type === "html" ||
+          (node.type === "inlineCode" && node.position?.start.line !== node.position?.end.line);
+        if (code || node.type === "list" || node.type === "blockquote")
+          protectedRanges.push({ start, end, code });
+      }
+      if ("children" in node) node.children.forEach(inspect);
+    };
+    tree.children.forEach(inspect);
+    const starts = new Set<number>();
+    const offsets: { original: number; rewritten: number; prefix: number }[] = [];
+    let indent: string | undefined;
+    let original = 0;
+    let rewritten = 0;
+    const lines = source.split(/(?<=\n)|(?<=\r)(?!\n)/u).map((line, index) => {
+      const value = line.replace(/[\r\n]+$/u, "");
+      const blocked = protectedRanges.some(
+        (range) =>
+          original >= range.start && original < range.end && (indent === undefined || range.code),
+      );
+      const opening =
+        indent === undefined && !blocked
+          ? /^( {0,3})(`?)★ Insight[ \t]+─{3,}\2[ \t]*$/u.exec(value)
+          : null;
+      const closing =
+        indent !== undefined && !blocked ? /^( {0,3})(`?)─{3,}\2[ \t]*$/u.exec(value) : null;
+      let prefix = 0;
+      let output = line;
+      if (opening) {
+        indent = opening[1] ?? "";
+        starts.add(index + 1);
+        output = ">" + line.slice(value.length);
+      } else if (closing && closing[1] === indent) {
+        indent = undefined;
+        output = line.slice(value.length);
+      } else if (indent !== undefined) {
+        prefix = 2;
+        output = "> " + line;
+      }
+      offsets.push({ original, rewritten, prefix });
+      original += line.length;
+      rewritten += output.length;
+      return output;
+    });
+    if (starts.size === 0) return;
+    const parsed = this.parse(lines.join("")) as Root;
+    const restorePosition = (node: RootContent | PhrasingContent) => {
+      if (node.position) {
+        for (const point of [node.position.start, node.position.end]) {
+          const offset = offsets[point.line - 1];
+          if (!offset) continue;
+          point.column = Math.max(1, point.column - offset.prefix);
+          if (point.offset !== undefined)
+            point.offset += offset.original - offset.rewritten - offset.prefix;
+        }
+      }
+      if ("children" in node) node.children.forEach(restorePosition);
+    };
+    for (const node of parsed.children) {
+      if (node.type === "blockquote" && starts.has(node.position?.start.line ?? 0)) {
+        node.data = { ...node.data, hProperties: { dataAlert: "insight" } };
+      }
+      restorePosition(node);
+    }
+    tree.children = parsed.children;
+  };
 }
 
 const imageSourceProcessor = unified()
