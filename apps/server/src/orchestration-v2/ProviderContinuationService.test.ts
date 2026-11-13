@@ -11,6 +11,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2Notification,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -19,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -524,6 +526,58 @@ describe("ProviderContinuationService", () => {
                 messages: [{ id: delegatedMessageId }],
               } as unknown as OrchestrationV2ThreadProjection),
           }),
+        ),
+        Effect.scoped,
+      );
+    });
+  });
+
+  it.effect("releases a wake once its continuation run starts on another provider thread", () => {
+    return Effect.gen(function* () {
+      const messageId = MessageId.make("message-provider-continuation-moved");
+      const runId = RunId.make("run-provider-continuation-moved");
+      const released = yield* Deferred.make<void>();
+      const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () => Effect.succeed(projection),
+        dispatch: () =>
+          Effect.succeed({
+            sequence: 1,
+            storedEvents: [
+              { event: { type: "run.created", payload: { id: runId, userMessageId: messageId } } },
+            ],
+          } as never),
+        // The thread moved to another session, so the run started there and is still running.
+        streamStoredEventsFrom: () =>
+          Stream.make({
+            event: {
+              type: "run.updated",
+              payload: {
+                id: runId,
+                status: "running",
+                startedAt: DateTime.makeUnsafe(0),
+                providerThreadId: ProviderThreadId.make("provider-thread-continuation-other"),
+              },
+            },
+          } as never),
+      });
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        yield* requests.offer({
+          ...request(),
+          messageId,
+          onRunEndedWithoutStarting: () => Deferred.succeed(released, undefined),
+        });
+        yield* Deferred.await(released);
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            ProviderContinuationRequests.layer,
+            ProviderContinuationService.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+              ),
+            ),
+          ),
         ),
         Effect.scoped,
       );
