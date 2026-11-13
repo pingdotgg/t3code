@@ -70,7 +70,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
 
-const ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
+export const ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
 const PROJECT_FAVICON_TOKEN_BUCKET_MS = 30 * 60 * 1000;
 const HTML_ATTACHMENT_TOKEN_BUCKET_MS = 30 * 60 * 1000;
 const COMMITTED_ATTACHMENT_TOKEN_BUCKET_MS = 5 * 60 * 1000;
@@ -194,7 +194,7 @@ export type ResolvedAsset =
       readonly mimeType?: string;
       readonly file?: OpenMediaFile;
       readonly renderIntent?: "mcp-app";
-      readonly maxAgeSeconds?: number;
+      readonly expiresAt?: number;
     }
   | {
       readonly kind: "bytes";
@@ -908,8 +908,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   if (!verified) return null;
 
   const claims = decodeClaims(encodedPayload);
-  const now = yield* Clock.currentTimeMillis;
-  if (!claims || claims.expiresAt <= now) return null;
+  if (!claims || claims.expiresAt <= (yield* Clock.currentTimeMillis)) return null;
 
   if (claims.kind === "attachment") {
     const config = yield* ServerConfig.ServerConfig;
@@ -931,7 +930,6 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       ),
       Effect.orElseSucceed(() => Option.none()),
     );
-    const respondedAt = yield* Clock.currentTimeMillis;
     return Option.isSome(info) && info.value.type === "File"
       ? ({
           kind: "file",
@@ -940,14 +938,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
           ...(claims.fileName !== undefined ? { fileName: claims.fileName } : {}),
           ...(claims.mimeType !== undefined ? { mimeType: claims.mimeType } : {}),
           ...(claims.renderIntent === "mcp-app" ? { renderIntent: "mcp-app" as const } : {}),
-          // Shared bucketed URLs must not stay fresh in the browser after the token expires.
-          maxAgeSeconds: Math.max(
-            0,
-            Math.min(
-              ASSET_TOKEN_TTL_MS / 1000,
-              Math.floor((claims.expiresAt - respondedAt) / 1000),
-            ),
-          ),
+          expiresAt: claims.expiresAt,
         } satisfies ResolvedAsset)
       : null;
   }

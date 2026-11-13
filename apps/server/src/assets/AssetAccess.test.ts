@@ -1323,7 +1323,7 @@ describe("AssetAccess", () => {
           path: attachmentPath,
           fileName: `report.${extension}`,
           mimeType,
-          maxAgeSeconds: 3600,
+          expiresAt: 60 * 60 * 1000,
         });
       }
     }).pipe(Effect.provide(layerTest)),
@@ -1404,7 +1404,7 @@ describe("AssetAccess", () => {
       expect(download.relativeUrl).not.toBe(first.relativeUrl);
       expect(pendingSecond.relativeUrl).not.toBe(pendingFirst.relativeUrl);
       // Browser freshness ends when the shared URL's token does.
-      expect(yield* resolve(second.relativeUrl)).toMatchObject({ maxAgeSeconds: 3419 });
+      expect(yield* resolve(second.relativeUrl)).toMatchObject({ expiresAt: first.expiresAt });
 
       yield* TestClock.adjust("2 minutes");
       expect((yield* issue(committedId)).relativeUrl).not.toBe(first.relativeUrl);

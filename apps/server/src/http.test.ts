@@ -696,6 +696,15 @@ describe("video asset byte ranges", () => {
       expect(image.status).toBe(206);
       expect(image.headers.get("accept-ranges")).toBe("bytes");
       expect(yield* Effect.promise(() => image.text())).toBe("01");
+      for (const [expiresAt, cacheControl] of [
+        [120_500, "private, max-age=120"],
+        [10 * 60 * 60 * 1000, "private, max-age=3600"],
+      ] as const) {
+        const shared = HttpServerResponse.toWeb(
+          yield* assetFileResponse({ path: file, mimeType: "image/png", expiresAt }, "bytes=0-1"),
+        );
+        expect(shared.headers.get("cache-control")).toBe(cacheControl);
+      }
       for (const mimeType of ["text/plain", "text/csv", "application/octet-stream"]) {
         for (const [range, expected, status] of [
           ["bytes=2-5", "2345", 206],
