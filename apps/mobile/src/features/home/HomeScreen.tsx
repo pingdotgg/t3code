@@ -89,6 +89,7 @@ import {
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
+  buildHomeProjectFilterOptions,
   buildHomeProjectScopes,
   findHomeProjectScope,
   type HomeProjectSortOrder,
@@ -323,6 +324,11 @@ export function HomeScreen(props: HomeScreenProps) {
         projectGroupingMode,
       }),
     [projects, selectedEnvironmentId, projectGroupingMode],
+  );
+  const { threads, pendingTasks } = props;
+  const projectFilterOptions = useMemo(
+    () => buildHomeProjectFilterOptions({ scopes: projectScopes, threads, pendingTasks }),
+    [projectScopes, threads, pendingTasks],
   );
   const hasSearchQuery = props.searchQuery.trim().length > 0;
   const projectByKey = (() => {
@@ -678,10 +684,7 @@ export function HomeScreen(props: HomeScreenProps) {
         <ThreadListFilters
           gutter={sidebarSurface ? 8 : 0}
           environments={props.environments}
-          projects={pickableProjectGroups(projectScopes).map((scope) => ({
-            key: scope.key,
-            label: scope.title,
-          }))}
+          projects={projectFilterOptions}
           selectedEnvironmentId={props.selectedEnvironmentId}
           selectedProjectKey={props.selectedProjectKey}
           onEnvironmentChange={props.onEnvironmentChange}

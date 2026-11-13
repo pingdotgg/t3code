@@ -5,7 +5,11 @@ import type {
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildHomeProjectScopes, findHomeProjectScope } from "./homeThreadList";
+import {
+  buildHomeProjectFilterOptions,
+  buildHomeProjectScopes,
+  findHomeProjectScope,
+} from "./homeThreadList";
 import { makeThreadShellFixture } from "../../test-fixtures";
 import { buildThreadListV2Items } from "../threads/threadListV2";
 
@@ -45,6 +49,43 @@ function makeThread(
 }
 
 describe("home project scopes", () => {
+  it("orders filter options by most recent thread activity, pinned first", () => {
+    const environmentId = EnvironmentId.make("local");
+    const projects = ["alpha", "beta", "gamma"].map((name) =>
+      makeProject({ environmentId, id: ProjectId.make(name), title: name }),
+    );
+    const scopes = buildHomeProjectScopes({
+      projects,
+      environmentId: null,
+      projectGroupingMode: "separate",
+    });
+    const threads = [
+      ["alpha", "2026-06-02T00:00:00.000Z"],
+      ["gamma", "2026-06-03T00:00:00.000Z"],
+    ].map(([projectId, messagedAt]) =>
+      makeThread({
+        environmentId,
+        projectId: ProjectId.make(projectId!),
+        id: ThreadId.make(`thread-${projectId}`),
+        title: projectId!,
+        latestUserAuthoredMessageAt: messagedAt!,
+      }),
+    );
+    const labels = (pinnedKey?: string) =>
+      buildHomeProjectFilterOptions({
+        scopes: scopes.map((scope) => ({ ...scope, pinned: scope.key === pinnedKey })),
+        threads,
+        pendingTasks: [],
+      }).map((option) => option.label);
+
+    expect(labels()).toEqual(["gamma", "alpha", "beta"]);
+    expect(labels(scopes.find((scope) => scope.title === "beta")!.key)).toEqual([
+      "beta",
+      "gamma",
+      "alpha",
+    ]);
+  });
+
   it("filters threads across both scratch hosts while retaining the selected environment boundary", () => {
     const localEnvironmentId = EnvironmentId.make("local");
     const remoteEnvironmentId = EnvironmentId.make("remote");

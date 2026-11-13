@@ -169,3 +169,14 @@ export function sortHomeProjectScopes(input: {
     ),
   );
 }
+
+/** Filter menu choices, pinned first and then by most recent thread activity. */
+export function buildHomeProjectFilterOptions(input: {
+  readonly scopes: ReadonlyArray<HomeProjectScope>;
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly pendingTasks: ReadonlyArray<PendingNewTask>;
+}): ReadonlyArray<{ readonly key: string; readonly label: string }> {
+  return pickableProjectGroups(
+    sortHomeProjectScopes({ ...input, projectSortOrder: "updated_at" }),
+  ).map((scope) => ({ key: scope.key, label: scope.title }));
+}
