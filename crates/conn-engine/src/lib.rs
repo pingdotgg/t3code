@@ -37,7 +37,7 @@ mod streams;
 mod time;
 mod titles;
 
-pub use engine::{EngineConfig, ProjectConfig, SqliteEngine};
+pub use engine::{DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig, SqliteEngine};
 
 /// What a [`TitleGenerator`] titles: the first message of a new thread, or a whole thread whose
 /// title the user asked to regenerate.
@@ -87,6 +87,85 @@ pub struct TurnPoint {
 pub trait TurnObserver: Send + Sync {
     fn turn_started(&self, point: TurnPoint) -> BoxFuture<'_, ()>;
     fn turn_ended(&self, point: TurnPoint, status: String) -> BoxFuture<'_, ()>;
+}
+
+/// The server's services the engine calls out to. Every method has a no-op default, so a test
+/// or a server without the service passes nothing. Wire one with [`EngineConfig::host`].
+pub trait EngineHost: Send + Sync {
+    /// MCP servers for a provider session about to open, and the key that revokes them.
+    fn agent_tools(&self, _session: AgentSession) -> Option<AgentTools> {
+        None
+    }
+
+    /// A provider session closed: revoke what [`EngineHost::agent_tools`] issued under `key`.
+    fn session_closed(&self, _key: &str) {}
+
+    /// Copies a message's pending uploads to the thread before the message is written. The
+    /// result replaces the command's `attachments`; an error refuses the command.
+    fn claim_attachments(
+        &self,
+        _thread_id: String,
+        attachments: Value,
+    ) -> BoxFuture<'_, Result<Value, String>> {
+        Box::pin(std::future::ready(Ok(attachments)))
+    }
+
+    /// The message that claimed `attachments` was refused: remove the copies.
+    fn release_attachments(&self, _attachments: Value) -> BoxFuture<'_, ()> {
+        Box::pin(std::future::ready(()))
+    }
+
+    /// Creates a git worktree for `launchThread` with a `worktree` strategy.
+    fn provision_worktree(
+        &self,
+        _request: WorktreeRequest,
+    ) -> BoxFuture<'_, Result<ProvisionedWorktree, String>> {
+        Box::pin(std::future::ready(Err(
+            "This server cannot create worktrees.".to_owned(),
+        )))
+    }
+
+    /// A thread was archived, deleted or settled; end what it holds open (terminals).
+    fn thread_closed(&self, _thread_id: &str, _reason: ThreadClose) {}
+}
+
+/// A provider session asking for agent tools.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentSession {
+    pub thread_id: String,
+    pub provider_instance_id: String,
+    /// The thread is a delegated child (`lineage.relationshipToParent: subagent`).
+    pub subagent: bool,
+}
+
+/// What [`EngineHost::agent_tools`] grants one provider session.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentTools {
+    pub servers: Vec<conn_provider::McpServer>,
+    /// Passed back to [`EngineHost::session_closed`].
+    pub key: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WorktreeRequest {
+    pub thread_id: String,
+    pub project_root: String,
+    pub base_ref: String,
+    pub branch: Option<String>,
+    pub start_from_origin: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProvisionedWorktree {
+    pub path: String,
+    pub branch: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThreadClose {
+    Archived,
+    Deleted,
+    Settled,
 }
 
 /// Asks a small model for a thread title (`generateTitle`, `regenerateTitle`). The engine
@@ -209,6 +288,12 @@ pub trait Engine: Send + Sync {
                 "this engine does not support {method}"
             )))
         })
+    }
+
+    /// Closes every provider session before the server exits, so no provider process, nor a
+    /// tool it started, outlives the server.
+    fn shutdown(&self) -> BoxFuture<'_, ()> {
+        Box::pin(std::future::ready(()))
     }
 
     /// `GET /api/orchestration/threads/:threadId`: `OrchestrationV2ThreadDetailSnapshot`, or

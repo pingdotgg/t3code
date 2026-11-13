@@ -1,6 +1,10 @@
 //! Engine tests: commands into a temp-file store, stream items out, and a restart.
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use conn_contract::{from_json, to_json};
 use serde_json::{Value, json};
@@ -2075,4 +2079,220 @@ async fn a_steer_sent_before_the_provider_turn_runs_waits_then_steers() {
             "assistant_message steered: early"
         ]
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_subagent_writes_to_its_own_child_thread() {
+    let db = TempDb::new("subagent");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "subagent")).await;
+    let parent = run_to_end(&engine, "t1", "run:t1:1").await;
+    let child = projection(&engine, "child:run:t1:1").await;
+    assert_eq!(child["thread"]["lineage"]["parentThreadId"], "t1");
+    assert_eq!(
+        child["thread"]["lineage"]["relationshipToParent"],
+        "subagent"
+    );
+    let texts = |p: &Value| -> Vec<String> {
+        p["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["text"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(texts(&child), ["do the sub task"]);
+    assert_eq!(child["messages"][0]["runId"], Value::Null);
+    assert_eq!(texts(&parent), ["subagent", "delegated"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_steer_status_moves_the_user_item() {
+    let db = TempDb::new("steer-status");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(
+        &engine,
+        message_with(
+            "t1",
+            "c3",
+            "also this",
+            json!({"type": "start_immediately"}),
+            Some("steer"),
+        ),
+    )
+    .await;
+    let seen = until_run_ends(&mut thread).await;
+    let steer_item: Vec<&str> = seen
+        .iter()
+        .filter(|(ty, p)| ty == "turn-item.updated" && p["id"] == "turn-item:message:c3")
+        .map(|(_, p)| p["status"].as_str().unwrap())
+        .collect();
+    assert_eq!(steer_item, ["completed", "pending", "completed"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_continuation_request_runs_a_provider_turn_after_the_run() {
+    let db = TempDb::new("continuation");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "background")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(
+        run_statuses(&p),
+        [
+            ("run:t1:1".into(), "completed".into()),
+            ("run:t1:2".into(), "completed".into())
+        ]
+    );
+    let wake = &p["messages"][2];
+    assert_eq!(wake["createdBy"], "agent");
+    assert_eq!(wake["creationSource"], "provider");
+    assert_eq!(wake["text"], "Background task completed.");
+    assert_eq!(p["messages"][3]["text"], "continued");
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn background_work_holds_an_idle_session_up_to_the_limit() {
+    let db = TempDb::new("idle-hold");
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![provider.clone()];
+    config.idle_session = Some(Duration::from_secs(60));
+    config.idle_max_hold = Duration::from_secs(600);
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "background-hold")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+
+    tokio::time::sleep(Duration::from_secs(300)).await;
+    assert_eq!(engine.inner().live_count(), 1, "held by background work");
+    tokio::time::sleep(Duration::from_secs(600)).await;
+    assert_eq!(
+        engine.inner().live_count(),
+        0,
+        "released after the hold limit"
+    );
+}
+
+#[derive(Default)]
+struct RecordingHost {
+    revoked: Mutex<Vec<String>>,
+    released: Mutex<Vec<Value>>,
+    closed: Mutex<Vec<(String, crate::ThreadClose)>>,
+}
+
+impl crate::EngineHost for RecordingHost {
+    fn agent_tools(&self, session: crate::AgentSession) -> Option<crate::AgentTools> {
+        Some(crate::AgentTools {
+            servers: vec![conn_provider::McpServer {
+                name: "t3-code".into(),
+                url: "http://127.0.0.1:1/mcp".into(),
+                headers: vec![(
+                    "Authorization".into(),
+                    format!("Bearer {}", session.thread_id),
+                )],
+            }],
+            key: format!("key:{}", session.thread_id),
+        })
+    }
+    fn session_closed(&self, key: &str) {
+        self.revoked.lock().unwrap().push(key.to_owned());
+    }
+    fn claim_attachments(
+        &self,
+        thread_id: String,
+        attachments: Value,
+    ) -> crate::BoxFuture<'_, Result<Value, String>> {
+        Box::pin(async move {
+            let claimed: Vec<Value> = attachments
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|a| {
+                    let mut a = a.clone();
+                    let id = a["id"].as_str().unwrap().replace("pending", &thread_id);
+                    a["id"] = json!(id);
+                    a
+                })
+                .collect();
+            Ok(json!(claimed))
+        })
+    }
+    fn release_attachments(&self, attachments: Value) -> crate::BoxFuture<'_, ()> {
+        self.released.lock().unwrap().push(attachments);
+        Box::pin(async {})
+    }
+    fn thread_closed(&self, thread_id: &str, reason: crate::ThreadClose) {
+        self.closed
+            .lock()
+            .unwrap()
+            .push((thread_id.to_owned(), reason));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_host_grants_tools_claims_attachments_and_hears_closes() {
+    let db = TempDb::new("host");
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![provider.clone()];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let image = json!({"type": "image", "id": "pending-1", "name": "a.png",
+        "mimeType": "image/png", "sizeBytes": 3});
+    let mut first = message("t1", "c2", "look");
+    first["attachments"] = json!([image]);
+    dispatch(&engine, first).await;
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(p["messages"][0]["attachments"][0]["id"], "t1-1");
+    assert_eq!(provider.mcp_servers.lock().unwrap()[0].name, "t3-code");
+
+    // A refused message gives its claimed files back.
+    let mut refused = message("missing", "c3", "nope");
+    refused["attachments"] = json!([image]);
+    assert!(engine.dispatch(from_json(refused).unwrap()).await.is_err());
+    assert_eq!(host.released.lock().unwrap()[0][0]["id"], "missing-1");
+
+    dispatch(
+        &engine,
+        json!({"type": "thread.archive", "commandId": "c4", "threadId": "t1"}),
+    )
+    .await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.delete", "commandId": "c5", "threadId": "t1"}),
+    )
+    .await;
+    // Effects run on spawned tasks; let them finish.
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        *host.closed.lock().unwrap(),
+        [
+            ("t1".to_owned(), crate::ThreadClose::Archived),
+            ("t1".to_owned(), crate::ThreadClose::Deleted)
+        ]
+    );
+    assert_eq!(*host.revoked.lock().unwrap(), ["key:t1"]);
 }

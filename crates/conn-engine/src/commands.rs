@@ -32,6 +32,11 @@ pub(crate) enum Effect {
     CloseSession {
         thread_id: String,
     },
+    /// Tells the host a thread was archived, deleted or settled (its terminals close).
+    ThreadClosed {
+        thread_id: String,
+        reason: crate::ThreadClose,
+    },
     /// Asks the title generator; answers with `thread.title.regeneration.complete`.
     GenerateTitle {
         thread_id: String,
@@ -1031,7 +1036,10 @@ fn thread_archive(tx: &mut Tx<'_>, command: Value) -> Outcome {
     patch_thread(tx, &c.thread_id, "thread.archived", true, |t, now| {
         t["archivedAt"] = json!(now);
     })?;
-    Ok(vec![])
+    Ok(vec![Effect::ThreadClosed {
+        thread_id: c.thread_id,
+        reason: crate::ThreadClose::Archived,
+    }])
 }
 
 fn thread_unarchive(tx: &mut Tx<'_>, command: Value) -> Outcome {
@@ -1059,6 +1067,10 @@ fn thread_delete(tx: &mut Tx<'_>, command: Value) -> Outcome {
     patch_thread(tx, &c.thread_id, "thread.deleted", true, |t, now| {
         t["deletedAt"] = json!(now);
     })?;
+    effects.push(Effect::ThreadClosed {
+        thread_id: c.thread_id,
+        reason: crate::ThreadClose::Deleted,
+    });
     Ok(effects)
 }
 
@@ -1362,7 +1374,11 @@ fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
             t["updatedAt"] = json!(now);
         }
         Ok(())
-    })
+    })?;
+    Ok(vec![Effect::ThreadClosed {
+        thread_id,
+        reason: crate::ThreadClose::Settled,
+    }])
 }
 
 fn thread_unsettle(tx: &mut Tx<'_>, command: Value) -> Outcome {

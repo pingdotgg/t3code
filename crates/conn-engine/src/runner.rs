@@ -13,7 +13,8 @@ use std::{
 use conn_contract::{ProviderThread, ProviderTurnId, from_json, to_json};
 use conn_provider::{
     EnsureThreadInput, InterruptInput, OpenSessionInput, ProviderEvent, ResumeThreadInput,
-    RuntimePolicy, RuntimeRequestResponse, Session, SteerInput, TurnInput, TurnMessage, TurnStatus,
+    RuntimePolicy, RuntimeRequestResponse, Session, SteerInput, SteerStatus, TurnInput,
+    TurnMessage, TurnStatus,
 };
 use serde_json::{Value, json};
 use tokio::{
@@ -34,6 +35,10 @@ pub(crate) struct LiveThread {
     /// Ends the event pump. The pump holds this thread, whose session may hold the event
     /// sender, so a closed channel alone would never end it.
     closed: tokio::sync::Notify,
+    /// Since when background work has kept this idle session open.
+    held_since: Mutex<Option<Instant>>,
+    /// Revokes the agent tools this session got ([`crate::EngineHost::session_closed`]).
+    tools_key: Option<String>,
 }
 
 #[derive(Default)]
@@ -54,9 +59,18 @@ impl LiveThread {
         *lock(&self.last_used) = Instant::now();
     }
 
-    /// Idle: no run and no provider event for `idle`.
-    pub(crate) fn idle_for(&self, idle: Duration) -> bool {
-        lock(&self.state).active.is_none() && lock(&self.last_used).elapsed() >= idle
+    /// Idle: no run and no provider event for `idle`, and no background work, which holds the
+    /// session at most `max_hold` past that (T3's idle pin).
+    pub(crate) fn idle_for(&self, idle: Duration, max_hold: Duration) -> bool {
+        if lock(&self.state).active.is_some() || lock(&self.last_used).elapsed() < idle {
+            return false;
+        }
+        let mut held = lock(&self.held_since);
+        if !self.session.has_pending_background_work() {
+            *held = None;
+            return true;
+        }
+        held.get_or_insert_with(Instant::now).elapsed() >= max_hold
     }
 
     fn active(&self) -> Option<ActiveRun> {
@@ -232,6 +246,13 @@ impl Inner {
                     .ok_or_else(|| {
                         format!("No provider instance `{instance}` is configured on this server.")
                     })?;
+                let tools = self.host.as_ref().and_then(|host| {
+                    host.agent_tools(crate::AgentSession {
+                        thread_id: thread_id.to_owned(),
+                        provider_instance_id: provider.instance_id().as_str().to_owned(),
+                        subagent: context.thread["lineage"]["relationshipToParent"] == "subagent",
+                    })
+                });
                 let opened = provider
                     .open_session(OpenSessionInput {
                         thread_id: thread_id.into(),
@@ -243,12 +264,23 @@ impl Inner {
                         resume_from_session: None,
                     })
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| {
+                        self.revoke_tools(tools.as_ref().map(|t| t.key.as_str()));
+                        e.to_string()
+                    })?;
+                let session: Arc<dyn Session> = Arc::from(opened.session);
+                if let Some(tools) = &tools
+                    && let Err(e) = session.set_mcp_servers(tools.servers.clone()).await
+                {
+                    eprintln!("conn-engine: the provider takes no MCP servers: {e}");
+                }
                 let live = Arc::new(LiveThread {
-                    session: Arc::from(opened.session),
+                    session,
                     state: Mutex::new(LiveState::default()),
                     last_used: Mutex::new(Instant::now()),
                     closed: tokio::sync::Notify::new(),
+                    held_since: Mutex::new(None),
+                    tools_key: tools.map(|t| t.key),
                 });
                 lock(&self.live).insert(thread_id.to_owned(), live.clone());
                 tokio::spawn(
@@ -387,33 +419,37 @@ impl Inner {
                 .await;
         }
 
-        live.session
-            .start_turn(TurnInput {
-                app_thread: from_json(context.thread.clone()).map_err(|e| e.to_string())?,
-                thread_id: thread_id.into(),
-                run_id: run_id.into(),
-                run_ordinal: context.run["ordinal"].as_u64().unwrap_or(1) as u32,
-                provider_turn_ordinal: context.run["ordinal"].as_u64().unwrap_or(1) as u32,
-                attempt_id: attempt_id.as_str().into(),
-                root_node_id: root.as_str().into(),
-                provider_thread,
-                message: TurnMessage {
-                    message_id: context.run["userMessageId"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .into(),
-                    text: context.message["text"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned(),
-                    attachments: from_json(context.message["attachments"].clone())
-                        .unwrap_or_default(),
-                },
-                model_selection,
-                runtime_policy,
-            })
-            .await
-            .map_err(|e| StartError::Failed(e.to_string()))
+        // A run the provider asked for (`continuation.requested`) shows output it already holds.
+        let continuation = context.message["creationSource"] == "provider";
+        let input = TurnInput {
+            app_thread: from_json(context.thread.clone()).map_err(|e| e.to_string())?,
+            thread_id: thread_id.into(),
+            run_id: run_id.into(),
+            run_ordinal: context.run["ordinal"].as_u64().unwrap_or(1) as u32,
+            provider_turn_ordinal: context.run["ordinal"].as_u64().unwrap_or(1) as u32,
+            attempt_id: attempt_id.as_str().into(),
+            root_node_id: root.as_str().into(),
+            provider_thread,
+            message: TurnMessage {
+                message_id: context.run["userMessageId"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .into(),
+                text: context.message["text"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                attachments: from_json(context.message["attachments"].clone()).unwrap_or_default(),
+            },
+            model_selection,
+            runtime_policy,
+        };
+        let started = if continuation {
+            live.session.start_continuation_turn(input).await
+        } else {
+            live.session.start_turn(input).await
+        };
+        started.map_err(|e| StartError::Failed(e.to_string()))
     }
 
     /// Reads one session's events until it closes. Ends a run the session leaves open.
@@ -470,6 +506,18 @@ impl Inner {
                     self.commit_after(&mut held, &mut deadline, vec![draft])
                         .await;
                 }
+                Translated::CreateThread(thread) => {
+                    self.commit_after(&mut held, &mut deadline, vec![]).await;
+                    self.create_provider_thread(thread).await;
+                }
+                Translated::Steer { message_id, status } => {
+                    self.commit_after(&mut held, &mut deadline, vec![]).await;
+                    self.steer_updated(&thread_id, message_id, status).await;
+                }
+                Translated::Continuation(detail) => {
+                    self.commit_after(&mut held, &mut deadline, vec![]).await;
+                    self.request_continuation(&thread_id, detail).await;
+                }
                 Translated::Terminal(status, failure) => {
                     self.commit_after(&mut held, &mut deadline, vec![]).await;
                     if let Some(run_id) = run_id {
@@ -500,6 +548,90 @@ impl Inner {
             .is_some_and(|current| Arc::ptr_eq(current, &live))
         {
             map.remove(&thread_id);
+        }
+    }
+
+    /// `app_thread.created`: the child thread a subagent's rows are written to. Created once;
+    /// a provider that announces it again changes nothing.
+    async fn create_provider_thread(&self, thread: Value) {
+        let Some(id) = thread["id"].as_str().map(str::to_owned) else {
+            return;
+        };
+        let result = self
+            .write(move |tx| {
+                if tx.thread(&id)?.is_none() {
+                    tx.append(Draft::new(&id, "thread.created", thread))?;
+                }
+                Ok(())
+            })
+            .await;
+        if let Err(e) = result {
+            eprintln!("conn-engine: could not create a provider thread: {e}");
+        }
+    }
+
+    /// `steer.updated`: the steered message's turn item takes the provider's status, as
+    /// `ProviderEventIngestor` does; only a pending or completed item changes.
+    async fn steer_updated(&self, thread_id: &str, message_id: String, status: &'static str) {
+        let tid = thread_id.to_owned();
+        let result = self
+            .write(move |tx| {
+                let item_id = format!("turn-item:{message_id}");
+                let Some(mut item) = tx.entity(&tid, "turnItems", &item_id)? else {
+                    return Ok(());
+                };
+                if item["type"] != "user_message"
+                    || item["status"] == status
+                    || !(item["status"] == "pending" || item["status"] == "completed")
+                {
+                    return Ok(());
+                }
+                let now = tx.now().to_owned();
+                item["status"] = json!(status);
+                item["completedAt"] = if status == "pending" {
+                    Value::Null
+                } else {
+                    json!(now)
+                };
+                item["updatedAt"] = json!(now);
+                let run = item["runId"].as_str().map(str::to_owned);
+                let node = item["nodeId"].as_str().map(str::to_owned);
+                tx.append(
+                    Draft::new(&tid, "turn-item.updated", item)
+                        .run(run.as_deref())
+                        .node(node.as_deref()),
+                )?;
+                Ok(())
+            })
+            .await;
+        if let Err(e) = result {
+            eprintln!("conn-engine: could not record a steer: {e}");
+        }
+    }
+
+    /// `continuation.requested`: a queued agent message whose run starts the provider's
+    /// continuation turn (`ProviderContinuationService`), so it runs after any active run.
+    async fn request_continuation(self: &Arc<Self>, thread_id: &str, detail: Option<String>) {
+        let message_id = format!(
+            "message:provider-continuation:{}",
+            crate::time::unique_suffix()
+        );
+        let command = json!({
+            "type": "message.dispatch",
+            "commandId": format!("provider-continuation:{message_id}"),
+            "threadId": thread_id,
+            "messageId": message_id,
+            "text": detail.unwrap_or_else(|| "Background task completed.".to_owned()),
+            "attachments": [],
+            "dispatchMode": {"type": "queue_after_active"},
+            "createdBy": "agent",
+            "creationSource": "provider",
+        });
+        if let Err(
+            crate::engine::DispatchError::Rejected(e) | crate::engine::DispatchError::Internal(e),
+        ) = self.dispatch_value(command).await
+        {
+            eprintln!("conn-engine: could not start a continuation turn: {e}");
         }
     }
 
@@ -809,7 +941,7 @@ impl Inner {
     pub(crate) async fn reap_idle(&self, idle: Duration) {
         let idle_threads: Vec<String> = lock(&self.live)
             .iter()
-            .filter(|(_, live)| live.idle_for(idle))
+            .filter(|(_, live)| live.idle_for(idle, self.idle_max_hold))
             .map(|(id, _)| id.clone())
             .collect();
         for thread_id in idle_threads {
@@ -817,9 +949,25 @@ impl Inner {
         }
     }
 
+    fn revoke_tools(&self, key: Option<&str>) {
+        if let (Some(host), Some(key)) = (&self.host, key) {
+            host.session_closed(key);
+        }
+    }
+
+    /// Closes every provider session, ending its process and what the process started. The
+    /// server calls this before it exits.
+    pub(crate) async fn close_all_sessions(&self) {
+        let threads: Vec<String> = lock(&self.live).keys().cloned().collect();
+        for thread_id in threads {
+            self.close_session(&thread_id).await;
+        }
+    }
+
     pub(crate) async fn close_session(&self, thread_id: &str) {
         let live = lock(&self.live).remove(thread_id);
         if let Some(live) = live {
+            self.revoke_tools(live.tools_key.as_deref());
             live.session.close().await;
             // `notify_one` keeps a permit, so a pump not yet waiting still sees it.
             live.closed.notify_one();
@@ -832,6 +980,15 @@ enum Translated {
     Event(Draft),
     ProviderTurn(ProviderTurnId, Draft),
     Terminal(&'static str, Option<Value>),
+    /// A provider-made thread (a subagent's child): created once, never overwritten.
+    CreateThread(Value),
+    /// A steer was taken or dropped: the user message's turn item follows.
+    Steer {
+        message_id: String,
+        status: &'static str,
+    },
+    /// The provider has output with no turn running and asks for one.
+    Continuation(Option<String>),
 }
 
 /// Maps one provider event to a domain event. Adding an event kind is one arm here.
@@ -839,7 +996,17 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
     let run_id = active.map(|a| a.run_id.as_str());
     let root = active.map(|a| a.root_node_id.as_str());
     // Provider rows name their thread and run; fill them in when a provider leaves them out.
+    // A row of another thread (a subagent's child thread) goes to that thread, without the
+    // parent's run.
     let scoped = |event_type: &'static str, mut payload: Value| {
+        let node = payload["nodeId"].as_str().map(str::to_owned);
+        if let Some(child) = payload["threadId"].as_str().filter(|t| *t != thread_id) {
+            let child = child.to_owned();
+            let run = payload["runId"].as_str().map(str::to_owned);
+            return Draft::new(&child, event_type, payload)
+                .run(run.as_deref())
+                .node(node.as_deref());
+        }
         if payload.is_object() {
             if payload["threadId"].is_null() {
                 payload["threadId"] = json!(thread_id);
@@ -848,7 +1015,6 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
                 payload["runId"] = json!(run_id);
             }
         }
-        let node = payload["nodeId"].as_str().map(str::to_owned);
         Draft::new(thread_id, event_type, payload)
             .run(run_id)
             .node(node.as_deref().or(root))
@@ -916,7 +1082,19 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
             };
             Translated::Terminal(status, failure)
         }
-        // Subagent threads, steers, background work, continuations: the engine track maps these.
-        _ => Translated::Ignore,
+        ProviderEvent::AppThreadCreated { app_thread, .. } => {
+            Translated::CreateThread(to_json(&app_thread))
+        }
+        ProviderEvent::SteerUpdated {
+            message_id, status, ..
+        } => Translated::Steer {
+            message_id: message_id.as_str().to_owned(),
+            status: match status {
+                SteerStatus::Pending => "pending",
+                SteerStatus::Completed => "completed",
+                SteerStatus::Cancelled => "cancelled",
+            },
+        },
+        ProviderEvent::ContinuationRequested(request) => Translated::Continuation(request.detail),
     }
 }

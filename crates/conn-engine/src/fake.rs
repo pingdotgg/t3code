@@ -2,23 +2,28 @@
 //! - `hang`: the turn starts and waits for an interrupt.
 //! - `ask`: the turn asks for a command approval, then answers once approved.
 //! - `fail`: the turn fails.
+//! - `subagent`: a subagent's child thread with one message, then the turn completes.
+//! - `background`: the turn completes with background work left, then asks for a
+//!   continuation turn, which answers `continued` and ends the work.
 //! - anything else: streams `echo: <text>` in three chunks and completes.
 //!
-//! A steer into a running turn answers `steered: <text>` and completes the turn, unless the
-//! provider was built with [`FakeProvider::without_steering`].
+//! A steer into a running turn reports `steer.updated` pending then completed, answers
+//! `steered: <text>` and completes the turn, unless the provider was built with
+//! [`FakeProvider::without_steering`].
 
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 use conn_contract::{
     ProviderCapabilities, ProviderInstanceId, ProviderSessionId, ProviderThread, from_json,
 };
 use conn_provider::{
-    BoxFuture, EnsureThreadInput, InterruptInput, OpenSessionInput, OpenedSession, Provider,
-    ProviderError, ProviderEvent, ProviderResult, ResumeThreadInput, RuntimeRequestResponse,
-    Session, SteerInput, ThreadDisposition, TurnInput, TurnStatus, TurnTerminal,
+    BoxFuture, EnsureThreadInput, InterruptInput, McpServer, OpenSessionInput, OpenedSession,
+    Provider, ProviderError, ProviderEvent, ProviderResult, ResumeThreadInput,
+    RuntimeRequestResponse, Session, SteerInput, ThreadDisposition, TurnInput, TurnStatus,
+    TurnTerminal,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -29,6 +34,10 @@ pub struct FakeProvider {
     id: ProviderInstanceId,
     /// Sessions opened so far.
     pub sessions: Arc<AtomicUsize>,
+    /// The MCP servers the newest session was given.
+    pub mcp_servers: Arc<Mutex<Vec<McpServer>>>,
+    /// Sessions closed so far.
+    pub closed: Arc<AtomicUsize>,
     steering: bool,
 }
 
@@ -37,6 +46,8 @@ impl FakeProvider {
         Self {
             id: instance_id.into(),
             sessions: Arc::new(AtomicUsize::new(0)),
+            mcp_servers: Arc::new(Mutex::new(vec![])),
+            closed: Arc::new(AtomicUsize::new(0)),
             steering: true,
         }
     }
@@ -62,6 +73,9 @@ struct FakeSession {
     events: mpsc::Sender<ProviderEvent>,
     turn: Arc<Mutex<Option<Turn>>>,
     steering: bool,
+    background: Arc<AtomicBool>,
+    mcp_servers: Arc<Mutex<Vec<McpServer>>>,
+    closed: Arc<AtomicUsize>,
 }
 
 impl Provider for FakeProvider {
@@ -88,6 +102,9 @@ impl Provider for FakeProvider {
                     events: tx,
                     turn: Arc::new(Mutex::new(None)),
                     steering: self.steering,
+                    background: Arc::new(AtomicBool::new(false)),
+                    mcp_servers: self.mcp_servers.clone(),
+                    closed: self.closed.clone(),
                 }),
                 events: rx,
             })
@@ -207,6 +224,47 @@ impl Session for FakeSession {
                     "responseCapability": {"type": "live", "providerSessionId": self.id},
                     "createdAt": now_iso(), "resolvedAt": null,
                 }}))),
+                "subagent" => {
+                    let child = format!("child:{}", turn.run_id);
+                    let now = now_iso();
+                    let mut app_thread = conn_contract::to_json(&input.app_thread);
+                    for (field, value) in [
+                        ("id", json!(child)),
+                        ("title", json!("Sub task")),
+                        ("createdBy", json!("agent")),
+                        ("creationSource", json!("provider")),
+                        ("activeProviderThreadId", Value::Null),
+                        ("lineage", json!({"parentThreadId": turn.thread_id,
+                            "relationshipToParent": "subagent", "rootThreadId": turn.thread_id})),
+                    ] {
+                        app_thread[field] = value;
+                    }
+                    started.push(event(json!({"type": "app_thread.created", "appThread": app_thread})));
+                    started.push(event(json!({"type": "message.updated", "message": {
+                        "createdBy": "agent", "creationSource": "provider",
+                        "id": format!("message:{child}:prompt"), "threadId": child, "runId": null,
+                        "nodeId": null, "role": "user", "text": "do the sub task", "attachments": [],
+                        "streaming": false, "createdAt": now, "updatedAt": now,
+                    }})));
+                    started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "delegated", false));
+                    started.push(provider_turn(&turn, "completed"));
+                    started.push(terminal(&turn, TurnStatus::Completed, None));
+                }
+                "background" => {
+                    self.background.store(true, Ordering::SeqCst);
+                    started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "started work", false));
+                    started.push(provider_turn(&turn, "completed"));
+                    started.push(terminal(&turn, TurnStatus::Completed, None));
+                    started.push(event(json!({"type": "continuation.requested",
+                        "threadId": turn.thread_id, "providerThreadId": turn.provider_thread_id,
+                        "detail": null})));
+                }
+                "background-hold" => {
+                    self.background.store(true, Ordering::SeqCst);
+                    started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "holding", false));
+                    started.push(provider_turn(&turn, "completed"));
+                    started.push(terminal(&turn, TurnStatus::Completed, None));
+                }
                 "fail" => started.push(terminal(
                     &turn,
                     TurnStatus::Failed,
@@ -240,13 +298,18 @@ impl Session for FakeSession {
             let events = {
                 let turn = self.turn.lock().unwrap();
                 let turn = turn.as_ref().ok_or(ProviderError::SessionStopped)?;
-                let mut events = assistant(
+                let steer = |status: &str| {
+                    event(json!({"type": "steer.updated", "threadId": turn.thread_id,
+                        "runId": turn.run_id, "messageId": input.message.message_id,
+                        "status": status}))
+                };
+                let mut events = vec![steer("pending"), steer("completed")];
+                events.extend(assistant(
                     turn,
                     &format!("{}:steer:{}", turn.run_id, input.message.message_id),
                     &format!("steered: {}", input.message.text),
                     false,
-                )
-                .to_vec();
+                ));
                 events.push(provider_turn(turn, "completed"));
                 events.push(terminal(turn, TurnStatus::Completed, None));
                 events
@@ -302,7 +365,47 @@ impl Session for FakeSession {
         })
     }
 
+    fn start_continuation_turn(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
+        Box::pin(async move {
+            let provider_thread_id = conn_contract::to_json(&input.provider_thread)["id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
+            let turn = Turn {
+                thread_id: input.thread_id.0.clone(),
+                run_id: input.run_id.0.clone(),
+                root: input.root_node_id.0.clone(),
+                provider_thread_id,
+                ordinal: input.run_ordinal,
+            };
+            self.background.store(false, Ordering::SeqCst);
+            let mut events = vec![provider_turn(&turn, "running")];
+            events.extend(assistant(
+                &turn,
+                &format!("{}:a", turn.run_id),
+                "continued",
+                false,
+            ));
+            events.push(provider_turn(&turn, "completed"));
+            events.push(terminal(&turn, TurnStatus::Completed, None));
+            *self.turn.lock().unwrap() = Some(turn);
+            let tx = self.events.clone();
+            tokio::spawn(async move { emit(&tx, events).await });
+            Ok(())
+        })
+    }
+
+    fn set_mcp_servers(&self, servers: Vec<McpServer>) -> BoxFuture<'_, ProviderResult<()>> {
+        *self.mcp_servers.lock().unwrap() = servers;
+        Box::pin(async { Ok(()) })
+    }
+
+    fn has_pending_background_work(&self) -> bool {
+        self.background.load(Ordering::SeqCst)
+    }
+
     fn close(&self) -> BoxFuture<'_, ()> {
+        self.closed.fetch_add(1, Ordering::SeqCst);
         Box::pin(async {})
     }
 }

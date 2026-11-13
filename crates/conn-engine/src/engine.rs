@@ -28,6 +28,9 @@ pub struct ProjectConfig {
     pub workspace_root: String,
 }
 
+/// T3's `DEFAULT_IDLE_TIMEOUT_MS`.
+pub const DEFAULT_IDLE_SESSION: Duration = Duration::from_secs(30 * 60);
+
 pub struct EngineConfig {
     /// The SQLite file. Created when missing.
     pub database: PathBuf,
@@ -39,8 +42,14 @@ pub struct EngineConfig {
     /// How long streamed assistant text may wait before it is written. Default 100 ms.
     pub stream_flush: Duration,
     /// A provider session with no turn for this long is closed, ending its process (a
-    /// `claude` child holds about 140 MiB). Default 10 minutes; `None` keeps sessions open.
+    /// `claude` child holds about 140 MiB). Default 30 minutes, as T3's session manager;
+    /// `None` keeps sessions open.
     pub idle_session: Option<Duration>,
+    /// How long background work (a background subagent) may keep an idle session open past
+    /// `idle_session`. Default 4 hours, as T3.
+    pub idle_max_hold: Duration,
+    /// The server's services: agent tools, attachments, worktrees, thread close.
+    pub host: Option<Arc<dyn crate::EngineHost>>,
     /// Generates thread titles. Without one, a new thread keeps the title the client sent.
     pub title_generator: Option<Arc<dyn crate::TitleGenerator>>,
     /// Sees every turn start and end (checkpoints). None by default.
@@ -55,7 +64,9 @@ impl EngineConfig {
             projects: vec![],
             providers: vec![],
             stream_flush: Duration::from_millis(100),
-            idle_session: Some(Duration::from_secs(600)),
+            idle_session: Some(DEFAULT_IDLE_SESSION),
+            idle_max_hold: Duration::from_secs(4 * 60 * 60),
+            host: None,
             title_generator: None,
             turn_observer: None,
         }
@@ -77,6 +88,8 @@ pub(crate) struct Inner {
     pub(crate) home: PathBuf,
     pub(crate) titles: Option<Arc<dyn crate::TitleGenerator>>,
     pub(crate) observer: Option<Arc<dyn crate::TurnObserver>>,
+    pub(crate) host: Option<Arc<dyn crate::EngineHost>>,
+    pub(crate) idle_max_hold: Duration,
 }
 
 /// Stable project id for a folder, so a fresh database gives clients the same ids.
@@ -130,6 +143,8 @@ impl SqliteEngine {
                 home,
                 titles: config.title_generator.clone(),
                 observer: config.turn_observer.clone(),
+                host: config.host.clone(),
+                idle_max_hold: config.idle_max_hold,
             }),
         };
         // Continuations and the reaper start on the caller's runtime; `open` never blocks.
@@ -212,6 +227,49 @@ impl Inner {
         self: &Arc<Self>,
         command: Value,
     ) -> Result<(u64, bool), DispatchError> {
+        let (command, claimed) = self.claim_attachments(command).await?;
+        let result = self.dispatch_claimed(command).await;
+        if let (Err(_), Some(claimed), Some(host)) = (&result, claimed, &self.host) {
+            host.release_attachments(claimed).await;
+        }
+        result
+    }
+
+    /// A new message's pending uploads become the thread's files before the message is
+    /// written (`AttachmentStore` claim). A retried command keeps what it claimed first.
+    async fn claim_attachments(
+        &self,
+        mut command: Value,
+    ) -> Result<(Value, Option<Value>), DispatchError> {
+        let Some(host) = &self.host else {
+            return Ok((command, None));
+        };
+        if command["type"] != "message.dispatch"
+            || command["attachments"].as_array().is_none_or(Vec::is_empty)
+        {
+            return Ok((command, None));
+        }
+        let command_id = command["commandId"].as_str().unwrap_or_default().to_owned();
+        let seen = self
+            .db(move |store| store.receipt(&command_id))
+            .await
+            .map_err(DispatchError::Internal)?;
+        if seen.is_some() {
+            return Ok((command, None));
+        }
+        let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+        let claimed = host
+            .claim_attachments(thread_id, command["attachments"].take())
+            .await
+            .map_err(DispatchError::Rejected)?;
+        command["attachments"] = claimed.clone();
+        Ok((command, Some(claimed)))
+    }
+
+    async fn dispatch_claimed(
+        self: &Arc<Self>,
+        command: Value,
+    ) -> Result<(u64, bool), DispatchError> {
         let command_type = command["type"].as_str().unwrap_or_default().to_owned();
         let Some(command_id) = command["commandId"].as_str().map(str::to_owned) else {
             return Err(DispatchError::Rejected(
@@ -272,12 +330,48 @@ impl Inner {
             Effect::Interrupt { thread_id, run_id } => self.interrupt(thread_id, run_id).await,
             Effect::Respond { thread_id, request } => self.respond(thread_id, request).await,
             Effect::CloseSession { thread_id } => self.close_session(&thread_id).await,
+            Effect::ThreadClosed { thread_id, reason } => {
+                if let Some(host) = &self.host {
+                    host.thread_closed(&thread_id, reason);
+                }
+            }
             Effect::GenerateTitle {
                 thread_id,
                 request_id,
                 regenerate,
             } => self.generate_title(thread_id, request_id, regenerate).await,
         }
+    }
+
+    async fn provision_worktree(
+        &self,
+        thread_id: &str,
+        input: &Value,
+    ) -> Result<crate::ProvisionedWorktree, (String, bool)> {
+        let Some(host) = &self.host else {
+            return Err(("This server cannot create worktrees.".into(), false));
+        };
+        let project_id = input["projectId"].as_str().unwrap_or_default().to_owned();
+        let root = self
+            .db(move |store| -> Result<Option<String>, String> {
+                let tx = store.tx()?;
+                let project = tx.project(&project_id);
+                tx.rollback();
+                Ok(project?.and_then(|p| p["workspaceRoot"].as_str().map(str::to_owned)))
+            })
+            .await
+            .map_err(|e| (e, true))?
+            .ok_or_else(|| ("The project does not exist.".to_owned(), false))?;
+        let strategy = &input["workspaceStrategy"];
+        host.provision_worktree(crate::WorktreeRequest {
+            thread_id: thread_id.to_owned(),
+            project_root: root,
+            base_ref: strategy["baseRef"].as_str().unwrap_or("HEAD").to_owned(),
+            branch: strategy["branch"].as_str().map(str::to_owned),
+            start_from_origin: strategy["startFromOrigin"] == true,
+        })
+        .await
+        .map_err(|e| (e, false))
     }
 
     async fn launch(self: &Arc<Self>, input: Value) -> Result<Value, (String, bool)> {
@@ -290,6 +384,23 @@ impl Inner {
             Some("root") => (strategy["branch"].clone(), Value::Null),
             Some("existing_worktree") => {
                 (strategy["branch"].clone(), strategy["worktreePath"].clone())
+            }
+            // The worktree is made before the thread exists, so the launch answers once it is
+            // ready; T3's `prepared-run.*` progress commands stay refused.
+            Some("worktree") if input["reuseExistingThread"] != true => {
+                let id = command_id.clone();
+                let retried = self
+                    .db(move |store| store.receipt(&id))
+                    .await
+                    .map_err(|e| (e, true))?
+                    .is_some();
+                if retried {
+                    // `thread.create` answers from its receipt; these values are not read.
+                    (Value::Null, Value::Null)
+                } else {
+                    let made = self.provision_worktree(&thread_id, &input).await?;
+                    (json!(made.branch), json!(made.path))
+                }
             }
             other => {
                 return Err((
@@ -486,6 +597,10 @@ impl Engine for SqliteEngine {
                 Err(e) => Err(EngineError::Internal(e)),
             }
         })
+    }
+
+    fn shutdown(&self) -> BoxFuture<'_, ()> {
+        Box::pin(self.inner.close_all_sessions())
     }
 
     fn methods(&self) -> &'static [&'static str] {
