@@ -115,6 +115,34 @@ describe("Cursor skills", () => {
       }),
     ));
 
+  it("discovers skills shipped by a user-local Cursor plugin", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const userHome = yield* fileSystem
+          .makeTempDirectoryScoped({ directory: NodeOS.tmpdir(), prefix: "cursor-plugin-home-" })
+          .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+        const pluginRoot = path.join(userHome, ".cursor", "plugins", "local", "acme");
+        yield* fileSystem.makeDirectory(path.join(pluginRoot, ".cursor-plugin"), {
+          recursive: true,
+        });
+        yield* fileSystem.writeFileString(
+          path.join(pluginRoot, ".cursor-plugin", "plugin.json"),
+          JSON.stringify({ name: "acme" }),
+        );
+        const skillDirectory = path.join(pluginRoot, "skills", "acme-deploy");
+        yield* fileSystem.makeDirectory(skillDirectory, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(skillDirectory, "SKILL.md"),
+          "---\ndescription: plugin deploy\n---\n",
+        );
+
+        const skills = yield* discoverCursorSkills(undefined, { HOME: userHome });
+        expect(skills.map((skill) => skill.name)).toContain("acme-deploy");
+      }),
+    ));
+
   it("skips a skill tree deeper than the limit instead of failing discovery", async () =>
     await runNode(
       Effect.gen(function* () {
