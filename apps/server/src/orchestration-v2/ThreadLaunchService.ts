@@ -37,8 +37,8 @@ import * as Stream from "effect/Stream";
 import {
   buildTemporaryWorktreeBranchName,
   flattenTemporaryWorktreeBranchName,
+  formatGeneratedBranchName,
   isTemporaryWorktreeBranch,
-  WORKTREE_BRANCH_PREFIX,
 } from "@t3tools/shared/git";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -377,11 +377,15 @@ const make = Effect.gen(function* () {
         // `git worktree add` reads `-` as the previous checkout.
         if (yield* git.hasCommit({ cwd, refName: baseRef === "-" ? "@{-1}" : baseRef }))
           return true;
-        if (
-          strategy.startFromOrigin === true &&
-          (yield* git.resolveWorktreeBaseRemote({ cwd, refName: baseRef })) !== null
-        )
-          return true;
+        if (strategy.startFromOrigin === true) {
+          const remote = yield* git.resolveWorktreeBaseRemote({ cwd, refName: baseRef });
+          // The remote may have deleted the branch; ask it rather than trusting the name.
+          if (
+            remote !== null &&
+            (yield* git.fetchWorktreeBaseCommit({ cwd, refName: baseRef, remote })) !== null
+          )
+            return true;
+        }
         // git worktree add accepts remote-tracking branches; let Git decide when any matching ref exists.
         if (yield* git.hasRefNamed({ cwd, refName: baseRef })) return true;
         return !(yield* git.hasCommit({ cwd, refName: "HEAD" }));
@@ -491,10 +495,23 @@ const make = Effect.gen(function* () {
       );
 
       const requestedBranch = input.workspaceStrategy.branch;
+      const generatedTemporaryBranch =
+        input.workspaceStrategy.type === "worktree" && requestedBranch === undefined;
       let branch: string | null;
-      if (input.workspaceStrategy.type === "worktree" && requestedBranch === undefined) {
+      if (generatedTemporaryBranch) {
         const uuid = yield* randomUuidV4;
         branch = buildTemporaryWorktreeBranchName(() => uuid.replaceAll("-", ""));
+        const settings = yield* serverSettings.getSettings.pipe(
+          Effect.map((settings) => resolveProjectSettings(settings, input.projectId).settings),
+          Effect.orElseSucceed(() => null),
+        );
+        if (settings?.branchNamingMode === "static") {
+          branch = formatGeneratedBranchName(branch.slice(-8), {
+            mode: "static",
+            prefix: settings.branchNamePrefix,
+            instructions: "",
+          });
+        }
       } else {
         branch = yield* launchBranch(input.workspaceStrategy, project.workspaceRoot);
       }
@@ -541,17 +558,23 @@ const make = Effect.gen(function* () {
           }
         }
         if (shouldFetch) yield* setupTracker.stageStatus(threadId, "fetch", "done");
-        if (
-          branch !== null &&
-          isTemporaryWorktreeBranch(branch) &&
-          (yield* git
-            .hasCommit({
-              cwd: project.workspaceRoot,
-              refName: `refs/heads/${WORKTREE_BRANCH_PREFIX}`,
-            })
-            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))))
-        ) {
-          branch = flattenTemporaryWorktreeBranchName(branch);
+        if (branch !== null && (generatedTemporaryBranch || isTemporaryWorktreeBranch(branch))) {
+          const parts = branch.split("/");
+          for (let depth = 1; depth < parts.length; depth++) {
+            if (
+              yield* git
+                .hasCommit({
+                  cwd: project.workspaceRoot,
+                  refName: `refs/heads/${parts.slice(0, depth).join("/")}`,
+                })
+                .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)))
+            ) {
+              branch = generatedTemporaryBranch
+                ? branch.replaceAll("/", "-")
+                : flattenTemporaryWorktreeBranchName(branch);
+              break;
+            }
+          }
         }
         yield* setupTracker.stageStatus(threadId, "checkout", "running");
         let submoduleProgressReportedAt = Number.NEGATIVE_INFINITY;
@@ -649,7 +672,7 @@ const make = Effect.gen(function* () {
         worktreePath !== null &&
         branch !== null &&
         initialMessage !== undefined &&
-        isTemporaryWorktreeBranch(branch)
+        (generatedTemporaryBranch || isTemporaryWorktreeBranch(branch))
       ) {
         const oldBranch = branch;
         const worktreeCwd = worktreePath;
