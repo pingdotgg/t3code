@@ -107,6 +107,34 @@ it("repairs the old semicolon permission entry without replacing unrelated regis
   expect(await NodeFSP.readdir(NodePath.dirname(desktop))).toEqual([NodePath.basename(desktop)]);
 });
 
+// KWin 6.7 authorizes by QProcess::splitCommand(service->exec()).first(); Exec field codes stay as written.
+const kwinExecutable = (exec: string) => {
+  let token = "";
+  let quoted = false;
+  for (let index = 0; index < exec.length; index++) {
+    const character = exec[index]!;
+    if (character === '"' && exec.startsWith('"""', index) && quoted) {
+      token += '"';
+      index += 2;
+    } else if (character === '"') quoted = !quoted;
+    else if (/\s/u.test(character) && !quoted) break;
+    else token += character;
+  }
+  return token;
+};
+
+it("registers an Exec path KWin resolves to the installed helper when the data path has a percent sign", async () => {
+  paths = { ...paths, dataHome: NodePath.join(directory, "data%test") };
+  setup = new KdeCaptureSetup(paths);
+  await setup.perform("install-kde-helper");
+  const { desktop, executable } = kdeCapturePaths(paths);
+  const exec = (await NodeFSP.readFile(desktop, "utf8"))
+    .split("\n")
+    .find((line) => line.startsWith("Exec="))!
+    .slice("Exec=".length);
+  expect(kwinExecutable(exec)).toBe(executable);
+});
+
 it("still verifies capture access when a systemd user manager is unavailable", async () => {
   const executeNormally = execute.getMockImplementation()!;
   execute.mockImplementation((file, args, options, callback) => {
