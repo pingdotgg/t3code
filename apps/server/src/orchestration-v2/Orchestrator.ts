@@ -842,7 +842,7 @@ function delegatedCompletionWakeDetail(
       const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${task === undefined ? " reached a terminal state" : ` [${task.status}]`}`;
       const resume =
         task?.status === "interrupted" && task.childThreadId !== null
-          ? `\nIt did not finish. Start no replacement unless asked; to continue it, t3_thread_send to thread ${task.childThreadId}.`
+          ? `\nIt did not finish. To continue it, \`t3_thread_send\` with threadId \`${task.childThreadId}\` exactly; start no replacement unless asked.`
           : "";
       if (task?.result != null) {
         const detail = `${label}:\n${task.result}${resume}`;

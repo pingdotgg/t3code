@@ -714,7 +714,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       assert.include(message?.text ?? "", "child finished");
       assert.include(
         message?.text ?? "",
-        "t3_thread_send to thread thread:delegated-delivery-live-cohort-child",
+        "`t3_thread_send` with threadId `thread:delegated-delivery-live-cohort-child`",
       );
     }),
   );
