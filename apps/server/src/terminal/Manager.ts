@@ -1266,6 +1266,12 @@ function sanitizeTerminalHistoryChunk(
       if (nextCodePoint === 0x5b) {
         let cursor = index + 2;
         while (cursor < input.length) {
+          // libghostty abandons a CSI at a non-ASCII character and prints it and what follows.
+          if (input.charCodeAt(cursor) >= 0x80) {
+            append(input.slice(index, cursor));
+            index = cursor;
+            break;
+          }
           const cancelled = isControlSequenceCancel(input.charCodeAt(cursor));
           if (cancelled || isCsiFinalByte(input.charCodeAt(cursor))) {
             const sequence = input.slice(index, cursor + 1);

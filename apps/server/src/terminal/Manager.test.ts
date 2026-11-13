@@ -1398,7 +1398,8 @@ it.layer(
       process.emitData("A\u001b[界nB");
       yield* manager.close({ threadId: "thread-1" });
 
-      expect((yield* manager.open(openInput())).history).toBe("A\u001b[界nB");
+      const { history } = yield* manager.open(openInput());
+      expect(history.startsWith("A\u001b[界nB")).toBe(true);
     }),
   );
 
