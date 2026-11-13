@@ -5178,6 +5178,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         // Unloading an idle thread kills its terminals without completing
         // their command items, while the shared provider session stays alive.
+        // A closed native child thread never sends turn/completed for its active turn.
         yield* client.handleServerNotification("thread/closed", (payload) =>
           Effect.gen(function* () {
             const completedAt = yield* DateTime.now;
@@ -5198,7 +5199,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const closing = threadClosings.get(payload.threadId);
               threadClosings.delete(payload.threadId);
               if (closing !== undefined) yield* Deferred.succeed(closing, undefined);
-              const completedAt = yield* DateTime.now;
               for (const context of (yield* Ref.get(settledTurns)).values()) {
                 if (context.providerThread.nativeThreadRef?.nativeId !== payload.threadId) continue;
                 const commands = (yield* Ref.get(runningCommandItemsByTurn)).get(
