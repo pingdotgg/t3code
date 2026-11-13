@@ -496,6 +496,7 @@ const historyReads = (reads: Array<string>) => {
       Effect.sync(() => record(fields, filter)).pipe(Effect.as(projection as never)),
     getThreadRecords: (_id, fields, filter) =>
       Effect.sync(() => record(fields, filter)).pipe(Effect.as(projection as never)),
+    getMessagesById: () => Effect.succeed(new Map()),
     dispatch: () => Effect.succeed({ sequence: 1 } as never),
   });
 };
