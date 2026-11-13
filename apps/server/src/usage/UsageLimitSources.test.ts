@@ -297,7 +297,7 @@ it.effect("takes a reset only from the hub at the instance's endpoint", () => {
               spentHub("home", "http://home:8317"),
               spentHub("work", "http://work:8317"),
             ]),
-            refresh: Effect.void,
+            refresh: Effect.die("hub refresh"),
           }),
         ),
       ),

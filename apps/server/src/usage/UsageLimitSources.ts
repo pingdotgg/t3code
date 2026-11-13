@@ -255,13 +255,8 @@ export const layerResetFallback = Layer.effect(
     return {
       resetAt: Effect.fn("UsageLimitResetFallback.resetAt")(function* (driver, endpoint, model) {
         // Only the hub at the instance's endpoint serves its turns.
-        const atEndpoint = (snapshots: ReadonlyArray<UsageLimitSourceSnapshot>) =>
-          snapshots.filter((source) => source.origin === endpoint);
-        if (atEndpoint(yield* sources.current).length === 0) return null;
-        // The terminal waits on this, so a slow hub falls back to its last reading.
-        yield* sources.refresh.pipe(Effect.timeoutOption("5 seconds"));
         return hubPoolResetAt(
-          atEndpoint(yield* sources.current),
+          (yield* sources.current).filter((source) => source.origin === endpoint),
           driver,
           model,
           DateTime.toEpochMillis(yield* DateTime.now),
