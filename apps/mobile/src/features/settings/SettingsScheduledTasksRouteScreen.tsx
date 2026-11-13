@@ -58,6 +58,10 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
+import {
+  SCHEDULED_TASK_SEND_MODE_COPY,
+  SCHEDULED_TASK_SEND_MODES,
+} from "@t3tools/client-runtime/scheduled-task-send-mode";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { usePreparedConnection } from "../../state/session";
 import { buildModelOptions } from "../../lib/modelOptions";
@@ -772,6 +776,7 @@ function TaskForm({
       enabled: draft.enabled,
       threadId: draft.threadId,
       ...(offersThreadModes ? { threadMode: draft.threadMode } : {}),
+      ...(draft.sendMode === draft.task?.sendMode ? {} : { sendMode: draft.sendMode }),
       workspaceStrategy:
         draft.workspace === "root"
           ? { type: "root" }
@@ -955,6 +960,32 @@ function TaskForm({
             />
           ) : null}
         </SettingsSection>
+
+        {draft.threadMode === "continue" &&
+        config?.environment.capabilities.scheduledTaskSendMode === true ? (
+          <SettingsSection
+            title="Thread"
+            footer={SCHEDULED_TASK_SEND_MODE_COPY[draft.sendMode].description}
+          >
+            <SelectRow
+              label="Delivery"
+              value={SCHEDULED_TASK_SEND_MODE_COPY[draft.sendMode].label}
+              actions={
+                saving || dictationPending
+                  ? []
+                  : SCHEDULED_TASK_SEND_MODES.map((mode) => ({
+                      id: mode,
+                      title: SCHEDULED_TASK_SEND_MODE_COPY[mode].label,
+                      state: mode === draft.sendMode ? "on" : undefined,
+                    }))
+              }
+              onSelect={(id) => {
+                const mode = SCHEDULED_TASK_SEND_MODES.find((candidate) => candidate === id);
+                if (mode) setDraft({ ...draft, sendMode: mode });
+              }}
+            />
+          </SettingsSection>
+        ) : null}
 
         <SettingsSection title="Workspace">
           <SelectRow

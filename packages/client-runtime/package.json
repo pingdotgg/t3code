@@ -87,6 +87,10 @@
       "types": "./src/scheduledTaskWebhook.ts",
       "default": "./src/scheduledTaskWebhook.ts"
     },
+    "./scheduled-task-send-mode": {
+      "types": "./src/scheduledTaskSendMode.ts",
+      "default": "./src/scheduledTaskSendMode.ts"
+    },
     "./scheduled-task-time-zone": {
       "types": "./src/scheduledTaskTimeZone.ts",
       "default": "./src/scheduledTaskTimeZone.ts"

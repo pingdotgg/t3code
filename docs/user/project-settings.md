@@ -97,6 +97,15 @@ project starts a new thread there on its next run.
 Deleting a thread also deletes tasks that post into that thread. Tasks that start
 a new thread on each run survive deletion of their previous threads.
 
+A task whose runs continue one conversation has a **Delivery** setting for runs
+that arrive while the agent is still working there. **Queue**, the default, waits for the
+current turn to finish. **Steer or start** adds the prompt to the current turn
+when it can take new input, such as while the agent is not waiting on an
+approval, and otherwise works like Queue. **Steer only** and **Restart** act on
+the current turn the way steering and restarting from the composer do. With no
+turn to act on, nothing is sent and the run is marked failed. The first run
+always starts the thread.
+
 You can edit, pause, resume, run immediately, or delete a task from the list.
 Webhook tasks only run when their URL is called, so they can't be run
 immediately.

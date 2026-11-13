@@ -216,6 +216,7 @@ interface ScheduledTaskRow {
   readonly project_id: string;
   readonly thread_id: string | null;
   readonly thread_mode: string;
+  readonly send_mode: string;
   readonly workspace_strategy_json: string;
   readonly model_selection_json: string;
   readonly runtime_mode: string;
@@ -397,6 +398,7 @@ const decodeRow = Effect.fnUntraced(
       projectId: row.project_id,
       threadId: row.thread_id,
       threadMode: row.thread_mode,
+      sendMode: row.send_mode,
       workspaceStrategy,
       modelSelection,
       runtimeMode: row.runtime_mode,
@@ -521,6 +523,7 @@ export const layer = Layer.effect(
         project_id,
         thread_id,
         thread_mode,
+        send_mode,
         workspace_strategy_json,
         model_selection_json,
         runtime_mode,
@@ -563,6 +566,7 @@ export const layer = Layer.effect(
         project_id,
         thread_id,
         thread_mode,
+        send_mode,
         workspace_strategy_json,
         model_selection_json,
         runtime_mode,
@@ -641,6 +645,7 @@ export const layer = Layer.effect(
           project_id,
           thread_id,
           thread_mode,
+          send_mode,
           workspace_strategy_json,
           model_selection_json,
           runtime_mode,
@@ -666,6 +671,7 @@ export const layer = Layer.effect(
           ${task.projectId},
           ${task.threadId},
           ${scheduledTaskThreadMode(task)},
+          ${task.sendMode},
           ${JSON.stringify(task.workspaceStrategy)},
           ${JSON.stringify(task.modelSelection)},
           ${task.runtimeMode},
@@ -698,6 +704,7 @@ export const layer = Layer.effect(
             ELSE COALESCE(excluded.thread_id, scheduled_tasks.thread_id)
           END,
           thread_mode = excluded.thread_mode,
+          send_mode = excluded.send_mode,
           workspace_strategy_json = excluded.workspace_strategy_json,
           model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
@@ -1036,7 +1043,7 @@ export const layer = Layer.effect(
               scheduledTaskId: active.id,
               text: prompt,
               attachments: [],
-              mode: "queue",
+              mode: active.sendMode,
               ...(threadMode === "fresh_session" ? { freshContext: true } : {}),
               createdBy: active.createdBy,
               creationSource: active.creationSource,
@@ -1531,6 +1538,8 @@ export const layer = Layer.effect(
         projectId: input.projectId,
         threadId,
         threadMode,
+        // Omitted keeps the stored mode, so clients and tools that predate it keep it on re-save.
+        sendMode: input.sendMode ?? existingTask?.sendMode ?? "queue",
         workspaceStrategy,
         modelSelection: input.modelSelection,
         runtimeMode: input.runtimeMode,
