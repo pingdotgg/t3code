@@ -45,7 +45,6 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import {
   buildTemporaryWorktreeBranchName,
-  deriveLocalBranchNameFromRemoteRef,
   flattenTemporaryWorktreeBranchName,
   formatGeneratedBranchName,
   isTemporaryWorktreeBranch,
@@ -314,6 +313,8 @@ const make = Effect.gen(function* () {
       : Effect.succeed(strategy.branch ?? null);
   const preparationScope = yield* Scope.make("sequential");
   const scheduledLaunches = yield* Ref.make<ReadonlySet<CommandId>>(new Set());
+  // Worktrees a launch is still creating; cancelling that launch removes them.
+  const provisionalWorktrees = yield* Ref.make<ReadonlySet<string>>(new Set());
   yield* Effect.addFinalizer(() => Scope.close(preparationScope, Exit.void));
 
   const mapError =
@@ -614,20 +615,27 @@ const make = Effect.gen(function* () {
     cwd: string,
     refName: string,
   ) {
-    const findLocal = Effect.fn("ThreadLaunchService.findLocalBranch")(function* (name: string) {
+    const findRef = Effect.fn("ThreadLaunchService.findRef")(function* (
+      refKind: "local" | "remote",
+      name: string,
+    ) {
       let cursor: number | undefined;
       do {
-        const result = yield* git.listRefs({ cwd, refKind: "local", query: name, cursor });
+        const result = yield* git.listRefs({ cwd, refKind, query: name, cursor });
         const match = result.refs.find((ref) => ref.name === name);
         if (match !== undefined) return match;
         cursor = result.nextCursor ?? undefined;
       } while (cursor !== undefined);
       return undefined;
     });
-    const exact = yield* findLocal(refName);
+    const exact = yield* findRef("local", refName);
     if (exact !== undefined) return { name: refName, ref: exact };
-    const name = deriveLocalBranchNameFromRemoteRef(refName);
-    return { name, ref: name === refName ? undefined : yield* findLocal(name) };
+    const remote = yield* findRef("remote", refName);
+    const name =
+      remote?.remoteName !== undefined && refName.startsWith(`${remote.remoteName}/`)
+        ? refName.slice(remote.remoteName.length + 1)
+        : refName;
+    return { name, ref: name === refName ? undefined : yield* findRef("local", name) };
   });
 
   // Opening a branch that already has a worktree joins it; Git can't check one branch out twice.
@@ -647,6 +655,14 @@ const make = Effect.gen(function* () {
       Effect.mapError(mapError(input, "provision-worktree", threadId)),
     );
     if (!ref?.worktreePath) return strategy;
+    if ((yield* Ref.get(provisionalWorktrees)).has(ref.worktreePath)) {
+      return yield* mapError(
+        input,
+        "provision-worktree",
+        threadId,
+      )(`${name} is still being set up for another thread. Try again once it is ready.`);
+    }
+    // Rejects a project folder at or inside the checkout; worktrees nested in the project are fine.
     if (workspaceRelativeFilePath(project.workspaceRoot, ref.worktreePath) !== null) {
       return yield* mapError(
         input,
@@ -920,7 +936,9 @@ const make = Effect.gen(function* () {
               createdWorktreePath = path;
               // A task folder has already claimed the name its repositories share.
               createdBranch ??= ownedBranch;
-            }),
+            }).pipe(
+              Effect.andThen(Ref.update(provisionalWorktrees, (paths) => new Set(paths).add(path))),
+            ),
           onCheckoutProgress: (progress) =>
             setupTracker.stage(threadId, "checkout", { percent: progress.percent }),
           onSubmodulesStarted: () =>
@@ -1380,6 +1398,18 @@ const make = Effect.gen(function* () {
           }
         }),
       ),
+      Effect.ensuring(
+        Effect.suspend(() => {
+          const path = createdWorktreePath;
+          return path === null
+            ? Effect.void
+            : Ref.update(provisionalWorktrees, (paths) => {
+                const next = new Set(paths);
+                next.delete(path);
+                return next;
+              });
+        }),
+      ),
     );
   });
 
@@ -1613,7 +1643,9 @@ const make = Effect.gen(function* () {
                   onSome: (worktreePath) => ({ type: "existing_worktree", worktreePath }),
                 },
               )
-            : yield* bindCheckedOutBranch(input, candidateThreadId);
+            : Option.isNone(launchReceipt)
+              ? yield* bindCheckedOutBranch(input, candidateThreadId)
+              : input.workspaceStrategy;
         const initialBranch = yield* Effect.interruptible(
           launchBranch(workspaceStrategy, project.workspaceRoot),
         );
@@ -1766,19 +1798,23 @@ const make = Effect.gen(function* () {
             // A retry prepares the worktree the accepted launch asked for, not the
             // retry's own strategy, whose defaults may resolve differently.
             const accepted = current?.runs.find((run) => run.id === runId)?.workspacePreparation;
-            const preparationStrategy: ThreadLaunchWorkspaceStrategy =
+            const acceptedStrategy: ThreadLaunchWorkspaceStrategy =
               Option.isSome(launchReceipt) &&
               (accepted?.type === "worktree" || accepted?.type === "existing_worktree")
                 ? accepted
-                : Option.isSome(launchReceipt) &&
-                    workspaceStrategy.type === "root" &&
-                    boundWorktreePath !== null
-                  ? {
-                      type: "existing_worktree",
-                      worktreePath: boundWorktreePath,
-                      branch: workspaceStrategy.branch,
-                    }
-                  : workspaceStrategy;
+                : workspaceStrategy;
+            // A worktree already bound to the thread is reused, never created again.
+            const preparationStrategy: ThreadLaunchWorkspaceStrategy =
+              Option.isSome(launchReceipt) &&
+              boundWorktreePath !== null &&
+              (acceptedStrategy.type === "root" ||
+                (acceptedStrategy.type === "worktree" && acceptedStrategy.checkoutExisting === true))
+                ? {
+                    type: "existing_worktree",
+                    worktreePath: boundWorktreePath,
+                    branch: acceptedStrategy.branch,
+                  }
+                : acceptedStrategy;
             // The thread's link decides, as it does when preparation is retried: a request
             // that reuses a thread names none.
             const { linkOrigin: _requestLinkOrigin, ...preparation } = input;
