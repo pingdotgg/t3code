@@ -64,6 +64,10 @@ describe("extractTerminalLinks", () => {
     expect(extractTerminalLinks(`see ${quote}${text}${quote}.`)).toEqual([
       { kind: "path", text, start: 5, end: 5 + text.length },
     ]);
+    const atText = "src/my contact@support.vue:12:3";
+    expect(extractTerminalLinks(`see ${quote}${atText}${quote}.`)).toEqual([
+      { kind: "path", text: atText, start: 5, end: 5 + atText.length },
+    ]);
   });
 
   it.each([
@@ -127,6 +131,11 @@ describe("extractTerminalLinks", () => {
     "src/𐐀.ts:12",
     "src/app/[id]/page.tsx:3:10",
     "src/routes/(app)/+page.svelte:12:4",
+    "src/routes/(app)/+page@.svelte:12:3",
+    "src/contact@support.vue:12:3",
+    String.raw`src\contact@support.ts:12:3`,
+    "src/équipe@home.ts:12:3",
+    "src/foo$contact@support.ts:12:3",
     "node_modules/.pnpm/react@18.3.1/node_modules/react/index.js:12:5",
     "app/routes/posts.$id.tsx:5",
   ])("keeps the complete relative path %s", (text) => {
@@ -198,6 +207,8 @@ describe("extractTerminalLinks", () => {
     "    at main (file:///Users/jane/app/src/index.mjs:3:7)",
     "+redis://localhost:6379/0",
     "-redis://localhost:6379/0",
+    "git clone git@github.com:acme/widgets.git",
+    "remote: git@gitlab.com:group/sub/project.git",
   ])("does not turn part of a non-web URL into an editor link: %s", (line) => {
     expect(extractTerminalLinks(line)).toEqual([]);
   });

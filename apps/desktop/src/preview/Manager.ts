@@ -24,6 +24,7 @@ import type {
   DesktopPreviewScreenshotArtifact,
   DesktopPreviewTabDefaults,
   PreviewForwardedShortcut,
+  PreviewAutomationLoadError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { matchesKeybindingShortcut } from "@t3tools/shared/keybindings";
@@ -562,9 +563,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const random = yield* SecureRandom.SecureRandom;
   const parentScope = yield* Scope.Scope;
   const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
+  const browserSession = yield* BrowserSession.BrowserSession;
   const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
+  const runPromise = Effect.runPromiseWith(context);
   const resolvedArtifactDirectory = path.resolve(artifactDirectory);
 
   let forwardedShortcuts: ReadonlyArray<PreviewForwardedShortcut> = [];
@@ -604,6 +607,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     { readonly semaphore: Semaphore.Semaphore; users: number }
   >();
   const tabLifecycleGenerations = new Map<string, number>();
+  // A guest can fail its first load before registerWebview installs its tab listeners.
+  const guestLoadFailures = new Map<number, PreviewAutomationLoadError>();
 
   const attempt = <A>(errorContext: PreviewOperationContext, evaluate: () => A) =>
     Effect.try({
@@ -1398,16 +1403,39 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       validatedUrl: string,
       isMainFrame: boolean,
     ): void => {
-      if (code === -3 || !isMainFrame) return;
+      if (code === -3 || !isMainFrame || wc.isDestroyed()) return;
+      const url = validatedUrl || wc.getURL();
       runFork(
-        update(tabId, {
-          navStatus: {
-            kind: "LoadFailed",
-            url: validatedUrl || wc.getURL(),
-            title: wc.getTitle(),
-            code,
-            description,
-          },
+        Effect.gen(function* () {
+          const updatedAt = yield* currentIso;
+          const next = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
+            const current = tabs.get(tabId);
+            if (
+              !current ||
+              current.webContentsId !== wc.id ||
+              wc.isDestroyed() ||
+              webContents.fromId(wc.id) !== wc
+            ) {
+              return [Option.none<PreviewTabState>(), tabs] as const;
+            }
+            const state: PreviewTabState = {
+              ...current,
+              navStatus: { kind: "LoadFailed", url, title: wc.getTitle(), code, description },
+              updatedAt,
+            };
+            return [
+              Option.some(state),
+              replaceMap(tabs, (copy) => copy.set(tabId, state)),
+            ] as const;
+          });
+          if (Option.isNone(next)) return;
+          const current = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+          if (current?.webContentsId !== wc.id || current.navStatus !== next.value.navStatus)
+            return;
+          if (current.serverTab) {
+            browserHost.loadFailed(current.serverTab, { url, code, description });
+          }
+          yield* emitIfCurrent(tabId, next.value);
         }),
       );
     };
@@ -1887,11 +1915,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           ] as const;
         }
         const pendingUrl = current.navStatus.kind === "Loading" ? current.navStatus.url : null;
+        const failure = guestLoadFailures.get(webContentsId);
         const { favicon: _favicon, ...currentWithoutFavicon } = current;
         const next: PreviewTabState = {
           ...currentWithoutFavicon,
           webContentsId,
-          navStatus: pendingUrl === null ? computeNavStatus(wc) : current.navStatus,
+          navStatus:
+            failure && (pendingUrl === null || pendingUrl === failure.url)
+              ? { kind: "LoadFailed", title: wc.getTitle(), ...failure }
+              : pendingUrl === null
+                ? computeNavStatus(wc)
+                : current.navStatus,
           canGoBack: wc.navigationHistory.canGoBack(),
           canGoForward: wc.navigationHistory.canGoForward(),
           audible: attachedAudible,
@@ -1959,7 +1993,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     yield* rendererHistory.register(wc, { surface: "preview" });
     const webContentsId = wc.id;
+    wc.on("did-start-navigation", (event) => {
+      if (event.isMainFrame && !event.isSameDocument) guestLoadFailures.delete(webContentsId);
+    });
+    wc.on("did-fail-load", (_event, code, description, validatedUrl, isMainFrame) => {
+      if (code === -3 || !isMainFrame) return;
+      guestLoadFailures.set(webContentsId, {
+        url: validatedUrl || wc.getURL(),
+        code,
+        description,
+      });
+    });
     wc.once("destroyed", () => {
+      guestLoadFailures.delete(webContentsId);
       runFork(hideDestroyedGuest(webContentsId));
       runFork(detachControlSession(webContentsId));
     });
@@ -2421,14 +2467,27 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       const beforeAttach = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
       if (beforeAttach?.webContentsId !== wc.id) return;
       const control = yield* ensureControlSession(wc);
+      if (beforeAttach.serverTab) yield* listenToBrowserHost;
       const afterAttach = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
       if (afterAttach?.webContentsId !== wc.id) {
         yield* detachControlSession(wc.id);
         return;
       }
       if (afterAttach.serverTab) {
-        yield* listenToBrowserHost;
-        browserHost.attach(afterAttach.serverTab, { webContents: wc, debugger: control.debugger });
+        browserHost.attach(afterAttach.serverTab, {
+          webContents: wc,
+          debugger: control.debugger,
+          cookiesCleared: () => runPromise(browserSession.cookiesCleared(wc.session)),
+        });
+        // CDP cannot recover a failure that happened before it attached.
+        const { navStatus } = afterAttach;
+        if (navStatus.kind === "LoadFailed") {
+          browserHost.loadFailed(afterAttach.serverTab, {
+            url: navStatus.url,
+            code: navStatus.code,
+            description: navStatus.description,
+          });
+        }
       }
       if (afterAttach.colorScheme !== "system") {
         yield* attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>
