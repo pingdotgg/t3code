@@ -1407,6 +1407,11 @@ describe("/usage-limits", () => {
     expect(threadUsageLimits(signedOut.instanceId, [signedOut], one, now)).toBe(hubLimits);
     expect(threadUsageLimits(signedOut.instanceId, [signedOut], sources, now)).toBeNull();
     expect(threadUsageLimits(selected.instanceId, [selected], one, now)).toBe(limits);
+    const other = provider({
+      instanceId: ProviderInstanceId.make("codex-work"),
+      usageLimits: limits,
+    });
+    expect(threadUsageLimits(signedOut.instanceId, [signedOut, other], [], now)).toBeNull();
   });
 
   it("keeps unidentified custom instances separate, filtering by driver", () => {

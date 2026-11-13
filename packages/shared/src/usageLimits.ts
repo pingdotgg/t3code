@@ -1007,8 +1007,8 @@ export function collectProviderUsageLimits(
 }
 
 /**
- * The limits one instance's thread runs against. Another report entry may be a different login or
- * workspace, so a usage-limit source account stands in only when it is the report's only account.
+ * The limits one instance's thread runs against. Another instance's entry is a different login, so
+ * only a usage-limit source account stands in, and only when it is the report's only account.
  */
 export function threadUsageLimits(
   instanceId: ProviderInstanceId,
@@ -1017,9 +1017,10 @@ export function threadUsageLimits(
   now: number,
 ): ServerProviderUsageLimits | null {
   const accounts = collectProviderUsageLimits(instanceId, providers, sources, now)?.accounts ?? [];
+  const [only] = accounts.length === 1 ? accounts : [];
   return (
     accounts.find((entry) => entry.instanceId === instanceId)?.limits ??
     providers.find((provider) => provider.instanceId === instanceId)?.usageLimits ??
-    (accounts.length === 1 ? (accounts[0]?.limits ?? null) : null)
+    (only && only.instanceId === undefined ? only.limits : null)
   );
 }
