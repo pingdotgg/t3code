@@ -1176,9 +1176,9 @@ const make = Effect.gen(function* () {
       ((!adopted && !desktop) || isPdfAssetUrl(snapshot.navStatus.url))
     ) {
       tab.loading = true;
-      const initialUrl = new URL(snapshot.navStatus.url);
-      initialUrl.hash = "";
-      tab.pendingInitialRequestUrl = initialUrl.href;
+      const initialUrl = URL.parse(snapshot.navStatus.url);
+      if (initialUrl) initialUrl.hash = "";
+      tab.pendingInitialRequestUrl = initialUrl?.href ?? null;
       const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
       tab.initialNavigation = (
         (desktop || adopted) && page.url() === snapshot.navStatus.url

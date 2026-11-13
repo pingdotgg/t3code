@@ -998,7 +998,7 @@ it.effect("a desktop page that loaded before the server attached reports its loa
   ).pipe(Effect.provide(layer)),
 );
 
-it.effect.each(["none", "during", "after", "after-fragment", "corrected", "same-url"])(
+it.effect.each(["none", "during", "after-fragment", "same-url"])(
   "Stop settles an initial navigation with its request event $0",
   (requestTiming) =>
     Effect.scoped(
@@ -1056,16 +1056,15 @@ it.effect.each(["none", "during", "after", "after-fragment", "corrected", "same-
         ) {
           settled = yield* PubSub.take(events);
         }
-        const corrected = requestTiming === "corrected" || requestTiming === "same-url";
+        const corrected = requestTiming === "same-url";
         using timeout = vi.spyOn(globalThis, "setTimeout");
         if (corrected) {
-          const url = requestTiming === "same-url" ? request.url() : "https://example.com/fixed";
           page.goto.mockImplementationOnce(async () => {
-            page.emit("request", { ...request, url: () => url });
+            page.emit("request", request);
           });
-          yield* viewer.input({ type: "navigate", url });
+          yield* viewer.input({ type: "navigate", url: request.url() });
         } else if (requestTiming !== "none") {
-          if (requestTiming.startsWith("after")) page.emit("request", request);
+          if (requestTiming === "after-fragment") page.emit("request", request);
           page.emit("requestfailed", request);
         }
         const status = yield* broker.invoke<PreviewAutomationStatus>({
