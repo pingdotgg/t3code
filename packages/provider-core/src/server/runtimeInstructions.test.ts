@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { buildRuntimeInstructions } from "./runtimeInstructions.ts";
+import { AGENT_FEEDBACK_INSTRUCTIONS, buildRuntimeInstructions } from "./runtimeInstructions.ts";
 
 describe("buildRuntimeInstructions", () => {
   it("leaves PR linking to a session that already carries it, and keeps runtime identity", () => {
@@ -51,5 +51,19 @@ describe("buildRuntimeInstructions", () => {
       "For PR waits, no sleep, loops, gh --watch, Monitor or ScheduleWakeup.",
     );
     assert.include(instructions, "call unwatch_pull_request");
+  });
+
+  it("tells agents to report T3 Code problems only when agent feedback is on", () => {
+    assert.notInclude(buildRuntimeInstructions({ harness: "Codex" }), "t3_feedback");
+    for (const pullRequestLinking of [true, false]) {
+      assert.include(
+        buildRuntimeInstructions({
+          harness: "Codex",
+          agentFeedbackEnabled: true,
+          pullRequestLinking,
+        }),
+        AGENT_FEEDBACK_INSTRUCTIONS,
+      );
+    }
   });
 });

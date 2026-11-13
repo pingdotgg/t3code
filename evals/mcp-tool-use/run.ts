@@ -55,6 +55,9 @@ import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/Cont
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
+import { FeedbackToolkit } from "../../apps/server/src/mcp/toolkits/feedback/tools.ts";
+import { FeedbackOffError } from "../../apps/server/src/feedback/FeedbackService.ts";
+import { scrubFeedback } from "../../apps/server/src/feedback/scrubFeedback.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
 import { MessageToolkit } from "../../apps/server/src/mcp/toolkits/message/tools.ts";
@@ -195,6 +198,8 @@ type McpToolUseCall = typeof McpToolUseCall.Type;
 const McpToolUseExpect = Schema.Struct({
   /** Each entry needs one matching call. */
   calls: Schema.optional(Schema.Array(McpToolUseCall)),
+  /** Each entry needs one matching call that did not fail. */
+  succeeds: Schema.optional(Schema.Array(McpToolUseCall)),
   /** Each entry matches a different call, and no call matches two entries; tool names are exact. */
   distinctCalls: Schema.optional(Schema.Array(McpToolUseCall)),
   /** No call may match any entry. */
@@ -276,6 +281,8 @@ const McpToolUseWorld = Schema.StructWithRest(
     deviceAgentAccess: Schema.optional(Schema.Boolean),
     /** false: agent browser access is off. T3 denies every preview call and drops its browser text. */
     browserAgentAccess: Schema.optional(Schema.Boolean),
+    /** Agent feedback is on: T3's text tells agents to report, and `t3_feedback` saves reports. */
+    agentFeedbackEnabled: Schema.optional(Schema.Boolean),
     /** Every capture reaches T3 with adb screencap's warning ahead of the PNG: T3 reports 0×0. */
     deviceInvalidCapture: Schema.optional(Schema.Boolean),
     /** Devices another thread's agent-device session holds, by device id: that thread's id. */
@@ -454,6 +461,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   ProjectToolkit,
   EnvironmentToolkit,
   ThemeToolkit,
+  FeedbackToolkit,
   PreviewControlsToolkit,
   WorktreeToolkit,
   PullRequestsToolkit,
@@ -528,7 +536,12 @@ const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?:
  * `browser` say whether the thread holds the `device` and `preview` capabilities, as agent device
  * and browser access decide.
  */
-const claudeQueryOptions = (model: Model, device = true, browser = true) => {
+const claudeQueryOptions = (
+  model: Model,
+  device = true,
+  browser = true,
+  agentFeedbackEnabled = false,
+) => {
   // Refs whose text follows a capability read its flag; older ones ignore it.
   const input: Parameters<typeof makeClaudeQueryOptions>[0] & {
     readonly deviceToolsAvailable?: boolean;
@@ -539,6 +552,7 @@ const claudeQueryOptions = (model: Model, device = true, browser = true) => {
     resume: false,
     cwd: null,
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
+    agentFeedbackEnabled,
     deviceToolsAvailable: device,
     browserToolsAvailable: browser,
   };
@@ -546,8 +560,13 @@ const claudeQueryOptions = (model: Model, device = true, browser = true) => {
 };
 
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
-export const t3SystemAppend = (model: Model, device = true, browser = true) => {
-  const { systemPrompt } = claudeQueryOptions(model, device, browser);
+export const t3SystemAppend = (
+  model: Model,
+  device = true,
+  browser = true,
+  agentFeedbackEnabled = false,
+) => {
+  const { systemPrompt } = claudeQueryOptions(model, device, browser, agentFeedbackEnabled);
   if (isRecord(systemPrompt) && systemPrompt.type === "preset" && systemPrompt.append) {
     return systemPrompt.append;
   }
@@ -636,6 +655,8 @@ export const buildBase = (
     readonly deviceAccess?: boolean;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
+    /** true: agent feedback is on, so T3's text includes the feedback line. */
+    readonly agentFeedbackEnabled?: boolean;
   },
 ) => {
   const t3 = visibleT3Tools(options);
@@ -661,7 +682,12 @@ export const buildBase = (
   const { model } = options;
   const append = options.nativeSubagent
     ? ""
-    : t3SystemAppend(model, options.deviceAccess, options.browserAccess);
+    : t3SystemAppend(
+        model,
+        options.deviceAccess,
+        options.browserAccess,
+        options.agentFeedbackEnabled,
+      );
   const modelLine = `You are powered by the model named ${MODELS[model]}. The exact model ID is ${model}.`;
   const joined = systemTexts.join("\n");
   // The capture's home directory names its user. Cases use `/home/user` paths instead.
@@ -730,6 +756,8 @@ const buildCodexBase = (
     readonly deviceAccess?: boolean;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
+    /** true: agent feedback is on, so T3's text includes the feedback line. */
+    readonly agentFeedbackEnabled?: boolean;
   },
 ): Base => {
   const t3 = visibleT3Tools(options);
@@ -764,7 +792,11 @@ const buildCodexBase = (
     return [JSON.parse(clean(JSON.stringify(item))) as Block];
   });
   const context = buildCodexAdditionalContext(
-    { model: options.model, reasoningEffort: effort },
+    {
+      model: options.model,
+      reasoningEffort: effort,
+      agentFeedbackEnabled: options.agentFeedbackEnabled ?? false,
+    },
     { browser: options.browserAccess ?? true, device: options.deviceAccess ?? true },
   );
   input.push(
@@ -880,6 +912,8 @@ type Sample = {
   backgroundWait?: BackgroundWait;
   /** Calls so far per mocked tool, for mocks that answer in sequence. */
   readonly mockCalls: Map<string, number>;
+  /** Starts at `world.agentFeedbackEnabled`; the agent may turn it on with preferences_update. */
+  agentFeedbackEnabled: boolean;
 };
 
 const SHELL_TOOLS = new Set(["Bash", "Read", "Edit", "Write", "WebFetch"]);
@@ -926,6 +960,7 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     priorResults: new Map(),
     priorErrors: new Set(),
     mockCalls: new Map(),
+    agentFeedbackEnabled: testCase.setup.world?.agentFeedbackEnabled === true,
   };
 };
 
@@ -1694,6 +1729,27 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     const result = yield* sample.backgroundWait(input);
     return result.isError ? failed(result.text) : toolResult(call.id, result.text);
   }
+  if (isT3Name(call.name) && name === "t3_environment_preferences_update") {
+    const feedback = input.agentFeedback;
+    if (isRecord(feedback) && typeof feedback.enabled === "boolean")
+      sample.agentFeedbackEnabled = feedback.enabled;
+  }
+  if (isT3Name(call.name) && name === "t3_feedback" && (mock === undefined || mock === "default")) {
+    if (!sample.agentFeedbackEnabled) return failed(new FeedbackOffError({}).message);
+    const text = (key: string) => scrubFeedback(valueText(input[key] ?? ""), []);
+    return toolResult(call.id, {
+      id: "019a7b3c-0000-7000-8000-000000000001",
+      threadId: "thread-1",
+      createdAt: `${base.environment.date ?? "2026-01-01"}T12:00:00.000Z`,
+      kind: input.kind,
+      subject: input.subject,
+      expected: text("expected"),
+      actual: text("actual"),
+      workaround: text("workaround"),
+      source: "mcp",
+      sent: true,
+    });
+  }
   // A pasted secret is saved without a card, so a mocked card outcome does not apply.
   if (mock !== undefined && mock !== "default" && !pastedSecret(name, input)) {
     if (name === "request_secret") savedSecretFile(sample, mock);
@@ -1864,6 +1920,14 @@ export const gradeSample = (
     among.some((call) => tool.split("|").includes(call.tool) && matches(args, call.input));
   const label = ({ tool, args }: McpToolUseCall) => (args ? `${tool} ${valueText(args)}` : tool);
   for (const call of expect.calls ?? []) add(`calls ${label(call)}`, found(call));
+  for (const call of expect.succeeds ?? [])
+    add(
+      `succeeds ${label(call)}`,
+      found(
+        call,
+        calls.filter((at) => at.failed !== true),
+      ),
+    );
   if (expect.distinctCalls !== undefined) {
     const expected = expect.distinctCalls.map(({ tool, args }) => ({ tool, input: args ?? {} }));
     add(
@@ -2562,6 +2626,7 @@ const main = Effect.gen(function* () {
     deviceAccess: boolean,
     browserAccess: boolean,
     links: boolean,
+    agentFeedbackEnabled = false,
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
@@ -2574,6 +2639,7 @@ const main = Effect.gen(function* () {
               links,
               deviceAccess,
               browserAccess,
+              agentFeedbackEnabled,
             }),
           ),
         )
@@ -2587,6 +2653,7 @@ const main = Effect.gen(function* () {
               links,
               deviceAccess,
               browserAccess,
+              agentFeedbackEnabled,
             });
             return role === "native-subagent"
               ? Effect.promise(() =>
@@ -2597,19 +2664,29 @@ const main = Effect.gen(function* () {
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}`;
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.world?.agentFeedbackEnabled === true}`;
   const base = yield* buildFor("top", true, true, false);
-  const bases = new Map<string, Base>([["top:true:true:false", base]]);
+  const bases = new Map<string, Base>([["top:true:true:false:false", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
-    const [role = "top", device, browser, links] = key.split(":") as [
+    const [role = "top", device, browser, links, feedback] = key.split(":") as [
       McpToolUseCase["setup"]["role"],
       string,
       string,
       string,
+      string,
     ];
-    bases.set(key, yield* buildFor(role, device === "true", browser === "true", links === "true"));
+    bases.set(
+      key,
+      yield* buildFor(
+        role,
+        device === "true",
+        browser === "true",
+        links === "true",
+        feedback === "true",
+      ),
+    );
   }
   const baseFor = (testCase: McpToolUseCase) => bases.get(baseKey(testCase)) ?? base;
   const effort = flags.effort ?? base.codex?.reasoning.effort ?? "high";

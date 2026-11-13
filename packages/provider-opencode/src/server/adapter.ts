@@ -293,6 +293,7 @@ interface ActiveOpenCodeTurn {
   readonly appThread: OrchestrationV2AppThread;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  readonly agentFeedbackEnabled: boolean;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly providerThreadId: OrchestrationV2ProviderTurn["providerThreadId"];
   readonly runOrdinal: number;
@@ -2486,6 +2487,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             appThread: state.appThread,
             modelSelection: state.appThread.modelSelection,
             runtimePolicy: state.parentSubagent.parentTurn.runtimePolicy,
+            agentFeedbackEnabled: state.parentSubagent.parentTurn.agentFeedbackEnabled,
             providerTurnId,
             providerThreadId: providerTurn.providerThreadId,
             runOrdinal: state.parentSubagent.parentTurn.runOrdinal,
@@ -3480,7 +3482,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             ...(variant === undefined ? {} : { variant }),
             system: [
               orchestrationSystemPrompt,
-              buildRuntimeInstructions({ harness: "OpenCode", model: turn.modelSelection.model }),
+              buildRuntimeInstructions({
+                harness: "OpenCode",
+                model: turn.modelSelection.model,
+                agentFeedbackEnabled: turn.agentFeedbackEnabled,
+              }),
             ]
               .filter(Boolean)
               .join("\n\n"),
@@ -3752,6 +3758,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 appThread: turnInput.appThread,
                 modelSelection: turnInput.modelSelection,
                 runtimePolicy: turnInput.runtimePolicy,
+                agentFeedbackEnabled: turnInput.agentFeedbackEnabled ?? false,
                 providerTurnId,
                 providerThreadId: turnInput.providerThread.id,
                 runOrdinal: turnInput.runOrdinal,

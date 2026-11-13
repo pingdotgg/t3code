@@ -2179,6 +2179,7 @@ export function makeClaudeQueryOptions(input: {
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  readonly agentFeedbackEnabled?: boolean;
   /** The thread's T3 MCP session holds the `device` capability. */
   readonly deviceToolsAvailable?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
@@ -2331,7 +2332,10 @@ export function makeClaudeQueryOptions(input: {
       type: "preset" as const,
       preset: "claude_code" as const,
       append: [
-        buildRuntimeInstructions({ harness: "Claude Code" }) +
+        buildRuntimeInstructions({
+          harness: "Claude Code",
+          agentFeedbackEnabled: input.agentFeedbackEnabled ?? false,
+        }) +
           (input.mcpServers === undefined
             ? ""
             : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
@@ -12836,6 +12840,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
           const queryOptions = makeClaudeQueryOptions({
+            agentFeedbackEnabled: turnInput.agentFeedbackEnabled ?? false,
             modelSelection: turnInput.modelSelection,
             modelCatalog: catalog,
             nativeThreadId,
