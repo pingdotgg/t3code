@@ -10739,6 +10739,67 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
+    it.effect(
+      "command approvals with a reason still show the command, cwd and network target",
+      () =>
+        Effect.gen(function* () {
+          const commandRequest = (
+            id: number,
+            itemId: string,
+            params: Partial<CodexSchema.CommandExecutionRequestApprovalParams>,
+          ): Array<CodexReplay.CodexAppServerReplayEntry> => [
+            {
+              type: "emit_inbound",
+              label: `command ${itemId}`,
+              frame: {
+                id,
+                method: "item/commandExecution/requestApproval",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  itemId,
+                  startedAtMs: 2,
+                  reason: "Read the documentation",
+                  ...params,
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: `command ${itemId}`,
+              frame: { id, result: { decision: "accept" } },
+            },
+          ];
+          const { harness, answerNext } = yield* startApprovalTurn("command-approval-context", [
+            ...commandRequest(0, "shell", { command: "printf reviewed > out.txt", cwd: "/w/pkg" }),
+            ...commandRequest(1, "network", {
+              networkApprovalContext: { host: "example.invalid", protocol: "https" },
+            }),
+            turnCompleted(nativeTurnId),
+          ]);
+          const shell = yield* answerNext;
+          const network = yield* answerNext;
+          yield* harness.firstTerminal;
+
+          const shellPrompt = approvalItem(harness.events, shell)?.prompt ?? "";
+          const networkPrompt = approvalItem(harness.events, network)?.prompt ?? "";
+          assert.include(shellPrompt, "printf reviewed > out.txt");
+          assert.include(shellPrompt, "/w/pkg");
+          assert.include(networkPrompt, "example.invalid");
+          assert.include(networkPrompt, "https");
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+    );
+
     it.effect("classifies permission requests that only list sandbox entries", () =>
       Effect.gen(function* () {
         const permissionRequest = (
