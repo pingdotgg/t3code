@@ -283,6 +283,14 @@ describe("Antigravity sign-in errors", () => {
         }),
       ),
     ).toBe(true);
+    // agy CLI 1.5.x answers `authenticate` this way on a host without a display.
+    expect(
+      isAntigravitySignInRequiredError(
+        AcpErrors.AcpRequestError.internalError(
+          "No browser is available here (no graphical display is available to open a browser). Run `agy acp --login` in a terminal on this machine, then retry; or use a Gemini API key.",
+        ),
+      ),
+    ).toBe(true);
   });
 
   it("does not treat other failures or arbitrary text as missing authentication", () => {
