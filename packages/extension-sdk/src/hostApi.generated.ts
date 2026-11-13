@@ -419,6 +419,7 @@ type Wire33 =
       readonly taskId: string;
       readonly description?: Wire8;
       readonly parentTaskId?: Wire8;
+      readonly nativeItemId?: Wire8;
       readonly awaited?: Wire35;
       readonly kind: "subagent";
       readonly providerInstanceId?: string | undefined;
@@ -431,6 +432,7 @@ type Wire33 =
       readonly taskId: string;
       readonly description?: Wire8;
       readonly parentTaskId?: Wire8;
+      readonly nativeItemId?: Wire8;
       readonly awaited?: Wire35;
       readonly kind: "command";
     }
@@ -441,6 +443,7 @@ type Wire33 =
       readonly taskId: string;
       readonly description?: Wire8;
       readonly parentTaskId?: Wire8;
+      readonly nativeItemId?: Wire8;
       readonly awaited?: Wire35;
       readonly kind: "monitor";
     }
@@ -451,6 +454,7 @@ type Wire33 =
       readonly taskId: string;
       readonly description?: Wire8;
       readonly parentTaskId?: Wire8;
+      readonly nativeItemId?: Wire8;
       readonly awaited?: Wire35;
       readonly kind: "background_task";
     }
@@ -461,6 +465,7 @@ type Wire33 =
       readonly taskId: string;
       readonly description?: Wire8;
       readonly parentTaskId?: Wire8;
+      readonly nativeItemId?: Wire8;
       readonly awaited?: Wire35;
       readonly kind?: string | undefined;
     };
@@ -2743,6 +2748,7 @@ export type ServerSettings = {
   readonly responseStreamingMode?: Wire128 | undefined;
   readonly enableProviderUpdateChecks?: Wire6;
   readonly continueThreadsAfterServerUpdate?: Wire6;
+  readonly keepAwakeWhileAgentsWork?: Wire6;
   readonly enableAgentBrowserAccess?: Wire6;
   readonly cloudSpeechCredentials?:
     | { readonly openai?: Wire129; readonly xai?: Wire129; readonly openrouter?: Wire129 }
@@ -2923,6 +2929,7 @@ export type ServerSettingsPatch = {
   readonly responseStreamingMode?: Wire128;
   readonly enableProviderUpdateChecks?: boolean;
   readonly continueThreadsAfterServerUpdate?: boolean;
+  readonly keepAwakeWhileAgentsWork?: boolean;
   readonly enableAgentBrowserAccess?: boolean;
   readonly cloudSpeechCredentials?: {
     readonly openai?: Wire130;
