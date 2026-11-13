@@ -1815,7 +1815,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
     yield* prepareWebview(wc);
     yield* registerWebviewUnlocked(tabId, wc.id, tabLifecycleGenerations.get(tabId));
-    if (background.url !== undefined) {
+    // A navigation that arrived during setup is newer; registration already loads it.
+    const navStatus = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.navStatus;
+    if (background.url !== undefined && navStatus?.kind !== "Loading") {
       runFork(
         attemptPromise({ operation: "backgroundWindow.load", tabId, webContentsId: wc.id }, () =>
           wc.loadURL(background.url!),
