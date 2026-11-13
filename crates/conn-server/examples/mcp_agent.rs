@@ -49,7 +49,7 @@ async fn run(state_dir: &Path, project: &Path, config_out: &Path) {
         engine: Some(engine.clone()),
         providers: vec![provider],
         environment: Some(environment.clone()),
-        mcp: None,
+        ..Deps::default()
     };
     deps.mcp = mcp::service(&deps);
     let service = deps.mcp.clone().expect("mcp service");

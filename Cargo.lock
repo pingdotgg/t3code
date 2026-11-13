@@ -190,9 +190,21 @@ dependencies = [
  "conn-provider",
  "conn-provider-claude",
  "conn-provider-codex",
+ "conn-vcs",
  "conn-wire",
  "getrandom",
  "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
+name = "conn-vcs"
+version = "0.1.0"
+dependencies = [
+ "conn-contract",
  "serde",
  "serde_json",
  "sha2",

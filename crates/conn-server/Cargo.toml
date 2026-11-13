@@ -18,6 +18,7 @@ conn-provider.workspace = true
 conn-provider-claude.workspace = true
 conn-provider-codex = { path = "../conn-provider-codex" }
 conn-mcp = { path = "../conn-mcp" }
+conn-vcs.workspace = true
 axum = { workspace = true, features = ["form"] }
 # Already in the tree through tungstenite; fills tokens from the OS random source.
 getrandom = "0.3"

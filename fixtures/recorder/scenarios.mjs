@@ -1,3 +1,7 @@
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 // Scenario drivers. Each gets a fresh page in a shared browser context, so scenario 2 onward
 // reuses the session cookie that scenario 1 earned by pairing.
 
@@ -430,6 +434,7 @@ async function settingsAndAccess(ctx, rust) {
   await ctx.shotAlways("revoked");
 }
 
+/**
  * The same scenario against a paired TypeScript server (`ts-*`) or the Conn Server (`rust-*`),
  * so the recordings and screenshots of the two compare side by side.
  */
@@ -492,6 +497,118 @@ const search = both(async (ctx, _target, projectName) => {
   await ctx.page.keyboard.press("Escape");
 });
 
+/**
+ * Gives a target's scratch project a feature branch with one commit, an edited tracked file and
+ * an untracked file, so status, refs and the diff have something to show.
+ */
+function prepareVcsRepo(project) {
+  const git = (...a) =>
+    NodeChildProcess.execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=rec",
+        "-c",
+        "user.email=rec@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        ...a,
+      ],
+      { cwd: project, stdio: "ignore" },
+    );
+  git("branch", "other");
+  git("checkout", "-q", "-b", "feature/review");
+  NodeFS.writeFileSync(NodePath.join(project, "README.md"), "# scratch\n\nA committed line.\n");
+  git("commit", "-qam", "Add a line");
+  NodeFS.writeFileSync(
+    NodePath.join(project, "README.md"),
+    "# scratch\n\nA committed line.\nAn uncommitted line.\n",
+  );
+  NodeFS.writeFileSync(NodePath.join(project, "notes.txt"), "untracked\n");
+}
+
+/**
+ * The VCS views on a paired environment: the draft's branch, the branch picker, and the diff
+ * panel. The same steps run against the T3 server (`vcs`) and the Conn Server (`rust-vcs`).
+ */
+async function vcsViews(ctx, target, projectName) {
+  await pairTarget(ctx, target);
+  await ctx.page.goto(`${ctx.server.origin}/`);
+  await settle(ctx, 3000, 30_000);
+  await ctx.page.getByRole("button", { name: "New thread", exact: true }).first().click();
+  await ctx.page.getByRole("dialog").getByText(projectName, { exact: true }).first().click();
+  await ctx.page.waitForURL((u) => u.pathname.startsWith("/draft/"), { timeout: 15_000 });
+  await settle(ctx, 3000, 30_000);
+  await ctx.shotAlways("draft");
+  await dump(ctx, "draft");
+  // The composer footer's branch control is a combobox-role button.
+  const branch = ctx.page
+    .locator("button", { hasText: "feature/review" })
+    .locator("visible=true")
+    .last();
+  await branch.waitFor({ timeout: 30_000 });
+  await branch.click();
+  await ctx.page
+    .getByText("other", { exact: true })
+    .locator("visible=true")
+    .first()
+    .waitFor({ timeout: 30_000 });
+  await settle(ctx, 2000, 15_000);
+  await ctx.shotAlways("branches");
+  await dump(ctx, "branches");
+  await ctx.page.keyboard.press("Escape");
+  // The diff opens from a server thread only, so one short Haiku turn makes one.
+  await ctx.page
+    .getByRole("button", { name: /^(GPT|Claude|Codex)/ })
+    .locator("visible=true")
+    .first()
+    .click();
+  await ctx.page.getByPlaceholder("Search models...").fill("Haiku 5.5");
+  await ctx.page
+    .getByRole("option", { name: /Claude Haiku 5\.5/ })
+    .first()
+    .click();
+  await ctx.page.keyboard.press("Escape");
+  await send(ctx, "Reply with exactly: ok");
+  await waitTurnEnd(ctx);
+  await ctx.page
+    .locator("button", { hasText: /^Changes/ })
+    .locator("visible=true")
+    .first()
+    .click();
+  await ctx.page
+    .getByText("notes.txt")
+    .locator("visible=true")
+    .first()
+    .waitFor({ timeout: 30_000 });
+  await settle(ctx, 3000, 30_000);
+  // Expanding a file loads its own patch (`review.getDiffPreview` with `file`).
+  // Expand by the row's chevron; the file name itself opens the file viewer.
+  const name = await ctx.page.getByText("README.md").locator("visible=true").last().boundingBox();
+  await ctx.page.mouse.click(name.x - 40, name.y + name.height / 2);
+  await ctx.page
+    .getByText("An uncommitted line.")
+    .locator("visible=true")
+    .first()
+    .waitFor({ timeout: 30_000 });
+  await settle(ctx, 2000, 15_000);
+  await ctx.shotAlways("diff");
+  await dump(ctx, "diff");
+}
+
+async function vcs(ctx) {
+  const target = await ctx.startServer("ts-project", prepareVcsRepo);
+  await vcsViews(ctx, target, "ts-project");
+}
+
+async function rustVcs(ctx) {
+  const target = await ctx.startRustServer(undefined, prepareVcsRepo);
+  const start = ctx.memory(target, "started");
+  await vcsViews(ctx, target, "rust-project");
+  // Status and branch streams are open on the project here.
+  ctx.log(`memory KB ${JSON.stringify({ start, diff: ctx.memory(target, "diff-open") })}`);
+}
+
 export const SCENARIOS = {
   pairing,
   reconnect,
@@ -512,4 +629,6 @@ export const SCENARIOS = {
   "rust-queue": queued.rust,
   "ts-search": search.ts,
   "rust-search": search.rust,
+  vcs,
+  "rust-vcs": rustVcs,
 };

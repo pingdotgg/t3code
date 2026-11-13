@@ -15,7 +15,7 @@ mod projects;
 pub mod provider;
 pub mod server;
 mod terminal;
-mod vcs;
+pub mod vcs;
 
 /// Services handlers may use. `None` until the owning track wires it in `main.rs`.
 #[derive(Clone, Default)]
@@ -26,6 +26,7 @@ pub struct Deps {
     pub environment: Option<Arc<Environment>>,
     /// `/mcp`; `serve.rs` builds it with `routes::mcp::service`.
     pub mcp: Option<Arc<conn_mcp::McpService>>,
+    pub vcs: vcs::VcsShared,
 }
 
 pub fn register_all(table: &mut MethodTable, deps: &Deps) {

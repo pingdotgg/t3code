@@ -131,7 +131,7 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
         engine: Some(engine.clone()),
         providers,
         environment: Some(environment.clone()),
-        mcp: None,
+        ..Deps::default()
     };
     deps.mcp = crate::routes::mcp::service(&deps);
     let state = AppState {
