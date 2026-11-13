@@ -475,6 +475,31 @@ describe("scoped settings writes", () => {
     });
   });
 
+  // regression: #35093 client settings saved in project scope overwrote the global default
+  it("refuses client-only keys at project scope", () => {
+    for (const scope of [project, checkout]) {
+      expect(
+        planScopedSettingsPatch(scope, environments, {
+          browserDefaultViewport: { _tag: "freeform", width: 1440, height: 900 },
+        }),
+      ).toMatchObject({
+        clientPatch: {},
+        hasClientWrite: false,
+        serverWrites: [],
+        unavailableReason:
+          "This setting is environment-wide and cannot be overridden by a project.",
+      });
+      expect(
+        planScopedSettingsPatch(
+          scope,
+          environments,
+          { fontSizeInterface: 15 },
+          { deviceOnly: true },
+        ),
+      ).toMatchObject({ clientPatch: { fontSizeInterface: 15 }, unavailableReason: null });
+    }
+  });
+
   it("clears overrides per member and removes an emptied entry", () => {
     const withOverrides = environment("Server", {
       settings: {
@@ -828,7 +853,12 @@ describe("model selections across environments' provider instances", () => {
   const from = (
     providersByEnvironment: ReadonlyMap<EnvironmentId, ServerProvider[]>,
     { environmentId, serverConfig } = laptop,
-  ) => ({ target: { environmentId, settings: serverConfig!.settings }, providersByEnvironment });
+  ) => ({
+    modelSource: {
+      target: { environmentId, settings: serverConfig!.settings },
+      providersByEnvironment,
+    },
+  });
   const luna = { instanceId: laptopCodex.instanceId, model: "gpt-6-luna" };
   const keys = SCOPED_MODEL_SETTING_KEYS;
   const forKeys = <T>(value: T, only: readonly string[] = keys) =>
