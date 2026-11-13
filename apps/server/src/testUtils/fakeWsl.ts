@@ -27,7 +27,6 @@ export const makeFakeWslHost = Effect.gen(function* () {
   const environment = {
     ...HostProcess.Environment.defaultValue(),
     PATH: `${binDir}:${HostProcess.Environment.defaultValue().PATH ?? ""}`,
-    WSL_DISTRO_NAME: "Ubuntu",
   };
   const underWsl = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
