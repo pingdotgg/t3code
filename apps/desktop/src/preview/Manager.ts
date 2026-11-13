@@ -444,6 +444,9 @@ type FindResultListener = (event: DesktopPreviewFindResultEvent) => Effect.Effec
 
 const PAGE_FIRST_FORWARDED_COMMANDS: ReadonlySet<PreviewForwardedShortcut["command"]> = new Set([
   "preview.find",
+  "preview.zoomIn",
+  "preview.zoomOut",
+  "preview.resetZoom",
 ]);
 
 const decodePageShortcutKeys = Schema.decodeUnknownOption(
@@ -1553,7 +1556,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         });
       if (forwarded && host) {
         // The page keeps these keys. Only the main-frame preload can report one it
-        // left unhandled, so a focused iframe (e.g. Google Docs' input) keeps its own find.
+        // left unhandled, so a focused iframe (e.g. Google Docs' input) keeps its own find or zoom.
         if (PAGE_FIRST_FORWARDED_COMMANDS.has(forwarded.command)) return;
         event.preventDefault();
         if (!input.isAutoRepeat) {

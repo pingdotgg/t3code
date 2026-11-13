@@ -820,7 +820,7 @@ describe("PreviewManager", () => {
     ["linux", false],
     ["win32", false],
   ] as const)(
-    "lets the page and its iframes claim the find shortcut before the host opens find on %s",
+    "lets the page and its iframes claim the find and zoom shortcuts before the host acts on %s",
     ([platform, usesMeta]) =>
       withManager(
         (manager) =>
@@ -838,8 +838,23 @@ describe("PreviewManager", () => {
             yield* manager.registerWebview("tab_page_find", 42);
             yield* manager.setForwardedShortcuts([
               { command: "preview.find", shortcut: parseKeybindingShortcut("mod+f")! },
+              { command: "preview.zoomIn", shortcut: parseKeybindingShortcut("mod+=")! },
             ]);
             const beforeInput = preview.listeners.get("before-input-event")!;
+            const keepsZoom = vi.fn();
+            beforeInput(
+              { preventDefault: keepsZoom } as never,
+              {
+                type: "keyDown",
+                key: "=",
+                code: "Equal",
+                meta: usesMeta,
+                control: !usesMeta,
+                shift: false,
+                alt: false,
+              } as never,
+            );
+            expect(keepsZoom).not.toHaveBeenCalled();
             const findKey = {
               type: "keyDown",
               key: "f",
