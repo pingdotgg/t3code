@@ -9,8 +9,10 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
   type ModelSelection,
@@ -2257,6 +2259,126 @@ it.effect("keeps a queued message queued when promoted into a run that Stop reac
       assert.isTrue(queued?.queueHeld);
     }).pipe(Effect.provide(layer));
   }),
+);
+
+it.effect.each(["ordinary", "goal-steer", "goal-promotion", "goal-restart"] as const)(
+  "queues a steer and puts a promoted message first while the turn waits on the person: %s",
+  (route) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+          `steering-pending-request-${route}`,
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const sink = yield* EventSink.EventSinkV2;
+          const threadId = yield* startFirstTurn;
+          const first = started[0]!;
+          const messageText = (id: string) =>
+            ((route === "goal-steer" || route === "goal-restart") && id === "steered") ||
+            (route === "goal-promotion" && id === "promoted")
+              ? "/goal ship it"
+              : id;
+          const send = (id: string, delivery: "queue" | "steer") =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(id),
+              threadId,
+              messageId: MessageId.make(`message:${id}`),
+              text: messageText(id),
+              attachments: [],
+              modelSelection: runSelection,
+              ...(delivery === "queue"
+                ? { dispatchMode: { type: "queue_after_active" } }
+                : {
+                    dispatchMode: { type: "start_immediately" },
+                    deliveryIntent:
+                      route === "goal-restart" && id === "steered" ? "restart" : "steer",
+                  }),
+              createdBy: "user",
+              creationSource: "web",
+            });
+          yield* send("queued", "queue");
+          yield* send("promoted", "queue");
+          const promotedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.userMessageId === MessageId.make("message:promoted"),
+          )!;
+          const now = yield* DateTime.now;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make("request:question"),
+                type: "runtime-request.updated",
+                threadId,
+                runId: first.runId,
+                nodeId: first.rootNodeId,
+                occurredAt: now,
+                payload: {
+                  id: RuntimeRequestId.make("request:question"),
+                  nodeId: first.rootNodeId,
+                  providerTurnId: null,
+                  nativeRequestRef: null,
+                  kind: "user_input",
+                  status: "pending",
+                  responseCapability: {
+                    type: "live",
+                    providerSessionId: ProviderSessionId.make("session:waiting"),
+                  },
+                  createdAt: now,
+                  resolvedAt: null,
+                },
+              },
+            ],
+          });
+
+          yield* orchestrator.dispatch({
+            type: "queued-message.promote-to-steer",
+            commandId: CommandId.make("promote"),
+            threadId,
+            queuedRunId: promotedRun.id,
+            targetRunId: first.runId,
+          });
+          yield* send("steered", "steer");
+          yield* worker.drain();
+
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          if (route === "goal-restart") {
+            assert.isTrue(
+              projection.turnItems.some((item) => item.type === "run_interrupt_request"),
+            );
+            assert.deepEqual(
+              started.map((turn) => turn.message.text),
+              ["first", "/goal ship it"],
+            );
+            assert.deepEqual(
+              projection.runtimeRequests.map((request) => request.status),
+              ["cancelled"],
+            );
+            return;
+          }
+          assert.isFalse(
+            projection.turnItems.some((item) => item.type === "run_interrupt_request"),
+          );
+          assert.deepEqual(steered, []);
+          assert.equal(started.length, 1);
+          assert.deepEqual(
+            projection.runs
+              .filter((run) => run.status === "queued")
+              .sort((left, right) => (left.queuePosition ?? 0) - (right.queuePosition ?? 0))
+              .map(
+                (run) =>
+                  projection.messages.find((message) => message.id === run.userMessageId)?.text,
+              ),
+            ["promoted", "queued", "steered"].map(messageText),
+          );
+          assert.deepEqual(
+            projection.runtimeRequests.map((request) => request.status),
+            ["pending"],
+          );
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
 );
 
 // regression: #32891 a restart that Stop already reached is lost
