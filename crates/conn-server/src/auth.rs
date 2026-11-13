@@ -611,9 +611,20 @@ impl AuthStore {
                 client: session.client.clone(),
             };
             let id = session.id.clone();
+            // `replaceActiveForSubjectAndMethod`: the desktop holds one session at a time.
             let written = self.write(|state| {
+                let mut changes = Vec::new();
+                state.sessions.retain(|_, s| {
+                    let replaced =
+                        s.subject == SUBJECT_DESKTOP_BOOTSTRAP && s.method == session.method;
+                    if replaced {
+                        changes.push(AccessChange::ClientRemoved(s.id.clone()));
+                    }
+                    !replaced
+                });
                 state.sessions.insert(hash(&token), session);
-                vec![AccessChange::ClientUpserted(id)]
+                changes.push(AccessChange::ClientUpserted(id));
+                changes
             });
             return match written {
                 Ok(()) => Ok(issued),
@@ -1695,6 +1706,38 @@ mod tests {
                 .exchange("ignored", None, ClientInfo::default())
                 .is_err()
         );
+    }
+
+    /// `replaceActiveForSubjectAndMethod`: each desktop exchange replaces the desktop's
+    /// earlier session, so they do not pile up. Other sessions stay.
+    #[test]
+    fn a_desktop_exchange_replaces_the_earlier_desktop_session() {
+        let store = AuthStore::in_memory();
+        store.set_desktop_bootstrap(DesktopBootstrap::new("desktop-token".into(), None, false));
+        let other = store
+            .issue_session(SessionRequest {
+                scopes: vec!["access:read".into()],
+                label: None,
+                subject: None,
+                ttl_ms: SESSION_TTL_MS,
+            })
+            .unwrap();
+        let first = store
+            .exchange("desktop-token", None, ClientInfo::default())
+            .unwrap();
+        let mut changes = store.subscribe();
+        let second = store
+            .exchange("desktop-token", None, ClientInfo::default())
+            .unwrap();
+        assert_eq!(store.authenticate_bearer(&first.token), None);
+        assert!(store.authenticate_bearer(&second.token).is_some());
+        assert!(store.authenticate_bearer(&other.token).is_some());
+        assert_eq!(store.client_sessions(None).len(), 2);
+        let mut seen = Vec::new();
+        while let Ok(change) = changes.try_recv() {
+            seen.push(change);
+        }
+        assert!(seen.contains(&AccessChange::ClientRemoved(first.principal.session_id)));
     }
 
     #[test]
