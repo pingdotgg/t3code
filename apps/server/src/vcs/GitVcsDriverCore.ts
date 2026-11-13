@@ -2714,7 +2714,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             { env, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
           ).pipe(Effect.map((stdout) => stdout.trim()));
           if (stagedSummary.length === 0) {
-            return null;
+            // Like git commit, a merge resolved to HEAD's tree still records its merge commit.
+            const mergeHead = yield* executeGit(
+              "GitVcsDriver.prepareCommitContext.mergeHead",
+              cwd,
+              ["rev-parse", "--verify", "--quiet", "MERGE_HEAD"],
+              { allowNonZeroExit: true },
+            );
+            if (mergeHead.exitCode !== 0) return null;
           }
 
           // A user-supplied message needs change detection, but no patch for generation.
