@@ -88,6 +88,15 @@ describe("1Password driver", () => {
     }).pipe(Effect.provide(op.layer));
   });
 
+  it.effect("reads a whitespace-only secret verbatim", () => {
+    const op = fakeOp(() => ({ stdout: " " }));
+    return Effect.gen(function* () {
+      assert.deepStrictEqual(yield* driver.read({ account }, ["op://Private/Router/password"]), [
+        " ",
+      ]);
+    }).pipe(Effect.provide(op.layer));
+  });
+
   it.effect("reads a failed reference as undefined", () => {
     const op = fakeOp(() => ({ code: 1, stderr: "[ERROR] account is locked" }));
     return Effect.gen(function* () {
@@ -102,15 +111,17 @@ describe("1Password driver", () => {
       injectFrom({
         "op://Private/OpenAI/credential": "sk-a",
         "op://Private/Anthropic/key": " sk-b\n",
+        "op://Private/Router/password": " \t",
       }),
     );
     return Effect.gen(function* () {
       const values = yield* driver.read({ account }, [
         "op://Private/OpenAI/credential",
         "op://Private/Anthropic/key",
+        "op://Private/Router/password",
       ]);
 
-      assert.deepStrictEqual(values, ["sk-a", " sk-b\n"]);
+      assert.deepStrictEqual(values, ["sk-a", " sk-b\n", " \t"]);
       assert.strictEqual(op.invocations.length, 1);
       assert.deepStrictEqual(op.invocations[0]?.slice(0, 3), [
         "--cache=false",
