@@ -45,3 +45,10 @@
 - Why: preferring the emptier account started both 5-hour windows at the same time, so both ran out together. Staggered windows let one refresh while the other is in use.
 - Numbers: 11 routing tests (3 new), a mutation check (dropping the 90% rule fails 3 tests).
 - Next: watch real routing on the hub for a day of use.
+
+## 2026-11-13: Auto levels on every machine
+
+- What: every Claude provider on a fork server lists Auto Low, Medium and High as built-in models, so Auto needs no settings. The model picker pins the three levels at the top of Favorites, from the first Claude instance that lists them, until the user stars an Auto level themselves.
+- Why: Tomáš wants Auto in every thread, including threads that run on his PC's own T3 server, which has none of the hub's settings.
+- Numbers: 1 new server test, 3 new picker tests; server and web typecheck clean (6 min and 62 s on the hub).
+- Next: Tomáš builds the fork desktop app on his PC; Auto there routes only to the providers logged in on that PC.
