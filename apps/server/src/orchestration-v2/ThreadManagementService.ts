@@ -332,7 +332,7 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
   "ThreadManagementBackgroundWaitError",
   {
     threadId: ThreadId,
-    reason: Schema.Literals(["unsupported", "unavailable", "failed"]),
+    reason: Schema.Literals(["unsupported", "unavailable", "failed", "unmatched"]),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -344,6 +344,8 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
         return "This thread has no live provider session.";
       case "failed":
         return "Failed to update the awaited background work.";
+      case "unmatched":
+        return "None of these IDs is running background work on this thread, so this request registers no wait for them. If the task already finished, read its output now. Otherwise pass the task ID of a background command or Monitor you started. Subagent, Agent tool, and delegate_task IDs don't go here.";
     }
   }
 }
@@ -687,7 +689,15 @@ const make = Effect.gen(function* () {
   const transcriptExportPermits = yield* Semaphore.make(2);
   const getThreadTranscript = Effect.fn("orchestrationV2.threadManagement.getThreadTranscript")(
     function* (threadId: ThreadId) {
-      const { projection } = yield* getThreadSnapshot(threadId);
+      yield* ensureProjectionTranscript(threadId);
+      const byteFloor = yield* orchestrator.getTranscriptByteFloor(
+        threadId,
+        PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+      );
+      if (byteFloor > PROVIDER_SEND_TURN_MAX_FILE_BYTES) {
+        return yield* new ThreadTranscriptTooLargeError({ threadId });
+      }
+      const { projection } = yield* orchestrator.getThreadSnapshot(threadId);
       const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
       const transcript = {
         threadId: projection.thread.id,
@@ -1495,6 +1505,12 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
+    if (input.awaited && matched.length === 0) {
+      return yield* new ThreadManagementBackgroundWaitError({
+        threadId: input.threadId,
+        reason: "unmatched",
+      });
+    }
     const matchedIds = new Set(matched);
     return { matched, unmatched: input.taskIds.filter((taskId) => !matchedIds.has(taskId)) };
   });
