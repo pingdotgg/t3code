@@ -554,7 +554,7 @@ const pollerByCache = new WeakMap<Atom.Atom<unknown>, Atom.Atom<unknown>>();
 
 /**
  * Polls only while read: keep this outside every idle TTL so the timer ends with the last
- * reader. A returning reader gets any poll it missed right away.
+ * reader. A returning reader gets a poll it missed right away.
  */
 const refreshEveryUntilFinal =
   <V extends AsyncResult.AsyncResult<unknown, unknown>>(
@@ -566,19 +566,25 @@ const refreshEveryUntilFinal =
       self,
       (get) => {
         const result = get(self);
-        if (!isFinal(result)) {
-          const lastSuccess = AsyncResult.isSuccess(result)
-            ? Option.some(result)
-            : AsyncResult.isFailure(result)
-              ? result.previousSuccess
-              : Option.none();
-          const delay =
-            Option.isSome(get.self()) || result.waiting || Option.isNone(lastSuccess)
-              ? intervalMs
-              : // @effect-diagnostics-next-line globalDate:off - AsyncResult timestamps use wall time outside an Effect runtime.
-                Math.max(0, intervalMs - (Date.now() - lastSuccess.value.timestamp));
+        if (isFinal(result)) return result;
+        const age =
+          Option.isNone(get.self()) && AsyncResult.isSuccess(result) && !result.waiting
+            ? // @effect-diagnostics-next-line globalDate:off - AsyncResult timestamps use wall time outside an Effect runtime.
+              Date.now() - result.timestamp
+            : 0;
+        if (age >= intervalMs) {
+          // Queued behind any revalidation this mount started; a refresh it makes rebuilds this
+          // node and cancels the catch-up.
+          let active = true;
+          get.addFinalizer(() => {
+            active = false;
+          });
+          get.registry.schedulerAsync.makeDispatcher().scheduleTask(() => {
+            if (active) get.refresh(self);
+          }, 0);
+        } else {
           // @effect-diagnostics-next-line globalTimers:off - Mirrors `Atom.withRefresh`, outside an Effect runtime.
-          const handle = setTimeout(() => get.refresh(self), delay);
+          const handle = setTimeout(() => get.refresh(self), intervalMs - age);
           get.addFinalizer(() => clearTimeout(handle));
         }
         return result;
