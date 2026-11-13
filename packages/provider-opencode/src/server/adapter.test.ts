@@ -43,6 +43,7 @@ import type * as ProviderEventLoggers from "@t3tools/provider-core/server/Provid
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 
 import {
   advanceOpenCodePromptAdmission,
@@ -202,6 +203,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     text = "hello",
     startProviderThread: OrchestrationV2ProviderThread = providerThread,
     turnPolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy = policy,
+    override: Partial<ProviderAdapter.ProviderAdapterV2TurnInput> = {},
   ) =>
     runtime.startTurn({
       appThread: {
@@ -243,6 +245,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
       },
       modelSelection,
       runtimePolicy: turnPolicy,
+      ...override,
     });
   return {
     nativeSessionId,
@@ -608,6 +611,120 @@ describe("OpenCodeAdapterV2", () => {
       );
       assert.equal(terminal?.status, "failed");
       assert.equal(terminal?.failure?.class, "usage_limit");
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
+  // Event order from a live 1.19.5 run: a finished background task prompts the idle session.
+  it.effect.each([
+    { case: "is still working when its run starts", endedFirst: false },
+    { case: "ended before its run started", endedFirst: true },
+  ])("gives a turn OpenCode starts on its own a run of its own ($case)", ({ endedFirst }) =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
+      const root = "ses_root";
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const prompts: Array<string> = [];
+      const harness = yield* makeOpenCodeRuntimeHarness("wake", root, {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
+          promptAsync: async (input: { messageID: string }) => {
+            prompts.push(input.messageID);
+            return { data: true };
+          },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      }).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) => Effect.sync(() => void offers.push(request)),
+          take: Effect.never,
+        }),
+      );
+      const runEvents = harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const message = (id: string, info: object) => ({
+        type: "message.updated",
+        properties: { sessionID: root, info: { id, sessionID: root, ...info } },
+      });
+      const text = (messageID: string, part: object) => ({
+        type: "message.part.updated",
+        properties: {
+          sessionID: root,
+          part: { id: `prt_${messageID}`, sessionID: root, messageID, type: "text", ...part },
+        },
+      });
+      const status = (type: "busy" | "idle") => ({
+        type: "session.status",
+        properties: { sessionID: root, status: { type } },
+      });
+
+      yield* harness.startTurn();
+      const firstRun = yield* runEvents;
+      yield* push(message(prompts[0]!, { role: "user", time: { created: 1 } }));
+      yield* push(status("busy"));
+      yield* push(status("idle"));
+      yield* Fiber.join(firstRun);
+
+      yield* push(message("msg_progress_note", { role: "user", time: { created: 2 } }));
+      assert.deepEqual(offers, [], "a prompt that asks for no reply starts no turn");
+      yield* push(message("msg_task_result", { role: "user", time: { created: 2 } }));
+      yield* push(
+        text("msg_task_result", { synthetic: true, text: "CHILD_OK", time: { start: 2 } }),
+      );
+      yield* push(status("busy"));
+      const reply = { role: "assistant", parentID: "msg_task_result" };
+      yield* push(message("msg_reply", { ...reply, time: { created: 3 } }));
+      yield* push(text("msg_reply", { text: "WAKE", time: { start: 3 } }));
+      const finish = Effect.gen(function* () {
+        yield* push(text("msg_reply", { text: "WAKE_OK", time: { start: 3, end: 4 } }));
+        yield* push(message("msg_reply", { ...reply, time: { created: 3, completed: 4 } }));
+        yield* push(status("idle"));
+      });
+      if (endedFirst) yield* finish;
+      assert.deepEqual(
+        offers.map((offer) => [offer.threadId, offer.delivery]),
+        [[harness.threadId, "adapter_buffered"]],
+      );
+
+      const wakeRun = yield* runEvents;
+      yield* harness.startTurn(
+        "Background task completed.",
+        harness.providerThread,
+        harness.policy,
+        {
+          runId: RunId.make("run-opencode-wake-2"),
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+          attemptId: RunAttemptId.make("attempt-opencode-wake-2"),
+          rootNodeId: NodeId.make("node-opencode-wake-2"),
+          message: {
+            createdBy: "agent",
+            creationSource: "provider",
+            messageId: MessageId.make("message-opencode-wake-2"),
+            text: "Background task completed.",
+            attachments: [],
+          },
+        },
+      );
+      if (!endedFirst) yield* finish;
+      const events = yield* Fiber.join(wakeRun);
+      const terminal = events.at(-1);
+      assert.deepEqual(
+        terminal?.type === "turn.terminal" ? [terminal.status, terminal.runOrdinal] : terminal,
+        ["completed", 2],
+      );
+      assert.equal(
+        events
+          .flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []))
+          .findLast((item) => item.type === "assistant_message")?.text,
+        "WAKE_OK",
+      );
+      assert.equal(prompts.length, 1, "OpenCode already runs this turn; prompting would repeat it");
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 

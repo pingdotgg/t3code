@@ -57,6 +57,7 @@ import * as Stream from "effect/Stream";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   structuralProtocolMethod,
@@ -368,11 +369,21 @@ interface OpenCodeSubagentContext {
   result: string | null;
 }
 
+/** A turn OpenCode started on its own, such as for a finished background task. */
+interface OpenCodeWake {
+  /** Its events so far, replayed into the run T3 starts for it. */
+  readonly events: Array<OpenCodeEvent>;
+  /** False while its prompt may still be one that asks for no reply. */
+  started: boolean;
+  replaying: boolean;
+}
+
 interface OpenCodeThreadState {
   readonly nativeSessionId: string;
   providerThread: OrchestrationV2ProviderThread;
   appThread: OrchestrationV2AppThread | null;
   activeTurn: ActiveOpenCodeTurn | null;
+  wake: OpenCodeWake | null;
   readonly providerTurns: Map<string, OrchestrationV2ProviderTurn>;
   readonly runtimeRequests: Map<string, OrchestrationV2RuntimeRequest>;
   readonly messageRoles: Map<string, "user" | "assistant">;
@@ -879,6 +890,23 @@ function isMessageAbortedError(event: Extract<OpenCodeEvent, { type: "session.er
   return event.properties.error?.name === "MessageAbortedError";
 }
 
+function turnEventSessionId(event: OpenCodeEvent): string | undefined {
+  switch (event.type) {
+    case "message.part.updated":
+      return event.properties.part.sessionID;
+    case "message.updated":
+    case "message.part.delta":
+    case "session.compacted":
+    case "session.error":
+    case "session.idle":
+    case "session.status":
+    case "todo.updated":
+      return event.properties.sessionID;
+    default:
+      return undefined;
+  }
+}
+
 function isOpenCodeNotFound(cause: unknown): boolean {
   const seen = new Set<unknown>();
   const queue: Array<unknown> = [cause];
@@ -936,6 +964,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
   const messageIdClock = yield* Ref.make({ epochMillis: -1, counter: 0 });
 
   return ProviderAdapter.ProviderAdapterV2.of({
@@ -1447,6 +1476,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               providerThread: childProviderThread,
               appThread: childThread,
               activeTurn: null,
+              wake: null,
               providerTurns: new Map(),
               runtimeRequests: new Map(),
               messageRoles: resumedChild?.messageRoles ?? new Map(),
@@ -2571,13 +2601,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           }
         });
 
-        const handleEvent = Effect.fnUntraced(function* (event: OpenCodeEvent) {
-          yield* logProtocolEvent({
-            direction: "incoming",
-            messageKind: "notification",
-            method: event.type,
-            payload: event,
-          });
+        const dispatchEvent = Effect.fnUntraced(function* (event: OpenCodeEvent) {
           switch (event.type) {
             case "server.connected":
               if (hasConnected) {
@@ -2752,6 +2776,74 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           }
         });
 
+        // A prompt OpenCode takes while no T3 turn runs starts a turn of its own. Its events are
+        // kept for the run T3 starts for it; the offer waits for busy, which a prompt that asks
+        // for no reply never reaches.
+        const holdForWake = Effect.fnUntraced(function* (event: OpenCodeEvent) {
+          const sessionId = turnEventSessionId(event);
+          const state = sessionId === undefined ? undefined : threads.get(sessionId);
+          if (state === undefined || state.parentSubagent !== null) return false;
+          if (state.wake?.replaying === true) {
+            state.wake.events.push(event);
+            return true;
+          }
+          if (state.activeTurn !== null) return false;
+          if (
+            event.type === "message.updated" &&
+            event.properties.info.role === "user" &&
+            !state.userMessageIds.includes(event.properties.info.id) &&
+            state.wake?.started !== true
+          ) {
+            state.wake = { events: [], started: false, replaying: false };
+          }
+          const wake = state.wake;
+          if (wake === null) return false;
+          wake.events.push(event);
+          const threadId = state.providerThread.appThreadId;
+          if (
+            wake.started ||
+            threadId === null ||
+            event.type !== "session.status" ||
+            event.properties.status.type === "idle"
+          ) {
+            return false;
+          }
+          wake.started = true;
+          const release = Effect.sync(() => {
+            if (state.wake === wake && !wake.replaying) state.wake = null;
+          });
+          yield* continuationRequests.offer({
+            threadId,
+            providerThreadId: state.providerThread.id,
+            driver: OPENCODE_PROVIDER,
+            detail: null,
+            delivery: "adapter_buffered",
+            dispatchIfCurrent: (dispatch) =>
+              Effect.suspend(() =>
+                state.wake === wake && nativeStreamFailure === null
+                  ? dispatch.pipe(
+                      Effect.asSome,
+                      Effect.tapError(() => release),
+                    )
+                  : Effect.succeedNone,
+              ),
+            clearIfCurrent: () => release,
+            onRunEndedWithoutStarting: () => release,
+          });
+          return false;
+        });
+
+        const handleEvent = Effect.fnUntraced(function* (event: OpenCodeEvent) {
+          yield* logProtocolEvent({
+            direction: "incoming",
+            messageKind: "notification",
+            method: event.type,
+            payload: event,
+          });
+          if (yield* holdForWake(event)) return;
+          yield* dispatchEvent(event);
+        });
+
         const inputProviderSessionId = input.providerSessionId;
 
         const subscription = yield* sdkCall("event.subscribe", {}, () =>
@@ -2873,6 +2965,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             providerThread,
             appThread,
             activeTurn: null,
+            wake: null,
             providerTurns: new Map(),
             runtimeRequests: new Map(),
             messageRoles: new Map(),
@@ -3252,10 +3345,16 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 );
               }
               yield* applyPermissionRules(state, turnInput.runtimePolicy);
+              // The run for a turn OpenCode started itself: it shows that turn and sends nothing.
+              const continuation =
+                turnInput.message.createdBy === "agent" &&
+                turnInput.message.creationSource === "provider";
               const isCompaction =
+                !continuation &&
                 turnInput.message.text.trim() === "/compact" &&
                 turnInput.message.attachments.length === 0;
-              const parts = isCompaction ? [] : yield* resolvePromptParts(turnInput);
+              const parts =
+                isCompaction || continuation ? [] : yield* resolvePromptParts(turnInput);
               const startedAt = yield* DateTime.now;
               const syntheticNativeTurnId = `${sessionId}:attempt:${turnInput.attemptId}`;
               const providerTurnId = idAllocator.derive.providerTurn({
@@ -3307,25 +3406,28 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 providerTurn,
                 nextItemOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
                 nativeUserMessageId: null,
-                admissionMessageId,
+                admissionMessageId: continuation ? null : admissionMessageId,
                 interrupted: false,
                 finalized: false,
                 contextOverflow: null,
                 planId: null,
                 admissionGeneration: state.nextAdmissionGeneration++,
                 admissionReconciliationGeneration: null,
-                admissionPending: !isCompaction,
-                admissionAccepted: isCompaction,
-                admissionMessageObserved: false,
+                admissionPending: !isCompaction && !continuation,
+                admissionAccepted: isCompaction || continuation,
+                admissionMessageObserved: continuation,
                 idleDuringAdmission: false,
                 admissionSettled: Deferred.makeUnsafe<void>(),
                 // @effect-diagnostics-next-line abortControllerInEffect:off - Turn interruption owns prompt admission cancellation.
-                admissionAbortController: new AbortController(),
+                admissionAbortController: continuation ? null : new AbortController(),
               };
               if (turn.admissionMessageId !== null)
                 turn.usage.promptMessageIds.add(turn.admissionMessageId);
               const admissionSettled = turn.admissionSettled;
               const admissionAbortController = turn.admissionAbortController;
+              const wake = continuation ? state.wake : null;
+              // Another turn takes what OpenCode does from here on, so its own run has nothing left.
+              if (!continuation) state.wake = null;
               state.appThread = turnInput.appThread;
               state.activeTurn = turn;
               state.providerTurns.set(String(providerTurnId), providerTurn);
@@ -3336,6 +3438,38 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 lastRunOrdinal: turnInput.runOrdinal,
               });
               yield* updateProviderSession("running", null);
+              if (continuation) {
+                if (wake !== null) {
+                  // Events that arrive while these replay queue behind them, to keep their order.
+                  wake.replaying = true;
+                  yield* Effect.gen(function* () {
+                    while (true) {
+                      const event = wake.events.shift();
+                      if (event === undefined) {
+                        state.wake = null;
+                        return;
+                      }
+                      yield* dispatchEvent(event);
+                    }
+                  }).pipe(
+                    Effect.ensuring(
+                      Effect.sync(() => {
+                        if (state.wake === wake) state.wake = null;
+                      }),
+                    ),
+                    Effect.tapError((cause) =>
+                      finalizeTurn(state, turn, "failed", {
+                        failure: makeProviderFailure({ cause, class: "provider_error" }),
+                      }),
+                    ),
+                  );
+                }
+                // OpenCode may have finished the turn before this run began, or inside another turn.
+                if (state.activeTurn === turn && !busySessionIds.has(sessionId)) {
+                  yield* finalizeTurn(state, turn, "completed");
+                }
+                return;
+              }
               if (isCompaction) {
                 yield* sdkCall(
                   "session.summarize",
