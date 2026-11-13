@@ -13,6 +13,7 @@ import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Digest from "effect/crypto/Digest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -50,6 +51,8 @@ import {
   SshPasswordPromptError,
   SshReadinessError,
 } from "./errors.ts";
+
+const encoder = new TextEncoder();
 
 const DEFAULT_REMOTE_PORT = 3773;
 const REMOTE_PORT_SCAN_WINDOW = 200;
@@ -587,6 +590,8 @@ PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
 MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
+AGENT_SOCK_FILE="$STATE_DIR/agent.sock"
+AGENT_PID_FILE="$STATE_DIR/agent-pid"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
 LAUNCH_LOCK="$DEFAULT_SERVER_HOME/ssh-launch/.launch.lock"
@@ -809,8 +814,10 @@ if [ "$REMOTE_MANAGED" = "external" ]; then
   fi
 elif [ -n "$REMOTE_PORT" ] && managed_server_running "$REMOTE_PID"; then
   # Reconnect owns the local tunnel, not the lifetime of an already running
-  # server. A changed runner is the update path and still replaces it.
-  if [ "$RUNNER_CHANGED" -eq 1 ]; then
+  # server. A changed runner is the update path and still replaces it. So does
+  # a server no launch recorded as using the agent link: it still holds the
+  # socket of the session that launched it, which sshd has since removed.
+  if [ "$RUNNER_CHANGED" -eq 1 ] || [ "$(cat "$AGENT_PID_FILE" 2>/dev/null || true)" != "$REMOTE_PID" ]; then
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
     REMOTE_PID=""
@@ -878,9 +885,12 @@ if [ -z "$REMOTE_PORT" ]; then
     fi
     exit 1
   fi
-  nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
+  # This session's forwarded agent socket goes away when the launch returns.
+  # The connection that stays open publishes its own at the link instead.
+  nohup env T3CODE_NO_BROWSER=1 SSH_AUTH_SOCK="$AGENT_SOCK_FILE" "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
+  printf '%s\\n' "$REMOTE_PID" >"$AGENT_PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
   if ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
@@ -892,7 +902,7 @@ if [ -z "$REMOTE_PORT" ]; then
     fi
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
-    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$AGENT_PID_FILE"
     exit 1
   fi
   # Keep the lock until another alias's launch can find this server, or it
@@ -940,8 +950,27 @@ if [ "$REMOTE_MANAGED" != "external" ] && managed_server_running "$REMOTE_PID"; 
     exit 1
   fi
 fi
-rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$STATE_DIR/agent-pid"
 printf '{"stopped":true}\\n'
+`;
+
+export const SSH_AGENT_PUBLISHED_MARKER = "__T3_SSH_AGENT_PUBLISHED__";
+
+// Runs in the connection that carries the port forward, so the agent socket
+// sshd forwards to it lives as long as the connection does. End of stdin is
+// how the script learns the connection closed.
+const REMOTE_AGENT_HOLDER_SCRIPT = `set -eu
+STATE_DIR="$HOME/.t3/ssh-launch/$1"
+AGENT_SOCK_FILE="$STATE_DIR/agent.sock"
+mkdir -p "$STATE_DIR"
+if [ -n "\${SSH_AUTH_SOCK:-}" ]; then
+  ln -s "$SSH_AUTH_SOCK" "$AGENT_SOCK_FILE.$$"
+  mv -f "$AGENT_SOCK_FILE.$$" "$AGENT_SOCK_FILE"
+else
+  rm -f "$AGENT_SOCK_FILE"
+fi
+printf '%s\\n' '${SSH_AGENT_PUBLISHED_MARKER}'
+exec cat >/dev/null
 `;
 
 const REMOTE_LOG_TAIL_SCRIPT = `set -eu
@@ -1053,6 +1082,16 @@ function buildRemoteLogTailScript(stateKey: string): string {
   });
 }
 
+// Shells known to take `-l -c` with a POSIX-style `exec` read their own login
+// profiles first; any other shell (csh, pwsh, ...) keeps the plain `sh -l` launch.
+const remoteLoginShellArgs = (stateKey: string) => [
+  "sh",
+  "-c",
+  shellSingleQuote(
+    `case "\${SHELL##*/}" in bash|zsh|ksh|fish|nu) exec "$SHELL" -l -c "exec sh -s -- ${stateKey}" ;; *) exec sh -l -s -- ${stateKey} ;; esac`,
+  ),
+];
+
 export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemoteServer")(
   function* (
     target: DesktopSshEnvironmentTarget,
@@ -1070,15 +1109,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       stateKey,
     });
     const result = yield* runSshCommand(target, {
-      // Shells known to take `-l -c` with a POSIX-style `exec` read their own login
-      // profiles first; any other shell (csh, pwsh, ...) keeps the plain `sh -l` launch.
-      remoteCommandArgs: [
-        "sh",
-        "-c",
-        shellSingleQuote(
-          `case "\${SHELL##*/}" in bash|zsh|ksh|fish|nu) exec "$SHELL" -l -c "exec sh -s -- ${stateKey}" ;; *) exec sh -l -s -- ${stateKey} ;; esac`,
-        ),
-      ],
+      remoteCommandArgs: remoteLoginShellArgs(stateKey),
       stdin: buildRemoteLaunchScript(runner),
       timeoutMs: isNodeScriptRunner(runner)
         ? REMOTE_LAUNCH_TIMEOUT_MS
@@ -1302,6 +1333,7 @@ const reserveLocalTunnelPort = Effect.fn("ssh/tunnel.reserveLocalTunnelPort")(fu
 const waitForTunnelForward = Effect.fn("ssh/tunnel.waitForTunnelForward")(function* (input: {
   readonly target: DesktopSshEnvironmentTarget;
   readonly localPort: number;
+  readonly agentPublished: Effect.Effect<void>;
 }) {
   const net = yield* NetService.NetService;
   yield* net.hasListenerOnHost(input.localPort, "127.0.0.1").pipe(
@@ -1309,6 +1341,7 @@ const waitForTunnelForward = Effect.fn("ssh/tunnel.waitForTunnelForward")(functi
       schedule: Schedule.spaced(Duration.millis(SSH_TUNNEL_FORWARD_PROBE_INTERVAL_MS)),
       until: (listening) => listening,
     }),
+    Effect.andThen(input.agentPublished),
     Effect.timeoutOrElse({
       duration: Duration.millis(SSH_TUNNEL_CONNECT_TIMEOUT_MS),
       orElse: () =>
@@ -1377,12 +1410,12 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     "ServerAliveInterval=15",
     "-o",
     "ServerAliveCountMax=3",
-    "-n",
-    "-N",
+    "-T",
     "-L",
     `${input.localPort}:127.0.0.1:${input.remotePort}`,
     "--",
     hostSpec,
+    ...remoteLoginShellArgs(yield* remoteStateKey(input.resolvedTarget)),
   ];
   const sshCommand = yield* resolveSshCommand;
   const tunnelCommand = [sshCommand, ...args];
@@ -1401,8 +1434,12 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
       ChildProcess.make(sshCommand, args, {
         env: childEnvironment,
         extendEnv: true,
+        // The remote script holds the session open until this stream ends, which it never does.
         stdin: {
-          stream: Stream.empty,
+          stream: Stream.concat(
+            Stream.make(encoder.encode(REMOTE_AGENT_HOLDER_SCRIPT)),
+            Stream.never,
+          ),
           endOnDone: true,
         },
       }),
@@ -1442,6 +1479,20 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     process: child,
     scope,
   };
+  const agentPublished = yield* Deferred.make<void>();
+  let stdoutTail = "";
+  yield* child.stdout.pipe(
+    Stream.decodeText(),
+    Stream.runForEach((chunk) => {
+      // Login profiles may print before the marker, in chunks of any size.
+      stdoutTail = (stdoutTail + chunk).slice(-TUNNEL_STDERR_TAIL_CHARS);
+      return stdoutTail.includes(SSH_AGENT_PUBLISHED_MARKER)
+        ? Deferred.succeed(agentPublished, undefined)
+        : Effect.void;
+    }),
+    Effect.ignore,
+    Effect.forkIn(scope),
+  );
   // Readiness cancels the exit waiter, but diagnostics must drain until the tunnel closes.
   let stderrTail = "";
   const stderrDrain = yield* child.stderr.pipe(
@@ -1496,7 +1547,11 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     }),
   );
   yield* Effect.raceFirst(
-    waitForTunnelForward({ target: input.resolvedTarget, localPort: input.localPort }).pipe(
+    waitForTunnelForward({
+      target: input.resolvedTarget,
+      localPort: input.localPort,
+      agentPublished: Deferred.await(agentPublished),
+    }).pipe(
       Effect.andThen(
         waitForHttpReady({
           baseUrl: input.httpBaseUrl,
