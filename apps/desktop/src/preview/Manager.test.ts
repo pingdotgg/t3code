@@ -619,6 +619,7 @@ describe("PreviewManager", () => {
                 setShown: () => {},
                 loadFailed: () => {},
                 humanStartedDownload: () => true,
+                agentLedPage: () => false,
                 placeDownload: () => true,
               }),
               Layer.mock(PreviewPasskeys.PreviewPasskeys)({
@@ -2194,6 +2195,71 @@ describe("PreviewManager", () => {
         screenshot.resolve({ data: "" });
         expect(yield* Queue.take(capturing)).toBe(false);
       }).pipe(Effect.provide(managerLayer())),
+  );
+
+  effectIt.effect(
+    "opens a new-tab link in the background only when the agent's input led to it",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+        const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
+        const contents = Object.assign(
+          makeTestPreviewWebContents(async () => {
+            throw new Error("unused");
+          }, 42),
+          {
+            isDevToolsOpened: () => false,
+            getUserAgent: () => "Electron",
+            focusedFrame: null,
+          },
+        );
+        fromId.mockReturnValue(contents);
+        const manager = yield* PreviewManager.PreviewManager;
+        const openLinks = yield* Queue.unbounded<boolean>();
+        yield* manager.subscribeOpenLinks(({ background }) =>
+          Queue.offer(openLinks, background).pipe(Effect.asVoid),
+        );
+        const attached = yield* Deferred.make<void>();
+        yield* host.events.pipe(
+          Stream.runForEach((line) =>
+            new TextDecoder().decode(line).includes('"type":"attached"')
+              ? Deferred.succeed(attached, undefined)
+              : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        yield* manager.createTab("tab_1", { serverTab });
+        yield* manager.registerWebview("tab_1", 42);
+        yield* Deferred.await(attached);
+        const openWindow = vi.mocked(contents.setWindowOpenHandler).mock.calls[0]![0];
+        const openBlankLink = Effect.suspend(() => {
+          openWindow({
+            url: "https://example.com/next",
+            disposition: "foreground-tab",
+          } as Electron.HandlerDetails);
+          return Queue.take(openLinks);
+        });
+
+        expect(yield* openBlankLink).toBe(false);
+
+        yield* host.handleCommandLine(
+          JSON.stringify({
+            type: "cdp",
+            ...serverTab,
+            message: JSON.stringify({
+              id: 1,
+              method: "Runtime.evaluate",
+              params: { expression: "document.querySelector('a').click()" },
+              sessionId: "t3-preview-page",
+            }),
+          }),
+        );
+        expect(yield* openBlankLink).toBe(true);
+
+        // A person clicking in the guest itself gives it a focused frame.
+        Object.assign(contents, { focusedFrame: {} });
+        expect(yield* openBlankLink).toBe(false);
+      }).pipe(Effect.provide(managerLayer()), Effect.scoped),
   );
 
   effectIt.effect("reports early and subsequent load failures for the current guest", () =>

@@ -1656,7 +1656,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               emitOpenLink({
                 tabId,
                 url: details.url,
-                background: details.disposition === "background-tab",
+                // A person's own click or key leaves the guest a focused frame; GuestInput hands
+                // focus back after the agent's press, so a foreground tab would take it again.
+                background:
+                  details.disposition === "background-tab" ||
+                  (wc.focusedFrame === null && browserHost.agentLedPage(wc)),
               }),
             );
             return { action: "deny" };
