@@ -595,6 +595,29 @@ it.layer(
     }),
   );
 
+  it.effect("runs a second initial command after a pending first one, in order", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new FakePtyAdapter();
+      const written = yield* Deferred.make<ReadonlyArray<string>>();
+      const seen: Array<string> = [];
+      ptyAdapter.onWrite = (data) => {
+        seen.push(data);
+        if (data === " echo SECOND\r") Deferred.doneUnsafe(written, Effect.succeed([...seen]));
+      };
+      const { manager } = yield* createManager(5, { ptyAdapter });
+
+      const first = yield* manager.open(openInput({ initialCommand: "echo FIRST" }));
+      const second = yield* manager.open(openInput({ initialCommand: "echo SECOND" }));
+      expect(first.initialCommandHandled).toBe(true);
+      expect(second.initialCommandHandled).toBe(true);
+      expect(ptyAdapter.processes[0]?.writes).toEqual([]);
+
+      ptyAdapter.processes[0]?.emitData("\x1b[?2004h$ ");
+      expect(yield* Deferred.await(written)).toEqual([" echo FIRST\r", " echo SECOND\r"]);
+      expect(ptyAdapter.processes[0]?.writes).toEqual([" echo FIRST\r", " echo SECOND\r"]);
+    }),
+  );
+
   it.effect("handles an initial command when open restarts a running session", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, baseDir } = yield* createManager();
