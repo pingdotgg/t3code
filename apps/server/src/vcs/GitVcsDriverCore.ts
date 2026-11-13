@@ -551,7 +551,7 @@ function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string):
     return null;
   }
   const refName = trimmed.slice(prefix.length).trim();
-  return refName.length > 0 ? refName : null;
+  return refName.length > 0 && refName !== "HEAD" ? refName : null;
 }
 
 function isMissingGitCwdError(error: GitCommandError): boolean {
@@ -1721,7 +1721,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     executeGit(
       "GitVcsDriver.resolveDefaultBranchName",
       cwd,
-      [...gitDirArgs, "symbolic-ref", `refs/remotes/${remoteName}/HEAD`],
+      // Unlike `symbolic-ref`, this fails when the remote deleted the branch HEAD points at.
+      [
+        ...gitDirArgs,
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        "--symbolic-full-name",
+        `refs/remotes/${remoteName}/HEAD`,
+      ],
       { allowNonZeroExit: true },
     ).pipe(
       Effect.map((result) => {
@@ -4217,7 +4225,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         executeGit(
           "GitVcsDriver.listRefs.defaultRef",
           fetchCwd,
-          [...gitDirArgs, "symbolic-ref", "refs/remotes/origin/HEAD"],
+          [
+            ...gitDirArgs,
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "--symbolic-full-name",
+            "refs/remotes/origin/HEAD",
+          ],
           {
             timeoutMs: 5_000,
             allowNonZeroExit: true,
@@ -4245,7 +4260,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
     const defaultBranch =
       defaultRefResult.exitCode === 0
-        ? defaultRefResult.stdout.trim().replace(/^refs\/remotes\/origin\//, "")
+        ? parseDefaultBranchFromRemoteHeadRef(defaultRefResult.stdout, "origin")
         : null;
     const parsedWorktreeEntries =
       worktreeListResult.exitCode === 0
@@ -5036,7 +5051,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         remoteName: "origin",
         branchName: input.refName,
       };
-      return remoteNames.includes(remoteName) ? { remoteName, branchName } : null;
+      // `<remote>/HEAD` is the remote's default-branch pointer, not a branch it can serve.
+      return remoteNames.includes(remoteName) && branchName !== "HEAD"
+        ? { remoteName, branchName }
+        : null;
     });
 
   const fetchWorktreeBaseCommit: GitVcsDriver.GitVcsDriver["Service"]["fetchWorktreeBaseCommit"] =
