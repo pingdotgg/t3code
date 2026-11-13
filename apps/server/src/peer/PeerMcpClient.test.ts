@@ -387,7 +387,7 @@ it.effect.each([
       "renewed",
       "renewed",
     ]);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("bounds the session handshake, not a tool call that waits longer", () =>
@@ -429,5 +429,5 @@ it.effect("bounds the session handshake, not a tool call that waits longer", () 
     yield* TestClock.adjust(Duration.minutes(1));
     yield* Deferred.succeed(answer, undefined);
     expect(yield* Fiber.join(waiting)).toEqual({ modes: "approval-required/plan" });
-  }).pipe(Effect.scoped),
+  }),
 );

@@ -1437,6 +1437,67 @@ it.effect("rejects HTTP failures even when tea exits successfully", () =>
   ),
 );
 
+it.effect("keeps Gitea's failure reason when tea reports an HTTP error", () =>
+  Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    const result = yield* cli
+      .api({
+        cwd: "/repo",
+        repository: "http://forgejo.local:3000/maria/project",
+        path: "repos/maria/project/pulls/1/merge",
+        method: "POST",
+        body: { Do: "merge", delete_branch_after_merge: true },
+      })
+      .pipe(Effect.result);
+    assert.strictEqual(result._tag, "Failure");
+    if (result._tag === "Failure") {
+      assert.include(result.failure.detail, "405");
+      assert.include(result.failure.detail, "The head branch is behind the base branch");
+    }
+  }).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(false),
+      }),
+    ),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make(() => {
+        throw new Error("tea must handle its own HTTP request");
+      }),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        process: {
+          run: (input) =>
+            Effect.succeed(
+              input.args[0] === "login"
+                ? processOutput(
+                    encodeJson([
+                      {
+                        name: "work",
+                        url: "http://forgejo.local:3000",
+                        ssh_host: "forgejo.local",
+                        user: "maria",
+                        default: "true",
+                      },
+                    ]),
+                  )
+                : processOutput(
+                    '{"message":"The head branch is behind the base branch","url":"http://forgejo.local:3000/api/swagger"}',
+                    {
+                      stderr:
+                        "HTTP/1.1 405 Method Not Allowed\nContent-Type: application/json;charset=utf-8\n",
+                    },
+                  ),
+            ),
+        },
+      }),
+    ),
+  ),
+);
+
 it.effect("routes mounted Forgejo repositories without repeating the mount in API paths", () =>
   Effect.gen(function* () {
     const cli = yield* ForgejoCli.make;
