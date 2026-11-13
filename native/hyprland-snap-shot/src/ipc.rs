@@ -143,11 +143,15 @@ pub fn ensure_unlocked() -> Result<()> {
 
 pub fn animations_enabled() -> bool {
     // Electron handles the standard reduced-motion setting; also honor Hyprland's own switch.
-    request("j/getoption animations:enabled")
+    // Older Hyprland replies with {"int":0}; current Hyprland replies with {"bool":false}.
+    let Some(value) = request("j/getoption animations:enabled")
         .ok()
         .and_then(|reply| serde_json::from_str::<serde_json::Value>(&reply).ok())
-        .and_then(|value| value.get("int").and_then(serde_json::Value::as_i64))
-        != Some(0)
+    else {
+        return true;
+    };
+    value.get("int").and_then(serde_json::Value::as_i64) != Some(0)
+        && value.get("bool").and_then(serde_json::Value::as_bool) != Some(false)
 }
 pub fn windows() -> Result<Vec<Window>> {
     Ok(serde_json::from_str(&request("j/clients")?)?)
