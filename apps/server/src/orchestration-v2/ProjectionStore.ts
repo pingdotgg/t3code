@@ -90,6 +90,11 @@ import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import {
+  type DeferredIndexName,
+  MissingDeferredIndexes,
+  pinDeferredIndex,
+} from "../persistence/DeferredIndexes.ts";
 import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
@@ -2124,6 +2129,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
   ProjectionStoreV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const missingDeferredIndexes = yield* MissingDeferredIndexes;
+    const pin = (name: DeferredIndexName) =>
+      sql.literal(pinDeferredIndex(missingDeferredIndexes, name));
 
     const inlineWorkOutput = sql`item.type = 'dynamic_tool' AND (
       item.payload_json LIKE '%htmlRender%' OR item.payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
@@ -3524,7 +3532,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           WITH compaction AS (
             SELECT run.ordinal, run.requested_at
             FROM orchestration_v2_projection_turn_items AS item
-              INDEXED BY orchestration_v2_projection_turn_items_conversation_idx
+              ${pin("orchestration_v2_projection_turn_items_conversation_idx")}
             INNER JOIN orchestration_v2_projection_runs AS run ON run.run_id = item.run_id
             WHERE item.thread_id = ${threadId}
               AND item.type = 'compaction' AND item.status = 'completed'
@@ -6660,7 +6668,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           : sql<HiddenCandidate>`
               SELECT ${candidateColumns}
               FROM orchestration_v2_projection_turn_items AS item
-                INDEXED BY orchestration_v2_projection_turn_items_conversation_idx
+                ${pin("orchestration_v2_projection_turn_items_conversation_idx")}
               WHERE item.thread_id = ${threadId}
                 AND item.type NOT IN ${CONVERSATION_INDEX_EXCLUDED_TYPES}
                 AND ((item.type = 'user_message'
@@ -6758,7 +6766,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       const counts = yield* sql<{ run_id: string; inputs: number }>`
         SELECT wanted.value AS run_id, (
           SELECT COUNT(*) FROM orchestration_v2_projection_turn_items AS input
-            INDEXED BY orchestration_v2_projection_turn_items_conversation_idx
+            ${pin("orchestration_v2_projection_turn_items_conversation_idx")}
           WHERE input.thread_id = ${local.records.thread.id}
             AND input.ordinal >= (
               SELECT MIN(ordinal) FROM orchestration_v2_projection_turn_items
@@ -7869,7 +7877,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ) THEN (
               SELECT COUNT(*)
               FROM orchestration_v2_projection_turn_items AS held
-                INDEXED BY orchestration_v2_projection_turn_items_queued_input_idx
+                ${pin("orchestration_v2_projection_turn_items_queued_input_idx")}
               WHERE held.run_id = per_run.run_key
                 AND held.type = 'user_message'
                 AND json_extract(held.payload_json, '$.inputIntent') = 'queued_turn'
@@ -7888,7 +7896,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHEN r.status IN ('queued', 'cancelled') THEN (
                 SELECT COUNT(*)
                 FROM orchestration_v2_projection_turn_items held
-                INDEXED BY orchestration_v2_projection_turn_items_queued_input_idx
+                ${pin("orchestration_v2_projection_turn_items_queued_input_idx")}
                 WHERE held.run_id = counts.run_key
                   AND held.type = 'user_message'
                   AND json_extract(held.payload_json, '$.inputIntent') = 'queued_turn'

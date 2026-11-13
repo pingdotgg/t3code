@@ -8,6 +8,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
+import { noteMissingDeferredIndexes } from "./DeferredIndexes.ts";
 import { hasPendingMigrations, runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 import * as ServerConfig from "../config.ts";
@@ -52,8 +53,9 @@ const damagedDatabaseError = (dbPath: string, cause: SqlError.SqlError) =>
 
 // CLI commands open the server's database from another process; migrating behind its owner changes the schema it runs on.
 const runMigrationsAsOwner = Effect.fn("SqlitePersistence.runMigrationsAsOwner")(function* () {
-  // With nothing pending, runMigrations only validates the recorded history and writes nothing.
-  if (!(yield* hasPendingMigrations())) return yield* runMigrations();
+  // With nothing pending, runMigrations only validates the recorded history and writes nothing:
+  // a running server builds its own deferred indexes.
+  if (!(yield* hasPendingMigrations())) return yield* runMigrations({ deferIndexes: true });
   const { serverRuntimeStatePath } = yield* ServerConfig.ServerConfig;
   yield* ServerOwnership.holdServerOwnershipLock(serverRuntimeStatePath).pipe(
     Effect.catchTags({
@@ -88,6 +90,7 @@ const makeLayerSetup = <E, R>(migrate: Effect.Effect<unknown, E, R>) =>
       // PASSIVE checkpoints retain peak WAL size until the last connection closes.
       yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
       yield* migrate;
+      yield* noteMissingDeferredIndexes();
       // Collecting stats scans every page, and stale small-table stats cause scans after growth; use indexes by default.
       // Connections cache stats; reload after deleting them.
       const statTables = yield* sql`SELECT 1 FROM sqlite_schema WHERE name = 'sqlite_stat1'`;
@@ -151,6 +154,11 @@ const makeLayerConfig = <E, R>(
   );
 
 export const layerConfig = makeLayerConfig(layerFromPath);
+
+/** For the server, which builds the deferred indexes itself once it is serving. */
+export const layerServerConfig = makeLayerConfig(
+  makeLayerFromPath(() => makeLayerSetup(runMigrations({ deferIndexes: true }))),
+);
 
 /** For CLI commands: pending migrations run only while no server owns the T3 home. */
 export const layerCliConfig = makeLayerConfig(

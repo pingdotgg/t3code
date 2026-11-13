@@ -8,6 +8,7 @@ import {
   DATABASE_MIGRATIONS_FINISHED_MESSAGE,
   DATABASE_MIGRATIONS_STARTED_MESSAGE,
 } from "@t3tools/shared/databaseMigrationLog";
+import { buildDeferredIndexes } from "./DeferredIndexes.ts";
 import { reconcileV2PreviewMigration } from "./reconcileV2PreviewMigration.ts";
 
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -279,10 +280,13 @@ export const DatabaseMigrationProgressReporter = Context.Reference<
 
 export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
+  /** Leave the indexes in DeferredIndexes unbuilt; the caller builds them once it is serving. */
+  readonly deferIndexes?: boolean | undefined;
 }
 
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
+  deferIndexes,
 }: RunMigrationsOptions = {}) {
   // The desktop waits past its readiness budget until the finished line follows this one.
   if (yield* hasPendingMigrations()) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
@@ -323,6 +327,7 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     }
     executedMigrations.push(...(yield* run({ loader: makeMigrationLoader(id) })));
   }
+  if (deferIndexes !== true) yield* buildDeferredIndexes();
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")

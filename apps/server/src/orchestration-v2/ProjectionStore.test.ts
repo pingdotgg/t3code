@@ -45,6 +45,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 
+import {
+  buildDeferredIndexes,
+  noteMissingDeferredIndexes,
+} from "../persistence/DeferredIndexes.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -6596,6 +6600,21 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         scoped.threads.map((thread) => thread.id),
         [activeThreadId, forkThreadId],
       );
+    }),
+  );
+
+  it.effect("reads the shell while a deferred index is not built yet", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const { projectId } = yield* assertProjectScopedShells("sql-shell-deferred-index");
+      const built = yield* projectionStore.getShellSnapshot({ projectId, location: "active" });
+      yield* sql`DROP INDEX orchestration_v2_projection_turn_items_queued_input_idx`;
+      yield* noteMissingDeferredIndexes();
+      const unbuilt = yield* projectionStore
+        .getShellSnapshot({ projectId, location: "active" })
+        .pipe(Effect.ensuring(Effect.orDie(buildDeferredIndexes())));
+      assert.deepStrictEqual(unbuilt, built);
     }),
   );
 

@@ -53,6 +53,7 @@ import { speechStreamRouteLayer } from "./speech/stream.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import type { DatabaseMigrationProgress } from "@t3tools/shared/databaseMigrationLog";
+import { buildDeferredIndexes } from "./persistence/DeferredIndexes.ts";
 import { DatabaseMigrationProgressReporter } from "./persistence/Migrations.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
@@ -269,7 +270,7 @@ const layerPtyAdapter = NodePtyAdapter.layer;
 
 // The listener answers requests before the database layer is built, so it reads the running migration from here.
 let startupDatabaseMigration: DatabaseMigrationProgress | undefined;
-const layerSqlitePersistence = SqlitePersistence.layerConfig.pipe(
+const layerSqlitePersistence = SqlitePersistence.layerServerConfig.pipe(
   Layer.provide(
     Layer.succeed(DatabaseMigrationProgressReporter, (progress) => {
       startupDatabaseMigration = progress;
@@ -1283,8 +1284,19 @@ const layerMakeServer = Layer.unwrap(
       withUntracedRequests,
       Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)),
     );
+    // An index build holds the database's one writer for minutes, so it starts once requests are served.
+    const layerDeferredIndexes = Layer.effectDiscard(
+      Deferred.await(routesReady).pipe(
+        Effect.andThen(buildDeferredIndexes()),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Building deferred database indexes failed", cause),
+        ),
+        Effect.forkScoped,
+      ),
+    );
     const layerServerApplication = Layer.mergeAll(
       layerRoutes,
+      layerDeferredIndexes,
       layerHttpListening,
       layerRuntimeState.pipe(Layer.provide(layerLauncher)),
       layerTailscaleServe,

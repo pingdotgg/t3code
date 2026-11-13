@@ -9,6 +9,11 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import {
+  buildDeferredIndexes,
+  MissingDeferredIndexes,
+  noteMissingDeferredIndexes,
+} from "./DeferredIndexes.ts";
+import {
   DatabaseMigrationProgressReporter,
   migrationManifest,
   runMigrations,
@@ -92,6 +97,34 @@ describe("runMigrations", () => {
       );
       assert.deepStrictEqual(yield* history, migrationManifest);
       assert.isAbove(yield* v2TableCount, 0);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("leaves the deferred indexes for the caller to build after startup", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const deferred = sql<{ readonly name: string }>`
+        SELECT name FROM sqlite_schema
+        WHERE type = 'index' AND name IN (
+          'orchestration_v2_projection_turn_items_conversation_idx',
+          'orchestration_v2_projection_nodes_settled_leaf_idx',
+          'orchestration_v2_projection_turn_items_queued_input_idx',
+          'orchestration_v2_projection_turn_items_thread_type_idx'
+        )
+      `;
+      yield* runMigrations({ toMigrationInclusive: 81 });
+      yield* runMigrations({ deferIndexes: true });
+      assert.deepStrictEqual(yield* history, migrationManifest);
+      assert.lengthOf(yield* deferred, 0);
+
+      const missing = new Set<string>();
+      yield* noteMissingDeferredIndexes().pipe(
+        Effect.provideService(MissingDeferredIndexes, missing),
+      );
+      assert.strictEqual(missing.size, 4);
+      yield* buildDeferredIndexes().pipe(Effect.provideService(MissingDeferredIndexes, missing));
+      assert.lengthOf(yield* deferred, 4);
+      assert.strictEqual(missing.size, 0);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
