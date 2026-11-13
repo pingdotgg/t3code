@@ -8,6 +8,7 @@ import {
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   resolveBranchToolbarPrBranch,
+  resolveDefaultWorktreeBaseBranch,
   resolveLocalCheckoutBranchMismatch,
   resolveLockedWorkspaceLabel,
   sanitizeNewRefName,
@@ -44,6 +45,24 @@ describe("resolveBranchToolbarPrBranch", () => {
         resolvedActiveBranch: "feature/next",
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveDefaultWorktreeBaseBranch", () => {
+  it("offers nothing while a clone has no refs, then the default branch once they are listed", () => {
+    expect(resolveDefaultWorktreeBaseBranch([])).toBeNull();
+    expect(
+      resolveDefaultWorktreeBaseBranch([
+        { name: "feature", isDefault: false, current: true },
+        { name: "staging", isDefault: true, current: false },
+      ]),
+    ).toBe("staging");
+    expect(
+      resolveDefaultWorktreeBaseBranch([
+        { name: "other", isDefault: false, current: false },
+        { name: "feature", isDefault: false, current: true },
+      ]),
+    ).toBe("feature");
   });
 });
 
