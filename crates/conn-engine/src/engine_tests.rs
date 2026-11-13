@@ -1085,70 +1085,12 @@ async fn scratch_and_new_projects_get_folders_under_home() {
     );
 }
 
-/// Every `type` of `OrchestrationV2Command` at the pinned contract.
-const CONTRACT_COMMANDS: [&str; 56] = [
-    "thread.stop",
-    "thread.create",
-    "thread.archive",
-    "thread.guest-share.close",
-    "thread.guest-message.dismiss",
-    "thread.unarchive",
-    "thread.delete",
-    "thread.settle",
-    "thread.auto-settle",
-    "thread.unsettle",
-    "thread.snooze",
-    "thread.unsnooze",
-    "thread.auto-settle.set",
-    "thread.pin",
-    "thread.unpin",
-    "thread.tag.set",
-    "thread.pin.reorder",
-    "thread.active.reorder",
-    "thread.visit",
-    "thread.mark-unread",
-    "thread.metadata.update",
-    "thread.pull-request.link",
-    "thread.pull-request.unlink",
-    "thread.pull-request-link.sync",
-    "thread.pull-request.watch",
-    "thread.pull-request.sync",
-    "thread.title.regeneration.complete",
-    "thread.runtime-mode.set",
-    "thread.interaction-mode.set",
-    "thread.model-selection.set",
-    "provider-session.detach",
-    "message.dispatch",
-    "prepared-run.release",
-    "notification.delivery.accept",
-    "prepared-run.progress",
-    "prepared-run.fail",
-    "prepared-run.retry",
-    "subagent.stop",
-    "run.interrupt",
-    "queued-message.promote-to-steer",
-    "queue.resume",
-    "queued-run.start",
-    "queued-run.reorder",
-    "queued-run.cancel",
-    "queued-run.edit",
-    "runtime-request.respond",
-    "thread.user-input.dismiss",
-    "checkpoint.rollback",
-    "thread.fork",
-    "thread.merge_back",
-    "delegated_task.request",
-    "delegated_task.wake-policy",
-    "delegated_task.completion-delivery.acknowledge",
-    "delegated_task.completion-delivery.dispose",
-    "thread.created.record",
-    "provider.switch",
-];
-
 #[test]
 fn every_contract_command_is_handled_or_refused_with_a_reason() {
+    // Generated from the pinned contract, so a new command fails this test until it is handled
+    // or refused with a reason.
     let mut handled = 0;
-    for command in CONTRACT_COMMANDS {
+    for command in conn_contract::COMMAND_TYPES.iter().copied() {
         if crate::commands::handler(command).is_some() {
             handled += 1;
         } else {
@@ -1160,6 +1102,7 @@ fn every_contract_command_is_handled_or_refused_with_a_reason() {
         }
     }
     assert_eq!(handled, 41);
+    assert_eq!(conn_contract::COMMAND_TYPES.len(), 56);
 }
 
 #[tokio::test(flavor = "current_thread")]
