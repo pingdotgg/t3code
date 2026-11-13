@@ -199,7 +199,10 @@ import { GuestPendingMessages } from "./chat/GuestShareControls";
 import { useDeviceState } from "~/state/device";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { ComposerContextPermissions } from "./ComposerContextPermissions";
-import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
+import {
+  makeWorkspaceFileDropHandlers,
+  type WorkspaceFileDropMode,
+} from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { shortcutLabelForCommand } from "../keybindings";
@@ -669,7 +672,9 @@ export default function ChatView(props: ChatViewProps) {
     }
     return accepted;
   });
-  const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
+  const [workspaceFileDragMode, setWorkspaceFileDragMode] = useState<WorkspaceFileDropMode | null>(
+    null,
+  );
   const [optimisticBlobPreviews] = useState(createOptimisticBlobPreviews);
   const [heldOptimisticUserMessages, setHeldOptimisticUserMessages] = useState(() =>
     emptyOptimisticUserMessages(threadId),
@@ -714,16 +719,16 @@ export default function ChatView(props: ChatViewProps) {
   const [workspaceFileDragRoute, setWorkspaceFileDragRoute] = useState(workspaceFileDragRouteKey);
   if (workspaceFileDragRoute !== workspaceFileDragRouteKey) {
     setWorkspaceFileDragRoute(workspaceFileDragRouteKey);
-    setIsWorkspaceFileDragActive(false);
+    setWorkspaceFileDragMode(null);
   }
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window dragend listener that clears the workspace file drag state
   useEffect(() => {
-    if (!isWorkspaceFileDragActive) return;
-    const clearWorkspaceFileDrag = () => setIsWorkspaceFileDragActive(false);
+    if (workspaceFileDragMode === null) return;
+    const clearWorkspaceFileDrag = () => setWorkspaceFileDragMode(null);
     window.addEventListener("dragend", clearWorkspaceFileDrag);
     return () => window.removeEventListener("dragend", clearWorkspaceFileDrag);
-  }, [isWorkspaceFileDragActive]);
+  }, [workspaceFileDragMode]);
   const prefersPlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const isMobileViewport = useMediaQuery("max-sm");
   // Focusing the composer without a tap raises the on-screen keyboard on touch devices.
@@ -3213,9 +3218,12 @@ export default function ChatView(props: ChatViewProps) {
     (files: Parameters<ChatComposerHandle["addDroppedFiles"]>[0]) =>
       composerRef.current?.addDroppedFiles(files),
   );
-  const addDroppedFoldersToComposer = useStableCallback(
-    (folders: Parameters<ChatComposerHandle["addDroppedFolders"]>[0]) =>
-      composerRef.current?.addDroppedFolders(folders),
+  const canInsertDroppedPathsInComposer = useStableCallback(
+    () => composerRef.current?.canInsertDroppedPaths() ?? false,
+  );
+  const addDroppedPathsToComposer = useStableCallback(
+    (entries: Parameters<ChatComposerHandle["addDroppedPaths"]>[0]) =>
+      composerRef.current?.addDroppedPaths(entries),
   );
   // Above the early return, where React Compiler can cache it for the side chat pane.
   const sideChatParentPanel = {
@@ -3313,9 +3321,14 @@ export default function ChatView(props: ChatViewProps) {
     </WorkspaceTitlebarControls>
   );
   const workspaceFileDropHandlers = makeWorkspaceFileDropHandlers({
-    setDragActive: setIsWorkspaceFileDragActive,
+    setDragMode: setWorkspaceFileDragMode,
     addFiles: addDroppedFilesToComposer,
-    addFolders: addDroppedFoldersToComposer,
+    addFolders: addDroppedPathsToComposer,
+    paths: {
+      dragMode: workspaceFileDragMode,
+      canInsert: canInsertDroppedPathsInComposer,
+      insert: addDroppedPathsToComposer,
+    },
   });
 
   const content = (
@@ -3405,7 +3418,9 @@ export default function ChatView(props: ChatViewProps) {
             onDrop={workspaceFileDropHandlers.onDrop}
           >
             <ThreadFind onClose={focusComposerStable} />
-            {isWorkspaceFileDragActive ? <WorkspaceFileDropOverlay /> : null}
+            {workspaceFileDragMode === null ? null : (
+              <WorkspaceFileDropOverlay mode={workspaceFileDragMode} />
+            )}
             <ChatBannerLane
               environmentId={activeThread.environmentId}
               providerStatus={visibleProviderStatus}

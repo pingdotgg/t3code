@@ -28,7 +28,7 @@ import {
   threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
-import { act, fakeTimers, render } from "../../test/render";
+import { act, fakeTimers, render, stubGlobal } from "../../test/render";
 
 // The socket is the only fake layer; see test/appScenarios.renders.tsx.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
@@ -358,4 +358,51 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
   // The thread keeps its latest structure, and the timeline may remember the one before it.
   const kept = shown.slice(0, -2).flatMap((structure, round) => (structure.deref() ? [round] : []));
   expect(kept).toEqual([]);
+});
+
+it("a path dropped with the caret inside the prompt keeps the prompt", async () => {
+  const thread = threadWithHistory("shift-drop", 1);
+  using _environment = installFakeEnvironment([thread]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
+  const editor = page.getByTestId("composer-editor");
+  await userEvent.click(editor);
+  await userEvent.keyboard("fix this bug{ArrowLeft}{ArrowLeft}{ArrowLeft}");
+
+  const dropTarget = document.querySelector("[data-chat-workspace-drop-target]");
+  const shiftDrag = (type: string) => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File(["pdf"], "report.pdf"));
+    return new DragEvent(type, { bubbles: true, cancelable: true, shiftKey: true, dataTransfer });
+  };
+  {
+    // Only what a drop reads; a fuller bridge would switch the whole app into desktop mode.
+    using _bridge = stubGlobal("desktopBridge", {
+      getLocalEnvironmentEnabled: () => true,
+      getLocalEnvironmentBootstraps: () => [],
+      getPathForFile: (file: File) => `/tmp/${file.name}`,
+      getWindowZoomFactor: () => 1,
+    });
+    await act(() => {
+      dropTarget?.dispatchEvent(shiftDrag("dragenter"));
+    });
+    await expect.element(page.getByText("Drop to insert paths")).toBeVisible();
+    await act(() => {
+      dropTarget?.dispatchEvent(shiftDrag("drop"));
+    });
+  }
+
+  await expect.element(page.getByRole("button", { name: "Preview /tmp/report.pdf" })).toBeVisible();
+  expect(editor.element().textContent).toContain("fix this");
 });

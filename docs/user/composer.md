@@ -58,6 +58,10 @@ also send files to T3 Code through another app's system share sheet.
 On Android, you can also drag images from another app into the message input
 in split screen.
 
+To give the agent a file's path instead of uploading it, hold **Shift** while you
+drop files or folders into the desktop composer. A dropped folder always becomes a
+path. Paths only work for a server running on the same computer as the desktop app.
+
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
 ## Send while the agent is working
