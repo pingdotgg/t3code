@@ -2640,3 +2640,26 @@ code {
 .messages-timeline-scroll:focus-visible {
   outline: none;
 }
+
+/* While a Safari keyboard overlays the page, the shell is pinned to the visible area
+   (pinShellToKeyboardViewport). Unlayered so these outrank the routes' h-dvh/h-svh utilities. */
+html[data-keyboard-viewport],
+html[data-keyboard-viewport] body {
+  overflow: hidden;
+}
+
+html[data-keyboard-viewport] [data-slot="sidebar-wrapper"] {
+  position: fixed;
+  inset-inline: 0;
+  top: var(--keyboard-viewport-top);
+  /* The desktop sidebar is position: fixed; this makes it follow the shell. */
+  contain: layout;
+}
+
+html[data-keyboard-viewport] [data-slot="sidebar-inset"] {
+  height: 100%;
+}
+
+html[data-keyboard-viewport] [data-slot="sidebar-container"] {
+  height: auto;
+}

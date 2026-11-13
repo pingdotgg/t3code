@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { createSoftwareKeyboardStore } from "./softwareKeyboard";
+import { createSoftwareKeyboardStore, pinShellToKeyboardViewport } from "./softwareKeyboard";
 
 function fixture(options: { native?: boolean; overlay?: boolean; desktop?: boolean } = {}) {
   const viewport = Object.assign(new EventTarget(), { width: 390, height: 844, scale: 1 });
@@ -132,5 +132,62 @@ describe("software keyboard detection", () => {
     expect(store.getSnapshot()).toBe(false);
     expect(listener).not.toHaveBeenCalled();
     unsubscribe();
+  });
+});
+
+describe("pinning the shell to the keyboard viewport", () => {
+  function pinFixture(desktop = false) {
+    const viewport = Object.assign(new EventTarget(), { height: 1244, offsetTop: 0, scale: 1 });
+    const properties = new Map<string, string>();
+    const root = {
+      clientHeight: 1244,
+      dataset: {} as DOMStringMap,
+      style: {
+        setProperty: (key: string, value: string) => properties.set(key, value),
+        removeProperty: (key: string) => properties.delete(key),
+      },
+    };
+    const stop = pinShellToKeyboardViewport(
+      { visualViewport: viewport, document: { documentElement: root } } as unknown as Window,
+      desktop,
+    );
+    const move = (event: "resize" | "scroll", height: number, offsetTop: number, scale = 1) => {
+      Object.assign(viewport, { height, offsetTop, scale });
+      viewport.dispatchEvent(new Event(event));
+    };
+    return { root, properties, stop, move };
+  }
+
+  // iPad Pro 13-inch Safari geometry: the layout viewport keeps its height under the keyboard.
+  it("follows the keyboard and Safari's pan, then restores the layout", () => {
+    const { root, properties, stop, move } = pinFixture();
+    move("resize", 1176, 0);
+    expect(root.dataset.keyboardViewport).toBeUndefined();
+
+    move("resize", 841, 0);
+    move("scroll", 841, 403);
+    expect(root.dataset.keyboardViewport).toBe("");
+    expect(Object.fromEntries(properties)).toEqual({
+      "--keyboard-viewport-height": "841px",
+      "--keyboard-viewport-top": "403px",
+    });
+
+    move("resize", 1244, 0);
+    expect(root.dataset.keyboardViewport).toBeUndefined();
+    expect(properties.size).toBe(0);
+
+    move("resize", 400, 300, 2);
+    expect(root.dataset.keyboardViewport).toBeUndefined();
+
+    move("resize", 841, 403);
+    stop();
+    expect(root.dataset.keyboardViewport).toBeUndefined();
+    expect(properties.size).toBe(0);
+  });
+
+  it("never pins on desktop", () => {
+    const { root, move } = pinFixture(true);
+    move("resize", 841, 403);
+    expect(root.dataset.keyboardViewport).toBeUndefined();
   });
 });

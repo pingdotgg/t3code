@@ -81,3 +81,54 @@ export function createSoftwareKeyboardStore(win: KeyboardWindow | undefined, isD
 
   return { getSnapshot, subscribe };
 }
+
+type PinWindow = Pick<Window, "visualViewport"> & {
+  readonly document: { readonly documentElement: HTMLElement };
+};
+
+/**
+ * Safari ignores `interactive-widget=resizes-content`: its keyboard shrinks only the visual
+ * viewport and Safari pans the page to the focused field. While that happens, pin the shell to
+ * the visible area (see index.css). `innerHeight` follows the keyboard on iPadOS, so the gap is
+ * measured from `documentElement.clientHeight`.
+ */
+export function pinShellToKeyboardViewport(win: PinWindow, isDesktop: boolean): () => void {
+  const viewport = win.visualViewport;
+  if (isDesktop || !viewport) return () => {};
+  const root = win.document.documentElement;
+  let pinned = "";
+
+  const unpin = () => {
+    pinned = "";
+    delete root.dataset.keyboardViewport;
+    root.style.removeProperty("--keyboard-viewport-height");
+    root.style.removeProperty("--keyboard-viewport-top");
+  };
+
+  const update = () => {
+    const height = Math.round(viewport.height);
+    const top = Math.max(0, Math.round(viewport.offsetTop));
+    // Pinch zoom also shrinks the visual viewport, and the page must stay pannable then.
+    const overlaid = viewport.scale <= 1.01 && root.clientHeight - height > KEYBOARD_THRESHOLD;
+    const next = overlaid ? `${height}:${top}` : "";
+    if (next === pinned) return;
+    if (!overlaid) {
+      unpin();
+      return;
+    }
+    pinned = next;
+    root.style.setProperty("--keyboard-viewport-height", `${height}px`);
+    root.style.setProperty("--keyboard-viewport-top", `${top}px`);
+    root.dataset.keyboardViewport = "";
+  };
+
+  update();
+  viewport.addEventListener("resize", update);
+  // Safari pans the visual viewport with scroll events alone while it reveals a focused field.
+  viewport.addEventListener("scroll", update);
+  return () => {
+    viewport.removeEventListener("resize", update);
+    viewport.removeEventListener("scroll", update);
+    unpin();
+  };
+}
