@@ -11,7 +11,11 @@ import { authEnvironment } from "~/state/auth";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { describeConnectDeviceClient, formatAccessTimestamp } from "./ConnectionsSettings.logic";
+import {
+  connectDeviceName,
+  describeConnectDeviceClient,
+  formatAccessTimestamp,
+} from "./ConnectionsSettings.logic";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 import { SettingsSection } from "./settingsLayout";
 
@@ -32,11 +36,14 @@ export function ConnectDeviceApprovalSettings({
   requests,
   devices,
   canWrite,
+  requestRevoke,
 }: {
   readonly environmentId: EnvironmentId;
   readonly requests: ReadonlyArray<ServerPairingLinkRecord>;
   readonly devices: ReadonlyArray<AuthConnectDevice>;
   readonly canWrite: boolean;
+  /** Revokes now, or first asks to turn approval on when it is off. */
+  readonly requestRevoke: (title: string, revoke: () => Promise<void>) => void;
 }) {
   const approve = useAtomCommand(authEnvironment.approveConnectDevice, { reportFailure: false });
   const deny = useAtomCommand(authEnvironment.revokePairingLink, { reportFailure: false });
@@ -124,13 +131,15 @@ export function ConnectDeviceApprovalSettings({
                   variant="destructive-outline"
                   disabled={!canWrite || busy}
                   onClick={() =>
-                    void run(device.proofKeyThumbprint, async () =>
-                      reportFailure(
-                        "Could not revoke the device",
-                        await revoke({
-                          environmentId,
-                          input: { proofKeyThumbprint: device.proofKeyThumbprint },
-                        }),
+                    requestRevoke(`Revoke ${connectDeviceName(device)}?`, () =>
+                      run(device.proofKeyThumbprint, async () =>
+                        reportFailure(
+                          "Could not revoke the device",
+                          await revoke({
+                            environmentId,
+                            input: { proofKeyThumbprint: device.proofKeyThumbprint },
+                          }),
+                        ),
                       ),
                     )
                   }

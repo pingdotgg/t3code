@@ -224,7 +224,7 @@ const connectDeviceRevokeCommand = Command.make("revoke", {
         const outcome = yield* environmentAuth.revokeConnectDeviceByCode(flags.code);
         yield* Console.log(
           outcome === "revoked"
-            ? `Revoked ${flags.code}.\n`
+            ? `Revoked ${flags.code}. If approval for new devices is off, it can connect again on its own.\n`
             : outcome === "ambiguous"
               ? `More than one trusted device shows ${flags.code}; revoke it from a client.\n`
               : `No trusted device shows ${flags.code}.\n`,

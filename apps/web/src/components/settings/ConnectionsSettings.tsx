@@ -29,6 +29,7 @@ import * as Cause from "effect/Cause";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import {
   applyWslEnableSelection,
+  connectDeviceName,
   isWslSettingsRowVisible,
   missingTailscaleEndpointDescription,
   resolveLocalVersionStatusLabel,
@@ -107,6 +108,7 @@ import {
   usePrimaryEnvironment,
 } from "~/state/environments";
 import { requestConfirmDialog } from "~/confirmDialog";
+import { useUpdateEnvironmentSettings } from "~/hooks/useSettings";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentUpdateStatesAtom, serverEnvironment } from "~/state/server";
@@ -140,7 +142,13 @@ import {
   SavedBackendListRow,
 } from "./SavedEnvironmentRows";
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
+import {
+  type ConnectDeviceRevokeRequest,
+  RevokeConnectDeviceDialog,
+} from "./RevokeConnectDeviceDialog";
 
+// Sessions T3 Connect minted for a device signed in to the linked account.
+const CLOUD_CONNECT_SESSION_SUBJECT = "cloud-connect";
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
 
@@ -719,6 +727,46 @@ function ConnectionsSettingsContent({
     authAccessChanges.data?.type === "snapshot"
       ? (authAccessChanges.data.payload.connectDevices ?? null)
       : null;
+  const updateAccessSettings = useUpdateEnvironmentSettings(accessEnvironmentId);
+  const [pendingConnectRevoke, setPendingConnectRevoke] =
+    useState<ConnectDeviceRevokeRequest | null>(null);
+  // With approval off a revoked T3 Connect device signs straight back in, so offer to turn it
+  // on. Older servers have no such setting, and revoking there goes ahead as before.
+  const connectApprovalOff =
+    accessEnvironment?.serverConfig?.settings.requireConnectDeviceApproval === false;
+  const requestConnectRevoke = (title: string, revoke: () => Promise<void>) => {
+    if (connectApprovalOff && canWriteAccess) setPendingConnectRevoke({ title, revoke });
+    else void revoke();
+  };
+  const requireConnectApproval = () =>
+    new Promise<boolean>((resolve) =>
+      updateAccessSettings(
+        { requireConnectDeviceApproval: true },
+        { onSaved: () => resolve(true), onFailed: () => resolve(false) },
+      ),
+    );
+  const requestRevokeClientSession = (sessionId: ServerClientSessionRecord["sessionId"]) => {
+    const session = desktopClientSessions.find((candidate) => candidate.sessionId === sessionId);
+    if (session?.subject === CLOUD_CONNECT_SESSION_SUBJECT) {
+      requestConnectRevoke(`Revoke ${connectDeviceName(session)}?`, () =>
+        handleRevokeDesktopClientSession(sessionId),
+      );
+    } else {
+      void handleRevokeDesktopClientSession(sessionId);
+    }
+  };
+  const requestRevokeOtherClients = () => {
+    const revokesConnectDevices =
+      (connectDevices?.length ?? 0) > 0 ||
+      desktopClientSessions.some(
+        (session) => !session.current && session.subject === CLOUD_CONNECT_SESSION_SUBJECT,
+      );
+    if (revokesConnectDevices) {
+      requestConnectRevoke("Revoke all other clients?", handleRevokeOtherDesktopClients);
+    } else {
+      void handleRevokeOtherDesktopClients();
+    }
+  };
   const tailscaleHttpsEndpoint = desktopAdvertisedEndpoints.find(isTailscaleHttpsEndpoint) ?? null;
   const visibleDesktopNetworkAdvertisedEndpoints = isLocalBackendNetworkAccessible
     ? desktopAdvertisedEndpoints.filter((endpoint) => !isTailscaleHttpsEndpoint(endpoint))
@@ -1061,7 +1109,7 @@ function ConnectionsSettingsContent({
       revokingPairingLinkId={revokingDesktopPairingLinkId}
       revokingClientSessionId={revokingDesktopClientSessionId}
       onRevokePairingLink={handleRevokeDesktopPairingLink}
-      onRevokeClientSession={handleRevokeDesktopClientSession}
+      onRevokeClientSession={requestRevokeClientSession}
       canRevoke={canWriteAccess}
     />
   );
@@ -1307,7 +1355,7 @@ function ConnectionsSettingsContent({
                         : null
                     }
                     isRevokingOtherClients={isRevokingOtherDesktopClients}
-                    onRevokeOtherClients={handleRevokeOtherDesktopClients}
+                    onRevokeOtherClients={requestRevokeOtherClients}
                   />
                 ) : undefined
               }
@@ -1336,8 +1384,14 @@ function ConnectionsSettingsContent({
               requests={connectDeviceRequests}
               devices={connectDevices}
               canWrite={canWriteAccess}
+              requestRevoke={requestConnectRevoke}
             />
           ) : null}
+          <RevokeConnectDeviceDialog
+            request={pendingConnectRevoke}
+            onClose={() => setPendingConnectRevoke(null)}
+            requireApproval={requireConnectApproval}
+          />
           <AlertDialog
             open={pendingDesktopServerExposureMode !== null && canManageLocalBackend}
             onOpenChange={(open) => {
