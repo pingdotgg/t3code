@@ -3347,6 +3347,32 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("expands working-tree-encoding files as the text their diff shows", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const encodedPath = (yield* Path.Path).join(cwd, "encoded.txt");
+        yield* writeTextFile(cwd, ".gitattributes", "encoded.txt working-tree-encoding=UTF-16LE\n");
+        yield* fileSystem.writeFile(encodedPath, Buffer.from("old\ncontext\n", "utf16le"));
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add encoded file"]);
+        yield* fileSystem.writeFile(encodedPath, Buffer.from("new\ncontext\n", "utf16le"));
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, sourceKind: "working-tree" });
+        assert.include(preview.sources[0]?.diff ?? "", "+new\n");
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, { oldPath: "encoded.txt", newPath: "encoded.txt" }),
+        );
+
+        assert.deepStrictEqual(contents, {
+          oldContents: "old\ncontext\n",
+          newContents: "new\ncontext\n",
+        });
+      }),
+    );
+
     it.effect("reads a base ref that looks like an option as a revision", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
