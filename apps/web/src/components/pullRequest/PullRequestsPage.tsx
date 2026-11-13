@@ -1,8 +1,5 @@
-import {
-  editHeldPullRequestListEntries,
-  pullRequestPendingEditsFor,
-} from "@t3tools/client-runtime/state/pull-requests";
-import { Atom } from "effect/reactivity";
+import { heldPullRequestListEntriesAtom } from "@t3tools/client-runtime/state/pull-requests";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { applyPullRequestDraftFilterChange } from "@t3tools/client-runtime/pull-request-query";
 import { Spinner } from "~/components/ui/spinner";
@@ -153,15 +150,31 @@ const EMPTY_PREVIEW_SESSIONS = {};
 const EMPTY_PREVIEW_DESKTOP_STATE = {};
 const EMPTY_TERMINAL_LABELS = new Map<string, string>();
 const EMPTY_PENDING_SURFACES = new Set<string>();
+const heldRowReaders = new WeakMap<
+  EnvironmentPullRequestEntry,
+  Map<string, ReturnType<typeof heldPullRequestListEntriesAtom<EnvironmentPullRequestEntry>>>
+>();
+
 function usePendingListEntries(
   input: PullRequestListInput,
   entries: ReadonlyArray<EnvironmentPullRequestEntry> | undefined,
 ) {
+  const key = JSON.stringify(input);
   return useAtomValue(
     Atom.make((get) =>
-      editHeldPullRequestListEntries(input, entries ?? [], (entry) =>
-        get(pullRequestPendingEditsFor(entry.environmentId, entry)),
-      ),
+      (entries ?? []).flatMap((entry) => {
+        let readers = heldRowReaders.get(entry);
+        if (readers === undefined) {
+          readers = new Map();
+          heldRowReaders.set(entry, readers);
+        }
+        let reader = readers.get(key);
+        if (reader === undefined) {
+          reader = heldPullRequestListEntriesAtom(entry.environmentId, input, [entry]);
+          readers.set(key, reader);
+        }
+        return AsyncResult.getOrElse(get(reader), () => []);
+      }),
     ),
   );
 }

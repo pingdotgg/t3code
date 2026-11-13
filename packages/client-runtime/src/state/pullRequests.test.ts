@@ -11,6 +11,7 @@ import {
   WS_METHODS,
   type AuthSessionState,
   type PullRequestListInput,
+  type PullRequestListEntry,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
@@ -46,6 +47,7 @@ import {
   createPullRequestEnvironmentAtoms,
   createPullRequestStackAtomFamily,
   editHeldPullRequestListEntries,
+  heldPullRequestListEntriesAtom,
   pullRequestHostAnswer,
   pullRequestPendingEditsAtom,
   pullRequestPendingEditsFor,
@@ -1100,6 +1102,20 @@ const actionReply = {
   isDraft: false,
   updatedAt: "2026-10-27T10:00:00Z",
   observedAt: 200,
+};
+
+const actionListEntry: PullRequestListEntry = {
+  ...actionReply,
+  provider: SourceControlProviderKind.make("github"),
+  projectTitle: "Web",
+  state: "open",
+  author: null,
+  mergeability: "unknown",
+  additions: 0,
+  deletions: 0,
+  createdAt: actionReply.updatedAt,
+  viewerReviewRequested: false,
+  labels: [],
 };
 
 function actionReplyClient(overrides: Record<string, unknown> = {}) {
@@ -2530,8 +2546,20 @@ it.effect(
               return undefined;
             }),
         });
-        const { atoms, registry } = yield* makeTestRuntime(client);
+        let held = [actionListEntry] as ReadonlyArray<PullRequestListEntry>;
+        const { atoms, registry } = yield* makeTestRuntime(client, undefined, false, {
+          acceptedEdit: (_target, edit) =>
+            Effect.sync(() => {
+              held = editHeldPullRequestListEntries({ state: "all" }, held, () => [edit]);
+            }),
+        });
         const target = { environmentId: TARGET.environmentId, input: actionReference };
+        const retained = heldPullRequestListEntriesAtom(
+          target.environmentId,
+          { state: "all" },
+          held,
+        );
+        registry.mount(retained);
         const detail = atoms.detail(target);
         registry.mount(detail);
         yield* Effect.promise(() => executeAtomQuery(registry, detail));
@@ -2545,6 +2573,10 @@ it.effect(
         yield* Deferred.await(rereadStarted);
 
         expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).state).toBe("closed");
+        expect(held[0]?.state).toBe("closed");
+        expect(Option.getOrThrow(AsyncResult.value(registry.get(retained)))[0]?.state).toBe(
+          "closed",
+        );
         yield* Deferred.succeed(releaseReread, undefined);
         expect(
           (yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true })).observedAt,
@@ -2697,15 +2729,20 @@ it.effect.each(["accepted", "refused"] as const)(
               title = input.title;
             }),
         });
+        let held: ReadonlyArray<PullRequestListEntry> = [];
         let observedTitle = "Original";
         const handlers = {
           detail: (_target: unknown, detail: { readonly title: string }) =>
             Effect.sync(() => {
               observedTitle = detail.title;
             }),
-          acceptedEdit: (_target: unknown, edit: { readonly title?: string }) =>
+          acceptedEdit: (
+            _target: unknown,
+            edit: Parameters<typeof applyPullRequestSummaryEdits>[2][number],
+          ) =>
             Effect.sync(() => {
               observedTitle = edit.title ?? observedTitle;
+              held = editHeldPullRequestListEntries({ state: "open" }, held, () => [edit]);
             }),
         };
         const { atoms, registry } = yield* makeTestRuntime(client, undefined, false, handlers);
@@ -2722,6 +2759,15 @@ it.effect.each(["accepted", "refused"] as const)(
           registry.mount(atom);
           yield* Effect.promise(() => executeAtomQuery(registry, atom));
         }
+        held = Option.getOrThrow(
+          AsyncResult.value(registry.get(pullRequestHostAnswer(list))),
+        ).entries;
+        const retained = heldPullRequestListEntriesAtom(
+          target.environmentId,
+          { state: "open" },
+          held,
+        );
+        registry.mount(retained);
         const titles = () => [
           Option.getOrThrow(AsyncResult.value(registry.get(detail))).title,
           Option.getOrThrow(AsyncResult.value(registry.get(preview))).title,
@@ -2751,6 +2797,10 @@ it.effect.each(["accepted", "refused"] as const)(
             : ["Edited", "Edited", "Edited", "Edited"],
         );
         expect(observedTitle).toBe(outcome === "refused" ? "Original" : "Edited");
+        expect(held[0]?.title).toBe(outcome === "refused" ? "Original" : "Edited");
+        expect(Option.getOrThrow(AsyncResult.value(registry.get(retained)))[0]?.title).toBe(
+          outcome === "refused" ? "Original" : "Edited",
+        );
         // The edit is known, so no reader asks the host again.
         expect(reads).toBe(3);
       }),
@@ -2857,71 +2907,95 @@ it.effect.each([
     ),
 );
 
-it.effect("shows a label change at once and takes it back when the host refuses it", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const sent = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const existing = { name: "existing", color: "111111" };
-      const added = { name: "new", color: "abcdef" };
-      const client = actionReplyClient({
-        [WS_METHODS.pullRequestsDetail]: () =>
-          Effect.succeed({ ...actionReference, state: "open", labels: [existing] }),
-        [WS_METHODS.pullRequestsLabelCandidates]: () =>
-          Effect.succeed({
-            candidates: [
-              { ...existing, description: null, isApplied: true },
-              { ...added, description: null, isApplied: false },
-            ],
-            truncated: false,
-          }),
-        [WS_METHODS.pullRequestsSetLabels]: () =>
-          Effect.gen(function* () {
-            yield* Deferred.succeed(sent, undefined);
-            yield* Deferred.await(release);
-            return yield* new MutationRefused();
-          }),
-      });
-      const { atoms, registry } = yield* makeTestRuntime(client);
-      const target = { environmentId: TARGET.environmentId, input: actionReference };
-      const detail = atoms.detail(target);
-      const candidates = atoms.labelCandidates(target);
-      const loaded: ReadonlyArray<Atom.Atom<AsyncResult.AsyncResult<object, unknown>>> = [
-        detail,
-        candidates,
-      ];
-      for (const atom of loaded) {
-        registry.mount(atom);
-        yield* Effect.promise(() => executeAtomQuery(registry, atom));
-      }
+it.effect.each(["accepted", "refused"] as const)(
+  "keeps a label change on retained rows only when the host takes it (%s)",
+  (outcome) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const sent = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const existing = { name: "existing", color: "111111" };
+        const added = { name: "new", color: "abcdef" };
+        const client = actionReplyClient({
+          [WS_METHODS.pullRequestsDetail]: () =>
+            Effect.succeed({ ...actionReference, state: "open", labels: [existing] }),
+          [WS_METHODS.pullRequestsLabelCandidates]: () =>
+            Effect.succeed({
+              candidates: [
+                { ...existing, description: null, isApplied: true },
+                { ...added, description: null, isApplied: false },
+              ],
+              truncated: false,
+            }),
+          [WS_METHODS.pullRequestsSetLabels]: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(sent, undefined);
+              yield* Deferred.await(release);
+              if (outcome === "refused") return yield* new MutationRefused();
+            }),
+        });
+        let held: ReadonlyArray<PullRequestListEntry> = [
+          { ...actionListEntry, labels: [existing] },
+        ];
+        const { atoms, registry } = yield* makeTestRuntime(client, undefined, false, {
+          acceptedEdit: (_target, edit) =>
+            Effect.sync(() => {
+              held = editHeldPullRequestListEntries({ state: "open" }, held, () => [edit]);
+            }),
+        });
+        const target = { environmentId: TARGET.environmentId, input: actionReference };
+        const retained = heldPullRequestListEntriesAtom(
+          target.environmentId,
+          { state: "open" },
+          held,
+        );
+        registry.mount(retained);
+        const detail = atoms.detail(target);
+        const candidates = atoms.labelCandidates(target);
+        const loaded: ReadonlyArray<Atom.Atom<AsyncResult.AsyncResult<object, unknown>>> = [
+          detail,
+          candidates,
+        ];
+        for (const atom of loaded) {
+          registry.mount(atom);
+          yield* Effect.promise(() => executeAtomQuery(registry, atom));
+        }
 
-      const labelling = yield* Effect.promise(() =>
-        atoms.setLabels.run(registry, {
-          ...target,
-          input: { ...actionReference, labels: ["new"], applied: true },
-        }),
-      ).pipe(Effect.forkScoped);
-      yield* Deferred.await(sent);
-      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).labels).toEqual([
-        existing,
-        added,
-      ]);
-      expect(
-        Option.getOrThrow(AsyncResult.value(registry.get(candidates))).candidates.map(
-          (candidate) => candidate.isApplied,
-        ),
-      ).toEqual([true, true]);
-      yield* Deferred.succeed(release, undefined);
-      expect((yield* Fiber.join(labelling))._tag).toBe("Failure");
+        const labelling = yield* Effect.promise(() =>
+          atoms.setLabels.run(registry, {
+            ...target,
+            input: { ...actionReference, labels: ["new"], applied: true },
+          }),
+        ).pipe(Effect.forkScoped);
+        yield* Deferred.await(sent);
+        expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).labels).toEqual([
+          existing,
+          added,
+        ]);
+        expect(
+          Option.getOrThrow(AsyncResult.value(registry.get(candidates))).candidates.map(
+            (candidate) => candidate.isApplied,
+          ),
+        ).toEqual([true, true]);
+        yield* Deferred.succeed(release, undefined);
+        expect((yield* Fiber.join(labelling))._tag).toBe(
+          outcome === "refused" ? "Failure" : "Success",
+        );
+        expect(held[0]?.labels).toEqual(outcome === "refused" ? [existing] : [existing, added]);
+        expect(Option.getOrThrow(AsyncResult.value(registry.get(retained)))[0]?.labels).toEqual(
+          outcome === "refused" ? [existing] : [existing, added],
+        );
 
-      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).labels).toEqual([existing]);
-      expect(
-        Option.getOrThrow(AsyncResult.value(registry.get(candidates))).candidates.map(
-          (candidate) => candidate.isApplied,
-        ),
-      ).toEqual([true, false]);
-    }),
-  ),
+        expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).labels).toEqual(
+          outcome === "refused" ? [existing] : [existing, added],
+        );
+        expect(
+          Option.getOrThrow(AsyncResult.value(registry.get(candidates))).candidates.map(
+            (candidate) => candidate.isApplied,
+          ),
+        ).toEqual(outcome === "refused" ? [true, false] : [true, true]);
+      }),
+    ),
 );
 
 it.effect.each(["loaded", "loading"] as const)(

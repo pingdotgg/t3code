@@ -355,8 +355,11 @@ function editedText(
     readonly title?: string;
     readonly body?: string;
   } | null;
-  if (held?.entries === undefined) return held ?? undefined;
-  return held.entries.find((entry) => samePullRequest(entry, reference));
+  const entries = Array.isArray(value)
+    ? (value as ReadonlyArray<PullRequestListEntry>)
+    : held?.entries;
+  if (entries === undefined) return held ?? undefined;
+  return entries.find((entry) => samePullRequest(entry, reference));
 }
 
 /** Whether the edited text changed while the write was out. */
@@ -585,15 +588,30 @@ export function editHeldPullRequestListEntries<Entry extends PullRequestListEntr
   input: PullRequestListInput,
   entries: ReadonlyArray<Entry>,
   editsOf: (entry: Entry) => ReadonlyArray<PullRequestPendingEdit>,
+  pending?: ReadonlyArray<PullRequestPendingEdit>,
 ): ReadonlyArray<Entry> {
   let changed = false;
   const shown = entries.flatMap((entry) => {
     const edits = editsOf(entry);
-    const next = editPullRequestListEntries(input, [entry], edits);
+    const next = editPullRequestListEntries(input, [entry], edits, pending);
     if (next[0] !== entry) changed = true;
     return next;
   });
   return changed ? shown : entries;
+}
+
+export function heldPullRequestListEntriesAtom<Entry extends PullRequestListEntry>(
+  environmentId: EnvironmentId,
+  input: PullRequestListInput,
+  entries: ReadonlyArray<Entry>,
+) {
+  return actionPatchedQuery(() => Atom.make(AsyncResult.success(entries)), {
+    label: "pull-requests:held-list-entries",
+    concerns: (_input: PullRequestListInput, reference) =>
+      entries.some((entry) => samePullRequest(entry, reference)),
+    edit: editPullRequestListEntries<Entry>,
+    patch: patchPullRequestListEntries<Entry>,
+  })({ environmentId, input });
 }
 
 function patchListWithReply(
@@ -1231,6 +1249,21 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       },
     ),
   );
+  const acceptEdit = (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    edit: PullRequestPendingEdit | null,
+    readsAfterWrite = false,
+    atSend?: ReadonlyMap<unknown, AsyncResult.AsyncResult<unknown, unknown>>,
+  ) =>
+    Effect.sync(() => settleEdit(registry, environmentId, edit, readsAfterWrite, atSend)).pipe(
+      Effect.andThen((rewritten) =>
+        edit === null || rewritten
+          ? Effect.void
+          : (onAnswer.acceptedEdit?.({ environmentId, input: edit.reference }, edit, registry) ??
+            Effect.void),
+      ),
+    );
   const listLabel = "environment-data:pull-requests:list";
   const listPersistence = persistQuery(PullRequestListResult);
 
@@ -1416,10 +1449,9 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           ).pipe(
             // The re-read a bare reply starts would otherwise show the old state until it answers.
             Effect.andThen(
-              Effect.sync(() => {
-                if (reply === undefined)
-                  settleEdit(registry, environmentId, actionEdit(input), true);
-              }),
+              reply === undefined
+                ? acceptEdit(registry, environmentId, actionEdit(input), true)
+                : Effect.void,
             ),
           ),
         scheduler: commandScheduler,
@@ -1434,18 +1466,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         execute: (input) => routedRequest(WS_METHODS.pullRequestsUpdate, input),
         onStart: ({ environmentId, input }, registry) =>
           editedResults(registry, environmentId, updateEdit(input)),
-        onSuccess: (target, registry, _reply, atSend) => {
-          const edit = updateEdit(target.input);
-          return Effect.sync(() =>
-            settleEdit(registry, target.environmentId, edit, false, atSend),
-          ).pipe(
-            Effect.andThen((rewritten) =>
-              edit === null || rewritten
-                ? Effect.void
-                : (onAnswer.acceptedEdit?.(target, edit, registry) ?? Effect.void),
-            ),
-          );
-        },
+        onSuccess: (target, registry, _reply, atSend) =>
+          acceptEdit(registry, target.environmentId, updateEdit(target.input), false, atSend),
         scheduler: commandScheduler,
         concurrency: serialPerEnvironment,
       }),
@@ -1594,9 +1616,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         scheduler: commandScheduler,
         concurrency: serialPerEnvironment,
         onSuccess: (target, registry) =>
-          Effect.sync(() =>
-            settleEdit(registry, target.environmentId, labelEdit(registry, target)),
-          ),
+          acceptEdit(registry, target.environmentId, labelEdit(registry, target)),
       }),
       labelEdit,
     ),

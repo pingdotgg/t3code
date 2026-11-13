@@ -1,5 +1,6 @@
 import {
   createPullRequestEnvironmentAtoms,
+  editHeldPullRequestListEntries,
   createPullRequestStackAtomFamily,
   patchPullRequestListEntries,
   pullRequestPendingEditsAtom,
@@ -60,6 +61,24 @@ export const composerPullRequests = createPullRequestEnvironmentAtoms(connection
             registry.get(pullRequestPendingEditsAtom(target.environmentId)),
           );
           return entries === "refresh" || entries === pages.entries ? pages : { ...pages, entries };
+        });
+      }
+    }),
+  acceptedEdit: (target, edit, registry) =>
+    Effect.sync(() => {
+      for (const atom of registry.getNodes().keys()) {
+        const listing =
+          typeof atom === "string" ? undefined : pullRequestListPagesTargets.get(atom);
+        if (listing === undefined || listing[0] !== target.environmentId) continue;
+        registry.update(atom as Atom.Writable<PullRequestListPages | null>, (pages) => {
+          if (pages === null) return pages;
+          const entries = editHeldPullRequestListEntries(
+            listing[1],
+            pages.entries,
+            () => [edit],
+            registry.get(pullRequestPendingEditsAtom(target.environmentId)),
+          );
+          return entries === pages.entries ? pages : { ...pages, entries };
         });
       }
     }),
