@@ -411,10 +411,11 @@ export function isRichTextBoldShortcut(
   );
 }
 
-/** Mod+B, Mod+I and Mod+E, the mark chords the rich-text composer binds. */
+/** Mod+B, Mod+I, Mod+E and Mod+Shift+S, the mark chords the rich-text composer binds. */
 export function isRichTextFormattingShortcut(event: ShortcutEventLike): boolean {
-  if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return false;
+  if (!(event.metaKey || event.ctrlKey) || event.altKey) return false;
   const keys = resolveEventKeys(event);
+  if (event.shiftKey) return keys.has("s");
   return keys.has("b") || keys.has("i") || keys.has("e");
 }
 
