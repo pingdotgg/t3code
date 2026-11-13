@@ -106,6 +106,10 @@ const fakeT3Serve = (publishDelayMs: number | null) => `const fs = require("node
 const http = require("node:http");
 const path = require("node:path");
 const args = process.argv.slice(2);
+if (args.join(" ") === "__ssh-helper home-dir") {
+  process.stdout.write(path.join(process.env.HOME, ".t3"));
+  process.exit(0);
+}
 const port = Number(args[args.indexOf("--port") + 1]);
 const userdata = path.join(args[args.indexOf("--base-dir") + 1], "userdata");
 const servers = path.join(process.env.HOME, "servers");
@@ -171,6 +175,214 @@ const localRemoteShellLayer = (home: string) =>
   );
 
 describe("ssh tunnel scripts", () => {
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "pairs against the remote custom home instead of creating credentials in ~/.t3",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-home-test-" });
+        const customHome = path.join(directory, "Custom T3 home");
+        const cli = path.join(directory, "pairing-fixture.cjs");
+        yield* fs.writeFileString(
+          cli,
+          `const args = process.argv.slice(2);
+process.stdout.write(args[0] === "__ssh-helper"
+  ? process.env.T3CODE_HOME
+  : JSON.stringify({ credential: args[args.indexOf("--base-dir") + 1] }));`,
+        );
+        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const localSsh = ChildProcessSpawner.make((command) => {
+          assert.strictEqual(command._tag, "StandardCommand");
+          if (command._tag !== "StandardCommand") return realSpawner.spawn(command);
+          return realSpawner.spawn(
+            ChildProcess.make("/bin/sh", ["-s"], {
+              ...command.options,
+              env: {
+                HOME: directory,
+                PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
+                T3CODE_HOME: customHome,
+              },
+              extendEnv: false,
+            }),
+          );
+        });
+        const paired = yield* SshTunnel.issueRemotePairingToken(
+          { alias: "fixture", hostname: "fixture", username: null, port: null },
+          undefined,
+          { nodeScriptPath: cli },
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, localSsh));
+        assert.strictEqual(paired.credential, customHome);
+        const stateKey = yield* remoteStateKey({
+          alias: "fixture",
+          hostname: "fixture",
+          username: null,
+          port: null,
+        });
+        const launchedHome = path.join(directory, "Home selected by the login shell");
+        yield* fs.writeFileString(
+          path.join(directory, ".t3/ssh-launch", stateKey, "server-home"),
+          launchedHome,
+        );
+        const pairedAgain = yield* SshTunnel.issueRemotePairingToken(
+          { alias: "fixture", hostname: "fixture", username: null, port: null },
+          undefined,
+          { nodeScriptPath: cli },
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, localSsh));
+        assert.strictEqual(pairedAgain.credential, launchedHome);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "adopts the custom-home service and leaves a live old-home managed server untouched",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-launch-test-" });
+        const customHome = path.join(directory, "custom home");
+        const target = { alias: "fixture", hostname: "fixture", username: null, port: null };
+        const stateKey = yield* remoteStateKey(target);
+        const stateDir = path.join(directory, ".t3/ssh-launch", stateKey);
+        const archiveDir = path.join(directory, ".t3/runtime/versions", ARCHIVE.archiveVersion);
+        yield* fs.makeDirectory(archiveDir, { recursive: true });
+        yield* fs.makeDirectory(path.join(customHome, "userdata"), { recursive: true });
+        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        // This fixture owns its PID. Even a broken ownership guard cannot signal
+        // the test runner or a real T3 environment.
+        const external = yield* realSpawner.spawn(
+          ChildProcess.make(process.execPath, [
+            "-e",
+            "process.stdin.resume()",
+            "--",
+            "serve",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "41773",
+          ]),
+        );
+        yield* fs.writeFileString(
+          path.join(customHome, "userdata/server-runtime.json"),
+          JSON.stringify({ pid: external.pid, port: 41773 }),
+        );
+        yield* fs.writeFileString(
+          path.join(archiveDir, ".install-complete"),
+          ARCHIVE.archiveVersion,
+        );
+        yield* fs.writeFileString(
+          path.join(archiveDir, "t3"),
+          `#!${process.execPath}
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args[0] === "serve" || args[0] === "--version") process.exit(0);
+if (args[0] !== "__ssh-helper") process.exit(21);
+switch (args[1]) {
+  case "home-dir": process.stdout.write(process.env.T3CODE_HOME); break;
+  case "runtime-port": {
+    const runtime = JSON.parse(fs.readFileSync(args[2], "utf8"));
+    process.stdout.write(runtime.pid + " " + runtime.port); break;
+  }
+  case "pick-port": process.stdout.write("41774"); break;
+  case "wait-ready": {
+    if (args[2] === "41774" && fs.readFileSync(process.env.T3_FIXTURE_STATE_DIR + "/server-home", "utf8").trim() !== process.env.T3CODE_HOME) process.exit(24);
+    process.exit(args[2] === process.env.T3_FIXTURE_READY_PORT ? 0 : 22); break;
+  }
+  default: process.exit(23);
+}`,
+          { mode: 0o700 },
+        );
+        yield* fs.writeFileString(
+          path.join(directory, "ps"),
+          '#!/bin/sh\nfor arg do pid="$arg"; done\nif [ -n "$T3_FIXTURE_ZOMBIE_PID" ] && [ "$pid" = "$T3_FIXTURE_ZOMBIE_PID" ]; then printf Z; else exec /bin/ps "$@"; fi\n',
+          { mode: 0o700 },
+        );
+        let zombiePid = "";
+        let readyPort = "41773";
+        const localSsh = ChildProcessSpawner.make((command) => {
+          assert.strictEqual(command._tag, "StandardCommand");
+          if (command._tag !== "StandardCommand") return realSpawner.spawn(command);
+          return realSpawner.spawn(
+            ChildProcess.make("/bin/sh", ["-s", "--", stateKey], {
+              ...command.options,
+              env: {
+                HOME: directory,
+                PATH: `${directory}:/usr/bin:/bin`,
+                T3_FIXTURE_ZOMBIE_PID: zombiePid,
+                T3CODE_HOME: customHome,
+                T3_FIXTURE_READY_PORT: readyPort,
+                T3_FIXTURE_STATE_DIR: stateDir,
+              },
+              extendEnv: false,
+            }),
+          );
+        });
+        const launch = SshTunnel.launchOrReuseRemoteServer(target, undefined, ARCHIVE).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, localSsh),
+        );
+        assert.deepEqual(yield* launch, { remotePort: 41773, remoteServerKind: "external" });
+        assert.strictEqual(
+          (yield* fs.readFileString(path.join(stateDir, "server-home"))).trim(),
+          customHome,
+        );
+        assert.isTrue(yield* external.isRunning);
+
+        // A responsive port remembered for the old home cannot stand in for
+        // an unresponsive service in the newly selected home.
+        readyPort = "41666";
+        yield* fs.remove(path.join(stateDir, "server-home"));
+        yield* fs.writeFileString(path.join(stateDir, "port"), readyPort);
+        assert.isTrue(Result.isFailure(yield* Effect.result(launch)));
+        assert.isFalse(yield* fs.exists(path.join(stateDir, "server-home")));
+        assert.isTrue(yield* external.isRunning);
+
+        // Legacy ownership has no server-home file and belongs to ~/.t3.
+        yield* fs.writeFileString(path.join(stateDir, "managed"), "managed");
+        yield* fs.writeFileString(path.join(stateDir, "pid"), String(external.pid));
+        yield* fs.writeFileString(path.join(stateDir, "run-t3.sh"), "old runner stays intact");
+        const refused = yield* Effect.result(launch);
+        assert.isTrue(Result.isFailure(refused));
+        if (Result.isFailure(refused))
+          assert.include(refused.failure.message, "Stop it before changing the T3 home");
+        assert.isTrue(yield* external.isRunning);
+        assert.strictEqual(
+          yield* fs.readFileString(path.join(stateDir, "run-t3.sh")),
+          "old runner stays intact",
+        );
+        zombiePid = String(external.pid);
+        readyPort = "41774";
+        assert.deepEqual(yield* launch, { remotePort: 41774, remoteServerKind: "managed" });
+        assert.strictEqual(
+          (yield* fs.readFileString(path.join(stateDir, "server-home"))).trim(),
+          customHome,
+        );
+        assert.isTrue(yield* external.isRunning);
+
+        // A rejected runtime PID must not hide a live sibling on the selected home.
+        const sibling = yield* realSpawner.spawn(
+          ChildProcess.make(process.execPath, [
+            "-e",
+            "process.stdin.resume()",
+            "--",
+            "serve",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "41775",
+          ]),
+        );
+        const siblingDir = path.join(directory, ".t3/ssh-launch", "sibling");
+        yield* fs.makeDirectory(siblingDir, { recursive: true });
+        yield* fs.writeFileString(path.join(siblingDir, "managed"), "managed");
+        yield* fs.writeFileString(path.join(siblingDir, "pid"), String(sibling.pid));
+        yield* fs.writeFileString(path.join(siblingDir, "port"), "41775");
+        yield* fs.writeFileString(path.join(siblingDir, "server-home"), customHome);
+        readyPort = "41775";
+        assert.deepEqual(yield* launch, { remotePort: 41775, remoteServerKind: "external" });
+        assert.isTrue(yield* sibling.isRunning);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.live("distinguishes an incompatible remote Node from a missing executable", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1113,6 +1325,14 @@ describe.runIf(HostProcess.Platform.defaultValue() === "linux")("stale managed p
 const http = require("node:http");
 const path = require("node:path");
 const args = process.argv.slice(2);
+if (args.join(" ") === "__ssh-helper home-dir") {
+  process.stdout.write(path.join(require("node:os").homedir(), ".t3"));
+  process.exit(0);
+}
+if (args[0] === "--version") {
+  process.stdout.write("1.0.0");
+  process.exit(0);
+}
 const flag = (name) => args[args.indexOf(name) + 1];
 const server = http.createServer((_request, response) => response.end("ok"));
 server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
@@ -1222,6 +1442,7 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
       process.kill(firstPid, "SIGKILL");
       yield* fs.remove(`${home}/.t3/userdata/server-runtime.json`);
       yield* fs.writeFileString(`${stateDir}/pid`, `${staleId}\n`);
+      yield* fs.writeFileString(`${stateDir}/server-home`, `${home}/old-home`);
       yield* fs.writeFileString(`${stateDir}/port`, `${holderPort}\n`);
 
       const relaunched = yield* launch;

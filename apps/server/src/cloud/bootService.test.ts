@@ -2,7 +2,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -20,6 +20,7 @@ import { vi } from "vite-plus/test";
 import * as ProcessRunner from "../processRunner.ts";
 import { serviceLauncherLockPath } from "../serviceLauncher.ts";
 import * as BootService from "./bootService.ts";
+import { resolveSshServerHome } from "../cli/sshHelper.ts";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import {
   disabledServiceTask,
@@ -1664,3 +1665,90 @@ process.disconnect();
     }),
   );
 });
+
+it.effect.each(["linux", "darwin"] as const)(
+  "resolves the %s service home and gives an explicit environment home precedence",
+  (platform) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-helper-test-" });
+      const serviceHome = path.join(directory, 'T3 "Data" & 100%');
+      const servicePath =
+        platform === "darwin"
+          ? path.join(directory, "Library/LaunchAgents/com.t3tools.t3code.service.plist")
+          : path.join(directory, ".config/systemd/user/t3code.service");
+      // No reachable systemd manager, so Linux falls back to the XDG config directory.
+      const runner = ProcessRunner.ProcessRunner.of({
+        run: () =>
+          Effect.succeed({
+            stdout: "",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(1),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          }),
+      });
+      const resolve = (environment: NodeJS.ProcessEnv = {}) =>
+        resolveSshServerHome.pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, runner),
+          Effect.provideService(HostProcess.HomeDirectory, directory),
+          Effect.provideService(HostProcess.Platform, platform),
+          Effect.provideService(HostProcess.Environment, environment),
+        );
+      assert.strictEqual(yield* resolve(), path.join(directory, ".t3"));
+      const plan = {
+        baseDir: serviceHome,
+        program: ["/fake/t3"],
+        logPath: "/fake/log",
+        unitPath: servicePath,
+      };
+      yield* fs.makeDirectory(path.dirname(servicePath), { recursive: true });
+      yield* fs.writeFileString(
+        servicePath,
+        platform === "darwin"
+          ? BootService.renderBootServicePlist(plan, { homeDir: directory, environmentPath: "" })
+          : BootService.renderBootServiceUnit(plan),
+      );
+      assert.strictEqual(yield* resolve(), serviceHome);
+      assert.strictEqual(
+        yield* resolve({ T3CODE_HOME: "~/explicit home" }),
+        path.join(directory, "explicit home"),
+      );
+      assert.strictEqual(yield* resolve({ T3CODE_HOME: " " }), serviceHome);
+      if (platform === "linux") {
+        // A non-login SSH shell has no XDG_RUNTIME_DIR; the user manager is still found.
+        const managerDirectory = path.join(directory, "relocated config/systemd/user");
+        yield* fs.makeDirectory(managerDirectory, { recursive: true });
+        yield* fs.rename(servicePath, path.join(managerDirectory, "t3code.service"));
+        const managerRunner = ProcessRunner.ProcessRunner.of({
+          run: (request) =>
+            Effect.succeed({
+              stdout: JSON.stringify({ data: [managerDirectory, managerDirectory + ".control"] }),
+              stderr: "",
+              code: ChildProcessSpawner.ExitCode(
+                request.env?.XDG_RUNTIME_DIR === "/run/user/1234" ? 0 : 1,
+              ),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            }),
+        });
+        assert.strictEqual(
+          yield* resolveSshServerHome.pipe(
+            Effect.provideService(ProcessRunner.ProcessRunner, managerRunner),
+            Effect.provideService(HostProcess.HomeDirectory, directory),
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(HostProcess.UserId, 1234),
+            Effect.provideService(HostProcess.Environment, {}),
+          ),
+          serviceHome,
+        );
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

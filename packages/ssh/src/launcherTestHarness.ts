@@ -102,6 +102,7 @@ Date.now = () => Number(fs.readFileSync(process.env.HOME + '/clock', 'utf8'));
       options.archive ? "test-node" : "node",
       `
 case "\${2:-}" in
+  __ssh-helper) [ "$3" = home-dir ] && printf '%s' "$HOME/.t3" ;;
   */server-runtime.json)
     # A started server publishes its runtime record, which the launch waits for.
     # The fake nohup runs in the background, so wait for it instead of racing it.
@@ -191,6 +192,7 @@ set -eu
 if [ "$1" = --version ]; then printf 1.2.3; exit; fi
 [ "$1" = __ssh-helper ]
 case "$2" in
+  home-dir) printf '%s' "$HOME/.t3" ;;
   update-remaining) printf 'marker %s\\n' "$(cat "$HOME/clock")" >> "$HOME/events"; exec "$TEST_REAL_NODE" --require "$HOME/clock.cjs" "$HOME/helper.ts" "$2" "$3" ;;
   runtime-port | pick-port | wait-ready) exec "$HOME/bin/test-node" - "$3" ;;
   *) exit 1 ;;

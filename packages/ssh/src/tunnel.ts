@@ -584,15 +584,14 @@ const REMOTE_LAUNCH_SCRIPT = `set -eu
 STATE_KEY="$1"
 LAUNCHER_ID="\${2:-}"
 STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
-DEFAULT_SERVER_HOME="$HOME/.t3"
-DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
+SERVER_HOME_FILE="$STATE_DIR/server-home"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
 MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
-LAUNCH_LOCK="$DEFAULT_SERVER_HOME/ssh-launch/.launch.lock"
+LAUNCH_LOCK="$HOME/.t3/ssh-launch/.launch.lock"
 LAUNCH_BREAK_LOCK="$LAUNCH_LOCK.break"
 mkdir -p "$STATE_DIR"
 cleanup_launch() {
@@ -665,6 +664,33 @@ while ! (set -C; printf '%s\\n' "$$" >"$LAUNCH_LOCK") 2>/dev/null; do
   sleep 1
   LAUNCH_LOCK_WAITED=$((LAUNCH_LOCK_WAITED + 1))
 done
+# Resolve with the new runner before replacing the old one: a failed home
+# change must not consume the runner-change signal used for future updates.
+DEFAULT_SERVER_HOME="$("$RUNNER_NEXT" __ssh-helper home-dir)" || DEFAULT_SERVER_HOME=""
+if [ -z "$DEFAULT_SERVER_HOME" ]; then
+  printf 'Could not resolve the remote T3 home.\\n' >&2
+  exit 1
+fi
+# kill -0 also succeeds for a server that exited but was not reaped yet, so
+# a zombie does not count as running. Without ps to tell, trust kill -0.
+server_running() {
+  [ -n "$1" ] && kill -0 "$1" 2>/dev/null || return 1
+  case "$(ps -o stat= -p "$1" 2>/dev/null || true)" in
+    *Z*) return 1 ;;
+  esac
+}
+@@T3_MANAGED_SERVER_RUNNING_SCRIPT@@
+PREVIOUS_SERVER_HOME="$(cat "$SERVER_HOME_FILE" 2>/dev/null || printf '%s' "$HOME/.t3")"
+# A home change must not redirect pairing to another environment while the
+# previously managed server is still running. Leave it for an explicit stop.
+if [ "$PREVIOUS_SERVER_HOME" != "$DEFAULT_SERVER_HOME" ] && [ "$(cat "$MANAGED_FILE" 2>/dev/null || true)" = "managed" ]; then
+  PREVIOUS_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+  if managed_server_running "$PREVIOUS_PID"; then
+    printf 'The SSH-managed server still uses %s. Stop it before changing the T3 home to %s.\\n' "$PREVIOUS_SERVER_HOME" "$DEFAULT_SERVER_HOME" >&2
+    exit 1
+  fi
+fi
+DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 RUNNER_CHANGED=0
 if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
   RUNNER_CHANGED=1
@@ -699,15 +725,6 @@ wait_for_pid_exit() {
     sleep 0.1
   done
 }
-# kill -0 also succeeds for a server that exited but was not reaped yet, so
-# a zombie does not count as running. Without ps to tell, trust kill -0.
-server_running() {
-  [ -n "$1" ] && kill -0 "$1" 2>/dev/null || return 1
-  case "$(ps -o stat= -p "$1" 2>/dev/null || true)" in
-    *Z*) return 1 ;;
-  esac
-}
-@@T3_MANAGED_SERVER_RUNNING_SCRIPT@@
 resolve_default_runtime_port() {
   if [ "$T3_ARCHIVE_MODE" = "1" ]; then
     "$RUNNER_FILE" __ssh-helper runtime-port "$DEFAULT_RUNTIME_FILE"
@@ -756,6 +773,13 @@ NODE
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+if [ "$PREVIOUS_SERVER_HOME" != "$DEFAULT_SERVER_HOME" ]; then
+  # A remembered port may belong to an external server using the old home.
+  # Rediscover against the selected home without stopping that server.
+  REMOTE_PID=""
+  REMOTE_PORT=""
+  REMOTE_MANAGED=""
+fi
 adopt_default_server() {
 DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
 DEFAULT_RUNTIME_PID=""
@@ -764,6 +788,11 @@ ADOPTED_PID=""
 if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
   DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
+  if ! server_running "$DEFAULT_RUNTIME_PID"; then
+    DEFAULT_RUNTIME_INFO=""
+    DEFAULT_RUNTIME_PID=""
+    DEFAULT_REMOTE_PORT=""
+  fi
 fi
 # The managed server runs on the default home, so it writes the default
 # runtime file too. When that file names the PID this launcher recorded as
@@ -795,6 +824,10 @@ elif [ -n "$DEFAULT_REMOTE_PORT" ]; then
     fi
     return 0
   else
+    if [ "$PREVIOUS_SERVER_HOME" != "$DEFAULT_SERVER_HOME" ]; then
+      printf 'The server in %s did not become ready. Retry the connection; the server was left running.\\n' "$DEFAULT_SERVER_HOME" >&2
+      exit 1
+    fi
     REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
     REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
     REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
@@ -808,7 +841,7 @@ return 1
 # Another desktop's server stays external. Only this first adoption runs
 # before the replace decision, which the previous key's runner settles.
 if adopt_default_server && [ -n "$ADOPTED_PID" ] && [ -n "$LAUNCHER_ID" ]; then
-  for SIBLING_DIR in "$DEFAULT_SERVER_HOME"/ssh-launch/*; do
+  for SIBLING_DIR in "$HOME/.t3"/ssh-launch/*; do
     [ "$SIBLING_DIR" != "$STATE_DIR" ] && [ "$(cat "$SIBLING_DIR/managed" 2>/dev/null || true)" = "managed" ] || continue
     [ "$(cat "$SIBLING_DIR/pid" 2>/dev/null || true)" = "$ADOPTED_PID" ] && managed_server_running "$ADOPTED_PID" || continue
     [ "$(cat "$SIBLING_DIR/launcher" 2>/dev/null || true)" = "$LAUNCHER_ID" ] || break
@@ -857,8 +890,9 @@ fi
 # publish one; another alias's launch record still names it. Only one server
 # owns the home, so the first live one decides.
 if [ -z "$REMOTE_PORT" ] && [ -z "$DEFAULT_RUNTIME_INFO" ]; then
-  for SIBLING_DIR in "$DEFAULT_SERVER_HOME"/ssh-launch/*; do
+  for SIBLING_DIR in "$HOME/.t3"/ssh-launch/*; do
     [ "$SIBLING_DIR" != "$STATE_DIR" ] && [ "$(cat "$SIBLING_DIR/managed" 2>/dev/null || true)" = "managed" ] || continue
+    [ "$(cat "$SIBLING_DIR/server-home" 2>/dev/null || printf '%s' "$HOME/.t3")" = "$DEFAULT_SERVER_HOME" ] || continue
     managed_server_running "$(cat "$SIBLING_DIR/pid" 2>/dev/null || true)" || continue
     REMOTE_PORT="$(cat "$SIBLING_DIR/port" 2>/dev/null || true)"
     if [ -n "$REMOTE_PORT" ] && wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
@@ -910,6 +944,7 @@ if [ -z "$REMOTE_PORT" ]; then
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+  printf '%s\\n' "$DEFAULT_SERVER_HOME" >"$SERVER_HOME_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
   # A stop keeps the launcher file; it must not name this server's owner.
   if [ -z "$LAUNCHER_ID" ]; then
@@ -936,19 +971,27 @@ if [ -z "$REMOTE_PORT" ]; then
     sleep 0.1
   done
 fi
+printf '%s\\n' "$DEFAULT_SERVER_HOME" >"$SERVER_HOME_FILE"
 printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGED:-managed}"
 `;
 
 const REMOTE_PAIRING_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
-DEFAULT_SERVER_HOME="$HOME/.t3"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 mkdir -p "$STATE_DIR"
 cat >"$RUNNER_FILE" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
 chmod 700 "$RUNNER_FILE"
-PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
+if [ -f "$STATE_DIR/server-home" ]; then
+  PAIRING_BASE_DIR="$(cat "$STATE_DIR/server-home")"
+else
+  PAIRING_BASE_DIR="$("$RUNNER_FILE" __ssh-helper home-dir)" || PAIRING_BASE_DIR=""
+fi
+if [ -z "$PAIRING_BASE_DIR" ]; then
+  printf 'Could not resolve the remote T3 home for pairing.\\n' >&2
+  exit 1
+fi
 "$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json
 `;
 
