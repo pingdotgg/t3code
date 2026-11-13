@@ -434,7 +434,7 @@ function PreviewStreamDocumentView({
                 return;
               case "status":
                 if (message.status === "connecting") showAccessible(accessible && pdfUri == null);
-                clearBootstrapTimer();
+                if (message.status !== "connecting") clearBootstrapTimer();
                 if (message.status === "error") {
                   fail(message.detail ?? "Browser stream failed.");
                   return;

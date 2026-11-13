@@ -274,6 +274,7 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
       ChildProcess.make(sshCommand, args, {
         env: environment,
         extendEnv: true,
+        forceKillAfter: "1 second",
         stdin: {
           stream: stdinStream(input.stdin),
           endOnDone: true,
