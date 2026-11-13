@@ -1,7 +1,9 @@
+import { AVAILABLE_CONNECTION_STATE } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { environmentCatalog } from "~/connection/catalog";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { serverEnvironment } from "~/state/server";
 import type { ServerUpdateOutcome, ServerUpdateTarget } from "../ServerUpdateAction";
@@ -54,6 +56,28 @@ describe("startDesktopUpdateLaunchNotice", () => {
         stage: "resuming",
         targetVersion: "9.9.9",
       });
+    } finally {
+      await vi.advanceTimersByTimeAsync(32 * 60 * 1000);
+      stop();
+    }
+  });
+
+  it("retries the connection to a restarting server instead of waiting out its backoff", async () => {
+    const environmentId = EnvironmentId.make("backing-off-machine");
+    using _connection = vi
+      .spyOn(environmentCatalog, "stateAtom")
+      .mockReturnValue(
+        Atom.make(
+          AsyncResult.success({ ...AVAILABLE_CONNECTION_STATE, phase: "backoff" as const }),
+        ) as unknown as ReturnType<typeof environmentCatalog.stateAtom>,
+      );
+    using retryNow = vi
+      .spyOn(environmentCatalog.retryNow, "run")
+      .mockResolvedValue(AsyncResult.success(undefined));
+    const stop = relaunchWhileRestarting(environmentId);
+    try {
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(retryNow).toHaveBeenCalledWith(appAtomRegistry, environmentId);
     } finally {
       await vi.advanceTimersByTimeAsync(32 * 60 * 1000);
       stop();
