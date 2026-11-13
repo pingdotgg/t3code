@@ -1,7 +1,6 @@
 import {
   CommandId,
   type OrchestrationProjectShell,
-  type PullRequestState,
   type OrchestrationV2ThreadShell,
   type ThreadId,
   type ThreadPullRequestLink,
@@ -86,11 +85,9 @@ function pullRequestListPosition(link: ThreadPullRequestLink): string {
 export function listThreadPullRequests(
   thread: Pick<OrchestrationV2ThreadShell, "pullRequests">,
   cursor?: string,
-  states?: ReadonlyArray<PullRequestState>,
 ): ListThreadPullRequestsResult {
   const chains = resolveThreadPullRequestChains(thread.pullRequests ?? []);
   const after = visibleThreadPullRequests(thread.pullRequests ?? [])
-    .filter((link) => states === undefined || states.includes(link.snapshot?.state ?? "open"))
     .map((link) => ({ link, position: pullRequestListPosition(link) }))
     .filter(({ position }) => cursor === undefined || position > cursor)
     .toSorted((left, right) => (left.position < right.position ? -1 : 1));
@@ -429,7 +426,7 @@ const make = Effect.gen(function* () {
     ),
     list_thread_pull_requests: McpToolAccess.reads((input) =>
       requireThread(PullRequestListFailedError, input.threadId).pipe(
-        Effect.map((thread) => listThreadPullRequests(thread, input.cursor, input.states)),
+        Effect.map((thread) => listThreadPullRequests(thread, input.cursor)),
       ),
     ),
     watch_pull_request: writesThread((input) => setWatching(input, true)),

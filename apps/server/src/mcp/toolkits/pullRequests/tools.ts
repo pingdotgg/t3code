@@ -311,7 +311,6 @@ const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId.annotate({ description: "Thread. Default: this thread." })),
-    states: Schema.optional(Schema.Array(PullRequestState)),
     cursor: Schema.optional(Schema.String),
   }),
   success: ListThreadPullRequestsResult,
