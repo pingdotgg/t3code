@@ -1,6 +1,12 @@
-import { MIN_SCHEDULED_TASK_INTERVAL_MS, type ScheduledTaskSchedule } from "@t3tools/contracts";
+import {
+  MIN_SCHEDULED_TASK_INTERVAL_MS,
+  parseScheduledTaskCron,
+  type ScheduledTaskSchedule,
+} from "@t3tools/contracts";
+import * as Cron from "effect/Cron";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 
 const MINUTE_MS = 60_000;
 
@@ -25,6 +31,17 @@ export function nextScheduledRunAt(
   if (schedule.type === "interval") {
     // Intervals advance elapsed time, including across daylight-saving changes.
     return DateTime.addDuration(from, Math.max(schedule.everyMs, MIN_SCHEDULED_TASK_INTERVAL_MS));
+  }
+  if (schedule.type === "cron") {
+    // Read the fields in the caller's zone, which is the host's local time in the service,
+    // as fixed-time schedules do.
+    const zone = DateTime.isZoned(from) ? from.zone : undefined;
+    const cron = parseScheduledTaskCron(schedule.expression, zone);
+    if (Result.isFailure(cron)) return null;
+    const next = Cron.next(cron.success, from);
+    return zone === undefined
+      ? DateTime.fromDateUnsafe(next)
+      : DateTime.makeZonedUnsafe(next, { timeZone: zone });
   }
 
   const time = parseTimeOfDay(schedule.timeOfDay);
@@ -57,6 +74,15 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
   }
   if (a.type === "webhook") return b.type === "webhook";
   if (a.type === "once") return b.type === "once" && Date.parse(a.runAt) === Date.parse(b.runAt);
+  if (a.type === "cron") {
+    if (b.type !== "cron") return false;
+    // Compare parsed fields so `MON-FRI` and `1-5` do not reschedule a pending run.
+    const aCron = parseScheduledTaskCron(a.expression, "UTC");
+    const bCron = parseScheduledTaskCron(b.expression, "UTC");
+    return Result.isSuccess(aCron) && Result.isSuccess(bCron)
+      ? Cron.equals(aCron.success, bCron.success)
+      : a.expression === b.expression;
+  }
   if (b.type !== "fixed_time") return false;
   // Compare parsed times so padded-hour edits do not reschedule pending runs.
   const aTime = parseTimeOfDay(a.timeOfDay);
@@ -70,13 +96,14 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
   );
 }
 
-const MISSED_FIXED_TIME_GRACE_MS = 10 * MINUTE_MS;
+const MISSED_CLOCK_TIME_GRACE_MS = 10 * MINUTE_MS;
 
-export function isMissedFixedTimeRun(
+/** A clock-time run found well after its time is skipped, not run late. Intervals run late. */
+export function isMissedClockTimeRun(
   schedule: ScheduledTaskSchedule,
   dueAt: DateTime.DateTime,
   now: DateTime.DateTime,
 ): boolean {
-  if (schedule.type !== "fixed_time") return false;
-  return DateTime.toEpochMillis(now) - DateTime.toEpochMillis(dueAt) > MISSED_FIXED_TIME_GRACE_MS;
+  if (schedule.type !== "fixed_time" && schedule.type !== "cron") return false;
+  return DateTime.toEpochMillis(now) - DateTime.toEpochMillis(dueAt) > MISSED_CLOCK_TIME_GRACE_MS;
 }

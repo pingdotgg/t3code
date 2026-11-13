@@ -18,6 +18,7 @@ import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
   resolveEnvironmentMachineKind,
+  scheduledTaskCronError,
   scheduledTaskThreadMode,
 } from "@t3tools/contracts";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
@@ -55,7 +56,6 @@ import {
 import { Menu } from "../../components/ui/Menu";
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
@@ -75,6 +75,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
   changeDraftProject,
+  DEFAULT_CRON_EXPRESSION,
   editDraft,
   parseIntervalMinutes,
   scheduledTaskDefaultModel,
@@ -124,9 +125,11 @@ function describeSchedule(task: ScheduledTask, timeZone?: string): string {
     return `Once, ${formatRunAtDate(runAt)} at ${formatRunAtTime(runAt)}`;
   }
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
-  const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
   const zone = scheduleTimeZoneLabel(timeZone, task.nextRunAt);
-  return `${days} at ${formatTime(task.schedule.timeOfDay)}${zone === undefined ? "" : ` ${zone}`}`;
+  const suffix = zone === undefined ? "" : ` ${zone}`;
+  if (task.schedule.type === "cron") return `Cron ${task.schedule.expression}${suffix}`;
+  const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
+  return `${days} at ${formatTime(task.schedule.timeOfDay)}${suffix}`;
 }
 
 function formatTime(value: string): string {
@@ -168,6 +171,14 @@ function repeatLabel(weekdays: ReadonlyArray<number>): string {
   );
 }
 
+const cronHelp = (example: string) =>
+  `Minute, hour, day of month, month, weekday. ${example} runs every 30 minutes from 9:00 to 16:30 on weekdays.`;
+const CRON_HELP = cronHelp(DEFAULT_CRON_EXPRESSION);
+// Word joiners and no-break spaces keep the example on one line; screen readers get CRON_HELP.
+const CRON_HELP_VISIBLE = cronHelp(
+  [...DEFAULT_CRON_EXPRESSION.replaceAll(" ", "\u00a0")].join("\u2060"),
+);
+
 function FormField(props: {
   readonly label: string;
   readonly value: string;
@@ -176,6 +187,9 @@ function FormField(props: {
   readonly disabled?: boolean;
   readonly placeholder?: string;
   readonly borderTop?: boolean;
+  /** For code-like values that capitalization and autocorrect would change. */
+  readonly verbatim?: boolean;
+  readonly hint?: string;
 }) {
   return (
     <View
@@ -186,6 +200,7 @@ function FormField(props: {
       <Text className="text-sm text-foreground-muted">{props.label}</Text>
       <RNTextInput
         accessibilityLabel={props.label}
+        accessibilityHint={props.hint}
         value={props.value}
         readOnly={props.disabled}
         onChangeText={props.onChange}
@@ -193,6 +208,7 @@ function FormField(props: {
         keyboardType={props.keyboardType}
         placeholder={props.placeholder}
         placeholderTextColorClassName="accent-foreground-muted"
+        {...(props.verbatim ? { autoCapitalize: "none", autoCorrect: false } : {})}
         className="min-h-8 font-sans text-base text-foreground"
       />
     </View>
@@ -697,6 +713,25 @@ function TaskForm({
   const offersOnce =
     config?.environment.capabilities.oneTimeSchedules === true ||
     draft.task?.schedule.type === "once";
+  // Older servers reject cron schedules on save.
+  const offersCron =
+    config?.environment.capabilities.cronSchedules === true || draft.task?.schedule.type === "cron";
+  const cronError =
+    draft.schedule.mode === "cron" ? scheduledTaskCronError(draft.schedule.cronExpression) : null;
+  const scheduleModes = [
+    { value: "fixed_time" as const, label: "At a time" },
+    // Older servers reject one-time schedules on save.
+    ...(offersOnce || draft.schedule.mode === "once"
+      ? [{ value: "once" as const, label: "Once" }]
+      : []),
+    { value: "interval" as const, label: "Interval" },
+    ...(offersCron || draft.schedule.mode === "cron"
+      ? [{ value: "cron" as const, label: "Cron" }]
+      : []),
+    ...(webhookDenial === undefined || draft.schedule.mode === "webhook"
+      ? [{ value: "webhook" as const, label: "On webhook" }]
+      : []),
+  ];
   const offersThreadModes = config?.environment.capabilities.scheduledTaskThreadModes === true;
   const save = async () => {
     if (
@@ -730,6 +765,17 @@ function TaskForm({
         "Once is not available here",
         "This environment runs an older T3 Code. Update it to schedule a one-time task, or pick another schedule.",
       );
+      return;
+    }
+    if (draft.schedule.mode === "cron" && !offersCron) {
+      Dialog.alert(
+        "Cron is not available here",
+        "This environment runs an older T3 Code. Update it to schedule a cron task, or pick another schedule.",
+      );
+      return;
+    }
+    if (cronError !== null) {
+      Dialog.alert("Invalid cron expression", cronError);
       return;
     }
     const parsedFilters = parseWebhookFilterDrafts(draft.schedule.filters);
@@ -1018,42 +1064,38 @@ function TaskForm({
         </SettingsSection>
 
         <SettingsSection title="Schedule">
-          <View className="px-4 py-3">
-            <SegmentedControl
-              variant="card"
-              options={[
-                { value: "fixed_time", label: "At a time" },
-                // Older servers reject one-time schedules on save.
-                ...(offersOnce || draft.schedule.mode === "once"
-                  ? [{ value: "once" as const, label: "Once" }]
-                  : []),
-                { value: "interval", label: "Interval" },
-                ...(webhookDenial === undefined || draft.schedule.mode === "webhook"
-                  ? [{ value: "webhook" as const, label: "On webhook" }]
-                  : []),
-              ]}
-              selected={draft.schedule.mode}
-              onSelect={(mode) => {
-                setTimePickerOpen(false);
-                setRunAtPicker(null);
-                setDraft({
-                  ...draft,
-                  prompt:
-                    mode === "webhook" && !draft.prompt.trim()
-                      ? DEFAULT_WEBHOOK_PROMPT
-                      : draft.prompt,
-                  schedule: {
-                    ...draft.schedule,
-                    mode,
-                    runAt:
-                      mode === "once" && !draft.schedule.runAt
-                        ? new Date(Math.ceil(Date.now() / 3_600_000) * 3_600_000).toISOString()
-                        : draft.schedule.runAt,
-                  },
-                });
-              }}
-            />
-          </View>
+          <SelectRow
+            label="Type"
+            value={
+              scheduleModes.find((option) => option.value === draft.schedule.mode)?.label ?? ""
+            }
+            actions={scheduleModes.map((option) => ({
+              id: option.value,
+              title: option.label,
+              state: option.value === draft.schedule.mode ? "on" : undefined,
+            }))}
+            onSelect={(id) => {
+              const mode = scheduleModes.find((option) => option.value === id)?.value;
+              if (mode === undefined) return;
+              setTimePickerOpen(false);
+              setRunAtPicker(null);
+              setDraft({
+                ...draft,
+                prompt:
+                  mode === "webhook" && !draft.prompt.trim()
+                    ? DEFAULT_WEBHOOK_PROMPT
+                    : draft.prompt,
+                schedule: {
+                  ...draft.schedule,
+                  mode,
+                  runAt:
+                    mode === "once" && !draft.schedule.runAt
+                      ? new Date(Math.ceil(Date.now() / 3_600_000) * 3_600_000).toISOString()
+                      : draft.schedule.runAt,
+                },
+              });
+            }}
+          />
           {draft.schedule.mode === "fixed_time" ? (
             <>
               <Pressable
@@ -1185,6 +1227,30 @@ function TaskForm({
                 </View>
               );
             })
+          ) : draft.schedule.mode === "cron" ? (
+            <>
+              <FormField
+                label="Cron expression"
+                value={draft.schedule.cronExpression}
+                placeholder={DEFAULT_CRON_EXPRESSION}
+                disabled={saving}
+                borderTop
+                verbatim
+                hint={cronError === null ? CRON_HELP : `Error: ${cronError}`}
+                onChange={(cronExpression) =>
+                  setDraft({ ...draft, schedule: { ...draft.schedule, cronExpression } })
+                }
+              />
+              <Text
+                className={
+                  cronError === null
+                    ? "px-4 pb-3 text-sm text-foreground-muted"
+                    : "px-4 pb-3 text-sm text-danger-foreground"
+                }
+              >
+                {cronError ?? CRON_HELP_VISIBLE}
+              </Text>
+            </>
           ) : draft.schedule.mode === "webhook" ? (
             <>
               <WebhookScheduleDetails
@@ -1291,7 +1357,7 @@ function TaskForm({
             />
           </View>
         </SettingsSection>
-        {draft.schedule.mode === "fixed_time" ? (
+        {draft.schedule.mode === "fixed_time" || draft.schedule.mode === "cron" ? (
           <Text className="px-2 text-sm text-foreground-muted">
             Time uses the environment's time zone, which may differ from your phone's.
           </Text>

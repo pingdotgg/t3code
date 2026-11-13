@@ -21,6 +21,7 @@ import {
   scheduledTaskDefaultModel,
   defaultScheduledTaskProjectId,
   matchesScheduledTaskScope,
+  scheduleDraftErrors,
   scheduleFromDraft,
   scheduleLabel,
   taskToDraft,
@@ -234,6 +235,33 @@ describe("one-time scheduled tasks", () => {
   });
 });
 
+describe("cron scheduled tasks", () => {
+  it("round-trips the expression and sends it trimmed", () => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "cron", expression: "*/30 9-16 * * MON-FRI" },
+    });
+    expect(draft.scheduleMode).toBe("cron");
+    expect(scheduleFromDraft(draft)).toEqual({ type: "cron", expression: "*/30 9-16 * * MON-FRI" });
+    expect(scheduleFromDraft({ ...draft, cronExpression: "  0 9 * * 1  " })).toEqual({
+      type: "cron",
+      expression: "0 9 * * 1",
+    });
+  });
+
+  it("refuses to save an expression the server would reject, and says why", () => {
+    const draft = { ...taskToDraft(legacyTask), scheduleMode: "cron" as const };
+    for (const [cronExpression, reason] of [
+      ["* * * * * *", /five fields/],
+      ["0 25 * * *", /between 0 and 23/],
+      ["0 9 30 2 *", /never matches/],
+    ] as const) {
+      expect(scheduleFromDraft({ ...draft, cronExpression })).toBeNull();
+      expect(scheduleDraftErrors({ ...draft, cronExpression })[0]?.description).toMatch(reason);
+    }
+  });
+});
+
 describe("webhook scheduled tasks", () => {
   const signature = { header: "x-signature", encoding: "base64", prefix: "" } as const;
   const webhookTask: ScheduledTask = {
@@ -409,9 +437,12 @@ it("rejects dedupe templates without a request placeholder", () => {
   expect(scheduleFromDraft({ ...draft, coalesceKey: "{{body.bad" })).toBeNull();
 });
 
-it("appends the server zone only to fixed-time schedule labels", () => {
+it("appends the server zone only to clock-time schedule labels", () => {
   expect(scheduleLabel({ type: "fixed_time", timeOfDay: "16:31" }, "Etc/UTC")).toBe(
     "Daily at 16:31 UTC",
+  );
+  expect(scheduleLabel({ type: "cron", expression: "0 9 * * 1-5" }, "Etc/UTC")).toBe(
+    "Cron 0 9 * * 1-5 UTC",
   );
   expect(scheduleLabel({ type: "fixed_time", timeOfDay: "09:00" })).toBe("Daily at 09:00");
   expect(scheduleLabel({ type: "interval", everyMs: 60_000 }, "Etc/UTC")).toBe("Every 1 min");
