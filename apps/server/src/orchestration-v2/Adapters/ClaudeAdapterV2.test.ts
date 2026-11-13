@@ -11013,7 +11013,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     );
 
   it.effect(
-    "uses task_started as an incremental roster fallback, keeps its tool call, and clears internal work on empty snapshot",
+    "uses task_started as an incremental roster fallback and keeps its owed wake after an empty snapshot",
     () =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
@@ -11161,7 +11161,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ).map((task) => task.taskId),
           WAKE_TASK_ID,
         );
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -13887,9 +13887,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.isTrue(yield* harness.hasPendingBackgroundWork);
       assert.lengthOf(harness.continuationRequests, 0);
 
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [],
+          uuid: "roster-before-notification",
+        }),
+      );
+      assert.isTrue(yield* harness.hasPendingBackgroundWork);
       yield* harness.offerAndWait(wakeNotification);
       assert.lengthOf(harness.continuationRequests, 0);
-      assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      assert.isTrue(yield* harness.hasPendingBackgroundWork);
 
       yield* Queue.offer(harness.sdkMessages, wakeAssistant);
       yield* harness.awaitContinuation(1);
@@ -14778,8 +14787,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* harness.offerAndWait(emptyRoster);
         yield* harness.offerAndWait(wakeNotification);
         if (emptyLevel === "after") yield* harness.offerAndWait(emptyRoster);
-        // Query replacement reads the internal roster, which the exit already cleared.
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
         yield* harness.offerAndWait(wakeTurnInit);
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -19095,7 +19103,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       yield* Queue.offer(firstProcess, turnOneResult);
       yield* changes.until(() => events.some((event) => event.type === "turn.terminal"));
-      assert.isFalse(yield* hasPendingBackgroundWork);
+      assert.isTrue(yield* hasPendingBackgroundWork);
 
       const alternateModel = CLAUDE_TEST_RESTART_MODEL_SELECTION;
       const activeProviderThread = {
@@ -19293,7 +19301,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* changes.until(
           () => events.filter((event) => event.type === "turn.terminal").length === 2,
         );
-        assert.isFalse(yield* hasPendingBackgroundWork);
+        assert.isTrue(yield* hasPendingBackgroundWork);
         assert.lengthOf(continuationRequests, 0);
 
         yield* Queue.offer(secondProcess, wakeResult);

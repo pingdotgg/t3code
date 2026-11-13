@@ -13108,6 +13108,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 return true;
               }
             }
+            // An empty roster can precede task_notification; the wake it owes is still pending.
+            for (const taskIds of (yield* Ref.get(
+              wakeEligibleBackgroundTasksByNativeThread,
+            )).values()) {
+              if (taskIds.size > 0) {
+                return true;
+              }
+            }
             const buffers = yield* Ref.get(wakeBuffers);
             for (const entry of buffers.values()) {
               if (
@@ -13115,7 +13123,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   (message) =>
                     message.type === "user" ||
                     message.type === "assistant" ||
-                    message.type === "result",
+                    message.type === "result" ||
+                    // The roster empties on the notification, before the wake turn's frames arrive.
+                    (message.type === "system" && message.subtype === "task_notification"),
                 )
               ) {
                 return true;
