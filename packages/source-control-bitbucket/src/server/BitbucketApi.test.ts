@@ -909,24 +909,37 @@ it.effect("follows a redirect that stays on the configured Bitbucket", () =>
 it.effect("reports a merge Bitbucket accepted as a task and then rejected", () => {
   const pullRequest = "https://api.test.local/2.0/repositories/acme/web/pullrequests/7";
   const task = `${pullRequest}/merge/task-status/task-1`;
+  // A queued merge can stay pending for minutes before Bitbucket rejects it.
+  const pendingReads = 100;
+  let taskReads = 0;
   const { execute, layer } = makeLayer({
-    response: (request) =>
-      request.method === "POST"
-        ? new Response("", { status: 202, headers: { location: task } })
-        : Response.json({ type: "error", error: { message: "Merge conflict" } }, { status: 400 }),
+    response: (request) => {
+      if (request.method === "POST") {
+        return new Response("", { status: 202, headers: { location: task } });
+      }
+      taskReads += 1;
+      return taskReads <= pendingReads
+        ? Response.json({ task_status: "PENDING" })
+        : Response.json({ type: "error", error: { message: "Merge conflict" } }, { status: 400 });
+    },
   });
 
   return Effect.gen(function* () {
     const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
 
-    const outcome = yield* Effect.result(
-      api.runAction({ repository: "acme/web", number: 7, action: "merge" }),
+    const merge = yield* Effect.forkChild(
+      Effect.result(api.runAction({ repository: "acme/web", number: 7, action: "merge" })),
     );
+    yield* TestClock.adjust("1 hour");
+    const outcome = yield* Fiber.join(merge);
 
     assert.isTrue(Result.isFailure(outcome));
     assert.deepStrictEqual(
       execute.mock.calls.map(([request]) => `${request.method} ${request.url}`),
-      [`POST ${pullRequest}/merge`, `GET ${task}`],
+      [
+        `POST ${pullRequest}/merge`,
+        ...Array.from({ length: pendingReads + 1 }, () => `GET ${task}`),
+      ],
     );
   }).pipe(Effect.provide(BitbucketPullRequestApi.layer.pipe(Layer.provideMerge(layer))));
 });
