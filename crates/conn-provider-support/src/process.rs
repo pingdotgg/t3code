@@ -14,12 +14,12 @@ use std::{
 };
 
 use tokio::{
-    io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader},
+    io::{AsyncRead, AsyncWriteExt},
     process::{Child, Command},
     sync::{Notify, mpsc, oneshot, watch},
 };
 
-use crate::lines::{Line, read_lines};
+use crate::lines::{Line, read_lines, read_lines_keeping_last};
 
 const STDERR_TAIL_BYTES: usize = 4096;
 /// How long a closed stdin may take to end the CLI before it is killed.
@@ -164,18 +164,26 @@ impl Process {
     }
 
     /// Ends input, waits [`CLOSE_GRACE`], then kills. Returns once the child is reaped.
-    pub async fn shutdown(self) {
-        let Process {
-            writer,
-            kill,
-            mut exited,
-            ..
-        } = self;
-        drop(writer);
+    pub async fn shutdown(mut self) {
+        // Replacing our sender with a closed one drops it: the writer task ends stdin once no
+        // clone from `writer()` is left.
+        let (closed, _) = mpsc::channel(1);
+        drop(std::mem::replace(&mut self.writer, closed));
+        let mut exited = self.exited.clone();
         let wait = exited.wait_for(|done| *done);
         if tokio::time::timeout(CLOSE_GRACE, wait).await.is_err() {
-            kill.notify_one();
+            self.kill.notify_one();
             let _ = exited.wait_for(|done| *done).await;
+        }
+    }
+}
+
+/// A `Process` dropped without [`Process::shutdown`] kills its child, so no path leaves it
+/// running. After a shutdown the child is already reaped and this does nothing.
+impl Drop for Process {
+    fn drop(&mut self) {
+        if !*self.exited.borrow() {
+            self.kill.notify_one();
         }
     }
 }
@@ -270,16 +278,22 @@ pub fn pid_alive(pid: u32) -> bool {
         .is_some_and(|pid| rustix::process::test_kill_process(pid).is_ok())
 }
 
+/// Keeps the last [`STDERR_TAIL_BYTES`] of stderr. Lines are framed with a cap and decoded
+/// lossily, so a long line or invalid UTF-8 cannot grow memory or end the reader (which would
+/// close the pipe and fail the child's next stderr write).
 fn spawn_stderr_tail(
     stderr: impl AsyncRead + Unpin + Send + 'static,
     tail: Arc<Mutex<String>>,
 ) -> oneshot::Receiver<()> {
     let (done_tx, done) = oneshot::channel();
     tokio::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
+        read_lines_keeping_last(stderr, STDERR_TAIL_BYTES, |line| {
+            let text = match line {
+                Line::Text(text) => text,
+                Line::Oversized(bytes) => format!("[{bytes}-byte line dropped]"),
+            };
             if let Ok(mut tail) = tail.lock() {
-                tail.push_str(&line);
+                tail.push_str(&text);
                 tail.push('\n');
                 if tail.len() > STDERR_TAIL_BYTES {
                     let mut cut = tail.len() - STDERR_TAIL_BYTES;
@@ -289,7 +303,9 @@ fn spawn_stderr_tail(
                     tail.drain(..cut);
                 }
             }
-        }
+            async { true }
+        })
+        .await;
         let _ = done_tx.send(());
     });
     done
@@ -319,6 +335,30 @@ mod tests {
         assert_eq!(info.code, Some(3));
         assert_eq!(info.stderr_tail, "boom\n");
         assert!(process.has_exited());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn invalid_utf8_on_stderr_keeps_the_pipe_open() {
+        let (tx, mut rx) = mpsc::channel(8);
+        // After the bad byte the child writes again; a closed pipe would fail that write.
+        let script = "printf '\\377\\376\\n' >&2; sleep 0.2; echo after >&2 || exit 9; exit 0";
+        let _process = Process::spawn(&sh(script), 1024, tx).unwrap();
+        let Some(ProcEvent::Exited(info)) = rx.recv().await else {
+            panic!("expected exit")
+        };
+        assert_eq!(info.code, Some(0), "the second stderr write succeeded");
+        assert!(info.stderr_tail.contains("after"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_dropped_process_kills_its_child() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let process = Process::spawn(&sh("sleep 30"), 1024, tx).unwrap();
+        let pid = process.pid;
+        drop(process);
+        let exited = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+        assert!(matches!(exited, Ok(Some(ProcEvent::Exited(_)))));
+        assert!(!pid_alive(pid));
     }
 
     #[tokio::test(flavor = "current_thread")]
