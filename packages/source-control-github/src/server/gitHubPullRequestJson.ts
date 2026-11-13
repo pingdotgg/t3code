@@ -229,6 +229,7 @@ const RawPullRequestFileSchema = Schema.Struct({
   patch: Schema.optional(Schema.NullOr(Schema.String)),
   additions: Schema.optional(Schema.NullOr(Schema.Int)),
   deletions: Schema.optional(Schema.NullOr(Schema.Int)),
+  sha: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 export function toPullRequestPreview(
@@ -1799,6 +1800,8 @@ const decodeCommitFiles = decodeJsonResult(
   Schema.Struct({ files: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))) }),
 );
 
+const EMPTY_BLOB_SHA = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
+
 function toFilesPatch(entries: ReadonlyArray<unknown>): GitHubPullRequestFilesPatch {
   const sections: string[] = [];
   const omittedFileStats: PullRequestOmittedFileStat[] = [];
@@ -1820,6 +1823,15 @@ function toFilesPatch(entries: ReadonlyArray<unknown>): GitHubPullRequestFilesPa
     }
     const oldPath =
       status === "renamed" ? value.previous_filename || value.filename : value.filename;
+    const from = status === "added" ? "/dev/null" : quoteGitPatchPath(`a/${oldPath}`);
+    const to = status === "removed" ? "/dev/null" : quoteGitPatchPath(`b/${value.filename}`);
+    // The files API sends a binary change as a patchless, countless entry; only the empty blob
+    // looks the same, so restore git's marker for the viewer.
+    const binary =
+      hunks.length === 0 &&
+      (value.additions ?? 0) + (value.deletions ?? 0) === 0 &&
+      (status === "added" || status === "removed" || status === "modified") &&
+      value.sha !== EMPTY_BLOB_SHA;
     const header = [
       `diff --git ${quoteGitPatchPath(`a/${oldPath}`)} ${quoteGitPatchPath(`b/${value.filename}`)}`,
       ...(status === "added" ? ["new file mode 100644"] : []),
@@ -1832,8 +1844,9 @@ function toFilesPatch(entries: ReadonlyArray<unknown>): GitHubPullRequestFilesPa
             `rename to ${quoteGitPatchPath(value.filename)}`,
           ]
         : []),
-      `--- ${status === "added" ? "/dev/null" : quoteGitPatchPath(`a/${oldPath}`)}`,
-      `+++ ${status === "removed" ? "/dev/null" : quoteGitPatchPath(`b/${value.filename}`)}`,
+      `--- ${from}`,
+      `+++ ${to}`,
+      ...(binary ? [`Binary files ${from} and ${to} differ`] : []),
     ].join("\n");
     sections.push(hunks.length === 0 ? `${header}\n` : `${header}\n${hunks.replace(/\n?$/, "\n")}`);
   }

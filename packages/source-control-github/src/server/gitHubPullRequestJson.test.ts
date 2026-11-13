@@ -1644,6 +1644,38 @@ describe("decodePullRequestFilesJson", () => {
     expect(result.truncated).toBe(true);
     expect(result.rawCount).toBe(2);
   });
+
+  it("marks a patchless, countless change as binary unless it is the empty blob", () => {
+    const result = expectSuccess(
+      decodePullRequestFilesJson(
+        JSON.stringify([
+          { filename: "icon.png", status: "added", additions: 0, deletions: 0, sha: "3e26" },
+          {
+            filename: "empty.txt",
+            status: "added",
+            additions: 0,
+            deletions: 0,
+            sha: "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+          },
+        ]),
+      ),
+    );
+
+    expect(result.patch).toBe(
+      [
+        "diff --git a/icon.png b/icon.png",
+        "new file mode 100644",
+        "--- /dev/null",
+        "+++ b/icon.png",
+        "Binary files /dev/null and b/icon.png differ",
+        "diff --git a/empty.txt b/empty.txt",
+        "new file mode 100644",
+        "--- /dev/null",
+        "+++ b/empty.txt",
+        "",
+      ].join("\n"),
+    );
+  });
 });
 
 describe("decodePullRequestFilesViewedJson", () => {
