@@ -1986,26 +1986,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           const runtimeParams = codexThreadRuntimeParams(params);
           if (shellNoProxy === undefined) return runtimeParams;
           const cwd = params.runtimePolicy?.cwd;
-          const configuredShellVariables = yield* ensureInitialized.pipe(
+          const shellEnvironmentPolicy = yield* ensureInitialized.pipe(
             Effect.andThen(
               client.request("config/read", {
                 ...(cwd == null ? {} : { cwd }),
                 includeLayers: false,
               }),
             ),
-            Effect.map((response) =>
-              readCodexProtocolPath(response.config, "shell_environment_policy", "set"),
+            Effect.map(
+              (response): unknown =>
+                readCodexProtocolPath(response.config, "shell_environment_policy") ?? {},
             ),
-            Effect.map((set) => (typeof set === "object" && set !== null ? Object.keys(set) : [])),
-            Effect.catch(() =>
-              Effect.logDebug("Codex config read failed.").pipe(Effect.as<Array<string>>([])),
-            ),
+            Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.asVoid)),
           );
           return {
             ...runtimeParams,
             config: {
               ...runtimeParams.config,
-              ...codexShellNoProxyConfig(shellNoProxy, configuredShellVariables, platform),
+              ...codexShellNoProxyConfig(shellNoProxy, shellEnvironmentPolicy, platform),
             },
           };
         });

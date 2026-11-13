@@ -28,11 +28,11 @@ it.each([
     shell: { name: "no_proxy", value: "remote.example" },
   },
   {
-    name: "exempts loopback from a macOS system proxy and blanks it for shells",
+    name: "exempts loopback from a macOS system proxy and reports it as unset for shells",
     platform: "darwin",
     environment: {},
     env: { NO_PROXY: LOOPBACK },
-    shell: { name: "NO_PROXY", value: "" },
+    shell: { name: "NO_PROXY", value: undefined },
   },
   {
     name: "keeps a wildcard as the user wrote it",
@@ -53,7 +53,7 @@ it.each([
     platform: "win32",
     environment: { HTTP_PROXY: PROXY },
     env: { NO_PROXY: LOOPBACK },
-    shell: { name: "NO_PROXY", value: "" },
+    shell: { name: "NO_PROXY", value: undefined },
   },
   {
     name: "leaves a Windows registry proxy and its bypass list alone",
@@ -74,7 +74,7 @@ it.each([
   platform: NodeJS.Platform;
   environment: NodeJS.ProcessEnv;
   env: NodeJS.ProcessEnv;
-  shell: { name: string; value: string } | undefined;
+  shell: { name: string; value: string | undefined } | undefined;
 }>)("$name", ({ platform, environment, env, shell }) => {
   assert.deepStrictEqual(codexLoopbackProxyBypass(environment, platform), { env, shell });
 });
@@ -82,7 +82,40 @@ it.each([
 it("leaves the other spelling to shells when Codex's config sets only that one", () => {
   const shell = { name: "NO_PROXY", value: "" };
   const restore = { "shell_environment_policy.set.NO_PROXY": "" };
+  const policy = { set: { no_proxy: "127.0.0.1" } };
 
-  assert.deepStrictEqual(codexShellNoProxyConfig(shell, ["no_proxy"], "linux"), restore);
-  assert.deepStrictEqual(codexShellNoProxyConfig(shell, ["no_proxy"], "win32"), {});
+  assert.deepStrictEqual(codexShellNoProxyConfig(shell, policy, "linux"), restore);
+  assert.deepStrictEqual(codexShellNoProxyConfig(shell, policy, "win32"), {});
+});
+
+it.each([
+  {
+    name: "excludes it beside a configured no_proxy instead of blanking it",
+    policy: { set: { no_proxy: "127.0.0.1" }, exclude: null, filters: null },
+    config: { "shell_environment_policy.exclude": ["NO_PROXY"] },
+  },
+  {
+    name: "keeps the configured excludes",
+    policy: { exclude: ["AWS_*"] },
+    config: { "shell_environment_policy.exclude": ["AWS_*", "NO_PROXY"] },
+  },
+  {
+    name: "adds a filter when the config uses filters",
+    policy: { filters: { "AWS_*": "exclude" } },
+    config: { "shell_environment_policy.filters.NO_PROXY": "exclude" },
+  },
+  {
+    name: "leaves a NO_PROXY the config sets",
+    policy: { set: { NO_PROXY: "intranet.example" } },
+    config: {},
+  },
+  {
+    name: "changes nothing when the config could not be read",
+    policy: undefined,
+    config: {},
+  },
+])("a NO_PROXY that was unset: $name", ({ policy, config }) => {
+  const shell = { name: "NO_PROXY", value: undefined };
+
+  assert.deepStrictEqual(codexShellNoProxyConfig(shell, policy, "linux"), config);
 });
