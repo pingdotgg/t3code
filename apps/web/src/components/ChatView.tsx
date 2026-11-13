@@ -2891,6 +2891,8 @@ export default function ChatView(props: ChatViewProps) {
     setPendingServerThreadEnvModeEntry,
     setPendingServerThreadStartFromOriginByThreadId,
     scheduleComposerFocus,
+    setThreadRuntimeMode,
+    runInProgress: isWorking || phase === "connecting" || pendingBackgroundTasks.length > 0,
   });
   const { onResume, isResuming } = useComposerResume({
     environmentId,

@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
+  RuntimeMode,
   ThreadId,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -12,7 +13,7 @@ import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 const mocks = vi.hoisted(() => ({
@@ -35,9 +36,10 @@ vi.mock(import("../../state/threads"), async (original) => {
   };
 });
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { deriveEffectiveComposerModelState, useComposerDraftStore } from "../../composerDraftStore";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
+import { toastManager } from "../ui/toast";
 import { useComposerSelection } from "./useComposerSelection";
 
 // Kept alive so a shell set before the hook mounts is still there when it saves a pick.
@@ -97,6 +99,8 @@ function Picker(props: {
     setPendingServerThreadEnvModeEntry: () => {},
     setPendingServerThreadStartFromOriginByThreadId: () => {},
     scheduleComposerFocus: () => {},
+    setThreadRuntimeMode: async () => AsyncResult.success(undefined),
+    runInProgress: false,
   });
   return (
     <button
@@ -174,4 +178,239 @@ it("saves a re-picked model again when its first save failed", async () => {
     },
   });
   await vi.waitFor(() => expect(setModelSelection.mock.calls).toEqual([[autoSave], [autoSave]]));
+});
+
+const env = EnvironmentId.make("env-1");
+const threadId = ThreadId.make("thread-1");
+const threadRef = scopeThreadRef(env, threadId);
+
+const mockActiveThread = {
+  environmentId: env,
+  id: threadId,
+  projectId: "proj-1" as never,
+  title: "Test Thread",
+  providerInstanceId: "codex" as never,
+  modelSelection: { instanceId: "codex" as never, model: "gpt-5.5" },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  branch: null,
+  worktreePath: null,
+  lineage: null as never,
+  forkedFrom: null,
+  linkOrigin: null,
+  delegatedFrom: null,
+  activeProviderThreadId: null,
+  latestRun: null,
+  runtime: null,
+  latestUserMessageAt: null,
+  hasPendingApprovals: false,
+  hasPendingUserInput: false,
+  hasActionableProposedPlan: false,
+  pendingBackgroundTasks: [],
+} as unknown as EnvironmentThreadShell;
+
+interface TestHarnessProps {
+  readonly isLocalDraftThread?: boolean;
+  readonly runInProgress?: boolean;
+  readonly activeThread?: EnvironmentThreadShell;
+  readonly setThreadRuntimeMode: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly input: {
+      readonly threadId: ThreadId;
+      readonly runtimeMode: RuntimeMode;
+      readonly createdAt?: string;
+    };
+  }) => Promise<unknown>;
+  readonly onReady: (hook: ReturnType<typeof useComposerSelection>) => void;
+}
+
+function TestHarness(props: TestHarnessProps) {
+  const hook = useComposerSelection({
+    environmentId: env,
+    composerDraftTarget: threadRef,
+    draftThread: null,
+    activeThread: props.activeThread ?? mockActiveThread,
+    activeRuntime: null,
+    activeProjectSettings: { settings: { newWorktreesStartFromOrigin: false } },
+    settings: DEFAULT_UNIFIED_SETTINGS,
+    providerStatuses: [],
+    lockedProvider: null,
+    supportsProviderSwitchingViaHandoff: false,
+    multipleModelSelections: null,
+    runtimeMode: "full-access",
+    isLocalDraftThread: props.isLocalDraftThread ?? false,
+    canOverrideServerThreadEnvMode: false,
+    setPendingServerThreadEnvModeEntry: vi.fn(),
+    setPendingServerThreadStartFromOriginByThreadId: vi.fn(),
+    scheduleComposerFocus: vi.fn(),
+    setThreadRuntimeMode: props.setThreadRuntimeMode as never,
+    runInProgress: props.runInProgress ?? false,
+  });
+
+  props.onReady(hook);
+  return null;
+}
+
+function clearRuntimeModeDraft() {
+  useComposerDraftStore.getState().setRuntimeMode(threadRef, null);
+  return {
+    [Symbol.dispose]() {
+      useComposerDraftStore.getState().setRuntimeMode(threadRef, null);
+    },
+  };
+}
+
+describe("useComposerSelection runtime mode persistence", () => {
+  it("persists runtime mode change immediately to the server on an existing thread", async () => {
+    using _cleanup = clearRuntimeModeDraft();
+    const setThreadRuntimeMode = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
+    let hook!: ReturnType<typeof useComposerSelection>;
+
+    await using _screen = await render(
+      <TestHarness
+        setThreadRuntimeMode={setThreadRuntimeMode}
+        onReady={(h) => {
+          hook = h;
+        }}
+      />,
+    );
+
+    await act(() => {
+      hook.handleRuntimeModeChangeStable("approval-required");
+    });
+
+    expect(setThreadRuntimeMode).toHaveBeenCalledTimes(1);
+    expect(setThreadRuntimeMode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environmentId: env,
+        input: expect.objectContaining({
+          threadId,
+          runtimeMode: "approval-required",
+        }),
+      }),
+    );
+    expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode).toBe(
+      "approval-required",
+    );
+  });
+
+  it("reverts the draft runtime mode and alerts when persisting to the server fails", async () => {
+    using _cleanup = clearRuntimeModeDraft();
+    const setThreadRuntimeMode = vi
+      .fn()
+      .mockResolvedValue(AsyncResult.failure(Cause.fail(new Error("Network disconnect"))));
+    let hook!: ReturnType<typeof useComposerSelection>;
+
+    await using _screen = await render(
+      <TestHarness
+        setThreadRuntimeMode={setThreadRuntimeMode}
+        onReady={(h) => {
+          hook = h;
+        }}
+      />,
+    );
+    using toastSpy = vi.spyOn(toastManager, "add");
+
+    await act(async () => {
+      hook.handleRuntimeModeChangeStable("approval-required");
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode ?? null,
+      ).toBeNull();
+    });
+
+    expect(toastSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        title: "Failed to update permission mode",
+      }),
+    );
+  });
+
+  it("rolls back only the selection whose save failed, even when a newer one has the same mode", async () => {
+    using _cleanup = clearRuntimeModeDraft();
+    let rejectFirst!: (res: unknown) => void;
+    const firstPromise = new Promise((resolve) => {
+      rejectFirst = resolve;
+    });
+    const setThreadRuntimeMode = vi
+      .fn()
+      .mockImplementationOnce(() => firstPromise)
+      .mockResolvedValueOnce(AsyncResult.success(undefined));
+    let hook!: ReturnType<typeof useComposerSelection>;
+
+    const harness = (runInProgress: boolean) => (
+      <TestHarness
+        runInProgress={runInProgress}
+        setThreadRuntimeMode={setThreadRuntimeMode}
+        onReady={(h) => {
+          hook = h;
+        }}
+      />
+    );
+    await using screen = await render(harness(false));
+    using toastSpy = vi.spyOn(toastManager, "add");
+
+    await act(() => {
+      hook.handleRuntimeModeChangeStable("approval-required");
+    });
+    await act(() => {
+      hook.handleRuntimeModeChangeStable("auto-accept-edits");
+    });
+
+    expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode).toBe(
+      "auto-accept-edits",
+    );
+
+    // A send is in flight, so this same-mode selection is kept only as a draft.
+    await screen.rerender(harness(true));
+    await act(() => {
+      hook.handleRuntimeModeChangeStable("approval-required");
+    });
+    expect(setThreadRuntimeMode).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      rejectFirst(AsyncResult.failure(Cause.fail(new Error("First call failed"))));
+    });
+
+    await vi.waitFor(() => {
+      expect(toastSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "error",
+          title: "Failed to update permission mode",
+        }),
+      );
+    });
+
+    expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode).toBe(
+      "approval-required",
+    );
+  });
+
+  it("keeps the selection as a draft for the next send while a run is in progress", async () => {
+    using _cleanup = clearRuntimeModeDraft();
+    const setThreadRuntimeMode = vi.fn();
+    let hook!: ReturnType<typeof useComposerSelection>;
+
+    await using _screen = await render(
+      <TestHarness
+        runInProgress
+        setThreadRuntimeMode={setThreadRuntimeMode}
+        onReady={(h) => {
+          hook = h;
+        }}
+      />,
+    );
+
+    await act(() => {
+      hook.handleRuntimeModeChangeStable("approval-required");
+    });
+
+    expect(setThreadRuntimeMode).not.toHaveBeenCalled();
+    expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode).toBe(
+      "approval-required",
+    );
+  });
 });
