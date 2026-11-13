@@ -32,6 +32,7 @@ import { openUrlInPreview } from "../../browser/openFileInPreview";
 import { isPreviewAvailableFor } from "../../browser/previewRuntime";
 import { resolveDiscoveredServerUrl } from "../../browser/browserTargetResolver";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { cycleThreadTerminal } from "../../lib/cycleThreadTerminal";
 import { confirmTerminalClose } from "../../lib/terminalCloseConfirm";
 import { findReusableProjectScriptTerminal } from "../../lib/projectScriptTerminal";
 import { type TerminalContextSelection } from "../../lib/terminalContext";
@@ -416,6 +417,14 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       )
         return false;
       toggleTerminalVisibility();
+    },
+    "terminal.previous": ({ terminalFocusOwner }) => {
+      if (!activeThreadRef || !terminalFocusOwner) return false;
+      return cycleThreadTerminal(activeThreadRef, terminalFocusOwner, "previous");
+    },
+    "terminal.next": ({ terminalFocusOwner }) => {
+      if (!activeThreadRef || !terminalFocusOwner) return false;
+      return cycleThreadTerminal(activeThreadRef, terminalFocusOwner, "next");
     },
     "terminal.split": ({ terminalFocusOwner }) => {
       if (!hasTerminalWriteAccess()) return false;

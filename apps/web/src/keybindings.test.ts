@@ -644,7 +644,7 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
-  it("navigates history with mod+[ and mod+] outside the terminal", () => {
+  it("uses bracket shortcuts for history outside terminals and cycling inside them", () => {
     const back = event({ key: "[", code: "BracketLeft", metaKey: true });
     const forward = event({ key: "]", code: "BracketRight", ctrlKey: true });
     assert.strictEqual(
@@ -655,12 +655,28 @@ describe("resolveShortcutCommand", () => {
       resolveShortcutCommand(forward, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "Linux" }),
       "navigation.forward",
     );
-    assert.isNull(
-      resolveShortcutCommand(back, DEFAULT_RESOLVED_KEYBINDINGS, {
-        platform: "MacIntel",
-        context: { terminalFocus: true },
-      }),
-    );
+    for (const platform of ["MacIntel", "Win32", "Linux"]) {
+      const mac = platform === "MacIntel";
+      for (const [key, command] of [
+        ["[", "terminal.previous"],
+        ["]", "terminal.next"],
+      ] as const) {
+        assert.strictEqual(
+          resolveShortcutCommand(
+            event({ key, metaKey: mac, ctrlKey: !mac, altKey: !mac }),
+            DEFAULT_RESOLVED_KEYBINDINGS,
+            { platform, context: { terminalFocus: true } },
+          ),
+          command,
+        );
+      }
+      assert.isNull(
+        resolveShortcutCommand(event({ key: "[", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: true },
+        }),
+      );
+    }
   });
 
   it("matches punctuation shortcuts by physical key across keyboard layouts", () => {
