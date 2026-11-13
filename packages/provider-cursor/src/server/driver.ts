@@ -162,13 +162,17 @@ export const CursorDriver: ProviderDriver<
         },
       });
 
-    const readEnabledPlugins = auth.readApiKey.pipe(
-      Effect.flatMap((apiKey) =>
-        apiKey === undefined ? Effect.succeed([]) : readCursorEnabledPlugins(apiKey),
+    // Every thread's first turn reads this, so one answer serves the turns that start together.
+    const readEnabledPlugins = yield* Effect.cachedWithTTL(
+      auth.readApiKey.pipe(
+        Effect.flatMap((apiKey) =>
+          apiKey === undefined ? Effect.succeed([]) : readCursorEnabledPlugins(apiKey),
+        ),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+        // Signed out or offline, folder and local plugin skills are still listed.
+        Effect.orElseSucceed((): ReadonlyArray<CursorEnabledPlugin> => []),
       ),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-      // Signed out or offline, folder and local plugin skills are still listed.
-      Effect.orElseSucceed((): ReadonlyArray<CursorEnabledPlugin> => []),
+      "1 minute",
     );
 
     let catalogModels: ReadonlyArray<ServerProviderModel> = [];

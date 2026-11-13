@@ -205,6 +205,9 @@ it.layer(layerTest)("CursorDriver", (it) => {
                 { status: failUser ? 503 : 200 },
               ),
             );
+          // Each first turn asks Cursor which plugins are enabled; this account has none to report.
+          if (!request.url.endsWith("/v1/models"))
+            return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
           yield* Deferred.succeed(catalogRequested, undefined);
           const models = yield* Deferred.await(catalog);
           return HttpClientResponse.fromWeb(request, Response.json({ items: models }));

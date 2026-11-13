@@ -2305,6 +2305,23 @@ describe("CursorAdapterV2", () => {
           path.join(userOnlySkill, "SKILL.md"),
           "---\nname: grill-me\ndescription: Grill the plan.\ndisable-model-invocation: true\n---\nAsk one question at a time.",
         );
+        const teamPlugin = path.join(
+          workspace,
+          ".cursor",
+          "plugins",
+          "cache",
+          "acme-team",
+          "ops",
+          "sha",
+        );
+        const teamSkill = path.join(teamPlugin, "skills", "rollback", "SKILL.md");
+        yield* fileSystem.makeDirectory(path.dirname(teamSkill), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(teamPlugin, ".cache-complete"), "");
+        yield* fileSystem.writeFileString(
+          teamSkill,
+          "---\ndescription: Roll a deploy back.\n---\nRevert the release.",
+        );
+        const sent: unknown[] = [];
         const steered: string[] = [];
         let cancelled = 0;
         let outcome: "complete_delivered" | "revert_to_followup" = "complete_delivered";
@@ -2326,6 +2343,7 @@ describe("CursorAdapterV2", () => {
         const adapter = yield* makeCursorAdapterV2({
           instanceId,
           environment: { HOME: workspace },
+          readEnabledPlugins: Effect.succeed([{ marketplace: "acme-team", name: "ops" }]),
         }).pipe(
           Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
             assertComplete: Effect.void,
@@ -2334,30 +2352,32 @@ describe("CursorAdapterV2", () => {
                 agentId: "native-cursor-steer",
                 listMessages: Effect.succeed([]),
                 close: Effect.void,
-                send: () =>
-                  Effect.succeed({
-                    agentId: "native-cursor-steer",
-                    runId: "native-cursor-steer-run",
-                    wait: Deferred.await(finished),
-                    cancel: Effect.sync(() => {
-                      cancelled += 1;
-                    }).pipe(
-                      Effect.andThen(
-                        Deferred.succeed(finished, {
-                          id: "native-cursor-steer-run",
-                          requestId: "native-request",
-                          status: "cancelled" as const,
-                          model: { id: "composer-2.5" },
-                          durationMs: 1,
-                        }),
+                send: (input) =>
+                  Effect.sync(() => sent.push(input.message)).pipe(
+                    Effect.as({
+                      agentId: "native-cursor-steer",
+                      runId: "native-cursor-steer-run",
+                      wait: Deferred.await(finished),
+                      cancel: Effect.sync(() => {
+                        cancelled += 1;
+                      }).pipe(
+                        Effect.andThen(
+                          Deferred.succeed(finished, {
+                            id: "native-cursor-steer-run",
+                            requestId: "native-request",
+                            status: "cancelled" as const,
+                            model: { id: "composer-2.5" },
+                            durationMs: 1,
+                          }),
+                        ),
                       ),
-                    ),
-                    steer: (text) =>
-                      Effect.sync(() => {
-                        steered.push(text);
-                        return outcome;
-                      }),
-                  }),
+                      steer: (text) =>
+                        Effect.sync(() => {
+                          steered.push(text);
+                          return outcome;
+                        }),
+                    }),
+                  ),
               }),
           }),
           Effect.provide(TestProviderHost.layer({ cwd: workspace })),
@@ -2424,6 +2444,8 @@ describe("CursorAdapterV2", () => {
           nativeTurnId: "native-cursor-steer-run",
         });
         yield* runtime.startTurn(turn);
+        // The SDK gives the model no team marketplace skills, so the first message lists them unasked.
+        assert.include(sent[0], `- rollback: Roll a deploy back. (${teamSkill})`);
         yield* runtime.steerTurn({
           threadId,
           runId: turn.runId,

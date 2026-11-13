@@ -11,7 +11,7 @@ import * as Schema from "effect/Schema";
 import { parse as parseYamlDocument } from "yaml";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import type { CursorEnabledPlugin } from "./enabledPlugins.ts";
+import { CURSOR_PUBLIC_MARKETPLACE, type CursorEnabledPlugin } from "./enabledPlugins.ts";
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 const SKILL_MENTION_PATTERN =
@@ -133,7 +133,6 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
   readonly directory: string;
   readonly scope: "user" | "project" | "system";
   readonly maxDepth?: number;
-  readonly userInvocationOnly?: boolean;
   readonly budget: CursorSkillScanBudget;
   readonly scannedRoots: Set<string>;
 }): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
@@ -193,9 +192,7 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
             ? { displayName: frontmatter.displayName }
             : {}),
           ...(frontmatter.description ? { description: frontmatter.description } : {}),
-          ...(frontmatter.userInvocationOnly || input.userInvocationOnly
-            ? { userInvocationOnly: true }
-            : {}),
+          ...(frontmatter.userInvocationOnly ? { userInvocationOnly: true } : {}),
           ...(frontmatter.userInvocable === false ? { userInvocable: false } : {}),
         });
       }
@@ -279,7 +276,7 @@ const cursorPluginSkillSources = Effect.fn("cursorPluginSkillSources")(function*
     orUndefined(fileSystem.readDirectory(directory)).pipe(
       Effect.map((entries) => [...(entries ?? [])].sort()),
     );
-  const plugins: Array<{ readonly directory: string; readonly userInvocationOnly: boolean }> = [];
+  const plugins: Array<{ readonly directory: string; readonly unlisted: boolean }> = [];
 
   const localRoot = path.join(pluginsRoot, "local");
   const resolvedLocalRoot = yield* orUndefined(fileSystem.realPath(localRoot));
@@ -288,7 +285,7 @@ const cursorPluginSkillSources = Effect.fn("cursorPluginSkillSources")(function*
     const directory = yield* orUndefined(fileSystem.realPath(path.join(localRoot, entry)));
     // The SDK ignores a local plugin that is a symlink to somewhere outside this folder.
     if (directory?.startsWith(`${resolvedLocalRoot}${path.sep}`)) {
-      plugins.push({ directory, userInvocationOnly: false });
+      plugins.push({ directory, unlisted: false });
     }
   }
 
@@ -304,8 +301,7 @@ const cursorPluginSkillSources = Effect.fn("cursorPluginSkillSources")(function*
       const directory = path.join(versionsRoot, version);
       const complete = yield* orUndefined(fileSystem.stat(path.join(directory, ".cache-complete")));
       if (complete?.type !== "File") continue;
-      // The SDK loads only Cursor's public marketplace, so the prompt carries a team plugin's skill.
-      plugins.push({ directory, userInvocationOnly: plugin.marketplace !== "cursor-public" });
+      plugins.push({ directory, unlisted: plugin.marketplace !== CURSOR_PUBLIC_MARKETPLACE });
     }
   }
 
@@ -313,7 +309,7 @@ const cursorPluginSkillSources = Effect.fn("cursorPluginSkillSources")(function*
     readonly directory: string;
     readonly scope: "user";
     readonly maxDepth: number;
-    readonly userInvocationOnly: boolean;
+    readonly unlisted: boolean;
   }> = [];
   for (const plugin of plugins) {
     for (const directory of yield* cursorPluginSkillRoots(plugin.directory)) {
@@ -322,7 +318,7 @@ const cursorPluginSkillSources = Effect.fn("cursorPluginSkillSources")(function*
         directory,
         scope: "user",
         maxDepth: 1,
-        userInvocationOnly: plugin.userInvocationOnly,
+        unlisted: plugin.unlisted,
       });
     }
   }
@@ -354,6 +350,7 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();
+  const unlisted: ServerProviderSkill[] = [];
   const budget: CursorSkillScanBudget = {
     remainingEntries: MAX_SKILL_SCAN_ENTRIES,
     remainingStats: MAX_SKILL_SCAN_STATS,
@@ -366,11 +363,19 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
     if (budget.exhausted) break;
     const skills = yield* discoverSkillsInRoot({ ...root, budget, scannedRoots });
     for (const skill of skills) {
-      if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
+      if (skillsByName.has(skill.name)) continue;
+      if (!("unlisted" in root && root.unlisted)) {
+        skillsByName.set(skill.name, skill);
+        continue;
+      }
+      // The model has no catalog entry to open, so an invoked skill's text travels with the prompt.
+      skillsByName.set(skill.name, { ...skill, userInvocationOnly: true });
+      if (!skill.userInvocationOnly) unlisted.push(skill);
     }
   }
   return {
     skills: [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name)),
+    unlisted,
     failureReason: budget.exhausted
       ? ("scan-budget-exhausted" as const)
       : budget.incomplete
@@ -385,6 +390,16 @@ export const discoverCursorSkills = Effect.fn("discoverCursorSkills")(function* 
   enabledPlugins: ReadonlyArray<CursorEnabledPlugin> = [],
 ) {
   return (yield* inspectCursorSkills(cwd, environment, enabledPlugins)).skills;
+});
+
+/** A session's skills, with the ones the Cursor SDK leaves out of the model's skill catalog. */
+export const discoverCursorSessionSkills = Effect.fn("discoverCursorSessionSkills")(function* (
+  cwd?: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  enabledPlugins: ReadonlyArray<CursorEnabledPlugin> = [],
+) {
+  const { skills, unlisted } = yield* inspectCursorSkills(cwd, environment, enabledPlugins);
+  return { skills, unlisted };
 });
 
 export const probeCursorSkills = Effect.fn("probeCursorSkills")(function* (
@@ -432,4 +447,17 @@ export function appendCursorInvokedSkills(
       `<skill name="${skill.name}">\n${skill.contents.replace(FRONTMATTER_PATTERN, "").trim()}\n</skill>`,
   );
   return `${prompt}\n\nThe user invoked these skills. Follow their instructions:\n\n${blocks.join("\n\n")}`;
+}
+
+/** Tells the model about the skills its Cursor catalog lacks: those of team marketplace plugins. */
+export function appendCursorSkillCatalog(
+  prompt: string,
+  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "description" | "path">>,
+): string {
+  if (skills.length === 0) return prompt;
+  const entries = skills.map(
+    (skill) =>
+      `- ${skill.name}: ${(skill.description ?? "No description.").replace(/\s+/g, " ")} (${skill.path})`,
+  );
+  return `${prompt}\n\nThese skills are also in your skill catalog. Before you use one, read its file and follow it:\n\n${entries.join("\n")}`;
 }

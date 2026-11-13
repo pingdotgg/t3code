@@ -29,6 +29,9 @@ const EffectiveUserPlugins = Schema.Struct({
   marketplaces: Schema.optional(Schema.Array(Marketplace)),
 });
 
+/** The only marketplace whose plugins the Cursor SDK gives to the model. */
+export const CURSOR_PUBLIC_MARKETPLACE = "cursor-public";
+
 /** A marketplace or team plugin the Cursor account has enabled. */
 export interface CursorEnabledPlugin {
   readonly marketplace: string;

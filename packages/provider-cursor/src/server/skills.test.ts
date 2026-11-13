@@ -11,6 +11,7 @@ import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 import { cursorEnabledPluginsFromResponse } from "./enabledPlugins.ts";
 import {
+  discoverCursorSessionSkills,
   discoverCursorSkills,
   hasCursorSkillMention,
   probeCursorSkills,
@@ -180,6 +181,11 @@ describe("Cursor skills", () => {
           ["review", "user", false],
           ["rollback", "user", true],
         ]);
+        const session = yield* discoverCursorSessionSkills(undefined, { HOME: userHome }, [
+          { marketplace: "cursor-public", name: "demo" },
+          { marketplace: "acme-team", name: "ops" },
+        ]);
+        expect(session.unlisted.map((skill) => skill.name)).toEqual(["rollback"]);
         expect(
           (yield* discoverCursorSkills(undefined, { HOME: userHome })).map((skill) => skill.name),
         ).toEqual(["acme-deploy"]);
