@@ -21,7 +21,7 @@ export const FeedbackToolkit = Toolkit.make(
   Tool.make("t3_feedback", {
     ...shared,
     description:
-      "Report a T3 Code problem to the T3 team: a T3 tool or `t3` command that misbehaved, a confusing instruction, or a missing capability. Not for the user's own code. Returns the scrubbed text saved and whether it was sent.",
+      "Report a T3 Code problem to the T3 team: a T3 tool or `t3` command that misbehaved, a confusing instruction, or a missing capability. Not for the user's own code. Describe T3's behavior in your own words; never quote the user's messages, code, files, or names.",
     parameters: FeedbackInput,
     success: FeedbackReport,
   }).annotate(Tool.Destructive, false),

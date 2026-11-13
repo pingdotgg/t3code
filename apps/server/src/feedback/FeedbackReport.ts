@@ -1,13 +1,15 @@
 import * as Schema from "effect/Schema";
 
+const FeedbackText = Schema.String.check(Schema.isMaxLength(300));
+
 export const FeedbackInput = Schema.Struct({
   kind: Schema.Literals(["bug", "confusing", "missing_capability", "wrong_docs"]),
   subject: Schema.String.annotate({
     description: "The T3 tool name or `t3` command, such as `t3 thread send`.",
   }),
-  expected: Schema.String,
-  actual: Schema.String,
-  workaround: Schema.String.annotate({ description: "What you did instead, or empty." }),
+  expected: FeedbackText,
+  actual: FeedbackText,
+  workaround: FeedbackText.annotate({ description: "What you did instead, or empty." }),
 });
 
 export const FeedbackReport = Schema.Struct({

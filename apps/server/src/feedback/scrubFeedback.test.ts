@@ -48,9 +48,21 @@ describe("scrubFeedback", () => {
     ],
     [
       "nothing that only looks like a path",
-      "See https://github.com/org/repo for t3 thread send and t3_thread_read: 3/10 and/or a / b /mcp",
+      "See https://github.com/org/repo for t3 thread send and t3_thread_read: 3/10 and/or a / b /mcp /compact /secret.env",
       [],
-      "See https://github.com/org/repo for t3 thread send and t3_thread_read: 3/10 and/or a / b /mcp",
+      "See https://github.com/org/repo for t3 thread send and t3_thread_read: 3/10 and/or a / b /mcp /compact /secret.env",
+    ],
+    [
+      "quoted paths with spaces",
+      `Read "/home/alice/My Project/secret.txt", 'C:\\Users\\My Name\\a.ts' and \`~/My Notes\` for '/compact'`,
+      [],
+      `Read "[redacted]", '[redacted]' and \`[redacted]\` for '/compact'`,
+    ],
+    [
+      "unquoted paths with spaces",
+      "Opened /home/alice/My Project/secret.txt then C:\\Users\\My Name\\a.ts today",
+      [],
+      "Opened [redacted] then [redacted] today",
     ],
   ])("scrubs %s", (_, text, sensitive, expected) => {
     expect(scrubFeedback(text, sensitive)).toBe(expected);
@@ -61,5 +73,6 @@ describe("scrubFeedback", () => {
       `${"a ".repeat(140)}[redacted]`,
     );
     expect(Array.from(scrubFeedback("😀".repeat(400), []))).toHaveLength(300);
+    expect(scrubFeedback(`${"a@".repeat(20_000)}`, [])).toBe("a@".repeat(150));
   });
 });
