@@ -12,7 +12,6 @@ import {
   PullRequestMediaContext,
   usePullRequestMediaUrl,
 } from "./PullRequestMedia";
-import { videoMimeType } from "@t3tools/shared/video";
 import { createContext, useContext, useMemo, useState } from "react";
 import {
   changeRequestReferenceAutolinker,
@@ -27,10 +26,9 @@ import { linkReferenceAutolinks } from "./pullRequestAutolinks";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
-import { markdownImageSources } from "../../lib/markdownImageSources";
 import { normalizeNativeMarkdownUrl } from "../../lib/markdownLinks";
 import { FilePreviewGallery, useFilePreviewGallery } from "../../components/ui/FilePreviewGallery";
-import { pullRequestImageSource } from "./pullRequestMediaSource";
+import { pullRequestImageGallery, pullRequestImageSource } from "./pullRequestMediaSource";
 import {
   FilePreviewModal,
   type FilePreviewSource,
@@ -125,16 +123,11 @@ export function PullRequestMarkdown(props: {
   const changeRequestUrl = useContext(ChangeRequestUrlContext);
   const segments = useMemo(() => splitPullRequestBody(props.markdown), [props.markdown]);
   const [undoneTicks, setUndoneTicks] = useState(0);
-  const gallery: FilePreviewItem[] = markdownImageSources(
+  const gallery = pullRequestImageGallery(
     props.imageGroupMarkdown ?? props.markdown,
-  )
-    .map((href) => (changeRequestUrl ? resolveChangeRequestMediaUrl(href, changeRequestUrl) : href))
-    .filter(
-      (uri) =>
-        /^https?:\/\//i.test(uri) &&
-        videoMimeType({ name: uri.split(/[?#]/)[0] ?? uri, mimeType: "" }) === null,
-    )
-    .map((uri) => pullRequestImageSource(uri, mediaContext));
+    mediaContext,
+    changeRequestUrl,
+  );
   const segmentProps = {
     gallery,
     lineBreaks: props.lineBreaks,

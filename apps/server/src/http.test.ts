@@ -44,9 +44,9 @@ import * as ServerConfig from "./config.ts";
 import { assetResponseHeaders, assetFileResponse, downloadContentDisposition } from "./http.ts";
 import * as ServerHttp from "./http.ts";
 
-describe("Azure DevOps media failures", () => {
-  it.each(["download", "response"] as const)(
-    "logs only safe diagnostics for a %s failure",
+describe("Azure DevOps media responses", () => {
+  it.each(["download", "response", "image"] as const)(
+    "serves private images and logs only safe diagnostics (%s)",
     async (failure) => {
       const warnings: unknown[] = [];
       const logger = Logger.make(({ message }) => {
@@ -56,13 +56,13 @@ describe("Azure DevOps media failures", () => {
         Effect.succeed({
           kind: "azure-devops-media",
           cwd: "/private-workspace",
-          url: "https://dev.azure.com/private-org/private-project/_apis/git/repositories/private-repo/pullRequests/42/attachments/private.mp4?private-query=secret",
+          url: `https://dev.azure.com/private-org/private-project/_apis/git/repositories/private-repo/pullRequests/42/attachments/private.${failure === "image" ? "gif" : "mp4"}?private-query=secret`,
           expiresAt: 1000,
         }),
       );
       const cli = TestSourceControlHost.layer({
         process: {
-          run: () =>
+          run: ({ args }) =>
             failure === "download"
               ? Effect.fail(
                   new VcsProcessSpawnError({
@@ -73,13 +73,21 @@ describe("Azure DevOps media failures", () => {
                     cause: new Error("private-credential"),
                   }),
                 )
-              : Effect.succeed({
-                  exitCode: ChildProcessSpawner.ExitCode(0),
-                  stdout: "",
-                  stderr: "",
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
-                }),
+              : Effect.gen(function* () {
+                  if (failure === "image") {
+                    const fs = yield* FileSystem.FileSystem;
+                    yield* fs
+                      .writeFileString(args[args.indexOf("--out-file") + 1]!, "GIF89a")
+                      .pipe(Effect.orDie);
+                  }
+                  return {
+                    exitCode: ChildProcessSpawner.ExitCode(0),
+                    stdout: "",
+                    stderr: "",
+                    stdoutTruncated: false,
+                    stderrTruncated: false,
+                  };
+                }).pipe(Effect.provide(NodeServices.layer)),
         },
       });
       const layerApp = Layer.mergeAll(
@@ -104,6 +112,13 @@ describe("Azure DevOps media failures", () => {
         const response = await handler(
           new Request("https://server.example/api/assets/private-capability/private.mp4"),
         );
+        if (failure === "image") {
+          expect(response.status).toBe(200);
+          expect(await response.text()).toBe("GIF89a");
+          expect(response.headers.get("cache-control")).toBe("private, no-store");
+          expect(warnings).toEqual([]);
+          return;
+        }
         expect(response.status).toBe(502);
         expect(response.headers.get("cache-control")).toBe("private, no-store");
         expect(warnings).toEqual([
