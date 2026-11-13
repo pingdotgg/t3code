@@ -9,6 +9,7 @@ import * as PlatformError from "effect/PlatformError";
 import type * as Scope from "effect/Scope";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
+import { cursorEnabledPluginsFromResponse } from "./enabledPlugins.ts";
 import {
   discoverCursorSkills,
   hasCursorSkillMention,
@@ -138,10 +139,69 @@ describe("Cursor skills", () => {
           "---\ndescription: plugin deploy\n---\n",
         );
 
-        const skills = yield* discoverCursorSkills(undefined, { HOME: userHome });
-        expect(skills.map((skill) => skill.name)).toContain("acme-deploy");
+        const writeCachedSkill = Effect.fn("writeCachedCursorPluginSkill")(function* (
+          marketplace: string,
+          plugin: string,
+          skill: string,
+          manifest: object,
+        ) {
+          const root = path.join(
+            userHome,
+            ".cursor",
+            "plugins",
+            "cache",
+            marketplace,
+            plugin,
+            "sha",
+          );
+          yield* fileSystem.makeDirectory(path.join(root, ".cursor-plugin"), { recursive: true });
+          yield* fileSystem.writeFileString(path.join(root, ".cache-complete"), "");
+          yield* fileSystem.writeFileString(
+            path.join(root, ".cursor-plugin", "plugin.json"),
+            JSON.stringify(manifest),
+          );
+          yield* fileSystem.makeDirectory(path.join(root, skill), { recursive: true });
+          yield* fileSystem.writeFileString(path.join(root, skill, "SKILL.md"), "Do the thing.\n");
+        });
+        yield* writeCachedSkill("cursor-public", "demo", "skills/review", { name: "demo" });
+        yield* writeCachedSkill("acme-team", "ops", "playbooks/rollback", {
+          skills: ["./playbooks/", "../../../../../skills"],
+        });
+        yield* writeCachedSkill("cursor-public", "turned-off", "skills/stale", {});
+
+        const skills = yield* discoverCursorSkills(undefined, { HOME: userHome }, [
+          { marketplace: "cursor-public", name: "demo" },
+          { marketplace: "acme-team", name: "ops" },
+        ]);
+        expect(
+          skills.map((skill) => [skill.name, skill.scope, skill.userInvocationOnly ?? false]),
+        ).toEqual([
+          ["acme-deploy", "user", false],
+          ["review", "user", false],
+          ["rollback", "user", true],
+        ]);
+        expect(
+          (yield* discoverCursorSkills(undefined, { HOME: userHome })).map((skill) => skill.name),
+        ).toEqual(["acme-deploy"]);
       }),
     ));
+
+  it("reads the account's enabled plugins and their marketplaces", () => {
+    expect(
+      cursorEnabledPluginsFromResponse({
+        plugins: [
+          { isEnabled: true, plugin: { name: "demo", marketplace: { name: "cursor-public" } } },
+          { isEnabled: true, plugin: { name: "ops", marketplaceId: "7" } },
+          { isEnabled: false, plugin: { name: "turned-off", marketplaceId: "7" } },
+          { isEnabled: true, plugin: { name: "orphan", marketplaceId: "8" } },
+        ],
+        marketplaces: [{ id: "7", name: "acme-team" }],
+      }),
+    ).toEqual([
+      { marketplace: "cursor-public", name: "demo" },
+      { marketplace: "acme-team", name: "ops" },
+    ]);
+  });
 
   it("skips a skill tree deeper than the limit instead of failing discovery", async () =>
     await runNode(

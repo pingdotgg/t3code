@@ -56,6 +56,7 @@ import {
   hasCursorSkillMention,
   rewriteCursorSkillMentions,
 } from "./skills.ts";
+import type { CursorEnabledPlugin } from "./enabledPlugins.ts";
 import { cursorWorkspaceMcpServers } from "./workspaceMcpServers.ts";
 import { t3OrchestrationPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
@@ -976,6 +977,7 @@ export interface CursorAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly environment: NodeJS.ProcessEnv;
   readonly getModels?: () => ReadonlyArray<ServerProviderModel>;
+  readonly readEnabledPlugins?: Effect.Effect<ReadonlyArray<CursorEnabledPlugin>>;
 }
 
 export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
@@ -2340,7 +2342,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               cursorSkills === undefined &&
               (hasCursorSkillMention(rawText) || cursorSlashSkillNames(rawText).size > 0)
             ) {
-              const skills = yield* discoverCursorSkills(cwd, adapterOptions.environment).pipe(
+              const skills = yield* discoverCursorSkills(
+                cwd,
+                adapterOptions.environment,
+                yield* adapterOptions.readEnabledPlugins ?? Effect.succeed([]),
+              ).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),
               );

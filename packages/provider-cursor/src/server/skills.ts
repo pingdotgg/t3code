@@ -4,11 +4,14 @@ import type { ServerProviderSkill } from "@t3tools/contracts";
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { parse as parseYamlDocument } from "yaml";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+
+import type { CursorEnabledPlugin } from "./enabledPlugins.ts";
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 const SKILL_MENTION_PATTERN =
@@ -16,6 +19,11 @@ const SKILL_MENTION_PATTERN =
 const HAS_SKILL_MENTION_PATTERN = new RegExp(SKILL_MENTION_PATTERN.source, "u");
 const SLASH_SKILL_PATTERN = /(?:^|\s)\/([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 const MAX_SKILL_DEPTH = 10;
+const PLUGIN_MANIFEST_PATHS = [
+  ".cursor-plugin/plugin.json",
+  ".claude-plugin/plugin.json",
+  "plugin.json",
+];
 const MAX_SKILL_BYTES = ByteSize.bytes(1_000_000);
 const MAX_SKILL_SCAN_ENTRIES = 10_000;
 const MAX_SKILL_SCAN_STATS = 100_000;
@@ -124,6 +132,8 @@ function parseSkillFrontmatter(contents: string): CursorSkillFrontmatter | undef
 const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (input: {
   readonly directory: string;
   readonly scope: "user" | "project" | "system";
+  readonly maxDepth?: number;
+  readonly userInvocationOnly?: boolean;
   readonly budget: CursorSkillScanBudget;
   readonly scannedRoots: Set<string>;
 }): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
@@ -183,7 +193,9 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
             ? { displayName: frontmatter.displayName }
             : {}),
           ...(frontmatter.description ? { description: frontmatter.description } : {}),
-          ...(frontmatter.userInvocationOnly ? { userInvocationOnly: true } : {}),
+          ...(frontmatter.userInvocationOnly || input.userInvocationOnly
+            ? { userInvocationOnly: true }
+            : {}),
           ...(frontmatter.userInvocable === false ? { userInvocable: false } : {}),
         });
       }
@@ -210,7 +222,7 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
       // Only directories can hold skills, so only they spend the budget: a skill
       // shipping many ordinary files must not hide its siblings.
       if (info?.type !== "Directory") continue;
-      if (depth >= MAX_SKILL_DEPTH) continue;
+      if (depth >= (input.maxDepth ?? MAX_SKILL_DEPTH)) continue;
       if (input.budget.remainingEntries === 0) {
         input.budget.exhausted = true;
         return;
@@ -224,9 +236,103 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
   return skills;
 });
 
+const decodePluginManifest = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ skills: Schema.optional(Schema.Unknown) })),
+);
+
+const cursorPluginSkillRoots = Effect.fn("cursorPluginSkillRoots")(function* (
+  pluginDirectory: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  for (const manifestPath of PLUGIN_MANIFEST_PATHS) {
+    const contents = yield* orUndefined(
+      fileSystem.readFileString(path.join(pluginDirectory, manifestPath)),
+    );
+    if (contents === undefined) continue;
+    const manifest = decodePluginManifest(contents);
+    if (Option.isNone(manifest)) continue;
+    const declared = manifest.value.skills;
+    if (declared === undefined) break;
+    return (Array.isArray(declared) ? declared : [declared])
+      .filter(
+        (entry): entry is string =>
+          typeof entry === "string" &&
+          !entry.includes("..") &&
+          !entry.includes("://") &&
+          !path.isAbsolute(entry),
+      )
+      .map((entry) => path.join(pluginDirectory, entry.replace(/SKILL\.md$/, "")));
+  }
+  return [path.join(pluginDirectory, "skills")];
+});
+
+/** The plugins the Cursor SDK loads: every local one, and the enabled ones it has cached. */
+const cursorPluginSkillSources = Effect.fn("cursorPluginSkillSources")(function* (
+  userHome: string,
+  enabledPlugins: ReadonlyArray<CursorEnabledPlugin>,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const pluginsRoot = path.join(userHome, ".cursor", "plugins");
+  const children = (directory: string) =>
+    orUndefined(fileSystem.readDirectory(directory)).pipe(
+      Effect.map((entries) => [...(entries ?? [])].sort()),
+    );
+  const plugins: Array<{ readonly directory: string; readonly userInvocationOnly: boolean }> = [];
+
+  const localRoot = path.join(pluginsRoot, "local");
+  const resolvedLocalRoot = yield* orUndefined(fileSystem.realPath(localRoot));
+  for (const entry of yield* children(localRoot)) {
+    if (entry.startsWith(".")) continue;
+    const directory = yield* orUndefined(fileSystem.realPath(path.join(localRoot, entry)));
+    // The SDK ignores a local plugin that is a symlink to somewhere outside this folder.
+    if (directory?.startsWith(`${resolvedLocalRoot}${path.sep}`)) {
+      plugins.push({ directory, userInvocationOnly: false });
+    }
+  }
+
+  const cacheSegment = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "_");
+  for (const plugin of enabledPlugins) {
+    const versionsRoot = path.join(
+      pluginsRoot,
+      "cache",
+      cacheSegment(plugin.marketplace),
+      cacheSegment(plugin.name),
+    );
+    for (const version of yield* children(versionsRoot)) {
+      const directory = path.join(versionsRoot, version);
+      const complete = yield* orUndefined(fileSystem.stat(path.join(directory, ".cache-complete")));
+      if (complete?.type !== "File") continue;
+      // The SDK loads only Cursor's public marketplace, so the prompt carries a team plugin's skill.
+      plugins.push({ directory, userInvocationOnly: plugin.marketplace !== "cursor-public" });
+    }
+  }
+
+  const sources: Array<{
+    readonly directory: string;
+    readonly scope: "user";
+    readonly maxDepth: number;
+    readonly userInvocationOnly: boolean;
+  }> = [];
+  for (const plugin of plugins) {
+    for (const directory of yield* cursorPluginSkillRoots(plugin.directory)) {
+      // Like the SDK, a plugin's skills are the folders directly below its skills root.
+      sources.push({
+        directory,
+        scope: "user",
+        maxDepth: 1,
+        userInvocationOnly: plugin.userInvocationOnly,
+      });
+    }
+  }
+  return sources;
+});
+
 const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   cwd?: string,
   environment: NodeJS.ProcessEnv = process.env,
+  enabledPlugins: ReadonlyArray<CursorEnabledPlugin> = [],
 ) {
   const path = yield* Path.Path;
   const userHome =
@@ -244,6 +350,7 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
     ...rootsBelow(userHome, "user"),
     // Cursor syncs its built-in skills here; same-named user and project skills win.
     { directory: path.join(userHome, ".cursor", "skills-cursor"), scope: "system" as const },
+    ...(yield* cursorPluginSkillSources(userHome, enabledPlugins)),
   ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();
@@ -275,15 +382,17 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
 export const discoverCursorSkills = Effect.fn("discoverCursorSkills")(function* (
   cwd?: string,
   environment: NodeJS.ProcessEnv = process.env,
+  enabledPlugins: ReadonlyArray<CursorEnabledPlugin> = [],
 ) {
-  return (yield* inspectCursorSkills(cwd, environment)).skills;
+  return (yield* inspectCursorSkills(cwd, environment, enabledPlugins)).skills;
 });
 
 export const probeCursorSkills = Effect.fn("probeCursorSkills")(function* (
   cwd?: string,
   environment: NodeJS.ProcessEnv = process.env,
+  enabledPlugins: ReadonlyArray<CursorEnabledPlugin> = [],
 ) {
-  const inspection = yield* inspectCursorSkills(cwd, environment);
+  const inspection = yield* inspectCursorSkills(cwd, environment, enabledPlugins);
   if (inspection.failureReason) {
     return yield* new CursorSkillsProbeError({
       reason: inspection.failureReason,

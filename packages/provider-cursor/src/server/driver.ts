@@ -32,6 +32,7 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
+import { type CursorEnabledPlugin, readCursorEnabledPlugins } from "./enabledPlugins.ts";
 import { probeCursorSkills } from "./skills.ts";
 import { makeCursorAuth } from "./auth.ts";
 import * as CursorCredentialStore from "./credentialStore.ts";
@@ -161,10 +162,20 @@ export const CursorDriver: ProviderDriver<
         },
       });
 
+    const readEnabledPlugins = auth.readApiKey.pipe(
+      Effect.flatMap((apiKey) =>
+        apiKey === undefined ? Effect.succeed([]) : readCursorEnabledPlugins(apiKey),
+      ),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      // Signed out or offline, folder and local plugin skills are still listed.
+      Effect.orElseSucceed((): ReadonlyArray<CursorEnabledPlugin> => []),
+    );
+
     let catalogModels: ReadonlyArray<ServerProviderModel> = [];
     const orchestrationAdapter = yield* makeCursorAdapterV2({
       instanceId,
       environment: processEnv,
+      readEnabledPlugins,
       getModels: () => catalogModels,
     }).pipe(
       Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
@@ -287,7 +298,10 @@ export const CursorDriver: ProviderDriver<
           ? snapshot.getSnapshot
           : Effect.all([
               snapshot.getSnapshot,
-              probeCursorSkills(cwd, processEnv).pipe(
+              readEnabledPlugins.pipe(
+                Effect.flatMap((enabledPlugins) =>
+                  probeCursorSkills(cwd, processEnv, enabledPlugins),
+                ),
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),
                 Effect.mapError(
