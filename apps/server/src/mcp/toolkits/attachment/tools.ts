@@ -34,7 +34,7 @@ const shared = {
 const AttachmentUploadTool = Tool.make("t3_attachment_prepare_upload", {
   ...shared,
   description:
-    "Get an upload URL. POST the file's exact bytes to `uploadUrl` (no auth header), then send via `t3_thread_send_attachments` with the returned `attachmentId`.",
+    "Get an upload URL. POST the file's exact bytes to `uploadUrl` (else this server's `relativeUrl`), then send via `t3_thread_send_attachments` with the returned `attachmentId`.",
   parameters: Schema.Struct({ upload: AttachmentCreateUploadUrlInput }),
   success: Schema.Struct({
     ...AttachmentCreateUploadUrlResult.fields,
