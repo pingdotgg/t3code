@@ -143,6 +143,36 @@ export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
 
 // Grok summaries can trail hydrated tools by over two seconds; shorter waits split the wake.
 const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
+const ACP_BUSY_PROMPT_RETRY_INTERVAL: Duration.Input = "1 second";
+
+// pi-agent-core agents (oh-my-pi) end a turn while background work runs and reject
+// prompts until it finishes; the prompt is resent rather than failing the turn.
+function isAgentBusyPromptError(error: EffectAcpErrors.AcpError): boolean {
+  return (
+    error._tag === "AcpRequestError" && error.errorMessage.startsWith("Agent is already processing")
+  );
+}
+
+function sendPromptWhenIdle<A>(
+  turn: { readonly interrupted: boolean; readonly finalized: boolean },
+  prompt: () => Effect.Effect<A, EffectAcpErrors.AcpError>,
+): Effect.Effect<A, EffectAcpErrors.AcpError> {
+  // A Stop can land during the wait, so the flags are rechecked before each resend.
+  const stopped = () => turn.interrupted || turn.finalized;
+  return prompt().pipe(
+    Effect.catchIf(
+      (error) => isAgentBusyPromptError(error) && !stopped(),
+      (error) =>
+        Effect.sleep(ACP_BUSY_PROMPT_RETRY_INTERVAL).pipe(
+          Effect.andThen(
+            Effect.suspend(() =>
+              stopped() ? Effect.fail(error) : sendPromptWhenIdle(turn, prompt),
+            ),
+          ),
+        ),
+    ),
+  );
+}
 
 /**
  * Emit first chunks and segment-close events immediately; coalesce later chunks into full-text snapshots.
@@ -219,6 +249,8 @@ export interface AcpAdapterV2ExtensionContext {
     readonly output?: string;
     readonly report?: BackgroundWork;
   }) => Effect.Effect<void>;
+  /** For compactions reported outside ACP `compaction_update`. */
+  readonly markSessionCompacted: (sessionId: string) => Effect.Effect<void>;
   readonly requestUserInput: (
     input: AcpAdapterV2UserInputRequest,
     requestContext: EffectAcpProtocol.AcpRequestContext,
@@ -296,7 +328,7 @@ export function acpPerTurnPromptUsage(
 }
 
 export interface AcpAdapterV2Flavor {
-  readonly buildPrompt?: (input: {
+  readonly buildAttachmentPrompt?: (input: {
     readonly text: string;
     readonly attachments: ReadonlyArray<ChatAttachment>;
     readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
@@ -329,6 +361,7 @@ export interface AcpAdapterV2Flavor {
   ) => Effect.Effect<string, never, ChildProcessSpawner.ChildProcessSpawner>;
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
+  readonly supportsNativeGoals?: Effect.Effect<boolean>;
   readonly clientCapabilitiesMeta?: NonNullable<
     EffectAcpSchema.InitializeRequest["clientCapabilities"]
   >["_meta"];
@@ -447,6 +480,8 @@ export interface AcpAdapterV2Flavor {
   ) => Effect.Effect<void>;
   readonly subagentsIdleOnTurnCompletion?: boolean;
   readonly supportsCompaction?: boolean;
+  /** Sends `/compact` as a prompt, only to sessions whose advertised commands include `compact`. */
+  readonly compactViaAdvertisedCommand?: boolean;
   /**
    * Native steering: `send` queues a message into the running turn and returns the
    * agent's id for it, which `injectedSteerId` reads from the update that delivers it.
@@ -477,11 +512,19 @@ export interface AcpAdapterV2Flavor {
       nativeTurnId: string,
     ) => NonNullable<EffectAcpSchema.ForkSessionRequest["_meta"]>;
   };
-  /** Compacts with the agent's own request, for agents that answer a `/compact` prompt as chat. */
-  readonly compactSession?: (
-    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
-    sessionId: string,
-  ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  /**
+   * Compacts with the agent's own request, for agents that answer a `/compact` prompt as chat.
+   * Compaction is refused when `supported` rejects the running agent's `initialize` result.
+   */
+  readonly compactSession?: {
+    readonly supported: (
+      initializeResult: AcpSessionRuntime.AcpSessionRuntimeStartResult["initializeResult"],
+    ) => boolean;
+    readonly compact: (
+      runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+      sessionId: string,
+    ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  };
   readonly runtimeHarness?: string;
   readonly registerExtensions?: (
     context: AcpAdapterV2ExtensionContext,
@@ -643,6 +686,7 @@ export interface AcpAdapterV2Options {
     readonly onCancelHeld?: () => Effect.Effect<void>;
     readonly afterPromptWireSettled?: () => Effect.Effect<void>;
     readonly afterPromptSettledWithBackgroundWork?: () => Effect.Effect<void>;
+    readonly afterPromptCallback?: () => Effect.Effect<void>;
     readonly onNativeResponseLifecycle?: (event: {
       readonly generation?: number;
       readonly requestId?: string;
@@ -791,6 +835,11 @@ function forkFromTurnMetaFor(input: {
 
 function isCompactionMessage(message: ProviderAdapter.ProviderAdapterV2TurnMessage): boolean {
   return message.text.trim() === "/compact" && message.attachments.length === 0;
+}
+
+/** `/compact`, optionally followed by preservation instructions that some agents accept. */
+function isCompactCommand(message: ProviderAdapter.ProviderAdapterV2TurnMessage): boolean {
+  return /^\/compact(?:\s|$)/.test(message.text.trim()) && message.attachments.length === 0;
 }
 
 function negotiatedCapabilities(
@@ -962,6 +1011,25 @@ function makeProviderThread(input: {
     createdAt: input.now,
     updatedAt: input.now,
   };
+}
+
+function appendToolContentText(content: unknown, text: string): unknown[] {
+  const next: unknown[] = Array.isArray(content) ? [...content] : [];
+  const last = unknownRecord(next.at(-1));
+  const lastContent = unknownRecord(last?.content);
+  if (
+    last?.type === "content" &&
+    lastContent?.type === "text" &&
+    typeof lastContent.text === "string"
+  ) {
+    next[next.length - 1] = {
+      ...last,
+      content: { ...lastContent, text: `${lastContent.text}${text}` },
+    };
+  } else {
+    next.push({ type: "content", content: { type: "text", text } });
+  }
+  return next;
 }
 
 function acpMcpToolCallOutput(rawOutput: unknown): unknown {
@@ -1724,11 +1792,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const postSettleContinuationEnabled =
     flavor.enablePostSettleContinuation === true && continuationRequests !== undefined;
 
+  const readCapabilities = Effect.gen(function* () {
+    if (flavor.supportsNativeGoals === undefined) return flavor.capabilities;
+    return {
+      ...flavor.capabilities,
+      turns: {
+        ...flavor.capabilities.turns,
+        supportsNativeGoals: yield* flavor.supportsNativeGoals,
+      },
+    };
+  });
+
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver,
-    getCapabilities: Effect.fn("AcpAdapter.getCapabilities")(function () {
-      return Effect.succeed(flavor.capabilities);
+    getCapabilities: Effect.fn("AcpAdapter.getCapabilities")(function* () {
+      return yield* readCapabilities;
     }),
     planSelectionTransition: Effect.fn("AcpAdapter.planSelectionTransition")(function (input) {
       return Effect.succeed(acpSelectionTransition(input));
@@ -1961,8 +2040,35 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
+        const promptRuntimeInstructions = yield* Ref.make(new Map<string, string>());
         // Unique markers keep delayed prompt completions from clearing later compactions.
         const compactionMarkers = yield* Ref.make(new Map<string, symbol>());
+        // ACP may patch a completed compaction again; each compaction id marks its session once.
+        const completedCompactionIds = yield* Ref.make(new Set<string>());
+        // The next prompt in a compacted session resends T3's instructions and runtime notes.
+        // Only root sessions get prompts, so a marker on a child session is never read.
+        const markSessionCompacted = Effect.fn("AcpAdapterV2.markSessionCompacted")(function* (
+          sessionId: string,
+          compactionId?: string,
+        ) {
+          if (compactionId !== undefined) {
+            const key = `${sessionId}\u0000${compactionId}`;
+            const alreadyMarked = yield* Ref.modify(
+              completedCompactionIds,
+              (current): [boolean, Set<string>] =>
+                current.has(key) ? [true, current] : [false, new Set(current).add(key)],
+            );
+            if (alreadyMarked) return;
+          }
+          yield* Ref.update(compactionMarkers, (current) =>
+            new Map(current).set(sessionId, Symbol()),
+          );
+        });
+        const advertisedCommandNames = yield* Ref.make(new Map<string, ReadonlySet<string>>());
+        const compactsContext =
+          flavor.supportsCompaction === true ||
+          flavor.compactSession !== undefined ||
+          flavor.compactViaAdvertisedCommand === true;
         const runtimeRestartRequired = yield* Ref.make(false);
         const runtimeTeardownState = yield* Ref.make<AcpRuntimeTeardownState>({ _tag: "Idle" });
         const runtimeCallbackGeneration = yield* Ref.make(0);
@@ -2923,7 +3029,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (other !== kind) yield* closeTextStream(context, other);
           }
           const stream = textStreamFor(context, kind);
-          const sourceMessageId = messageId?.trim() || null;
+          const sourceMessageId = messageId || null;
           if (
             stream.current !== null &&
             sourceMessageId !== null &&
@@ -3043,26 +3149,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (toolCall.content.type !== "content") return;
             const text = acpContentBlockDisplayText(toolCall.content.content);
             if (text === undefined || text.length === 0) return;
-            const content: unknown[] = Array.isArray(previous?.data.content)
-              ? [...previous.data.content]
-              : [];
-            const last = unknownRecord(content.at(-1));
-            const lastContent = unknownRecord(last?.content);
-            if (
-              last?.type === "content" &&
-              lastContent?.type === "text" &&
-              typeof lastContent.text === "string"
-            ) {
-              content[content.length - 1] = {
-                ...last,
-                content: { ...lastContent, text: `${lastContent.text}${text}` },
-              };
-            } else {
-              content.push({ type: "content", content: { type: "text", text } });
-            }
             toolCall = {
               toolCallId: toolCall.toolCallId,
-              data: { content },
+              data: { content: appendToolContentText(previous?.data.content, text) },
             };
           }
           const merged = mergeToolCallState(previous, toolCall);
@@ -4139,11 +4228,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 updated.delete(context.nativeThreadId);
                 return updated;
               });
-              yield* Ref.update(compactionMarkers, (current) => {
-                const updated = new Map(current);
-                updated.set(context.nativeThreadId, Symbol());
-                return updated;
-              });
+              // A completion projected at turn end must not swallow the agent's later real one.
+              yield* markSessionCompacted(
+                context.nativeThreadId,
+                projectedStatus === undefined
+                  ? toolCall.toolCallId.slice("acp-compaction:".length)
+                  : undefined,
+              );
             }
           } else if (mcpIdentity !== undefined) {
             const toolName = `${mcpIdentity.server}.${mcpIdentity.tool}`;
@@ -4884,10 +4975,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ? ("completed" as const)
                 : ("failed" as const);
           const embeddedToolCallIds = toolCallIdsByAgentTerminalId.get(terminalKey);
-          const projectedToolCallIds =
-            embeddedToolCallIds === undefined || embeddedToolCallIds.size === 0
-              ? [`acp-agent-terminal:${update.terminalId}`]
-              : [...embeddedToolCallIds];
+          const linked = embeddedToolCallIds !== undefined && embeddedToolCallIds.size > 0;
+          const projectedToolCallIds = linked
+            ? [...embeddedToolCallIds]
+            : [`acp-agent-terminal:${update.terminalId}`];
           const output = next.output.slice(-MAX_AGENT_TERMINAL_OUTPUT_CHARS);
           for (const toolCallId of projectedToolCallIds) {
             const existing = context.tools.get(toolCallId);
@@ -4906,7 +4997,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               setToolOutputText(
                 {
                   ...seeded,
-                  status,
+                  // An agent-reported tool owns its status; terminal state only drives the synthetic one.
+                  status: (linked ? existing?.status : undefined) ?? status,
                   ...(next.command === undefined ? {} : { command: next.command }),
                 },
                 output,
@@ -5493,7 +5585,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   status: "inProgress" as const,
                   data: { toolCallId: update.toolCallId },
                 };
-                yield* emitTool(context, appendToolOutputText(previous, text));
+                // Text chunks extend the content list so a later content replacement still shows.
+                yield* emitTool(
+                  context,
+                  update.content.type === "content" && previous.data.rawOutput === undefined
+                    ? {
+                        ...previous,
+                        data: {
+                          ...previous.data,
+                          content: appendToolContentText(previous.data.content, text),
+                        },
+                      }
+                    : previous.data.rawOutput === undefined
+                      ? setToolOutputText(
+                          previous,
+                          `${textFromUnknown(previous.data.content) ?? ""}${text}`,
+                        )
+                      : appendToolOutputText(previous, text),
+                );
               }
               break;
             }
@@ -6355,10 +6464,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       clientTerminals.readOutputSnapshot,
                     );
               if (notification.update.sessionUpdate === "available_commands_update") {
-                yield* (
-                  flavor.onAvailableCommandsUpdate?.(notification.update.availableCommands) ??
-                    Effect.void
-                );
+                const sessionId = rawNotification.sessionId;
+                const advertisedCommands = notification.update.availableCommands;
+                yield* Ref.update(advertisedCommandNames, (current) => {
+                  const updated = new Map(current);
+                  updated.set(
+                    sessionId,
+                    new Set(advertisedCommands.map((command) => command.name.trim().toLowerCase())),
+                  );
+                  return updated;
+                });
+                yield* flavor.onAvailableCommandsUpdate?.(advertisedCommands) ?? Effect.void;
               }
               if (
                 notification.update.sessionUpdate === "config_option_update" ||
@@ -6372,9 +6488,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ) ?? Effect.void
                 );
               }
-              yield* handleSessionUpdate(
-                flavor.normalizeSessionUpdate?.(notification) ?? notification,
-              );
+              const normalized = flavor.normalizeSessionUpdate?.(notification) ?? notification;
+              // Turn projection misses compactions that finish while idle or after settlement.
+              if (
+                normalized.update.sessionUpdate === "compaction_update" &&
+                normalized.update.status === "completed"
+              ) {
+                yield* markSessionCompacted(normalized.sessionId, normalized.update.compactionId);
+              }
+              yield* handleSessionUpdate(normalized);
             },
             Effect.mapError(
               (cause) =>
@@ -6840,6 +6962,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     yield* finishSubagentFromNotice(notice);
                   }),
                 ).pipe(Effect.asVoid),
+              markSessionCompacted: (sessionId) =>
+                runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  markSessionCompacted(sessionId),
+                ).pipe(Effect.asVoid),
               applyBackgroundTaskMutation: (incoming) =>
                 runRuntimeCallbackAtGeneration(
                   handlerGeneration,
@@ -7137,7 +7264,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.set(activeSelection, null);
             yield* Ref.set(activeInteractionMode, null);
             yield* Ref.set(promptInstructionStates, new Map());
+            yield* Ref.set(promptRuntimeInstructions, new Map());
             yield* Ref.set(compactionMarkers, new Map());
+            yield* Ref.set(completedCompactionIds, new Set());
             yield* Ref.set(providerTurns, new Map());
             yield* Ref.set(snapshot, emptySnapshotState());
             yield* continuationPermit.withPermit(
@@ -7187,8 +7316,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         yield* Ref.set(activeSessionId, started.sessionId);
         yield* setActiveSessionSetup(started);
         rememberTerminalEnvironment(started.sessionId, yield* readMcpContext(input.threadId));
+        yield* runtime.drainEvents;
         const capabilities = negotiatedCapabilities(
-          flavor.capabilities,
+          yield* readCapabilities,
           started,
           flavor.modelOptionArrivesLate === true,
           flavor.forkFromTurn?.supported(started.initializeResult) === true,
@@ -7692,18 +7822,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (settledStatus !== "failed") {
             yield* emitProviderRetry(context, settledStatus);
           }
-          const now = yield* DateTime.now;
           if (
-            (flavor.supportsCompaction === true || flavor.compactSession !== undefined) &&
-            isCompactionMessage(context.input.message) &&
+            compactsContext &&
+            isCompactCommand(context.input.message) &&
             settledStatus === "completed"
           ) {
-            const nativeItemId = `${context.nativeTurnId}:compaction`;
-            yield* Ref.update(compactionMarkers, (current) => {
+            yield* markSessionCompacted(context.nativeThreadId);
+          }
+          const now = yield* DateTime.now;
+          if (
+            compactsContext &&
+            isCompactionMessage(context.input.message) &&
+            settledStatus === "completed" &&
+            !context.tools.keys().some((id) => id.startsWith("acp-compaction:"))
+          ) {
+            context.contextUsage = null;
+            yield* Ref.update(contextUsageBySessionId, (current) => {
               const updated = new Map(current);
-              updated.set(context.nativeThreadId, Symbol());
+              updated.delete(context.nativeThreadId);
               return updated;
             });
+            const nativeItemId = `${context.nativeTurnId}:compaction`;
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver,
@@ -7956,15 +8095,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           sessionId: string,
         ) {
-          const prompt: Array<EffectAcpSchema.ContentBlock> = [];
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
           const instructionState = {
             interactionMode: turnInput.runtimePolicy.interactionMode,
             hasT3Mcp: mcpSession !== undefined,
             hasDeviceTools: mcpSession?.capabilities?.has("device") === true,
           } satisfies T3AcpInstructionState;
-          const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
-          const compactionMarker = (yield* Ref.get(compactionMarkers)).get(sessionId);
           const userText =
             flavor.rewriteUserText === undefined
               ? turnInput.message.text
@@ -7983,16 +8119,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             resolveExtractedTextPath: host.resolveExtractedTextPath,
           });
           const isNativeSlashCommand = userText.trimStart().startsWith("/");
-          const text = t3AcpPromptWithInstructions({
-            prompt: messageText,
-            state: instructionState,
-            ...(previousInstructionState === undefined || compactionMarker !== undefined
-              ? {}
-              : { previousState: previousInstructionState }),
-          });
-          if (text.length > 0) {
-            prompt.push({ type: "text", text });
-          }
           const imageAttachments = turnInput.message.attachments.filter(
             isProviderNativeImageAttachment,
           );
@@ -8002,13 +8128,39 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               detail: "ACP driver did not negotiate image prompt support",
             });
           }
-          if (flavor.buildPrompt) {
+          const attachmentBlocks: Array<EffectAcpSchema.ContentBlock> = [];
+          for (const attachment of flavor.buildAttachmentPrompt ? [] : imageAttachments) {
+            const path = host.resolveAttachmentPath(attachment as ChatAttachment);
+            if (path === null) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver,
+                detail: `Invalid attachment id '${attachment.id}'`,
+              });
+            }
+            const bytes = yield* fileSystem.readFile(path).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver,
+                    detail: `Failed to read attachment '${attachment.id}'`,
+                    reason: "attachment_unreadable",
+                    payload: cause,
+                  }),
+              ),
+            );
+            attachmentBlocks.push({
+              type: "image",
+              data: Buffer.from(bytes).toString("base64"),
+              mimeType: attachment.mimeType,
+            });
+          }
+          if (flavor.buildAttachmentPrompt) {
             const setup = yield* Ref.get(activeSessionSetup);
             const modelOption = findModelConfigOption(yield* runtime.getConfigOptions);
             const currentModelId = modelOption?.currentValue;
             const blocks = yield* flavor
-              .buildPrompt({
-                text,
+              .buildAttachmentPrompt({
+                text: messageText,
                 attachments: turnInput.message.attachments,
                 resolveAttachmentPath: host.resolveAttachmentPath,
                 promptCapabilities: setup?.initializeResult.agentCapabilities?.promptCapabilities,
@@ -8033,55 +8185,49 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     }),
                 ),
               );
-            prompt.splice(0, prompt.length, ...blocks);
+            attachmentBlocks.push(...blocks);
           }
-          for (const attachment of flavor.buildPrompt ? [] : imageAttachments) {
-            const path = host.resolveAttachmentPath(attachment as ChatAttachment);
-            if (path === null) {
-              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                driver,
-                detail: `Invalid attachment id '${attachment.id}'`,
-              });
-            }
-            const bytes = yield* fileSystem.readFile(path).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterProtocolError({
-                    driver,
-                    detail: `Failed to read attachment '${attachment.id}'`,
-                    reason: "attachment_unreadable",
-                    payload: cause,
-                  }),
-              ),
-            );
-            prompt.push({
-              type: "image",
-              data: Buffer.from(bytes).toString("base64"),
-              mimeType: attachment.mimeType,
-            });
-          }
+          // Read delivery state after the awaits above, so a compaction that lands
+          // while the prompt is prepared still resends the notes in this prompt.
+          const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
+          const compactionMarker = (yield* Ref.get(compactionMarkers)).get(sessionId);
+          const text = t3AcpPromptWithInstructions({
+            prompt: messageText,
+            state: instructionState,
+            ...(previousInstructionState === undefined || compactionMarker !== undefined
+              ? {}
+              : { previousState: previousInstructionState }),
+          });
+          const sessionSetup = yield* Ref.get(activeSessionSetup);
+          const runtimeInstructions = buildRuntimeInstructions({
+            harness: flavor.runtimeHarness ?? driver,
+            model: turnInput.modelSelection.model,
+            pullRequestLinking:
+              sessionSetup === null ||
+              flavor.sessionCarriesPullRequestLinking?.(sessionSetup.initializeResult) !== true,
+          });
+          // The agent keeps its own history, so resend only after compaction or when the text changes.
+          const sendRuntimeInstructions =
+            !isNativeSlashCommand &&
+            (compactionMarker !== undefined ||
+              (yield* Ref.get(promptRuntimeInstructions)).get(sessionId) !== runtimeInstructions);
+          const promptText = flavor.buildAttachmentPrompt ? text.trim() : text;
+          const prompt: Array<EffectAcpSchema.ContentBlock> =
+            promptText.length > 0 ? [{ type: "text", text: promptText }] : [];
+          prompt.push(...attachmentBlocks);
           if (prompt.length === 0) {
             return yield* new ProviderAdapter.ProviderAdapterProtocolError({
               driver,
               detail: "ACP turn requires non-empty text or attachments",
             });
           }
-          if (!isNativeSlashCommand) {
-            const sessionSetup = yield* Ref.get(activeSessionSetup);
-            prompt.push({
-              type: "text",
-              text: buildRuntimeInstructions({
-                harness: flavor.runtimeHarness ?? driver,
-                model: turnInput.modelSelection.model,
-                pullRequestLinking:
-                  sessionSetup === null ||
-                  flavor.sessionCarriesPullRequestLinking?.(sessionSetup.initializeResult) !== true,
-              }),
-            });
+          if (sendRuntimeInstructions) {
+            prompt.push({ type: "text", text: runtimeInstructions });
           }
           return {
             prompt,
             instructionState: text === messageText ? undefined : instructionState,
+            runtimeInstructions: sendRuntimeInstructions ? runtimeInstructions : undefined,
             compactionMarker,
           };
         });
@@ -8097,6 +8243,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(activeSessionSetup, null);
           yield* Ref.set(activeSelection, null);
           yield* Ref.set(activeInteractionMode, null);
+          // A failed prompt may have been dropped, so the fresh runtime sends T3's notes again.
+          yield* Ref.set(promptInstructionStates, new Map());
+          yield* Ref.set(promptRuntimeInstructions, new Map());
+          yield* Ref.set(compactionMarkers, new Map());
+          yield* Ref.set(completedCompactionIds, new Set());
           yield* Ref.set(snapshot, emptySnapshotState());
           return true;
         });
@@ -8151,6 +8302,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* Ref.set(activeSelection, turnInput.modelSelection);
                 yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
               }
+            }
+            // Checked after activation: a loaded session advertises its own commands.
+            const compactionSetup = yield* Ref.get(activeSessionSetup);
+            if (
+              isCompactionMessage(turnInput.message) &&
+              ((flavor.compactViaAdvertisedCommand === true &&
+                (yield* Ref.get(advertisedCommandNames)).get(requestedSessionId)?.has("compact") !==
+                  true) ||
+                (flavor.compactSession !== undefined &&
+                  (compactionSetup === null ||
+                    !flavor.compactSession.supported(compactionSetup.initializeResult))))
+            ) {
+              return yield* new ProviderAdapter.ProviderCompactionUnsupportedError({
+                driver,
+                providerThreadId: turnInput.providerThread.id,
+              });
             }
             yield* validateModelSelection(turnInput.modelSelection);
             yield* Ref.set(lastTurnRoute, {
@@ -8411,36 +8578,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               : undefined;
             yield* (
               compactSession === undefined
-                ? runtime.prompt({ prompt: promptParts!.prompt }, promptOptions)
+                ? sendPromptWhenIdle(context, () =>
+                    runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
+                  )
                 : Deferred.succeed(context.promptDispatched, undefined).pipe(
-                    Effect.andThen(compactSession(runtime, requestedSessionId)),
+                    Effect.andThen(compactSession.compact(runtime, requestedSessionId)),
                     Effect.as({ stopReason: "end_turn" } satisfies EffectAcpSchema.PromptResponse),
                   )
             ).pipe(
-              Effect.tap(() =>
-                Ref.update(promptInstructionStates, (current) => {
-                  // Native compaction sends no prompt, so no instructions reached the agent.
-                  if (promptParts?.instructionState === undefined || compactSession !== undefined)
-                    return current;
-                  const updated = new Map(current);
-                  updated.set(requestedSessionId, promptParts.instructionState);
-                  return updated;
-                }),
-              ),
-              Effect.tap(() =>
-                Ref.update(compactionMarkers, (current) => {
-                  if (promptParts?.instructionState === undefined) return current;
-                  const observedMarker = promptParts.compactionMarker;
-                  if (
-                    observedMarker === undefined ||
-                    current.get(requestedSessionId) !== observedMarker
-                  )
-                    return current;
-                  const updated = new Map(current);
-                  updated.delete(requestedSessionId);
-                  return updated;
-                }),
-              ),
               // Settle the wire before the completion callback's permit so a settled-soft
               // Stop sees the native return. Capture usage only before finalize: a late
               // response must not flip a settled turn.
@@ -8460,6 +8605,41 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 runRuntimeCallbackAtGeneration(
                   promptGeneration,
                   Effect.gen(function* () {
+                    // Record delivery only for this runtime: a replacement can reuse the session id.
+                    // Grok cancels locally, refusals discard the prompt, and errors need a retry.
+                    // Native compaction sends no prompt, and the compacted session needs the notes.
+                    if (compactSession !== undefined) {
+                      yield* markSessionCompacted(requestedSessionId);
+                    } else if (
+                      result.stopReason !== "cancelled" &&
+                      result.stopReason !== "refusal" &&
+                      result.stopReason !== "error"
+                    ) {
+                      yield* Ref.update(promptInstructionStates, (current) => {
+                        if (promptParts?.instructionState === undefined) return current;
+                        const updated = new Map(current);
+                        updated.set(requestedSessionId, promptParts.instructionState);
+                        return updated;
+                      });
+                      yield* Ref.update(promptRuntimeInstructions, (current) => {
+                        if (promptParts?.runtimeInstructions === undefined) return current;
+                        const updated = new Map(current);
+                        updated.set(requestedSessionId, promptParts.runtimeInstructions);
+                        return updated;
+                      });
+                      yield* Ref.update(compactionMarkers, (current) => {
+                        if (promptParts?.instructionState === undefined) return current;
+                        const observedMarker = promptParts.compactionMarker;
+                        if (
+                          observedMarker === undefined ||
+                          current.get(requestedSessionId) !== observedMarker
+                        )
+                          return current;
+                        const updated = new Map(current);
+                        updated.delete(requestedSessionId);
+                        return updated;
+                      });
+                    }
                     if (context.finalized || followsAgentWorkState) return;
                     // ACP v2 reports a failed prompt as an idle `error`, not an RPC error.
                     const idleError = result.stopReason === "error" && !context.interrupted;
@@ -8513,7 +8693,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     }
                     yield* finalizeTurn(context, status);
                   }),
-                ).pipe(Effect.asVoid),
+                ).pipe(
+                  Effect.andThen(() => options.testHooks?.afterPromptCallback?.() ?? Effect.void),
+                  Effect.asVoid,
+                ),
               ),
               Effect.catchCause((cause) =>
                 runRuntimeCallbackAtGeneration(
@@ -8816,13 +8999,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ),
           ),
           startTurn,
-          ...(flavor.supportsCompaction === true || flavor.compactSession !== undefined
+          ...(compactsContext
             ? {
-                compactThread: (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =>
-                  startTurn({
+                compactThread: Effect.fn("AcpAdapterV2.compactThread")(function* (
+                  turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+                ) {
+                  return yield* startTurn({
                     ...turnInput,
                     message: { ...turnInput.message, text: "/compact" },
-                  }),
+                  });
+                }),
               }
             : {}),
           steerTurn: Effect.fn("AcpAdapterV2.steerTurn")(

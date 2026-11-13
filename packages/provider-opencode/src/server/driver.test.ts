@@ -279,7 +279,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         }),
       );
       assert.deepStrictEqual(serverStarts, ["start"]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each(["2.1.2", null])(
@@ -312,7 +312,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         assert.strictEqual(maintenance.packageName, "@opencode/cli");
         assert.isNotEmpty(probeOffline);
         assert.isTrue(probeOffline.every((offline) => offline === "1"));
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("skips the installed CLI probe when a localhost provider is disabled", () =>
@@ -333,7 +333,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       const snapshot = yield* instance.snapshot.refresh;
       assert.isFalse(snapshot.enabled);
       assert.deepStrictEqual(probed, []);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("opens a session through OpenCode 2 that a lazy mise shim installs on first use", () =>
@@ -356,7 +356,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       assert.deepStrictEqual(serverStarts, ["start"], "the OpenCode 2 adapter starts its server");
       const capabilities = yield* instance.orchestrationAdapter.getCapabilities();
       assert.isTrue(capabilities.sessions.supportsRuntimeModeSwitchInSession);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("does not scan a workspace through a 1.x server it could not probe offline", () =>
@@ -368,7 +368,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
 
       yield* Effect.flip(instance.snapshotForCwd!(process.cwd()));
       assert.deepStrictEqual(serverStarts, []);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each([
@@ -404,7 +404,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         capabilities.turns.supportsNativeGoals === true,
         version.endsWith("2.2.5") || version.endsWith("2.2.6"),
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("uses the connected OpenCode version for goal support after an upgrade", () =>
@@ -479,7 +479,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       assert.isTrue(
         (yield* instance.orchestrationAdapter.getCapabilities()).turns.supportsNativeGoals,
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("answers capability reads without waiting on an unreachable server", () =>
@@ -804,6 +804,81 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  it.effect.each([
+    { status: 200, data: null, reason: "unsupported" },
+    { status: 404, data: null, reason: "unsupported" },
+    { status: 503, data: null, reason: "probeFailed" },
+    {
+      status: 200,
+      data: {
+        workspace: {
+          id: "remote-workspace",
+          name: "Remote workspace",
+          usageURL: "https://opencode.ai/console/remote-workspace",
+        },
+        budgets: [
+          {
+            id: "all",
+            limit: 20,
+            spent: 15,
+            scope: "combined",
+            per: "set",
+            coverage: "all",
+            models: [],
+            shared: true,
+            resetsAt: 1793491200000,
+          },
+        ],
+      },
+      reason: undefined,
+    },
+  ])(
+    "reads external workspace usage without local credentials, HTTP $status, $reason",
+    (scenario) =>
+      Effect.gen(function* () {
+        const requested: string[] = [];
+        const replay = replayOpenCodeServer(OPENCODE_2_RESPONSES, "secret", requested);
+        const server = HttpClient.make((request) => {
+          assert.notInclude(request.url, "opencode.ai/zen");
+          if (request.url.endsWith("/api/experimental/usage/limits")) {
+            assert.strictEqual(request.headers.authorization, "Basic b3BlbmNvZGU6c2VjcmV0");
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  {
+                    location: { directory: "/work" },
+                    data: scenario.data,
+                  },
+                  { status: scenario.status },
+                ),
+              ),
+            );
+          }
+          return replay.execute(request);
+        });
+        const instance = yield* create(
+          { serverUrl: "https://remote.example", serverPassword: "secret" },
+          server,
+        );
+        const [snapshot] = Array.from(
+          yield* instance.snapshot.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.usageLimits !== undefined),
+            Stream.take(1),
+            Stream.runCollect,
+          ),
+        );
+        assert.strictEqual(snapshot?.usageLimits?.unavailable?.reason, scenario.reason);
+        if (scenario.reason === undefined) {
+          assert.strictEqual(snapshot?.usageLimits?.windows[0]?.usedPercent, 75);
+          assert.strictEqual(snapshot?.usageLimits?.externalUsage?.label, "Remote workspace");
+          assert.deepStrictEqual(snapshot?.usageLimits?.windows[0]?.providerIds, []);
+        } else {
+          assert.deepStrictEqual(snapshot?.usageLimits?.windows, []);
+        }
+      }),
+  );
+
   it.effect.each(
     [
       { name: "recovers" },
@@ -843,6 +918,10 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
           );
         }
         const path = new URL(request.url).pathname;
+        if (path === "/api/experimental/usage/limits")
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response(null, { status: 404 })),
+          );
         if (path === "/api/model") modelReads += 1;
         const body =
           path === "/api/info"
@@ -1148,7 +1227,7 @@ it.layer(Layer.mergeAll(layer, Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, op
         assert.deepStrictEqual(slugsOf(unreadable), ["opencode/big-pickle"]);
         assert.strictEqual(unreadable.workspaceModels, undefined);
         assert.strictEqual(unreadable.workspaceModelsPending, true);
-      }).pipe(Effect.scoped),
+      }),
     );
   },
 );
@@ -1183,7 +1262,7 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
         const v2 = yield* instance.snapshot.resolveMaintenance({ fresh: true });
         assert.strictEqual(v2.packageName, "@opencode/cli");
         assert.isNull(v2.update);
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect(
@@ -1218,6 +1297,6 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
           "after upgrading to 2.x, the next session must not open through the 1.x adapter",
         );
         assert.include(serverStarts, "start", "the OpenCode 2 adapter starts its server");
-      }).pipe(Effect.scoped),
+      }),
   );
 });
