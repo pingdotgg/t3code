@@ -1,4 +1,9 @@
-import { WorkflowRun, WorkflowRunStatus, WorkflowStep } from "@t3tools/contracts";
+import {
+  type WorkflowCounts,
+  WorkflowRun,
+  WorkflowRunStatus,
+  WorkflowStep,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -152,6 +157,13 @@ export class WorkflowStore extends Context.Service<
     readonly waitAt: (address: SignalAddress) => Effect.Effect<WaitRow | undefined>;
     readonly waitsPastDeadline: Effect.Effect<ReadonlyArray<WaitRow>>;
     readonly requests: Effect.Effect<ReadonlyArray<WaitRow>>;
+    /** The thread of the run's latest agent step, if it has had one. */
+    readonly latestThread: (
+      runId: string,
+    ) => Effect.Effect<{ readonly threadId: string; readonly environmentId: string | null } | null>;
+    readonly counts: Effect.Effect<WorkflowCounts>;
+    /** Say something about a step that is under way, such as when its sleep ends. */
+    readonly stepDetail: (runId: string, name: string, detail: string) => Effect.Effect<void>;
     readonly mailPut: (mail: {
       readonly signalId: string;
       readonly address: SignalAddress;
@@ -218,15 +230,15 @@ const make = Effect.gen(function* () {
       const at = yield* now;
       const out = yield* sql<{ name: string; kind: string }>`
         SELECT name, kind FROM workflow_steps
-        WHERE run_id = ${runId} AND status = 'running' AND kind IN ('wait', 'ask', 'agent')
+        WHERE run_id = ${runId} AND status = 'running' AND kind IN ('wait', 'ask', 'agent', 'sleep')
         ORDER BY started_at, rowid LIMIT 1
       `.pipe(Effect.orDie);
       const waiting = out[0];
       const detail =
         waiting === undefined
           ? null
-          : waiting.kind === "agent"
-            ? `agent ${waiting.name}`
+          : waiting.kind === "agent" || waiting.kind === "sleep"
+            ? `${waiting.kind} ${waiting.name}`
             : waiting.name;
       yield* write(
         runId,
@@ -423,6 +435,38 @@ const make = Effect.gen(function* () {
         WHERE deadline IS NOT NULL AND deadline <= ${at} AND signalled_at IS NULL
       `.pipe(Effect.orDie),
     ),
+    latestThread: Effect.fn("WorkflowStore.latestThread")(function* (runId) {
+      const rows = yield* sql<{ thread_id: string; environment_id: string | null }>`
+        SELECT thread_id, environment_id FROM workflow_steps
+        WHERE run_id = ${runId} AND thread_id IS NOT NULL
+        ORDER BY started_at DESC, rowid DESC LIMIT 1
+      `.pipe(Effect.orDie);
+      const row = rows[0];
+      return row === undefined
+        ? null
+        : { threadId: row.thread_id, environmentId: row.environment_id };
+    }),
+    counts: sql<{ questions: number; paused: number; active: number; total: number }>`
+      SELECT
+        (SELECT COUNT(*) FROM workflow_waits
+          WHERE request_json IS NOT NULL AND signalled_at IS NULL) AS questions,
+        (SELECT COUNT(*) FROM workflow_runs WHERE status = 'paused') AS paused,
+        (SELECT COUNT(*) FROM workflow_runs WHERE ended_at IS NULL) AS active,
+        (SELECT COUNT(*) FROM workflow_runs) AS total
+    `.pipe(
+      Effect.orDie,
+      Effect.map((rows) => ({
+        needsYou: Number(rows[0]?.questions ?? 0) + Number(rows[0]?.paused ?? 0),
+        active: Number(rows[0]?.active ?? 0),
+        total: Number(rows[0]?.total ?? 0),
+      })),
+    ),
+    stepDetail: Effect.fn("WorkflowStore.stepDetail")(function* (runId, name, detail) {
+      yield* write(
+        runId,
+        sql`UPDATE workflow_steps SET detail = ${detail} WHERE run_id = ${runId} AND name = ${name}`,
+      );
+    }),
     requests: sql<WaitRow>`
       SELECT ${waitColumns} FROM workflow_waits
       WHERE request_json IS NOT NULL AND signalled_at IS NULL ORDER BY opened_at

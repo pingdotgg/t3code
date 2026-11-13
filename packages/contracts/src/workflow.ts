@@ -25,6 +25,8 @@ export const WorkflowRun = Schema.Struct({
   retired: Schema.Boolean,
   /** The run that invoked this one and waits for it; null for a run started by itself. */
   parentRunId: Schema.NullOr(Schema.String),
+  /** The step of that run this one was invoked as. */
+  parentStep: Schema.NullOr(Schema.String),
   startedAt: Schema.String,
   updatedAt: Schema.String,
   endedAt: Schema.NullOr(Schema.String),
@@ -33,7 +35,8 @@ export type WorkflowRun = typeof WorkflowRun.Type;
 
 export const WorkflowStep = Schema.Struct({
   name: Schema.String,
-  kind: Schema.Literals(["step", "wait", "agent", "ask"]),
+  // A sleep's `detail` is when it wakes, as an ISO time.
+  kind: Schema.Literals(["step", "wait", "agent", "ask", "sleep"]),
   status: Schema.Literals(["running", "completed", "failed"]),
   attempts: Schema.Number,
   detail: Schema.NullOr(Schema.String),
@@ -53,6 +56,10 @@ export const WorkflowQuestion = Schema.Struct({
   /** What `ask` was given: a title, the choices, and data to lay out. */
   request: Schema.Json,
   askedAt: Schema.String,
+  /** The run's latest agent thread, for talking it through before answering. */
+  thread: Schema.NullOr(
+    Schema.Struct({ threadId: Schema.String, environmentId: Schema.NullOr(Schema.String) }),
+  ),
 });
 export type WorkflowQuestion = typeof WorkflowQuestion.Type;
 
@@ -69,6 +76,17 @@ export const WorkflowRunsSnapshot = Schema.Struct({
   runs: Schema.Array(WorkflowRun),
   questions: Schema.Array(WorkflowQuestion),
 });
+
+/** How much is going on, for a badge that must not cost a list of runs to keep current. */
+export const WorkflowCounts = Schema.Struct({
+  /** Open questions and paused runs: what waits on a person. */
+  needsYou: Schema.Number,
+  /** Runs that have not ended. */
+  active: Schema.Number,
+  /** Runs there have ever been, so a client knows whether workflows are in use at all. */
+  total: Schema.Number,
+});
+export type WorkflowCounts = typeof WorkflowCounts.Type;
 export type WorkflowRunsSnapshot = typeof WorkflowRunsSnapshot.Type;
 
 export const WorkflowRunsSubscribeInput = Schema.Struct({});
