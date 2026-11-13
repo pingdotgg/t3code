@@ -202,6 +202,24 @@ export const layer: Layer.Layer<
             ),
             Effect.catchCause(() => Effect.succeed(input.inheritedBackgroundTurnItems)),
           ),
+        loadRunOwnedTools: Effect.fn("ProviderTurnStartService.loadRunOwnedTools")(function* () {
+          const { turnItems, runtimeRequests } = yield* projectionStore.getThreadRecords(
+            input.threadId,
+            ["turnItems", "runtimeRequests"],
+            {
+              turnItemRunIds: [input.runId],
+              turnItemTypes: ["command_execution", "dynamic_tool", "approval_request"],
+              turnItemStatuses: ["pending", "running", "waiting", "cancelled", "failed"],
+              runtimeRequestStatuses: ["pending", "expired", "cancelled"],
+            },
+          );
+          const nodeIds = turnItems.flatMap((item) => (item.nodeId === null ? [] : [item.nodeId]));
+          if (nodeIds.length === 0) return { turnItems, nodes: [], runtimeRequests };
+          const { nodes } = yield* projectionStore.getThreadRecords(input.threadId, ["nodes"], {
+            nodeIds,
+          });
+          return { turnItems, nodes, runtimeRequests };
+        }),
         shouldStartProviderTurn: () => isCurrentAttemptInStatus("running"),
         shouldFinalizeRun: () => isCurrentAttemptIn(["starting", "running"]),
         hasUnpairedRunInterruptRequest: () =>
@@ -1718,6 +1736,7 @@ export const layer: Layer.Layer<
         attempt: runningAttempt,
         attemptId: attempt.id,
         loadInheritedBackgroundTurnItems: runControls.loadInheritedBackgroundTurnItems,
+        loadRunOwnedTools: runControls.loadRunOwnedTools,
         relatedThreadIds: routableSubagents.flatMap((subagent) =>
           subagent.childThreadId === null ? [] : [subagent.childThreadId],
         ),

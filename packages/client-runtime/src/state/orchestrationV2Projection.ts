@@ -1,9 +1,10 @@
 import { applyThreadPullRequestLinkUpdate } from "../threadPullRequests.ts";
-import type {
-  OrchestrationV2DomainEvent,
-  OrchestrationV2Run,
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2TurnItem,
+import {
+  isOrchestrationV2WorkActive,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import {
   restoreSubagentBodies,
@@ -416,6 +417,15 @@ export function applyOrchestrationV2ProjectionEvent(
       ) {
         return projection;
       }
+      const previous = itemIndex === -1 ? undefined : projection.turnItems[itemIndex];
+      // A delayed tool_use frame cannot restart work cancelled before execution.
+      if (
+        previous?.toolNonExecutionKind === "cancelled" &&
+        (previous.type === "command_execution" || previous.type === "dynamic_tool") &&
+        isOrchestrationV2WorkActive(payload.status)
+      ) {
+        payload = previous;
+      }
       const turnItems =
         itemIndex === -1
           ? [...projection.turnItems, payload]
@@ -423,7 +433,6 @@ export function applyOrchestrationV2ProjectionEvent(
       const next = { ...base, turnItems };
       // Only interrupt requests can change another item's visibility. Streaming
       // text/tool updates must not recheck every row against every run.
-      const previous = itemIndex === -1 ? undefined : projection.turnItems[itemIndex];
       const visible =
         payload.type === "run_interrupt_request" || previous?.type === "run_interrupt_request"
           ? { ...next, visibleTurnItems: activeVisibleTurnItems(next) }

@@ -17,6 +17,7 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2ThreadProjection,
   type ProviderSessionId,
   type ProviderThreadId,
   type ProviderTurnId,
@@ -151,6 +152,11 @@ export function selectInheritedBackgroundTurnItems(input: {
       : [],
   );
 }
+
+type RunOwnedTools = Pick<
+  OrchestrationV2ThreadProjection,
+  "turnItems" | "nodes" | "runtimeRequests"
+>;
 
 type SubagentTurnItem = Extract<OrchestrationV2TurnItem, { readonly type: "subagent" }>;
 
@@ -585,6 +591,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  readonly loadRunOwnedTools?: () => Effect.Effect<RunOwnedTools, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
   readonly hasWorkspaceMoved?: () => Effect.Effect<boolean, never>;
@@ -644,6 +651,7 @@ export const layer: Layer.Layer<
         readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
         readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
         readonly openRunOwnedSubagentsTerminal?: ProviderTerminalEvent;
+        readonly loadRunOwnedTools?: () => Effect.Effect<RunOwnedTools, ProjectionStoreV2Error>;
         // Root turn snapshot written with the run when T3 ends the run itself.
         readonly abandonedProviderTurn?: OrchestrationV2ProviderTurn;
         readonly terminal: ProviderTerminalEvent;
@@ -728,6 +736,143 @@ export const layer: Layer.Layer<
                 allocateEventId,
               })
             : [];
+        const cancelledToolEvents: OrchestrationV2DomainEvent[] = [];
+        if (input.loadRunOwnedTools !== undefined && !childTurnsContinue(input.terminal)) {
+          const { turnItems, nodes, runtimeRequests } = yield* input.loadRunOwnedTools();
+          // A session release may already have closed the approval. Claude also cancels
+          // requests a hook allowed, and those tools run, so their capability stays live.
+          const unresolvedApprovalNodes = new Set(
+            runtimeRequests
+              .filter(
+                (request) =>
+                  request.status === "pending" ||
+                  request.status === "expired" ||
+                  (request.status === "cancelled" &&
+                    request.responseCapability.type === "not_resumable"),
+              )
+              .map((request) => request.nodeId),
+          );
+          const blockedToolNodes = new Set(
+            nodes.flatMap((node) =>
+              node.runId === input.run.id &&
+              node.threadId === input.run.threadId &&
+              node.kind === "approval_request" &&
+              unresolvedApprovalNodes.has(node.id) &&
+              node.parentNodeId !== null
+                ? [node.parentNodeId]
+                : [],
+            ),
+          );
+          const cancelledToolNodeIds = new Set<NodeId>();
+          for (const item of turnItems) {
+            // Claude marks tool_use as running before asking permission. Only an
+            // unresolved approval child proves that a running tool never started.
+            if (
+              item.runId !== input.run.id ||
+              item.threadId !== input.run.threadId ||
+              (item.type !== "command_execution" && item.type !== "dynamic_tool") ||
+              !isOrchestrationV2WorkActive(item.status) ||
+              !(
+                item.status === "pending" ||
+                (item.nodeId !== null && blockedToolNodes.has(item.nodeId))
+              )
+            )
+              continue;
+            cancelledToolEvents.push({
+              id: yield* allocateEventId(),
+              type: "turn-item.updated",
+              threadId: item.threadId,
+              runId: input.run.id,
+              ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+              providerInstanceId: input.run.providerInstanceId,
+              occurredAt: completedAt,
+              payload: {
+                ...item,
+                status: "cancelled",
+                toolNonExecutionKind: "cancelled",
+                completedAt,
+                updatedAt: completedAt,
+              },
+            });
+            if (item.nodeId !== null) cancelledToolNodeIds.add(item.nodeId);
+            const node = nodes.find((candidate) => candidate.id === item.nodeId);
+            if (node !== undefined && isOrchestrationV2WorkActive(node.status)) {
+              cancelledToolEvents.push({
+                id: yield* allocateEventId(),
+                type: "node.updated",
+                threadId: node.threadId,
+                runId: input.run.id,
+                nodeId: node.id,
+                providerInstanceId: input.run.providerInstanceId,
+                occurredAt: completedAt,
+                payload: { ...node, status: "cancelled", completedAt },
+              });
+            }
+          }
+          for (const approvalNode of nodes) {
+            if (
+              approvalNode.kind !== "approval_request" ||
+              approvalNode.runId !== input.run.id ||
+              approvalNode.threadId !== input.run.threadId ||
+              approvalNode.parentNodeId === null ||
+              !cancelledToolNodeIds.has(approvalNode.parentNodeId)
+            )
+              continue;
+            const request = runtimeRequests.find(
+              (candidate) => candidate.nodeId === approvalNode.id && candidate.status === "pending",
+            );
+            if (request === undefined) continue;
+            cancelledToolEvents.push(
+              {
+                id: yield* allocateEventId(),
+                type: "runtime-request.updated",
+                threadId: input.run.threadId,
+                runId: input.run.id,
+                nodeId: approvalNode.id,
+                providerInstanceId: input.run.providerInstanceId,
+                occurredAt: completedAt,
+                payload: {
+                  ...request,
+                  status: "cancelled",
+                  responseCapability: {
+                    type: "not_resumable",
+                    reason: "The tool was cancelled before this approval was resolved.",
+                  },
+                  resolvedAt: completedAt,
+                },
+              },
+              {
+                id: yield* allocateEventId(),
+                type: "node.updated",
+                threadId: input.run.threadId,
+                runId: input.run.id,
+                nodeId: approvalNode.id,
+                providerInstanceId: input.run.providerInstanceId,
+                occurredAt: completedAt,
+                payload: { ...approvalNode, status: "cancelled", completedAt },
+              },
+            );
+            for (const approvalItem of turnItems) {
+              if (approvalItem.type !== "approval_request" || approvalItem.requestId !== request.id)
+                continue;
+              cancelledToolEvents.push({
+                id: yield* allocateEventId(),
+                type: "turn-item.updated",
+                threadId: input.run.threadId,
+                ...(approvalItem.runId === null ? {} : { runId: approvalItem.runId }),
+                ...(approvalItem.nodeId === null ? {} : { nodeId: approvalItem.nodeId }),
+                providerInstanceId: input.run.providerInstanceId,
+                occurredAt: completedAt,
+                payload: {
+                  ...approvalItem,
+                  status: "cancelled",
+                  completedAt,
+                  updatedAt: completedAt,
+                },
+              });
+            }
+          }
+        }
         const persistedStatus =
           input.terminal.status === "completed" ? "waiting" : input.terminal.status;
         // Omit delegatedCompletion; the startup snapshot must not overwrite newer acknowledgements, successors, or Stop barriers.
@@ -776,6 +921,7 @@ export const layer: Layer.Layer<
               : [],
           events: [
             ...cascadedSubagentEvents,
+            ...cancelledToolEvents,
             ...(input.abandonedProviderTurn === undefined
               ? []
               : [
@@ -877,6 +1023,7 @@ export const layer: Layer.Layer<
         } satisfies Parameters<typeof eventSink.writeWithEffects>[0];
         if (input.writeIfRunCurrent !== undefined) {
           const result = yield* eventSink.writeIfRunCurrent({
+            guardPendingApprovalCancellations: true,
             threadId: input.run.threadId,
             runId: input.run.id,
             activeAttemptId: input.writeIfRunCurrent.activeAttemptId,
@@ -902,7 +1049,10 @@ export const layer: Layer.Layer<
             return false;
           }
         } else {
-          yield* eventSink.writeWithEffects(finalization);
+          yield* eventSink.writeWithEffects({
+            ...finalization,
+            guardPendingApprovalCancellations: true,
+          });
         }
         yield* turnAnalytics.runSettled({
           runId: input.run.id,
@@ -1011,6 +1161,9 @@ export const layer: Layer.Layer<
                   }),
                   input.providerTurnOrdinal * 100 + 1,
                 ),
+                ...(input.loadRunOwnedTools === undefined
+                  ? {}
+                  : { loadRunOwnedTools: input.loadRunOwnedTools }),
                 failureItemPersisted: false,
                 refreshAfterTurn,
                 writeIfRunCurrent: {
@@ -1149,6 +1302,9 @@ export const layer: Layer.Layer<
                 : { loadRunInterruptReason: input.loadRunInterruptReason }),
               openRunOwnedSubagents: openSubagents,
               openRunOwnedSubagentsTerminal: terminal,
+              ...(input.loadRunOwnedTools === undefined
+                ? {}
+                : { loadRunOwnedTools: input.loadRunOwnedTools }),
               terminal: settledTerminal,
               failureItemPersisted: settledTerminal.status === "failed",
               refreshAfterTurn,
@@ -1781,6 +1937,9 @@ export const layer: Layer.Layer<
                     },
                     openRunOwnedSubagents: openSubagents,
                     ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
+                    ...(input.loadRunOwnedTools === undefined
+                      ? {}
+                      : { loadRunOwnedTools: input.loadRunOwnedTools }),
                     completedAt,
                     terminal: makeFailedTerminalEvent(
                       makeProviderFailure({
@@ -1944,6 +2103,9 @@ export const layer: Layer.Layer<
                             expectedStatus: "running",
                           },
                           openRunOwnedSubagents: openSubagents,
+                          ...(input.loadRunOwnedTools === undefined
+                            ? {}
+                            : { loadRunOwnedTools: input.loadRunOwnedTools }),
                           terminal: makeFailedTerminalEvent(
                             makeProviderFailure({
                               cause: Cause.squash(cause),

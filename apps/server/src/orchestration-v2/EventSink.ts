@@ -117,12 +117,14 @@ export interface EventSinkV2Shape {
       "driver" | "providerInstanceId" | "appThreadId" | "nativeThreadRef"
     >;
     readonly guardPendingUserInputCancellations?: boolean;
+    readonly guardPendingApprovalCancellations?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
   readonly writeIfRunCurrent: (input: {
     readonly guardPendingUserInputCancellations?: boolean;
+    readonly guardPendingApprovalCancellations?: boolean;
     readonly commandId?: CommandId;
     readonly threadId: ThreadId;
     readonly runId: RunId;
@@ -374,6 +376,66 @@ const layerBase: Layer.Layer<
         });
       });
 
+    // Run finalization cancels approvals it read as pending. One closed since then keeps
+    // its outcome; if it let the tool run, the tool is not marked as never started.
+    const guardApprovalCancellations =
+      /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
+      Effect.fnUntraced(function* (events: ReadonlyArray<OrchestrationV2DomainEvent>) {
+        const staleRequests = new Set<RuntimeRequestId>();
+        const staleNodes = new Set<NodeId>();
+        const startedToolParents = new Set<NodeId>();
+        for (const event of events) {
+          if (
+            event.type !== "runtime-request.updated" ||
+            event.payload.kind === "user_input" ||
+            event.payload.status !== "cancelled"
+          )
+            continue;
+          const current = yield* projectionStore.getRuntimeRequest(
+            event.threadId,
+            event.payload.id,
+          );
+          if (current?.status === "pending") continue;
+          staleRequests.add(event.payload.id);
+          staleNodes.add(event.payload.nodeId);
+          // Accepted, or withdrawn by Claude after a hook allowed it. A server-closed
+          // (not_resumable) approval still proves the tool never started.
+          if (
+            current?.status === "resolved" ||
+            (current?.status === "cancelled" && current.responseCapability.type === "live")
+          ) {
+            startedToolParents.add(event.payload.nodeId);
+          }
+        }
+        if (staleRequests.size === 0) return events;
+        for (const event of events) {
+          if (
+            event.type === "node.updated" &&
+            startedToolParents.has(event.payload.id) &&
+            event.payload.parentNodeId !== null
+          ) {
+            staleNodes.add(event.payload.parentNodeId);
+          }
+        }
+        return events.filter((event) => {
+          switch (event.type) {
+            case "runtime-request.updated":
+              return !staleRequests.has(event.payload.id);
+            case "node.updated":
+              return event.payload.status !== "cancelled" || !staleNodes.has(event.payload.id);
+            case "turn-item.updated":
+              return (
+                event.payload.status !== "cancelled" ||
+                !(event.payload.type === "approval_request"
+                  ? staleRequests.has(event.payload.requestId)
+                  : event.payload.nodeId !== null && staleNodes.has(event.payload.nodeId))
+              );
+            default:
+              return true;
+          }
+        });
+      });
+
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
       const runOrdinals = new Map(
         events.flatMap((event) =>
@@ -484,10 +546,14 @@ const layerBase: Layer.Layer<
           const events = input.updateDelegatedCompletionOnly
             ? yield* updateDelegatedCompletionOnly(input.events, () => true)
             : input.events;
-          const normalized = yield* normalizeEvents(
+          const guarded =
             input.guardPendingUserInputCancellations === true
               ? yield* guardUserInputCancellations(events)
-              : events,
+              : events;
+          const normalized = yield* normalizeEvents(
+            input.guardPendingApprovalCancellations === true
+              ? yield* guardApprovalCancellations(guarded)
+              : guarded,
           );
           const committed = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
@@ -561,10 +627,14 @@ const layerBase: Layer.Layer<
               }
             }
 
-            const normalized = yield* normalizeEvents(
+            const guarded =
               input.guardPendingUserInputCancellations === true
                 ? yield* guardUserInputCancellations(input.events)
-                : input.events,
+                : input.events;
+            const normalized = yield* normalizeEvents(
+              input.guardPendingApprovalCancellations === true
+                ? yield* guardApprovalCancellations(guarded)
+                : guarded,
             );
             const storedEvents = yield* eventStore.append({
               ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
