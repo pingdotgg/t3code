@@ -407,7 +407,7 @@ function recordedLayoutShortcutKey(
 ): string {
   const physicalKey = shortcutKeyFromEvent(event);
   const layoutKey = event.key.toLowerCase();
-  if (event.altKey || layoutKey.length !== 1) return physicalKey;
+  if (event.altKey || layoutKey.length !== 1 || event.code?.startsWith("Key")) return physicalKey;
   // Normalize only US shifted glyphs at their US position. Other layouts can
   // produce the same glyph without Shift or at a different position.
   const unshiftedKey = event.shiftKey ? US_SHIFTED_TO_UNSHIFTED_KEYS.get(layoutKey) : undefined;

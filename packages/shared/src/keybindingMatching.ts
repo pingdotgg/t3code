@@ -46,6 +46,18 @@ export const EVENT_CODE_SHORTCUT_KEYS: Readonly<Record<string, string>> = {
   Slash: "/",
 };
 
+const POSITIONAL_SHORTCUT_KEYS = new Set(Object.values(EVENT_CODE_SHORTCUT_KEYS));
+
+// A letter key that types a digit or punctuation keeps its letter, so it never
+// shares an identity with the key at that character's own position.
+function letterKeyForPositionalCharacter(
+  event: Pick<ShortcutEventLike, "code">,
+  layoutKey: string,
+): string | undefined {
+  if (!POSITIONAL_SHORTCUT_KEYS.has(layoutKey)) return undefined;
+  return event.code?.match(/^Key([A-Z])$/)?.[1]?.toLowerCase();
+}
+
 export function isMacPlatform(platform: string): boolean {
   return /mac|iphone|ipad|ipod/i.test(platform);
 }
@@ -61,6 +73,8 @@ export function shortcutKeyFromEvent(
 ): string {
   const layoutKey = normalizeEventKey(event.key);
   if (/^[a-z]$/.test(layoutKey)) return layoutKey;
+  const letterKey = letterKeyForPositionalCharacter(event, layoutKey);
+  if (letterKey) return letterKey;
   // An unshifted "+" is a dedicated zoom key (German, Spanish, Nordic); Czech types it on Digit1.
   const isZoomPlus = layoutKey === "+" && !event.shiftKey && !event.altKey;
   if (isZoomPlus && !event.code?.startsWith("Digit")) return layoutKey;
@@ -70,7 +84,7 @@ export function shortcutKeyFromEvent(
 
 export function resolveEventKeys(event: ShortcutEventLike): Set<string> {
   const layoutKey = normalizeEventKey(event.key);
-  const keys = new Set([layoutKey]);
+  const keys = new Set(letterKeyForPositionalCharacter(event, layoutKey) ? [] : [layoutKey]);
   const letterCode = event.code?.match(/^Key([A-Z])$/)?.[1];
   if (letterCode && !/^[a-z]$/.test(layoutKey)) {
     keys.add(letterCode.toLowerCase());
