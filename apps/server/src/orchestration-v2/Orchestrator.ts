@@ -2590,6 +2590,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(freshContext ? sessionsReleasedByFreshContext(projection, activeProviderThread) : []),
       ]);
       const busySessionIds = new Set<ProviderSessionId>();
+      // Registered before the probe: work that settles while it runs must still retry this start.
+      queuesWaitingOnBackgroundWork.add(threadId);
       for (const session of releasableSessions) {
         if (yield* sessionHasBackgroundWork(session, projection.providerThreads)) {
           busySessionIds.add(session.id);
@@ -2607,7 +2609,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           "The queue waits: the replaced provider session still runs background work",
           { threadId, runId: queuedRun.id, providerSessionIds: Array.from(busySessionIds) },
         );
-        queuesWaitingOnBackgroundWork.add(threadId);
         return;
       }
       queuesWaitingOnBackgroundWork.delete(threadId);
