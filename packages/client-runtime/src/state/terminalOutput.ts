@@ -244,6 +244,13 @@ function resetOutput(
   };
 }
 
+// Erasing in place, not a full reset, keeps the modes the still-running program negotiated.
+const CLEAR_SEQUENCE = "\u001b[H\u001b[2J\u001b[3J";
+
+function clearOutput(current: TerminalOutputState, maxBufferBytes: number): TerminalOutputState {
+  return appendOutput({ ...current, chunks: [], retainedBytes: 0 }, CLEAR_SEQUENCE, maxBufferBytes);
+}
+
 export function terminalOutputText(output: TerminalOutputState): string {
   return output.chunks.map((chunk) => chunk.data).join("");
 }
@@ -286,4 +293,4 @@ export function readTerminalOutputUpdate(
   };
 }
 
-export { appendOutput, resetOutput };
+export { appendOutput, clearOutput, resetOutput };

@@ -74,7 +74,7 @@ it("retains visible output and selection until a replacement subscription receiv
     terminalId: "term-1",
   });
   synchronizeTerminalOutput(terminal, cleared, observedCursor);
-  expect(terminal.resetAndWrite).toHaveBeenLastCalledWith("");
+  expect(terminal.write).toHaveBeenLastCalledWith("\u001b[H\u001b[2J\u001b[3J");
 });
 
 it("reports an attach failure that leaves the output unchanged", () => {

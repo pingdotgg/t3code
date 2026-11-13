@@ -252,7 +252,7 @@ describe("terminal session reducers", () => {
     expect(state.output.retainedBytes).toBe(8);
   });
 
-  it("resets for repeated snapshots, clear, and restart even when output text repeats", () => {
+  it("resets for repeated snapshots and restart, and erases in place on clear", () => {
     let state = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
       type: "snapshot",
       snapshot: BASE_SNAPSHOT,
@@ -274,7 +274,9 @@ describe("terminal session reducers", () => {
       terminalId: TARGET.terminalId,
     });
     const cleared = readTerminalOutputUpdate(state.output, cursor);
-    expect(cleared).toMatchObject({ type: "reset", data: "" });
+    // A live viewer erases in place, keeping the modes the running program negotiated.
+    expect(cleared).toMatchObject({ type: "append", data: "\u001b[H\u001b[2J\u001b[3J" });
+    expect(terminalOutputText(state.output)).toBe("\u001b[H\u001b[2J\u001b[3J");
     state = applyTerminalAttachStreamEvent(state, {
       type: "restarted",
       threadId: TARGET.threadId,

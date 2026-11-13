@@ -362,7 +362,7 @@ describe("GhosttyTerminalCore snapshots", () => {
     expect(core.snapshot()).toEqual(reference.snapshot());
   });
 
-  it("resets real Ghostty for a repeated snapshot, clear, restart, and a fresh attach", async () => {
+  it("resets real Ghostty for a repeated snapshot, restart, and a fresh attach, and erases on clear", async () => {
     const [core, reference] = await Promise.all([createCore(), createCore()]);
     let state = createSession("hello");
     const initial = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
@@ -391,7 +391,7 @@ describe("GhosttyTerminalCore snapshots", () => {
       core.write("\r\nstale local text");
       state = applyTerminalAttachStreamEvent(state, event);
       const update = readTerminalOutputUpdate(state.output, cursor);
-      expect(update.type).toBe("reset");
+      expect(update.type).toBe(event.type === "cleared" ? "append" : "reset");
       writeTerminalOutputUpdate(core, update);
       cursor = update.cursor;
       reference.resetAndWrite(event.type === "cleared" ? "" : "hello");
