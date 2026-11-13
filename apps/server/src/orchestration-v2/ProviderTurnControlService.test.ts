@@ -25,7 +25,7 @@ import * as Stream from "effect/Stream";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 
@@ -164,6 +164,7 @@ it.effect(
         makeProjection({ now, threadId, providerThread, providerTurnId, attemptId }),
       );
       const interruptedThread = yield* Ref.make<OrchestrationV2ProviderThread | null>(null);
+      const interruptTimesOut = yield* Ref.make(false);
       const providerSession = {
         id: oldSessionId,
         driver,
@@ -187,19 +188,32 @@ it.effect(
         startTurn: () => Effect.die("unused startTurn"),
         steerTurn: () => Effect.die("unused steerTurn"),
         interruptTurn: ({ providerThread: target }) =>
-          Effect.all(
-            [
-              Ref.set(interruptedThread, target),
-              Ref.update(projection, (current) => ({
-                ...current,
-                providerTurns: current.providerTurns.map((turn) =>
-                  turn.id === providerTurnId
-                    ? { ...turn, status: "interrupted" as const, completedAt: now }
-                    : turn,
-                ),
-              })),
-            ],
-            { discard: true },
+          Effect.gen(function* () {
+            if (yield* Ref.get(interruptTimesOut)) {
+              return yield* new ProviderAdapter.ProviderAdapterInterruptTimeoutError({
+                driver,
+                providerThreadId: target.id,
+                providerTurnId,
+                timeoutMs: 10_000,
+              });
+            }
+          }).pipe(
+            Effect.andThen(
+              Effect.all(
+                [
+                  Ref.set(interruptedThread, target),
+                  Ref.update(projection, (current) => ({
+                    ...current,
+                    providerTurns: current.providerTurns.map((turn) =>
+                      turn.id === providerTurnId
+                        ? { ...turn, status: "interrupted" as const, completedAt: now }
+                        : turn,
+                    ),
+                  })),
+                ],
+                { discard: true },
+              ),
+            ),
           ),
         respondToRuntimeRequest: () => Effect.die("unused respondToRuntimeRequest"),
         readThreadSnapshot: () => Effect.die("unused readThreadSnapshot"),
@@ -355,5 +369,33 @@ it.effect(
       assert.equal(interrupted?.providerSessionId, oldSessionId);
       assert.equal(interrupted?.id, providerThreadId);
       assert.equal(interrupted?.nativeThreadRef?.nativeId, "native-thread:restart-session");
+
+      // A provider that never completes the interrupted turn blocks an in-session restart,
+      // while a restart that detaches the session proceeds and lets the detach end the turn.
+      yield* Ref.set(interruptTimesOut, true);
+      yield* Ref.update(projection, (current) => ({
+        ...current,
+        providerTurns: current.providerTurns.map((turn) =>
+          turn.id === providerTurnId ? { ...turn, status: "running" as const } : turn,
+        ),
+      }));
+      const [inSession, detaching] = yield* Effect.gen(function* () {
+        const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
+        const restart = (detachesSession: boolean) =>
+          Effect.exit(
+            control.interruptAndAwaitTerminal({
+              threadId,
+              providerSessionId: oldSessionId,
+              replacementProviderSessionId: replacementSessionId,
+              providerThreadId,
+              providerTurnId,
+              interruptedAttemptId: attemptId,
+              detachesSession,
+            }),
+          );
+        return [yield* restart(false), yield* restart(true)] as const;
+      }).pipe(Effect.provide(layerControl));
+      assert.isTrue(Exit.isFailure(inSession));
+      assert.isTrue(Exit.isSuccess(detaching));
     }),
 );

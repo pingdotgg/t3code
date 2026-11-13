@@ -91,6 +91,7 @@ export interface ProviderTurnControlServiceV2Shape {
     readonly providerThreadId: ProviderThreadId;
     readonly providerTurnId: ProviderTurnId;
     readonly interruptedAttemptId: RunAttemptId;
+    readonly detachesSession?: boolean;
   }) => Effect.Effect<void, ProviderTurnControlError>;
 }
 
@@ -346,10 +347,20 @@ export const layer: Layer.Layer<
             return;
           }
 
-          yield* loaded.session.value.interruptTurn({
-            providerThread: loaded.providerThread,
-            providerTurnId: loaded.providerTurn.id,
-          });
+          const interrupted = yield* loaded.session.value
+            .interruptTurn({
+              providerThread: loaded.providerThread,
+              providerTurnId: loaded.providerTurn.id,
+            })
+            .pipe(
+              Effect.as(true),
+              // A detach unloads the thread, which ends a turn the provider never completed.
+              Effect.catchTags({
+                ProviderAdapterInterruptTimeoutError: (cause) =>
+                  input.detachesSession === true ? Effect.succeed(false) : Effect.fail(cause),
+              }),
+            );
+          if (!interrupted) return;
 
           for (let remaining = 1_000; remaining > 0; remaining -= 1) {
             const { providerTurn, attempt } = yield* projections.getProviderControlContext(

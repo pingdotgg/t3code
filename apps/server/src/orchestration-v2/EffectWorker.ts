@@ -385,6 +385,7 @@ export const layerExecutor: Layer.Layer<
                 providerThreadId: effect.request.providerThreadId,
                 providerTurnId: effect.request.providerTurnId,
                 interruptedAttemptId: effect.request.interruptedAttemptId,
+                detachesSession: effect.request.sessionTransition !== undefined,
                 ...(effect.request.sessionTransition?.type === "replace"
                   ? {
                       replacementProviderSessionId:
