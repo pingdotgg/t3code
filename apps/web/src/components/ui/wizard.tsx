@@ -140,11 +140,12 @@ export function WizardPanel({
   readonly className?: string;
 }) {
   return (
-    <ScrollArea>
+    // -my-px / my-px keep the ring's top and bottom edges inside the viewport without adding height.
+    <ScrollArea radius="none" className="-my-px">
       <div
         data-slot="dialog-panel"
         className={cn(
-          "min-w-0 space-y-4 border-y border-black/5 bg-background/80 px-6 py-5 dark:border-white/5 dark:bg-white/2",
+          "my-px min-w-0 space-y-4 bg-background/80 px-6 py-5 ring-1 ring-black/5 dark:bg-white/2 dark:ring-white/5",
           className,
         )}
       >
