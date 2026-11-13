@@ -10,9 +10,9 @@ const { version } = JSON.parse(
   fs.readFileSync(path.join(import.meta.dirname, "../package.json"), "utf8"),
 );
 
-// Current CLI archives fit within 128 MiB. A larger release needs an explicit
-// limit change; extraction and other installer writes are separate costs.
-const MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024;
+// Leave room above current releases while bounding the compressed download.
+// Extraction and other installer writes are separate costs.
+const MAX_DOWNLOAD_BYTES = 256 * 1024 * 1024;
 
 const SUPPORTED = ["darwin-arm64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
 
