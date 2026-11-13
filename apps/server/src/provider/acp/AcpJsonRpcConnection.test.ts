@@ -514,7 +514,11 @@ describe("AcpSessionRuntime", () => {
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
-          spawn: { command: mockAgentCommand, args: mockAgentArgs },
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: { T3_ACP_MCP_NO_STDIO: "1" },
+          },
           cwd: process.cwd(),
           clientInfo: { name: "t3-test", version: "0.0.0" },
           authMethodId: "test",
