@@ -266,8 +266,9 @@ function chatThreadRef(target: ThreadRouteTarget): ScopedThreadRef | null {
 
 /**
  * Run an open (a sidebar click, a route) so a thread's terminal and side panes follow its chat:
- * a chat it swaps off a pane hides them, shells and browsers still running, and a chat it brings
- * back shows the ones an earlier open hid.
+ * a chat it swaps off a pane hides them, shells and browsers still running, unless the open only
+ * focused another tab of that pane as a tab click would, and a chat it brings back shows the ones
+ * an earlier open hid.
  */
 export function followLayoutCompanions(open: () => void): void {
   const before = useLayoutStore.getState().layout;
@@ -277,7 +278,7 @@ export function followLayoutCompanions(open: () => void): void {
     const from = chatThreadRef(swap.from);
     const to = chatThreadRef(swap.to);
     if (from && to && scopedThreadKey(from) === scopedThreadKey(to)) continue;
-    if (from) hideCompanionsOf(from);
+    if (from && !swap.focusOnly) hideCompanionsOf(from);
     if (to) showCompanionsOf(to);
   }
 }

@@ -1348,12 +1348,13 @@ export function showLayoutContent(state: LayoutState, content: LayoutTabContent)
 
 /**
  * The chats an open swapped on screen: in a pane of the focused workspace that showed `from` and
- * now shows `to`. A chat still showing in another pane, or moving there, is no swap.
+ * now shows `to`. A chat still showing in another pane, or moving there, is no swap. `focusOnly`
+ * marks a swap that only focused a tab the pane already held, as a tab click does.
  */
 export function layoutChatSwaps(
   before: LayoutState,
   after: LayoutState,
-): Array<{ from: ThreadRouteTarget; to: ThreadRouteTarget }> {
+): Array<{ from: ThreadRouteTarget; to: ThreadRouteTarget; focusOnly: boolean }> {
   if (before.focusedWorkspaceId !== after.focusedWorkspaceId) return [];
   const shownChats = (state: LayoutState) =>
     new Map(
@@ -1370,12 +1371,17 @@ export function layoutChatSwaps(
     new Set([...shown.values()].map((content) => layoutTabContentKey(content)));
   const wasKeys = keys(was);
   const nowKeys = keys(now);
+  const holds = (state: LayoutState, paneId: string, content: LayoutTabContent) =>
+    findPane(state, paneId)?.pane.tabs.some(
+      (tab) => layoutTabContentKey(tab.content) === layoutTabContentKey(content),
+    ) ?? false;
   return [...now].flatMap(([paneId, to]) => {
     const from = was.get(paneId);
     if (!from || nowKeys.has(layoutTabContentKey(from)) || wasKeys.has(layoutTabContentKey(to))) {
       return [];
     }
-    return [{ from: from.target, to: to.target }];
+    const focusOnly = holds(before, paneId, to) && holds(after, paneId, from);
+    return [{ from: from.target, to: to.target, focusOnly }];
   });
 }
 
