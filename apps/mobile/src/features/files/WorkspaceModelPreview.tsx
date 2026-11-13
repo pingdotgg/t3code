@@ -47,7 +47,10 @@ function readViewerMessage(data: string): ViewerMessage | null {
   }
 }
 
-/** Touch view of a mesh, drawn by the web client's 3D viewer inside a WebView. */
+/**
+ * Touch view of a mesh, drawn by the web client's 3D viewer inside a WebView. Mount it with a
+ * `key` per URL, so each page load starts its own ready handshake.
+ */
 function ModelWebView(props: {
   readonly downloadUrl: string | null;
   readonly name: string;
@@ -71,36 +74,40 @@ function ModelWebView(props: {
   return (
     <View className="flex-1 bg-card">
       {uri === null ? null : (
-        <WebView<object>
-          source={{ uri }}
-          accessibilityLabel={`3D view of ${props.name}`}
-          style={{ flex: 1, backgroundColor: "transparent" }}
-          // The page handles every gesture itself; nothing should scroll or zoom the WebView.
-          scrollEnabled={false}
-          bounces={false}
-          overScrollMode="never"
-          setBuiltInZoomControls={false}
-          setSupportMultipleWindows={false}
-          onShouldStartLoadWithRequest={(request) =>
-            request.url.split("#", 1)[0] === uri.split("#", 1)[0]
-          }
-          onLoadEnd={() => setLoaded(true)}
-          onMessage={(event: WebViewMessageEvent) => {
-            const message = readViewerMessage(event.nativeEvent.data);
-            if (message?.type === "ready") setReady(true);
-            else if (message?.type === "unavailable") props.onUnavailable(message.reason);
-          }}
-          // Servers from before the 3D view have no viewer page.
-          onHttpError={() => props.onUnavailable(NO_VIEWER_PAGE)}
-          onError={() => props.onUnavailable("The 3D view could not be loaded.")}
-          onRenderProcessGone={() => props.onUnavailable("The 3D view stopped unexpectedly.")}
-          onContentProcessDidTerminate={() =>
-            props.onUnavailable("The 3D view stopped unexpectedly.")
-          }
-        />
+        // Until the viewer reports in, the page may be an older server's app: keep it untouchable.
+        <View className="flex-1" pointerEvents={ready ? "auto" : "none"}>
+          <WebView<object>
+            source={{ uri }}
+            accessibilityLabel={`3D view of ${props.name}`}
+            style={{ flex: 1, backgroundColor: "transparent" }}
+            // The page handles every gesture itself; nothing should scroll or zoom the WebView.
+            scrollEnabled={false}
+            bounces={false}
+            overScrollMode="never"
+            setBuiltInZoomControls={false}
+            setSupportMultipleWindows={false}
+            onShouldStartLoadWithRequest={(request) =>
+              request.url.split("#", 1)[0] === uri.split("#", 1)[0]
+            }
+            onLoadEnd={() => setLoaded(true)}
+            onMessage={(event: WebViewMessageEvent) => {
+              const message = readViewerMessage(event.nativeEvent.data);
+              if (message?.type === "ready") setReady(true);
+              else if (message?.type === "unavailable") props.onUnavailable(message.reason);
+            }}
+            // Servers from before the 3D view have no viewer page.
+            onHttpError={() => props.onUnavailable(NO_VIEWER_PAGE)}
+            onError={() => props.onUnavailable("The 3D view could not be loaded.")}
+            onRenderProcessGone={() => props.onUnavailable("The 3D view stopped unexpectedly.")}
+            onContentProcessDidTerminate={() =>
+              props.onUnavailable("The 3D view stopped unexpectedly.")
+            }
+          />
+        </View>
       )}
-      {loaded ? null : (
-        <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
+      {ready ? null : (
+        // Opaque, so an older server's app page never shows before the picture fallback.
+        <View className="absolute inset-0 items-center justify-center bg-card">
           <AppActivityIndicator />
         </View>
       )}
@@ -171,6 +178,7 @@ export function WorkspaceModelPreview(props: {
           onPress={() => setMode("picture")}
         />
         <ModelWebView
+          key={downloadUrl._tag === "Success" ? downloadUrl.url : "pending"}
           downloadUrl={downloadUrl._tag === "Success" ? downloadUrl.url : null}
           name={props.name}
           onUnavailable={setReported}
