@@ -1488,15 +1488,8 @@ export default function ChatView(props: ChatViewProps) {
     deriveActiveWorkStartedAt(activeActivityRun, activeRuntime, localDispatchStartedAt) ??
     runlessWorkStartedAt;
   const activeRunPreparing = activeActivityRun?.status === "preparing";
-  // A stopped worktree setup still holds new sends, so they queue rather than flash as sent.
   const sendQueuesBehindSetup =
-    isServerThread &&
-    (activeRunPreparing ||
-      activeActivityRun?.status === "starting" ||
-      orchestrationV2WorktreePending(
-        activeThread?.worktreePath ?? null,
-        serverProjection?.runs ?? [],
-      ));
+    isServerThread && (activeRunPreparing || activeActivityRun?.status === "starting");
   const [setupQueueSendThreadKey, setSetupQueueSendThreadKey] = useState<string | null>(null);
   const downloadFileAttachment = async (attachment: ChatFileAttachment) => {
     const connection = readPreparedConnection(environmentId);
