@@ -88,6 +88,7 @@ const CLONE_ENV = {
 // What `git lfs install` writes. Other setups chose behavior that `git lfs pull` would not honor.
 const STOCK_LFS_FILTER = "git-lfs filter-process";
 const LFS_PROGRESS_INTERVAL_MS = 1_000;
+const NULL_OID = "0".repeat(40);
 const isStockLfs = (filter: string | null, toleratesErrors: string | null) =>
   filter === STOCK_LFS_FILTER && toleratesErrors === null;
 
@@ -412,7 +413,15 @@ export const make = Effect.gen(function* () {
       {
         operation: "SourceControlRepositoryService.cloneRepository",
         cwd: path.dirname(destinationPath),
-        args: ["clone", "--progress", "--", normalizedCloneUrl, path.basename(destinationPath)],
+        args: [
+          // A deferred clone runs post-checkout itself once the files are real.
+          ...(deferLfs ? ["-c", "core.hooksPath=/dev/null"] : []),
+          "clone",
+          "--progress",
+          "--",
+          normalizedCloneUrl,
+          path.basename(destinationPath),
+        ],
         env: deferLfs ? { ...CLONE_ENV, GIT_LFS_SKIP_SMUDGE: "1" } : CLONE_ENV,
       },
       options,
@@ -433,10 +442,19 @@ export const make = Effect.gen(function* () {
         git.readConfigValue(path.dirname(destinationPath), key, {
           gitDir: path.join(destinationPath, ".git"),
         });
-      return isStockLfs(
+      const stock = isStockLfs(
         yield* readUserConfig("filter.lfs.process"),
         yield* readUserConfig("lfs.skipdownloaderrors"),
       );
+      if (!stock) return false;
+      const version = yield* git.execute({
+        operation: "SourceControlRepositoryService.gitVersion",
+        cwd: path.dirname(destinationPath),
+        args: ["version"],
+      });
+      const [, major = "0", minor = "0"] = /(\d+)\.(\d+)/.exec(version.stdout) ?? [];
+      // `git hook run`, which replays the clone's post-checkout hook, is from 2.36.
+      return Number(major) > 2 || (Number(major) === 2 && Number(minor) >= 36);
     },
     Effect.orElseSucceed(() => false),
   );
@@ -461,10 +479,18 @@ export const make = Effect.gen(function* () {
         ),
       );
     if (lfsFiles.stdout.trim().length === 0) return;
+    // git-lfs also reads this from the repository's committed `.lfsconfig`.
+    const committedTolerance = yield* git.execute({
+      operation: "SourceControlRepositoryService.readLfsConfig",
+      cwd: destinationPath,
+      args: ["config", "--file", ".lfsconfig", "--get", "lfs.skipdownloaderrors"],
+      allowNonZeroExit: true,
+    });
     // Config that only applies inside the checkout (an includeIf, say) is visible only now.
     const deferrable = isStockLfs(
       yield* git.readConfigValue(destinationPath, "filter.lfs.process"),
-      yield* git.readConfigValue(destinationPath, "lfs.skipdownloaderrors"),
+      (yield* git.readConfigValue(destinationPath, "lfs.skipdownloaderrors")) ??
+        (committedTolerance.stdout.trim() || null),
     );
     if (!deferrable) {
       // Redo the checkout through git's own filters, exactly as a plain clone would have.
@@ -539,7 +565,28 @@ export const make = Effect.gen(function* () {
             ),
       ),
     );
-    if (deferLfs) yield* pullLfsObjects(input, prepared.destinationPath, options);
+    if (deferLfs) {
+      yield* pullLfsObjects(input, prepared.destinationPath, options);
+      const head = yield* git.execute({
+        operation: "SourceControlRepositoryService.cloneRepository",
+        cwd: prepared.destinationPath,
+        args: ["rev-parse", "--verify", "--quiet", "HEAD"],
+        allowNonZeroExit: true,
+      });
+      const commit = head.stdout.trim();
+      if (commit.length > 0) {
+        yield* runCloneCommand(
+          input,
+          {
+            operation: "SourceControlRepositoryService.postCheckoutHook",
+            cwd: prepared.destinationPath,
+            args: ["hook", "run", "--ignore-missing", "post-checkout", "--", NULL_OID, commit, "1"],
+            env: CLONE_ENV,
+          },
+          options,
+        );
+      }
+    }
 
     return {
       cwd: prepared.destinationPath,

@@ -309,6 +309,7 @@ type LfsCloneCase = {
   readonly skipSmudge?: string;
   readonly enclosingConfig?: Record<string, string>;
   readonly checkoutConfig?: Record<string, string>;
+  readonly lfsconfig?: string;
   readonly defers: boolean;
   readonly after?: "pull" | "restore";
 };
@@ -342,6 +343,15 @@ it.effect.each<readonly [string, LfsCloneCase]>([
     },
   ],
   [
+    "commits a .lfsconfig that tolerates LFS download errors",
+    {
+      userConfig: STOCK_LFS_CONFIG,
+      lfsconfig: "[lfs]\n\tskipdownloaderrors = true\n",
+      defers: true,
+      after: "restore",
+    },
+  ],
+  [
     "smudges LFS content without a process filter inside the checkout",
     {
       userConfig: STOCK_LFS_CONFIG,
@@ -366,6 +376,9 @@ it.effect.each<readonly [string, LfsCloneCase]>([
       yield* fs.writeFileString(path.join(source, ".gitattributes"), "*.bin filter=lfs\n");
     }
     yield* fs.writeFileString(path.join(source, "model.bin"), "weights\n");
+    if (testCase.lfsconfig) {
+      yield* fs.writeFileString(path.join(source, ".lfsconfig"), testCase.lfsconfig);
+    }
     yield* runIn(source, "add", "-A");
     yield* runIn(source, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "init");
 
@@ -401,8 +414,26 @@ it.effect.each<readonly [string, LfsCloneCase]>([
       yield* fs.readFileString(path.join(destinationPath, "model.bin")),
       "weights\n",
     );
-    const clone = commands.find((command) => command.args[0] === "clone");
+    const clone = commands.find((command) => command.args.includes("clone"));
     assert.strictEqual(clone?.env?.GIT_LFS_SKIP_SMUDGE, testCase.defers ? "1" : undefined);
+    // post-checkout must see hydrated files, so it runs last instead of inside the clone.
+    assert.strictEqual(clone?.args.includes("core.hooksPath=/dev/null"), testCase.defers);
+    const hook = commands.at(-1);
+    if (testCase.defers) {
+      const head = yield* runIn(destinationPath, "rev-parse", "HEAD");
+      assert.deepStrictEqual(hook?.args, [
+        "hook",
+        "run",
+        "--ignore-missing",
+        "post-checkout",
+        "--",
+        "0".repeat(40),
+        head.stdout.trim(),
+        "1",
+      ]);
+    } else {
+      assert.notStrictEqual(hook?.args[0], "hook");
+    }
     const after = commands.find(
       (command) => command.args[0] === "lfs" || command.args[0] === "reset",
     );
@@ -448,7 +479,10 @@ it.effect("reports LFS download progress at git's pace and keeps its error text 
               Effect.succeed(key === "filter.lfs.process" ? "git-lfs filter-process" : null),
             execute: (input) =>
               Effect.gen(function* () {
-                if (input.args[0] !== "lfs") return { ...processOutput(), stdout: "model.bin\n" };
+                const stdout = { version: "git version 2.43.0\n", "ls-files": "model.bin\n" }[
+                  input.args[0] ?? ""
+                ];
+                if (input.args[0] !== "lfs") return { ...processOutput(), stdout: stdout ?? "" };
                 pullEnv = input.env;
                 const report = input.progress?.onStdoutLine ?? (() => Effect.void);
                 yield* report("Downloading LFS objects:   0% (0/3), 1 MB | 1.0 MB/s     ");
