@@ -102,7 +102,7 @@ function formatProcessName(process: Pick<ResourceTelemetryProcess, "command" | "
   return normalized.split(/[\\/]/).findLast((segment) => segment.length > 0) ?? normalized;
 }
 
-function categoryLabel(category: ResourceTelemetryProcessCategory): string {
+export function categoryLabel(category: ResourceTelemetryProcessCategory): string {
   switch (category) {
     case "server":
       return "Server";
@@ -134,7 +134,7 @@ function categoryDotClass(category: ResourceTelemetryProcessCategory): string {
   return "bg-success";
 }
 
-function ioSemanticsLabel(semantics: ResourceTelemetryIoSemantics): string {
+export function ioSemanticsLabel(semantics: ResourceTelemetryIoSemantics): string {
   switch (semantics) {
     case "storage":
       return "Storage bytes";
@@ -451,7 +451,7 @@ export function ResourceHistoryChart({
   );
 }
 
-function ProcessTreeName({
+export function ProcessTreeName({
   process,
   collapsed,
   onToggle,
@@ -500,7 +500,7 @@ function canSignalProcess(process: ResourceTelemetryProcess): boolean {
   );
 }
 
-function ProcessActions({
+export function ProcessActions({
   process,
   canMaintainEnvironment,
   signalingKeys,
@@ -520,133 +520,6 @@ function ProcessActions({
       disabled={!canMaintainEnvironment || isSignaling}
       onSignal={(signal) => onSignal(process, signal)}
     />
-  );
-}
-
-export function ProcessTable({
-  processes,
-  canMaintainEnvironment,
-  signalingKeys,
-  onSignal,
-}: {
-  processes: ReadonlyArray<ResourceTelemetryProcess>;
-  canMaintainEnvironment: boolean;
-  signalingKeys: ReadonlySet<string>;
-  onSignal: (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => void;
-}) {
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
-  const visible = visibleResourceTelemetryProcesses(processes, collapsed);
-  const toggle = (process: ResourceTelemetryProcess) => {
-    const identityKey = processIdentityKey(process);
-    setCollapsed((current) => {
-      const next = new Set(current);
-      if (next.has(identityKey)) {
-        next.delete(identityKey);
-      } else {
-        next.add(identityKey);
-      }
-      return next;
-    });
-  };
-
-  return (
-    <div className="border-t border-border/60">
-      <ScrollArea
-        chainVerticalScroll
-        scrollFade
-        hideScrollbars
-        className="max-h-[min(68vh,48rem)] w-full max-w-full"
-      >
-        <table className="w-full min-w-[1320px] table-fixed text-left text-xs">
-          <colgroup>
-            <col className="w-[20%]" />
-            <col className="w-[10%]" />
-            <col className="w-[7%]" />
-            <col className="w-[8%]" />
-            <col className="w-[9%]" />
-            <col className="w-[9%]" />
-            <col className="w-[9%]" />
-            <col className="w-[10%]" />
-            <col className="w-[8%]" />
-            <col className="w-[6%]" />
-            <col className="w-[4%]" />
-          </colgroup>
-          <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-3xs uppercase tracking-widest text-muted-foreground/65">
-            <tr>
-              <th className="px-4 py-2 font-semibold sm:pl-5">Process</th>
-              <th className="px-3 py-2 font-semibold">Category</th>
-              <th className="px-3 py-2 text-right font-semibold">CPU</th>
-              <th className="px-3 py-2 text-right font-semibold">CPU Time</th>
-              <th className="px-3 py-2 text-right font-semibold">Memory</th>
-              <th className="px-3 py-2 text-right font-semibold">Read/s</th>
-              <th className="px-3 py-2 text-right font-semibold">Write/s</th>
-              <th className="px-3 py-2 text-right font-semibold">Read Total</th>
-              <th className="px-3 py-2 text-right font-semibold">Write Total</th>
-              <th className="px-3 py-2 text-right font-semibold">PID</th>
-              <th className="px-2 py-2 text-right font-semibold sm:pr-4">Kill</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border/50">
-            {visible.length === 0 ? (
-              <tr>
-                <td colSpan={11} className="px-4 py-5 text-xs text-muted-foreground sm:px-5">
-                  Waiting for the native process monitor.
-                </td>
-              </tr>
-            ) : null}
-            {visible.map((process) => (
-              <tr key={processIdentityKey(process)} className="hover:bg-muted/20">
-                <td className="px-4 py-2 sm:pl-5">
-                  <ProcessTreeName
-                    process={process}
-                    collapsed={collapsed.has(processIdentityKey(process))}
-                    onToggle={toggle}
-                  />
-                </td>
-                <td className="truncate px-3 py-2 text-2xs text-muted-foreground">
-                  {categoryLabel(process.category)}
-                </td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums">
-                  {process.cpuPercent.toFixed(1)}%
-                </td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums">
-                  {formatCpuTime(process.cpuTimeMs)}
-                </td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums">
-                  {formatBytes(process.residentBytes)}
-                </td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums text-info-foreground">
-                  {formatRate(process.ioReadBytesPerSecond)}
-                </td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums text-warning-foreground">
-                  {formatRate(process.ioWriteBytesPerSecond)}
-                </td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">
-                  {formatBytes(process.ioReadBytes)}
-                </td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">
-                  <Tooltip>
-                    <TooltipTrigger render={<span>{formatBytes(process.ioWriteBytes)}</span>} />
-                    <TooltipPopup side="top">{ioSemanticsLabel(process.ioSemantics)}</TooltipPopup>
-                  </Tooltip>
-                </td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">
-                  {process.identity.pid}
-                </td>
-                <td className="px-2 py-2 text-right sm:pr-4">
-                  <ProcessActions
-                    process={process}
-                    canMaintainEnvironment={canMaintainEnvironment}
-                    signalingKeys={signalingKeys}
-                    onSignal={onSignal}
-                  />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </ScrollArea>
-    </div>
   );
 }
 
@@ -809,3 +682,4 @@ export function ResourceTelemetryDiagnostics({
     <ResourceTelemetryDiagnosticsBody key={environmentId ?? ""} environmentId={environmentId} />
   );
 }
+export * from "./ResourceTelemetryDiagnosticsParts2";

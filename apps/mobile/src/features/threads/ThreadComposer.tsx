@@ -121,6 +121,7 @@ import {
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
 import { useCompactComposerEditor } from "./ThreadComposerParts";
+import { ComposerSurface } from "./ThreadComposerParts2";
 
 export const COMPOSER_COLLAPSED_CHROME = 60;
 
@@ -191,7 +192,7 @@ export interface ThreadComposerProps {
 }
 
 // Android KeyboardStickyView tracks the IME; concurrent timed layout morphs cause jitter.
-const COMPOSER_TRANSITION_DURATION_MS = 220;
+export const COMPOSER_TRANSITION_DURATION_MS = 220;
 // Side panes animate dock width; nested horizontal transitions would make the surface trail the toolbar.
 const composerHeightTransition: LayoutAnimationFunction = (values) => {
   "worklet";
@@ -214,7 +215,7 @@ const composerHeightTransition: LayoutAnimationFunction = (values) => {
     },
   };
 };
-const COMPOSER_LAYOUT_TRANSITION = Platform.OS === "android" ? undefined : composerHeightTransition;
+export const COMPOSER_LAYOUT_TRANSITION = Platform.OS === "android" ? undefined : composerHeightTransition;
 // Share of the one-row composer the draft keeps; a long model name truncates first.
 const INLINE_EDITOR_MIN_WIDTH = "40%";
 export const INLINE_EDITOR_HEIGHT = 36;
@@ -224,7 +225,7 @@ const COMPOSER_ATTACHMENT_ENTERING =
     ? FadeIn.duration(160)
     : FadeIn.delay(COMPOSER_TRANSITION_DURATION_MS).duration(160).reduceMotion(ReduceMotion.System);
 
-const AnimatedGlassSurface = Animated.createAnimatedComponent(GlassSurface);
+export const AnimatedGlassSurface = Animated.createAnimatedComponent(GlassSurface);
 
 const FOLLOW_UP_ACTION_LABEL = {
   queue: "Queue",
@@ -281,68 +282,6 @@ function SendActionButton(props: {
   );
 }
 
-function ComposerSurface(props: {
-  readonly children: ReactNode;
-  readonly style: ViewStyle;
-  readonly animateLayout?: boolean;
-}) {
-  const colors = useUniwindTheme();
-  const targetBorderRadius =
-    typeof props.style.borderRadius === "number" ? props.style.borderRadius : 0;
-  const shouldAnimate = props.animateLayout !== false && Platform.OS !== "android";
-  const animatedBorderRadius = useDerivedValue(() =>
-    shouldAnimate
-      ? withTiming(targetBorderRadius, {
-          duration: COMPOSER_TRANSITION_DURATION_MS,
-          reduceMotion: ReduceMotion.System,
-        })
-      : targetBorderRadius,
-  );
-  const borderCurve = props.style.borderCurve;
-  const animatedShapeStyle = useAnimatedStyle(() => ({
-    borderRadius: animatedBorderRadius.value,
-    ...(borderCurve ? { borderCurve } : {}),
-  }));
-  const layoutTransition = shouldAnimate ? COMPOSER_LAYOUT_TRANSITION : undefined;
-
-  // Animate every native frame or glass and content jump to final height inside the clip.
-  return (
-    <Animated.View
-      className={
-        Platform.OS === "android" ? undefined : "shadow-[0_6px_28px] shadow-adaptive-black-a15-a35"
-      }
-      layout={layoutTransition}
-      style={[
-        animatedShapeStyle,
-        {
-          overflow: "hidden",
-        },
-      ]}
-    >
-      <AnimatedGlassSurface
-        chrome="none"
-        fallbackColor={colors["--color-composer-surface"]}
-        fallbackClassName="border border-composer-border"
-        glassEffectStyle="regular"
-        pointerEvents="none"
-        tintColor="transparent"
-        layout={layoutTransition}
-        style={[{ position: "absolute", inset: 0 }, animatedShapeStyle]}
-      >
-        {null}
-      </AnimatedGlassSurface>
-      <Animated.View
-        collapsable={false}
-        layout={layoutTransition}
-        style={[props.style, animatedShapeStyle]}
-      >
-        {props.children}
-      </Animated.View>
-    </Animated.View>
-  );
-}
-
-/** Space below the composer pill, inside the bottom inset it is given. */
 export const THREAD_COMPOSER_BOTTOM_GUTTER = 6;
 
 export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps) {

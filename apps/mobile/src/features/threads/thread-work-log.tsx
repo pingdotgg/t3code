@@ -105,16 +105,18 @@ import { useAssetUrl } from "../../state/assets";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { ThreadWorkLogRow } from "./thread-work-logParts";
+import { ThreadWorkGroupList } from "./thread-work-logParts2";
+import { ShimmeringWorkContent } from "./thread-work-logParts3";
 
-const SHIMMER_WIDTH = 72;
-const SHIMMER_SWEEP_MS = 1_350;
-const SHIMMER_PAUSE_MS = 1_450;
-const SHIMMER_ICON_AND_GAP_WIDTH = 30;
+export const SHIMMER_WIDTH = 72;
+export const SHIMMER_SWEEP_MS = 1_350;
+export const SHIMMER_PAUSE_MS = 1_450;
+export const SHIMMER_ICON_AND_GAP_WIDTH = 30;
 export const THREAD_DISCLOSURE_TRANSITION_MS = 180;
 export const WORK_LOG_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
 export const WORK_LOG_DETAIL_ENTER_TRANSITION = FadeIn.duration(140);
 export const WORK_LOG_DETAIL_EXIT_TRANSITION = FadeOut.duration(120);
-type WorkContentIcon =
+export type WorkContentIcon =
   | AppSymbolName
   | "browser"
   | "computer"
@@ -202,7 +204,7 @@ export function ThreadDisclosureChevron(props: {
   );
 }
 
-function ShimmerWorkContent(props: {
+export function ShimmerWorkContent(props: {
   readonly textClassName?: string;
   readonly compact?: boolean;
   readonly environmentId?: EnvironmentId;
@@ -248,139 +250,6 @@ function ShimmerWorkContent(props: {
       >
         {props.label}
       </Text>
-    </View>
-  );
-}
-
-export function ShimmeringWorkContent(props: {
-  readonly className?: string;
-  readonly textClassName?: string;
-  readonly compact?: boolean;
-  readonly environmentId?: EnvironmentId;
-  readonly icon: WorkContentIcon;
-  readonly iconSubtleColor: ColorValue;
-  readonly label: string;
-  readonly showIcon: boolean;
-  readonly themeAppearance?: "light" | "dark";
-  readonly toolIcon?: ToolActivityIcon;
-}) {
-  const [availableWidth, setAvailableWidth] = useState(0);
-  const [textWidth, setTextWidth] = useState(0);
-  const appIsActive = useAppActive();
-  const reducedMotion = useReduceMotionEnabled();
-  const screenIsFocused = useIsFocused();
-  const progress = useAnimatedValue(0);
-  const gradientId = `work-shimmer-${useId().replaceAll(":", "")}`;
-  const contentWidth = Math.min(
-    availableWidth,
-    (props.showIcon ? SHIMMER_ICON_AND_GAP_WIDTH : 0) + Math.ceil(textWidth),
-  );
-
-  // Runs on React Native's native driver instead of Reanimated, whose
-  // per-frame commits starve React's while commit pausing is disabled
-  // (package.json). See docs/internals/performance-regressions.md.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the native-driver shimmer loop while visible and active, and stops it on cleanup
-  useEffect(() => {
-    progress.setValue(0);
-    if (contentWidth <= 0 || reducedMotion || !appIsActive || !screenIsFocused) return;
-
-    const loop = NativeAnimated.loop(
-      NativeAnimated.timing(progress, {
-        toValue: 1,
-        duration: SHIMMER_SWEEP_MS + SHIMMER_PAUSE_MS,
-        easing: Easing.linear,
-        useNativeDriver: true,
-      }),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [appIsActive, contentWidth, progress, reducedMotion, screenIsFocused]);
-
-  // One timing covers the sweep and the pause, so the native driver can loop it.
-  // The React Compiler memoizes these, so re-renders don't rebuild the native
-  // animation nodes.
-  const inputRange = [0, SHIMMER_SWEEP_MS / (SHIMMER_SWEEP_MS + SHIMMER_PAUSE_MS), 1];
-  const sweepTranslateX = progress.interpolate({
-    inputRange,
-    outputRange: [-SHIMMER_WIDTH, contentWidth, contentWidth],
-  });
-  const counterSweepTranslateX = progress.interpolate({
-    inputRange,
-    outputRange: [SHIMMER_WIDTH, -contentWidth, -contentWidth],
-  });
-
-  return (
-    <View
-      className={cn("min-w-0 flex-1 overflow-hidden", props.className)}
-      onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width)}
-    >
-      <ShimmerWorkContent
-        textClassName={props.textClassName}
-        compact={props.compact}
-        environmentId={props.environmentId}
-        highlighted={false}
-        icon={props.icon}
-        iconSubtleColor={props.iconSubtleColor}
-        label={props.label}
-        showIcon={props.showIcon}
-        themeAppearance={props.themeAppearance}
-        toolIcon={props.toolIcon}
-        onTextLayout={(event) => setTextWidth(event.nativeEvent.lines[0]?.width ?? 0)}
-      />
-      {!reducedMotion && appIsActive && screenIsFocused && contentWidth > 0 ? (
-        <NativeAnimated.View
-          pointerEvents="none"
-          accessible={false}
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-          style={{
-            position: "absolute",
-            top: 0,
-            bottom: 0,
-            left: 0,
-            overflow: "hidden",
-            width: SHIMMER_WIDTH,
-            transform: [{ translateX: sweepTranslateX }],
-          }}
-        >
-          <MaskedView
-            style={StyleSheet.absoluteFill}
-            maskElement={
-              <Svg width="100%" height="100%">
-                <Defs>
-                  <LinearGradient id={gradientId} x1="0%" x2="100%" y1="0%" y2="0%">
-                    <Stop offset="0" stopColor="white" stopOpacity={0} />
-                    <Stop offset="0.15" stopColor="white" stopOpacity={0.12} />
-                    <Stop offset="0.35" stopColor="white" stopOpacity={0.55} />
-                    <Stop offset="0.5" stopColor="white" stopOpacity={1} />
-                    <Stop offset="0.65" stopColor="white" stopOpacity={0.55} />
-                    <Stop offset="0.85" stopColor="white" stopOpacity={0.12} />
-                    <Stop offset="1" stopColor="white" stopOpacity={0} />
-                  </LinearGradient>
-                </Defs>
-                <Rect width="100%" height="100%" fill={`url(#${gradientId})`} />
-              </Svg>
-            }
-          >
-            <NativeAnimated.View
-              style={{ width: availableWidth, transform: [{ translateX: counterSweepTranslateX }] }}
-            >
-              <ShimmerWorkContent
-                textClassName={props.textClassName}
-                compact={props.compact}
-                environmentId={props.environmentId}
-                highlighted
-                icon={props.icon}
-                iconSubtleColor={props.iconSubtleColor}
-                label={props.label}
-                showIcon={props.showIcon}
-                themeAppearance={props.themeAppearance}
-                toolIcon={props.toolIcon}
-              />
-            </NativeAnimated.View>
-          </MaskedView>
-        </NativeAnimated.View>
-      ) : null}
     </View>
   );
 }
@@ -435,14 +304,14 @@ export function isFreshRow(createdAt: string): boolean {
 
 // Match min-h-8; disable exact sizing when native accessibility scaling can exceed it.
 const WORK_ROW_HEIGHT = THREAD_WORK_ROW_MIN_HEIGHT;
-const WORK_ROW_GAP = 1;
+export const WORK_ROW_GAP = 1;
 const WORK_LOG_BOTTOM_MARGIN = 3.5;
-const WORK_GROUP_MAX_HEIGHT = 256;
-const WORK_GROUP_EDGE_FADE_HEIGHT = 12;
+export const WORK_GROUP_MAX_HEIGHT = 256;
+export const WORK_GROUP_EDGE_FADE_HEIGHT = 12;
 
 export const WORK_GROUP_TOGGLE_HEIGHT = THREAD_WORK_ROW_MIN_HEIGHT;
 
-function workLogRowsHeight(
+export function workLogRowsHeight(
   activities: ReadonlyArray<ThreadFeedActivity>,
   rowHeight = WORK_ROW_HEIGHT,
 ): number {
@@ -610,209 +479,7 @@ function ThreadReasoningGroup(props: {
   );
 }
 
-function ThreadWorkGroupList(props: {
-  readonly activities: ReadonlyArray<ThreadFeedActivity>;
-  readonly edgeFadeColor: string;
-  readonly expandedRows: Readonly<Record<string, boolean>>;
-  readonly groupId: string;
-  readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
-  readonly scrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
-  readonly renderRow: (row: ThreadFeedActivity) => ReactNode;
-}) {
-  const estimatedRowsHeight = workLogRowsHeight(
-    props.activities,
-    props.rowSizing.estimatedRowHeight,
-  );
-  const [initialPosition] = useState(() => {
-    const position = props.scrollPositions.get(props.groupId);
-    return props.activities.some((row) => row.id === position?.rowId) ? position : undefined;
-  });
-  const [initialScrollIndex] = useState(() =>
-    resolveThreadWorkGroupInitialScroll(props.activities, initialPosition),
-  );
-  const [restoringPosition, setRestoringPosition] = useState(initialScrollIndex !== undefined);
-  const listRef = useRef<LegendListRef>(null);
-  const loadedRef = useRef(false);
-  const userScrollingRef = useRef(false);
-  const pendingAppendHeightRef = useRef<number | null>(null);
-  const previousContent = useRef({
-    rows: props.activities,
-    height: Math.max(estimatedRowsHeight, initialPosition?.contentHeight ?? 0),
-    expandedRows: props.expandedRows,
-  });
-  const [measuredContent, setMeasuredContent] = useState(() => ({
-    height: Math.max(estimatedRowsHeight, initialPosition?.contentHeight ?? 0),
-    rowCount: props.activities.length,
-  }));
-  const contentHeight = Math.max(
-    1,
-    measuredContent.height +
-      Math.max(0, props.activities.length - measuredContent.rowCount) *
-        (props.rowSizing.estimatedRowHeight + WORK_ROW_GAP),
-  );
-  const height = Math.min(contentHeight, WORK_GROUP_MAX_HEIGHT);
-  const scrollOffset = useSharedValue(initialPosition?.scrollOffset ?? 0);
-  const sharedValues = { scrollOffset };
-
-  const topFadeStyle = useAnimatedStyle(() => ({
-    opacity: Math.min(1, Math.max(0, scrollOffset.value) / WORK_GROUP_EDGE_FADE_HEIGHT),
-  }));
-  const bottomFadeStyle = useAnimatedStyle(() => ({
-    opacity: Math.min(
-      1,
-      Math.max(0, contentHeight - height - scrollOffset.value) / WORK_GROUP_EDGE_FADE_HEIGHT,
-    ),
-  }));
-  const rememberPosition = () => {
-    if (!loadedRef.current) return;
-    const state = listRef.current?.getState();
-    const position = state && resolveWorkGroupScrollAnchor(state);
-    if (!state || !position) return;
-    props.scrollPositions.set(props.groupId, {
-      ...position,
-      contentHeight: state.contentLength,
-    });
-  };
-  const finishPendingAppend = () => {
-    const targetHeight = pendingAppendHeightRef.current;
-    const state = listRef.current?.getState();
-    if (
-      targetHeight !== null &&
-      state &&
-      !userScrollingRef.current &&
-      Math.abs(state.scrollLength - targetHeight) <= 1
-    ) {
-      pendingAppendHeightRef.current = null;
-      void listRef.current?.scrollToEnd({ animated: false });
-    }
-  };
-  // LegendList notifies from child layout effects. Effect Events see the
-  // committed rows before those effects run, unlike a parent layout-effect ref.
-  const onContentSizeChange = useEffectEvent((nextHeight: number) => {
-    const previous = previousContent.current;
-    const detailsChanged = previous.expandedRows !== props.expandedRows;
-    const followAppend =
-      loadedRef.current &&
-      shouldFollowThreadWorkGroupAppend({
-        previousRows: previous.rows,
-        rows: props.activities,
-        previousContentHeight: previous.height,
-        contentHeight: nextHeight,
-        viewportHeight: Math.min(previous.height, WORK_GROUP_MAX_HEIGHT),
-        scrollOffset: scrollOffset.value,
-        detailsChanged,
-        userScrolling: userScrollingRef.current,
-      });
-    previousContent.current = {
-      rows: props.activities,
-      height: nextHeight,
-      expandedRows: props.expandedRows,
-    };
-    setMeasuredContent((current) =>
-      current.height === nextHeight && current.rowCount === props.activities.length
-        ? current
-        : { height: nextHeight, rowCount: props.activities.length },
-    );
-    if (followAppend) {
-      pendingAppendHeightRef.current = Math.min(nextHeight, WORK_GROUP_MAX_HEIGHT);
-    } else if (detailsChanged || userScrollingRef.current || previous.rows !== props.activities) {
-      pendingAppendHeightRef.current = null;
-    } else if (pendingAppendHeightRef.current !== null) {
-      pendingAppendHeightRef.current = Math.min(nextHeight, WORK_GROUP_MAX_HEIGHT);
-    }
-    finishPendingAppend();
-    rememberPosition();
-  });
-  // Native ScrollView reports size after LegendList lays out rows. Use LegendList's JS size
-  // so group height and row measurements settle in the same commit.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to LegendList's totalSize state to report content height in the same commit
-  useLayoutEffect(() => {
-    const list = listRef.current;
-    if (!list) return;
-    const unsubscribe = list.getState().listen("totalSize", () => {
-      onContentSizeChange(list.getState().contentLength);
-    });
-    onContentSizeChange(list.getState().contentLength);
-    return unsubscribe;
-  }, []);
-  const getFixedItemSize = (row: ThreadFeedActivity, index: number) =>
-    props.expandedRows[row.id] || props.rowSizing.fixedRowHeight === undefined
-      ? undefined
-      : props.rowSizing.fixedRowHeight + (index < props.activities.length - 1 ? WORK_ROW_GAP : 0);
-  const renderItem = ({ item, index }: { item: ThreadFeedActivity; index: number }) => (
-    <View className={index < props.activities.length - 1 ? "pb-px" : undefined}>
-      {props.renderRow(item)}
-    </View>
-  );
-
-  return (
-    <View style={{ height, overflow: "hidden" }}>
-      {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- Nested in a fixed-height card inside the thread feed, which owns the header's scroll view. */}
-      <AnimatedLegendList
-        ref={listRef}
-        data={props.activities}
-        keyExtractor={workLogRowKey}
-        estimatedItemSize={props.rowSizing.estimatedRowHeight + WORK_ROW_GAP}
-        getFixedItemSize={getFixedItemSize}
-        initialScrollIndex={initialScrollIndex}
-        // 50px bootstrap overscan may leave expanded details unmeasured until after scroll restoration.
-        alwaysRender={
-          restoringPosition && initialPosition ? { keys: [initialPosition.rowId] } : undefined
-        }
-        recycleItems={false}
-        extraData={props.renderRow}
-        renderItem={renderItem}
-        sharedValues={sharedValues}
-        onLayout={finishPendingAppend}
-        onLoad={() => {
-          loadedRef.current = true;
-          setRestoringPosition(false);
-          rememberPosition();
-        }}
-        onScroll={rememberPosition}
-        onScrollBeginDrag={() => {
-          userScrollingRef.current = true;
-          pendingAppendHeightRef.current = null;
-        }}
-        onScrollEndDrag={() => {
-          userScrollingRef.current = false;
-        }}
-        onMomentumScrollBegin={() => {
-          userScrollingRef.current = true;
-          pendingAppendHeightRef.current = null;
-        }}
-        onMomentumScrollEnd={() => {
-          userScrollingRef.current = false;
-          rememberPosition();
-        }}
-        maintainVisibleContentPosition
-        nestedScrollEnabled
-        directionalLockEnabled
-        showsVerticalScrollIndicator
-        scrollsToTop={false}
-        bounces={false}
-        keyboardShouldPersistTaps="handled"
-        style={{ height }}
-      />
-      <Animated.View
-        pointerEvents="none"
-        className="absolute inset-x-0 top-0"
-        style={[{ height: WORK_GROUP_EDGE_FADE_HEIGHT }, topFadeStyle]}
-      >
-        <EdgeFade color={props.edgeFadeColor} direction="down" />
-      </Animated.View>
-      <Animated.View
-        pointerEvents="none"
-        className="absolute inset-x-0 bottom-0"
-        style={[{ height: WORK_GROUP_EDGE_FADE_HEIGHT }, bottomFadeStyle]}
-      >
-        <EdgeFade color={props.edgeFadeColor} direction="up" />
-      </Animated.View>
-    </View>
-  );
-}
-
-function EdgeFade(props: { readonly color: string; readonly direction: "up" | "down" }) {
+export function EdgeFade(props: { readonly color: string; readonly direction: "up" | "down" }) {
   const gradientId = `work-group-fade-${useId().replaceAll(":", "")}`;
   return (
     <Svg width="100%" height="100%">
@@ -835,7 +502,7 @@ function EdgeFade(props: { readonly color: string; readonly direction: "up" | "d
   );
 }
 
-function workLogRowKey(row: ThreadFeedActivity): string {
+export function workLogRowKey(row: ThreadFeedActivity): string {
   return row.id;
 }
 
@@ -904,106 +571,6 @@ export function ReplCodeText({
     <Text selectable className="font-mono text-2xs leading-normal text-foreground">
       {highlighted ?? code}
     </Text>
-  );
-}
-
-export function ThreadWorkGroupToggle(props: {
-  readonly environmentId: EnvironmentId;
-  readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
-  readonly expanded: boolean;
-  readonly hiddenCount: number;
-  readonly iconSubtleColor: import("react-native").ColorValue;
-  readonly summary: string;
-  readonly summaryKind: ToolGroupSummaryKind;
-  readonly summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request" | "brain";
-  readonly themeAppearance: "light" | "dark";
-  readonly toolSurface?: import("@t3tools/contracts").ToolActivitySurface;
-  readonly toolIcon?: ToolActivityIcon;
-  readonly hasFailure: boolean;
-  readonly shimmer: boolean;
-  readonly thought?: string | undefined;
-  readonly trailing?: ReactNode;
-  readonly onToggle: () => void;
-}) {
-  const statusLabel = props.hasFailure ? `${props.summary}, tool call failed` : props.summary;
-  const accessibilityLabel = props.thought ? `${props.thought} ${statusLabel}` : statusLabel;
-  const icon =
-    props.summaryToolIcon ??
-    (props.toolSurface
-      ? workRowSymbolName(props.toolSurface)
-      : toolGroupSummarySymbolName(props.summaryKind));
-
-  return (
-    <WorkLogBlock layout="group-header">
-      {props.thought ? (
-        <Pressable
-          accessible={false}
-          onPress={props.onToggle}
-          className="flex-row items-start gap-1.5 rounded-md px-0.5 active:bg-subtle"
-        >
-          <WorkLogIconSlot>
-            <WorkLogIcon icon="brain" color={props.iconSubtleColor} />
-          </WorkLogIconSlot>
-          <Text
-            key={props.rowSizing.textSizeKey}
-            selectable={false}
-            numberOfLines={4}
-            ellipsizeMode="tail"
-            className="min-w-0 flex-1 py-0.5 text-sm text-foreground-muted"
-          >
-            {props.thought}
-          </Text>
-        </Pressable>
-      ) : null}
-      <View className="flex-row items-center">
-        <View className="min-w-0 flex-1">
-          <WorkLogPressable
-            accessibilityRole="button"
-            accessibilityState={{ expanded: props.expanded }}
-            accessibilityLabel={accessibilityLabel}
-            accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} ${props.hiddenCount} tool ${props.hiddenCount === 1 ? "call" : "calls"}.`}
-            onPress={() => {
-              void Haptics.selectionAsync();
-              props.onToggle();
-            }}
-            rowSizing={props.rowSizing}
-          >
-            {props.shimmer ? (
-              <ShimmeringWorkContent
-                key={props.rowSizing.textSizeKey}
-                environmentId={props.environmentId}
-                icon={icon}
-                iconSubtleColor={props.iconSubtleColor}
-                label={props.summary}
-                showIcon
-                themeAppearance={props.themeAppearance}
-                toolIcon={props.toolIcon}
-              />
-            ) : (
-              <>
-                <WorkLogIconSlot>
-                  <ToolActivityIconView
-                    environmentId={props.environmentId}
-                    icon={props.toolIcon}
-                    fallback={icon}
-                    fallbackColor={props.iconSubtleColor}
-                    themeAppearance={props.themeAppearance}
-                  />
-                </WorkLogIconSlot>
-                <WorkLogLabel key={props.rowSizing.textSizeKey}>{props.summary}</WorkLogLabel>
-              </>
-            )}
-            <ThreadDisclosureChevron
-              expanded={props.expanded}
-              collapsedDirection="down"
-              size={11}
-              tintColor={props.iconSubtleColor}
-            />
-          </WorkLogPressable>
-        </View>
-        {props.trailing}
-      </View>
-    </WorkLogBlock>
   );
 }
 
@@ -1138,7 +705,7 @@ function ToolActivityImage(props: {
   );
 }
 
-function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
+export function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
   switch (kind) {
     case "pull-request":
     case "link-pr":
@@ -1176,3 +743,5 @@ function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
       return { ios: "hammer", android: "construction" };
   }
 }
+export * from "./thread-work-logParts3";
+export * from "./thread-work-logParts4";

@@ -31,6 +31,9 @@ import {
 
 import { appAtomRegistry, subscribeAtomChanges } from "./rpc/atomRegistry";
 import { primaryServerEnvironmentThemesAtom } from "./state/server";
+import { createVividThemeColors } from "./themePaletteParts2";
+import { APP_THEME_VARIABLES } from "./themePaletteParts3";
+import { parseThemeFile } from "./themePaletteParts4";
 
 export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
@@ -100,11 +103,11 @@ function setThemePreviewAppearance(appearance: ThemeAppearance | null): void {
   for (const listener of themePreviewListeners) listener();
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isThemeAppearance(value: unknown): value is ThemeAppearance {
+export function isThemeAppearance(value: unknown): value is ThemeAppearance {
   return value === "light" || value === "dark";
 }
 
@@ -112,15 +115,15 @@ export function isThemeColor(value: unknown): value is string {
   return typeof value === "string" && toCanonicalThemeColor(value) !== null;
 }
 
-function isThemeId(value: unknown): value is string {
+export function isThemeId(value: unknown): value is string {
   return typeof value === "string" && /^[a-z0-9](?:[a-z0-9-]{0,47})$/.test(value);
 }
 
-function isThemeLabel(value: unknown): value is string {
+export function isThemeLabel(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.trim().length <= 48;
 }
 
-function parseThemeCollection(value: unknown): ThemeCollection | undefined {
+export function parseThemeCollection(value: unknown): ThemeCollection | undefined {
   return isRecord(value) &&
     typeof value.id === "string" &&
     /^[a-z0-9][a-z0-9.:-]{0,127}$/i.test(value.id) &&
@@ -415,26 +418,26 @@ export function getStandardPaintedThemeColors(appearance: ThemeAppearance): Them
   return { ...getStandardThemeColors(appearance), ...STANDARD_WEB_PAINTED_COLORS[appearance] };
 }
 
-type ThemeRgbColor = {
+export type ThemeRgbColor = {
   r: number;
   g: number;
   b: number;
 };
 
-type ThemeOklch = { L: number; C: number; h: number };
+export type ThemeOklch = { L: number; C: number; h: number };
 type ParsedThemeColor = { color: ThemeOklch; alpha: number };
 
 let standardLightThemeColors: ThemeColors | undefined;
 let standardDarkThemeColors: ThemeColors | undefined;
 
-const THEME_LIGHT_FOREGROUND: ThemeRgbColor = { r: 255, g: 250, b: 255 };
+export const THEME_LIGHT_FOREGROUND: ThemeRgbColor = { r: 255, g: 250, b: 255 };
 const THEME_DARK_FOREGROUND: ThemeRgbColor = { r: 36, g: 21, b: 35 };
-const THEME_WHITE_FOREGROUND: ThemeRgbColor = { r: 255, g: 255, b: 255 };
-const THEME_BLACK_FOREGROUND: ThemeRgbColor = { r: 0, g: 0, b: 0 };
+export const THEME_WHITE_FOREGROUND: ThemeRgbColor = { r: 255, g: 255, b: 255 };
+export const THEME_BLACK_FOREGROUND: ThemeRgbColor = { r: 0, g: 0, b: 0 };
 
 const convertToOklch = converter("oklch");
 
-function parseThemeColor(value: unknown): ParsedThemeColor | null {
+export function parseThemeColor(value: unknown): ParsedThemeColor | null {
   if (typeof value !== "string") return null;
   const input = value.trim();
   const parsed = parse(input);
@@ -461,7 +464,7 @@ function formatThemeColorNumber(value: number, precision: number): string {
   return rounded.toFixed(precision).replace(/(?:\.0+|(?:(\.[0-9]*?)0+))$/, "$1");
 }
 
-function formatOklchThemeColor(color: ThemeOklch, alpha = 1): string {
+export function formatOklchThemeColor(color: ThemeOklch, alpha = 1): string {
   const normalizedHue = color.C < 0.0000005 ? 0 : ((color.h % 360) + 360) % 360;
   const body = `${formatThemeColorNumber(color.L, 6)} ${formatThemeColorNumber(color.C, 6)} ${formatThemeColorNumber(normalizedHue, 3)}`;
   return alpha < 1 ? `oklch(${body} / ${formatThemeColorNumber(alpha, 4)})` : `oklch(${body})`;
@@ -485,7 +488,7 @@ export function themeColorToHex(value: string): string | null {
   return `${opaque}${alpha}`;
 }
 
-function parseThemeRgbColor(value: string, fallback: ThemeRgbColor): ThemeRgbColor {
+export function parseThemeRgbColor(value: string, fallback: ThemeRgbColor): ThemeRgbColor {
   const parsed = parseThemeColor(value);
   return parsed ? themeOklchToRgb(parsed.color) : fallback;
 }
@@ -500,7 +503,7 @@ function themeRgbToHexColor(color: ThemeRgbColor): string {
     .join("")}`;
 }
 
-function themeRgbToThemeColor(color: ThemeRgbColor): string {
+export function themeRgbToThemeColor(color: ThemeRgbColor): string {
   return formatOklchThemeColor(themeRgbToOklch(color));
 }
 
@@ -535,7 +538,7 @@ function canonicalizeThemeDefinition(theme: ThemeDefinition): ThemeDefinition {
   };
 }
 
-function mixThemeRgbColors(
+export function mixThemeRgbColors(
   base: ThemeRgbColor,
   overlay: ThemeRgbColor,
   amount: number,
@@ -547,7 +550,7 @@ function mixThemeRgbColors(
   };
 }
 
-function themeRelativeLuminance(color: ThemeRgbColor): number {
+export function themeRelativeLuminance(color: ThemeRgbColor): number {
   const linearize = (channel: number) => {
     const normalized = channel / 255;
     return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
@@ -567,7 +570,7 @@ function linearChannelToSrgb(channel: number, round = true): number {
   return round ? Math.round(srgb) : srgb;
 }
 
-function themeRgbToOklch(color: ThemeRgbColor): ThemeOklch {
+export function themeRgbToOklch(color: ThemeRgbColor): ThemeOklch {
   const r = srgbChannelToLinear(color.r);
   const g = srgbChannelToLinear(color.g);
   const b = srgbChannelToLinear(color.b);
@@ -618,7 +621,7 @@ function mapThemeOklchToSrgbGamut(color: ThemeOklch): ThemeOklch {
   return { ...color, C: low };
 }
 
-function themeOklchToRgb(color: ThemeOklch, round = true): ThemeRgbColor {
+export function themeOklchToRgb(color: ThemeOklch, round = true): ThemeRgbColor {
   const linear = oklchToRgbUnclamped(mapThemeOklchToSrgbGamut(color));
   return {
     r: linearChannelToSrgb(linear.r, round),
@@ -627,11 +630,11 @@ function themeOklchToRgb(color: ThemeOklch, round = true): ThemeRgbColor {
   };
 }
 
-function themeOklchToThemeColor(color: ThemeOklch): string {
+export function themeOklchToThemeColor(color: ThemeOklch): string {
   return formatOklchThemeColor(mapThemeOklchToSrgbGamut(color));
 }
 
-function solveOklchLightness(
+export function solveOklchLightness(
   base: ThemeOklch,
   against: ReadonlyArray<ThemeRgbColor>,
   minContrast: number,
@@ -742,7 +745,7 @@ const STANDARD_STATUS_COLORS = {
   },
 } as const;
 
-function standardStatusColors(canvas: ThemeRgbColor): {
+export function standardStatusColors(canvas: ThemeRgbColor): {
   error: string;
   errorForeground: string;
   errorSurface: string;
@@ -775,142 +778,6 @@ function standardStatusColors(canvas: ThemeRgbColor): {
   };
 }
 
-export function createVividThemeColors(
-  appearance: ThemeAppearance,
-  backgroundValue: string,
-  accentValue: string,
-): ThemeColors {
-  const defaults = getDefaultThemeColors(appearance);
-  const canvasRgb = parseThemeRgbColor(
-    backgroundValue,
-    appearance === "dark" ? { r: 24, g: 15, b: 27 } : { r: 250, g: 245, b: 250 },
-  );
-  const accentRgb = parseThemeRgbColor(accentValue, { r: 168, g: 67, b: 112 });
-  const canvas = themeRgbToOklch(canvasRgb);
-  const accent = themeRgbToOklch(accentRgb);
-  // At luminance 0.179, black and white text have equal contrast.
-  const dark = themeRelativeLuminance(canvasRgb) < 0.179;
-  const hue = accent.C < 0.02 ? canvas.h : accent.h;
-  const tintC = Math.min(0.045, Math.max(0.008, accent.C * 0.22));
-  const step = dark ? 1 : -1;
-
-  const surfaceAt = (deltaL: number, chroma = tintC): ThemeOklch => ({
-    L: Math.min(0.98, Math.max(0.05, canvas.L + step * deltaL)),
-    C: chroma,
-    h: hue,
-  });
-  const themeColor = (color: ThemeOklch) => themeOklchToThemeColor(color);
-
-  const textBase: ThemeOklch = {
-    L: dark ? 0.95 : 0.2,
-    C: Math.min(0.035, accent.C * 0.25),
-    h: hue,
-  };
-  const text = solveOklchLightness(textBase, [canvasRgb], 7, dark ? "lighter" : "darker");
-  const textRgb = themeOklchToRgb(text);
-  const textMutedRgb = standardMutedThemeText(canvasRgb, textRgb);
-
-  const action: ThemeOklch = {
-    L: Math.min(0.85, Math.max(0.35, accent.L + (dark ? 0.06 : -0.02))),
-    C: Math.max(accent.C * 0.9, 0.06),
-    h: (hue + 50) % 360,
-  };
-  const actionRgb = themeOklchToRgb(action);
-  const actionForeground = readableThemeForeground(actionRgb);
-  const accentForeground = readableThemeForeground(accentRgb);
-
-  const sidebar = surfaceAt(0.045, tintC * 1.4);
-  const sidebarRgb = themeOklchToRgb(sidebar);
-  const surface = surfaceAt(0.015);
-  const surfaceRaised = surfaceAt(0.05);
-  const surfaceRaisedRgb = themeOklchToRgb(surfaceRaised);
-  const surfaceOverlay = surfaceAt(0.075);
-  const border = surfaceAt(dark ? 0.16 : 0.12, Math.min(0.07, accent.C * 0.35));
-  const input = surfaceAt(dark ? 0.21 : 0.16, Math.min(0.08, accent.C * 0.4));
-  const secondary = surfaceAt(dark ? 0.1 : 0.06, Math.min(0.09, accent.C * 0.5));
-  const secondaryRgb = themeOklchToRgb(secondary);
-  const muted = surfaceAt(dark ? 0.06 : 0.04, Math.min(0.06, accent.C * 0.35));
-  const mutedRgb = themeOklchToRgb(muted);
-  const accentSurface = surfaceAt(dark ? 0.13 : 0.08, Math.min(0.11, accent.C * 0.55));
-  const accentSurfaceRgb = themeOklchToRgb(accentSurface);
-  const messageSurface = surfaceAt(dark ? 0.16 : 0.1, Math.min(0.13, accent.C * 0.6));
-  const messageSurfaceRgb = themeOklchToRgb(messageSurface);
-  const codeBackground = surfaceAt(0.035, tintC * 0.8);
-  const updateSurface = surfaceAt(dark ? 0.14 : 0.09, Math.min(0.12, accent.C * 0.55));
-
-  const foregroundOn = (surfaceRgb: ThemeRgbColor): string =>
-    themeOklchToThemeColor(
-      solveOklchLightness(textBase, [surfaceRgb], 4.6, dark ? "lighter" : "darker"),
-    );
-  const mutedForeground = themeRgbToThemeColor(readableThemeText(mutedRgb, textRgb, 1, 4.6));
-  const placeholder = themeRgbToThemeColor(readableThemeText(surfaceRaisedRgb, textRgb, 1, 4.6));
-
-  const searchMatch = themeOklchToRgb(surfaceAt(0.22, Math.min(0.12, accent.C)));
-  const searchMatchActive = themeOklchToRgb(surfaceAt(0.4, Math.min(0.18, accent.C)));
-
-  const actionHover: ThemeOklch = { ...action, L: action.L + (dark ? 0.06 : -0.06) };
-
-  return {
-    ...defaults,
-    ...standardStatusColors(canvasRgb),
-    canvas: themeRgbToThemeColor(canvasRgb),
-    chrome: themeRgbToThemeColor(canvasRgb),
-    toolbar: themeRgbToThemeColor(canvasRgb),
-    toolbarForeground: themeRgbToThemeColor(textRgb),
-    toolbarBorder: themeColor(surfaceAt(dark ? 0.14 : 0.1, Math.min(0.08, accent.C * 0.4))),
-    toolbarControl: themeColor(surfaceAt(dark ? 0.09 : 0.05, tintC * 1.3)),
-    toolbarControlForeground: themeRgbToThemeColor(textRgb),
-    toolbarControlHover: themeColor(surfaceAt(dark ? 0.14 : 0.09, tintC * 1.6)),
-    surface: themeColor(surface),
-    surfaceRaised: themeColor(surfaceRaised),
-    surfaceOverlay: themeColor(surfaceOverlay),
-    text: themeRgbToThemeColor(textRgb),
-    textMuted: themeRgbToThemeColor(textMutedRgb),
-    border: themeColor(border),
-    input: themeColor(input),
-    focus: themeRgbToThemeColor(accentRgb),
-    accent: themeRgbToThemeColor(accentRgb),
-    accentForeground: themeRgbToThemeColor(accentForeground),
-    secondary: themeColor(secondary),
-    secondaryForeground: foregroundOn(secondaryRgb),
-    muted: themeColor(muted),
-    mutedForeground,
-    placeholder,
-    secondaryLabel: themeRgbToThemeColor(textMutedRgb),
-    iconMuted: themeRgbToThemeColor(textMutedRgb),
-    update: themeRgbToThemeColor(accentRgb),
-    updateForeground: foregroundOn(themeOklchToRgb(updateSurface)),
-    updateSurface: themeColor(updateSurface),
-    accentSurface: themeColor(accentSurface),
-    accentSurfaceForeground: foregroundOn(accentSurfaceRgb),
-    messageSurface: themeColor(messageSurface),
-    messageForeground: foregroundOn(messageSurfaceRgb),
-    messageAction: themeRgbToThemeColor(actionRgb),
-    messageActionForeground: themeRgbToThemeColor(actionForeground),
-    messageActionHover: themeColor(actionHover),
-    codeBackground: themeColor(codeBackground),
-    codeForeground: themeRgbToThemeColor(textRgb),
-    searchMatchBackground: themeRgbToThemeColor(searchMatch),
-    searchMatchForeground: themeRgbToThemeColor(readableThemeForeground(searchMatch)),
-    searchMatchActiveBackground: themeRgbToThemeColor(searchMatchActive),
-    searchMatchActiveForeground: themeRgbToThemeColor(readableThemeForeground(searchMatchActive)),
-    sidebar: themeColor(sidebar),
-    sidebarForeground: foregroundOn(sidebarRgb),
-    sidebarMutedForeground: themeRgbToThemeColor(standardMutedThemeText(sidebarRgb, textRgb)),
-    sidebarControlSurface: themeColor(surfaceAt(dark ? 0.1 : 0.07, tintC * 1.5)),
-    sidebarRowHover: themeColor(surfaceAt(dark ? 0.08 : 0.06, Math.min(0.08, accent.C * 0.45))),
-    sidebarRowActive: themeColor(surfaceAt(dark ? 0.12 : 0.09, Math.min(0.1, accent.C * 0.55))),
-    sidebarRowSelected: themeColor(surfaceAt(dark ? 0.14 : 0.1, Math.min(0.11, accent.C * 0.6))),
-    sidebarBorder: themeColor(surfaceAt(dark ? 0.17 : 0.12, Math.min(0.08, accent.C * 0.4))),
-    terminalBackground: themeRgbToThemeColor(canvasRgb),
-    terminalForeground: themeRgbToThemeColor(textRgb),
-    terminalCursor: themeRgbToThemeColor(accentRgb),
-    terminalSelection: themeColor(surfaceAt(dark ? 0.18 : 0.12, Math.min(0.12, accent.C * 0.55))),
-    terminalScrollbar: themeColor(surfaceAt(dark ? 0.22 : 0.16, tintC)),
-    terminalScrollbarHover: themeColor(surfaceAt(dark ? 0.3 : 0.22, tintC)),
-  };
-}
-
 function themeContrastRatio(first: ThemeRgbColor, second: ThemeRgbColor): number {
   const firstLuminance = themeRelativeLuminance(first);
   const secondLuminance = themeRelativeLuminance(second);
@@ -919,7 +786,7 @@ function themeContrastRatio(first: ThemeRgbColor, second: ThemeRgbColor): number
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-function readableThemeForeground(background: ThemeRgbColor): ThemeRgbColor {
+export function readableThemeForeground(background: ThemeRgbColor): ThemeRgbColor {
   const lightContrast = themeContrastRatio(background, THEME_LIGHT_FOREGROUND);
   const darkContrast = themeContrastRatio(background, THEME_DARK_FOREGROUND);
   if (Math.max(lightContrast, darkContrast) >= 4.5) {
@@ -932,7 +799,7 @@ function readableThemeForeground(background: ThemeRgbColor): ThemeRgbColor {
     : THEME_BLACK_FOREGROUND;
 }
 
-function readableThemeText(
+export function readableThemeText(
   background: ThemeRgbColor,
   foreground: ThemeRgbColor,
   amount: number,
@@ -960,7 +827,7 @@ function readableThemeText(
 const STANDARD_LIGHT_MUTED_CONTRAST = 4.705;
 const STANDARD_DARK_MUTED_CONTRAST = 5.082;
 
-function standardMutedThemeText(
+export function standardMutedThemeText(
   background: ThemeRgbColor,
   foreground: ThemeRgbColor,
 ): ThemeRgbColor {
@@ -973,204 +840,6 @@ function standardMutedThemeText(
 
 export function getDefaultThemeColors(appearance: ThemeAppearance): ThemeColors {
   return appearance === "dark" ? T3_CHAT_THEME.variants!.dark! : T3_CHAT_THEME.colors;
-}
-
-export function updateThemeColorFamily(
-  appearance: ThemeAppearance,
-  colors: ThemeColors,
-  role: ThemeColorRole,
-  value: string,
-): ThemeColors {
-  const parsedSelected = parseThemeColor(value);
-  if (!parsedSelected) return { ...colors, [role]: value };
-  const normalized = formatOklchThemeColor(parsedSelected.color, parsedSelected.alpha);
-
-  const canvas = parseThemeRgbColor(
-    colors.canvas,
-    appearance === "dark" ? { r: 24, g: 15, b: 27 } : { r: 250, g: 245, b: 250 },
-  );
-  const selected = themeOklchToRgb(parsedSelected.color);
-  const selectedOn = (background: ThemeRgbColor) =>
-    mixThemeRgbColors(background, selected, parsedSelected.alpha);
-  const selectedOnCanvas = selectedOn(canvas);
-  const accent = parseThemeRgbColor(colors.accent, { r: 168, g: 67, b: 112 });
-  const canvasIsDark = themeRelativeLuminance(canvas) < 0.179;
-  const terminalIsDark = themeRelativeLuminance(selectedOnCanvas) < 0.179;
-  const colorOf = (color: ThemeRgbColor) => themeRgbToThemeColor(color);
-  const foregroundOn = (background: ThemeRgbColor) => colorOf(readableThemeForeground(background));
-  const selectedToneOn = (background: ThemeRgbColor) =>
-    themeOklchToThemeColor(
-      solveOklchLightness(
-        parsedSelected.color,
-        [background],
-        4.6,
-        themeRelativeLuminance(background) < 0.179 ? "lighter" : "darker",
-      ),
-    );
-  const statusColors = () => {
-    const surface = mixThemeRgbColors(canvas, selectedOnCanvas, canvasIsDark ? 0.16 : 0.08);
-    return {
-      foreground: selectedToneOn(surface),
-      surface: colorOf(surface),
-    };
-  };
-
-  switch (role) {
-    case "canvas":
-      return { ...colors, canvas: normalized, chrome: normalized, toolbar: normalized };
-    case "surface":
-    case "surfaceRaised":
-    case "surfaceOverlay":
-    case "input":
-    case "sidebarControlSurface":
-      return { ...colors, [role]: normalized };
-    case "text":
-      return {
-        ...colors,
-        text: normalized,
-        toolbarForeground: normalized,
-        toolbarControlForeground: normalized,
-      };
-    case "mutedForeground":
-      return {
-        ...colors,
-        textMuted: normalized,
-        mutedForeground: normalized,
-        placeholder: normalized,
-        secondaryLabel: normalized,
-        iconMuted: normalized,
-        sidebarMutedForeground: normalized,
-      };
-    case "border":
-      return {
-        ...colors,
-        border: normalized,
-        toolbarBorder: normalized,
-        sidebarBorder: normalized,
-      };
-    case "secondary":
-      return {
-        ...colors,
-        secondary: normalized,
-        secondaryForeground: foregroundOn(selectedOnCanvas),
-        muted: normalized,
-        toolbarControl: normalized,
-      };
-    case "accentSurface":
-      return {
-        ...colors,
-        accentSurface: normalized,
-        accentSurfaceForeground: foregroundOn(selectedOnCanvas),
-        toolbarControlHover: normalized,
-      };
-    case "accent": {
-      const updateSurface = mixThemeRgbColors(canvas, selectedOnCanvas, canvasIsDark ? 0.32 : 0.16);
-      return {
-        ...colors,
-        accent: normalized,
-        accentForeground: foregroundOn(selectedOnCanvas),
-        focus: normalized,
-        update: normalized,
-        updateForeground: selectedToneOn(updateSurface),
-        updateSurface: colorOf(updateSurface),
-        terminalCursor: normalized,
-      };
-    }
-    case "messageAction": {
-      const actionForeground = readableThemeForeground(selectedOnCanvas);
-      const towardOpposite =
-        actionForeground === THEME_LIGHT_FOREGROUND || actionForeground === THEME_WHITE_FOREGROUND
-          ? THEME_BLACK_FOREGROUND
-          : THEME_WHITE_FOREGROUND;
-      const actionHover = mixThemeRgbColors(selected, towardOpposite, 0.12);
-      return {
-        ...colors,
-        messageAction: normalized,
-        messageActionForeground: colorOf(actionForeground),
-        messageActionHover: formatOklchThemeColor(
-          themeRgbToOklch(actionHover),
-          parsedSelected.alpha,
-        ),
-      };
-    }
-    case "messageSurface":
-      return {
-        ...colors,
-        messageSurface: normalized,
-        messageForeground: foregroundOn(selectedOnCanvas),
-      };
-    case "searchMatchBackground":
-      return {
-        ...colors,
-        searchMatchBackground: colorOf(selectedOnCanvas),
-        searchMatchForeground: foregroundOn(selectedOnCanvas),
-      };
-    case "searchMatchActiveBackground":
-      return {
-        ...colors,
-        searchMatchActiveBackground: colorOf(selectedOnCanvas),
-        searchMatchActiveForeground: foregroundOn(selectedOnCanvas),
-      };
-    case "codeBackground":
-      return {
-        ...colors,
-        codeBackground: normalized,
-        codeForeground: foregroundOn(selectedOnCanvas),
-      };
-    case "sidebar":
-      return {
-        ...colors,
-        sidebar: normalized,
-        sidebarForeground: foregroundOn(selectedOnCanvas),
-      };
-    case "sidebarRowSelected": {
-      const sidebar = parseThemeRgbColor(colors.sidebar, canvas);
-      const selectedOnSidebar = selectedOn(sidebar);
-      return {
-        ...colors,
-        sidebarRowHover: colorOf(mixThemeRgbColors(sidebar, selectedOnSidebar, 0.5)),
-        sidebarRowActive: colorOf(mixThemeRgbColors(sidebar, selectedOnSidebar, 0.8)),
-        sidebarRowSelected: normalized,
-      };
-    }
-    case "terminalBackground": {
-      const terminalForeground = readableThemeForeground(selectedOnCanvas);
-      return {
-        ...colors,
-        terminalBackground: normalized,
-        terminalForeground: colorOf(terminalForeground),
-        terminalSelection: colorOf(
-          mixThemeRgbColors(selectedOnCanvas, accent, terminalIsDark ? 0.35 : 0.18),
-        ),
-        terminalScrollbar: colorOf(
-          mixThemeRgbColors(selectedOnCanvas, terminalForeground, terminalIsDark ? 0.42 : 0.22),
-        ),
-        terminalScrollbarHover: colorOf(
-          mixThemeRgbColors(selectedOnCanvas, terminalForeground, terminalIsDark ? 0.55 : 0.32),
-        ),
-      };
-    }
-    case "error": {
-      const status = statusColors();
-      return {
-        ...colors,
-        error: normalized,
-        errorForeground: status.foreground,
-        errorSurface: status.surface,
-      };
-    }
-    case "warning": {
-      const status = statusColors();
-      return {
-        ...colors,
-        warning: normalized,
-        warningForeground: status.foreground,
-        warningSurface: status.surface,
-      };
-    }
-    default:
-      return { ...colors, [role]: normalized };
-  }
 }
 
 const BUILT_IN_THEME_DEFINITIONS: ReadonlyArray<ThemeDefinition> = BUILT_IN_THEMES;
@@ -1432,7 +1101,7 @@ export function removeCustomThemes(themeIds: ReadonlyArray<string>): void {
   );
 }
 
-function parseThemeColorOverrides(value: unknown): ThemeColorOverrides {
+export function parseThemeColorOverrides(value: unknown): ThemeColorOverrides {
   if (!isRecord(value)) throw new Error("Theme colors must be objects.");
 
   const overrides: Partial<Record<ThemeColorRole, string>> = {};
@@ -1454,67 +1123,6 @@ function parseThemeColorOverrides(value: unknown): ThemeColorOverrides {
   return overrides;
 }
 
-export function parseThemeFile(value: unknown): ThemeDefinition {
-  if (!isRecord(value)) {
-    throw new Error("Theme files must contain a JSON object.");
-  }
-  if (value.version !== THEME_FILE_VERSION) {
-    throw new Error(`This theme file uses an unsupported version. Expected ${THEME_FILE_VERSION}.`);
-  }
-
-  const name = value.name;
-  const appearance = value.appearance;
-  const rawColors = value.colors;
-  if (!isThemeLabel(name)) throw new Error("Theme files need a name (48 characters or fewer).");
-  if (!isThemeAppearance(appearance)) {
-    throw new Error('Theme files need an appearance of "light" or "dark".');
-  }
-  if (!isRecord(rawColors)) throw new Error("Theme files need a colors object.");
-
-  const id = value.id === undefined ? themeIdFromName(name) : value.id;
-  if (!isThemeId(id)) {
-    throw new Error("Theme ids may only contain lowercase letters, numbers, and hyphens.");
-  }
-  if (RESERVED_THEME_IDS.has(id)) {
-    throw new Error(`The theme id "${id}" is reserved.`);
-  }
-
-  const overrides = parseThemeColorOverrides(rawColors);
-  const collection = parseThemeCollection(value.collection);
-  if (value.collection !== undefined && !collection) {
-    throw new Error("Theme collections need a valid id and label.");
-  }
-
-  const fallback = getDefaultThemeColors(appearance);
-  const variants: Partial<Record<ThemeAppearance, ThemeColors>> = {};
-  if (value.variants !== undefined) {
-    if (!isRecord(value.variants)) throw new Error("Theme variants must be an object.");
-    for (const [variantAppearance, variantColors] of Object.entries(value.variants)) {
-      if (!isThemeAppearance(variantAppearance)) {
-        throw new Error('Theme variants may only be named "light" or "dark".');
-      }
-      if (variantAppearance === appearance) {
-        throw new Error(`Theme variants must not repeat the base appearance "${appearance}".`);
-      }
-      const variantFallback = getDefaultThemeColors(variantAppearance);
-      variants[variantAppearance] = {
-        ...variantFallback,
-        ...parseThemeColorOverrides(variantColors),
-      };
-    }
-  }
-
-  return {
-    id,
-    label: name.trim(),
-    appearance,
-    colors: { ...fallback, ...overrides },
-    ...(Object.keys(variants).length > 0 ? { variants } : {}),
-    ...(collection ? { collection } : {}),
-    ...(value.managed === true ? { managed: true } : {}),
-  };
-}
-
 export function serializeThemeFile(theme: ThemeDefinition): string {
   const canonicalTheme = canonicalizeThemeDefinition(theme);
   const file: ThemeFile = {
@@ -1529,70 +1137,6 @@ export function serializeThemeFile(theme: ThemeDefinition): string {
   };
   return `${JSON.stringify(file, null, 2)}\n`;
 }
-
-const APP_THEME_VARIABLES: Readonly<Record<ThemeColorRole, string>> = {
-  canvas: "--app-theme-canvas",
-  chrome: "--app-theme-chrome",
-  toolbar: "--app-theme-toolbar",
-  toolbarForeground: "--app-theme-toolbar-foreground",
-  toolbarBorder: "--app-theme-toolbar-border",
-  toolbarControl: "--app-theme-toolbar-control",
-  toolbarControlForeground: "--app-theme-toolbar-control-foreground",
-  toolbarControlHover: "--app-theme-toolbar-control-hover",
-  surface: "--app-theme-surface",
-  surfaceRaised: "--app-theme-surface-raised",
-  surfaceOverlay: "--app-theme-surface-overlay",
-  text: "--app-theme-text",
-  textMuted: "--app-theme-text-muted",
-  border: "--app-theme-border",
-  input: "--app-theme-input",
-  focus: "--app-theme-focus",
-  accent: "--app-theme-accent",
-  accentForeground: "--app-theme-accent-foreground",
-  secondary: "--app-theme-secondary",
-  secondaryForeground: "--app-theme-secondary-foreground",
-  muted: "--app-theme-muted",
-  mutedForeground: "--app-theme-muted-foreground",
-  placeholder: "--app-theme-placeholder",
-  secondaryLabel: "--app-theme-secondary-label",
-  iconMuted: "--app-theme-icon-muted",
-  error: "--app-theme-error",
-  errorForeground: "--app-theme-error-foreground",
-  errorSurface: "--app-theme-error-surface",
-  warning: "--app-theme-warning",
-  warningForeground: "--app-theme-warning-foreground",
-  warningSurface: "--app-theme-warning-surface",
-  update: "--app-theme-update",
-  updateForeground: "--app-theme-update-foreground",
-  updateSurface: "--app-theme-update-surface",
-  accentSurface: "--app-theme-accent-surface",
-  accentSurfaceForeground: "--app-theme-accent-surface-foreground",
-  messageSurface: "--app-theme-message-surface",
-  messageForeground: "--app-theme-message-foreground",
-  messageAction: "--app-theme-message-action",
-  messageActionForeground: "--app-theme-message-action-foreground",
-  messageActionHover: "--app-theme-message-action-hover",
-  codeBackground: "--app-theme-code-background",
-  codeForeground: "--app-theme-code-foreground",
-  searchMatchBackground: "--app-theme-search-match-background",
-  searchMatchForeground: "--app-theme-search-match-foreground",
-  searchMatchActiveBackground: "--app-theme-search-match-active-background",
-  searchMatchActiveForeground: "--app-theme-search-match-active-foreground",
-  sidebar: "--app-theme-sidebar",
-  sidebarForeground: "--app-theme-sidebar-foreground",
-  sidebarMutedForeground: "--app-theme-sidebar-muted-foreground",
-  sidebarControlSurface: "--app-theme-sidebar-control-surface",
-  sidebarRowHover: "--app-theme-sidebar-row-hover",
-  sidebarRowActive: "--app-theme-sidebar-row-active",
-  sidebarRowSelected: "--app-theme-sidebar-row-selected",
-  sidebarBorder: "--app-theme-sidebar-border",
-  terminalBackground: "--app-theme-terminal-background",
-  terminalForeground: "--app-theme-terminal-foreground",
-  terminalCursor: "--app-theme-terminal-cursor",
-  terminalSelection: "--app-theme-terminal-selection-background",
-  terminalScrollbar: "--app-theme-terminal-scrollbar",
-  terminalScrollbarHover: "--app-theme-terminal-scrollbar-hover",
-};
 
 export function getThemeColorVariable(role: ThemeColorRole): string {
   return APP_THEME_VARIABLES[role];
@@ -1729,3 +1273,6 @@ export function resolveThemeHalf(
 ): ThemePreference {
   return halves?.[appearance] ?? theme;
 }
+export * from "./themePaletteParts";
+export * from "./themePaletteParts2";
+export * from "./themePaletteParts4";

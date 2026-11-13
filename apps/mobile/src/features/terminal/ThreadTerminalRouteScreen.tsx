@@ -116,7 +116,7 @@ type TerminalToolbarAction =
       readonly modifier: PendingModifier;
     };
 
-function firstRouteParam(value: string | string[] | undefined): string | null {
+export function firstRouteParam(value: string | string[] | undefined): string | null {
   const first = Array.isArray(value) ? value[0] : value;
   return first === undefined || first.trim().length === 0 ? null : first;
 }
@@ -142,7 +142,7 @@ function inferHostPlatform(environmentLabel: string | null): HostPlatform {
   return "unknown";
 }
 
-function pickRunningTerminalSessionForBootstrap(
+export function pickRunningTerminalSessionForBootstrap(
   sessions: ReadonlyArray<KnownTerminalSession>,
 ): KnownTerminalSession | null {
   const running = sessions.filter(
@@ -158,7 +158,7 @@ function pickRunningTerminalSessionForBootstrap(
   );
 }
 
-type ThreadTerminalRouteScreenProps = StaticScreenProps<{
+export type ThreadTerminalRouteScreenProps = StaticScreenProps<{
   readonly environmentId: string;
   readonly threadId: string;
   readonly terminalId?: string;
@@ -166,7 +166,7 @@ type ThreadTerminalRouteScreenProps = StaticScreenProps<{
 
 type ThreadSelection = ReturnType<typeof useThreadSelection>;
 
-function useTerminalAccess(environmentId: EnvironmentId | null) {
+export function useTerminalAccess(environmentId: EnvironmentId | null) {
   const session = useEnvironmentQuery(
     environmentId === null ? null : environmentSession.sessionStateAtom(environmentId),
   );
@@ -183,70 +183,6 @@ function useTerminalAccess(environmentId: EnvironmentId | null) {
       session.data !== null &&
       sessionGrantsScope(session.data, AuthTerminalReadScope),
   };
-}
-
-export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps) {
-  const connectionsReady = useConnectionsReady();
-  const params = props.route.params;
-  const selection = useThreadSelection();
-  const { selectedThread } = selection;
-  const routeEnvironmentIdRaw = firstRouteParam(params.environmentId);
-  const routeEnvironmentId = routeEnvironmentIdRaw
-    ? EnvironmentId.make(routeEnvironmentIdRaw)
-    : null;
-  const access = useTerminalAccess(routeEnvironmentId);
-  const knownSessions = useKnownTerminalSessions({
-    environmentId: selectedThread?.environmentId ?? null,
-    threadId: selectedThread?.id ?? null,
-  });
-  const requestedTerminalId = firstRouteParam(params.terminalId);
-  // A route without a terminal shows the thread's running one. The choice is
-  // made once, from the first session list that has one, so the terminal shown
-  // does not change under the user as sessions come and go.
-  const [bootstrapTerminalId, setBootstrapTerminalId] = useState<string | null>(null);
-  const runningSession = knownSessions.sessions
-    ? (pickRunningTerminalSessionForBootstrap(knownSessions.sessions) ??
-      (access.canOperate ? null : (knownSessions.sessions[0] ?? null)))
-    : null;
-  if (
-    requestedTerminalId === null &&
-    bootstrapTerminalId === null &&
-    runningSession !== null &&
-    runningSession.target.terminalId !== DEFAULT_TERMINAL_ID
-  ) {
-    setBootstrapTerminalId(runningSession.target.terminalId);
-  }
-  const explicitTerminalId = requestedTerminalId ?? bootstrapTerminalId;
-  const terminalId = explicitTerminalId ?? DEFAULT_TERMINAL_ID;
-
-  if (!selectedThread) {
-    if (!connectionsReady) {
-      return <LoadingScreen message="Opening terminal…" />;
-    }
-
-    return (
-      <View className="flex-1 bg-screen">
-        <EmptyState
-          title="Thread unavailable"
-          detail="This terminal route needs an active thread and workspace."
-        />
-      </View>
-    );
-  }
-
-  return (
-    <ThreadTerminal
-      key={`${selectedThread.environmentId}:${selectedThread.id}:${terminalId}`}
-      params={params}
-      routeEnvironmentId={routeEnvironmentId}
-      selection={selection}
-      thread={selectedThread}
-      terminalId={terminalId}
-      hasExplicitTerminalId={explicitTerminalId !== null}
-      access={access}
-      knownSessions={knownSessions}
-    />
-  );
 }
 
 function readLiveTerminalSessions(
@@ -288,7 +224,7 @@ function subscribeKeyboardShowing(onChange: () => void) {
 }
 const getKeyboardShowing = () => keyboardShowing;
 
-function ThreadTerminal(props: {
+export function ThreadTerminal(props: {
   readonly params: ThreadTerminalRouteScreenProps["route"]["params"];
   readonly routeEnvironmentId: EnvironmentId | null;
   readonly selection: ThreadSelection;
@@ -997,3 +933,4 @@ function ThreadTerminal(props: {
     </>
   );
 }
+export * from "./ThreadTerminalRouteScreenParts2";

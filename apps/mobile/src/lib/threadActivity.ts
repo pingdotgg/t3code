@@ -76,6 +76,11 @@ import {
   IDLE_COMPACTION_TITLES,
   IDLE_COMPACTING_LABELS,
 } from "@t3tools/client-runtime/user-message";
+import { appendToolGroupRows } from "./threadActivityParts4";
+import { itemIcon } from "./threadActivityParts6";
+import { toWorkLogEntry } from "./threadActivityParts7";
+import { itemSummary } from "./threadActivityParts8";
+import { appendActivityGroupRows } from "./threadActivityParts10";
 
 export type PendingApproval = ThreadPendingApproval;
 export type PendingUserInput = ThreadPendingUserInput;
@@ -156,7 +161,7 @@ export interface LocalThreadMessage {
   readonly updatedAt: string;
 }
 
-type RawThreadFeedEntry =
+export type RawThreadFeedEntry =
   | {
       readonly type: "message";
       readonly id: string;
@@ -248,7 +253,7 @@ export interface ThreadFeedLatestRun {
 /** Long Android headers can ANR despite one-line display; cap labels only, preserving expanded and copied text. */
 const WORK_LOG_LABEL_MAX_LENGTH = 200;
 
-function compactWorkEntryText(value: string): string {
+export function compactWorkEntryText(value: string): string {
   return truncate(value.replace(/\s+/gu, " "), WORK_LOG_LABEL_MAX_LENGTH);
 }
 
@@ -293,22 +298,22 @@ export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = fa
   return preview ? compactWorkEntryText(preview) || entry.label : entry.label;
 }
 
-type ThreadFeedActivityGroup = Extract<ThreadFeedEntry, { readonly type: "activity-group" }>;
+export type ThreadFeedActivityGroup = Extract<ThreadFeedEntry, { readonly type: "activity-group" }>;
 
 // Immutable source rows let retained history keep its identities while the active item streams.
-const projectedEntriesCache = new WeakMap<
+export const projectedEntriesCache = new WeakMap<
   OrchestrationV2ProjectedTurnItem,
   {
     readonly attemptId: RunAttemptId | null;
     readonly entry: RawThreadFeedEntry;
   }
 >();
-const localMessageEntriesCache = new WeakMap<
+export const localMessageEntriesCache = new WeakMap<
   LocalThreadMessage,
   Extract<RawThreadFeedEntry, { readonly type: "message" }>
 >();
-const activityGroupsCache = new WeakMap<ThreadFeedActivity, ThreadFeedActivityGroup>();
-const failedActivityGroupsCache = new WeakMap<
+export const activityGroupsCache = new WeakMap<ThreadFeedActivity, ThreadFeedActivityGroup>();
+export const failedActivityGroupsCache = new WeakMap<
   ThreadFeedActivityGroup,
   ReadonlyArray<ThreadFeedActivityGroup>
 >();
@@ -321,7 +326,7 @@ const presentedActivityGroupsCache = new WeakMap<
     readonly rows: ReadonlyArray<ThreadFeedEntry>;
   }
 >();
-const runFoldRowsCache = new WeakMap<
+export const runFoldRowsCache = new WeakMap<
   ThreadFeedEntry,
   Extract<ThreadFeedEntry, { readonly type: "run-fold" }>
 >();
@@ -369,7 +374,7 @@ export function threadFeedCompactionLabels(feed: ReadonlyArray<ThreadFeedEntry>)
   return labelsByEntryId;
 }
 
-function isResumeCompactionAnswerGroup(entry: ThreadFeedActivityGroup): boolean {
+export function isResumeCompactionAnswerGroup(entry: ThreadFeedActivityGroup): boolean {
   return entry.activities.every((activity) => {
     const answer = activity.workEntry.questionAnswer;
     return answer !== undefined && claudeResumeCompactionAge(answer) !== null;
@@ -399,12 +404,12 @@ function isUserInputActivityGroup(entry: ThreadFeedActivityGroup): boolean {
   return entry.activities.some((activity) => activity.workEntry.questionAnswer !== undefined);
 }
 
-function capitalizePhrase(value: string): string {
+export function capitalizePhrase(value: string): string {
   const trimmed = value.trim();
   return trimmed.length === 0 ? value : `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
 }
 
-function memoizeValue<T>(build: () => T): () => T {
+export function memoizeValue<T>(build: () => T): () => T {
   let value: T;
   let initialized = false;
   return () => {
@@ -416,7 +421,7 @@ function memoizeValue<T>(build: () => T): () => T {
   };
 }
 
-function itemIsToolLike(item: OrchestrationV2TurnItem): boolean {
+export function itemIsToolLike(item: OrchestrationV2TurnItem): boolean {
   return (
     item.type === "reasoning" ||
     item.type === "command_execution" ||
@@ -430,7 +435,7 @@ function itemIsToolLike(item: OrchestrationV2TurnItem): boolean {
   );
 }
 
-function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
+export function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
   return (
     item.type === "fork" ||
     item.type === "thread_created" ||
@@ -441,7 +446,7 @@ function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
   );
 }
 
-function itemStatus(item: OrchestrationV2TurnItem): ThreadFeedActivity["status"] {
+export function itemStatus(item: OrchestrationV2TurnItem): ThreadFeedActivity["status"] {
   if (item.type === "notification") return item.outcome === "failed" ? "failure" : null;
   if (item.type === "error") {
     if (item.status === "failed")
@@ -453,7 +458,7 @@ function itemStatus(item: OrchestrationV2TurnItem): ThreadFeedActivity["status"]
   return item.status === "completed" ? "success" : "neutral";
 }
 
-function itemLifecycleStatus(item: OrchestrationV2TurnItem): WorkLogToolLifecycleStatus {
+export function itemLifecycleStatus(item: OrchestrationV2TurnItem): WorkLogToolLifecycleStatus {
   switch (item.status) {
     case "pending":
     case "running":
@@ -471,7 +476,7 @@ function itemLifecycleStatus(item: OrchestrationV2TurnItem): WorkLogToolLifecycl
   }
 }
 
-function itemWorkLogTone(item: OrchestrationV2TurnItem): WorkLogPresentationEntry["tone"] {
+export function itemWorkLogTone(item: OrchestrationV2TurnItem): WorkLogPresentationEntry["tone"] {
   if (item.type === "error") return "info";
   if (item.type === "reasoning") return "thinking";
   switch (item.type) {
@@ -487,84 +492,7 @@ function itemWorkLogTone(item: OrchestrationV2TurnItem): WorkLogPresentationEntr
   }
 }
 
-function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
-  if (item.type === "notification") {
-    const source = item.source;
-    switch (source.kind) {
-      case "subagent":
-      case "delegated_task":
-        return "hammer";
-      case "command":
-        return "command";
-      case "monitor":
-        return "eye";
-      case "background_task":
-      case "system":
-        return "zap";
-      default:
-        source satisfies never;
-        return "zap";
-    }
-  }
-  if (item.type === "dynamic_tool") {
-    const classified = classifyToolActivity({
-      itemType: "dynamic_tool_call",
-      data: { toolName: item.toolName ?? undefined, input: item.input },
-    });
-    if (classified === "read") {
-      return "eye";
-    }
-    if (classified === "search") return "search";
-  }
-  switch (item.type) {
-    case "reasoning":
-      return "agent";
-    case "command_execution":
-      return "command";
-    case "file_change":
-      return "edit";
-    case "file_search":
-      return "search";
-    case "web_search":
-      return "globe";
-    case "approval_request":
-      return item.requestKind === "permission" ? "lock" : "message";
-    case "user_input_request":
-    case "user_message":
-    case "assistant_message":
-      return "message";
-    case "dynamic_tool":
-      return isJavaScriptReplTool(item.toolName) ? "code" : "wrench";
-    case "subagent":
-      return "hammer";
-    case "run_interrupt_request":
-    case "run_interrupt_result":
-      return "stop";
-    case "system_notice":
-      return "warning";
-    case "error":
-      return item.failure.class === "usage_limit"
-        ? item.status === "completed"
-          ? "check"
-          : "warning"
-        : "alert";
-    case "checkpoint":
-    case "proposed_plan":
-    case "todo_list":
-      return "check";
-    case "compaction":
-    case "handoff":
-    case "fork":
-    case "thread_created":
-      return "zap";
-    case "secret_request":
-      return "lock";
-    case "link_request":
-      return "globe";
-  }
-}
-
-function itemToolPresentation(item: OrchestrationV2TurnItem): T3McpToolPresentation | null {
+export function itemToolPresentation(item: OrchestrationV2TurnItem): T3McpToolPresentation | null {
   if (item.type !== "dynamic_tool") {
     return null;
   }
@@ -574,80 +502,7 @@ function itemToolPresentation(item: OrchestrationV2TurnItem): T3McpToolPresentat
   );
 }
 
-function itemSummary(
-  item: OrchestrationV2TurnItem,
-  toolPresentation: T3McpToolPresentation | null = null,
-): string {
-  if (item.type === "notification") return item.summary;
-  if (item.type === "system_notice") return item.message;
-  if (item.type === "compaction") return contextCompactionLabel(item);
-  const title =
-    (item.type === "dynamic_tool"
-      ? dynamicToolTitle(item.toolName, item.input, item.title)
-      : undefined) ?? item.title?.trim();
-  if (item.type === "subagent") return formatSubagentDisplayTitle(title || "Subagent");
-  if (title) return toolPresentation?.displayName ?? capitalizePhrase(title);
-  switch (item.type) {
-    case "reasoning":
-      return "Thinking";
-    case "command_execution":
-      return "Command";
-    case "file_change":
-      return item.changes !== undefined && item.changes.length > 1
-        ? `Changed ${item.changes.length} files`
-        : `Changed ${item.fileName}`;
-    case "file_search":
-      return item.title?.trim() || formatSearchToolLabel(item) || "Searched files";
-    case "web_search":
-      return "Searched the web";
-    case "approval_request":
-      return "Approval requested";
-    case "user_input_request":
-      return "Input requested";
-    case "checkpoint":
-      return "Checkpoint captured";
-    case "run_interrupt_request":
-      return "Interrupt requested";
-    case "run_interrupt_result":
-      return "Run interrupted";
-    case "error":
-      return item.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error";
-    case "handoff":
-      return "Context handed off";
-    case "fork":
-      return "Thread forked";
-    case "thread_created":
-      return "Thread created";
-    case "secret_request":
-      return item.label;
-    case "link_request":
-      return `Link ${item.label ?? item.url ?? "an environment"}`;
-    case "dynamic_tool": {
-      const classified = classifyToolActivity({
-        itemType: "dynamic_tool_call",
-        data: { toolName: item.toolName ?? undefined, input: item.input },
-      });
-      if (classified === "read") {
-        const [path] = collectToolFilePaths({ input: item.input });
-        return formatReadToolLabel(path ?? "");
-      }
-      if (classified === "search") {
-        return formatSearchToolLabel({ input: item.input }) ?? item.toolName ?? "Tool call";
-      }
-      return toolPresentation?.displayName ?? item.toolName ?? "Tool call";
-    }
-    case "proposed_plan":
-      return "Proposed plan";
-    case "todo_list":
-      return "Plan updated";
-    case "user_message":
-      return "User message";
-    case "assistant_message":
-      return "Assistant message";
-  }
-}
-
-function itemPreview(item: OrchestrationV2TurnItem): string | null {
+export function itemPreview(item: OrchestrationV2TurnItem): string | null {
   switch (item.type) {
     case "reasoning":
       return item.text || null;
@@ -698,79 +553,6 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
   }
 }
 
-function toWorkLogEntry(
-  item: OrchestrationV2TurnItem,
-  createdAt: string,
-  summary: string,
-  detail: string | null,
-): WorkLogPresentationEntry {
-  const title = item.title?.trim() || null;
-  const common = {
-    ...extractToolActivityPresentation(item),
-    id: item.id,
-    createdAt,
-    label: summary,
-    tone: itemWorkLogTone(item),
-    itemType: item.type,
-    toolLifecycleStatus: itemLifecycleStatus(item),
-    structuredPayload: item,
-    ...(item.type === "user_input_request" && item.questionAnswer
-      ? { questionAnswer: item.questionAnswer }
-      : {}),
-  } as const;
-
-  switch (item.type) {
-    case "reasoning":
-      return { ...common, ...(item.text ? { detail: item.text } : {}) };
-    case "command_execution":
-      return {
-        ...common,
-        command: item.input,
-        rawCommand: item.input,
-        toolTitle: title ?? "Command",
-        toolData: item,
-      };
-    case "file_change":
-      return {
-        ...common,
-        changedFiles: item.changes?.map((change) => change.path) ?? [item.fileName],
-        toolTitle: title ?? "File change",
-        toolData: item,
-      };
-    case "file_search":
-      return {
-        ...common,
-        ...(item.pattern ? { detail: item.pattern } : {}),
-        toolTitle: title ?? "File search",
-        toolData: item,
-      };
-    case "web_search":
-      return {
-        ...common,
-        ...(item.patterns?.length ? { detail: item.patterns.join(", ") } : {}),
-        toolTitle: title ?? "Web search",
-        toolData: item,
-      };
-    case "checkpoint":
-      return { ...common, changedFiles: item.files.map((file) => file.path), toolData: item };
-    case "approval_request":
-      return {
-        ...common,
-        ...(item.prompt ? { detail: item.prompt } : {}),
-        requestKind: item.requestKind,
-        toolData: item,
-      };
-    case "dynamic_tool":
-      return {
-        ...common,
-        toolTitle: title ?? item.toolName ?? "Tool",
-        toolData: { input: item.input, output: item.output },
-      };
-    default:
-      return { ...common, ...(detail ? { detail } : {}), toolData: item };
-  }
-}
-
 export function formatItemFullDetail(
   row: OrchestrationV2ProjectedTurnItem,
   item: OrchestrationV2TurnItem,
@@ -787,71 +569,7 @@ export function formatItemFullDetail(
   );
 }
 
-function toFeedActivity(
-  row: OrchestrationV2ProjectedTurnItem,
-  attemptId: RunAttemptId | null,
-): ThreadFeedActivity {
-  const item = row.item;
-  const toolPresentation = itemToolPresentation(item);
-  const summary = itemSummary(item, toolPresentation);
-  const detail = item.type === "notification" ? null : itemPreview(item);
-  const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
-  const workEntry = toWorkLogEntry(item, createdAt, summary, detail);
-  const readPaths =
-    item.type === "dynamic_tool" && toolGroupAction(workEntry) === "read"
-      ? collectToolFilePaths(item)
-      : null;
-  const getFullDetail = memoizeValue(() =>
-    item.type === "proposed_plan"
-      ? item.markdown
-      : readPaths
-        ? readPaths.join("\n") || null
-        : item.type === "notification"
-          ? item.detail?.trim() || null
-          : formatItemFullDetail(row, item),
-  );
-  const getCopyText = memoizeValue(() =>
-    item.type === "proposed_plan"
-      ? `${item.markdown.trimEnd()}\n`
-      : [summary, detail, getFullDetail()]
-          .filter(
-            (value, index, values): value is string =>
-              Boolean(value) && values.indexOf(value) === index,
-          )
-          .join("\n"),
-  );
-  return {
-    id: `${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
-    createdAt,
-    runId: item.runId,
-    attemptId,
-    summary,
-    detail,
-    canExpand:
-      !(item.type === "error" && item.status === "failed") &&
-      (readPaths
-        ? readPaths.length > 0 || turnItemNeedsDetailFetch(item)
-        : turnItemHasDetail(item) || workEntry.questionAnswer !== undefined),
-    fetchesDetail: turnItemNeedsDetailFetch(item),
-    getFullDetail,
-    getCopyText,
-    icon: workEntry.toolSurface ?? itemIcon(item),
-    logo: toolPresentation?.logo ?? null,
-    toolLike: itemIsToolLike(item),
-    prominent: itemIsProminent(item) || (item.type === "error" && item.status === "failed"),
-    status:
-      item.type === "error" && item.failure.class === "usage_limit"
-        ? itemStatus(item)
-        : workEntryDisplayIndicatesToolFailure(workEntry)
-          ? "failure"
-          : itemStatus(item),
-    lifecycleStatus: itemLifecycleStatus(item),
-    workEntry,
-    projectedItem: row,
-  };
-}
-
-function singleToolCallLabel(activity: ThreadFeedActivity, expanded: boolean): string {
+export function singleToolCallLabel(activity: ThreadFeedActivity, expanded: boolean): string {
   if (activity.workEntry.itemType === "reasoning")
     return expanded
       ? "Thought"
@@ -862,7 +580,7 @@ function singleToolCallLabel(activity: ThreadFeedActivity, expanded: boolean): s
   return command ? truncate(command, WORK_LOG_LABEL_MAX_LENGTH) : activity.summary;
 }
 
-function isEmptyMessage(entry: RawThreadFeedEntry): boolean {
+export function isEmptyMessage(entry: RawThreadFeedEntry): boolean {
   return (
     entry.type === "message" &&
     entry.message.text.trim().length === 0 &&
@@ -874,111 +592,19 @@ function isEmptyMessage(entry: RawThreadFeedEntry): boolean {
  * `onRestart` hears each entry after which no group is open, with the grouped
  * length so far: the entries before it group the same whatever follows.
  */
-function groupAdjacentActivities(
-  entries: ReadonlyArray<RawThreadFeedEntry>,
-  childrenByRun: ReadonlyMap<RunId, ReadonlySet<string>>,
-  onRestart?: (entryIndex: number, groupedLength: number) => void,
-): ThreadFeedEntry[] {
-  const grouped: ThreadFeedEntry[] = [];
-  let firstActivityEntry: Extract<RawThreadFeedEntry, { readonly type: "activity" }> | null = null;
-  let openGroupActivities: ThreadFeedActivity[] = [];
-  const flushGroup = () => {
-    if (firstActivityEntry === null) return;
-    const cached = activityGroupsCache.get(firstActivityEntry.activity);
-    if (
-      cached &&
-      cached.activities.length === openGroupActivities.length &&
-      cached.activities.every((activity, index) => activity === openGroupActivities[index])
-    ) {
-      grouped.push(cached);
-    } else {
-      const group: ThreadFeedActivityGroup = {
-        type: "activity-group",
-        id: firstActivityEntry.id,
-        createdAt: firstActivityEntry.createdAt,
-        runId: firstActivityEntry.runId,
-        activities: openGroupActivities,
-      };
-      activityGroupsCache.set(firstActivityEntry.activity, group);
-      grouped.push(group);
-    }
-    firstActivityEntry = null;
-    openGroupActivities = [];
-  };
-
-  for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
-    const entry = entries[entryIndex]!;
-    if (entry.type === "activity") {
-      const item = entry.activity.projectedItem.item;
-      if (
-        item.type === "dynamic_tool" &&
-        item.runId !== null &&
-        (item.status === "running" || item.status === "completed") &&
-        resolveT3McpToolDefinition(item.toolName)?.summaryAction === "delegate" &&
-        !workEntryDisplayIndicatesToolFailure(entry.activity.workEntry)
-      ) {
-        const output = compactDynamicToolOutput(item.output);
-        if (
-          !output?.isError &&
-          output?.taskId !== undefined &&
-          childrenByRun.get(item.runId)?.has(output.taskId)
-        )
-          continue;
-      }
-    }
-    if (isEmptyMessage(entry)) {
-      continue;
-    }
-
-    if (entry.type !== "activity") {
-      flushGroup();
-      grouped.push(entry);
-      onRestart?.(entryIndex, grouped.length);
-      continue;
-    }
-
-    const isStandaloneActivity =
-      entry.activity.workEntry.questionAnswer !== undefined ||
-      entry.activity.projectedItem.item.type === "compaction" ||
-      entry.activity.projectedItem.item.type === "handoff" ||
-      entry.activity.projectedItem.item.type === "notification";
-    if (
-      isStandaloneActivity ||
-      entry.activity.prominent ||
-      (entry.activity.projectedItem.item.type === "subagent") !==
-        (firstActivityEntry?.activity.projectedItem.item.type === "subagent") ||
-      firstActivityEntry?.runId !== entry.runId ||
-      (entry.activity.projectedItem.item.type === "subagent" &&
-        firstActivityEntry?.activity.projectedItem.item.providerTurnId !==
-          entry.activity.projectedItem.item.providerTurnId) ||
-      (entry.activity.projectedItem.item.type !== "subagent" &&
-        firstActivityEntry?.activity.attemptId !== entry.activity.attemptId)
-    ) {
-      flushGroup();
-    }
-    firstActivityEntry ??= entry;
-    openGroupActivities.push(entry.activity);
-    if (isStandaloneActivity || entry.activity.prominent) {
-      flushGroup();
-    }
-  }
-  flushGroup();
-  return grouped;
-}
-
-function computeElapsedMs(startIso: string, endIso: string): number | null {
+export function computeElapsedMs(startIso: string, endIso: string): number | null {
   const start = Date.parse(startIso);
   const end = Date.parse(endIso);
   return Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : null;
 }
 
-function maxIsoTimestamp(left: string | null, right: string | null): string | null {
+export function maxIsoTimestamp(left: string | null, right: string | null): string | null {
   if (left === null) return right;
   if (right === null) return left;
   return Date.parse(right) > Date.parse(left) ? right : left;
 }
 
-function unsettledRunId(latestRun: ThreadFeedLatestRun | null): RunId | null {
+export function unsettledRunId(latestRun: ThreadFeedLatestRun | null): RunId | null {
   return threadFeedRunIsUnsettled(latestRun) ? latestRun.runId : null;
 }
 
@@ -995,7 +621,7 @@ export function threadFeedRunIsUnsettled(
   );
 }
 
-function threadFeedActivityIsVisible(
+export function threadFeedActivityIsVisible(
   activity: Pick<ThreadFeedActivity, "prominent" | "status" | "toolLike"> &
     Partial<Pick<ThreadFeedActivity, "lifecycleStatus">>,
 ): boolean {
@@ -1008,7 +634,7 @@ function threadFeedActivityIsVisible(
   );
 }
 
-interface ThreadFeedRunFold {
+export interface ThreadFeedRunFold {
   readonly deferredWorkItemIds?: ReadonlyArray<string>;
   readonly runId: RunId;
   readonly createdAt: string;
@@ -1060,194 +686,10 @@ export function messageFoldRunId(
   return null;
 }
 
-function deriveThreadFeedRunFolds(
-  feed: ReadonlyArray<ThreadFeedEntry>,
-  latestRun: ThreadFeedLatestRun | null,
-  runlessWorkActive: boolean,
-  feedFailedRunIds: ReadonlySet<RunId>,
-): ReadonlyMap<string, ThreadFeedRunFold> {
-  const terminalAssistantMessageIdByRun = new Map<RunId, string>();
-  const interruptedRunIds = new Set<RunId>();
-  const failedRunIds = new Set(feedFailedRunIds);
-  const promptIndexByRunId = new Map<RunId, number>();
-  for (const [index, entry] of feed.entries()) {
-    if (
-      entry.type !== "message" ||
-      entry.message.role !== "user" ||
-      entry.message.inputIntent === "steer" ||
-      entry.message.inputIntent === "promoted_queued_to_steer"
-    ) {
-      continue;
-    }
-    const runId = entry.message.runId;
-    if (runId != null && !promptIndexByRunId.has(runId)) promptIndexByRunId.set(runId, index);
-  }
-  const groupsByRunId = new Map<
-    RunId,
-    { entries: ThreadFeedEntry[]; startBoundary: string | null }
-  >();
-  let runlessKey: RunId | null = null;
-  let responseKey: RunId | null = null;
-  let pendingUserBoundary: string | null = null;
-  for (const [index, entry] of feed.entries()) {
-    if (entry.type === "message" && entry.message.role === "user") {
-      pendingUserBoundary = entry.message.createdAt;
-      runlessKey = entry.message.runId == null ? RunId.make(`runless:${entry.id}`) : null;
-      responseKey = entry.message.runId ?? runlessKey;
-      continue;
-    }
-    const ownRunId =
-      entry.type === "message" && entry.message.role === "assistant"
-        ? (entry.message.runId ?? runlessKey)
-        : entry.type === "activity-group" ||
-            entry.type === "html-render" ||
-            entry.type === "mcp-app"
-          ? (entry.runId ?? runlessKey)
-          : null;
-    if (!ownRunId) continue;
-    // Resumed subagents keep their original turn position and fold, leaving later run folds under their own prompts.
-    const runId =
-      responseKey !== null && (promptIndexByRunId.get(ownRunId) ?? -1) > index
-        ? responseKey
-        : ownRunId;
-    let group = groupsByRunId.get(runId);
-    if (!group) {
-      group = { entries: [], startBoundary: pendingUserBoundary };
-      pendingUserBoundary = null;
-      groupsByRunId.set(runId, group);
-    }
-    group.entries.push(entry);
-    if (entry.type === "message") {
-      terminalAssistantMessageIdByRun.set(runId, entry.id);
-    }
-    if (entry.type !== "activity-group") continue;
-    for (const activity of entry.activities) {
-      const item = activity.projectedItem.item;
-      if (item.type === "run_interrupt_result") interruptedRunIds.add(runId);
-      if (
-        runId === runlessKey &&
-        item.type === "error" &&
-        item.status === "failed" &&
-        item.parentItemId === null
-      ) {
-        failedRunIds.add(runId);
-      }
-    }
-  }
-
-  const activeRunId = unsettledRunId(latestRun);
-  const foldsByAnchorId = new Map<string, ThreadFeedRunFold>();
-  for (const [runId, group] of groupsByRunId) {
-    if (
-      runId === activeRunId ||
-      (runlessWorkActive && runId === runlessKey) ||
-      interruptedRunIds.has(runId) ||
-      failedRunIds.has(runId) ||
-      group.entries.some((entry) => entry.type === "message" && entry.message.streaming)
-    ) {
-      continue;
-    }
-    const terminalAssistantId = terminalAssistantMessageIdByRun.get(runId);
-    const hiddenEntryIds = new Set(
-      group.entries
-        .filter(
-          (entry) =>
-            entry.id !== terminalAssistantId &&
-            entry.type !== "html-render" &&
-            entry.type !== "mcp-app" &&
-            !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&
-            !(
-              entry.type === "activity-group" &&
-              entry.activities.some(
-                (activity) =>
-                  activity.prominent ||
-                  activity.workEntry.questionAnswer !== undefined ||
-                  activity.projectedItem.item.type === "notification" ||
-                  activity.projectedItem.item.type === "handoff" ||
-                  // A child still working outlives its settled launching run;
-                  // its group stays visible while any member is live.
-                  isLiveSubagentTurnItem(activity.projectedItem.item),
-              )
-            ),
-        )
-        .map((entry) => entry.id),
-    );
-    const firstEntry = group.entries[0];
-    const firstHiddenEntry = group.entries.find((entry) => hiddenEntryIds.has(entry.id));
-    const lastEntry = group.entries.at(-1);
-    if (!firstHiddenEntry || !firstEntry || !lastEntry) continue;
-    const hidesNonCompactionWork = group.entries.some(
-      (entry) =>
-        hiddenEntryIds.has(entry.id) &&
-        !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)),
-    );
-    if (!hidesNonCompactionWork) continue;
-    const terminalEntry = terminalAssistantId
-      ? group.entries.find((entry) => entry.id === terminalAssistantId)
-      : null;
-    const latestRunMatches = latestRun?.runId === runId;
-    const lastEntryEnd =
-      lastEntry.type === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
-    const elapsedMs =
-      latestRunMatches && latestRun.startedAt && latestRun.completedAt
-        ? computeElapsedMs(latestRun.startedAt, latestRun.completedAt)
-        : computeElapsedMs(
-            group.startBoundary ?? firstEntry.createdAt,
-            maxIsoTimestamp(
-              terminalEntry?.type === "message" ? terminalEntry.message.updatedAt : null,
-              lastEntryEnd,
-            ) ?? lastEntryEnd,
-          );
-    const duration = elapsedMs === null ? null : formatDuration(elapsedMs);
-    const interrupted =
-      latestRunMatches && (latestRun.status === "interrupted" || latestRun.status === "cancelled");
-    const deferredWorkItemIds = group.entries.flatMap((entry) =>
-      entry.type === "activity-group"
-        ? entry.activities.flatMap((activity) =>
-            activity.projectedItem.item.deferredWork
-              ? [String(activity.projectedItem.sourceItemId)]
-              : [],
-          )
-        : [],
-    );
-    foldsByAnchorId.set(firstHiddenEntry.id, {
-      ...(deferredWorkItemIds.length > 0 ? { deferredWorkItemIds } : {}),
-      runId,
-      createdAt: firstHiddenEntry.createdAt,
-      hiddenEntryIds,
-      label: interrupted
-        ? duration
-          ? `You stopped after ${duration}`
-          : "You stopped this response"
-        : duration
-          ? `Worked for ${duration}`
-          : "Worked",
-    });
-  }
-  const covered = new Set(
-    [...foldsByAnchorId.values()].flatMap((fold) => [...fold.hiddenEntryIds]),
-  );
-  for (const entry of feed) {
-    if (entry.type !== "activity-group" || covered.has(entry.id)) continue;
-    const deferredWorkItemIds = entry.activities.flatMap((activity) =>
-      activity.projectedItem.item.deferredWork ? [String(activity.projectedItem.sourceItemId)] : [],
-    );
-    if (deferredWorkItemIds.length === 0) continue;
-    foldsByAnchorId.set(entry.id, {
-      runId: RunId.make(`deferred-work:${entry.id}`),
-      createdAt: entry.createdAt,
-      hiddenEntryIds: new Set([entry.id]),
-      label: "Earlier work",
-      deferredWorkItemIds,
-    });
-  }
-  return foldsByAnchorId;
-}
-
 const supersededReasoningGroups = new WeakMap<ThreadFeedActivityGroup, ThreadFeedActivityGroup>();
 const trailingReasoningGroups = new WeakMap<ThreadFeedActivityGroup, ThreadFeedActivityGroup>();
 
-function settleSupersededReasoning(
+export function settleSupersededReasoning(
   entry: Exclude<ThreadFeedEntry, { readonly type: "run-fold" | "work-toggle" | "thinking" }>,
   tail: boolean,
 ) {
@@ -1301,11 +743,11 @@ function latestRunsEqual(left: ThreadFeedLatestRun | null, right: ThreadFeedLate
   );
 }
 
-function feedEntryRunId(entry: ThreadFeedEntry): RunId | null {
+export function feedEntryRunId(entry: ThreadFeedEntry): RunId | null {
   return entry.type === "message" ? (entry.message.runId ?? null) : entry.runId;
 }
 
-function isUserMessageEntry(entry: ThreadFeedEntry | undefined): boolean {
+export function isUserMessageEntry(entry: ThreadFeedEntry | undefined): boolean {
   return entry?.type === "message" && entry.message.role === "user";
 }
 
@@ -1315,7 +757,7 @@ function isUserMessageEntry(entry: ThreadFeedEntry | undefined): boolean {
  * shared inputs. Returns the user message entry to restart from, or null to
  * present the whole feed.
  */
-function presentationRestart(
+export function presentationRestart(
   previous: ThreadFeedPresentationBuild | null,
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestRun: ThreadFeedLatestRun | null,
@@ -1347,275 +789,9 @@ function presentationRestart(
   return { ...restart, index };
 }
 
-export function deriveThreadFeedPresentation(
-  feed: ReadonlyArray<ThreadFeedEntry>,
-  latestRun: ThreadFeedLatestRun | null,
-  expandedRunIds: ReadonlySet<RunId>,
-  expandedWorkGroupIds: ReadonlySet<string> = new Set(),
-  activeWorkStartedAt: string | null = null,
-  runlessWorkActive = false,
-  cache?: ThreadFeedCache,
-): ThreadFeedEntry[] {
-  const previous = cache?.presentation ?? null;
-  const restart = presentationRestart(
-    previous,
-    feed,
-    latestRun,
-    expandedRunIds,
-    expandedWorkGroupIds,
-    activeWorkStartedAt,
-    runlessWorkActive,
-  );
-  const start = restart?.entry ?? 0;
-  const result: ThreadFeedEntry[] =
-    restart === null ? [] : previous!.rows.slice(0, restart.rowsLength);
-  const restarts = restart === null ? [] : previous!.restarts.slice(0, restart.index);
-  const firstEntryByRun = new Map<RunId, number>();
-  if (restart !== null) {
-    for (const [runId, entry] of previous!.firstEntryByRun) {
-      if (entry < start) firstEntryByRun.set(runId, entry);
-    }
-  }
-  const tailStart = result.length;
-  const lastEntryByRun = new Map<RunId, number>();
+export const continuedWorkLogRows = new WeakMap<ThreadFeedEntry, ThreadFeedEntry>();
 
-  const retainedFeed: Array<
-    Exclude<ThreadFeedEntry, { readonly type: "run-fold" | "work-toggle" | "thinking" }>
-  > = [];
-  const retainedFeedIndices: number[] = [];
-  for (let index = start; index < feed.length; index += 1) {
-    const entry = feed[index]!;
-    if (entry.type === "run-fold" || entry.type === "work-toggle" || entry.type === "thinking")
-      continue;
-    retainedFeed.push(entry);
-    retainedFeedIndices.push(index);
-  }
-  const sourceFeed = retainedFeed.map((entry, index) =>
-    settleSupersededReasoning(entry, index === retainedFeed.length - 1),
-  );
-  const failedRunIds = failedFeedRunIds(sourceFeed, latestRun);
-  const activeTailGroup = sourceFeed.at(-1);
-  const activeRunId = unsettledRunId(latestRun);
-  // A bare `/compact` turn is the compaction itself: its compaction row stands in for the prompt
-  // and the live activity row. An answered "compact before continuing?" question folds into the
-  // compaction it asked for.
-  const compactionCommandRunIds = new Set<RunId>();
-  const compactionItemRunIds = new Set<RunId>();
-  for (const entry of feed) {
-    if (
-      entry.type === "message" &&
-      entry.message.runId !== null &&
-      isCompactionCommandMessage(entry.message)
-    ) {
-      compactionCommandRunIds.add(entry.message.runId);
-    } else if (
-      entry.type === "activity-group" &&
-      entry.runId !== null &&
-      isContextCompactionActivityGroup(entry)
-    ) {
-      compactionItemRunIds.add(entry.runId);
-    }
-  }
-  const isWorking = activeWorkStartedAt !== null && latestRun?.status !== "preparing";
-  const foldsByAnchorId = deriveThreadFeedRunFolds(
-    sourceFeed,
-    latestRun,
-    isWorking && runlessWorkActive,
-    failedRunIds,
-  );
-  const collapsedEntryIds = new Set<string>();
-  for (const fold of foldsByAnchorId.values()) {
-    if (!expandedRunIds.has(fold.runId)) {
-      for (const entryId of fold.hiddenEntryIds) collapsedEntryIds.add(entryId);
-    }
-  }
-  for (let sourceIndex = 0; sourceIndex < sourceFeed.length; sourceIndex += 1) {
-    const entry = sourceFeed[sourceIndex]!;
-    const feedIndex = retainedFeedIndices[sourceIndex]!;
-    if (isUserMessageEntry(entry)) {
-      restarts.push({ entry: feedIndex, rowsLength: result.length });
-    }
-    const runId = feedEntryRunId(entry);
-    if (runId !== null) {
-      if (!firstEntryByRun.has(runId)) firstEntryByRun.set(runId, feedIndex);
-      lastEntryByRun.set(runId, feedIndex);
-    }
-    const isActiveTailGroup =
-      isWorking &&
-      (activeRunId !== null || runlessWorkActive) &&
-      entry.type === "activity-group" &&
-      activeTailGroup?.type === "activity-group" &&
-      activeTailGroup.id === entry.id &&
-      entry.runId === activeRunId;
-    const fold = foldsByAnchorId.get(entry.id);
-    if (fold) {
-      const expanded = expandedRunIds.has(fold.runId);
-      let row = runFoldRowsCache.get(entry);
-      if (
-        !row ||
-        row.runId !== fold.runId ||
-        row.createdAt !== fold.createdAt ||
-        row.label !== fold.label ||
-        row.expanded !== expanded ||
-        row.deferredWorkItemIds?.join("|") !== fold.deferredWorkItemIds?.join("|")
-      ) {
-        row = {
-          type: "run-fold",
-          id: `run-fold:${fold.runId}`,
-          ...(fold.deferredWorkItemIds ? { deferredWorkItemIds: fold.deferredWorkItemIds } : {}),
-          createdAt: fold.createdAt,
-          runId: fold.runId,
-          label: fold.label,
-          expanded,
-        };
-        runFoldRowsCache.set(entry, row);
-      }
-      result.push(row);
-    }
-    if (
-      (entry.type === "message" &&
-        entry.message.runId !== null &&
-        compactionItemRunIds.has(entry.message.runId) &&
-        isCompactionCommandMessage(entry.message)) ||
-      (entry.type === "activity-group" &&
-        entry.runId !== null &&
-        compactionItemRunIds.has(entry.runId) &&
-        isResumeCompactionAnswerGroup(entry))
-    ) {
-      continue;
-    }
-    if (!collapsedEntryIds.has(entry.id)) {
-      if (
-        entry.type === "activity-group" &&
-        entry.runId !== null &&
-        failedRunIds.has(entry.runId)
-      ) {
-        let rows = failedActivityGroupsCache.get(entry);
-        if (!rows) {
-          rows =
-            entry.activities.length === 1
-              ? [entry]
-              : entry.activities.map((activity) => ({
-                  type: "activity-group" as const,
-                  id: activity.id,
-                  createdAt: activity.createdAt,
-                  runId: activity.runId,
-                  activities: [activity],
-                }));
-          failedActivityGroupsCache.set(entry, rows);
-        }
-        result.push(...rows);
-        continue;
-      }
-      appendPresentedFeedEntry(
-        result,
-        entry,
-        expandedWorkGroupIds,
-        activeRunId,
-        isWorking,
-        isActiveTailGroup,
-      );
-    }
-  }
-  if (
-    isWorking &&
-    activeWorkStartedAt !== null &&
-    latestRun?.turnEnded !== true &&
-    (activeRunId === null || !compactionCommandRunIds.has(activeRunId)) &&
-    !result.some(
-      (row) =>
-        row.id === LIVE_ACTIVITY_ROW_ID ||
-        (row.type === "activity-group" &&
-          isContextCompactionActivityGroup(row) &&
-          row.runId === activeRunId &&
-          row.activities[0]?.projectedItem.item.status === "running"),
-    )
-  ) {
-    result.push(thinkingRow(activeWorkStartedAt, activeRunId));
-  }
-  const checkpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
-  for (const entry of sourceFeed) {
-    if (entry.type === "message" && entry.message.checkpointSummary) {
-      checkpointByRunId.set(entry.message.checkpointSummary.runId, entry.message.checkpointSummary);
-    }
-  }
-  const workRowByRunId = new Map<RunId, number>();
-  for (let index = tailStart; index < result.length; index += 1) {
-    const row = result[index]!;
-    if (
-      (row.type === "run-fold" || row.type === "work-toggle") &&
-      row.runId !== null &&
-      checkpointByRunId.has(row.runId) &&
-      (row.type === "run-fold" || !workRowByRunId.has(row.runId))
-    ) {
-      workRowByRunId.set(row.runId, index);
-    }
-  }
-  for (const [runId, index] of workRowByRunId) {
-    result[index] = { ...result[index]!, checkpointSummary: checkpointByRunId.get(runId)! };
-  }
-  for (let index = tailStart; index < result.length; index += 1) {
-    const row = result[index]!;
-    if (
-      row.type !== "message" ||
-      !row.message.checkpointSummary ||
-      !workRowByRunId.has(row.message.checkpointSummary.runId)
-    )
-      continue;
-    const message = { ...row.message };
-    delete message.checkpointSummary;
-    result[index] = { ...row, message };
-  }
-  // Reused rows are final: the user message after them never continues a work log.
-  for (let index = tailStart; index < result.length; index += 1) {
-    const row = result[index]!;
-    if (!isWorkLogFeedRow(row) || !isWorkLogFeedRow(result[index + 1])) continue;
-    let continued = continuedWorkLogRows.get(row);
-    if (!continued) {
-      continued = { ...row, continuesWorkLog: true };
-      continuedWorkLogRows.set(row, continued);
-    }
-    result[index] = continued;
-  }
-  // A run that crosses a user message made the rows before it from entries
-  // after it, so a later build cannot restart there even once those entries
-  // are gone. Only runs of this build's own entries can cross its restarts.
-  const crossings = Array.from({ length: feed.length - start + 1 }, () => 0);
-  for (const [runId, last] of lastEntryByRun) {
-    const first = firstEntryByRun.get(runId)!;
-    if (first >= last) continue;
-    crossings[first - start + 1]! += 1;
-    crossings[last - start + 1]! -= 1;
-  }
-  let crossingRuns = 0;
-  let crossingIndex = 0;
-  const cleanRestarts = restarts.filter((candidate) => {
-    if (candidate.entry < start) return true;
-    while (crossingIndex <= candidate.entry - start) {
-      crossingRuns += crossings[crossingIndex]!;
-      crossingIndex += 1;
-    }
-    return crossingRuns === 0;
-  });
-  if (cache) {
-    cache.presentation = {
-      feed,
-      latestRun,
-      expandedRunIds,
-      expandedWorkGroupIds,
-      activeWorkStartedAt,
-      runlessWorkActive,
-      rows: result,
-      restarts: cleanRestarts,
-      firstEntryByRun,
-    };
-  }
-  return result;
-}
-
-const continuedWorkLogRows = new WeakMap<ThreadFeedEntry, ThreadFeedEntry>();
-
-function isWorkLogFeedRow(row: ThreadFeedEntry | undefined): boolean {
+export function isWorkLogFeedRow(row: ThreadFeedEntry | undefined): boolean {
   return (
     row !== undefined &&
     (row.type === "work-toggle" ||
@@ -1632,16 +808,16 @@ function isWorkLogFeedRow(row: ThreadFeedEntry | undefined): boolean {
   );
 }
 
-const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
+export const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
-function thinkingRow(createdAt: string, runId: RunId | null) {
+export function thinkingRow(createdAt: string, runId: RunId | null) {
   if (cachedThinkingRow?.createdAt !== createdAt || cachedThinkingRow.runId !== runId) {
     cachedThinkingRow = { type: "thinking", id: LIVE_ACTIVITY_ROW_ID, createdAt, runId };
   }
   return cachedThinkingRow;
 }
 
-function appendPresentedFeedEntry(
+export function appendPresentedFeedEntry(
   result: ThreadFeedEntry[],
   entry: Exclude<ThreadFeedEntry, { readonly type: "run-fold" | "work-toggle" | "thinking" }>,
   expandedWorkGroupIds: ReadonlySet<string>,
@@ -1683,193 +859,7 @@ function appendPresentedFeedEntry(
   }
 }
 
-function appendActivityGroupRows(
-  result: ThreadFeedEntry[],
-  entry: ThreadFeedActivityGroup,
-  expandedWorkGroupIds: ReadonlySet<string>,
-  activeRunId: RunId | null,
-  isWorking: boolean,
-  activeTail: boolean,
-): void {
-  const groupAnchorIdByActivityId = new Map<string, string>();
-  let groupAnchorId: string | null = null;
-  for (const activity of entry.activities) {
-    const item = activity.projectedItem.item;
-    if (activity.prominent || (item.type === "error" && item.status === "failed")) {
-      groupAnchorId = null;
-      continue;
-    }
-    groupAnchorId ??= activity.id;
-    groupAnchorIdByActivityId.set(activity.id, groupAnchorId);
-  }
-  const activities = entry.activities.filter(
-    (activity) =>
-      threadFeedActivityIsVisible(activity) ||
-      (isWorking && activity.lifecycleStatus === "inProgress" && activity.runId === activeRunId),
-  );
-  if (activities.length === 0) {
-    return;
-  }
-
-  let groupableRun: ThreadFeedActivity[] = [];
-  const flushGroupableRun = (isTrailingRun: boolean) => {
-    if (groupableRun.length === 0) return;
-    appendToolGroupRows(
-      result,
-      entry,
-      groupableRun,
-      `work-group:${groupAnchorIdByActivityId.get(groupableRun[0]!.id) ?? groupableRun[0]!.id}`,
-      expandedWorkGroupIds,
-      activeRunId,
-      isWorking,
-      activeTail && isTrailingRun,
-    );
-    groupableRun = [];
-  };
-  for (const activity of activities) {
-    const item = activity.projectedItem.item;
-    const severeProviderError = item.type === "error" && item.status === "failed";
-    if (!activity.prominent && !severeProviderError && item.type !== "notification") {
-      groupableRun.push(activity);
-      continue;
-    }
-    flushGroupableRun(false);
-    result.push({
-      type: "activity-group",
-      id: activity.id,
-      createdAt: activity.createdAt,
-      runId: activity.runId,
-      activities: [activity],
-    });
-  }
-  flushGroupableRun(true);
-}
-
-function appendToolGroupRows(
-  result: ThreadFeedEntry[],
-  sourceGroup: Extract<ThreadFeedEntry, { readonly type: "activity-group" }>,
-  activities: ReadonlyArray<ThreadFeedActivity>,
-  groupId: string,
-  expandedWorkGroupIds: ReadonlySet<string>,
-  activeRunId: RunId | null,
-  isWorking: boolean,
-  activeTail: boolean,
-): void {
-  const expanded = expandedWorkGroupIds.has(groupId);
-  const latestActiveActivity = activities.findLast(
-    (activity) =>
-      isWorking && activity.lifecycleStatus === "inProgress" && activity.runId === activeRunId,
-  );
-  const active = latestActiveActivity !== undefined;
-  const live = activeTail || active;
-  const latestActivity = latestActiveActivity ?? activities.at(-1)!;
-  const shimmer = activeTail && (active || latestActivity.status === "success");
-  const singleActivity = activities.length === 1 ? latestActivity : null;
-  const groupSummary = summarizeToolGroup(activities.map((activity) => activity.workEntry));
-  const latestThought =
-    live && !expanded
-      ? activities.findLast(
-          (activity) =>
-            activity.workEntry.itemType === "reasoning" &&
-            (activity.workEntry.detail?.trim() ?? "") !== "",
-        )?.workEntry.detail
-      : undefined;
-  const thought = latestThought ? compactWorkEntryText(liveThoughtLine(latestThought)) : "";
-  const summary = live
-    ? (expanded || thought) && latestActivity.workEntry.itemType === "reasoning"
-      ? latestActivity.lifecycleStatus === "inProgress"
-        ? "Thinking"
-        : "Thought"
-      : liveToolActivitySummary(latestActivity, live)
-    : singleActivity !== null &&
-        singleActivity.toolLike &&
-        toolGroupAction(singleActivity.workEntry) !== "edit"
-      ? singleToolCallLabel(singleActivity, expanded)
-      : singleActivity !== null && !singleActivity.toolLike
-        ? singleActivity.workEntry.label
-        : groupSummary.summary;
-  const id = shimmer ? LIVE_ACTIVITY_ROW_ID : `${live ? "work-live" : "work-toggle"}:${groupId}`;
-  // Lone calls replace the header and disclose directly; lone thoughts retain the header to show text on expansion.
-  if (singleActivity !== null && singleActivity.workEntry.itemType !== "reasoning") {
-    result.push({
-      type: "activity-group",
-      id,
-      createdAt: singleActivity.createdAt,
-      runId: singleActivity.runId,
-      activities: [{ ...singleActivity, live: shimmer, groupStandIn: { groupId, label: summary } }],
-      // No trailing margin lets Thinking or a growing group replace the row without shifting the feed.
-      continuesWorkLog: true,
-    });
-    return;
-  }
-  const primarySourceActivity = activities.find(
-    (activity) => activity.workEntry.toolSource !== undefined,
-  );
-  const primarySourceKey = primarySourceActivity?.workEntry.toolSource?.key;
-  const primarySourceIcon = primarySourceKey
-    ? (activities.find(
-        (activity) =>
-          activity.workEntry.toolSource?.key === primarySourceKey &&
-          activity.workEntry.toolIcon !== undefined,
-      )?.workEntry.toolIcon ?? primarySourceActivity?.workEntry.toolSource?.icon)
-    : undefined;
-  const groupToolSurface =
-    primarySourceActivity?.workEntry.toolSurface ??
-    latestActivity.workEntry.toolSurface ??
-    activities.findLast((activity) => activity.workEntry.toolSurface !== undefined)?.workEntry
-      .toolSurface;
-  const groupToolIcon =
-    primarySourceIcon ??
-    latestActivity.workEntry.toolIcon ??
-    activities.findLast((activity) => activity.workEntry.toolIcon !== undefined)?.workEntry
-      .toolIcon;
-  const summaryToolIcon = live
-    ? resolveWorkEntryToolPresentation(latestActivity.workEntry)?.icon
-    : undefined;
-  result.push({
-    type: "work-toggle",
-    id,
-    createdAt: sourceGroup.createdAt,
-    runId: sourceGroup.runId,
-    groupId,
-    hiddenCount: activities.length,
-    expanded,
-    summary,
-    summaryKind: toolGroupSummaryKind(
-      (live ? [latestActivity] : activities).map((activity) => activity.workEntry),
-    ),
-    ...(groupToolSurface ? { toolSurface: groupToolSurface } : {}),
-    ...(groupToolIcon ? { toolIcon: groupToolIcon } : {}),
-    ...(summaryToolIcon ? { summaryToolIcon } : {}),
-    ...(thought ? { thought } : {}),
-    hasFailure: (() => {
-      const lastToolLike = activities.findLast((activity) => activity.toolLike);
-      return (
-        lastToolLike !== undefined && workEntryDisplayIndicatesToolFailure(lastToolLike.workEntry)
-      );
-    })(),
-    live,
-    shimmer,
-  });
-  if (!expanded) return;
-  result.push({
-    type: "activity-group",
-    id: `work-details:${groupId}`,
-    createdAt: activities[0]!.createdAt,
-    runId: activities[0]!.runId,
-    activities: activities.map((activity) => ({
-      ...activity,
-      groupedToolDetail: true,
-      live:
-        isWorking &&
-        activity.id === latestActivity.id &&
-        activity.lifecycleStatus === "inProgress" &&
-        activity.runId === activeRunId,
-    })),
-  });
-}
-
-function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boolean): string {
+export function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boolean): string {
   const status = liveActivityToolStatus(activity.lifecycleStatus, presentTense);
   if (activity.workEntry.itemType === "reasoning") {
     return compactWorkEntryText(
@@ -1924,7 +914,7 @@ export function createThreadFeedCache(): ThreadFeedCache {
   return { feedBuild: null, presentation: null };
 }
 
-function setsEqual<T>(left: ReadonlySet<T>, right: ReadonlySet<T>): boolean {
+export function setsEqual<T>(left: ReadonlySet<T>, right: ReadonlySet<T>): boolean {
   if (left.size !== right.size) return false;
   for (const value of left) if (!right.has(value)) return false;
   return true;
@@ -1932,7 +922,7 @@ function setsEqual<T>(left: ReadonlySet<T>, right: ReadonlySet<T>): boolean {
 
 // Summaries are re-derived whenever messages change, including streamed text,
 // so a new array often holds the same checkpoints.
-function checkpointSummariesEqual(
+export function checkpointSummariesEqual(
   left: ReadonlyArray<ThreadCheckpointSummary> | undefined,
   right: ReadonlyArray<ThreadCheckpointSummary> | undefined,
 ): boolean {
@@ -1954,7 +944,7 @@ function checkpointSummariesEqual(
   });
 }
 
-function setMapsEqual<K, V>(
+export function setMapsEqual<K, V>(
   left: ReadonlyMap<K, ReadonlySet<V>>,
   right: ReadonlyMap<K, ReadonlySet<V>>,
 ): boolean {
@@ -1967,280 +957,14 @@ function setMapsEqual<K, V>(
 }
 
 /** Index of the first entry that differs, or the shorter length when one extends the other. */
-function firstChangedIndex<T>(previous: ReadonlyArray<T>, next: ReadonlyArray<T>): number {
+export function firstChangedIndex<T>(previous: ReadonlyArray<T>, next: ReadonlyArray<T>): number {
   const limit = Math.min(previous.length, next.length);
   let index = 0;
   while (index < limit && previous[index] === next[index]) index += 1;
   return index;
 }
-
-export function buildThreadFeed(
-  visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
-  options?: {
-    readonly anchoredMessages?: ReadonlyArray<LocalThreadMessage>;
-    readonly attempts?: ReadonlyArray<OrchestrationV2RunAttempt>;
-    readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
-    readonly checkpointSummaries?: ReadonlyArray<ThreadCheckpointSummary>;
-    readonly cache?: ThreadFeedCache;
-  },
-): ThreadFeedEntry[] {
-  const anchoredMessages = options?.anchoredMessages ?? [];
-  const attemptByRootNodeId = new Map(
-    (options?.attempts ?? []).map((attempt) => [attempt.rootNodeId, attempt] as const),
-  );
-  const nodeById = new Map((options?.nodes ?? []).map((node) => [node.id, node] as const));
-  const resolveAttemptId = (item: OrchestrationV2TurnItem): RunAttemptId | null => {
-    if (item.nodeId === null || item.runId === null) return null;
-    let nodeId: OrchestrationV2ExecutionNode["id"] | null = item.nodeId;
-    const visited = new Set<OrchestrationV2ExecutionNode["id"]>();
-    while (nodeId !== null && !visited.has(nodeId)) {
-      visited.add(nodeId);
-      const directAttempt = attemptByRootNodeId.get(nodeId);
-      if (directAttempt?.runId === item.runId) return directAttempt.id;
-      const node = nodeById.get(nodeId);
-      if (node === undefined) return null;
-      const rootAttempt = attemptByRootNodeId.get(node.rootNodeId);
-      if (rootAttempt?.runId === item.runId) return rootAttempt.id;
-      nodeId = node.parentNodeId;
-    }
-    return null;
-  };
-  // Thread-wide facts that change rows anywhere in the feed. A cached prefix
-  // is reused only while these match the build that produced it.
-  const foldedAnswerMessageIds = new Set<string>();
-  const delegatedChildrenByRun = new Map<RunId, Set<string>>();
-  for (const { item } of visibleTurnItems) {
-    if (item.type === "user_input_request" && item.questionAnswer) {
-      foldedAnswerMessageIds.add(`async-answer:${item.questionAnswer.requestId}`);
-    } else if (item.type === "subagent" && item.origin === "app_owned" && item.runId !== null) {
-      const children = delegatedChildrenByRun.get(item.runId) ?? new Set<string>();
-      children.add(item.subagentId);
-      delegatedChildrenByRun.set(item.runId, children);
-    }
-  }
-
-  const cache = options?.cache;
-  const previous = cache?.feedBuild ?? null;
-  let restartIndex = -1;
-  if (
-    previous !== null &&
-    anchoredMessages.length === 0 &&
-    previous.attempts === options?.attempts &&
-    previous.nodes === options?.nodes &&
-    checkpointSummariesEqual(previous.checkpointSummaries, options?.checkpointSummaries) &&
-    setsEqual(previous.foldedAnswerMessageIds, foldedAnswerMessageIds) &&
-    setMapsEqual(previous.delegatedChildrenByRun, delegatedChildrenByRun)
-  ) {
-    const firstChanged = firstChangedIndex(previous.rows, visibleTurnItems);
-    restartIndex = previous.restarts.length - 1;
-    while (restartIndex >= 0 && previous.restarts[restartIndex]!.row > firstChanged) {
-      restartIndex -= 1;
-    }
-  }
-  const restart = restartIndex === -1 ? null : previous!.restarts[restartIndex]!;
-  const prefix = restart === null ? [] : previous!.feed.slice(0, restart.feedLength);
-  const restarts = restart === null ? [] : previous!.restarts.slice(0, restartIndex + 1);
-
-  const entries: RawThreadFeedEntry[] = [];
-  const entryRows: number[] = [];
-  // A stopped compaction's own row already says it stopped. A `/compact` run stopped
-  // before its provider started has no such row, so it keeps the interrupted one.
-  const compactPromptRunIds = new Set<RunId>();
-  const compactedRunIds = new Set<RunId>();
-  for (const { item } of visibleTurnItems) {
-    if (item.runId === null) continue;
-    if (item.type === "user_message" && isCompactionCommandMessage({ role: "user", ...item })) {
-      compactPromptRunIds.add(item.runId);
-    } else if (item.type === "compaction") {
-      compactedRunIds.add(item.runId);
-    }
-  }
-  for (let index = restart?.row ?? 0; index < visibleTurnItems.length; index += 1) {
-    const row = visibleTurnItems[index]!;
-    const item = row.item;
-    if (turnItemIsWorkspacePreparation(item) && !item.deferredWork) continue;
-    if (item.type === "todo_list" || item.type === "checkpoint") continue;
-    if (
-      item.type === "user_message" &&
-      item.inputIntent === "queued_turn" &&
-      item.status === "pending"
-    )
-      continue;
-    if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
-    if (
-      item.type === "run_interrupt_request" ||
-      (item.type === "run_interrupt_result" &&
-        item.runId !== null &&
-        compactPromptRunIds.has(item.runId) &&
-        compactedRunIds.has(item.runId))
-    ) {
-      continue;
-    }
-    const attemptId = resolveAttemptId(item);
-    const cached = projectedEntriesCache.get(row);
-    if (cached?.attemptId === attemptId) {
-      entries.push(cached.entry);
-      entryRows.push(index);
-      continue;
-    }
-    const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
-    const render =
-      item.type === "dynamic_tool" && item.status === "completed"
-        ? htmlRenderFromToolItem(item)
-        : undefined;
-    if (render) {
-      const entry: RawThreadFeedEntry = {
-        type: "html-render",
-        id: `html-render:${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
-        createdAt,
-        runId: item.runId,
-        render,
-      };
-      projectedEntriesCache.set(row, { attemptId, entry });
-      entries.push(entry);
-      entryRows.push(index);
-      continue;
-    }
-    const app = item.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
-    if (app) {
-      const entry: RawThreadFeedEntry = {
-        type: "mcp-app",
-        id: `mcp-app:${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
-        createdAt,
-        runId: item.runId,
-        sourceThreadId: row.sourceThreadId,
-        itemId: row.sourceItemId,
-        revision: turnItemDetailRevision(item),
-        app,
-      };
-      projectedEntriesCache.set(row, { attemptId, entry });
-      entries.push(entry);
-      entryRows.push(index);
-      continue;
-    }
-    if (item.type === "user_message" || item.type === "assistant_message") {
-      const updatedAt = DateTime.formatIso(item.updatedAt);
-      const entry: RawThreadFeedEntry = {
-        type: "message",
-        id: item.messageId,
-        createdAt,
-        message: {
-          id: item.messageId,
-          role: item.type === "user_message" ? "user" : "assistant",
-          text: item.text,
-          ...(item.type === "user_message" && item.context ? { context: item.context } : {}),
-          attachments: item.attachments ?? [],
-          runId: item.runId,
-          streaming: item.type === "assistant_message" && item.streaming,
-          ...(item.type === "user_message"
-            ? {
-                inputIntent: item.inputIntent,
-                createdBy: item.createdBy,
-                creationSource: item.creationSource,
-                ...(item.scheduledTaskId ? { scheduledTaskId: item.scheduledTaskId } : {}),
-                ...(item.senderThreadId ? { senderThreadId: item.senderThreadId } : {}),
-                ...(item.idleCompaction ? { idleCompaction: item.idleCompaction } : {}),
-              }
-            : {}),
-          visibility: row.visibility,
-          sourceThreadId: row.sourceThreadId,
-          createdAt,
-          updatedAt,
-          projectedItem: row,
-        },
-      };
-      projectedEntriesCache.set(row, { attemptId, entry });
-      entries.push(entry);
-      entryRows.push(index);
-      continue;
-    }
-    const activity = toFeedActivity(row, attemptId);
-    const entry: RawThreadFeedEntry = {
-      type: "activity",
-      id: activity.id,
-      createdAt,
-      runId: item.runId,
-      activity,
-    };
-    projectedEntriesCache.set(row, { attemptId, entry });
-    entries.push(entry);
-    entryRows.push(index);
-  }
-  const retainedMessageIds = new Set([
-    ...foldedAnswerMessageIds,
-    ...entries.flatMap((entry) => (entry.type === "message" ? [entry.id] : [])),
-  ]);
-  const appendLocalMessage = (message: LocalThreadMessage): RawThreadFeedEntry => {
-    const cached = localMessageEntriesCache.get(message);
-    if (cached) return cached;
-    const entry: Extract<RawThreadFeedEntry, { readonly type: "message" }> = {
-      type: "message",
-      id: message.id,
-      createdAt: message.createdAt,
-      message: {
-        id: message.id,
-        role: message.role === "assistant" ? "assistant" : "user",
-        text: message.text,
-        ...(message.context ? { context: message.context } : {}),
-        attachments: message.attachments ?? [],
-        runId: null,
-        streaming: message.streaming,
-        visibility: "local",
-        sourceThreadId: ThreadId.make("local-feedback"),
-        createdAt: message.createdAt,
-        updatedAt: message.updatedAt,
-      },
-    };
-    localMessageEntriesCache.set(message, entry);
-    return entry;
-  };
-  for (const message of anchoredMessages) {
-    if (retainedMessageIds.has(message.id)) continue;
-    retainedMessageIds.add(message.id);
-    const entry = appendLocalMessage(message);
-    const insertionIndex = entries.findIndex(
-      (candidate) => candidate.createdAt > message.createdAt,
-    );
-    if (insertionIndex === -1) entries.push(entry);
-    else entries.splice(insertionIndex, 0, entry);
-  }
-  const checkpointByMessageId = new Map(
-    (options?.checkpointSummaries ?? [])
-      .filter((checkpoint) => checkpoint.status === "ready" && checkpoint.files.length > 0)
-      .map((checkpoint) => [checkpoint.assistantMessageId, checkpoint]),
-  );
-  const grouped = groupAdjacentActivities(
-    entries.map((entry) => {
-      if (entry.type !== "message" || entry.message.role !== "assistant") return entry;
-      const checkpointSummary = checkpointByMessageId.get(entry.message.id);
-      if (!checkpointSummary || checkpointSummary.runId !== entry.message.runId) return entry;
-      return { ...entry, message: { ...entry.message, checkpointSummary } };
-    }),
-    delegatedChildrenByRun,
-    // Anchored messages shift entries away from their rows; such a build is not reused.
-    anchoredMessages.length > 0
-      ? undefined
-      : (entryIndex, groupedLength) =>
-          restarts.push({
-            row: entryRows[entryIndex]! + 1,
-            feedLength: prefix.length + groupedLength,
-          }),
-  );
-  const feed = prefix.length === 0 ? grouped : prefix.concat(grouped);
-  if (cache) {
-    cache.feedBuild =
-      anchoredMessages.length > 0
-        ? null
-        : {
-            rows: visibleTurnItems,
-            attempts: options?.attempts,
-            nodes: options?.nodes,
-            checkpointSummaries: options?.checkpointSummaries,
-            foldedAnswerMessageIds,
-            delegatedChildrenByRun,
-            feed,
-            restarts,
-          };
-  }
-  return feed;
-}
+export * from "./threadActivityParts";
+export * from "./threadActivityParts2";
+export * from "./threadActivityParts3";
+export * from "./threadActivityParts5";
+export * from "./threadActivityParts9";

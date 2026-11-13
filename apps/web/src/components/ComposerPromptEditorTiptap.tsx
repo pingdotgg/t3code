@@ -127,6 +127,7 @@ import { importPastedComposerText } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
 import { createComposerExtensions } from "./ComposerPromptEditorTiptapParts";
+import { ComposerCitationNodeView } from "./ComposerPromptEditorTiptapParts2";
 
 export interface ComposerPromptEditorHandle {
   focus: () => void;
@@ -201,7 +202,7 @@ type OpenCitationComment = {
   removeOnCancel?: CitationInsertedSpaces;
 };
 
-const ComposerCitationCommentContext = createContext<{
+export const ComposerCitationCommentContext = createContext<{
   openComment: OpenCitationComment | null;
   onOpenChange: (citeKey: string, open: boolean) => void;
   onDraftChange: (citeKey: string, comment: string) => void;
@@ -233,7 +234,7 @@ function resolvedThemeFromDocument(): "light" | "dark" {
   return document.documentElement.classList.contains("dark") ? "dark" : "light";
 }
 
-const CHIP_NODE_SELECTION_CLASS_NAME =
+export const CHIP_NODE_SELECTION_CLASS_NAME =
   "relative inline-flex min-w-0 max-w-full select-none items-baseline data-[composer-chip-selected]:after:pointer-events-none data-[composer-chip-selected]:after:absolute data-[composer-chip-selected]:after:inset-0 data-[composer-chip-selected]:after:rounded-sm data-[composer-chip-selected]:after:bg-[Highlight] data-[composer-chip-selected]:after:opacity-30 data-[composer-chip-selected]:after:content-['']";
 
 export const ComposerMentionExtension = Node.create({
@@ -386,107 +387,6 @@ export const ComposerCitationExtension = Node.create({
     return ReactNodeViewRenderer(ComposerCitationNodeView);
   },
 });
-
-function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
-  const commentContext = use(ComposerCitationCommentContext);
-  const citation = node.attrs.citation as AssistantCitation;
-  const citeKey = node.attrs.citeKey as string;
-  const commentTarget =
-    commentContext.openComment?.key === citeKey ? commentContext.openComment : null;
-
-  const nodePos = () => {
-    const pos = typeof getPos === "function" ? getPos() : null;
-    return typeof pos === "number" ? pos : null;
-  };
-
-  const onSaveComment = (comment: string): boolean => {
-    if (!editor.isEditable) return false;
-    const pos = nodePos();
-    if (pos === null) return false;
-    const current = editor.state.doc.nodeAt(pos);
-    if (!current || current.type.name !== "composer-citation") return false;
-    const currentCitation = current.attrs.citation as AssistantCitation;
-    const next = withAssistantCitationComment(currentCitation, comment);
-    const tr = editor.state.tr.setNodeMarkup(pos, undefined, {
-      ...current.attrs,
-      citation: next,
-      source: serializeAssistantCitation(next),
-    });
-    editor.view.dispatch(tr);
-    return true;
-  };
-
-  const removeOnCancel = commentTarget?.removeOnCancel;
-  const onRemove = () => {
-    if (!editor.isEditable || !removeOnCancel) return;
-    const pos = nodePos();
-    if (pos === null) return;
-    const { doc } = editor.state;
-    const current = doc.nodeAt(pos);
-    if (!current) return;
-    const end = pos + current.nodeSize;
-    const from = removeOnCancel.before && doc.textBetween(pos - 1, pos) === " " ? pos - 1 : pos;
-    const to = removeOnCancel.after && doc.textBetween(end, end + 1) === " " ? end + 1 : end;
-    editor.chain().focus().deleteRange({ from, to }).run();
-  };
-
-  const onRestoreFocus = () => {
-    if (!editor.isEditable) return;
-    const pos = nodePos();
-    if (pos === null) return;
-    const current = editor.state.doc.nodeAt(pos);
-    if (!current || current.type.name !== "composer-citation") return;
-    editor.commands.focus(pos + current.nodeSize);
-  };
-
-  return (
-    <NodeViewWrapper
-      as="span"
-      className={CHIP_NODE_SELECTION_CLASS_NAME}
-      contentEditable={false}
-      spellCheck={false}
-      data-composer-citation-chip="true"
-      onKeyDown={(event: ReactKeyboardEvent<HTMLElement>) => {
-        if (
-          !editor.isEditable ||
-          event.key !== "Tab" ||
-          event.shiftKey ||
-          event.altKey ||
-          event.metaKey ||
-          event.ctrlKey ||
-          !(event.target instanceof HTMLElement) ||
-          event.target.dataset.citationCommentTrigger === undefined
-        ) {
-          return;
-        }
-        event.preventDefault();
-        onRestoreFocus();
-      }}
-    >
-      <AssistantCitationChip
-        citation={citation}
-        composer
-        commentEditor={{
-          open: commentTarget !== null,
-          sourceAnchor: commentTarget?.sourceAnchor,
-          onOpenChange: (open) => {
-            if (open && !editor.isEditable) return;
-            commentContext.onOpenChange(citeKey, open);
-          },
-          ...(removeOnCancel ? { onCancel: onRemove } : {}),
-          onSave: onSaveComment,
-          onDraftChange: (comment) => commentContext.onDraftChange(citeKey, comment),
-          onSaveAndSend: (comment) => {
-            if (!onSaveComment(comment)) return false;
-            commentContext.onSubmitAndSend();
-            return true;
-          },
-          onRestoreFocus,
-        }}
-      />
-    </NodeViewWrapper>
-  );
-}
 
 export const ComposerContextReferenceExtension = Node.create({
   name: "composer-context-reference",

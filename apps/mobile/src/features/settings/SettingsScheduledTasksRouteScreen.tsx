@@ -93,6 +93,7 @@ import {
   formatScheduledTaskInterval,
 } from "./scheduledTaskPresentation";
 import { TaskForm } from "./SettingsScheduledTasksRouteScreenParts";
+import { EnvironmentTasks } from "./SettingsScheduledTasksRouteScreenParts2";
 
 export type ScheduledTaskRoutes = {
   SettingsScheduledTaskNew: undefined;
@@ -111,7 +112,7 @@ export const DAYS = [
   { index: 0, label: "Sun" },
 ] as const;
 
-function describeSchedule(task: ScheduledTask): string {
+export function describeSchedule(task: ScheduledTask): string {
   if (task.schedule.type === "webhook") return "On webhook";
   if (task.schedule.type === "once") {
     const runAt = new Date(task.schedule.runAt);
@@ -738,171 +739,5 @@ export function WebhookScheduleDetails({
         </Text>
       ) : null}
     </View>
-  );
-}
-
-function EnvironmentTasks({
-  environment,
-  now,
-  projectIds,
-  onEdit,
-}: {
-  readonly environment: SettingsTarget;
-  readonly now: number;
-  readonly projectIds: readonly ProjectId[] | null;
-  readonly onEdit: (task: ScheduledTask) => void;
-}) {
-  const environmentId = environment.environmentId;
-  const tasks = useEnvironmentQuery(
-    serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
-  );
-  const visibleTasks = tasks.data?.tasks.filter(
-    (task) => projectIds === null || projectIds.includes(task.projectId),
-  );
-  const canOperate = useAtomValue(
-    serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
-  );
-  const setEnabled = useAtomCommand(serverEnvironment.setScheduledTaskEnabled, {
-    label: "scheduled task enabled",
-    reportFailure: false,
-  });
-  const runNow = useAtomCommand(serverEnvironment.runScheduledTaskNow, {
-    label: "scheduled task run",
-    reportFailure: false,
-  });
-  const remove = useAtomCommand(serverEnvironment.deleteScheduledTask, {
-    label: "scheduled task delete",
-    reportFailure: false,
-  });
-  const failure = (title: string, result: AtomCommandResult<unknown, unknown>) => {
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      Dialog.alert(title, String(squashAtomCommandFailure(result)));
-    }
-  };
-
-  const act = async (task: ScheduledTask, action: "run" | "toggle" | "delete") => {
-    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
-    const result =
-      action === "run"
-        ? await runNow({ environmentId, input: { id: task.id } })
-        : action === "toggle"
-          ? await setEnabled({ environmentId, input: { id: task.id, enabled: !task.enabled } })
-          : await remove({ environmentId, input: { id: task.id } });
-    failure(`Could not ${action === "toggle" ? "update" : action} task`, result);
-  };
-
-  return (
-    <SettingsSection
-      title={environment.label}
-      titleIcon={
-        <EnvironmentMachineSymbol
-          kind={resolveEnvironmentMachineKind(environment.serverConfig)}
-          size={16}
-          tintColorClassName={
-            Platform.OS === "android" ? "accent-primary" : "accent-foreground-muted"
-          }
-        />
-      }
-    >
-      {tasks.error ? (
-        <Text className="p-4 text-base text-danger-foreground">{tasks.error}</Text>
-      ) : !tasks.data ? (
-        <Text className="p-4 text-base text-foreground-muted">Loading tasks…</Text>
-      ) : visibleTasks?.length === 0 ? (
-        <Text className="p-4 text-base text-foreground-muted">
-          {projectIds === null ? "No scheduled tasks yet." : "No tasks in this project."}
-        </Text>
-      ) : (
-        visibleTasks?.map((task, index) => (
-          <View
-            key={task.id}
-            className={
-              index === 0
-                ? "flex-row items-start gap-1 px-4 py-3"
-                : "flex-row items-start gap-1 border-t border-border-subtle px-4 py-3"
-            }
-          >
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Edit ${task.title}`}
-              onPress={() => {
-                onEdit(task);
-              }}
-              className="min-w-0 flex-1 gap-1 active:opacity-70"
-            >
-              <Text textRole="body" className="text-foreground" numberOfLines={1}>
-                {task.title}
-              </Text>
-              <Text className="text-sm text-foreground-muted" numberOfLines={2}>
-                {describeSchedule(task)}
-                {!task.enabled
-                  ? " · Paused"
-                  : task.nextRunAt
-                    ? ` · ${formatNextScheduledTaskRun(task.nextRunAt, now)}`
-                    : ""}
-              </Text>
-              {task.blockedByPolicy ? (
-                <Text className="text-sm text-foreground-muted" numberOfLines={2}>
-                  {task.blockedByPolicy}
-                </Text>
-              ) : null}
-              {task.lastRunError ? (
-                <Text className="text-sm text-danger-foreground" numberOfLines={2}>
-                  Last run failed: {task.lastRunError}
-                </Text>
-              ) : null}
-            </Pressable>
-            <Menu
-              actions={[
-                { id: "edit", title: "Edit" },
-                {
-                  id: "toggle",
-                  title: task.enabled ? "Pause" : "Resume",
-                  attributes: { disabled: !canOperate },
-                },
-                ...(task.schedule.type === "webhook"
-                  ? []
-                  : [{ id: "run", title: "Run now", attributes: { disabled: !canOperate } }]),
-                {
-                  id: "delete",
-                  title: "Delete",
-                  attributes: { destructive: true, disabled: !canOperate },
-                },
-              ]}
-              onPressAction={({ nativeEvent }) => {
-                const action = nativeEvent.event;
-                if (action === "edit") {
-                  onEdit(task);
-                } else if (action === "delete") {
-                  Dialog.alert("Delete task?", task.title, [
-                    { text: "Cancel", style: "cancel" },
-                    {
-                      text: "Delete",
-                      style: "destructive",
-                      onPress: () => void act(task, "delete"),
-                    },
-                  ]);
-                } else if (action === "toggle" || action === "run") {
-                  void act(task, action);
-                }
-              }}
-            >
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Actions for ${task.title}`}
-                className="h-11 w-11 items-center justify-center"
-              >
-                <SymbolView
-                  name="ellipsis"
-                  size={18}
-                  tintColorClassName="accent-icon"
-                  type="monochrome"
-                />
-              </Pressable>
-            </Menu>
-          </View>
-        ))
-      )}
-    </SettingsSection>
   );
 }

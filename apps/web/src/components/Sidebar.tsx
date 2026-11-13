@@ -274,6 +274,7 @@ import {
   SidebarSectionPlaceholder,
 } from "./sidebar/SidebarListMarkers";
 import { useSidebarThreads } from "./SidebarParts";
+import { isOptimisticDropReleased } from "./SidebarParts3";
 
 function sameSidebarProviderEntries(
   left: ReadonlyMap<string, SidebarProviderEntry>,
@@ -346,7 +347,7 @@ export type SidebarOptimisticDrop = {
   readonly assignedKeys: ReadonlyMap<string, string>;
 };
 
-interface SidebarThreadPartitionInput {
+export interface SidebarThreadPartitionInput {
   readonly threads: readonly EnvironmentThreadShell[];
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   /** Tasks linked environments run for a listed thread; they show under it. */
@@ -414,113 +415,6 @@ export function routeThreadOnly(
 }
 
 // Separate hooks cache maps independently of later Sidebar hooks and preserve dnd-kit inputs.
-export function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
-  const {
-    threads,
-    scopedProjectKeys,
-    delegatedUnderParent,
-    serverConfigs,
-    optimisticDrop,
-    workingShelfEnabled,
-    sortActiveBySend,
-    disconnectedEnvironmentIds,
-  } = input;
-  const preciseNow = new Date().toISOString();
-  const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent);
-  const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
-  const pinned: EnvironmentThreadShell[] = [];
-  const active: EnvironmentThreadShell[] = [];
-  const working: EnvironmentThreadShell[] = [];
-  const inbox = (thread: EnvironmentThreadShell, manuallyMoved = false) =>
-    belongsInSidebarWorkingShelf(thread, {
-      enabled: workingShelfEnabled,
-      disconnectedEnvironmentIds,
-      isWorking: manuallyMoved ? isThreadWorking : inboxObservation.isWorking,
-    })
-      ? working
-      : active;
-  const snoozed: EnvironmentThreadShell[] = [];
-  const settled: EnvironmentThreadShell[] = [];
-  const { draggableThreadKeys, activeReorderableThreadKeys } = resolveSidebarReorderableThreadKeys({
-    threads: visible,
-    serverConfigs,
-    connectedEnvironmentIds: input.connectedEnvironmentIds,
-  });
-  for (const thread of visible) {
-    const configLoaded = serverConfigs.has(thread.environmentId);
-    const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-    if (optimisticDrop?.key === threadKey) {
-      const projected = applySidebarThreadDrop(
-        thread,
-        optimisticDrop.section,
-        optimisticDrop.occurredAt,
-        optimisticDrop.assignedKeys.get(threadKey),
-      );
-      (optimisticDrop.section === "pinned"
-        ? pinned
-        : optimisticDrop.section === "settled"
-          ? settled
-          : inbox(projected, true)
-      ).push(
-        optimisticDrop.clearsSnooze
-          ? projected
-          : { ...projected, snoozedAt: thread.snoozedAt, snoozedUntil: thread.snoozedUntil },
-      );
-    } else {
-      const section = resolveSidebarThreadSection({
-        snoozed: configLoaded && effectiveSnoozed(thread, { now: preciseNow }),
-        settled: configLoaded && thread.settledOverride === "settled",
-        pinned: thread.pinnedAt != null,
-      });
-      (section === "snoozed"
-        ? snoozed
-        : section === "settled"
-          ? settled
-          : section === "pinned"
-            ? pinned
-            : inbox(thread)
-      ).push(thread);
-    }
-  }
-  // Availability gates dragging only; sorting must stay consistent across clients.
-  const sortedPinned = sortPinnedThreadsForSidebar(pinned);
-  const sortedActive = sortActiveBySend
-    ? sortWorkingThreadsBySend(active)
-    : workingShelfEnabled
-      ? sortInboxThreadsByReturn(active, inboxObservation.returnedAt)
-      : sortThreadsForSidebar(active);
-  return {
-    pinnedThreads:
-      optimisticDrop?.section !== "pinned" || optimisticDrop.order === null
-        ? sortedPinned
-        : orderItemsByPreferredIds({
-            items: sortedPinned,
-            preferredIds: optimisticDrop.order,
-            getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-          }),
-    draggableThreadKeys,
-    activeReorderableThreadKeys,
-    activeThreads:
-      optimisticDrop?.section !== "active" || optimisticDrop.order === null
-        ? sortedActive
-        : orderItemsByPreferredIds({
-            items: sortedActive,
-            preferredIds: optimisticDrop.order,
-            getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-          }),
-    workingThreads: sortWorkingThreadsBySend(working),
-    snoozedThreads: snoozed.toSorted(
-      (left, right) =>
-        firstValidTimestampMs(left.snoozedUntil ?? null) -
-        firstValidTimestampMs(right.snoozedUntil ?? null),
-    ),
-    settledThreads: sortSettledThreads(settled),
-    visibleThreads: visible,
-    snoozeNow: preciseNow,
-  };
-}
-
-/** The sidebar's scope per environment: the scoped projects there, or every project. */
 export function olderSettledScopes(
   environmentIds: ReadonlyArray<EnvironmentId>,
   scopedProjectKeys: ReadonlySet<string> | null,
@@ -537,78 +431,6 @@ export function olderSettledScopes(
   });
 }
 
-function isOptimisticDropReleased(input: {
-  readonly optimisticDrop: SidebarOptimisticDrop;
-  readonly threads: readonly EnvironmentThreadShell[];
-  readonly pinnedKeys: readonly string[];
-  readonly activeKeys: readonly string[];
-  readonly now: string;
-}): boolean {
-  const { optimisticDrop, threads, pinnedKeys, activeKeys, now } = input;
-  const canonicalByKey = new Map(
-    threads.map((thread) => [
-      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      thread,
-    ]),
-  );
-  const thread = canonicalByKey.get(optimisticDrop.key);
-  if (thread === undefined || thread.archivedAt !== null) {
-    return true;
-  }
-  const canonicalSection = effectiveSnoozed(thread, { now })
-    ? "snoozed"
-    : thread.settledOverride === "settled"
-      ? "settled"
-      : thread.pinnedAt != null
-        ? "pinned"
-        : "active";
-  if (
-    canonicalSection !== optimisticDrop.sourceSection &&
-    canonicalSection !== optimisticDrop.section
-  ) {
-    return true;
-  }
-  if (optimisticDrop.order === null) {
-    // Settle emits unpin/unsnooze too; hold projected fields and sort times until the whole move completes.
-    if (
-      canonicalSection === optimisticDrop.section &&
-      thread.pinnedAt == null &&
-      (!optimisticDrop.clearsSnooze || thread.snoozedUntil == null)
-    ) {
-      return true;
-    }
-    return false;
-  }
-  if (canonicalSection !== optimisticDrop.section) return false;
-  if (optimisticDrop.clearsSnooze && thread.snoozedUntil != null) return false;
-  const destinationKeys = optimisticDrop.section === "pinned" ? pinnedKeys : activeKeys;
-  const canonicalDestination = destinationKeys.flatMap((key) => {
-    const canonical = canonicalByKey.get(key);
-    return canonical === undefined ? [] : [canonical];
-  });
-  const keyByThread = new Map(
-    canonicalDestination.map((thread) => [
-      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      (optimisticDrop.section === "pinned" ? thread.pinOrderKey : thread.activeOrderKey) ?? null,
-    ]),
-  );
-  const heldOrder = optimisticDrop.order;
-  const heldKeys = new Set(heldOrder);
-  const membershipChanged =
-    destinationKeys.length !== heldOrder.length ||
-    destinationKeys.some((key) => !heldKeys.has(key));
-  const foreignKeyLanded = destinationKeys.some((threadKey) => {
-    const currentKey = keyByThread.get(threadKey) ?? null;
-    if (currentKey === (optimisticDrop.keysAtDrop.get(threadKey) ?? null)) return false;
-    return currentKey !== optimisticDrop.assignedKeys.get(threadKey);
-  });
-  const allAssignmentsLanded = [...optimisticDrop.assignedKeys].every(
-    ([threadKey, orderKey]) => keyByThread.get(threadKey) === orderKey,
-  );
-  return membershipChanged || foreignKeyLanded || allAssignmentsLanded;
-}
-
-// Build maps in a hook so the compiler can prove they are frozen and cache them.
 function useSidebarLookups() {
   const projects = useProjects();
   const environments = useEnvironmentIdentities();
@@ -3435,3 +3257,4 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     </>
   );
 }
+export * from "./SidebarParts2";
