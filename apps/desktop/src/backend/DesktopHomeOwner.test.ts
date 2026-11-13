@@ -3,10 +3,12 @@ import * as NodeSqlite from "node:sqlite";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -94,16 +96,26 @@ describe("DesktopHomeOwner.readLiveHomeOwner", () => {
   );
 });
 
-describe("DesktopHomeOwner.isHomeOwnershipLocked", () => {
-  it.effect("reports the ownership lock only while a server holds it", () =>
+describe("DesktopHomeOwner.awaitHomeOwnershipRelease", () => {
+  it.effect("waits for a shutting-down owner to release the lock, then gives up", () =>
     withTempHome((userdata) =>
       Effect.gen(function* () {
-        assert.isFalse(yield* DesktopHomeOwner.isHomeOwnershipLocked());
+        assert.isTrue(yield* DesktopHomeOwner.awaitHomeOwnershipRelease());
+
         const lock = new NodeSqlite.DatabaseSync(`${userdata}/server-owner.sqlite`);
         lock.exec("BEGIN EXCLUSIVE;");
-        assert.isTrue(yield* DesktopHomeOwner.isHomeOwnershipLocked());
+        const released = yield* Effect.forkChild(DesktopHomeOwner.awaitHomeOwnershipRelease());
+        yield* TestClock.adjust("5 seconds");
         lock.close();
-        assert.isFalse(yield* DesktopHomeOwner.isHomeOwnershipLocked());
+        yield* TestClock.adjust("1 second");
+        assert.isTrue(yield* Fiber.join(released));
+
+        const held = new NodeSqlite.DatabaseSync(`${userdata}/server-owner.sqlite`);
+        held.exec("BEGIN EXCLUSIVE;");
+        const owned = yield* Effect.forkChild(DesktopHomeOwner.awaitHomeOwnershipRelease());
+        yield* TestClock.adjust("1 minute");
+        assert.isFalse(yield* Fiber.join(owned));
+        held.close();
       }),
     ),
   );

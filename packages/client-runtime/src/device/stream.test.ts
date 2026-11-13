@@ -471,6 +471,21 @@ describe("shared device stream readiness and recovery", () => {
     client.stop();
   });
 
+  it("stops retrying a Simlock lease that ended and keeps its reason", async () => {
+    const { client, events, fetch, sockets, videoBodies } = recoveryFixture("ios", false, true);
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const reason = [...new TextEncoder().encode('{"reason":"expired"}')];
+    videoBodies[0]!.enqueue(new Uint8Array([...envelope(4, [1]), ...envelope(7, reason)]));
+    videoBodies[0]!.close();
+    sockets[0]!.onclose?.({ code: 4001, reason: "expired" });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(fetch.mock.calls.filter(([url]) => url.includes("stream.avcc"))).toHaveLength(1);
+    expect(sockets).toHaveLength(1);
+    expect(events.onStatus).toHaveBeenLastCalledWith("error", expect.stringContaining("expired"));
+    client.stop();
+  });
+
   it("does not repaint a delayed JPEG seed over newer decoded video", async () => {
     const { client, videoBodies, drawImage, decodedFrame } = recoveryFixture("ios", false);
     let resolveBitmap!: (bitmap: ImageBitmap) => void;
