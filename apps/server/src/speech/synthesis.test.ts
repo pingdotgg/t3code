@@ -97,6 +97,8 @@ it.effect.each(["xai", "openrouter"] as const)(
                 response_format: "pcm",
               },
         );
+        if (provider === "openrouter")
+          expect(JSON.parse(String(init?.body))).not.toHaveProperty("speed");
         expect(yield* service.synthesisModels(provider)).toEqual({
           models:
             provider === "xai"

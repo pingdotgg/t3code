@@ -59,7 +59,8 @@ export const readAloudController = createReadAloudController(async (text, settin
     new Blob([new Uint8Array(bytes)], { type: speechAudioMimeType(bytes) }),
   );
   const audio = new Audio(url);
-  if (settings.provider === "chatgpt") audio.playbackRate = settings.speed;
+  if (settings.provider === "chatgpt" || settings.provider === "openrouter")
+    audio.playbackRate = settings.speed;
   let done: () => void = () => {};
   const finished = new Promise<void>((resolve, reject) => {
     done = resolve;

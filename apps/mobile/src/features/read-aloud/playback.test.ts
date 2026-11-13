@@ -1,13 +1,18 @@
 import { DEFAULT_READ_ALOUD_SETTINGS, EnvironmentId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import * as Speech from "expo-speech";
-import { createAudioPlayer } from "expo-audio";
+import { Platform } from "react-native";
+import { createAudioPlayer, type AudioStatus } from "expo-audio";
 import { acquireAudioSession, releaseAudioSession } from "../../lib/audioSession";
 import { readAloudController } from "./playback";
 
 vi.mock("react-native", () => ({
   AppState: { currentState: "active", addEventListener: () => ({ remove() {} }) },
-  Platform: { OS: "ios" },
+  Platform: {
+    get OS() {
+      return "ios";
+    },
+  },
 }));
 vi.mock("../../lib/uuid", () => ({ uuidv4: () => "speech-test" }));
 vi.mock("expo-speech", () => ({
@@ -65,24 +70,66 @@ it("falls back from a removed system voice and completes playback", async () => 
 
 it("removes lock-screen playback when recording takes audio focus", async () => {
   const started = Promise.withResolvers<void>();
+  const playing = Promise.withResolvers<void>();
+  const unsubscribe = readAloudController.subscribe(() => {
+    if (readAloudController.getSnapshot().status === "playing") playing.resolve();
+  });
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => {
+    readAloudController.stop();
+    unsubscribe();
+  });
   const player = {
     play: vi.fn(() => started.resolve()),
     pause: vi.fn(),
     release: vi.fn(),
     setPlaybackRate: vi.fn(),
     setActiveForLockScreen: vi.fn(),
-    addListener: vi.fn(),
+    addListener:
+      vi.fn<(_event: string, listener: (status: Partial<AudioStatus>) => void) => void>(),
   };
   vi.mocked(createAudioPlayer).mockReturnValue(
     player as unknown as ReturnType<typeof createAudioPlayer>,
   );
   const run = readAloudController.start("cloud", "reply", {
     ...DEFAULT_READ_ALOUD_SETTINGS,
-    provider: "xai",
+    provider: "openrouter",
+    speed: 1.25,
     environmentId: EnvironmentId.make("host"),
     backgroundPlayback: true,
   });
   await started.promise;
+  await playing.promise;
+  expect(player.setPlaybackRate).toHaveBeenCalledWith(1.25);
+  const statusChanged = player.addListener.mock.calls[0]![1];
+  statusChanged({
+    currentTime: 1,
+    duration: 10,
+    playing: false,
+    isLoaded: true,
+    isBuffering: true,
+    timeControlStatus: "waiting",
+  });
+  expect(readAloudController.getSnapshot().status).toBe("playing");
+  statusChanged({
+    currentTime: 10,
+    duration: 10,
+    playing: false,
+    isLoaded: true,
+    isBuffering: false,
+    timeControlStatus: "paused",
+  });
+  expect(readAloudController.getSnapshot().status).toBe("playing");
+  statusChanged({
+    currentTime: 1,
+    duration: 10,
+    playing: false,
+    isLoaded: true,
+    isBuffering: false,
+    timeControlStatus: "paused",
+  });
+  expect(readAloudController.getSnapshot().status).toBe("paused");
+  await readAloudController.resume();
   const recorder = acquireAudioSession("recording");
   try {
     expect(player.setActiveForLockScreen).toHaveBeenLastCalledWith(false);
@@ -90,5 +137,29 @@ it("removes lock-screen playback when recording takes audio focus", async () => 
     readAloudController.stop();
     await run;
     await releaseAudioSession(recorder);
+    unsubscribe();
   }
+});
+
+it("cancels Android default speech while the native engine initializes", async () => {
+  using _os = vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
+  const loading = Promise.withResolvers<void>();
+  const initialized = Promise.withResolvers<Speech.Voice[]>();
+  vi.mocked(Speech.getAvailableVoicesAsync).mockClear();
+  vi.mocked(Speech.getAvailableVoicesAsync).mockImplementationOnce(() => {
+    loading.resolve();
+    return initialized.promise;
+  });
+  vi.mocked(Speech.speak).mockClear();
+  const run = readAloudController.start("android", "reply", {
+    ...DEFAULT_READ_ALOUD_SETTINGS,
+    provider: "system",
+    voice: "",
+  });
+  expect(Speech.getAvailableVoicesAsync).toHaveBeenCalled();
+  await loading.promise;
+  readAloudController.stop();
+  initialized.resolve([]);
+  await run;
+  expect(Speech.speak).not.toHaveBeenCalled();
 });
