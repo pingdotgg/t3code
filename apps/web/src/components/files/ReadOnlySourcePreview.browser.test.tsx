@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
+import { dragSelectWhileScrolling } from "../../../test/dragSelection";
 import { render } from "../../../test/render";
 
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
@@ -85,6 +86,29 @@ describe("ReadOnlySourcePreview", () => {
     await vi.waitFor(() => expect(rows()[0]?.textContent).not.toBe("line 1"));
 
     const selected = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join("\n");
+    expect(copiedText(rows()[0]!)?.trimEnd()).toBe(selected);
+  });
+
+  it("keeps the start of a drag that scrolls its first rows out of the render window", async () => {
+    await getSyntaxHighlighterPromise("text");
+    await using screen = await render(
+      <div className="flex h-[400px] flex-col">
+        <ReadOnlySourcePreview name="notes.txt" text={text} wordWrap={false} />
+      </div>,
+    );
+    const root = screen.container.querySelector("diffs-container")!.shadowRoot!;
+    const rows = () => root.querySelectorAll("[data-line]");
+    await vi.waitFor(() => expect(rows()[0]?.textContent).toBe("line 1"));
+
+    const scroller = screen.container.querySelector(".file-preview-virtualizer")!;
+    await dragSelectWhileScrolling(
+      scroller,
+      rows()[0]!,
+      () => root.querySelector('[data-line="210"]') ?? undefined,
+    );
+    expect(rows()[0]?.textContent).not.toBe("line 1");
+
+    const selected = Array.from({ length: 210 }, (_, index) => `line ${index + 1}`).join("\n");
     expect(copiedText(rows()[0]!)?.trimEnd()).toBe(selected);
   });
 });

@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import "~/index.css";
 
+import { dragSelectWhileScrolling } from "../../../test/dragSelection";
 import { render } from "../../../test/render";
 
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
@@ -75,4 +76,29 @@ describe("StyledDiffCodeView", () => {
       expect(copiedText(rows()[0]!)).toBe(lines(prefix, 20).join("\n"));
     },
   );
+
+  it("keeps the start of a drag that scrolls its first rows out of the render window", async () => {
+    await getSyntaxHighlighterPromise("text");
+    await using screen = await render(
+      <div className="flex h-[400px] flex-col">
+        <StyledDiffCodeView
+          items={[{ id: "notes", type: "diff", fileDiff }]}
+          options={{ diffStyle: "unified" }}
+          className="min-h-0 flex-1 overflow-auto"
+        />
+      </div>,
+    );
+    const root = screen.container.querySelector("diffs-container")!.shadowRoot!;
+    const rows = () => root.querySelectorAll("[data-line]");
+    await vi.waitFor(() => expect(rows()[0]?.textContent).toBe("old 1"));
+
+    await dragSelectWhileScrolling(
+      screen.container.querySelector(".diff-render-surface")!,
+      rows()[0]!,
+      () => root.querySelector('[data-line][data-line-index^="209,"]') ?? undefined,
+    );
+    expect(rows()[0]?.textContent).not.toBe("old 1");
+
+    expect(copiedText(rows()[0]!)).toBe(lines("old", 210).join("\n"));
+  });
 });

@@ -56,6 +56,10 @@ function linePoint(node: Node, offset: number): LinePoint | null {
   return { line: Number(row.dataset.line), column: range.toString().length };
 }
 
+function compareLinePoints(a: LinePoint, b: LinePoint) {
+  return a.line - b.line || a.column - b.column;
+}
+
 function isMounted(root: ShadowRoot, point: LinePoint) {
   return root.querySelector(`[data-line="${point.line}"]`) !== null;
 }
@@ -84,13 +88,48 @@ export default function ReadOnlySourcePreview(props: {
   const wordWrap = props.wordWrap ?? defaultWordWrap;
   const containerRef = useRef<HTMLDivElement>(null);
   // The selection as file positions, so an end whose row the virtualizer unmounts is still known.
-  const selectionRef = useRef<{ start: LinePoint; end: LinePoint } | null>(null);
+  const selectionRef = useRef<{ start: LinePoint; end: LinePoint; dragged: boolean } | null>(null);
+  // Chromium loses a drag's anchor once the virtualizer unmounts its row and re-anchors on whatever
+  // is mounted, so while the button is held the selection runs between the carets under the pointer
+  // where it went down and where it is now.
+  const pressRef = useRef<{
+    anchor: LinePoint | null;
+    focus: LinePoint | null;
+    x: number;
+    y: number;
+  } | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks the document selection, which lives outside React
   useEffect(() => {
+    const shadowRoot = () => containerRef.current?.querySelector("diffs-container")?.shadowRoot;
+    const caretAt = (root: ShadowRoot, x: number, y: number) => {
+      const caret = document.caretPositionFromPoint?.(x, y, { shadowRoots: [root] });
+      return caret && root.contains(caret.offsetNode)
+        ? linePoint(caret.offsetNode, caret.offset)
+        : null;
+    };
     const track = () => {
-      const root = containerRef.current?.querySelector("diffs-container")?.shadowRoot;
+      const root = shadowRoot();
+      const press = pressRef.current;
+      if (root && press) {
+        press.focus = caretAt(root, press.x, press.y) ?? press.focus;
+        const { anchor, focus } = press;
+        const order = anchor && focus ? compareLinePoints(anchor, focus) : 0;
+        selectionRef.current =
+          !anchor || !focus || order === 0
+            ? null
+            : order < 0
+              ? { start: anchor, end: focus, dragged: true }
+              : { start: focus, end: anchor, dragged: true };
+        return;
+      }
       const range = root ? selectionInside(root) : null;
-      if (!root || !range || range.collapsed) {
+      if (!root || !range) {
+        selectionRef.current = null;
+        return;
+      }
+      // After the button is released the native selection may still hold the lost anchor.
+      if (selectionRef.current?.dragged) return;
+      if (range.collapsed) {
         selectionRef.current = null;
         return;
       }
@@ -99,15 +138,41 @@ export default function ReadOnlySourcePreview(props: {
         point && !isMounted(root, point) ? point : null;
       const start = linePoint(range.startContainer, range.startOffset) ?? evicted(previous?.start);
       const end = linePoint(range.endContainer, range.endOffset) ?? evicted(previous?.end);
-      selectionRef.current = start && end ? { start, end } : null;
+      selectionRef.current = start && end ? { start, end, dragged: false } : null;
+    };
+    const press = (event: PointerEvent) => {
+      selectionRef.current = null;
+      const root = shadowRoot();
+      if (event.button !== 0 || !root) return;
+      const anchor = caretAt(root, event.clientX, event.clientY);
+      pressRef.current = { anchor, focus: anchor, x: event.clientX, y: event.clientY };
+    };
+    const move = (event: PointerEvent) => {
+      if (!pressRef.current) return;
+      pressRef.current.x = event.clientX;
+      pressRef.current.y = event.clientY;
+      track();
+    };
+    const release = () => {
+      if (!pressRef.current) return;
+      track();
+      pressRef.current = null;
     };
     const container = containerRef.current;
     document.addEventListener("selectionchange", track);
     // Scrolling queues the render that unmounts rows; record the selection while they are still there.
     container?.addEventListener("scroll", track, { capture: true, passive: true });
+    container?.addEventListener("pointerdown", press);
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", release);
+    document.addEventListener("pointercancel", release);
     return () => {
       document.removeEventListener("selectionchange", track);
       container?.removeEventListener("scroll", track, { capture: true });
+      container?.removeEventListener("pointerdown", press);
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", release);
+      document.removeEventListener("pointercancel", release);
     };
   }, []);
   const copy = (event: ClipboardEvent<HTMLDivElement>) => {

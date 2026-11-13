@@ -148,6 +148,35 @@ const browserTestProject = {
         resetPointer: async ({ page }) => {
           await page.mouse.move(-1, -1);
         },
+        // Real pointer input for native behavior such as drag selection; x and y are in the test frame.
+        mouse: async (
+          { page, iframe },
+          action: "move" | "down" | "up" | "wheel",
+          x = 0,
+          y = 0,
+          deltaY = 0,
+        ) => {
+          const frame = await iframe.owner().boundingBox();
+          const pageX = (frame?.x ?? 0) + x;
+          const pageY = (frame?.y ?? 0) + y;
+          if (action === "move") await page.mouse.move(pageX, pageY);
+          else if (action === "down") await page.mouse.down();
+          else if (action === "up") await page.mouse.up();
+          else {
+            // Playwright's wheel reports no pressed button, which ends a drag; send it with the left button held.
+            const cdp = await page.context().newCDPSession(page);
+            await cdp.send("Input.dispatchMouseEvent", {
+              type: "mouseWheel",
+              x: pageX,
+              y: pageY,
+              deltaX: 0,
+              deltaY,
+              button: "left",
+              buttons: 1,
+            });
+            await cdp.detach();
+          }
+        },
       },
     },
   },

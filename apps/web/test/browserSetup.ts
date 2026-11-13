@@ -7,6 +7,13 @@ declare module "vite-plus/test/browser" {
   interface BrowserCommands {
     /** Defined in vite.config.ts. Moves Playwright's mouse off the page. */
     resetPointer: () => Promise<void>;
+    /** Defined in vite.config.ts. Drives Playwright's real mouse; x and y are in the test frame. */
+    mouse: (
+      action: "move" | "down" | "up" | "wheel",
+      x?: number,
+      y?: number,
+      deltaY?: number,
+    ) => Promise<void>;
   }
 }
 
