@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import {
@@ -223,6 +225,38 @@ describe("getDiff reads", () => {
       yield* Effect.all([readDiff(7), readDiff(8)], { concurrency: 2 });
 
       expect(peakInFlight).toBeLessThanOrEqual(MAX_DIFF_SPAWNS);
+    }),
+  );
+
+  it.effect("returns a first page within the client's diff timeout when each az read is slow", () =>
+    Effect.gen(function* () {
+      // The client gives up on a diff page after 60s; a cold `az` run takes seconds.
+      const CLIENT_DIFF_TIMEOUT = Duration.seconds(60);
+      const AZ_READ = Duration.millis(2_500);
+      const paths = Array.from({ length: 200 }, (_, at) => `src/file-${at}.ts`);
+
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            listIterations: () => Effect.succeed([ITERATION]),
+            listIterationChanges: () =>
+              Effect.succeed({ changes: paths.map((path) => change(path)), truncated: false }),
+            readItemContent: () =>
+              Effect.sleep(AZ_READ).pipe(
+                Effect.as({ contents: side("new", 2, 4), isBinary: false }),
+              ),
+          }),
+        ),
+      );
+
+      const page = yield* provider
+        .getDiff({ cwd: "/w", repository: "acme/web", host: "dev.azure.com", number: 7 })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust(CLIENT_DIFF_TIMEOUT);
+
+      const slice = page.pollUnsafe();
+      expect(slice, "first diff page still pending at the client's timeout").toBeDefined();
     }),
   );
 
