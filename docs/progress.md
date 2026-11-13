@@ -38,3 +38,10 @@
 - Why: Tomáš wants to trace a problem back to the step and request that caused it. One big commit per task, or a squash merge, hides that.
 - Numbers: docs only, 4 commits in PR #4. The fork runs no CI checks on PRs.
 - Next: watch whether agents keep the cadence. If they do not, add the rule to the built-in orchestration instructions (`orchestrationInstructions.ts`, needs evals).
+
+## 2026-11-13: Auto staggers Claude A/B 5-hour windows
+
+- What: Auto now keeps sending work to the account whose 5-hour window is already running, until any of its windows reaches 90%, then moves to the other account. Within 10 points of 5-hour use, the sooner weekly reset wins. Past 90% everywhere, the account with the most left wins.
+- Why: preferring the emptier account started both 5-hour windows at the same time, so both ran out together. Staggered windows let one refresh while the other is in use.
+- Numbers: 11 routing tests (3 new), a mutation check (dropping the 90% rule fails 3 tests).
+- Next: watch real routing on the hub for a day of use.

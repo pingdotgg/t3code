@@ -17,7 +17,8 @@ const AUTO_MODEL_SLUG = "auto";
 const AUTO_LEVELS = ["low", "medium", "high"] as const;
 type AutoLevel = (typeof AUTO_LEVELS)[number];
 const DEFAULT_LEVEL: AutoLevel = "medium";
-/** Above this peak usage, a sticky model gives way when another candidate has more room. */
+/** At this peak usage an account counts as nearly out: a sticky model gives way and routing
+ * moves to an account with room. */
 const STICKY_MAX_USED_PERCENT = 90;
 
 interface AutoCandidate {
@@ -51,8 +52,9 @@ const opencode = (model: string, effort: string): AutoCandidate => ({
 });
 
 /**
- * Orchestrator candidates per level, best first. Each level starts on its Claude model and
- * steps down through the other subscriptions as limits run out.
+ * Orchestrator candidates per level, best first: Claude A/B, Claude on Antigravity A/B, ChatGPT
+ * (Codex), Grok, Gemini, then free OpenCode models. Models a provider does not list are skipped,
+ * so paid-plan models (Sol, Astra) wait until the plan has them.
  */
 const AUTO_CANDIDATES: Readonly<Record<AutoLevel, ReadonlyArray<AutoCandidate>>> = {
   high: [
@@ -61,8 +63,9 @@ const AUTO_CANDIDATES: Readonly<Record<AutoLevel, ReadonlyArray<AutoCandidate>>>
     antigravity("claude-opus-4-6-thinking", "high"),
     codex("gpt-6.1-sol", "high"),
     codex("gpt-6-astra", "high"),
-    grok("high"),
     codex("gpt-6-luna", "high"),
+    grok("high"),
+    antigravity("gemini-3.8-flash", "high"),
   ],
   medium: [
     claude("claude-opus-5-5", "medium"),
@@ -71,15 +74,21 @@ const AUTO_CANDIDATES: Readonly<Record<AutoLevel, ReadonlyArray<AutoCandidate>>>
     codex("gpt-6.1-sol", "medium"),
     codex("gpt-6-astra", "medium"),
     claude("claude-sonnet-5-5", "medium"),
-    grok("medium"),
+    antigravity("claude-sonnet-4-6", "medium"),
     codex("gpt-6-luna", "medium"),
+    grok("medium"),
+    antigravity("gemini-3.8-flash", "medium"),
+    opencode("opencode/big-pickle", "medium"),
   ],
   low: [
     claude("claude-sonnet-5-5", "low"),
     claude("claude-haiku-5-5", "low"),
     antigravity("claude-sonnet-4-6", "low"),
+    antigravity("gemini-3.8-flash", "low"),
     opencode("opencode/big-pickle", "medium"),
+    opencode("opencode/beam-free", "medium"),
     opencode("opencode/deepseek-v4.1-flash-free", "medium"),
+    opencode("opencode/glm-5.3-flash-free", "medium"),
     codex("gpt-6-luna", "low"),
     grok("low"),
   ],
@@ -127,7 +136,7 @@ export const AUTO_LEVEL_DESCRIPTOR: ProviderOptionDescriptor = {
   ],
 };
 
-/** Accounts whose 5-hour use differs by less than this many points count as equally free. */
+/** Accounts whose 5-hour use differs by less than this many points count as equally far along. */
 const SESSION_BAND_PERCENT = 10;
 
 function sessionUsedPercent(provider: ServerProvider): number {
@@ -145,18 +154,26 @@ function weeklyResetAt(provider: ServerProvider): number {
 }
 
 /**
- * Best instance first: Auto-aware (carries the Auto prompt), then the freer 5-hour window,
- * then, between accounts with similar 5-hour use, the one whose weekly quota resets first.
+ * Best instance first: Auto-aware, then accounts under 90% everywhere. Among those, the further
+ * along 5-hour window, so windows stagger (one refreshes while the other runs); within 10
+ * points, the sooner weekly reset. Past 90% everywhere, the most left.
  */
 function compareInstances(a: ServerProvider, b: ServerProvider): number {
   const aware = Number(isAutoAware(b)) - Number(isAutoAware(a));
   if (aware !== 0) return aware;
-  const session = sessionUsedPercent(a) - sessionUsedPercent(b);
+  const room = Number(hasRoom(b)) - Number(hasRoom(a));
+  if (room !== 0) return room;
+  if (!hasRoom(a)) return peakUsedPercent(a) - peakUsedPercent(b);
+  const session = sessionUsedPercent(b) - sessionUsedPercent(a);
   if (Math.abs(session) >= SESSION_BAND_PERCENT) return session;
   const weekly = weeklyResetAt(a) - weeklyResetAt(b);
   if (Number.isFinite(weekly) && weekly !== 0) return weekly;
   if (weekly === Infinity || weekly === -Infinity) return weekly > 0 ? 1 : -1;
   return session || peakUsedPercent(a) - peakUsedPercent(b);
+}
+
+function hasRoom(provider: ServerProvider): boolean {
+  return peakUsedPercent(provider) < STICKY_MAX_USED_PERCENT;
 }
 
 function peakUsedPercent(provider: ServerProvider): number {
