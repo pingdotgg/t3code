@@ -1,4 +1,5 @@
 import { uuidv4 } from "../../lib/uuid";
+import { threadTagKey } from "@t3tools/contracts";
 import { ThreadUndoNotice } from "./ThreadUndoNotice";
 import { use } from "react";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
@@ -11,8 +12,9 @@ import { Platform } from "react-native";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 
-import { useProjects } from "../../state/entities";
-import { steadyNavigationThreadShellsAtom } from "../../state/threads";
+import { useProjects, useQuietThreadShells } from "../../state/entities";
+import { steadyNavigationThreadShellsAtom, steadyThreadShellsAtom } from "../../state/threads";
+import { threadListEnvironmentsAtom } from "../../state/presentation";
 import { useLaunchingThreads, usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -35,6 +37,8 @@ import {
 } from "./homeThreadList";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
+import { collectThreadTags } from "@t3tools/client-runtime/state/threadTagFilter";
+import { filterListedThreadsByTag } from "../threads/thread-tags";
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceTab } from "../layout/workspace/useSelectWorkspaceTab";
@@ -51,7 +55,7 @@ export function HomeRouteScreen() {
   const projects = useProjects();
   // Stop rebuilding the streaming thread list while Thread covers Home.
   const visible = useHomeRouteVisible();
-  const threads = useLaunchingThreads(
+  const allThreads = useLaunchingThreads(
     useAtomValueWhileVisible(steadyNavigationThreadShellsAtom, visible),
   );
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
@@ -129,8 +133,30 @@ export function HomeRouteScreen() {
     options: listOptions,
     setSelectedEnvironmentId,
     setSelectedProjectKey,
-  } = useHomeListOptions(availableEnvironmentIds);
+    setSelectedTag,
+  } = useHomeListOptions(
+    availableEnvironmentIds,
+    useAtomValueWhileVisible(threadListEnvironmentsAtom, visible).tagEnvironmentIds,
+  );
   const selectedEnvironmentId = listOptions.selectedEnvironmentId;
+  const selectedTag = listOptions.selectedTag;
+  const fullShells = useAtomValueWhileVisible(
+    steadyThreadShellsAtom,
+    visible && selectedTag !== null,
+  );
+  const threads = useMemo(
+    () => filterListedThreadsByTag(allThreads, fullShells, selectedTag),
+    [allThreads, fullShells, selectedTag],
+  );
+  // Quiet shells include nested subagents, so a tag only a child carries is still offered.
+  const quietShells = useQuietThreadShells();
+  const tags = useMemo(() => {
+    const known = collectThreadTags(quietShells);
+    return selectedTag === null ||
+      known.some((tag) => threadTagKey(tag) === threadTagKey(selectedTag))
+      ? known
+      : [...known, selectedTag];
+  }, [quietShells, selectedTag]);
   const projectScopes = useMemo(
     () =>
       buildHomeProjectScopes({
@@ -181,7 +207,8 @@ export function HomeRouteScreen() {
             accessibilityLabel: "Search threads",
           }}
           filter={{
-            customized: selectedEnvironmentId !== null || selectedProjectKey !== null,
+            customized:
+              selectedEnvironmentId !== null || selectedProjectKey !== null || selectedTag !== null,
             items: buildHomeListFilterMenuItems({
               environments,
               projects: projectFilterOptions,
@@ -189,6 +216,9 @@ export function HomeRouteScreen() {
               selectedProjectKey,
               onEnvironmentChange: setSelectedEnvironmentId,
               onProjectChange: setSelectedProjectKey,
+              tags,
+              selectedTag,
+              onTagChange: setSelectedTag,
             }),
           }}
         />
@@ -211,6 +241,9 @@ export function HomeRouteScreen() {
           onRegenerateThreadTitle={regenerateThreadTitle}
           onEnvironmentChange={setSelectedEnvironmentId}
           onProjectChange={setSelectedProjectKey}
+          selectedTag={selectedTag}
+          tags={tags}
+          onTagChange={setSelectedTag}
           onOpenSettings={() => selectTab("settings")}
           onSearchQueryChange={setSearchQuery}
           onSelectThread={handleSelectThread}

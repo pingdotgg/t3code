@@ -369,6 +369,21 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         case "mark_unread":
           command = { ...common, type: "thread.mark-unread" };
           break;
+        case "tag":
+        case "untag":
+          if (input.tag === undefined) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: `${input.action} requires tag.`,
+            });
+          }
+          command = {
+            ...common,
+            type: "thread.tag.set",
+            tag: input.tag,
+            tagged: input.action === "tag",
+          };
+          break;
         default:
           command = { ...common, type: `thread.${input.action}` };
       }

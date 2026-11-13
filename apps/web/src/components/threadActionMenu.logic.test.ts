@@ -26,6 +26,16 @@ const baseState: ThreadActionMenuState = {
 };
 
 describe("buildThreadActionMenuItems", () => {
+  it("offers Tags only where the environment supports it, and gates it on operate", () => {
+    const ids = (state: ThreadActionMenuState) =>
+      buildThreadActionMenuItems(state).map((item) => item.id);
+    expect(ids(baseState)).not.toContain("tags");
+    const supported = { ...baseState, supports: { ...baseState.supports, threadTags: true } };
+    expect(ids(supported)).toContain("tags");
+    const readOnly = buildThreadActionMenuItems({ ...supported, canOperate: false });
+    expect(readOnly.find((item) => item.id === "tags")?.disabled).toBe(true);
+  });
+
   it.each([false, true])(
     "disables both lifecycle directions without permission (reversed: %s)",
     (reversed) => {

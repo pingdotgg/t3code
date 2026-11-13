@@ -257,6 +257,9 @@ describe("threadListV2RowAccessibilityLabel", () => {
         snoozeWakeLabel: "in 2h",
       }),
     ).toBe("Fix login, in 2h, Codex");
+    expect(threadListV2RowAccessibilityLabel({ ...row, tags: ["bug", "review"] })).toBe(
+      "Fix login, 5m, Codex, tagged bug, review",
+    );
   });
 });
 

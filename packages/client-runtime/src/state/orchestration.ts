@@ -206,6 +206,21 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       label: "environment-data:orchestration:force-stop-thread",
       tag: ORCHESTRATION_V2_WS_METHODS.forceStopThread,
     }),
+    // Settings' tag list, archived threads included; read on open, so never served stale.
+    threadTagUsage: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:thread-tag-usage",
+      tag: ORCHESTRATION_V2_WS_METHODS.listThreadTags,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
+    renameThreadTag: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:rename-thread-tag",
+      tag: ORCHESTRATION_V2_WS_METHODS.renameThreadTag,
+    }),
+    deleteThreadTag: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:delete-thread-tag",
+      tag: ORCHESTRATION_V2_WS_METHODS.deleteThreadTag,
+    }),
     turnItem: (target: {
       readonly environmentId: EnvironmentId;
       readonly input: OrchestrationV2GetTurnItemInput;

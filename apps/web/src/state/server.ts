@@ -40,6 +40,10 @@ export const environmentUpdateStatesAtom = environmentAtomList(
   "web-environment-update-states",
   serverEnvironment.updateStateAtom,
 );
+export const environmentHiddenThreadTagsAtom = environmentAtomList(
+  "web-environment-hidden-thread-tags",
+  serverEnvironment.hiddenThreadTagsAtom,
+);
 export const updateOutdatedServer = createOutdatedServerUpdateCommand(connectionAtomRuntime);
 export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,

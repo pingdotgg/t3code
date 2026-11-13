@@ -2089,6 +2089,20 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+        [ORCHESTRATION_V2_WS_METHODS.listThreadTags]: () =>
+          threadManagement.listThreadTags().pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2GetShellSnapshotError({
+                  message: "Failed to load thread tags",
+                  cause,
+                }),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.renameThreadTag]: (input) =>
+          threadManagement.renameThreadTag(input),
+        [ORCHESTRATION_V2_WS_METHODS.deleteThreadTag]: (input) =>
+          threadManagement.deleteThreadTag(input),
         [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]: (input) =>
           loadOlderSettledThreadsPage({
             sql,

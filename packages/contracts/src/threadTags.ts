@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-/** Tags match by exact spelling and case after trimming. */
+/** Tags are trimmed and match ignoring case; a thread keeps the spelling it was first tagged with. */
 export const ThreadTag = TrimmedNonEmptyString.check(
   Schema.isMaxLength(64),
   Schema.makeFilter((value) =>
@@ -16,3 +16,18 @@ export type ThreadTag = typeof ThreadTag.Type;
 export const StoredThreadTags = Schema.Array(Schema.String).pipe(
   Schema.catchDecoding(() => Effect.succeedSome([])),
 );
+
+/** The identity tag spellings share: "bug" and "Bug" are one tag. */
+export const threadTagKey = (tag: string): string => tag.toLowerCase();
+
+/** Tagging keeps an existing spelling; untagging removes every spelling. Returns `tags` when unchanged. */
+export function applyThreadTag(
+  tags: ReadonlyArray<string>,
+  tag: string,
+  tagged: boolean,
+): ReadonlyArray<string> {
+  const key = threadTagKey(tag);
+  if (tagged) return tags.some((each) => threadTagKey(each) === key) ? tags : [...tags, tag];
+  const kept = tags.filter((each) => threadTagKey(each) !== key);
+  return kept.length === tags.length ? tags : kept;
+}

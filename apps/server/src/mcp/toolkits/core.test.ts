@@ -605,6 +605,55 @@ it.effect("rejects an unknown organize target instead of archiving the calling t
   );
 });
 
+it.effect(
+  "tags and untags a thread through organize, and refuses a tag action without a tag",
+  () => {
+    const dispatched: Array<unknown> = [];
+    return Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const call = (args: Record<string, unknown>) =>
+        server
+          .callTool({ name: "t3_thread_organize", arguments: args })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+      const missing = yield* call({ action: "untag" });
+      expect(declaredFailure(missing)).toMatchObject({ code: "invalid_request" });
+      expect(dispatched).toEqual([]);
+
+      expect((yield* call({ action: "tag", tag: "review" })).isError).toBe(false);
+      expect((yield* call({ action: "untag", tag: "review" })).isError).toBe(false);
+      expect(dispatched).toMatchObject([
+        { type: "thread.tag.set", tag: "review", tagged: true },
+        { type: "thread.tag.set", tag: "review", tagged: false },
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerThreadToolkit.pipe(
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+              getProjectThreadRecords: ({ threadId: id }) =>
+                Effect.succeed(
+                  McpToolAccessTestkit.idleThreadProjection(
+                    McpToolAccessTestkit.liveThreadShell(id),
+                  ),
+                ),
+              dispatch: (command) => {
+                dispatched.push(command);
+                return Effect.succeed({ sequence: 1 } as never);
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+  },
+);
+
 it.effect("keeps unexpected handler defects private through the production registration", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;

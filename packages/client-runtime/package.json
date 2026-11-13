@@ -395,6 +395,10 @@
       "types": "./src/state/threadUndo.ts",
       "default": "./src/state/threadUndo.ts"
     },
+    "./state/threadTagFilter": {
+      "types": "./src/state/threadTagFilter.ts",
+      "default": "./src/state/threadTagFilter.ts"
+    },
     "./state/thread-settled": {
       "types": "./src/state/threadSettled.ts",
       "default": "./src/state/threadSettled.ts"

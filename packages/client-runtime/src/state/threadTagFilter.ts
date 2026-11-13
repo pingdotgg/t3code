@@ -4,7 +4,10 @@ import {
   type OrchestrationV2ThreadShell,
   type ScopedThreadRef,
   type ThreadId,
+  ThreadTag,
+  threadTagKey,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 import { threadKey } from "./entities.ts";
 
@@ -19,6 +22,8 @@ export interface TagFilteredEnvironment {
   /** Tags this environment hides, or null while its filter is off. */
   readonly hiddenTags: ReadonlyArray<string> | null;
 }
+
+const isThreadTag = Schema.is(ThreadTag);
 
 export const NO_HIDDEN_THREADS: ReadonlySet<string> = new Set();
 
@@ -55,11 +60,12 @@ export function visibleLinkedThreads<Row extends { readonly id: ThreadId }>(
   );
 }
 
-function hasHiddenTag(
-  tags: ReadonlyArray<string> | undefined,
-  hiddenTags: ReadonlyArray<string> | null,
-): boolean {
-  return hiddenTags?.some((tag) => tags?.includes(tag) === true) === true;
+const tagKeySet = (tags: ReadonlyArray<string>): ReadonlySet<string> =>
+  new Set(tags.map(threadTagKey));
+
+/** Whether any of `tags` matches `keys` (from tagKeySet), ignoring case. */
+function hasAnyTagKey(tags: ReadonlyArray<string> | undefined, keys: ReadonlySet<string>): boolean {
+  return tags !== undefined && keys.size > 0 && tags.some((tag) => keys.has(threadTagKey(tag)));
 }
 
 /**
@@ -87,6 +93,15 @@ export function hiddenThreadKeys(
       });
     }
   }
+  const hiddenKeySets = new Map<TagFilteredEnvironment, ReadonlySet<string>>();
+  const hiddenKeySet = (environment: TagFilteredEnvironment) => {
+    let keys = hiddenKeySets.get(environment);
+    if (keys === undefined) {
+      keys = tagKeySet(environment.hiddenTags ?? []);
+      hiddenKeySets.set(environment, keys);
+    }
+    return keys;
+  };
   const hiddenByKey = new Map<string, boolean>();
   const isHidden = (key: string): boolean => {
     if (alreadyHidden.has(key)) return true;
@@ -107,7 +122,8 @@ export function hiddenThreadKeys(
       return true;
     }
     if (!followsParent) {
-      const hidden = hasHiddenTag(thread.tags, environment.hiddenTags);
+      const hidden =
+        environment.hiddenTags !== null && hasAnyTagKey(thread.tags, hiddenKeySet(environment));
       hiddenByKey.set(key, hidden);
       return hidden;
     }
@@ -122,4 +138,101 @@ export function hiddenThreadKeys(
     if (isHidden(key)) hidden.add(key);
   }
   return hidden.size === 0 ? NO_HIDDEN_THREADS : hidden;
+}
+
+/** Every tag on these threads, deduplicated ignoring case in the first spelling seen, sorted. */
+export function collectThreadTags(
+  threads: ReadonlyArray<Pick<FilterableThread, "tags">>,
+): ReadonlyArray<string> {
+  const tags = new Map<string, string>();
+  for (const thread of threads) {
+    for (const tag of thread.tags ?? []) {
+      const key = threadTagKey(tag);
+      if (!tags.has(key)) tags.set(key, tag);
+    }
+  }
+  return [...tags.values()].sort((left, right) => left.localeCompare(right));
+}
+
+export type ThreadTagInput =
+  | { readonly kind: "empty" }
+  | { readonly kind: "ok"; readonly tag: string }
+  | { readonly kind: "error"; readonly message: string };
+
+/** Checks typed text against the contracts tag rules and the thread's own tags. */
+export function validateThreadTag(input: string, own: ReadonlyArray<string>): ThreadTagInput {
+  const tag = input.trim();
+  if (tag === "") return { kind: "empty" };
+  if (tag.length > 64) return { kind: "error", message: "Tags are 64 characters at most." };
+  if (!isThreadTag(tag)) return { kind: "error", message: "Tags are one line of text." };
+  if (own.some((existing) => threadTagKey(existing) === threadTagKey(tag))) {
+    return { kind: "error", message: "Already tagged." };
+  }
+  return { kind: "ok", tag };
+}
+
+export function suggestThreadTags(
+  known: ReadonlyArray<string>,
+  own: ReadonlyArray<string>,
+  query = "",
+): ReadonlyArray<string> {
+  const needle = threadTagKey(query.trim());
+  const ownKeys = tagKeySet(own);
+  return known.filter(
+    (tag) =>
+      !ownKeys.has(threadTagKey(tag)) && (needle === "" || threadTagKey(tag).includes(needle)),
+  );
+}
+
+type TagFilterThread = Pick<FilterableThread, "id" | "lineage" | "tags"> & {
+  readonly environmentId: EnvironmentId;
+  readonly delegatedFrom?: FilterableThread["delegatedFrom"] | null;
+};
+
+/**
+ * Threads to list under a tag filter: threads with any of the tags, the parents they display
+ * under, and the children of matching threads, so no match loses the row it nests in.
+ */
+export function filterThreadsByTag<T extends TagFilterThread>(
+  threads: ReadonlyArray<T>,
+  tags: ReadonlyArray<string>,
+): ReadonlyArray<T> {
+  if (tags.length === 0) return threads;
+  const parentOf = new Map<string, string | null>();
+  const keyOf = (thread: T) =>
+    threadKey({ environmentId: thread.environmentId, threadId: thread.id });
+  for (const thread of threads) {
+    parentOf.set(
+      keyOf(thread),
+      visibilityParentKey(thread.environmentId, {
+        lineage: thread.lineage,
+        delegatedFrom: thread.delegatedFrom ?? undefined,
+      }),
+    );
+  }
+  const wantedKeys = tagKeySet(tags);
+  const keep = new Set<string>();
+  const tagged = new Set<string>();
+  for (const thread of threads) {
+    if (!hasAnyTagKey(thread.tags, wantedKeys)) continue;
+    const key = keyOf(thread);
+    tagged.add(key);
+    // Walk up so a tagged child keeps the parent it nests under; the set guards cycles.
+    for (let at: string | null | undefined = key; at != null && !keep.has(at);) {
+      keep.add(at);
+      at = parentOf.get(at);
+    }
+  }
+  const underTagged = (key: string): boolean => {
+    const seen = new Set<string>();
+    for (let at = parentOf.get(key); at != null && !seen.has(at); at = parentOf.get(at)) {
+      if (tagged.has(at)) return true;
+      seen.add(at);
+    }
+    return false;
+  };
+  return threads.filter((thread) => {
+    const key = keyOf(thread);
+    return keep.has(key) || underTagged(key);
+  });
 }

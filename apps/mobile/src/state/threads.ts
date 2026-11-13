@@ -59,11 +59,14 @@ const steadyShells = createSteadyShellAtoms({
  * changes once when environments connect, not once per environment.
  */
 export const steadyShellsHoldingAtom = steadyShells.holdingAtom;
-export const steadyNavigationThreadShellsAtom = createEnvironmentThreadShellAtoms({
+const steadyThreadShells = createEnvironmentThreadShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   snapshotAtom: steadyShells.snapshotAtom,
   hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
-}).navigationThreadShellsAtom;
+});
+export const steadyNavigationThreadShellsAtom = steadyThreadShells.navigationThreadShellsAtom;
+/** Every steady shell, children included, for the tag filter that runs before lists nest them. */
+export const steadyThreadShellsAtom = steadyThreadShells.threadShellsAtom;
 export const childThreadApprovalsAtom = createChildThreadApprovalsAtom({
   childThreadInputsAtom: environmentThreadShells.childThreadInputsAtom,
   pendingRequestsAtom: environmentThreadDetails.pendingRequestsAtom,

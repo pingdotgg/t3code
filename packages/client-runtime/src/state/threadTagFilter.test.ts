@@ -2,7 +2,15 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { threadKey } from "./entities.ts";
-import { hiddenThreadKeys, NO_HIDDEN_THREADS, visibleLinkedThreads } from "./threadTagFilter.ts";
+import {
+  collectThreadTags,
+  filterThreadsByTag,
+  hiddenThreadKeys,
+  NO_HIDDEN_THREADS,
+  suggestThreadTags,
+  validateThreadTag,
+  visibleLinkedThreads,
+} from "./threadTagFilter.ts";
 
 const local = EnvironmentId.make("local");
 const linked = EnvironmentId.make("linked");
@@ -93,6 +101,7 @@ describe("hiddenThreadKeys", () => {
 
   it("applies each environment's own tags", () => {
     expect(hiddenIds(null, ["client", "private"])).toEqual([key(linked, "linked-client")]);
+    expect(hiddenIds(null, ["Client"])).toEqual([key(linked, "linked-client")]);
   });
 
   it("judges loaded PR rows by visibility and leaves out unloaded rows while hiding", () => {
@@ -124,4 +133,61 @@ describe("hiddenThreadKeys", () => {
     );
     expect([...archived]).toEqual([key(linked, "delegated-from-private")]);
   });
+});
+
+describe("filterThreadsByTag", () => {
+  const shells = [
+    { ...thread("parent", []), environmentId: local },
+    {
+      ...thread("tagged-subagent", ["review"], { id: "parent", relationship: "subagent" }),
+      environmentId: local,
+    },
+    { ...thread("tagged", ["review"]), environmentId: local },
+    {
+      ...thread("tagged-child", [], { id: "tagged", relationship: "subagent" }),
+      environmentId: local,
+    },
+    { ...thread("other", ["later"]), environmentId: local },
+    { ...thread("loop-a", [], { id: "loop-b", relationship: "subagent" }), environmentId: local },
+    { ...thread("loop-b", [], { id: "loop-a", relationship: "subagent" }), environmentId: local },
+  ];
+  const ids = (tags: ReadonlyArray<string>) =>
+    filterThreadsByTag(shells, tags).map((shell) => String(shell.id));
+
+  it("keeps tagged threads, the parents they nest under, and their children", () => {
+    expect(ids(["review"])).toEqual(["parent", "tagged-subagent", "tagged", "tagged-child"]);
+  });
+
+  it("lists everything without a filter, nothing for an unused tag, and any match for several", () => {
+    expect(ids([])).toHaveLength(shells.length);
+    expect(ids(["missing"])).toEqual([]);
+    expect(ids(["later", "missing"])).toEqual(["other"]);
+    expect(ids(["LATER"])).toEqual(["other"]);
+  });
+});
+
+describe("validateThreadTag", () => {
+  it.each([
+    ["  ", [], { kind: "empty" }],
+    [" review ", [], { kind: "ok", tag: "review" }],
+    ["review", ["review"], { kind: "error", message: "Already tagged." }],
+    ["Review", ["review"], { kind: "error", message: "Already tagged." }],
+    ["x".repeat(65), [], { kind: "error", message: "Tags are 64 characters at most." }],
+    ["a\u0007b", [], { kind: "error", message: "Tags are one line of text." }],
+  ] as const)("%j", (input, own, expected) => {
+    expect(validateThreadTag(input, own)).toEqual(expected);
+  });
+});
+
+it("suggests known tags the thread lacks, matching the query case-insensitively", () => {
+  expect(suggestThreadTags(["auth", "Review", "later"], ["later"], "rev")).toEqual(["Review"]);
+  expect(suggestThreadTags(["auth", "Review", "later"], ["LATER"])).toEqual(["auth", "Review"]);
+});
+
+it("collects each tag once, ignoring case, in the first spelling seen", () => {
+  expect(collectThreadTags([{ tags: ["bug", "Later"] }, { tags: ["Bug", "auth"] }, {}])).toEqual([
+    "auth",
+    "bug",
+    "Later",
+  ]);
 });

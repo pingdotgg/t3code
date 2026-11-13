@@ -52,6 +52,7 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
     activeReorderEnvironmentIds: environmentIds,
     queuedThreadKeys: new Set(),
     settledLimit: 10,
+    tagFilterActive: false,
     now: "2026-01-02T00:00:00.000Z",
     pendingOrder: null,
     shelfPreferencesLoaded: true,
@@ -151,6 +152,33 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
   );
   expect(seen.at(-1)!.layout).not.toBe(search.layout);
   expect(seen.at(-1)!.layout.items.map((item) => item.thread.title)).toEqual(["Updated title"]);
+
+  const draftProjectId = ProjectId.make("project-1");
+  const pendingTasks = [
+    {
+      kind: "draft" as const,
+      key: "draft-task:new-task:unsent",
+      environmentId,
+      projectId: draftProjectId,
+      projectTitle: undefined,
+      projectCwd: undefined,
+      title: "unsent",
+      createdAt: input.now,
+      draftKey: "new-task:unsent",
+      draft: {
+        text: "unsent",
+        attachments: [],
+        project: { environmentId, projectId: draftProjectId, createdAt: input.now },
+      },
+    },
+  ];
+  const pendingCount = () => seen.at(-1)!.items.filter((item) => item.type === "v2-pending").length;
+  await act(async () => root.render(<Probe input={{ ...input, pendingTasks }} tab="chats" />));
+  expect(pendingCount()).toBe(1);
+  await act(async () =>
+    root.render(<Probe input={{ ...input, pendingTasks, tagFilterActive: true }} tab="chats" />),
+  );
+  expect(pendingCount()).toBe(0);
 
   const clockThreads = threads.map((thread) =>
     thread.id === "thread-0" ? { ...thread, snoozedUntil: "2026-01-02T00:00:30.000Z" } : thread,

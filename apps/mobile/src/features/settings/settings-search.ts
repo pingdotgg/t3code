@@ -77,6 +77,7 @@ const SETTINGS_SEARCH_TERMS = {
     "thread behavior",
   ],
   SettingsFollowUp: ["follow-ups", "queue", "steer", "while the agent is running"],
+  SettingsTags: ["tags", "rename tag", "delete tag", "labels", "thread tags"],
   SettingsArchive: ["archive", "archived", "restore", "unarchive"],
   SettingsProviderAccounts: [
     "provider accounts",

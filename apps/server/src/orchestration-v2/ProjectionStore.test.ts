@@ -160,6 +160,10 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
     snoozedUntil: iso(row.snoozedUntil),
   });
   assert.deepEqual(index.map(trimmed), shells.map(trimmed));
+  assert.deepEqual(
+    index.map((row) => row.tagged),
+    shells.map((shell) => (shell.tags?.length ?? 0) > 0),
+  );
   shells.forEach((shell, position) => {
     if (isLiveSubagentShell(shell)) assert.isTrue(index[position]?.mayBeLive, shell.id);
   });
