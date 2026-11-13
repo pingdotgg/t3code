@@ -1556,7 +1556,7 @@ it.effect("closing a tab force-closes a page that never finishes unloading", () 
   ).pipe(Effect.provide(layer)),
 );
 
-it.live.each(["agent", "client", "all", "concurrent", "timeout"] as const)(
+it.effect.each(["agent", "client", "all", "concurrent", "timeout"] as const)(
   "closing a desktop tab waits for unload before removal (%s)",
   (source) =>
     Effect.scoped(
@@ -3543,6 +3543,29 @@ it.effect("a full server takes back the slot of the longest idle agent tab nobod
       expect(concurrent.every((status) => status.available)).toBe(true);
       const remaining = (yield* manager.list({ threadId: scope.thread.threadId })).sessions;
       expect(remaining).toHaveLength(32);
+      const closedBeforeReturn = yield* Deferred.make<void>();
+      const finishClose = yield* Deferred.make<void>();
+      let heldClose = false;
+      closeSpy.mockImplementation((input) => {
+        const hold = !heldClose;
+        heldClose = true;
+        return close(input).pipe(
+          Effect.andThen(
+            hold
+              ? Deferred.succeed(closedBeforeReturn, undefined).pipe(
+                  Effect.andThen(Deferred.await(finishClose)),
+                )
+              : Effect.void,
+          ),
+        );
+      });
+      const reclaimingOpen = yield* open("agent-reclaiming").pipe(Effect.forkScoped);
+      yield* Deferred.await(closedBeforeReturn);
+      const takingFreedSlot = yield* open("agent-taking-free-slot");
+      expect(takingFreedSlot.available).toBe(true);
+      yield* Deferred.succeed(finishClose, undefined);
+      expect((yield* Fiber.join(reclaimingOpen)).available).toBe(true);
+      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toHaveLength(32);
       expect(remaining.some((session) => session.tabId === opened[3])).toBe(false);
       expect(remaining.some((session) => session.tabId === opened[4])).toBe(false);
     }),

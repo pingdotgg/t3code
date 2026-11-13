@@ -1621,7 +1621,14 @@ const make = Effect.gen(function* () {
       Effect.tryPromise({
         try: async () => {
           if (input.automationOwner !== undefined) {
-            if (options.reclaimIdleSlot) await freeIdleAgentSlot(input.automationOwner);
+            while (
+              options.reclaimIdleSlot &&
+              serverAtTabLimit() &&
+              !agentAtTabLimit(input.automationOwner) &&
+              idleAgentTabs().length > 0
+            ) {
+              await freeIdleAgentSlot(input.automationOwner);
+            }
             assertTabCapacity(input.automationOwner);
           }
           pendingTabs.set(key, reservation);
