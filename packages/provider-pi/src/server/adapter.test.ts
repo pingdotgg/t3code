@@ -3406,7 +3406,7 @@ describe("PiAdapterV2", () => {
       // The widget lists one parallel group of a chain at a time, each from position zero.
       const chainGroup = (generatedAt: number, children: ReadonlyArray<unknown>) =>
         widget(generatedAt, [{ id: "chain-1", kind: "subagent", state: "running", children }]);
-      yield* chainGroup(3, [{ id: "child-p", kind: "step", state: "complete", agent: "planner" }]);
+      yield* chainGroup(3, [{ id: "step:0", kind: "step", state: "complete", agent: "planner" }]);
       yield* takeSubagent("planner", "completed");
       yield* chainGroup(4, [{ id: "step:1", kind: "step", state: "pending", agent: "auditor" }]);
       yield* chainGroup(5, [{ id: "child-u", kind: "step", state: "running", agent: "auditor" }]);

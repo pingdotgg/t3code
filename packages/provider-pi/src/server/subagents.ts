@@ -188,16 +188,20 @@ export function makePiBackgroundSubagents<Owner>() {
     const steps = (node.children ?? []).filter((child) => child.kind === "step");
     // Workflow steps are named by their key. Chain and parallel steps trade a `step:<position>`
     // placeholder for a run id once they start, and the widget lists only the active parallel
-    // group: a new run id sits relative to a listed step of known position, else after the last.
+    // group: a new run id sits relative to a listed step of known position, else after the last taken.
     const positions = steps.map((step) => {
       const placeholder = PLACEHOLDER_STEP_ID.exec(step.id)?.[1];
       const known = placeholder ?? run.stepKeys.get(step.id);
       return known === undefined ? undefined : Number(known);
     });
     const anchor = positions.findIndex((position) => position !== undefined);
+    // A row with an outcome is never the step a new run id names, even if it ended on a placeholder.
+    const taken = [...run.members]
+      .filter(([, member]) => isSettled(member.status))
+      .map(([key]) => key);
     const first =
       anchor === -1
-        ? Math.max(-1, ...[...run.stepKeys.values()].map(Number)) + 1
+        ? Math.max(-1, ...[...run.stepKeys.values(), ...taken].map(Number)) + 1
         : positions[anchor]! - anchor;
     const running = new Set<string>();
     const changed = steps.flatMap((step, index) => {
