@@ -115,6 +115,8 @@ export default mergeConfig(
             },
           }
         : {}),
+      // jsonc-parser's UMD main requires its own files at runtime, which the bundle cannot follow.
+      alias: { "jsonc-parser": "jsonc-parser/lib/esm/main.js" },
       deps: {
         // alwaysBundle=false has no opinion; neverBundle must retain transitive native acceleration.
         alwaysBundle: shouldBundleCliDependency,

@@ -139,7 +139,8 @@ async function install(name, version, entry) {
     { platform: 'android', available: android, ...(!android ? { reason: 'Android SDK missing. Set ANDROID_HOME or put adb on the SSH PATH.' } : {}) },
   ];
   if (mode === 'probe') {
-    if (Number(process.versions.node.split('.')[0]) < 22) throw Error('Node 22 or newer is required on the device host.');
+    const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
+    if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 12)) throw Error('Node 22.12 or newer is required on the device host.');
     if (run('npm', ['--version']).status !== 0) throw Error('npm is missing from the non-interactive SSH PATH.');
     console.log(JSON.stringify({ nodePath: process.execPath, platforms, tools: versions() })); return;
   }

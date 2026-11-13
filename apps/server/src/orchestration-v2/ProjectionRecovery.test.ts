@@ -484,11 +484,12 @@ it.effect("selects unfinished recovery work without reading settled thread histo
       WHERE thread_id = ${queued} AND ordinal = 1
     `;
     assert.deepEqual(yield* projections.getRecoveryThreadIds("queued-runs"), [queued]);
-    assert.deepEqual(
-      new Set(yield* projections.getRecoveryThreadIds("runtime")),
-      new Set([queued, archived, blocked, background, outboxOnly, requestOnly]),
-    );
     for (const [kind, expected, index] of [
+      [
+        "runtime",
+        [queued, archived, blocked, background, outboxOnly, requestOnly],
+        "nodes_live_idx",
+      ],
       ["delegated-completions", [delivery], "runs_delegated_delivery_idx"],
       ["subagent-results", [], "threads_subagent_result_idx"],
     ] as const) {
@@ -498,10 +499,12 @@ it.effect("selects unfinished recovery work without reading settled thread histo
         return Effect.succeed(statement);
       };
       assert.deepEqual(
-        yield* projections
-          .getRecoveryThreadIds(kind)
-          .pipe(Effect.provideService(Statement.CurrentTransformer, observe)),
-        expected,
+        new Set(
+          yield* projections
+            .getRecoveryThreadIds(kind)
+            .pipe(Effect.provideService(Statement.CurrentTransformer, observe)),
+        ),
+        new Set<ThreadId>(expected),
       );
       const [query, params] = statements[0]!;
       const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, params);
@@ -1128,14 +1131,25 @@ it.effect("bounds runtime provider-thread reads by ownership and preserves recov
         ${ProviderThreadId.make("provider-thread:ownership:item")}, 1, 'assistant_message', 'waiting', '', '{}')
     `;
     const statements: Array<ReturnType<Statement.Statement<unknown>["compile"]>> = [];
+    const nodeStatements: typeof statements = [];
     const observe: Statement.Transformer = (statement) => {
       const compiled = statement.compile();
       if (compiled[0].includes("SELECT provider_thread.payload_json")) statements.push(compiled);
+      if (compiled[0].includes("SELECT node.payload_json")) nodeStatements.push(compiled);
       return Effect.succeed(statement);
     };
     const projection = yield* projections
       .getRuntimeRecoveryProjection(threadId)
       .pipe(Effect.provideService(Statement.CurrentTransformer, observe));
+    assert.equal(nodeStatements.length, 1);
+    const nodePlan = yield* sql.unsafe<{ detail: string }>(
+      `EXPLAIN QUERY PLAN ${nodeStatements[0]![0]}`,
+      nodeStatements[0]![1],
+    );
+    assert.isTrue(
+      nodePlan.some((row) => /^SEARCH node USING INDEX .*nodes_live_idx/.test(row.detail)),
+      JSON.stringify(nodePlan),
+    );
     assert.deepEqual(
       projection.providerThreads.map((row) => row.id),
       cases

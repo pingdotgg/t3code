@@ -7,6 +7,7 @@ import {
   EventId,
   ExecutionEnvironmentDescriptor,
   MessageId,
+  OrchestrationV2DispatchCommandError,
   ORCHESTRATION_PROTOCOL_VERSION,
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
@@ -41,6 +42,7 @@ import type { WsRpcProtocolClient } from "@t3tools/client-runtime/rpc";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { APP_VERSION } from "~/branding";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
@@ -361,6 +363,11 @@ let terminalMetadataSubscriber: Queue.Queue<TerminalMetadataStreamEvent> | null 
 let threads: ReadonlyArray<FakeThread> = [];
 let dispatched: OrchestrationV2Command[] = [];
 let acceptCommands = false;
+let holdCommand: (command: OrchestrationV2Command) => boolean = () => false;
+let pendingDispatches: Array<{
+  readonly command: OrchestrationV2Command;
+  readonly reply: Deferred.Deferred<never, OrchestrationV2DispatchCommandError>;
+}> = [];
 let sequence = 1;
 let vcsStatusSubscriber: Queue.Queue<VcsStatusStreamEvent> | null = null;
 
@@ -383,7 +390,11 @@ const handlers: Record<string, (input: never) => unknown> = {
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
     Effect.suspend(() => {
       dispatched.push(command);
-      return acceptCommands ? Effect.succeed({ sequence: sequence + 1 }) : Effect.never;
+      if (acceptCommands && !holdCommand(command))
+        return Effect.succeed({ sequence: sequence + 1 });
+      const reply = Deferred.makeUnsafe<never, OrchestrationV2DispatchCommandError>();
+      pendingDispatches.push({ command, reply });
+      return Deferred.await(reply);
     }),
   [WS_METHODS.subscribeTerminalMetadata]: () =>
     subscribe<TerminalMetadataStreamEvent>([{ type: "snapshot", terminals: [] }], (queue) => {
@@ -495,12 +506,18 @@ const encodedDescriptor = Schema.encodeSync(ExecutionEnvironmentDescriptor)(
 /** Serves the environment's HTTP API and these threads until disposed. */
 export function installFakeEnvironment(
   fixtures: ReadonlyArray<FakeThread>,
-  options?: { readonly acceptCommands?: boolean; readonly providers?: ReadonlyArray<unknown> },
+  options?: {
+    readonly acceptCommands?: boolean;
+    /** Commands left unanswered even when accepting, until `rejectPendingCommand`. */
+    readonly holdCommand?: (command: OrchestrationV2Command) => boolean;
+    readonly providers?: ReadonlyArray<unknown>;
+  },
 ): Disposable {
   threads = fixtures;
   baseServerConfig = makeServerConfig(options?.providers ?? [CODEX_PROVIDER]);
   dispatched = [];
   acceptCommands = options?.acceptCommands === true;
+  holdCommand = options?.holdCommand ?? (() => false);
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if (url.origin !== window.location.origin) return realFetch(input, init);
@@ -525,8 +542,26 @@ export function installFakeEnvironment(
       baseServerConfig = makeServerConfig([CODEX_PROVIDER]);
       dispatched = [];
       acceptCommands = false;
+      holdCommand = () => false;
+      pendingDispatches = [];
     },
   };
+}
+
+/** Answers the oldest unanswered command with the server's rejection. */
+export async function rejectPendingCommand(message: string): Promise<void> {
+  const pending = pendingDispatches.shift();
+  if (!pending) throw new Error("No pending command");
+  await Effect.runPromise(
+    Deferred.fail(
+      pending.reply,
+      new OrchestrationV2DispatchCommandError({
+        commandId: pending.command.commandId,
+        commandType: pending.command.type,
+        message,
+      }),
+    ),
+  );
 }
 
 /** Commands the app dispatched to the environment, oldest first. */

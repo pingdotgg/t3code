@@ -115,6 +115,11 @@ const linkedEnvironmentsOffThere = new OrchestratorMcpFailure({
     "The linked environment has Linked environments turned off. Turn it on in its Settings → Labs.",
 });
 
+const stoppedAnswering = new OrchestratorMcpFailure({
+  code: "orchestration_error",
+  message: "The linked environment stopped answering.",
+});
+
 /** The body of an MCP response: JSON, or a single server-sent event carrying JSON. */
 const responseJson = (contentType: string | undefined, text: string) =>
   contentType?.includes("text/event-stream") === true
@@ -147,45 +152,49 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const openSession = Effect.fn("PeerMcpClient.openSession")(function* (
-    from: "link" | "registry",
-    url: string,
-    token: string,
-    limitHeader: Record<string, string>,
-  ) {
-    const initialized = yield* post(
-      url,
-      token,
-      {
-        jsonrpc: "2.0",
-        id: 0,
-        method: "initialize",
-        params: {
-          protocolVersion: PROTOCOL_VERSION,
-          capabilities: {},
-          clientInfo: { name: "t3code-peer", version: "1" },
+  const openSession = Effect.fn("PeerMcpClient.openSession")(
+    function* (
+      from: "link" | "registry",
+      url: string,
+      token: string,
+      limitHeader: Record<string, string>,
+    ) {
+      const initialized = yield* post(
+        url,
+        token,
+        {
+          jsonrpc: "2.0",
+          id: 0,
+          method: "initialize",
+          params: {
+            protocolVersion: PROTOCOL_VERSION,
+            capabilities: {},
+            clientInfo: { name: "t3code-peer", version: "1" },
+          },
         },
-      },
-      limitHeader,
-    );
-    const sessionId = initialized.headers["mcp-session-id"];
-    if (initialized.status === 403) return yield* linkedEnvironmentsOffThere;
-    if (initialized.status !== 200 || sessionId === undefined) {
-      return yield* initialized.status === 401
-        ? rejected(from)
-        : new OrchestratorMcpFailure({
-            code: "orchestration_error",
-            message: `The linked environment refused to start an MCP session (HTTP ${initialized.status}).`,
-          });
-    }
-    yield* post(
-      url,
-      token,
-      { jsonrpc: "2.0", method: "notifications/initialized" },
-      { ...limitHeader, "mcp-session-id": sessionId, "mcp-protocol-version": PROTOCOL_VERSION },
-    );
-    return sessionId;
-  });
+        limitHeader,
+      );
+      const sessionId = initialized.headers["mcp-session-id"];
+      if (initialized.status === 403) return yield* linkedEnvironmentsOffThere;
+      if (initialized.status !== 200 || sessionId === undefined) {
+        return yield* initialized.status === 401
+          ? rejected(from)
+          : new OrchestratorMcpFailure({
+              code: "orchestration_error",
+              message: `The linked environment refused to start an MCP session (HTTP ${initialized.status}).`,
+            });
+      }
+      yield* post(
+        url,
+        token,
+        { jsonrpc: "2.0", method: "notifications/initialized" },
+        { ...limitHeader, "mcp-session-id": sessionId, "mcp-protocol-version": PROTOCOL_VERSION },
+      );
+      return sessionId;
+    },
+    // Only the handshake is bounded: a forwarded tool call may wait for minutes.
+    (effect, _from, url) => Effect.timeout(effect, PeerLinks.probeTimeout(url)),
+  );
 
   /**
    * Where a peer is reached and with what credential: its link if one is
@@ -336,13 +345,8 @@ const make = Effect.gen(function* () {
         Effect.tap(() => links.recordOutcome(input.environmentId, { error: null })),
         // Recorded above with the transport's own message; the agent hears it plainly.
         Effect.catchTags({
-          HttpClientError: () =>
-            Effect.fail(
-              new OrchestratorMcpFailure({
-                code: "orchestration_error",
-                message: "The linked environment stopped answering.",
-              }),
-            ),
+          HttpClientError: () => Effect.fail(stoppedAnswering),
+          TimeoutError: () => Effect.fail(stoppedAnswering),
         }),
         Effect.flatMap(Effect.fromResult),
       ),

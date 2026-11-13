@@ -85,6 +85,7 @@ function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironm
 const SettingsScopeContext = createContext<
   | (ReturnType<typeof useResolvedSettingsScope> & {
       singleEnvironment: boolean;
+      deviceOnly: boolean;
       search: SettingsScopeSearch;
       selectScope: (next: SettingsScopeSearch) => void;
     })
@@ -96,14 +97,17 @@ export function SettingsScopeProvider({
   onChange,
   children,
   singleEnvironment = false,
+  deviceOnly = false,
 }: {
   singleEnvironment?: boolean;
+  /** The page hides the scope picker, so its client settings save for this device. */
+  deviceOnly?: boolean;
   search: SettingsScopeSearch;
   onChange: (next: SettingsScopeSearch) => void;
   children: ReactNode;
 }) {
   const resolved = useResolvedSettingsScope(search, singleEnvironment);
-  const value = { ...resolved, singleEnvironment, selectScope: onChange };
+  const value = { ...resolved, singleEnvironment, deviceOnly, selectScope: onChange };
   return <SettingsScopeContext value={value}>{children}</SettingsScopeContext>;
 }
 

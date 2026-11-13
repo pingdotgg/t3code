@@ -1437,6 +1437,67 @@ it.effect("rejects HTTP failures even when tea exits successfully", () =>
   ),
 );
 
+it.effect("keeps Gitea's failure reason when tea reports an HTTP error", () =>
+  Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    const result = yield* cli
+      .api({
+        cwd: "/repo",
+        repository: "http://forgejo.local:3000/maria/project",
+        path: "repos/maria/project/pulls/1/merge",
+        method: "POST",
+        body: { Do: "merge", delete_branch_after_merge: true },
+      })
+      .pipe(Effect.result);
+    assert.strictEqual(result._tag, "Failure");
+    if (result._tag === "Failure") {
+      assert.include(result.failure.detail, "405");
+      assert.include(result.failure.detail, "The head branch is behind the base branch");
+    }
+  }).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(false),
+      }),
+    ),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make(() => {
+        throw new Error("tea must handle its own HTTP request");
+      }),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        process: {
+          run: (input) =>
+            Effect.succeed(
+              input.args[0] === "login"
+                ? processOutput(
+                    encodeJson([
+                      {
+                        name: "work",
+                        url: "http://forgejo.local:3000",
+                        ssh_host: "forgejo.local",
+                        user: "maria",
+                        default: "true",
+                      },
+                    ]),
+                  )
+                : processOutput(
+                    '{"message":"The head branch is behind the base branch","url":"http://forgejo.local:3000/api/swagger"}',
+                    {
+                      stderr:
+                        "HTTP/1.1 405 Method Not Allowed\nContent-Type: application/json;charset=utf-8\n",
+                    },
+                  ),
+            ),
+        },
+      }),
+    ),
+  ),
+);
+
 it.effect("routes mounted Forgejo repositories without repeating the mount in API paths", () =>
   Effect.gen(function* () {
     const cli = yield* ForgejoCli.make;
@@ -1783,6 +1844,62 @@ it.effect("loads later fj review pages when the server caps pages below the requ
       }),
     ),
     Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
+  );
+});
+
+it.effect("re-sends an fj write with its method and body to a renamed repository's path", () => {
+  const requests: string[] = [];
+  return Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    yield* cli.api({
+      cwd: "/repo",
+      repository: "https://forgejo.local/maria/old-name",
+      path: "repos/maria/old-name/issues/42/comments",
+      method: "POST",
+      body: { body: "only once" },
+    });
+    assert.deepStrictEqual(requests, [
+      "https://forgejo.local/api/v1/repos/maria/old-name/issues/42/comments",
+      "https://forgejo.local/api/v1/repos/maria/new-name/issues/42/comments",
+    ]);
+  }).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(true),
+        readFileString: () =>
+          Effect.succeed(
+            encodeJson({
+              hosts: { "forgejo.local": { type: "Application", token: "test-token" } },
+            }),
+          ),
+      }),
+    ),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => {
+        requests.push(request.url);
+        assert.strictEqual(request.method, "POST");
+        assert.strictEqual(request.headers.authorization, "token test-token");
+        assert.deepStrictEqual(requestJson(request), { body: "only once" });
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            requests.length === 1
+              ? new Response(null, {
+                  status: 301,
+                  headers: { location: "/api/v1/repos/maria/new-name/issues/42/comments" },
+                })
+              : new Response("{}", { status: 201 }),
+          ),
+        );
+      }),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        process: { run: () => Effect.succeed(processOutput("")) },
+      }),
+    ),
   );
 });
 

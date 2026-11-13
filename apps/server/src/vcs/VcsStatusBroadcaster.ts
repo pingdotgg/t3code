@@ -451,7 +451,30 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.refreshLocalStatus",
   )(function* (rawCwd) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-    return yield* refreshLocalStatusCore(cwd);
+    const local = yield* refreshLocalStatusCore(cwd);
+    const cached = yield* getCachedStatus(cwd);
+    // Divergence is local Git data; a slow forge lookup must not delay turn-end updates.
+    if (cached?.remote?.value?.hasUpstream) {
+      const divergence = yield* workflow.upstreamDivergence(cwd);
+      const latest = yield* getCachedStatus(cwd);
+      if (divergence && latest?.remote?.value && latest.remote.branch === divergence.refName) {
+        const value = {
+          ...latest.remote.value,
+          aheadCount: divergence.aheadCount,
+          behindCount: divergence.behindCount,
+        };
+        yield* updateCachedRemoteStatus(
+          cwd,
+          {
+            branch: divergence.refName,
+            value,
+            fingerprint: fingerprintStatusPart(value),
+          },
+          { publish: true },
+        );
+      }
+    }
+    return local;
   });
 
   const readRemoteStatus = Effect.fn("VcsStatusBroadcaster.readRemoteStatus")(function* (
@@ -461,7 +484,18 @@ export const make = Effect.gen(function* () {
     const branch = yield* workflow.currentBranch(cwd);
     // GitManager's remote TTL cache is keyed by cwd, not the checked-out branch.
     yield* workflow.invalidateRemoteStatus(cwd);
-    const value = yield* workflow.remoteStatus({ cwd }, options);
+    const previousRemote = (yield* getCachedStatus(cwd))?.remote;
+    const remote = yield* workflow.remoteStatus({ cwd }, options);
+    const latest = yield* getCachedStatus(cwd);
+    // An overlapping turn refresh and fetch can both move divergence during the forge lookup.
+    const refreshed =
+      remote?.hasUpstream && latest?.remote !== previousRemote && latest?.remote?.branch === branch
+        ? yield* workflow.upstreamDivergence(cwd)
+        : null;
+    const value =
+      remote && refreshed?.refName === branch
+        ? { ...remote, aheadCount: refreshed.aheadCount, behindCount: refreshed.behindCount }
+        : remote;
     const currentBranch = yield* workflow.currentBranch(cwd);
     const cached = yield* getCachedStatus(cwd);
     if (branch !== currentBranch || cached?.local?.value.refName !== currentBranch) {
@@ -822,12 +856,19 @@ export const make = Effect.gen(function* () {
   const watchHead = Effect.fnUntraced(function* (cwd: string, ready: Deferred.Deferred<void>) {
     const headPath = yield* workflow.headPath(cwd);
     if (headPath === null) return;
+    const headDirectory = path.dirname(headPath);
     // Git replaces HEAD by renaming HEAD.lock, which a watch on the file itself would lose.
     yield* fs
-      .watch(path.dirname(headPath), {
+      .watch(headDirectory, {
         onReady: () => Deferred.doneUnsafe(ready, Exit.void),
       })
       .pipe(
+        // On Windows a watch outlives its deleted directory and reports it ~150k times a second.
+        Stream.takeUntilEffect((event) =>
+          event._tag === "Remove"
+            ? fs.exists(headDirectory).pipe(Effect.map((exists) => !exists))
+            : Effect.succeed(false),
+        ),
         Stream.filter((event) => path.basename(event.path) === "HEAD"),
         // A rebase moves HEAD many times; refresh once for whatever arrived during a refresh.
         Stream.buffer({ capacity: 1, strategy: "sliding" }),

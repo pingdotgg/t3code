@@ -117,7 +117,7 @@ const run = (input: OrchestratorMcpDelegateTaskInput, harness: Harness) =>
       ),
     );
     const events = yield* toolkit
-      .handle("delegate_task", input)
+      .handle("delegate_task", input as never)
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
     return events.at(-1)?.result;
   });

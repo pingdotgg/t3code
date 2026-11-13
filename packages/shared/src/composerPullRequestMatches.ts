@@ -63,13 +63,14 @@ export function filterComposerPullRequestMatches<
   }
   const isExactMatch = (entry: ComposerPullRequestMatch) => String(entry.number) === input.query;
   const isLinked = (entry: ComposerPullRequestMatch) => linkedKeys.has(keyOf(entry));
+  const updatedAtMs = (entry: ComposerPullRequestMatch) => Date.parse(entry.updatedAt) || 0;
   // Hermes has no ES2023 array methods, so sort a fresh array.
   return [...uniqueEntries.values()]
     .sort(
       (left, right) =>
         Number(isExactMatch(right)) - Number(isExactMatch(left)) ||
         Number(isLinked(right)) - Number(isLinked(left)) ||
-        right.updatedAt.localeCompare(left.updatedAt),
+        updatedAtMs(right) - updatedAtMs(left),
     )
     .slice(0, input.limit);
 }

@@ -445,7 +445,7 @@ it.effect.each([true, false])(
         ),
       ).toBeUndefined();
       expect(inputs).toEqual(supported ? [{ cwd: "/repo" }] : []);
-    }).pipe(Effect.scoped),
+    }),
 );
 
 it.effect("binds branch capability selection and execution to one session", () =>
@@ -481,5 +481,5 @@ it.effect("binds branch capability selection and execution to one session", () =
     } as ServerConfig);
     expect(yield* Fiber.join(refresh)).toBeUndefined();
     yield* Deferred.await(executed);
-  }).pipe(Effect.scoped),
+  }),
 );

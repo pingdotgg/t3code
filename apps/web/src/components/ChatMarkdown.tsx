@@ -174,6 +174,7 @@ import { filesystemEnvironment } from "../state/filesystem";
 import {
   claimWorkspaceBasenameLookup,
   needsWorkspaceBasenameLookup,
+  pickProjectLinkMatch,
   pickWorkspaceLinkMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
   workspaceLinkLookupQuery,
@@ -646,7 +647,7 @@ function useChatMarkdownState({
   const projects = useProjects();
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
-  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
+  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors, cwd);
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
@@ -792,13 +793,44 @@ function useChatMarkdownState({
       });
       if (metadata._tag !== "Success" || metadata.value.entries[0] !== null) return null;
     }
-    const result = await searchProjectEntries({
-      environmentId,
-      input: { cwd, query, limit: WORKSPACE_BASENAME_LOOKUP_LIMIT, kind: "file" },
-    });
-    return result._tag === "Success"
-      ? pickWorkspaceLinkMatch(workspaceRelativePath, cwd, result.value.entries)
-      : null;
+    const searchRoot = async (root: string) => {
+      const rootQuery = workspaceLinkLookupQuery(workspaceRelativePath, root);
+      if (rootQuery === null) return { root, entries: [] };
+      const result = await searchProjectEntries({
+        environmentId,
+        input: {
+          cwd: root,
+          query: rootQuery,
+          limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
+          kind: "file",
+        },
+      });
+      return { root, entries: result._tag === "Success" ? result.value.entries : [] };
+    };
+    const own = await searchRoot(cwd);
+    const ownMatch = pickWorkspaceLinkMatch(workspaceRelativePath, cwd, own.entries);
+    if (ownMatch !== null) return ownMatch;
+    const threadProjectId = threadRef ? readThreadShell(threadRef)?.projectId : undefined;
+    const otherRoots = projects.flatMap((project) =>
+      project.environmentId === environmentId &&
+      project.id !== threadProjectId &&
+      project.workspaceRoot !== cwd
+        ? [project.workspaceRoot]
+        : [],
+    );
+    if (otherRoots.length === 0) return null;
+    // Another project's file never replaces a thread-local file the search missed.
+    if (needsWorkspaceBasenameLookup(workspaceRelativePath)) {
+      const metadata = await getFilesystemMetadata({
+        environmentId,
+        input: { paths: [resolveWorkspaceFilePath(workspaceRelativePath, cwd)] },
+      });
+      if (metadata._tag !== "Success" || metadata.value.entries[0] !== null) return null;
+    }
+    return pickProjectLinkMatch(
+      workspaceRelativePath,
+      await Promise.all(otherRoots.map(searchRoot)),
+    );
   };
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
     if (!threadRef) return;
@@ -1023,19 +1055,21 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   blockquote: function MarkdownBlockquote({ node: _node, children, ...props }) {
-    const alert =
-      GITHUB_ALERT_PRESENTATIONS[String((props as Record<string, unknown>)["data-alert"] ?? "")];
+    const alertKind = String((props as Record<string, unknown>)["data-alert"] ?? "");
+    const alert = GITHUB_ALERT_PRESENTATIONS[alertKind];
     if (!alert) {
       return <blockquote {...props}>{children}</blockquote>;
     }
     return (
       <div
         role="note"
+        data-markdown-alert={alertKind}
         dir={props.dir}
         className={cn("my-1 border-s-2 ps-3", alert.borderClassName)}
       >
         <p
           data-thread-find-ignore="true"
+          data-markdown-alert-label=""
           className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}
         >
           <alert.Icon aria-hidden className="size-3.5 shrink-0" />
@@ -1592,6 +1626,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             _tag: "media-file",
             threadId: threadRef.threadId,
             path: imageSource.path,
+            ...(imageSource.relative ? { hostOnly: true as const } : {}),
           }}
           alt={altText}
           kind={kind}

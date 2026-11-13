@@ -3,6 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  AuthAccessReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSessionId,
@@ -22,6 +23,7 @@ import {
   WsRpcGroup,
   WsServerRefreshProvidersRpc,
   WsSubscribeServerConfigRpc,
+  type AuthAccessStreamEvent,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2StoredEvent,
@@ -135,6 +137,7 @@ import * as TriageService from "./triage/TriageService.ts";
 import * as TextGenerators from "./textGeneration/TextGenerators.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import * as SecretCheck from "./secrets/SecretCheck.ts";
 import * as ServerConfigModule from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
@@ -149,6 +152,7 @@ import * as EventSink from "./orchestration-v2/EventSink.ts";
 import * as LegacyV1ThreadImporter from "./orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as ThreadCommandExecutor from "./orchestration-v2/ThreadCommandExecutor.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { projectIdentitiesDigest } from "./orchestration-v2/ShellStream.ts";
 import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -233,7 +237,7 @@ it.effect("resends a reveal kind and remote targets that outlast the snapshot ti
       assert.deepEqual(remote.config.remoteOpenTargets, targets);
       assert.equal(remote.config.shellRevealInFileManagerKind, "file-explorer");
     }
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("runs editor, remote open target and direct endpoint discovery side by side", () =>
@@ -272,25 +276,23 @@ const ReplayTestLayer = OrchestrationEventStore.layer.pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 
-it.live.each(["thread", "shell"] as const)(
-  "%s resume skips unknown types, synchronizes, and receives the live tail",
-  (scope) =>
-    Effect.gen(function* () {
-      const store = yield* OrchestrationEventStore.OrchestrationEventStore;
-      const sql = yield* SqlClient.SqlClient;
-      const now = "2026-01-05T00:00:00.000Z";
-      const threadId = ThreadId.make("thread:replay");
-      const projectId = ProjectId.make("project:replay");
-      const project = {
-        id: projectId,
-        title: "Replay",
-        workspaceRoot: "/tmp/replay",
-        defaultModelSelection: null,
-        scripts: [],
-        createdAt: now,
-        updatedAt: now,
-      } satisfies OrchestrationProjectShell;
-      const insert = (version: number, unknown = false) => sql<{ sequence: number }>`
+const resumeSkipsUnknownTypes = (scope: "thread" | "shell") =>
+  Effect.gen(function* () {
+    const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-01-05T00:00:00.000Z";
+    const threadId = ThreadId.make("thread:replay");
+    const projectId = ProjectId.make("project:replay");
+    const project = {
+      id: projectId,
+      title: "Replay",
+      workspaceRoot: "/tmp/replay",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: now,
+      updatedAt: now,
+    } satisfies OrchestrationProjectShell;
+    const insert = (version: number, unknown = false) => sql<{ sequence: number }>`
         INSERT INTO orchestration_events (
           event_id, aggregate_kind, stream_id, stream_version, event_type,
           occurred_at, actor_kind, payload_json, metadata_json, application_event_version
@@ -305,85 +307,91 @@ it.live.each(["thread", "shell"] as const)(
           )}, '{}', 2
         ) RETURNING sequence
       `;
-      const [before] = yield* insert(0);
-      yield* insert(1, true);
-      const [after] = yield* insert(2);
-      const [highWater] = yield* insert(3, true);
-      const updates = yield* PubSub.unbounded();
-      let liveSequence = 0;
-      const consume = <A extends { readonly kind: string; readonly sequence?: number }, E, R>(
-        stream: Stream.Stream<A, E, R>,
-      ) =>
-        stream.pipe(
-          Stream.tap((item) =>
-            Effect.gen(function* () {
-              if (item.kind !== "synchronized") return;
-              const [live] = yield* insert(4);
-              liveSequence = live!.sequence;
-              const events = yield* store
-                .readApplicationEvents({
-                  afterSequence: highWater!.sequence,
-                  throughSequence: liveSequence,
-                })
-                .pipe(Stream.runCollect);
-              yield* store.publishCommitted(events);
-            }),
-          ),
-          Stream.takeUntil((item) => item.sequence === liveSequence),
-          Stream.map((item) => ({ kind: item.kind as string, sequence: item.sequence })),
-          Stream.runCollect,
-        );
-      const subscription = Effect.gen(function* () {
-        return scope === "thread"
-          ? yield* subscribeOrchestrationV2Thread({
-              threadId,
-              afterSequence: before!.sequence,
-              requestCompletionMarker: true,
-            }).pipe(Effect.flatMap(consume))
-          : yield* subscribeOrchestrationV2Shell({
-              afterSequence: before!.sequence,
-              requestCompletionMarker: true,
-            }).pipe(Effect.flatMap(consume));
-      });
-      const items = yield* subscription.pipe(
-        Effect.provideService(ThreadManagement.ThreadManagementService, {
-          ensureLegacyTranscript: () => Effect.void,
-          getShellSnapshot: () => Effect.die("shell resume must not load a full snapshot"),
-          listActiveSubagentThreadIds: () => Effect.succeed([]),
-          streamStoredEventsFrom: (
-            input: Parameters<
-              ThreadManagement.ThreadManagementService["Service"]["streamStoredEventsFrom"]
-            >[0],
-          ) => {
-            assert.equal(input?.afterSequence, highWater!.sequence);
-            return store
-              .streamApplicationEvents({ afterSequence: input?.afterSequence ?? 0 })
-              .pipe(
-                Stream.filter((event): event is OrchestrationV2StoredEvent => "event" in event),
-              );
-          },
-        } as unknown as ThreadManagement.ThreadManagementService["Service"]),
-        Effect.provideService(ProjectStore.ProjectStoreV2, {
-          listShells: () => Effect.succeed([]),
-        } as unknown as ProjectStore.ProjectStoreV2["Service"]),
-        Effect.provideService(ProjectService.ProjectService, {
-          getShell: () => Effect.succeedSome(project),
-        } as unknown as ProjectService.ProjectService["Service"]),
-        Effect.provideService(ProjectEnrichment.ProjectEnrichmentService, {
-          subscribeChanges: PubSub.subscribe(updates),
-        } as ProjectEnrichment.ProjectEnrichmentService["Service"]),
+    const [before] = yield* insert(0);
+    yield* insert(1, true);
+    const [after] = yield* insert(2);
+    const [highWater] = yield* insert(3, true);
+    const updates = yield* PubSub.unbounded();
+    let liveSequence = 0;
+    const consume = <A extends { readonly kind: string; readonly sequence?: number }, E, R>(
+      stream: Stream.Stream<A, E, R>,
+    ) =>
+      stream.pipe(
+        Stream.tap((item) =>
+          Effect.gen(function* () {
+            if (item.kind !== "synchronized") return;
+            const [live] = yield* insert(4);
+            liveSequence = live!.sequence;
+            const events = yield* store
+              .readApplicationEvents({
+                afterSequence: highWater!.sequence,
+                throughSequence: liveSequence,
+              })
+              .pipe(Stream.runCollect);
+            yield* store.publishCommitted(events);
+          }),
+        ),
+        Stream.takeUntil((item) => item.sequence === liveSequence),
+        Stream.map((item) => ({ kind: item.kind as string, sequence: item.sequence })),
+        Stream.runCollect,
       );
-      assert.deepEqual(
-        items.map((item) => item.kind),
-        scope === "thread"
-          ? ["event", "synchronized", "event"]
-          : ["project.updated", "synchronized", "project.updated"],
-      );
-      assert.deepEqual(
-        items.flatMap((item) => (item.sequence === undefined ? [] : [item.sequence])),
-        [after!.sequence, liveSequence],
-      );
-    }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+    const subscription = Effect.gen(function* () {
+      return scope === "thread"
+        ? yield* subscribeOrchestrationV2Thread({
+            threadId,
+            afterSequence: before!.sequence,
+            requestCompletionMarker: true,
+          }).pipe(Effect.flatMap(consume))
+        : yield* subscribeOrchestrationV2Shell({
+            afterSequence: before!.sequence,
+            requestCompletionMarker: true,
+          }).pipe(Effect.flatMap(consume));
+    });
+    const items = yield* subscription.pipe(
+      Effect.provideService(ThreadManagement.ThreadManagementService, {
+        ensureLegacyTranscript: () => Effect.void,
+        getShellSnapshot: () => Effect.die("shell resume must not load a full snapshot"),
+        listActiveSubagentThreadIds: () => Effect.succeed([]),
+        streamStoredEventsFrom: (
+          input: Parameters<
+            ThreadManagement.ThreadManagementService["Service"]["streamStoredEventsFrom"]
+          >[0],
+        ) => {
+          assert.equal(input?.afterSequence, highWater!.sequence);
+          return store
+            .streamApplicationEvents({ afterSequence: input?.afterSequence ?? 0 })
+            .pipe(Stream.filter((event): event is OrchestrationV2StoredEvent => "event" in event));
+        },
+      } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+      Effect.provideService(ProjectStore.ProjectStoreV2, {
+        listShells: () => Effect.succeed([]),
+      } as unknown as ProjectStore.ProjectStoreV2["Service"]),
+      Effect.provideService(ProjectService.ProjectService, {
+        getShell: () => Effect.succeedSome(project),
+      } as unknown as ProjectService.ProjectService["Service"]),
+      Effect.provideService(ProjectEnrichment.ProjectEnrichmentService, {
+        subscribeChanges: PubSub.subscribe(updates),
+      } as ProjectEnrichment.ProjectEnrichmentService["Service"]),
+    );
+    assert.deepEqual(
+      items.map((item) => item.kind),
+      scope === "thread"
+        ? ["event", "synchronized", "event"]
+        : ["project.updated", "synchronized", "project.updated"],
+    );
+    assert.deepEqual(
+      items.flatMap((item) => (item.sequence === undefined ? [] : [item.sequence])),
+      [after!.sequence, liveSequence],
+    );
+  }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer));
+
+it.effect("thread resume skips unknown types, synchronizes, and receives the live tail", () =>
+  resumeSkipsUnknownTypes("thread"),
+);
+
+// Shell updates batch through `Stream.groupedWithin`, whose window needs real time to close.
+it.live("shell resume skips unknown types, synchronizes, and receives the live tail", () =>
+  resumeSkipsUnknownTypes("shell"),
 );
 
 it.effect("coalesces streaming replay before synchronization and the live tail", () =>
@@ -708,6 +716,8 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
       shell("live", "parent", "running"),
       ...Array.from({ length: 25 }, (_, index) => shell(`recent-${index}`, null, null, 1)),
       shell("old", null, null, 30),
+      shell("remote-parent", null, null, 40),
+      shell("remote-child-parent", "parent", null),
     ];
     const firstSnapshot = (input: {
       readonly omitIdleSubagents?: boolean;
@@ -724,6 +734,7 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
                 pinnedAt: null,
                 snoozedUntil: null,
                 mayBeLive: thread.activityRunStatus !== null,
+                hasRemoteTasks: thread.id.startsWith("remote-"),
               })),
             ),
           readShellSnapshot: (options?: { readonly threadIds?: ReadonlyArray<string> }) =>
@@ -767,15 +778,17 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
     const withoutChildren = yield* firstSnapshot({ omitIdleSubagents: true });
     assert.deepEqual(
       withoutChildren?.threads.map((thread) => thread.id),
-      ["parent", "live", ...recent, "old"],
+      ["parent", "live", ...recent, "old", "remote-parent", "remote-child-parent"],
     );
+    // A linked environment's clients nest its task under its parent, so that parent stays: an
+    // older settled thread or an idle subagent.
     const withoutOld = yield* firstSnapshot({ omitIdleSubagents: true, omitOlderSettled: true });
     assert.deepEqual(
       withoutOld?.threads.map((thread) => thread.id),
-      ["parent", "live", ...recent],
+      ["parent", "live", ...recent, "remote-parent", "remote-child-parent"],
     );
     assert.deepEqual(withoutOld?.olderSettled?.counts, [
-      { projectId: ProjectId.make("project"), count: 1 },
+      { projectId: ProjectId.make("project"), count: 2 },
     ]);
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
@@ -784,6 +797,7 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
 const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(DocumentText.DocumentText)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+  Layer.mock(SecretCheck.SecretCheck)({}),
   Layer.mock(WorkspacePaths.WorkspacePaths)({}),
   Layer.mock(TraceDiagnostics.TraceDiagnostics)({}),
   Layer.mock(TriageService.TriageService)({}),
@@ -1130,8 +1144,118 @@ it.effect.each([
           Layer.mock(ServerBrowser.ServerBrowser)({}),
         ),
       ),
-      Effect.scoped,
     ),
+);
+
+it.effect("access changes made while the snapshot loads reach the client after it", () =>
+  Effect.gen(function* () {
+    const pairingChanges = yield* PubSub.unbounded<PairingGrantStore.BootstrapCredentialChange>();
+    const sessionChanges = yield* PubSub.unbounded<SessionStore.SessionCredentialChange>();
+    const subscribed = yield* Queue.unbounded<void>();
+    const subscribe = <A>(changes: PubSub.PubSub<A>) =>
+      Stream.unwrap(
+        PubSub.subscribe(changes).pipe(
+          Effect.tap(() => Queue.offer(subscribed, undefined)),
+          Effect.map(Stream.fromSubscription),
+        ),
+      );
+    const revokedElsewhere = AuthSessionId.make("revoked-elsewhere");
+    const responses = yield* Queue.unbounded<AuthAccessStreamEvent>();
+    const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+      ...WS_RPC_SERVER_OPTIONS,
+      onFromServer: (response) =>
+        response._tag === "Chunk"
+          ? Effect.forEach(
+              response.values,
+              (event) => Queue.offer(responses, event as AuthAccessStreamEvent),
+              {
+                discard: true,
+              },
+            )
+          : Effect.void,
+    }).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("current"),
+            subject: "current",
+            method: "browser-session-cookie",
+            scopes: [],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          { secretReferences: true },
+        ).pipe(
+          Layer.merge(RpcAuthorization.layer([AuthAccessReadScope])),
+          Layer.provide(
+            Layer.mergeAll(
+              layerUnusedConfigRpcServices,
+              Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+              Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+              Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+              Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+              Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                namedProjectsRoot: "/unused",
+              }),
+              Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+              Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+              Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+                listPairingLinks: () => Effect.succeed([]),
+                // Another client revokes a session after the snapshot read it.
+                listClientSessions: () =>
+                  PubSub.publish(sessionChanges, {
+                    type: "clientRemoved",
+                    sessionId: revokedElsewhere,
+                  }).pipe(Effect.as([])),
+              }),
+              Layer.mock(PairingGrantStore.PairingGrantStore)({
+                streamChanges: subscribe(pairingChanges),
+              }),
+              Layer.mock(SessionStore.SessionStore)({
+                cookieName: "auth-access-test",
+                legacyCookieName: undefined,
+                streamChanges: subscribe(sessionChanges),
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+    const requestId = RpcMessage.RequestId("auth-access");
+    yield* server.write(0, {
+      _tag: "Request",
+      id: requestId,
+      tag: WS_METHODS.subscribeAuthAccess,
+      payload: {},
+      headers: Headers.empty,
+    });
+    const snapshot = yield* Queue.take(responses);
+    assert.equal(snapshot.type, "snapshot");
+    yield* server.write(0, { _tag: "Ack", requestId });
+    yield* Queue.take(subscribed);
+    yield* Queue.take(subscribed);
+
+    // A later change arrives either way, so a dropped revocation fails as a mismatch.
+    yield* PubSub.publish(pairingChanges, { type: "pairingLinkRemoved", id: "later" });
+    const next = yield* Queue.take(responses);
+    assert.deepEqual(next, {
+      version: 1,
+      revision: 2,
+      type: "clientRemoved",
+      payload: { sessionId: revokedElsewhere },
+    });
+    yield* server.write(0, { _tag: "Interrupt", requestId, interruptors: [] });
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+  ),
 );
 
 it.effect("on-demand clients get provider config without workspace snapshots", () =>
@@ -1168,6 +1292,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       ],
     };
     let scansCwd = true;
+    let registryProviders: ReadonlyArray<ServerProvider> = [provider];
     const providerChanges = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
     const pulled = yield* Queue.unbounded<void>();
     const responses = yield* Queue.unbounded<unknown>();
@@ -1178,11 +1303,12 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         resolveFileManagerRevealKind: () => Effect.undefined,
       }),
       Layer.mock(ProviderRegistry.ProviderRegistry)({
-        getProviders: Effect.succeed([provider]),
+        getProviders: Effect.sync(() => registryProviders),
         streamChanges: Stream.fromQueue(providerChanges).pipe(
           Stream.tap(() => Queue.offer(pulled, undefined)),
         ),
-        refreshWorkspaceSnapshot: () => Effect.succeed([provider]),
+        refresh: () => Effect.sync(() => registryProviders),
+        refreshWorkspaceSnapshot: () => Effect.sync(() => registryProviders),
       }),
       Layer.mock(ProjectService.ProjectService)({
         workspaceScanDirectory: (cwd) => Effect.succeed(cwd),
@@ -1204,6 +1330,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       Layer.mock(UsageLimitSources.UsageLimitSources)({
         current: Effect.succeed([]),
         streamChanges: Stream.make([]),
+        refresh: Effect.void,
       }),
       Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
         resolveTargets: () => Effect.succeed([]),
@@ -1359,6 +1486,121 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       },
     ]);
     yield* server.write(0, { _tag: "Interrupt", requestId: configRequest, interruptors: [] });
+
+    // A client that takes digests and deltas, against a catalog of over 200 KB.
+    const heavy: ServerProvider = {
+      ...provider,
+      slashCommands: Array.from({ length: 250 }, (_, index) => ({
+        name: `command-${index}`,
+        description: "d".repeat(400),
+      })),
+      skills: Array.from({ length: 200 }, (_, index) => ({
+        name: `skill-${index}`,
+        description: "d".repeat(500),
+        path: `/home/user/.claude/skills/skill-${index}/SKILL.md`,
+        enabled: true,
+      })),
+    };
+    registryProviders = [heavy];
+    const lightRequest = RpcMessage.RequestId("light-config");
+    yield* server.write(0, {
+      _tag: "Request",
+      id: lightRequest,
+      tag: WS_METHODS.subscribeServerConfig,
+      payload: {
+        workspaceSnapshotsOnDemand: true,
+        providerCatalogsOnDemand: true,
+        providerCatalogDigests: true,
+        providerStatusDeltas: true,
+      },
+      headers: Headers.empty,
+    });
+    const light = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (light.type !== "snapshot") return yield* Effect.die("Missing light snapshot");
+    const digest = light.config.providers[0]?.catalogDigest;
+    assert.isString(digest);
+    assert.deepEqual(
+      [light.config.providers[0]?.slashCommands, light.config.providers[0]?.skills],
+      [[], []],
+    );
+    // Budget for the first config a phone decodes: the catalog stays out of it.
+    assert.isBelow(JSON.stringify(light.config.providers).length, 1024);
+    yield* server.write(0, { _tag: "Ack", requestId: lightRequest });
+
+    // A health check sends the provider without the lists the client already holds.
+    yield* Queue.offer(providerChanges, [{ ...heavy, checkedAt: "2026-10-25T00:10:00.000Z" }]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    const delta = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (delta.type !== "providerStatusDeltas") return yield* Effect.die("Expected provider deltas");
+    assert.deepEqual(
+      delta.payload.providers.map((entry) => [
+        entry.checkedAt,
+        entry.catalogDigest,
+        entry.models,
+        entry.slashCommands,
+        entry.skills,
+      ]),
+      [["2026-10-25T00:10:00.000Z", digest, undefined, undefined, undefined]],
+    );
+    yield* server.write(0, { _tag: "Ack", requestId: lightRequest });
+
+    // A changed description changes the digest, so the client loads the lists again.
+    yield* Queue.offer(providerChanges, [
+      {
+        ...heavy,
+        checkedAt: "2026-10-25T00:20:00.000Z",
+        skills: heavy.skills.map((skill, index) =>
+          index === 0 ? { ...skill, description: "changed" } : skill,
+        ),
+      },
+    ]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    const redescribed = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (redescribed.type !== "providerStatusDeltas") {
+      return yield* Effect.die("Expected provider deltas");
+    }
+    assert.notEqual(redescribed.payload.providers[0]?.catalogDigest, digest);
+    yield* server.write(0, { _tag: "Ack", requestId: lightRequest });
+
+    // A caller that only waits for a machine refresh gets no provider list back.
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("refresh-omitted"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: { workspaceSnapshotsOnDemand: true, omitProviders: true },
+      headers: Headers.empty,
+    });
+    assert.deepEqual(yield* Queue.take(responses), { providers: [] });
+
+    // The cwd snapshot brings the lists the digest stands for, under the same digest.
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("refresh-machine-catalog"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: {
+        instanceId,
+        cwd: "/b",
+        workspaceSnapshotsOnDemand: true,
+        providerCatalogsOnDemand: true,
+        omitProviders: true,
+        machineCatalog: true,
+      },
+      headers: Headers.empty,
+    });
+    const loaded = (yield* Queue.take(responses)) as {
+      readonly providers: ReadonlyArray<ServerProvider>;
+    };
+    assert.equal(loaded.providers[0]?.catalogDigest, digest);
+    assert.deepEqual(loaded.providers[0]?.slashCommands[0], { name: "command-0" });
+    assert.deepEqual(loaded.providers[0]?.skills[0], {
+      name: "skill-0",
+      path: "/home/user/.claude/skills/skill-0/SKILL.md",
+      enabled: true,
+    });
+    assert.lengthOf(loaded.providers[0]?.workspaceSnapshots ?? [], 1);
+    yield* server.write(0, { _tag: "Interrupt", requestId: lightRequest, interruptors: [] });
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -1367,7 +1609,6 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         Layer.mock(ServerBrowser.ServerBrowser)({}),
       ),
     ),
-    Effect.scoped,
   ),
 );
 
@@ -1539,7 +1780,6 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
         Layer.mock(ServerBrowser.ServerBrowser)({}),
       ),
     ),
-    Effect.scoped,
   ),
 );
 
@@ -1613,7 +1853,6 @@ it.effect("a git action that fails partway still refreshes the repository status
         Layer.mock(ServerBrowser.ServerBrowser)({}),
       ),
     ),
-    Effect.scoped,
   ),
 );
 
@@ -1701,7 +1940,6 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
         Layer.mock(ServerBrowser.ServerBrowser)({}),
       ),
     ),
-    Effect.scoped,
   ),
 );
 
@@ -1857,41 +2095,123 @@ it.effect.each(["thread", "shell"] as const)(
     }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
-// A thread idle since before the boundary missed nothing; resuming must not resend its body.
-it.effect("thread resume at its own high-water below the pruned boundary skips the snapshot", () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const now = "2026-10-13T00:00:00.000Z";
-    const threadId = ThreadId.make("thread:idle");
-    const [last] = yield* sql<{ sequence: number }>`
-      INSERT INTO orchestration_events (
-        event_id, aggregate_kind, stream_id, stream_version, event_type,
-        occurred_at, actor_kind, payload_json, metadata_json, application_event_version
-      ) VALUES (
-        'idle:0', 'thread', ${threadId}, 0, 'provider-session.detached',
-        ${now}, 'server', ${JSON.stringify({ providerSessionId: "session:idle", detachedAt: now })},
-        '{}', 2
-      ) RETURNING sequence
-    `;
-    yield* sql`
-      INSERT INTO orchestration_v2_projection_metadata (
-        projection_name, schema_version, last_sequence, updated_at
-      ) VALUES (${OrchestrationEventStore.EVENT_LOG_PRUNED_THROUGH}, 2, ${last!.sequence + 10}, ${now})
-    `;
-    const exit = yield* subscribeOrchestrationV2Thread({
-      threadId,
-      afterSequence: last!.sequence,
-    }).pipe(
-      Effect.provideService(ThreadManagement.ThreadManagementService, {
-        ensureLegacyTranscript: () => Effect.void,
-        getThreadSnapshot: () => Effect.die("snapshot"),
-        streamStoredEventsFrom: () => Stream.empty,
-      } as unknown as ThreadManagement.ThreadManagementService["Service"]),
-      Effect.exit,
-    );
-    // A snapshot load dies with "snapshot", so success means the resume replayed nothing.
-    assert.isTrue(Exit.isSuccess(exit));
-  }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+// A cursor at the high-water missed nothing, even below the boundary; resuming must not resend
+// a snapshot. The shell cases are a client that just loaded the HTTP snapshot of a pruned
+// database: it gets the marker, and the project identities only when it does not name them.
+it.effect.each([
+  { scope: "thread", knowsIdentities: false, isRepository: true, kinds: [] },
+  {
+    scope: "shell",
+    knowsIdentities: false,
+    isRepository: true,
+    kinds: ["snapshot", "synchronized"],
+  },
+  { scope: "shell", knowsIdentities: true, isRepository: true, kinds: ["synchronized"] },
+  // The client keeps a cached identity over an absent one, so "resolved to none" still goes out.
+  {
+    scope: "shell",
+    knowsIdentities: true,
+    isRepository: false,
+    kinds: ["snapshot", "synchronized"],
+  },
+] as const)(
+  "$scope resume at its own high-water below the pruned boundary skips the snapshot (knows identities: $knowsIdentities, repository: $isRepository)",
+  ({ scope, knowsIdentities, isRepository, kinds }) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-10-13T00:00:00.000Z";
+      const threadId = ThreadId.make("thread:idle");
+      const [last] = yield* sql<{ sequence: number }>`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type,
+          occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+        ) VALUES (
+          'idle:0', 'thread', ${threadId}, 0, 'provider-session.detached',
+          ${now}, 'server', ${JSON.stringify({ providerSessionId: "session:idle", detachedAt: now })},
+          '{}', 2
+        ) RETURNING sequence
+      `;
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_metadata (
+          projection_name, schema_version, last_sequence, updated_at
+        ) VALUES (${OrchestrationEventStore.EVENT_LOG_PRUNED_THROUGH}, 2, ${last!.sequence + 10}, ${now})
+      `;
+      const identity = isRepository
+        ? ({
+            canonicalKey: "github.com/t3/idle",
+            locator: {
+              source: "git-remote",
+              remoteName: "origin",
+              remoteUrl: "git@github.com:t3/idle",
+            },
+          } as const)
+        : null;
+      const project = {
+        id: ProjectId.make("project:idle"),
+        title: "Idle",
+        workspaceRoot: "/tmp/idle",
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+      } satisfies OrchestrationProjectShell;
+      const subscription = Effect.gen(function* () {
+        if (scope === "thread") {
+          return yield* subscribeOrchestrationV2Thread({
+            threadId,
+            afterSequence: last!.sequence,
+          }).pipe(Effect.as([]));
+        }
+        const stream = yield* subscribeOrchestrationV2Shell({
+          afterSequence: last!.sequence,
+          requestCompletionMarker: true,
+          ...(knowsIdentities
+            ? {
+                knownProjectIdentities: projectIdentitiesDigest([
+                  { ...project, repositoryIdentity: identity },
+                ]),
+              }
+            : {}),
+        });
+        return yield* stream.pipe(
+          Stream.takeUntil((item) => item.kind === "synchronized"),
+          Stream.map((item) => item.kind),
+          Stream.runCollect,
+        );
+      });
+      const exit = yield* subscription.pipe(
+        Effect.provideService(ThreadManagement.ThreadManagementService, {
+          ensureLegacyTranscript: () => Effect.void,
+          getThreadSnapshot: () => Effect.die("snapshot"),
+          listActiveShellIndex: () => Effect.die("snapshot"),
+          readShellSnapshot: () => Effect.die("snapshot"),
+          listActiveSubagentThreadIds: () => Effect.succeed([]),
+          streamStoredEventsFrom: () => Stream.empty,
+        } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+        Effect.provideService(ProjectStore.ProjectStoreV2, {
+          listShells: () => Effect.succeed([project]),
+        } as unknown as ProjectStore.ProjectStoreV2["Service"]),
+        Effect.provideService(
+          ProjectService.ProjectService,
+          {} as ProjectService.ProjectService["Service"],
+        ),
+        Effect.provideService(ProjectEnrichment.ProjectEnrichmentService, {
+          subscribeChanges: PubSub.subscribe(yield* PubSub.unbounded()),
+          getAvailable: () =>
+            Effect.succeed({
+              repositoryIdentity: identity,
+              faviconPath: null,
+              repositoryIdentityResolved: true,
+            }),
+        } as unknown as ProjectEnrichment.ProjectEnrichmentService["Service"]),
+        Effect.exit,
+      );
+      // A snapshot load dies with "snapshot", so success means the resume replayed nothing.
+      assert.deepEqual(
+        Exit.isFailure(exit) ? Cause.squash(exit.cause) : Array.from(exit.value),
+        kinds,
+      );
+    }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
 const acpDriver = ProviderDriverKind.make("acpRegistry");
@@ -2123,6 +2443,5 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
         Layer.mock(ServerBrowser.ServerBrowser)({}),
       ),
     ),
-    Effect.scoped,
   ),
 );

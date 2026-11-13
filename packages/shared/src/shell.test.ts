@@ -807,40 +807,32 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
   it.effect.runIf(HostProcess.Platform.defaultValue() === "win32")(
     "runs the executable behind an npm shim directly when asked",
     () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const prefix = yield* fs.makeTempDirectoryScoped({ prefix: "t3-npm-shim-" });
-          const shim = path.join(prefix, "opencode.cmd");
-          const executable = path.join(
-            prefix,
-            "node_modules",
-            "opencode-ai",
-            "bin",
-            "opencode.exe",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const prefix = yield* fs.makeTempDirectoryScoped({ prefix: "t3-npm-shim-" });
+        const shim = path.join(prefix, "opencode.cmd");
+        const executable = path.join(prefix, "node_modules", "opencode-ai", "bin", "opencode.exe");
+        yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+        yield* fs.writeFileString(executable, "");
+        yield* fs.writeFileString(shim, NPM_OPENCODE_SHIM);
+        const resolve = (bypassNpmShim: boolean) =>
+          resolveSpawnCommand("opencode", ["serve", "--port=4096"], {
+            env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+            bypassNpmShim,
+          }).pipe(
+            Effect.provideService(HostProcess.Platform, "win32"),
+            Effect.provideService(CommandResolutionCache, new Map()),
+            Effect.provideService(SpawnExecutableResolution, () => shim),
           );
-          yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
-          yield* fs.writeFileString(executable, "");
-          yield* fs.writeFileString(shim, NPM_OPENCODE_SHIM);
-          const resolve = (bypassNpmShim: boolean) =>
-            resolveSpawnCommand("opencode", ["serve", "--port=4096"], {
-              env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
-              bypassNpmShim,
-            }).pipe(
-              Effect.provideService(HostProcess.Platform, "win32"),
-              Effect.provideService(CommandResolutionCache, new Map()),
-              Effect.provideService(SpawnExecutableResolution, () => shim),
-            );
 
-          expect(yield* resolve(true)).toEqual({
-            command: executable,
-            args: ["serve", "--port=4096"],
-            shell: false,
-          });
-          expect((yield* resolve(false)).shell).toBe(true);
-        }),
-      ),
+        expect(yield* resolve(true)).toEqual({
+          command: executable,
+          args: ["serve", "--port=4096"],
+          shell: false,
+        });
+        expect((yield* resolve(false)).shell).toBe(true);
+      }),
   );
 
   it.effect("builds one escaped cmd.exe line for Windows command shims", () =>

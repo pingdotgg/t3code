@@ -29,6 +29,7 @@ import {
 } from "../../sidebarProjectGrouping";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useThreadShells, waitForProjectRemoval } from "../../state/entities";
+import { refreshProjectFaviconUrl } from "../../state/assets";
 import { projectEnvironment } from "../../state/projects";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Alert, AlertDescription } from "../ui/alert";
@@ -310,15 +311,7 @@ function ProjectDetail({
       toastManager.add({ type: "warning", title: "Project title cannot be empty" });
       return;
     }
-    if (
-      !projectGroupTitleNeedsUpdate(
-        group.memberProjects.map((member) => member.title),
-        title,
-        wasEdited,
-      )
-    ) {
-      return;
-    }
+    if (!projectGroupTitleNeedsUpdate(group.memberProjects, title, wasEdited)) return;
     await updateAllMembers({ title }, "Failed to rename project");
   };
 
@@ -331,6 +324,15 @@ function ProjectDetail({
     savingFaviconRef.current = true;
     setIsSavingFavicon(true);
     await updateAllMembers(input, "Failed to update project icon");
+    for (const member of group.memberProjects) {
+      const update = typeof input === "function" ? input(member) : input;
+      if (update.faviconPath === undefined || update.projectIcon) continue;
+      refreshProjectFaviconUrl({
+        environmentId: member.environmentId,
+        cwd: member.workspaceRoot,
+        faviconPath: update.faviconPath,
+      });
+    }
     savingFaviconRef.current = false;
     setIsSavingFavicon(false);
   };
