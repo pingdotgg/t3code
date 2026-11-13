@@ -12,6 +12,7 @@ import { useRightPanelStore } from "../rightPanelStore";
 import { remarkEnableOrderedListNumbers } from "@t3tools/shared/markdownPipeline";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import { HostImageUrlContext } from "./chat/hostImageUrl";
+import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 
 const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   workspaceSearch: vi.fn(),
@@ -120,6 +121,7 @@ vi.mock(import("../hooks/useSettings"), async (original) => {
 });
 
 import ChatMarkdown from "./ChatMarkdown";
+import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
 import { AudioPreview } from "./files/AudioPreview";
 
 it("keeps compact audio playback loaded across signed URL renewals", async () => {
@@ -282,6 +284,8 @@ it("highlights a code block's own source when an earlier block of the same lengt
   // These two lines share a 32-bit FNV-1a hash and a length.
   const first = 'const commitSha = "f36a6d8fe0aa";';
   const second = 'const commitSha = "cb06f8d135b3";';
+  // The block suspends until the shared highlighter loads, which can outlast vi.waitFor on a busy runner.
+  await getSyntaxHighlighterPromise("ts");
   {
     await using screen = await renderText(`\`\`\`ts\n${first}\n\`\`\``);
     await vi.waitFor(() => expect(highlightedText(screen.container)).toBe(first));
@@ -614,6 +618,30 @@ describe("ChatMarkdown inline code selection", () => {
       );
     }
     expect(selections).toEqual(lines);
+  });
+});
+
+describe("ChatMarkdown alert copy", () => {
+  it("copies a fully selected callout as alert Markdown and a partial one as text", async () => {
+    setup();
+    await using screen = await renderText("> [!WARNING]\n> Back up first.");
+    const [label, body] = screen.container.querySelectorAll('[role="note"] > p');
+    const select = (startNode: Node, endNode: Node, endOffset: number) => {
+      const range = document.createRange();
+      range.setStart(startNode, 0);
+      range.setEnd(endNode, endOffset);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return chatMarkdownClipboardPayload(selection)?.text;
+    };
+    const labelText = label!.lastChild!;
+    const bodyText = body!.firstChild!;
+
+    expect(select(labelText, bodyText, bodyText.textContent!.length)).toBe(
+      "> [!WARNING]\n> Back up first.",
+    );
+    expect(select(labelText, bodyText, "Back up".length)).toBe("Warning\n\nBack up");
   });
 });
 

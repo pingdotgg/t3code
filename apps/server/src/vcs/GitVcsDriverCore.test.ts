@@ -722,6 +722,26 @@ it.effect("reads a branch whose name starts with a parenthesis as attached", () 
   ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("follows a checkout made outside the driver after refs were cached", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      yield* git(cwd, ["branch", "feature/outside"]);
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      yield* driver.listRefs({ cwd });
+
+      yield* git(cwd, ["switch", "feature/outside"]);
+
+      const refs = (yield* driver.listRefs({ cwd })).refs;
+      const previous = refs.find((ref) => ref.name === initialBranch);
+      assert.isTrue(refs.find((ref) => ref.name === "feature/outside")?.current);
+      assert.isFalse(previous?.current);
+      assert.isNull(previous?.worktreePath ?? null);
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each(["on a branch", "detached", "unborn"] as const)(
   "reads only the repository root for review requests that ignore the branch when %s",
   (state) =>
@@ -2187,6 +2207,55 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.notProperty(error, "stderr");
           assert.notProperty(error, "args");
         }),
+    );
+
+    it.effect("explains a non-fast-forward push from a host with a translated Git", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const remote = yield* makeTmpDir("git-remote-");
+        const other = yield* makeTmpDir("git-other-");
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "--set-upstream", "origin", initialBranch]);
+        yield* git(other, ["clone", "--branch", initialBranch, remote, "."]);
+        yield* git(other, [
+          "-c",
+          "user.email=t@t",
+          "-c",
+          "user.name=T",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "remote",
+        ]);
+        yield* git(other, ["push", "origin", initialBranch]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "local"]);
+        const locales: Array<CommandLine.Word | undefined> = [];
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (ChildProcess.isStandardCommand(command) && command.args.includes("push")) {
+            locales.push(command.options.env?.LANGUAGE);
+          }
+          return delegate.spawn(command);
+        });
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(layerServerConfig),
+        );
+        const hostEnv = yield* HostProcess.Environment;
+
+        const error = yield* driver
+          .pushCurrentBranch(cwd, null)
+          .pipe(
+            Effect.provideService(HostProcess.Environment, { ...hostEnv, LANGUAGE: "de" }),
+            Effect.flip,
+          );
+
+        assert.equal(error.reason, "push_rejected_non_fast_forward");
+        assert.isNotEmpty(locales);
+        for (const locale of locales) assert.equal(locale, "C");
+      }),
     );
 
     it.effect("lets a slow remote branch checkout finish without blocking config writes", () =>
@@ -4274,6 +4343,39 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           insertions: 1,
           deletions: 1,
         });
+        const preview = yield* driver.getReviewDiffPreview({ cwd, metadataOnly: true });
+        assert.deepStrictEqual(
+          preview.sources.find((source) => source.kind === "working-tree")?.files,
+          [
+            { path: "asset.data", previousPath: null, additions: 0, deletions: 1 },
+            { path: "ordinary.txt", previousPath: null, additions: 1, deletions: 0 },
+          ],
+        );
+      }),
+    );
+
+    it.effect("keeps an oversized untracked file out of the review diff", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        yield* writeTextFile(cwd, "README.md", "# tracked change\n");
+        yield* writeTextFile(cwd, "ordinary.txt", "new\n");
+        yield* writeTextFile(cwd, "large.data", "");
+        // Sparse: the logical size is over the budget without allocating it.
+        yield* fileSystem.truncate(pathService.join(cwd, "large.data"), 257 * 1024 * 1024);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, metadataOnly: true });
+
+        const source = preview.sources.find((source) => source.kind === "working-tree")!;
+        assert.isUndefined(source.files);
+        assert.isUndefined(source.patchesDeferred);
+        assert.isTrue(source.truncated);
+        assert.include(source.diff, "+# tracked change");
+        assert.include(source.diff, "b/ordinary.txt");
+        assert.notInclude(source.diff, "large.data");
       }),
     );
 
@@ -4585,6 +4687,28 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(status.branch, "release");
         assert.equal(status.upstreamRef, "upstream/release");
         assert.equal(status.isDefaultBranch, false);
+      }),
+    );
+
+    it.effect("does not report a default branch the remote deleted after the clone", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-origin-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["branch", "-M", "development"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "origin", "development", "development:main"]);
+        yield* git(cwd, ["remote", "set-head", "origin", "development"]);
+        yield* git(remote, ["--git-dir=.", "symbolic-ref", "HEAD", "refs/heads/main"]);
+        yield* git(cwd, ["push", "origin", "--delete", "development"]);
+        yield* git(cwd, ["fetch", "--prune", "origin"]);
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const defaultBranch = yield* driver.resolveDefaultBranchName(cwd, "origin");
+
+        assert.notEqual(defaultBranch, "development");
+        assert.isNull(yield* driver.resolveWorktreeBaseRemote({ cwd, refName: "origin/HEAD" }));
       }),
     );
 
