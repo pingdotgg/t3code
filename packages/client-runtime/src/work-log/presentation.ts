@@ -651,6 +651,29 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
   return { summary, hasFailure: summaries.some((group) => group.failedCount > 0) };
 }
 
+const MAX_TOOL_GROUP_SOURCE_ICONS = 4;
+
+/** Logos of the sources a tool group's summary names, in the summary's order. */
+export function toolGroupSourceIcons(
+  entries: ReadonlyArray<WorkLogPresentationEntry>,
+): ReadonlyArray<ToolActivityIcon> {
+  const icons = new Map<string, ToolActivityIcon | undefined>();
+  for (const entry of entries) {
+    const source = entry.toolSource;
+    if (
+      source === undefined ||
+      entry.itemType === "reasoning" ||
+      resolveT3McpSummaryAction(workEntryToolName(entry), t3ToolSummaryCall(entry).input) !== null
+    ) {
+      continue;
+    }
+    icons.set(source.name, icons.get(source.name) ?? source.icon ?? entry.toolIcon);
+  }
+  return [...icons.values()]
+    .filter((icon): icon is ToolActivityIcon => icon !== undefined)
+    .slice(0, MAX_TOOL_GROUP_SOURCE_ICONS);
+}
+
 export function toolGroupSummaryKind(
   entries: ReadonlyArray<WorkLogPresentationEntry>,
 ): ToolGroupSummaryKind {

@@ -26,6 +26,7 @@ import {
   toolGroupAction,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
+  toolGroupSourceIcons,
   toolGroupSummaryKind,
   workEntriesViewedImagePaths,
   type ToolGroupSummaryKind,
@@ -220,6 +221,8 @@ type ThreadFeedEntryContent =
       readonly summaryKind: ToolGroupSummaryKind;
       readonly toolSurface?: WorkLogPresentationEntry["toolSurface"];
       readonly toolIcon?: WorkLogPresentationEntry["toolIcon"];
+      /** Set when the group used two or more sources with logos; they replace the row icon. */
+      readonly sourceIcons?: ReadonlyArray<NonNullable<WorkLogPresentationEntry["toolIcon"]>>;
       readonly summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request";
       readonly hasFailure: boolean;
       readonly live: boolean;
@@ -2139,6 +2142,7 @@ function appendToolGroupRows(
   const summaryToolIcon = live
     ? resolveWorkEntryToolPresentation(latestActivity.workEntry)?.icon
     : undefined;
+  const sourceIcons = toolGroupSourceIcons(activities.map((activity) => activity.workEntry));
   result.push({
     type: "work-toggle",
     id,
@@ -2152,7 +2156,11 @@ function appendToolGroupRows(
       (live ? [latestActivity] : activities).map((activity) => activity.workEntry),
     ),
     ...(groupToolSurface ? { toolSurface: groupToolSurface } : {}),
-    ...(groupToolIcon ? { toolIcon: groupToolIcon } : {}),
+    ...(sourceIcons.length > 1
+      ? { sourceIcons }
+      : groupToolIcon
+        ? { toolIcon: groupToolIcon }
+        : {}),
     ...(summaryToolIcon ? { summaryToolIcon } : {}),
     ...(thought ? { thought } : {}),
     hasFailure: (() => {

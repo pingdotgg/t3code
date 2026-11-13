@@ -76,16 +76,17 @@ function BrowserAppIcon({ className }: { className: string }) {
   );
 }
 
+/** Without `fallbackName`, a missing or broken image renders nothing. */
 export function ToolActivityIconView(props: {
   icon: ToolActivityIcon | undefined;
-  fallbackName: WorkEntryIconName;
+  fallbackName?: WorkEntryIconName | undefined;
   className: string;
   muted: boolean;
 }) {
   const { resolvedTheme } = use(TimelineRowCtx);
   const fallbackClassName = cn(props.className, props.muted && "opacity-70 light:brightness-60");
   if (!props.icon) {
-    return <WorkEntryIcon name={props.fallbackName} className={fallbackClassName} />;
+    return <FallbackIcon name={props.fallbackName} className={fallbackClassName} />;
   }
   if (props.icon._tag === "website") {
     const src = toolActivityFaviconUrl(props.icon, resolvedTheme, 32);
@@ -97,9 +98,12 @@ export function ToolActivityIconView(props: {
         fallbackName={props.fallbackName}
         className={props.className}
         muted={props.muted}
+        lightTile={
+          resolvedTheme === "dark" && src === toolActivityFaviconUrl(props.icon, "light", 32)
+        }
       />
     ) : (
-      <WorkEntryIcon name={props.fallbackName} className={fallbackClassName} />
+      <FallbackIcon name={props.fallbackName} className={fallbackClassName} />
     );
   }
   if (props.icon._tag === "themed-logo") {
@@ -115,6 +119,7 @@ export function ToolActivityIconView(props: {
         fallbackName={props.fallbackName}
         className={props.className}
         muted={props.muted}
+        lightTile={resolvedTheme === "dark" && props.icon.logoUrlDark === undefined}
       />
     );
   }
@@ -130,7 +135,7 @@ export function ToolActivityIconView(props: {
 
 function NativeAppToolActivityIcon(props: {
   app: Extract<ToolActivityIcon, { readonly _tag: "native-app" }>["app"];
-  fallbackName: WorkEntryIconName;
+  fallbackName: WorkEntryIconName | undefined;
   className: string;
   muted: boolean;
 }) {
@@ -141,7 +146,7 @@ function NativeAppToolActivityIcon(props: {
   });
   if (asset._tag !== "Success") {
     return (
-      <WorkEntryIcon
+      <FallbackIcon
         name={props.fallbackName}
         className={cn(props.className, props.muted && "opacity-70 light:brightness-60")}
       />
@@ -166,12 +171,14 @@ function NativeAppToolActivityIcon(props: {
 
 const loadedToolActivityIconSrcs = new Map<string, string>();
 
+/** `lightTile` keeps a logo drawn for light backgrounds legible in dark mode. */
 function ToolActivityImageIcon(props: {
   cacheKey: string;
   src: string;
-  fallbackName: WorkEntryIconName;
+  fallbackName: WorkEntryIconName | undefined;
   className: string;
   muted: boolean;
+  lightTile?: boolean;
 }) {
   const [displayedSrc, setDisplayedSrc] = useState<string | null>(
     () => loadedToolActivityIconSrcs.get(props.cacheKey) ?? null,
@@ -186,7 +193,7 @@ function ToolActivityImageIcon(props: {
   return (
     <>
       {displayedSrc === null ? (
-        <WorkEntryIcon
+        <FallbackIcon
           name={props.fallbackName}
           className={cn(props.className, props.muted && "opacity-70 light:brightness-60")}
         />
@@ -195,7 +202,8 @@ function ToolActivityImageIcon(props: {
         <span
           className={cn(
             props.className,
-            "inline-block overflow-hidden rounded-xs bg-background",
+            "inline-block overflow-hidden rounded-md [corner-shape:squircle]",
+            props.lightTile ? "bg-white" : "bg-background",
             props.muted && "dark:opacity-70",
           )}
         >
@@ -226,6 +234,26 @@ function ToolActivityImageIcon(props: {
         />
       ) : null}
     </>
+  );
+}
+
+function FallbackIcon(props: { name: WorkEntryIconName | undefined; className: string }) {
+  return props.name ? <WorkEntryIcon name={props.name} className={props.className} /> : null;
+}
+
+/** Overlapping logos of the sources a collapsed tool group used, in its icon slot. */
+export function ToolSourceIcons(props: { icons: ReadonlyArray<ToolActivityIcon> }) {
+  return (
+    <span aria-hidden className="flex items-center -space-x-1">
+      {props.icons.slice(0, 3).map((icon) => (
+        <ToolActivityIconView
+          key={JSON.stringify(icon)}
+          icon={icon}
+          className="size-4 shrink-0 ring-2 ring-background"
+          muted
+        />
+      ))}
+    </span>
   );
 }
 

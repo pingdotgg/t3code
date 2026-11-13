@@ -39,6 +39,7 @@ import {
   toolIconAcceptsTint,
   type WorkEntryIconName,
   ToolActivityIconView,
+  ToolSourceIcons,
 } from "./TimelineToolActivityIcon";
 import {
   useThreadReadTarget,
@@ -613,6 +614,7 @@ export function WorkGroupToggleTimelineRow({
       label={row.summary}
       iconName={row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)}
       toolIcon={row.toolIcon}
+      sourceIcons={row.sourceIcons}
       failed={row.hasFailure}
       expanded={row.expanded}
       createdAt={row.createdAt}
@@ -626,6 +628,7 @@ function WorkGroupHeader(props: {
   label: string;
   iconName: WorkEntryIconName;
   toolIcon?: ToolActivityIcon | undefined;
+  sourceIcons?: ReadonlyArray<ToolActivityIcon> | undefined;
   failed?: boolean | undefined;
   expanded: boolean;
   createdAt: string;
@@ -638,12 +641,16 @@ function WorkGroupHeader(props: {
       aria-expanded={props.expanded}
       onClick={props.onToggle}
       icon={
-        <ToolActivityIconView
-          icon={props.toolIcon}
-          fallbackName={props.iconName}
-          className="size-4 shrink-0 stroke-2 text-icon-muted"
-          muted
-        />
+        props.sourceIcons ? (
+          <ToolSourceIcons icons={props.sourceIcons} />
+        ) : (
+          <ToolActivityIconView
+            icon={props.toolIcon}
+            fallbackName={props.iconName}
+            className="size-4 shrink-0 stroke-2 text-icon-muted"
+            muted
+          />
+        )
       }
       label={<span className="block truncate">{props.label}</span>}
       trailing={
