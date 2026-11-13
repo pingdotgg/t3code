@@ -155,6 +155,10 @@ export const make = Effect.gen(function* () {
               ) ?? process.execPath,
             scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
             ...(iconPath === undefined ? {} : { iconPath }),
+            ...(Option.isSome(linuxDesktopEntryConfig.appImagePath) &&
+            Option.isNone(linuxDesktopEntryConfig.launcherPath)
+              ? { startupWMClass: linux.linuxDesktopEntryName.replace(/\.desktop$/u, "") }
+              : {}),
           }),
           "utf8",
         );

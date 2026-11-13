@@ -171,6 +171,8 @@ describe("DesktopPreReadyPlatform", () => {
         assert.include(identity.desktopEntry ?? "", "Exec=/Applications/current.AppImage %U");
         assert.include(identity.desktopEntry ?? "", "Name=T3 Code (Beta)");
         assert.include(identity.desktopEntry ?? "", "MimeType=x-scheme-handler/t3code;");
+        assert.include(identity.desktopEntry ?? "", "NoDisplay=false");
+        assert.include(identity.desktopEntry ?? "", "StartupWMClass=com.t3tools.T3Code\n");
         assert.include(
           identity.desktopEntry ?? "",
           "Icon=/xdg/icons/com.t3tools.T3Code.desktop.png",
@@ -248,6 +250,8 @@ describe("DesktopPreReadyPlatform", () => {
           ([path]) => path === "/xdg/applications/com.t3tools.T3Code.desktop",
         )?.[1];
         assert.include(entry, 'Exec="/opt/T3 Code/t3code" %U');
+        assert.include(entry, "NoDisplay=true");
+        assert.notInclude(entry, "StartupWMClass=");
       }),
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });

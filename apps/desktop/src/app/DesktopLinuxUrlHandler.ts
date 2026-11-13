@@ -74,13 +74,14 @@ const escapeUrlHandlerExecTarget = (value: string): string =>
     ? escapeDesktopEntryExecArgument(value)
     : escapeDesktopEntryString(value.replaceAll("%", "%%"));
 
-// The AppImage integration entry owns the window identity. This
-// hidden URL-only entry must not compete with it for StartupWMClass matching.
+// A standalone AppImage has no other launcher, so this entry must be visible and own the window.
+// Packages with their own launcher get a hidden URL-only entry that cannot compete with it.
 export function renderUrlHandlerDesktopEntry(input: {
   readonly displayName: string;
   readonly execTarget: string;
   readonly scheme: string;
   readonly iconPath?: string;
+  readonly startupWMClass?: string;
 }): string {
   return [
     "[Desktop Entry]",
@@ -89,9 +90,12 @@ export function renderUrlHandlerDesktopEntry(input: {
     `Exec=${escapeUrlHandlerExecTarget(input.execTarget)} %U`,
     ...(input.iconPath === undefined ? [] : [`Icon=${escapeDesktopEntryString(input.iconPath)}`]),
     "Terminal=false",
-    "NoDisplay=true",
+    `NoDisplay=${input.startupWMClass === undefined}`,
     "StartupNotify=false",
     `MimeType=x-scheme-handler/${input.scheme};`,
+    ...(input.startupWMClass === undefined
+      ? []
+      : [`StartupWMClass=${escapeDesktopEntryString(input.startupWMClass)}`]),
     "",
   ].join("\n");
 }
@@ -177,6 +181,9 @@ export const make = Effect.gen(function* () {
       execTarget,
       scheme,
       ...(environment.isPackaged ? { iconPath } : {}),
+      ...(Option.isSome(environment.appImagePath) && Option.isNone(environment.desktopLauncherPath)
+        ? { startupWMClass: environment.linuxDesktopEntryName.replace(/\.desktop$/u, "") }
+        : {}),
     });
     // Avoid truncating the pre-ready entry while the portal may be reading it.
     const existing = yield* fileSystem

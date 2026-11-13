@@ -202,6 +202,16 @@ describe("DesktopLinuxUrlHandler", () => {
     assert.notInclude(entry, "StartupWMClass=");
     assert.include(entry, "MimeType=x-scheme-handler/t3code;");
     assert.include(entry, "Icon=/home/al ice/icons/T3\\\\x.png");
+
+    const launcher = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+      displayName: "T3 Code (Nightly)",
+      execTarget: "/home/alice/T3.AppImage",
+      scheme: "t3code",
+      startupWMClass: "com.t3tools.T3Code",
+    });
+    assert.include(launcher, "NoDisplay=false");
+    assert.include(launcher, "StartupWMClass=com.t3tools.T3Code");
+    assert.include(launcher, "MimeType=x-scheme-handler/t3code;");
   });
 
   it.each([
@@ -252,6 +262,7 @@ describe("DesktopLinuxUrlHandler", () => {
           "Exec=/home/alice/Applications/T3-Code.AppImage %U",
         );
         assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/t3code;");
+        assert.include(recorded.files[0]?.content, "StartupWMClass=com.t3tools.T3Code");
         assert.deepEqual(recorded.commands, [
           {
             command: "update-desktop-database",
@@ -293,6 +304,8 @@ describe("DesktopLinuxUrlHandler", () => {
       });
 
       assert.include(recorded.files[0]?.content, 'Exec="/opt/T3 Code/t3code" %U');
+      assert.include(recorded.files[0]?.content, "NoDisplay=true");
+      assert.notInclude(recorded.files[0]?.content, "StartupWMClass=");
     });
   });
 
@@ -305,6 +318,7 @@ describe("DesktopLinuxUrlHandler", () => {
           displayName: "T3 Code (Alpha)",
           execTarget: "/home/alice/Applications/T3-Code.AppImage",
           scheme: "t3code",
+          startupWMClass: "com.t3tools.T3Code",
           iconPath: "/home/alice/.local/share/icons/com.t3tools.T3Code.desktop.png",
         }),
       });
@@ -334,6 +348,7 @@ describe("DesktopLinuxUrlHandler", () => {
           displayName: "T3 Code (Alpha)",
           execTarget: "/home/alice/Applications/T3-Code.AppImage",
           scheme: "t3code",
+          startupWMClass: "com.t3tools.T3Code",
           iconPath,
         }),
       });
