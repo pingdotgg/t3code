@@ -97,35 +97,49 @@ function linkedThreadsView(
 }
 
 /**
- * Tells whether a domain event changed any `pullRequests.linkedThreads` answer, so readers can
- * refresh on change instead of polling. A thread's first event after a restart counts as a change,
- * since its earlier links are unknown.
+ * Tells how a domain event changed `pullRequests.linkedThreads` answers, so readers can refresh on
+ * change instead of polling. `reordered` means only activity order moved. A thread's first event
+ * after a restart counts as a change, since its earlier links are unknown.
  */
 export function makeLinkedThreadsChangeDetector() {
   const views = new Map<ThreadId, string | null>();
   const keysByThread = new Map<ThreadId, ReadonlyArray<string>>();
+  const threadsByKey = new Map<string, Set<ThreadId>>();
   const activeAt = new Map<ThreadId, number>();
-  // Answers order by activity, so activity reorders one only when another thread was newest.
-  const newestByKey = new Map<string, ThreadId>();
+  const setKeys = (threadId: ThreadId, keys: ReadonlyArray<string>) => {
+    for (const key of keysByThread.get(threadId) ?? []) threadsByKey.get(key)?.delete(threadId);
+    if (keys.length === 0) {
+      keysByThread.delete(threadId);
+      activeAt.delete(threadId);
+      return;
+    }
+    keysByThread.set(threadId, keys);
+    for (const key of keys) {
+      const threads = threadsByKey.get(key) ?? new Set<ThreadId>();
+      threadsByKey.set(key, threads.add(threadId));
+    }
+  };
+  // Answers order by activity, so activity reorders one only when another linked thread was newer.
   const reordered = (threadId: ThreadId, at: DateTime.Utc): boolean => {
     const keys = keysByThread.get(threadId);
     if (keys === undefined) return false;
     const millis = DateTime.toEpochMillis(at);
-    const previous = activeAt.get(threadId);
-    if (previous !== undefined && millis <= previous) return false;
+    const previous = activeAt.get(threadId) ?? Number.NEGATIVE_INFINITY;
+    if (millis <= previous) return false;
     activeAt.set(threadId, millis);
-    let moved = false;
-    for (const key of keys) {
-      if (newestByKey.get(key) === threadId) continue;
-      newestByKey.set(key, threadId);
-      moved = true;
-    }
-    return moved;
+    return keys.some((key) =>
+      Array.from(threadsByKey.get(key) ?? []).some(
+        (other) =>
+          other !== threadId && (activeAt.get(other) ?? Number.NEGATIVE_INFINITY) >= previous,
+      ),
+    );
   };
-  return (event: OrchestrationV2DomainEvent): boolean => {
+  return (event: OrchestrationV2DomainEvent): "changed" | "reordered" | null => {
     // The projection stamps every non-thread event as the thread's activity.
-    if (!event.type.startsWith("thread.")) return reordered(event.threadId, event.occurredAt);
-    if (!("lineage" in event.payload)) return false;
+    if (!event.type.startsWith("thread.")) {
+      return reordered(event.threadId, event.occurredAt) ? "reordered" : null;
+    }
+    if (!("lineage" in event.payload)) return null;
     const thread = event.payload;
     const keys = linkedKeys(thread);
     const view = linkedThreadsView(thread, keys);
@@ -133,13 +147,9 @@ export function makeLinkedThreadsChangeDetector() {
     const previous = views.get(event.threadId) ?? null;
     if (event.type === "thread.deleted") views.delete(event.threadId);
     else views.set(event.threadId, view);
-    if (view === null) {
-      keysByThread.delete(event.threadId);
-      activeAt.delete(event.threadId);
-    } else {
-      keysByThread.set(event.threadId, keys);
-    }
+    setKeys(event.threadId, view === null ? [] : keys);
     const moved = reordered(event.threadId, thread.updatedAt);
-    return moved || !known || view !== previous;
+    if (!known || view !== previous) return "changed";
+    return moved ? "reordered" : null;
   };
 }

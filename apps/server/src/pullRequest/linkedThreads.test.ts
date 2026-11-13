@@ -267,15 +267,26 @@ it("signals linked-thread changes only when a linked answer could change", () =>
       }),
       event("thread.deleted", { pullRequests: [], deletedAt: now }),
     ].map(changed),
-  ).toEqual([true, true, false, false, true, false, true, true, true, false]);
+  ).toEqual([
+    "changed",
+    "changed",
+    null,
+    null,
+    "changed",
+    null,
+    "changed",
+    "changed",
+    "changed",
+    null,
+  ]);
 
   const afterRestart = makeLinkedThreadsChangeDetector();
-  expect(afterRestart(event("thread.created", { title: "New" }))).toBe(false);
+  expect(afterRestart(event("thread.created", { title: "New" }))).toBe(null);
   expect(
     makeLinkedThreadsChangeDetector()(
       event("thread.deleted", { pullRequests: [], deletedAt: now }),
     ),
-  ).toBe(true);
+  ).toBe("changed");
 });
 
 it("signals when activity reorders the threads linked to a pull request", () => {
@@ -322,5 +333,13 @@ it("signals when activity reorders the threads linked to a pull request", () => 
       activity("b", 5),
       activity("unlinked", 6),
     ].map(changed),
-  ).toEqual([true, false, true, false, false]);
+  ).toEqual(["reordered", null, "reordered", null, null]);
+
+  // Seeing an older thread last must not hide a later move to the top.
+  const afterRestart = makeLinkedThreadsChangeDetector();
+  afterRestart(thread("a", 4));
+  afterRestart(thread("b", 2));
+  expect(
+    afterRestart({ ...thread("b", 6), type: "thread.pinned" } as OrchestrationV2DomainEvent),
+  ).toBe("reordered");
 });
