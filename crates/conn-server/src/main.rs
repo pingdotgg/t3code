@@ -6,10 +6,15 @@ use conn_server::serve::{ServeOptions, serve};
 
 fn main() {
     let options = ServeOptions::from_args();
-    let providers: Vec<Arc<dyn Provider>> = vec![Arc::new(ClaudeProvider::new(
+    let mut providers: Vec<Arc<dyn Provider>> = vec![Arc::new(ClaudeProvider::new(
         "claudeAgent".into(),
         ClaudeConfig::default(),
     ))];
+    if let Some(codex) =
+        conn_provider_codex::CodexProvider::detect("codex".into(), Default::default())
+    {
+        providers.push(Arc::new(codex));
+    }
     // One thread: a container serves a handful of clients, and each worker thread costs
     // stack and allocator arenas.
     tokio::runtime::Builder::new_current_thread()

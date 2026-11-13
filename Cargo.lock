@@ -146,6 +146,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "conn-provider-codex"
+version = "0.1.0"
+dependencies = [
+ "conn-contract",
+ "conn-provider",
+ "conn-provider-support",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "conn-provider-support"
+version = "0.1.0"
+dependencies = [
+ "tokio",
+]
+
+[[package]]
 name = "conn-server"
 version = "0.1.0"
 dependencies = [
@@ -154,6 +173,7 @@ dependencies = [
  "conn-engine",
  "conn-provider",
  "conn-provider-claude",
+ "conn-provider-codex",
  "conn-wire",
  "getrandom",
  "serde",

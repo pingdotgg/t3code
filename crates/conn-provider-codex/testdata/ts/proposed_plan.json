@@ -1,0 +1,239 @@
+{
+  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/proposed_plan.ndjson through the orchestrator fixture runner at 5b571fe04a; driver dropped.",
+  "capturedOn": "2026-11-13",
+  "startTurn": [
+    {
+      "appThread": {
+        "createdBy": "user",
+        "creationSource": "web",
+        "id": "thread:fixture:proposed_plan:project:project%3Afixture%3Aproposed_plan%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "projectId": "project:fixture:proposed_plan:f2604e9d-55b7-45de-a716-838867faae7e",
+        "title": "Replay fixture: proposed_plan",
+        "providerInstanceId": "codex",
+        "modelSelection": { "instanceId": "codex", "model": "gpt-6-luna" },
+        "runtimeMode": "full-access",
+        "interactionMode": "plan",
+        "branch": null,
+        "worktreePath": null,
+        "pullRequests": [],
+        "activeProviderThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "lineage": {
+          "parentThreadId": null,
+          "relationshipToParent": null,
+          "rootThreadId": "thread:fixture:proposed_plan:project:project%3Afixture%3Aproposed_plan%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7"
+        },
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.001Z",
+        "archivedAt": null,
+        "settledOverride": null,
+        "settledAt": null,
+        "snoozedUntil": null,
+        "snoozedAt": null,
+        "lastVisitedAt": "1970-01-01T00:00:00.000Z",
+        "deletedAt": null
+      },
+      "threadId": "thread:fixture:proposed_plan:project:project%3Afixture%3Aproposed_plan%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "runId": "run:thread:thread%3Afixture%3Aproposed_plan%3Aproject%3Aproject%253Afixture%253Aproposed_plan%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+      "runOrdinal": 1,
+      "providerTurnOrdinal": 1,
+      "nativeThreadHasTurns": false,
+      "attemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+      "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+      "providerThread": {
+        "id": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "providerSessionId": "provider-session:provider-instance:codex:shared",
+        "appThreadId": "thread:fixture:proposed_plan:project:project%3Afixture%3Aproposed_plan%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "codex",
+          "nativeId": "01a0d5ef-0ba3-7552-b090-7cfbb328e278",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": 1,
+        "lastRunOrdinal": 1,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.001Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "contextUsage": null
+      },
+      "message": {
+        "messageId": "message:thread:thread%3Afixture%3Aproposed_plan%3Aproject%3Aproject%253Afixture%253Aproposed_plan%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1:a209c1b9-9d82-4ff3-ba27-8bd6853514a5",
+        "text": "Create a short implementation plan for adding deterministic replay fixtures. Do not ask questions. Present the final plan in a proposed plan block.",
+        "attachments": [],
+        "createdBy": "user",
+        "creationSource": "web"
+      },
+      "modelSelection": { "instanceId": "codex", "model": "gpt-6-luna" },
+      "runtimePolicy": {
+        "runtimeMode": "full-access",
+        "interactionMode": "plan",
+        "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-proposed_plan-Scbqbj",
+        "approvalPolicy": "never",
+        "sandboxPolicy": {
+          "type": "readOnly",
+          "access": { "type": "fullAccess" },
+          "networkAccess": false
+        }
+      }
+    }
+  ],
+  "respond": [],
+  "events": [
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:proposed_plan:project:project%3Afixture%3Aproposed_plan%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0d5ef-0c85-7f41-ad02-13753158be02",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0d5ef-0c85-7f41-ad02-13753158be02",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-13T12:14:33.161Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:01a0d5ef-0c85-7f41-ad02-13753158be02-plan",
+        "threadId": "thread:fixture:proposed_plan:project:project%3Afixture%3Aproposed_plan%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Aproposed_plan%3Aproject%3Aproject%253Afixture%253Aproposed_plan%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "plan",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d5ef-0c85-7f41-ad02-13753158be02",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "01a0d5ef-0c85-7f41-ad02-13753158be02-plan",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-09-25T00:20:12.756Z",
+        "completedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "plan.updated",
+      "plan": {
+        "id": "plan:thread:thread%3Afixture%3Aproposed_plan%3Aproject%3Aproject%253Afixture%253Aproposed_plan%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:provider:codex:run:run%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:4d5d9862-e86b-4ae5-89bd-fef707188ea9",
+        "threadId": "thread:fixture:proposed_plan:project:project%3Afixture%3Aproposed_plan%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Aproposed_plan%3Aproject%3Aproject%253Afixture%253Aproposed_plan%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:01a0d5ef-0c85-7f41-ad02-13753158be02-plan",
+        "kind": "proposed_plan",
+        "status": "active",
+        "markdown": "1. **Find the replay boundary.** Trace the Codex app-server adapter from incoming JSON-RPC messages through event translation, and identify the smallest deterministic input/output boundary suitable for fixtures. Follow existing fixture and test conventions in this package.\n\n2. **Define a compact fixture format.** Store representative input message sequences and expected normalized events. Keep timestamps, IDs, and other nondeterministic values fixed or normalized explicitly so replay comparisons are stable.\n\n3. **Add a replay helper.** Build a test-only helper that reads a fixture, feeds messages through the adapter boundary, and compares the resulting events with the expected output. Keep it isolated from live provider processes and external state.\n\n4. **Cover key protocol paths.** Add a small set of fixtures for a normal turn, tool activity, completion, and at least one error or interruption path. Include a case that protects against message ordering regressions.\n\n5. **Document fixture updates briefly.** Add a nearby comment or concise test note explaining how to capture or update fixtures and which values require normalization.\n\n6. **Verify narrowly.** Run the focused fixture test file and the package’s targeted typecheck or lint for any new helper, then review fixture diffs for unintended protocol detail or unstable fields.\n"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:01a0d5ef-0c85-7f41-ad02-13753158be02-plan",
+        "threadId": "thread:fixture:proposed_plan:project:project%3Afixture%3Aproposed_plan%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Aproposed_plan%3Aproject%3Aproject%253Afixture%253Aproposed_plan%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:01a0d5ef-0c85-7f41-ad02-13753158be02-plan",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d5ef-0c85-7f41-ad02-13753158be02",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "01a0d5ef-0c85-7f41-ad02-13753158be02-plan",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-09-25T00:20:12.756Z",
+        "completedAt": "1970-01-01T00:00:00.002Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "proposed_plan",
+        "planId": "plan:thread:thread%3Afixture%3Aproposed_plan%3Aproject%3Aproject%253Afixture%253Aproposed_plan%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:provider:codex:run:run%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:4d5d9862-e86b-4ae5-89bd-fef707188ea9",
+        "markdown": "1. **Find the replay boundary.** Trace the Codex app-server adapter from incoming JSON-RPC messages through event translation, and identify the smallest deterministic input/output boundary suitable for fixtures. Follow existing fixture and test conventions in this package.\n\n2. **Define a compact fixture format.** Store representative input message sequences and expected normalized events. Keep timestamps, IDs, and other nondeterministic values fixed or normalized explicitly so replay comparisons are stable.\n\n3. **Add a replay helper.** Build a test-only helper that reads a fixture, feeds messages through the adapter boundary, and compares the resulting events with the expected output. Keep it isolated from live provider processes and external state.\n\n4. **Cover key protocol paths.** Add a small set of fixtures for a normal turn, tool activity, completion, and at least one error or interruption path. Include a case that protects against message ordering regressions.\n\n5. **Document fixture updates briefly.** Add a nearby comment or concise test note explaining how to capture or update fixtures and which values require normalization.\n\n6. **Verify narrowly.** Run the focused fixture test file and the package’s targeted typecheck or lint for any new helper, then review fixture diffs for unintended protocol detail or unstable fields.\n",
+        "streaming": false
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:proposed_plan:project:project%3Afixture%3Aproposed_plan%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0d5ef-0c85-7f41-ad02-13753158be02",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0d5ef-0c85-7f41-ad02-13753158be02",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-13T12:14:33.161Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 21575,
+          "maxTokens": 258400,
+          "inputTokens": 21310,
+          "cachedInputTokens": 6912,
+          "outputTokens": 265,
+          "reasoningOutputTokens": 0,
+          "updatedAt": "1970-01-01T00:00:00.002Z"
+        }
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:proposed_plan:project:project%3Afixture%3Aproposed_plan%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0d5ef-0c85-7f41-ad02-13753158be02",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0d5ef-0c85-7f41-ad02-13753158be02",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "completed",
+        "startedAt": "2026-11-13T12:14:33.161Z",
+        "completedAt": "2026-09-25T00:20:18.000Z",
+        "turnTokenUsage": {
+          "usageStatus": "complete",
+          "usageScope": "main_agent",
+          "inputTokens": 21310,
+          "cachedInputTokens": 6912,
+          "cacheCreationTokens": 0,
+          "outputTokens": 265,
+          "reasoningTokens": 0,
+          "hasSubagents": false,
+          "models": ["gpt-6-luna"]
+        },
+        "model": "gpt-6-luna"
+      }
+    },
+    {
+      "type": "turn.terminal",
+      "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aproposed_plan%253Aproject%253Aproject%25253Afixture%25253Aproposed_plan%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+      "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d5ef-0c85-7f41-ad02-13753158be02",
+      "runOrdinal": 1,
+      "status": "completed",
+      "failure": null,
+      "threadDisposition": "reusable"
+    }
+  ]
+}
