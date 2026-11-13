@@ -166,216 +166,259 @@ const makeAccount = Effect.fn("makeAccount")(function* (input: {
 });
 
 // regression: #32296 an account switch must not close the CLI that still owes a wake reply
-it.live.each(["sent after", "queued behind"] as const)(
-  "delivers a Claude background reply before an account switch %s the turn",
-  (variant) =>
-    Effect.gen(function* () {
-      const cwd = yield* checkpointWorkspace("claude-account-switch-wake");
-      const continuations =
-        yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
-      const closed: Array<string> = [];
-      const first = yield* makeAccount({
-        instanceId: firstAccount.instanceId,
-        cwd,
-        continuations,
-        closed,
+it.live.each([
+  "switch sent after",
+  "switch queued behind",
+  "hand-off sent after",
+  "hand-off still running after",
+] as const)("delivers a Claude background reply across an account %s the turn", (variant) =>
+  Effect.gen(function* () {
+    const cwd = yield* checkpointWorkspace("claude-account-switch-wake");
+    const continuations =
+      yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
+    const closed: Array<string> = [];
+    const first = yield* makeAccount({
+      instanceId: firstAccount.instanceId,
+      cwd,
+      continuations,
+      closed,
+    });
+    const second = yield* makeAccount({
+      instanceId: secondAccount.instanceId,
+      cwd,
+      continuations,
+      closed,
+    });
+    const adapters = [first.adapter, second.adapter];
+    // Two accounts of one Claude install resume each other's native history; separate installs hand off.
+    const handsOff = variant.startsWith("hand-off");
+    const registry = Layer.succeed(
+      ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+      ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
+        get: (instanceId) => {
+          const adapter = adapters.find((candidate) => candidate.instanceId === instanceId);
+          return adapter === undefined
+            ? Effect.fail(
+                new ProviderAdapterRegistry.ProviderAdapterRegistryLookupError({ instanceId }),
+              )
+            : Effect.succeed(adapter);
+        },
+        list: () => Effect.succeed(adapters.map((adapter) => adapter.instanceId)),
+        getMetadata: (instanceId) =>
+          Effect.succeed({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            continuationKey: handsOff
+              ? `claude:${instanceId}`
+              : "claude:shared-native-account-history",
+            enabled: true,
+            capabilities: ClaudeProviderCapabilitiesV2,
+          }),
+      }),
+    );
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const threadId = ThreadId.make("thread:claude-account-switch-wake");
+      const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
+        orchestrator.streamDomainEvents.pipe(
+          Stream.filter(predicate),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+      const runStatus = (messageId: string, status: string) =>
+        watch(
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.userMessageId === messageId &&
+            event.payload.status === status,
+        );
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create"),
+        threadId,
+        projectId: ProjectId.make("project:claude-account-switch-wake"),
+        title: "Account switch during a background build",
+        modelSelection: firstAccount,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: cwd,
+        createdBy: "user",
+        creationSource: "web",
       });
-      const second = yield* makeAccount({
-        instanceId: secondAccount.instanceId,
-        cwd,
-        continuations,
-        closed,
-      });
-      const adapters = [first.adapter, second.adapter];
-      // Two accounts of one Claude install resume each other's native history.
-      const registry = Layer.succeed(
-        ProviderAdapterRegistry.ProviderAdapterRegistryV2,
-        ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
-          get: (instanceId) => {
-            const adapter = adapters.find((candidate) => candidate.instanceId === instanceId);
-            return adapter === undefined
-              ? Effect.fail(
-                  new ProviderAdapterRegistry.ProviderAdapterRegistryLookupError({ instanceId }),
-                )
-              : Effect.succeed(adapter);
-          },
-          list: () => Effect.succeed(adapters.map((adapter) => adapter.instanceId)),
-          getMetadata: () =>
-            Effect.succeed({
-              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-              continuationKey: "claude:shared-native-account-history",
-              enabled: true,
-              capabilities: ClaudeProviderCapabilitiesV2,
-            }),
-        }),
-      );
-      yield* Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-        const threadId = ThreadId.make("thread:claude-account-switch-wake");
-        const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
-          orchestrator.streamDomainEvents.pipe(
-            Stream.filter(predicate),
-            Stream.take(1),
-            Stream.runDrain,
-            Effect.forkScoped,
-          );
-        const runStatus = (messageId: string, status: string) =>
-          watch(
-            (event) =>
-              event.type === "run.updated" &&
-              event.payload.userMessageId === messageId &&
-              event.payload.status === status,
-          );
-        yield* orchestrator.dispatch({
-          type: "thread.create",
-          commandId: CommandId.make("create"),
+      const queued = variant === "switch queued behind";
+      const send = (ordinal: number, modelSelection: ModelSelection) =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`send-${ordinal}`),
           threadId,
-          projectId: ProjectId.make("project:claude-account-switch-wake"),
-          title: "Account switch during a background build",
-          modelSelection: firstAccount,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: cwd,
+          messageId: MessageId.make(`send-${ordinal}`),
+          text: `Prompt ${ordinal}`,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: queued ? "queue_after_active" : "start_immediately" },
           createdBy: "user",
           creationSource: "web",
         });
-        const queued = variant === "queued behind";
-        const send = (ordinal: number, modelSelection: ModelSelection) =>
-          orchestrator.dispatch({
+
+      const firstRunning = yield* watch(
+        (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+      );
+      yield* send(1, firstAccount);
+      yield* worker.drain();
+      yield* Fiber.join(firstRunning);
+      if (queued) yield* send(2, secondAccount);
+      const firstSettling = yield* runStatus("send-1", "waiting");
+      const firstProcess = first.processes[0]!;
+      yield* Queue.offer(firstProcess, backgroundBashStarted);
+      yield* Queue.offer(firstProcess, resultFrame("turn-1", "Started the build."));
+      yield* Fiber.join(firstSettling);
+      yield* worker.drain();
+
+      if (!queued) yield* send(2, secondAccount);
+      yield* worker.drain();
+      const deliverWake = (afterDispatch: Effect.Effect<unknown> = Effect.void) =>
+        Effect.gen(function* () {
+          yield* Queue.offer(firstProcess, bashNotification);
+          yield* Queue.offer(firstProcess, assistantFrame("wake-assistant", WAKE_REPLY));
+          yield* Queue.offer(firstProcess, resultFrame("wake-result", WAKE_REPLY, true));
+          const request = yield* Queue.take(continuations);
+          const wakeSettling = yield* runStatus("wake", "waiting");
+          yield* orchestrator.dispatch({
             type: "message.dispatch",
-            commandId: CommandId.make(`send-${ordinal}`),
+            commandId: CommandId.make("wake"),
             threadId,
-            messageId: MessageId.make(`send-${ordinal}`),
-            text: `Prompt ${ordinal}`,
+            messageId: MessageId.make("wake"),
+            text: request.detail ?? "Background task completed.",
             attachments: [],
-            modelSelection,
-            dispatchMode: { type: queued ? "queue_after_active" : "start_immediately" },
-            createdBy: "user",
-            creationSource: "web",
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "agent",
+            creationSource: "provider",
+            continuationProviderThreadId: request.providerThreadId,
+            notification: request.notification ?? {
+              source: { kind: "background_task" },
+              outcome: "updated",
+              summary: "Background activity updated",
+            },
           });
-
-        const firstRunning = yield* watch(
-          (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
-        );
-        yield* send(1, firstAccount);
-        yield* worker.drain();
-        yield* Fiber.join(firstRunning);
-        if (queued) yield* send(2, secondAccount);
-        const firstSettling = yield* runStatus("send-1", "waiting");
-        const firstProcess = first.processes[0]!;
-        yield* Queue.offer(firstProcess, backgroundBashStarted);
-        yield* Queue.offer(firstProcess, resultFrame("turn-1", "Started the build."));
-        yield* Fiber.join(firstSettling);
-        yield* worker.drain();
-
-        if (!queued) yield* send(2, secondAccount);
-        yield* worker.drain();
-        const waiting = yield* orchestrator.getThreadProjection(threadId);
-        assert.deepEqual(
-          waiting.runs.map((run) => [run.providerInstanceId, run.status]),
-          [
-            [firstAccount.instanceId, "completed"],
-            [secondAccount.instanceId, "queued"],
-          ],
-        );
-
-        // The settled roster gives queue resumption its chance before the notification.
-        const rosterSettled = yield* orchestrator
-          .streamStoredEventsFrom({
-            threadId,
-            afterSequence: yield* (yield* EventSink.EventSinkV2).latestSequence(),
-            eventType: "provider-thread.updated",
-          })
-          .pipe(Stream.runHead, Effect.forkScoped);
-        yield* Queue.offer(firstProcess, emptyRoster);
-        yield* Fiber.join(rosterSettled);
-        yield* worker.drain();
-        yield* orchestrator.resumeQueuedRuns;
-        yield* worker.drain();
-        const afterRoster = yield* orchestrator.getThreadProjection(threadId);
-        assert.deepEqual(closed, [], "the notification is still owed by the first account");
-        assert.equal(afterRoster.runs[1]?.status, "queued");
-        assert.equal(
-          afterRoster.providerSessions.find(
-            (session) => session.providerInstanceId === firstAccount.instanceId,
-          )?.status,
-          "ready",
-        );
-
-        // The notification and wake reply arrive on the still-open process.
-        yield* Queue.offer(firstProcess, bashNotification);
-        yield* Queue.offer(firstProcess, assistantFrame("wake-assistant", WAKE_REPLY));
-        yield* Queue.offer(firstProcess, resultFrame("wake-result", WAKE_REPLY, true));
-        const request = yield* Queue.take(continuations);
-        const wakeSettling = yield* runStatus("wake", "waiting");
-        const switched = yield* runStatus("send-2", "running");
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make("wake"),
-          threadId,
-          messageId: MessageId.make("wake"),
-          text: request.detail ?? "Background task completed.",
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          creationSource: "provider",
-          notification: request.notification ?? {
-            source: { kind: "background_task" },
-            outcome: "updated",
-            summary: "Background activity updated",
-          },
+          yield* afterDispatch;
+          yield* worker.drain();
+          yield* Fiber.join(wakeSettling);
+          yield* worker.drain();
         });
-        yield* worker.drain();
-        yield* Fiber.join(wakeSettling);
-        yield* worker.drain();
-        yield* Fiber.join(switched);
-        yield* worker.drain();
-
+      if (handsOff) {
+        // The second account runs beside the first, whose process still owes its reply.
+        const finishSecond = Effect.gen(function* () {
+          const secondSettling = yield* runStatus("send-2", "waiting");
+          yield* Queue.offer(second.processes[0]!, resultFrame("turn-2", "Handoff complete."));
+          yield* Fiber.join(secondSettling);
+          yield* worker.drain();
+        });
+        assert.deepEqual(closed, []);
+        // A reply that arrives during the second account's turn queues, then starts on its owner.
+        if (variant === "hand-off sent after") {
+          yield* finishSecond;
+          yield* deliverWake();
+        } else {
+          yield* deliverWake(finishSecond);
+        }
         const after = yield* orchestrator.getThreadProjection(threadId);
         assert.isTrue(
           after.messages.some((message) => message.text === WAKE_REPLY),
           "the wake reply must reach the thread",
         );
-        const wakeRun = after.runs.find((run) => run.userMessageId === "wake");
-        assert.equal(wakeRun?.providerInstanceId, firstAccount.instanceId);
-        assert.equal(wakeRun?.status, "completed");
         assert.equal(
-          after.runs.find((run) => run.userMessageId === "send-2")?.providerInstanceId,
-          secondAccount.instanceId,
+          after.runs.find((run) => run.userMessageId === "wake")?.providerInstanceId,
+          firstAccount.instanceId,
         );
-        // Only now may the switch release the first account's process.
-        assert.deepEqual(closed, [firstAccount.instanceId]);
-        assert.lengthOf(second.processes, 1);
-      }).pipe(
-        Effect.provide(
-          ProviderReplayHarness.layerWithRegistry(
-            {
-              name: "claude-account-switch-wake",
-              runtimePolicyOverride: {
-                cwd,
-                approvalPolicy: "never",
-                sandboxPolicy: {
-                  type: "readOnly",
-                  access: { type: "fullAccess" },
-                  networkAccess: false,
-                },
-              },
-            },
-            registry,
-            { runEffectWorker: false },
-          ),
-        ),
+        // The reply drains on its owner; the user's pick stays on the second account.
+        assert.deepEqual(after.thread.modelSelection, secondAccount);
+        assert.equal(after.thread.providerInstanceId, secondAccount.instanceId);
+        assert.notInclude(closed, secondAccount.instanceId);
+        return;
+      }
+      const waiting = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        waiting.runs.map((run) => [run.providerInstanceId, run.status]),
+        [
+          [firstAccount.instanceId, "completed"],
+          [secondAccount.instanceId, "queued"],
+        ],
       );
+
+      // The settled roster gives queue resumption its chance before the notification.
+      const rosterSettled = yield* orchestrator
+        .streamStoredEventsFrom({
+          threadId,
+          afterSequence: yield* (yield* EventSink.EventSinkV2).latestSequence(),
+          eventType: "provider-thread.updated",
+        })
+        .pipe(Stream.runHead, Effect.forkScoped);
+      yield* Queue.offer(firstProcess, emptyRoster);
+      yield* Fiber.join(rosterSettled);
+      yield* worker.drain();
+      yield* orchestrator.resumeQueuedRuns;
+      yield* worker.drain();
+      const afterRoster = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(closed, [], "the notification is still owed by the first account");
+      assert.equal(afterRoster.runs[1]?.status, "queued");
+      assert.equal(
+        afterRoster.providerSessions.find(
+          (session) => session.providerInstanceId === firstAccount.instanceId,
+        )?.status,
+        "ready",
+      );
+
+      // The notification and wake reply arrive on the still-open process.
+      const switched = yield* runStatus("send-2", "running");
+      yield* deliverWake();
+      yield* Fiber.join(switched);
+      yield* worker.drain();
+
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.isTrue(
+        after.messages.some((message) => message.text === WAKE_REPLY),
+        "the wake reply must reach the thread",
+      );
+      const wakeRun = after.runs.find((run) => run.userMessageId === "wake");
+      assert.equal(wakeRun?.providerInstanceId, firstAccount.instanceId);
+      assert.equal(wakeRun?.status, "completed");
+      assert.equal(
+        after.runs.find((run) => run.userMessageId === "send-2")?.providerInstanceId,
+        secondAccount.instanceId,
+      );
+      // Only now may the switch release the first account's process.
+      assert.deepEqual(closed, [firstAccount.instanceId]);
+      assert.lengthOf(second.processes, 1);
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
+        ProviderReplayHarness.layerWithRegistry(
+          {
+            name: "claude-account-switch-wake",
+            runtimePolicyOverride: {
+              cwd,
+              approvalPolicy: "never",
+              sandboxPolicy: {
+                type: "readOnly",
+                access: { type: "fullAccess" },
+                networkAccess: false,
+              },
+            },
+          },
+          registry,
+          { runEffectWorker: false },
         ),
       ),
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        IdAllocator.layer,
+        McpProviderSessions.layer,
+        NodeServices.layer,
+        NodeCrypto.layer,
+      ),
     ),
+  ),
 );

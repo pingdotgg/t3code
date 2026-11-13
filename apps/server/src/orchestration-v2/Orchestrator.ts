@@ -81,6 +81,7 @@ import {
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { modelSwitchSince } from "./modelSwitch.ts";
+import { resolveBufferedProviderContinuation } from "./bufferedProviderContinuation.ts";
 import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
@@ -2501,8 +2502,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const activeProviderThread = dispatchProviderThread(projection, queuedMessage, freshContext);
       const contextBoundary = freshContext ? ordinal : contextBoundaryOrdinal(projection);
       // A run queued before a fresh run started is bound to the conversation that run left behind.
+      // Buffered output can only drain on the session that holds it.
+      const bufferedContinuation = isBufferedProviderNotification(queuedMessage);
       const followsLatestContext =
         !freshContext &&
+        !bufferedContinuation &&
         (followsCurrent || providerThreadPredatesBoundary(storedProviderThread, contextBoundary));
       const targetProviderThread = followsLatestContext
         ? activeProviderThread?.providerInstanceId === queuedRun.providerInstanceId &&
@@ -2539,10 +2543,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         createdAt: now,
         updatedAt: now,
       };
-      const selectionChanged = !modelSelectionsEqual(
-        projection.thread.modelSelection,
-        queuedRun.modelSelection,
-      );
+      const selectionChanged =
+        !bufferedContinuation &&
+        !modelSelectionsEqual(projection.thread.modelSelection, queuedRun.modelSelection);
       // The picker may already have moved ahead of the native conversation.
       const switchFromActiveProvider =
         followsCurrent &&
@@ -6850,7 +6853,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
       projection = applyToProjection(projection, event);
     }
-    let modelSelection = command.modelSelection ?? projection.thread.modelSelection;
+    // A session kept across a hand-off still replies; its reply must not move the user's pick.
+    const continuation = resolveBufferedProviderContinuation(projection, command);
+    let modelSelection =
+      continuation?.modelSelection ?? command.modelSelection ?? projection.thread.modelSelection;
     let dispatchMode = resolveMessageDispatchIntent(
       projection,
       command.dispatchMode,
@@ -7191,11 +7197,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return;
     }
 
-    const activeProviderThread = dispatchProviderThread(
-      projection,
-      { ...command, delegatedCompletion },
-      freshContext,
-    );
+    const activeProviderThread =
+      continuation?.providerThread ??
+      dispatchProviderThread(projection, { ...command, delegatedCompletion }, freshContext);
     const activeRun = projection.runs.find(isActiveRun);
     // Messages after failed or stopped worktree setup must wait for a worktree,
     // rather than start in the project checkout.
@@ -7680,8 +7684,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     const now = yield* DateTime.now;
     if (
-      !modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
-      projection.thread.providerInstanceId !== modelSelection.instanceId
+      continuation === undefined &&
+      (!modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
+        projection.thread.providerInstanceId !== modelSelection.instanceId)
     ) {
       yield* emit(
         events,

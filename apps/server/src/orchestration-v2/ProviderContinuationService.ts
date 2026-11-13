@@ -258,6 +258,9 @@ export const layer = Layer.effectDiscard(
             createdBy: "agent",
             // Only buffered wakes use creationSource "provider"; Claude would drain an empty buffer instead of prompting message_text.
             creationSource: request.delivery === "message_text" ? "server" : "provider",
+            ...(request.delivery === "message_text"
+              ? {}
+              : { continuationProviderThreadId: request.providerThreadId }),
           })
           .pipe(Effect.tap((dispatched) => releaseIfNeverStarted(request, messageId, dispatched)));
         // Catch after dispatchIfCurrent so adapters see raw failures first; clearIfCurrent is idempotent and covers others.
