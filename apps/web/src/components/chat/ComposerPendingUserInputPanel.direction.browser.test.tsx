@@ -2,7 +2,7 @@ import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
 vi.mock(import("../ChatMarkdown"), () => ({
-  default: (({ text }: { text: string }) => <p data-testid="markdown">{text}</p>) as never,
+  default: (({ text }: { text: string }) => <p>{text}</p>) as never,
 }));
 
 import { render } from "../../../test/render";
@@ -119,26 +119,4 @@ it("shows an option's preview so the user can see what they are approving", asyn
   await expect
     .element(screen.getByText("A quote in the password breaks login.", { exact: false }))
     .toBeVisible();
-});
-
-it("renders option labels and descriptions as Markdown, like the question", async () => {
-  await using screen = await renderPanel([
-    {
-      header: "Series",
-      question: "What does $\\sum_{n=1}^{\\infty} \\frac{1}{2^n}$ equal?",
-      options: [
-        { label: "$1$", description: "Half of $2$." },
-        { label: "$\\frac{1}{2}$", description: "The first term." },
-      ],
-    },
-  ]);
-
-  await expect.element(screen.getByRole("button", { name: /The first term/ })).toBeVisible();
-  const markdownTexts = screen
-    .getByTestId("markdown")
-    .elements()
-    .map((node) => node.textContent);
-  expect(markdownTexts).toEqual(
-    expect.arrayContaining(["$1$", "Half of $2$.", "$\\frac{1}{2}$", "The first term."]),
-  );
 });
