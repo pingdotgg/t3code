@@ -60,6 +60,7 @@ const APPLY_FAILURES = {
     "has CSS that loads files. Remove @import, image-set(), and url() that is not data: or #id.",
   "too-large": `is larger than ${MAX_THEME_FILE_BYTES} bytes.`,
   "not-published": "could not be published. The themes directory may be full or not writable.",
+  occupied: "would replace a file that could not be backed up. Use another theme id.",
   "not-selected": "was not made the environment theme, because the settings could not be saved.",
 } as const;
 
@@ -74,6 +75,7 @@ export class EnvironmentThemeApplyError extends Schema.TaggedError<EnvironmentTh
       "remote-css",
       "too-large",
       "not-published",
+      "occupied",
       "not-selected",
     ]),
     known: Schema.optional(Schema.Array(Schema.String)),
@@ -107,6 +109,16 @@ export class EnvironmentThemeService extends Context.Service<
 
 /** Validates and reads one handle; rejects symlinked files, allows symlinked directories.
  * Uses non-blocking opens against FIFOs; Windows lacks these flags and checks symlinks with lstat. */
+/** True when anything, a dangling symlink included, is at the path. */
+const pathIsTaken = (filePath: string): boolean => {
+  try {
+    NodeFS.lstatSync(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const readThemeFileGuarded = (filePath: string, maxBytes: number): string | null => {
   let fd: number;
   try {
@@ -281,6 +293,8 @@ const make = Effect.gen(function* () {
 
     // The guarded reader does not block on a FIFO and does not follow a symlink.
     const previous = Option.fromNullOr(readThemeFileGuarded(destination, MAX_THEME_FILE_BYTES));
+    // A file it cannot read back, such as one over the size limit, could not be restored.
+    if (Option.isNone(previous) && pathIsTaken(destination)) return yield* fail("occupied");
     const servedBefore = (yield* refresh).themes.map((theme) => theme.id);
     // Puts back what was there, so a failed apply does not take a working theme away.
     const revert = Option.match(previous, {

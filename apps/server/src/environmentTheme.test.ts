@@ -184,6 +184,26 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     ),
   );
 
+  it.effect("does not replace a theme file it could not put back", () => {
+    const oversized = JSON.stringify({ ...NIGHTFALL_THEME, padding: "x".repeat(40_000) });
+    return withEnvironmentThemes(
+      { [`${REFUSED_THEME_ID}.json`]: oversized },
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig.ServerConfig;
+        const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+        const refused = yield* themes
+          .apply({ themeId: REFUSED_THEME_ID, theme: NIGHTFALL_THEME })
+          .pipe(Effect.flip);
+        assert.strictEqual(refused.reason, "occupied");
+        assert.strictEqual(
+          yield* fs.readFileString(`${config.environmentThemesDir}/${REFUSED_THEME_ID}.json`),
+          oversized,
+        );
+      }),
+    );
+  });
+
   it.effect.skipIf(!symlinksSupported)("does not write through a symlink at its staging path", () =>
     withEnvironmentThemes(
       {},
