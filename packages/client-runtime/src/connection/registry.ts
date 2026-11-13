@@ -51,6 +51,7 @@ import {
   findRouteToSameAddress,
   hasSavedBearerRoute,
   mergeLearnedRoutes,
+  routeKeepsItsHost,
   routesAfterRemoving,
   routesWithCopiedLabel,
   routesWithHostLabel,
@@ -104,11 +105,12 @@ export class EnvironmentRegistry extends Context.Service<
     /**
      * Succeeds with `false` and changes nothing when the environment is
      * platform-managed, since the host owns that entry. With `knownAddressOnly`, it fails like
-     * `assertKnownAddress`, checked under the environment's lease.
+     * `assertKnownAddress`, checked under the environment's lease. `paired` means the server at
+     * this address just confirmed its environment id, so no other environment is still there.
      */
     readonly register: (
       registration: ConnectionRegistration,
-      options?: { readonly knownAddressOnly?: boolean },
+      options?: { readonly knownAddressOnly?: boolean; readonly paired?: boolean },
     ) => Effect.Effect<boolean, Persistence.ConnectionPersistenceError | ConnectionBlockedError>;
     /**
      * Fails when the route would add a new address to a saved user environment. Pairing that does
@@ -562,12 +564,12 @@ export const make = Effect.gen(function* () {
 
   const register = Effect.fn("EnvironmentRegistry.register")(function* (
     registration: ConnectionRegistration,
-    options?: { readonly knownAddressOnly?: boolean },
+    options?: { readonly knownAddressOnly?: boolean; readonly paired?: boolean },
   ) {
     const registered = connectionRegistrationCatalogEntry(registration);
     const environmentId = registered.target.environmentId;
     const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
-    return yield* withLeaseLock(
+    const saved = yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
@@ -606,6 +608,51 @@ export const make = Effect.gen(function* () {
         yield* installEntryLocked(entry);
         return true;
       }),
+    );
+    if (saved && options?.paired === true && routeKeepsItsHost(route)) {
+      yield* dropAddressFromOtherEnvironments(environmentId, route);
+    }
+    return saved;
+  });
+
+  /**
+   * An HTTPS or loopback address reaches one server, so a pairing there proves every other
+   * environment saved at it is gone from it. One with no other route can never be reached again
+   * and is forgotten. One left with only routes borrowing that address's login is not touched:
+   * those routes may still reach it, and they cannot keep the login without the address.
+   */
+  const dropAddressFromOtherEnvironments = Effect.fn(
+    "EnvironmentRegistry.dropAddressFromOtherEnvironments",
+  )(function* (environmentId: EnvironmentId, route: ConnectionRoute) {
+    const others = [...(yield* SubscriptionRef.get(entries)).keys()].filter(
+      (other) => other !== environmentId,
+    );
+    yield* Effect.forEach(
+      others,
+      (other) =>
+        withLeaseLock(
+          other,
+          Effect.gen(function* () {
+            if ((yield* Ref.get(platformEnvironmentIds)).has(other)) return;
+            // Read under the lease: the route may have been edited or removed meanwhile.
+            const entry = (yield* SubscriptionRef.get(entries)).get(other);
+            if (entry === undefined) return;
+            const routes = connectionRoutes(entry);
+            const stale = findRouteToSameAddress(routes, route);
+            if (stale === undefined) return;
+            const remaining = routesAfterRemoving(routes, connectionRouteId(stale.target));
+            if (remaining.length > 0) return yield* replaceRoutesLocked(entry, remaining);
+            if (routes.length === 1) yield* removeLocked(other);
+          }),
+        ).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Could not drop a stale route at a newly paired address.", {
+              environmentId: other,
+              error,
+            }),
+          ),
+        ),
+      { discard: true },
     );
   });
 
