@@ -222,7 +222,9 @@ function repositoryGroupingRemoteOf(identity: RepositoryIdentity): string {
 
 export function deriveProjectGroupLabel(input: {
   readonly representative: Pick<EnvironmentProject, "title" | "repositoryIdentity">;
-  readonly members: ReadonlyArray<Pick<EnvironmentProject, "title" | "repositoryIdentity">>;
+  readonly members: ReadonlyArray<
+    Pick<EnvironmentProject, "title" | "hasCustomTitle" | "repositoryIdentity">
+  >;
 }): string {
   const sharedTitles = uniqueNonEmptyValues(input.members.map((member) => member.title));
   const providerLabels = input.members.map((member) =>
@@ -245,10 +247,11 @@ export function deriveProjectGroupLabel(input: {
   if (
     sharedTitles.length === 1 &&
     sharedTitle !== undefined &&
-    !displayNames.includes(sharedTitle) &&
-    !sharedRepositoryNames.includes(sharedTitle) &&
-    // A provider label's repository keeps the remote's case where the server's name may not.
-    !providerLabels.some((label) => label?.slice(label.lastIndexOf("/") + 1) === sharedTitle)
+    (input.members.some((member) => member.hasCustomTitle === true) ||
+      (!displayNames.includes(sharedTitle) &&
+        !sharedRepositoryNames.includes(sharedTitle) &&
+        // A provider label's repository keeps the remote's case where the server's name may not.
+        !providerLabels.some((label) => label?.slice(label.lastIndexOf("/") + 1) === sharedTitle)))
   ) {
     return sharedTitle;
   }
