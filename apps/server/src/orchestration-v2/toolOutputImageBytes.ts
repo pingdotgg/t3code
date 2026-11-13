@@ -14,7 +14,7 @@ import {
   toolOutputImageBlocks,
 } from "@t3tools/shared/toolOutput";
 
-import { chatAttachmentStableKey, createDeterministicAttachmentId } from "../attachmentStore.ts";
+import { toolOutputImageAttachmentId } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import { inferImageExtension } from "../imageMime.ts";
 
@@ -135,7 +135,7 @@ function mapOutputBlocks(value: unknown, map: (block: unknown) => unknown): unkn
 }
 
 /** Moves served image bytes to the attachment store so SQLite rows keep only a reference.
- * Ids are deterministic per item, index, and bytes, so repeated updates reuse one file. */
+ * Ids address the bytes, so repeated updates and identical images share one file. */
 export const storeServedToolOutputImages = Effect.fn(
   "ToolOutputImageBytes.storeServedToolOutputImages",
 )(function* (item: OrchestrationV2TurnItem) {
@@ -148,7 +148,7 @@ export const storeServedToolOutputImages = Effect.fn(
   const replacements = new Map<unknown, unknown>();
   yield* Effect.forEach(
     blocks,
-    Effect.fnUntraced(function* (block, index) {
+    Effect.fnUntraced(function* (block) {
       const image = readToolOutputImage(block);
       if (image === null || !Predicate.isObject(block)) return;
       // Provider output must not point at another thread's stored file, on any path below.
@@ -162,13 +162,8 @@ export const storeServedToolOutputImages = Effect.fn(
       const decoded = Base64.decode(image.data);
       if (Result.isFailure(decoded)) return;
       const bytes = decoded.success;
-      const baseId = createDeterministicAttachmentId(
-        item.threadId,
-        chatAttachmentStableKey(item.id, index, bytes),
-      );
-      if (baseId === null) return;
       const extension = inferImageExtension({ mimeType: image.mimeType });
-      const attachmentId = `${baseId}-${extension.slice(1)}`;
+      const attachmentId = toolOutputImageAttachmentId(bytes, extension);
       const filePath = path.join(config.attachmentsDir, `${attachmentId}${extension}`);
       const partPath = `${filePath}.${NodeCrypto.randomUUID()}.part`;
       const stored = yield* fileSystem.exists(filePath).pipe(

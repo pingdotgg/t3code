@@ -27,6 +27,7 @@ import { vi } from "vite-plus/test";
 
 import * as AssetSigner from "./AssetSigner.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { toolOutputImageAttachmentId } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
@@ -102,12 +103,21 @@ const oversizedScreenshotItem = {
   },
 };
 
-const storedScreenshotAttachmentId = "thread-1-00000000-0000-4000-8000-000000000041-png";
+const storedScreenshotAttachmentId = toolOutputImageAttachmentId(screenshotPng, ".png");
+const foreignAttachmentId = "thread-2-00000000-0000-4000-8000-000000000041-png";
 const storedScreenshotItem = {
   ...screenshotItem,
   id: TurnItemId.make("tool-screenshot-stored"),
   output: {
     content: [{ type: "image", mimeType: "image/png", attachmentId: storedScreenshotAttachmentId }],
+  },
+};
+// Rows persisted before the server stored images can carry any id a provider emitted.
+const foreignScreenshotItem = {
+  ...screenshotItem,
+  id: TurnItemId.make("tool-screenshot-foreign"),
+  output: {
+    content: [{ type: "image", mimeType: "image/png", attachmentId: foreignAttachmentId }],
   },
 };
 
@@ -116,7 +126,7 @@ const layerTest = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({
     getTurnItem: ({ itemId }) =>
       Effect.succeed(
-        [screenshotItem, oversizedScreenshotItem, storedScreenshotItem].find(
+        [screenshotItem, oversizedScreenshotItem, storedScreenshotItem, foreignScreenshotItem].find(
           (item) => item.id === itemId,
         ) ?? null,
       ),
@@ -199,10 +209,9 @@ describe("AssetAccess", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
-      yield* fs.writeFile(
-        path.join(config.attachmentsDir, `${storedScreenshotAttachmentId}.png`),
-        screenshotPng,
-      );
+      for (const attachmentId of [storedScreenshotAttachmentId, foreignAttachmentId]) {
+        yield* fs.writeFile(path.join(config.attachmentsDir, `${attachmentId}.png`), screenshotPng);
+      }
       const resource = {
         _tag: "tool-output-image" as const,
         threadId: screenshotItem.threadId,
@@ -226,10 +235,12 @@ describe("AssetAccess", () => {
         Effect.flip,
       );
       expect(missing._tag).toBe("AssetWorkspaceAssetNotFoundError");
-      const oversized = yield* issueAssetUrl({
-        resource: { ...resource, itemId: oversizedScreenshotItem.id },
-      }).pipe(Effect.flip);
-      expect(oversized._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      for (const itemId of [oversizedScreenshotItem.id, foreignScreenshotItem.id]) {
+        const unserved = yield* issueAssetUrl({ resource: { ...resource, itemId } }).pipe(
+          Effect.flip,
+        );
+        expect(unserved._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      }
     }).pipe(Effect.provide(layerTest)),
   );
 

@@ -50,7 +50,12 @@ import * as Stream from "effect/Stream";
 import { base64UrlDecodeUtf8, base64UrlEncode } from "../auth/utils.ts";
 import * as AssetSigner from "./AssetSigner.ts";
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
-import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
+import {
+  parseAttachmentFileExtension,
+  resolveAttachmentPathById,
+  toolOutputImageAttachmentId,
+} from "../attachmentStore.ts";
+import { inferImageExtension } from "../imageMime.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -251,7 +256,11 @@ const readToolOutputImage = Effect.fn("AssetAccess.readToolOutputImage")(functio
     });
     if (filePath === null) return null;
     const fileSystem = yield* FileSystem.FileSystem;
-    return { mimeType: image.mimeType, bytes: yield* fileSystem.readFile(filePath) };
+    const bytes = yield* fileSystem.readFile(filePath);
+    const extension = inferImageExtension({ mimeType: image.mimeType });
+    return toolOutputImageAttachmentId(bytes, extension) === image.attachmentId
+      ? { mimeType: image.mimeType, bytes }
+      : null;
   }
   return image?.data === undefined || image.data.length > MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH
     ? null
