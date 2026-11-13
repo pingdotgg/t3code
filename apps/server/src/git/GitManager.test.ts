@@ -2741,6 +2741,60 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
+  it.effect.each([
+    { checkout: ["-b", "feature/x", "origin/dev"], head: "dev", state: "merged", shown: false },
+    {
+      checkout: ["--track", "-b", "pulls/42", "origin/feature/published"],
+      head: "feature/published",
+      state: "open",
+      shown: true,
+    },
+    {
+      checkout: ["-b", "review", "--track", "origin/feature/published"],
+      head: "feature/published",
+      state: "open",
+      shown: true,
+    },
+  ] as const)(
+    "status takes the $state PR of a differently named upstream ahead of the default: $shown ($checkout.1)",
+    ({ checkout, head, state, shown }) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "upstream-work"]);
+        yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Work not on main yet"]);
+        yield* runGit(repoDir, ["push", "origin", `upstream-work:${head}`]);
+        yield* runGit(repoDir, ["fetch", "origin"]);
+        yield* runGit(repoDir, ["checkout", ...checkout]);
+        yield* runGit(repoDir, ["branch", "-D", "upstream-work"]);
+
+        const { manager } = yield* makeManager({
+          providerScenario: {
+            prListByHeadSelector: {
+              [head]: [
+                {
+                  number: 42,
+                  title: "Upstream branch PR",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+                  baseRefName: "main",
+                  headRefName: head,
+                  state,
+                  updatedAt: "2026-08-20T10:00:00Z",
+                },
+              ],
+            },
+          },
+        });
+
+        const status = yield* manager.status({ cwd: repoDir });
+        expect(status.pr?.number ?? null).toBe(shown ? 42 : null);
+      }),
+  );
+
   it.effect("status finds a PR pushed under the branch's own name despite a default upstream", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

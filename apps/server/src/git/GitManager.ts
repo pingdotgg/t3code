@@ -1282,7 +1282,7 @@ export const make = Effect.gen(function* () {
         ...(remoteName.length > 0 ? { remoteName } : {}),
       };
       return Effect.gen(function* () {
-        const { headContext, lookup } = yield* resolveLookupHeadContext(cwd, details);
+        const { headContext, lookup, openOnly } = yield* resolveLookupHeadContext(cwd, details);
         if (!lookup) {
           return { latest: null, headContext };
         }
@@ -1293,7 +1293,8 @@ export const make = Effect.gen(function* () {
         ) {
           return { latest: null, headContext };
         }
-        const latest = yield* findLatestPrForHeadContext(cwd, headContext, details.defaultBranch);
+        const found = yield* findLatestPrForHeadContext(cwd, headContext, details.defaultBranch);
+        const latest = openOnly && found?.state !== "open" ? null : found;
         if (latest !== null) yield* noteLookupState(latest);
         return { latest, headContext };
       });
@@ -1845,20 +1846,45 @@ export const make = Effect.gen(function* () {
         return {
           headContext: yield* resolveBranchHeadContext(cwd, { ...details, remoteName }),
           lookup: true,
+          openOnly: false,
         };
       }
     }
     if (headContext.headBranch === details.branch || headContext.isCrossRepository) {
-      return { headContext, lookup: true };
+      return { headContext, lookup: true, openOnly: false };
     }
     const upstreamHeadIsBase =
       headContext.headBranch === details.defaultBranch ||
       (details.defaultBranch === null &&
         (headContext.headBranch === "main" || headContext.headBranch === "master")) ||
       headContext.headBranch ===
-        (yield* gitCore.readBranchBase(cwd, details.branch).pipe(Effect.orElseSucceed(() => null)));
+        (yield* gitCore
+          .readBranchBase(cwd, details.branch)
+          .pipe(Effect.orElseSucceed(() => null))) ||
+      // A head the default branch already contains has nothing left to propose.
+      (details.defaultBranch !== null &&
+        headContext.remoteName !== null &&
+        (yield* gitCore
+          .execute({
+            operation: "GitManager.resolveLookupHeadContext.containedInDefault",
+            cwd,
+            args: [
+              "merge-base",
+              "--is-ancestor",
+              `refs/remotes/${headContext.remoteName}/${headContext.headBranch}`,
+              `refs/remotes/${headContext.remoteName}/${details.defaultBranch}`,
+            ],
+            allowNonZeroExit: true,
+            timeoutMs: 5_000,
+          })
+          .pipe(
+            Effect.map((result) => result.exitCode === 0),
+            Effect.orElseSucceed(() => false),
+          )));
     if (!upstreamHeadIsBase) {
-      return { headContext, lookup: true };
+      // Git records a branch cut from a base and a PR checked out under another name the same
+      // way, so a PR found through the upstream's name is this branch's only while it is open.
+      return { headContext, lookup: true, openOnly: true };
     }
     const remoteName = yield* findRemoteTrackingRemote(
       cwd,
@@ -1866,14 +1892,14 @@ export const make = Effect.gen(function* () {
       headContext.remoteName,
     ).pipe(Effect.orElseSucceed(() => null));
     if (remoteName === null) {
-      return { headContext, lookup: false };
+      return { headContext, lookup: false, openOnly: false };
     }
     const ownNameContext = yield* resolveBranchHeadContext(cwd, {
       branch: details.branch,
       upstreamRef: null,
       remoteName,
     });
-    return { headContext: ownNameContext, lookup: true };
+    return { headContext: ownNameContext, lookup: true, openOnly: false };
   });
 
   const isUnpublishedBranch = Effect.fn("isUnpublishedBranch")(function* (
