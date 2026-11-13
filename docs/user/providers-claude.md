@@ -95,11 +95,12 @@ Claude skills come from the config directory's `skills` folder and the project's
 `.claude/skills` folder. If both define the same name, the config-directory copy
 wins. Skills disabled in Claude's settings do not appear in the composer.
 
-Use `$` in the composer to select a skill. Enabled installed Claude plugins also
-contribute skills under names such as `plugin:review`. Skills marked `disable-model-invocation`
-can still be started by you. Invoke those one per message: Claude directly runs
-only the last named skill and may try to start earlier ones through its Skill
-tool, which refuses skills reserved for manual invocation.
+Use `$` in the composer to select a skill. Enabled installed Claude plugins,
+and plugins synced from your claude.ai account, also contribute skills under
+names such as `plugin:review`. Skills marked `disable-model-invocation` can
+still be started by you. Invoke those one per message: Claude directly runs only
+the last named skill and may try to start earlier ones through its Skill tool,
+which refuses skills reserved for manual invocation.
 
 ## Task lists
 
@@ -107,6 +108,19 @@ To show Claude task lists in the web and desktop apps, add
 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` under **Variables** in the Claude instance's
 **Environment** section in **Settings > Providers**. Each update shows as a Tasks
 row in the thread; open it to see every step.
+
+## Claude in Chrome
+
+Claude threads can use the Claude in Chrome extension, which works in your own
+Chrome with its sign-ins. T3 Code sessions load it only when asked: add `--chrome`
+to **Launch arguments** in the Claude instance's settings in **Settings > Providers**.
+It applies to sessions that start after you save. Set up the extension as you would
+for Claude Code first; see Claude Code's [Chrome guide](https://code.claude.com/docs/en/chrome).
+
+The instance must be signed in with `/login` on a direct Anthropic plan. Instances
+that use an API key or a `claude setup-token` token don't get it, even with
+`--chrome`, and neither do third-party providers such as Amazon Bedrock. Claude Code
+doesn't support it in WSL.
 
 ## OpenRouter
 

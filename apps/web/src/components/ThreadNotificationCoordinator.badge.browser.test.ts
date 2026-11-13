@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   mode: "notifications",
   inApp: false,
   toast: vi.fn(),
+  closeToast: vi.fn(),
   shells: null as unknown as { set: (id: string, value: unknown) => void },
   navigate: vi.fn(),
   sound: vi.fn(),
@@ -20,7 +21,14 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock(import("./ui/toast"), async (original) => {
   const actual = await original();
-  return { ...actual, toastManager: { ...actual.toastManager, add: state.toast as never } };
+  return {
+    ...actual,
+    toastManager: {
+      ...actual.toastManager,
+      add: state.toast as never,
+      close: state.closeToast as never,
+    },
+  };
 });
 vi.mock(import("../state/shell"), async (original) => {
   const actual = await original();
@@ -206,15 +214,25 @@ function setup() {
       .spyOn(document, "visibilityState", "get")
       .mockImplementation(() => visibility as DocumentVisibilityState),
   );
+  const routeListeners = new Set<() => void>();
+  const route = { params: {} as Record<string, string> };
   const router = {
-    state: { matches: [{ params: {} }] },
+    state: { matches: [route] },
     navigate: state.navigate,
+    subscribe: (_event: string, listener: () => void) => {
+      routeListeners.add(listener);
+      return () => routeListeners.delete(listener);
+    },
   } as unknown as AnyRouter;
   return {
     start: () => {
       stack.defer(startThreadNotifications(testRegistry, router));
     },
     setEnvironmentIds: (ids: ReadonlyArray<string>) => testRegistry.set(environmentIdsAtom, ids),
+    openThread: (environmentId: string, threadId: string) => {
+      route.params = { environmentId, threadId };
+      for (const listener of routeListeners) listener();
+    },
     changeSettings: () => {
       for (const listener of state.settingsListeners) listener();
     },
@@ -243,12 +261,19 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
 );
 
 it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
-  "notifies again when a new %s request replaces the pending one in the same run",
+  "notifies once per %s request, not again as queued runs start behind it",
   async (flag) => {
     await using app = setup();
     app.start();
-    state.shells.set("one", shell({ [flag]: true, pendingRequestId: "request-1" }));
-    state.shells.set("one", shell({ [flag]: true, pendingRequestId: "request-2" }));
+    const waiting = (turnId: string, pendingRequestId: string) =>
+      shell({
+        [flag]: true,
+        pendingRequestId,
+        latestTurn: { turnId, state: "running", completedAt: null },
+      });
+    state.shells.set("one", waiting("turn-1", "request-1"));
+    state.shells.set("one", waiting("turn-2", "request-1"));
+    state.shells.set("one", waiting("turn-2", "request-2"));
     const title = flag === "hasPendingApprovals" ? "Approval needed" : "Input needed";
     expect(TestNotification.sent.map(({ title }) => title)).toEqual([title, title]);
   },
@@ -393,3 +418,38 @@ it.each([false, true])(
     expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Thread completed"]);
   },
 );
+
+it("opening a thread closes only its in-app toasts, and disabling notifications closes the rest", async () => {
+  await using app = setup();
+  state.inApp = true;
+  focused = true;
+  state.toast
+    .mockReturnValueOnce("one-completed")
+    .mockReturnValueOnce("one-approval")
+    .mockReturnValueOnce("one-other")
+    .mockReturnValueOnce("two-completed");
+  state.shells.set("one", shell({}, { id: "other" }));
+  app.start();
+  const completed = {
+    latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:01:00Z" },
+  };
+  state.shells.set("one", shell(completed, { id: "other" }));
+  state.shells.set("one", shell({ ...completed, hasPendingApprovals: true }, { id: "other" }));
+  state.shells.set(
+    "one",
+    shell({ ...completed, hasPendingApprovals: true }, { ...completed, id: "other" }),
+  );
+  state.shells.set("two", shell(completed));
+  expect(state.toast).toHaveBeenCalledTimes(4);
+
+  app.openThread("one", "thread");
+  expect(state.closeToast.mock.calls).toEqual([["one-completed"], ["one-approval"]]);
+
+  state.mode = "off";
+  state.inApp = false;
+  app.changeSettings();
+  expect(state.closeToast.mock.calls.slice(2).flat().toSorted()).toEqual([
+    "one-other",
+    "two-completed",
+  ]);
+});

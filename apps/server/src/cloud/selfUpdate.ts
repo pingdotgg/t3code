@@ -45,7 +45,7 @@ import {
 import { bootServiceProgramOf, bootServiceUnitPath } from "./bootService.ts";
 import { decodeServicePreflightResult } from "./servicePreflight.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
-import { isExactServiceVersion, SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
+import { isExactServiceVersion } from "./serviceProtocol.ts";
 
 // A staged runtime's cold start can take over a minute on a loaded, swapping host.
 const PREFLIGHT_TIMEOUT = Duration.minutes(3);
@@ -199,7 +199,9 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         "This server is managed by the T3 Code desktop app on its machine; update the desktop app to update it.",
       );
     }
-    if (capability === null) {
+    // The target must accept the launcher that will run it, which can be older than this server.
+    const launcherProtocol = launcher.protocol;
+    if (capability === null || launcherProtocol === undefined) {
       return yield* failWith(
         "Remote updates require the T3 Code background service. Run `t3 service install` on the server machine.",
       );
@@ -238,7 +240,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
                 "--database-path",
                 serverConfig.dbPath,
                 "--launcher-protocol",
-                String(SERVICE_LAUNCHER_PROTOCOL),
+                String(launcherProtocol),
               ],
               timeout: PREFLIGHT_TIMEOUT,
             })
@@ -278,7 +280,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
                       }),
                     );
                   }
-                  const preflight = decodeServicePreflightResult(parsed);
+                  const preflight = decodeServicePreflightResult(parsed, launcherProtocol);
                   if (preflight === undefined || preflight.version !== targetVersion) {
                     return Effect.fail(
                       new PinnedRuntimeInstallError({

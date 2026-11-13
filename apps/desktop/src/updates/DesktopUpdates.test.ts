@@ -83,16 +83,22 @@ describe("DesktopUpdates", () => {
         Effect.scoped(
           Effect.gen(function* () {
             const updates = yield* DesktopUpdates.DesktopUpdates;
+            const desktopState = yield* DesktopState.DesktopState;
             yield* updates.configure;
-            return yield* updates.getState;
+            return {
+              state: yield* updates.getState,
+              canInstallUpdates: yield* Ref.get(desktopState.canInstallUpdates),
+            };
           }),
         ).pipe(Effect.provide(makeHarness({ platform: "linux", packageType }).layer));
 
       const deb = yield* linuxState("deb\n");
-      assert.equal(deb.status, "idle");
+      assert.equal(deb.state.status, "idle");
+      assert.isTrue(deb.canInstallUpdates);
 
       const unmarked = yield* linuxState(undefined);
-      assert.equal(unmarked.status, "disabled");
+      assert.equal(unmarked.state.status, "disabled");
+      assert.isFalse(unmarked.canInstallUpdates);
     }),
   );
 
@@ -237,6 +243,26 @@ describe("DesktopUpdates", () => {
         ]);
         assert.equal(state.omittedReleaseCount, 0);
         assert.equal(state.downloadPercent, 100);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("checks shortly after startup and then every four hours", () => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        yield* TestClock.adjust("15 seconds");
+        assert.equal(harness.checkCount(), 1);
+
+        yield* TestClock.adjust("3 hours");
+        assert.equal(harness.checkCount(), 1);
+
+        yield* TestClock.adjust("1 hour");
+        assert.equal(harness.checkCount(), 2);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -420,6 +446,33 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("shows why a download failed, not only the channel", () => {
+    const harness = makeHarness({
+      downloadUpdate: Effect.fail(
+        new ElectronUpdater.ElectronUpdaterDownloadUpdateError({
+          channel: "nightly",
+          cause: new Error("net::ERR_CONTENT_LENGTH_MISMATCH"),
+        }),
+      ),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.download;
+        assert.isFalse(result.completed);
+
+        const state = yield* updates.getState;
+        assert.equal(state.errorContext, "download");
+        assert.include(state.message ?? "", "ERR_CONTENT_LENGTH_MISMATCH");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("restores download state and permits retry after interruption", () =>
     Effect.gen(function* () {
       const actionStarted = yield* Deferred.make<void>();
@@ -491,14 +544,17 @@ describe("DesktopUpdates", () => {
 
   it.effect("marks the backend stop for an install as an update restart", () => {
     let markersAtStop: ReadonlyArray<string> = [];
+    let inProgressAtStop: string | undefined;
     const harness = makeHarness({
       stopBackend: Effect.sync(() => {
         markersAtStop = [...harness.updateRestartMarkers];
+        inProgressAtStop = harness.updateInProgressMarker();
       }),
     });
 
     return Effect.scoped(
       Effect.gen(function* () {
+        yield* TestClock.setTime(1_000);
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
@@ -509,6 +565,12 @@ describe("DesktopUpdates", () => {
         assert.deepEqual(markersAtStop, [
           environment.path.join(environment.baseDir, "runtime", DESKTOP_UPDATE_RESTART_MARKER_FILE),
         ]);
+        // SSH launchers wait on this until the replacement backend publishes its runtime.
+        assert.deepEqual(JSON.parse(inProgressAtStop ?? "null"), {
+          startedAt: 1_000,
+          expiresAt: 61_000,
+        });
+        assert.isDefined(harness.updateInProgressMarker());
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -591,9 +653,11 @@ describe("DesktopUpdates", () => {
           const installFiber = yield* updates.install.pipe(Effect.forkScoped);
           yield* Deferred.await(stopping);
           assert.equal(harness.updateRestartMarkers.size, 1);
+          assert.isDefined(harness.updateInProgressMarker());
 
           yield* Fiber.interrupt(installFiber);
           assert.equal(harness.updateRestartMarkers.size, 0);
+          assert.isUndefined(harness.updateInProgressMarker());
         }),
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     }),
@@ -622,8 +686,13 @@ describe("DesktopUpdates", () => {
         const result = yield* updates.install;
         assert.isTrue(result.accepted);
         assert.isFalse(yield* Ref.get(desktopState.quitting));
-        assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
+        assert.deepEqual(harness.installSteps, [
+          "closeSshTunnels",
+          "quitAndInstall",
+          "startBackend",
+        ]);
         assert.equal(harness.updateRestartMarkers.size, 0);
+        assert.isUndefined(harness.updateInProgressMarker());
         assert.equal(harness.installRecords.size, 0);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
@@ -652,7 +721,7 @@ describe("DesktopUpdates", () => {
 
         const result = yield* updates.install;
         assert.equal(result.state.errorContext, "install");
-        assert.deepEqual(harness.installSteps, ["quitAndInstall"]);
+        assert.deepEqual(harness.installSteps, ["closeSshTunnels", "quitAndInstall"]);
         assert.isFalse((yield* (yield* pool.primary).snapshot).desiredRunning);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
@@ -746,7 +815,11 @@ describe("DesktopUpdates", () => {
         assert.equal(harness.quitAndInstalls(), 1);
         harness.emit("error", new Error("duplicate native installer error"));
         yield* flushCallbacks;
-        assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
+        assert.deepEqual(harness.installSteps, [
+          "closeSshTunnels",
+          "quitAndInstall",
+          "startBackend",
+        ]);
 
         yield* Deferred.succeed(releaseRecovery, undefined);
         const failedResult = yield* Fiber.join(failedInstall);
@@ -895,6 +968,32 @@ describe("DesktopUpdates", () => {
         harness.emit("update-available", { version: "1.2.3" });
         yield* flushCallbacks;
         assert.equal((yield* updates.getState).availableVersion, "1.2.3");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("keeps the current track's offers when a track switch fails to save", () => {
+    const harness = makeHarness({
+      setUpdateChannelError: new DesktopAppSettings.DesktopSettingsWriteError({
+        operation: "replace-settings-file",
+        path: "desktop-settings.json",
+        cause: new Error("rename failed"),
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        const error = yield* updates
+          .setChannel("nightly", { minimumVersion: "1.2.5-nightly.20261028.1" })
+          .pipe(Effect.flip);
+        assert.equal(error._tag, "DesktopUpdateChannelPersistenceError");
+        assert.equal((yield* updates.getState).channel, "latest");
+
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).availableVersion, "1.2.4");
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
