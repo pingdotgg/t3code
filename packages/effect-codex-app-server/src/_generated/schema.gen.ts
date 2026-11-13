@@ -20630,7 +20630,8 @@ export type V2GetAccountResponse__Account =
       readonly planType: V2GetAccountResponse__PlanType;
       readonly type: "chatgpt";
     }
-  | { readonly type: "amazonBedrock"; readonly usesCodexManagedCredentials?: boolean };
+  | { readonly type: "amazonBedrock"; readonly usesCodexManagedCredentials?: boolean }
+  | { readonly type: "gcp" };
 export const V2GetAccountResponse__Account = Schema.Union(
   [
     Schema.Struct({
@@ -20645,6 +20646,10 @@ export const V2GetAccountResponse__Account = Schema.Union(
       type: Schema.Literal("amazonBedrock").annotate({ title: "AmazonBedrockAccountType" }),
       usesCodexManagedCredentials: Schema.optionalKey(Schema.Boolean.annotate({ default: false })),
     }).annotate({ title: "AmazonBedrockAccount" }),
+    Schema.Struct({ type: Schema.Literal("gcp").annotate({ title: "GcpAccountType" }) }).annotate({
+      title: "GcpAccount",
+      description: "Google Cloud Vertex AI with externally managed credentials.",
+    }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "V2GetAccountResponse__Account" });

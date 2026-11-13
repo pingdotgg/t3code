@@ -239,3 +239,14 @@ it("accepts account plan slugs newer than the pinned protocol", () => {
     assert.equal(isGetAccountResponse(accountResponse), true);
   }
 });
+
+it("accepts a Google Cloud account that needs no OpenAI login", () => {
+  assert.equal(
+    isGetAccountResponse({
+      account: { type: "gcp" },
+      requiresOpenaiAuth: false,
+      workspaceRouting: null,
+    }),
+    true,
+  );
+});
