@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId } from "@t3tools/contracts";
 import { it as effectIt } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -232,7 +233,7 @@ const TAILSCALE_STATUS_JSON = JSON.stringify({
   Self: { DNSName: "bb-1.tail1234.ts.net.", TailscaleIPs: ["100.64.1.2"] },
 });
 
-const layerTailscaleUp = Layer.succeed(
+const layerTailscaleCli = Layer.succeed(
   ChildProcessSpawner.ChildProcessSpawner,
   ChildProcessSpawner.make(() =>
     Effect.succeed(
@@ -251,6 +252,12 @@ const layerTailscaleUp = Layer.succeed(
       }),
     ),
   ),
+);
+
+// The macOS apps are read without the CLI these cases answer through.
+const layerTailscaleUp = Layer.merge(
+  layerTailscaleCli,
+  Layer.succeed(HostProcess.Platform, "linux"),
 );
 
 const T3_DESCRIPTOR_BODY = JSON.stringify({

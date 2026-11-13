@@ -1,8 +1,9 @@
 import type { ServerDirectEndpoint } from "@t3tools/contracts";
 import {
   buildTailscaleHttpsBaseUrl,
+  isTailscaleInterface,
   probeTailscaleHttpsEndpoint,
-  readTailscaleStatus,
+  readTailscaleStatusForDiscovery,
 } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -16,11 +17,7 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import {
-  formatHostForUrl,
-  isTailnetHost,
-  isWildcardHost,
-} from "@t3tools/shared/hostClassification";
+import { formatHostForUrl, isWildcardHost } from "@t3tools/shared/hostClassification";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
@@ -42,14 +39,6 @@ export class DirectEndpoints extends Context.Service<
 // Credentials travel over HTTP; public IPs leak them and hostnames can resolve differently per client.
 const isAdvertisableAddress = (address: string): boolean =>
   NodeNet.isIPv4(address) && !address.startsWith("127.") && isPrivateNetworkAddress(address);
-
-// macOS utun names need Tailscale's IPv6 range to identify them; WARP shares its IPv4 range.
-const isTailscaleInterface = (
-  name: string,
-  entries: ReadonlyArray<NodeOS.NetworkInterfaceInfo>,
-): boolean =>
-  /^tailscale/i.test(name) ||
-  entries.some((entry) => entry.family === "IPv6" && isTailnetHost(entry.address));
 
 // Windows adapter names are mutable; Linux bridges can inherit these MACs.
 const WINDOWS_HOST_ADAPTER_MAC = /^(0a:00:27|00:50:56:c0:00):/i;
@@ -149,7 +138,7 @@ export const make = Effect.gen(function* () {
   const resolve = Effect.gen(function* () {
     // Serve setup can fail without stopping startup; advertise only after it answers as this server.
     if (config.tailscaleServeEnabled) {
-      const servedUrl = yield* readTailscaleStatus.pipe(
+      const servedUrl = yield* readTailscaleStatusForDiscovery.pipe(
         Effect.map((status) => status.magicDnsName),
         Effect.flatMap((magicDnsName) => {
           if (magicDnsName === null) return Effect.succeed(null);
