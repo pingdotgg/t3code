@@ -2610,3 +2610,187 @@ it.effect("a running provider-turn update reads only the thread's queued and run
     );
   }),
 );
+
+it.effect(
+  "a send and a queued start read a long thread's settled runs without walking all of them",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread:settled-run-reads");
+      const driver = ProviderDriverKind.make("codex");
+      const now = yield* DateTime.now;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-settled-run-reads"),
+        threadId,
+        projectId: ProjectId.make("project:settled-run-reads"),
+        title: "Settled runs",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const providerThreadId = ProviderThreadId.make("provider-thread:settled-run-reads");
+      yield* projections.apply({
+        id: EventId.make("event:settled-run-reads:provider-thread"),
+        type: "provider-thread.updated",
+        threadId,
+        driver,
+        providerInstanceId: instanceId,
+        occurredAt: now,
+        payload: {
+          id: providerThreadId,
+          appThreadId: threadId,
+          ownerNodeId: null,
+          driver,
+          providerInstanceId: instanceId,
+          providerSessionId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 4,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          pendingBackgroundTasks: [],
+        },
+      });
+      const dispatch = (
+        name: string,
+        dispatchMode: { readonly type: "defer_start" | "queue_after_active" },
+      ) =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`dispatch:settled-run-reads:${name}`),
+          threadId,
+          messageId: MessageId.make(`message:settled-run-reads:${name}`),
+          text: `Request ${name}`,
+          attachments: [],
+          dispatchMode,
+          createdBy: "user",
+          creationSource: "web",
+        });
+      const settle = (name: string, status: "completed" | "running") =>
+        Effect.gen(function* () {
+          const run = (yield* projections.getThreadProjection(threadId)).runs.at(-1)!;
+          yield* projections.apply({
+            id: EventId.make(`event:settled-run-reads:${name}:${status}:run`),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: {
+              ...run,
+              providerThreadId,
+              status,
+              queuePosition: null,
+              startedAt: now,
+              completedAt: status === "completed" ? now : null,
+            },
+          });
+          yield* projections.apply({
+            id: EventId.make(`event:settled-run-reads:${name}:${status}:turn`),
+            type: "provider-turn.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: {
+              id: ProviderTurnId.make(`provider-turn:settled-run-reads:${name}`),
+              providerThreadId,
+              nodeId: run.rootNodeId!,
+              runAttemptId: run.activeAttemptId!,
+              nativeTurnRef: { driver, nativeId: `native:${name}`, strength: "strong" },
+              ordinal: run.ordinal,
+              status,
+              startedAt: now,
+              completedAt: status === "completed" ? now : null,
+            },
+          });
+          return run;
+        });
+      // Settled history: finished runs with their attempts, provider turns and user messages.
+      for (const name of ["1", "2", "3"]) {
+        yield* dispatch(name, { type: "defer_start" });
+        yield* settle(name, "completed");
+      }
+      yield* dispatch("active", { type: "defer_start" });
+      const activeRun = yield* settle("active", "running");
+
+      const statements: Array<ReturnType<Statement.Statement<unknown>["compile"]>> = [];
+      const observe: Statement.Transformer = (statement) => {
+        const compiled = statement.compile();
+        if (
+          /orchestration_v2_projection_(runs|run_attempts|provider_turns|messages)\b/.test(
+            compiled[0],
+          ) &&
+          /payload_json/.test(compiled[0])
+        ) {
+          statements.push(compiled);
+        }
+        return Effect.succeed(statement);
+      };
+      const historyWalks = Effect.fnUntraced(function* (commandType: string) {
+        const walks: Array<string> = [];
+        for (const [query, params] of statements.splice(0)) {
+          const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, params);
+          for (const { detail } of plan) {
+            // Every row the thread ever had of a kind whose settled rows no send or start uses.
+            if (
+              /^(SEARCH|SCAN) .*(runs|run_attempts|provider_turns|messages)\b.*\(thread_id=\?\)$/.test(
+                detail,
+              ) &&
+              !detail.includes("USING COVERING INDEX")
+            ) {
+              walks.push(`${commandType}: ${detail}\n  in: ${query.replace(/\s+/g, " ").trim()}`);
+            }
+          }
+        }
+        return walks;
+      });
+      const observed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(Effect.provideService(Statement.CurrentTransformer, observe));
+
+      yield* observed(dispatch("queued", { type: "queue_after_active" }));
+      const walks = yield* historyWalks("message.dispatch");
+      const queuedRun = (yield* projections.getThreadProjection(threadId)).runs.at(-1)!;
+      assert.equal(queuedRun.status, "queued");
+
+      yield* projections.apply({
+        id: EventId.make("event:settled-run-reads:active:done"),
+        type: "run.updated",
+        threadId,
+        runId: activeRun.id,
+        occurredAt: now,
+        payload: {
+          ...activeRun,
+          providerThreadId,
+          status: "completed",
+          queuePosition: null,
+          startedAt: now,
+          completedAt: now,
+        },
+      });
+      statements.splice(0);
+      yield* observed(
+        orchestrator.dispatch({
+          type: "queued-run.start",
+          commandId: CommandId.make("start:settled-run-reads"),
+          threadId,
+          runId: queuedRun.id,
+        }),
+      );
+      walks.push(...(yield* historyWalks("queued-run.start")));
+      const started = (yield* projections.getThreadProjection(threadId)).runs.find(
+        (run) => run.id === queuedRun.id,
+      );
+      assert.notEqual(started?.status, "queued");
+      assert.deepEqual(walks, [], walks.join("\n"));
+    }).pipe(Effect.provide(layerTest)),
+);
