@@ -1,5 +1,6 @@
 import {
   McpCapabilityUnavailableError,
+  NonNegativeInt,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   PositiveInt,
@@ -236,6 +237,8 @@ export const ListThreadPullRequestsResult = Schema.Struct({
       numbers: Schema.Array(Schema.Int),
     }),
   ),
+  /** Pass as `cursor` for the next page; null on the last page. */
+  nextCursor: Schema.NullOr(NonNegativeInt),
 });
 export type ListThreadPullRequestsResult = typeof ListThreadPullRequestsResult.Type;
 
@@ -309,6 +312,7 @@ const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId.annotate({ description: "Thread. Default: this thread." })),
+    cursor: Schema.optional(NonNegativeInt),
   }),
   success: ListThreadPullRequestsResult,
   failure: PullRequestToolError,

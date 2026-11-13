@@ -72,18 +72,27 @@ function entryOf(
   };
 }
 
+const PULL_REQUEST_LIST_PAGE_SIZE = 50;
+
 export function listThreadPullRequests(
   thread: Pick<OrchestrationV2ThreadShell, "pullRequests">,
+  cursor = 0,
 ): ListThreadPullRequestsResult {
   const chains = resolveThreadPullRequestChains(thread.pullRequests ?? []);
+  const visible = visibleThreadPullRequests(thread.pullRequests ?? []);
+  const end = cursor + PULL_REQUEST_LIST_PAGE_SIZE;
+  const page = visible.slice(cursor, end);
+  const pageKeys = new Set(page.map(threadPullRequestKeyOf));
   return {
-    pullRequests: visibleThreadPullRequests(thread.pullRequests ?? []).map((link) =>
-      entryOf(link, chains),
-    ),
-    chains: chains.map((chain) => ({
-      kind: chain.kind,
-      numbers: chain.layers.map((layer) => layer.number),
-    })),
+    pullRequests: page.map((link) => entryOf(link, chains)),
+    // Stacks with a pull request on this page, whole.
+    chains: chains
+      .filter((chain) => chain.layers.some((layer) => pageKeys.has(threadPullRequestKeyOf(layer))))
+      .map((chain) => ({
+        kind: chain.kind,
+        numbers: chain.layers.map((layer) => layer.number),
+      })),
+    nextCursor: end < visible.length ? end : null,
   };
 }
 
@@ -407,7 +416,7 @@ const make = Effect.gen(function* () {
     ),
     list_thread_pull_requests: McpToolAccess.reads((input) =>
       requireThread(PullRequestListFailedError, input.threadId).pipe(
-        Effect.map(listThreadPullRequests),
+        Effect.map((thread) => listThreadPullRequests(thread, input.cursor)),
       ),
     ),
     watch_pull_request: writesThread((input) => setWatching(input, true)),

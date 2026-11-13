@@ -608,6 +608,31 @@ describe("listThreadPullRequests", () => {
     ]);
     expect(result.chains).toEqual([{ kind: "derived", numbers: [1, 2, 3] }]);
   });
+
+  it("pages a large list once through, with each page's stacks whole", () => {
+    const thread = {
+      pullRequests: [
+        makeLink(1, { headBranch: "feat-a" }),
+        ...Array.from({ length: 118 }, (_, index) => makeLink(index + 2)),
+        makeLink(120, { headBranch: "feat-z", baseBranch: "feat-a" }),
+      ],
+    };
+    const pages = [listThreadPullRequests(thread)];
+    for (let next = pages[0]!.nextCursor; next !== null; next = pages.at(-1)!.nextCursor) {
+      pages.push(listThreadPullRequests(thread, next));
+    }
+    expect(pages.map((page) => page.pullRequests.length)).toEqual([50, 50, 20]);
+    expect(pages.flatMap((page) => page.pullRequests.map((entry) => entry.number))).toEqual(
+      Array.from({ length: 120 }, (_, index) => index + 1),
+    );
+    const stack = { kind: "derived", numbers: [1, 120] };
+    expect(pages.map((page) => page.chains.length)).toEqual([50, 50, 20]);
+    expect(pages.map((page) => page.chains.filter((chain) => chain.numbers.length > 1))).toEqual([
+      [stack],
+      [],
+      [stack],
+    ]);
+  });
 });
 
 describe("pull request guide tools", () => {

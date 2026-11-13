@@ -1310,6 +1310,7 @@ export const t3Default = (
           watching: false,
         })),
         chains: [],
+        nextCursor: null,
       };
     case "t3_thread_read": {
       const threadId = valueText(input.threadId);
