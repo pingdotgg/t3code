@@ -2616,3 +2616,41 @@ async fn snooze_follows_the_upstream_rules() {
     let queued = refused(&engine, snooze("s6", "t3", "2031-01-01T00:00:00Z")).await;
     assert!(queued.contains("queued run"), "{queued}");
 }
+
+/// Shutdown closes sessions side by side, and no session opens once it began: a run that
+/// starts then stays for the next start to pick up.
+#[tokio::test(flavor = "current_thread")]
+async fn shutdown_closes_sessions_together_and_opens_no_more() {
+    let db = TempDb::new("shutdown");
+    let (engine, provider) = open_with(
+        &db,
+        FakeProvider::new("claudeAgent").with_close_delay(Duration::from_millis(300)),
+    );
+    for thread in ["t1", "t2", "t3"] {
+        dispatch(&engine, create(thread, &format!("{thread}:c1"))).await;
+        dispatch(&engine, message(thread, &format!("{thread}:c2"), "hi")).await;
+        run_to_end(&engine, thread, &format!("run:{thread}:1")).await;
+    }
+    assert_eq!(count(&provider.sessions), 3);
+    let started = std::time::Instant::now();
+    engine.shutdown().await;
+    let took = started.elapsed();
+    assert_eq!(count(&provider.closed), 3);
+    assert!(
+        took < Duration::from_millis(800),
+        "closed one by one: {took:?}"
+    );
+
+    dispatch(&engine, create("t4", "t4:c1")).await;
+    dispatch(&engine, message("t4", "t4:c2", "hi")).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        count(&provider.sessions),
+        3,
+        "no session opens after shutdown began"
+    );
+    assert_eq!(
+        projection(&engine, "t4").await["runs"][0]["status"],
+        "starting"
+    );
+}

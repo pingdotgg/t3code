@@ -92,6 +92,8 @@ pub(crate) struct Inner {
     pub(crate) idle_max_hold: Duration,
     /// Live output of running commands for `subscribeCommandOutput`; bounded, never stored.
     pub(crate) command_output: crate::output::CommandOutputHub,
+    /// Set when shutdown begins; no provider session opens after it.
+    pub(crate) shutting_down: std::sync::atomic::AtomicBool,
 }
 
 /// Stable project id for a folder, so a fresh database gives clients the same ids.
@@ -142,6 +144,7 @@ impl SqliteEngine {
                 providers: config.providers,
                 live: Mutex::new(HashMap::new()),
                 command_output: crate::output::CommandOutputHub::default(),
+                shutting_down: std::sync::atomic::AtomicBool::new(false),
                 stream_flush: config.stream_flush,
                 home,
                 titles: config.title_generator.clone(),

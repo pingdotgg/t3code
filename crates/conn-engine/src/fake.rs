@@ -39,6 +39,7 @@ pub struct FakeProvider {
     /// Sessions closed so far.
     pub closed: Arc<AtomicUsize>,
     steering: bool,
+    close_delay: std::time::Duration,
 }
 
 impl FakeProvider {
@@ -49,7 +50,14 @@ impl FakeProvider {
             mcp_servers: Arc::new(Mutex::new(vec![])),
             closed: Arc::new(AtomicUsize::new(0)),
             steering: true,
+            close_delay: std::time::Duration::ZERO,
         }
+    }
+
+    /// A provider whose sessions take `delay` to close, as a process given time to exit.
+    pub fn with_close_delay(mut self, delay: std::time::Duration) -> Self {
+        self.close_delay = delay;
+        self
     }
 
     /// A provider whose sessions decline every steer, as one without live steering does.
@@ -77,6 +85,7 @@ struct FakeSession {
     background: Arc<AtomicBool>,
     mcp_servers: Arc<Mutex<Vec<McpServer>>>,
     closed: Arc<AtomicUsize>,
+    close_delay: std::time::Duration,
 }
 
 impl Provider for FakeProvider {
@@ -107,6 +116,7 @@ impl Provider for FakeProvider {
                     background: Arc::new(AtomicBool::new(false)),
                     mcp_servers: self.mcp_servers.clone(),
                     closed: self.closed.clone(),
+                    close_delay: self.close_delay,
                 }),
                 events: rx,
             })
@@ -431,6 +441,11 @@ impl Session for FakeSession {
 
     fn close(&self) -> BoxFuture<'_, ()> {
         self.closed.fetch_add(1, Ordering::SeqCst);
-        Box::pin(async {})
+        let delay = self.close_delay;
+        Box::pin(async move {
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+        })
     }
 }

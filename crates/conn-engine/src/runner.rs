@@ -6,7 +6,7 @@
 //! When the turn ends, every row gets a final version and the streaming versions leave the log.
 
 use std::{
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, atomic::Ordering},
     time::Duration,
 };
 
@@ -272,6 +272,8 @@ impl Inner {
         }
         let live = match self.live_thread(thread_id) {
             Some(live) => live,
+            // The run stays `starting`; the next server start picks it up (`restart.rs`).
+            None if self.shutting_down() => return Err(StartError::Abandoned),
             None => {
                 // Only a run that names no instance may go to the one configured provider.
                 let provider = self
@@ -315,21 +317,36 @@ impl Inner {
                 {
                     eprintln!("conn-engine: the provider takes no MCP servers: {e}");
                 }
-                let live = Arc::new(LiveThread {
-                    session,
-                    instance: instance.to_owned(),
-                    state: Mutex::new(LiveState::default()),
-                    last_used: Mutex::new(Instant::now()),
-                    closed: tokio::sync::Notify::new(),
-                    held_since: Mutex::new(None),
-                    tools_key: tools.map(|t| t.key),
-                });
-                lock(&self.live).insert(thread_id.to_owned(), live.clone());
-                tokio::spawn(
-                    self.clone()
-                        .pump(thread_id.to_owned(), live.clone(), opened.events),
-                );
-                live
+                // `open_session` and `set_mcp_servers` must not yield before the session is in
+                // `live`: on the one runtime thread, nothing else can then open a session for
+                // this thread or begin shutdown in between. Check again anyway, so a provider
+                // that does yield never leaks a session or overwrites one.
+                let raced = self.live_thread(thread_id);
+                if raced.is_some() || self.shutting_down() {
+                    self.revoke_tools(tools.as_ref().map(|t| t.key.as_str()));
+                    session.close().await;
+                    match raced {
+                        Some(live) if !self.shutting_down() && live.instance == instance => live,
+                        _ => return Err(StartError::Abandoned),
+                    }
+                } else {
+                    let live = Arc::new(LiveThread {
+                        session,
+                        instance: instance.to_owned(),
+                        state: Mutex::new(LiveState::default()),
+                        last_used: Mutex::new(Instant::now()),
+                        closed: tokio::sync::Notify::new(),
+                        held_since: Mutex::new(None),
+                        tools_key: tools.map(|t| t.key),
+                    });
+                    lock(&self.live).insert(thread_id.to_owned(), live.clone());
+                    tokio::spawn(self.clone().pump(
+                        thread_id.to_owned(),
+                        live.clone(),
+                        opened.events,
+                    ));
+                    live
+                }
             }
         };
 
@@ -1035,13 +1052,27 @@ impl Inner {
         }
     }
 
-    /// Closes every provider session, ending its process and what the process started. The
-    /// server calls this before it exits.
+    /// Closes every provider session, side by side, ending its process and what the process
+    /// started. The server calls this before it exits. No session opens after it began.
     pub(crate) async fn close_all_sessions(&self) {
-        let threads: Vec<String> = lock(&self.live).keys().cloned().collect();
-        for thread_id in threads {
-            self.close_session(&thread_id).await;
+        self.shutting_down.store(true, Ordering::SeqCst);
+        let closing: Vec<(String, Arc<LiveThread>)> = lock(&self.live).drain().collect();
+        let mut closes = Vec::with_capacity(closing.len());
+        for (thread_id, live) in closing {
+            self.command_output.finish_thread(&thread_id);
+            self.revoke_tools(live.tools_key.as_deref());
+            closes.push(tokio::spawn(async move {
+                live.session.close().await;
+                live.closed.notify_one();
+            }));
         }
+        for close in closes {
+            let _ = close.await;
+        }
+    }
+
+    fn shutting_down(&self) -> bool {
+        self.shutting_down.load(Ordering::SeqCst)
     }
 
     pub(crate) async fn close_session(&self, thread_id: &str) {
