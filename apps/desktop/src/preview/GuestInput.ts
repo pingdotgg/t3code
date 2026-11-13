@@ -1,4 +1,7 @@
 // CDP input follows shared window focus; send directly to unfocused guests to avoid typing into the app.
+import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 
 const FOCUS_ROUTED_INPUT = new Set([
   "Input.insertText",
@@ -167,7 +170,85 @@ const sendPointerCommand = async (
   }
 };
 
-/** Sends one command to the guest's page, keeping reloads and input inside it. */
+const SCREENSHOT_DEADLINE = "5 seconds";
+const SCREENSHOT_RETRY = "50 millis";
+const pendingViewportCopies = new WeakMap<Electron.WebContents, Promise<Electron.NativeImage>>();
+
+const copyViewport = (
+  webContents: Electron.WebContents,
+  signal: AbortSignal,
+): Promise<Electron.NativeImage> => {
+  signal.throwIfAborted();
+  const pending = pendingViewportCopies.get(webContents);
+  if (pending) return pending.catch(() => undefined).then(() => copyViewport(webContents, signal));
+  const copy = webContents.capturePage().finally(() => {
+    if (pendingViewportCopies.get(webContents) === copy) pendingViewportCopies.delete(webContents);
+  });
+  pendingViewportCopies.set(webContents, copy);
+  return copy;
+};
+
+class PreviewScreenshotError extends Schema.TaggedError<PreviewScreenshotError>()(
+  "PreviewScreenshotError",
+  { reason: Schema.Literals(["unpainted", "timeout"]) },
+) {
+  override get message(): string {
+    return this.reason === "timeout"
+      ? `The preview tab did not paint within ${SCREENSHOT_DEADLINE}.`
+      : "The preview tab has not painted yet.";
+  }
+}
+
+/** Whether capturePage can stand in for this screenshot; a clip or full page goes to Chromium. */
+const capturesViewport = (params: Record<string, unknown>) =>
+  Object.entries(params).every(([name, value]) => {
+    switch (name) {
+      case "format":
+        return value === "png" || value === "jpeg";
+      case "fromSurface":
+        return value !== false;
+      case "captureBeyondViewport":
+        return value !== true;
+      case "quality":
+      case "optimizeForSpeed":
+        return true;
+      default:
+        return false;
+    }
+  });
+
+/**
+ * Page.captureScreenshot waits for a presented frame, which Chromium may never present for a
+ * guest the app paints behind itself. capturePage copies the surface instead. That surface exists
+ * only once the client paints the guest, so a refused copy is retried; a stalled one is not overlapped.
+ */
+const captureViewport = (webContents: Electron.WebContents, params: Record<string, unknown>) =>
+  Effect.runPromise(
+    Effect.tryPromise({
+      try: (signal) => copyViewport(webContents, signal),
+      catch: () => new PreviewScreenshotError({ reason: "unpainted" }),
+    }).pipe(
+      Effect.filterOrFail(
+        (image) => !image.isEmpty(),
+        () => new PreviewScreenshotError({ reason: "unpainted" }),
+      ),
+      Effect.retry({
+        schedule: Schedule.spaced(SCREENSHOT_RETRY),
+        while: () => !webContents.isDestroyed(),
+      }),
+      Effect.timeoutOrElse({
+        duration: SCREENSHOT_DEADLINE,
+        orElse: () => Effect.fail(new PreviewScreenshotError({ reason: "timeout" })),
+      }),
+      Effect.map((image) => {
+        const quality = typeof params["quality"] === "number" ? params["quality"] : 80;
+        const encoded = params["format"] === "jpeg" ? image.toJPEG(quality) : image.toPNG();
+        return { data: encoded.toString("base64") };
+      }),
+    ),
+  );
+
+/** Sends one command to the guest's page, keeping reloads, screenshots and input inside it. */
 export const sendPageCommand = async (
   webContents: Electron.WebContents,
   debuggee: Electron.Debugger,
@@ -184,6 +265,9 @@ export const sendPageCommand = async (
     if (params["ignoreCache"] === true) webContents.reloadIgnoringCache();
     else webContents.reload();
     return {};
+  }
+  if (method === "Page.captureScreenshot" && capturesViewport(params)) {
+    return captureViewport(webContents, params);
   }
   if (!FOCUS_ROUTED_INPUT.has(method) || webContents.focusedFrame) {
     return debuggee.sendCommand(method, params);
