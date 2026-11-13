@@ -402,10 +402,10 @@ describe("evaluatePullRequestWatch", () => {
       detail({ checks: [{ ...bot, status: "pending" }, unknown] }),
       noRemarks,
     );
-    assert.isFalse(blocked.next.passed);
+    assert.deepEqual(blocked.changes, []);
     assert.deepEqual(
       evaluatePullRequestWatch(blocked.next, detail({ checks: [bot] }), noRemarks).changes,
-      [{ kind: "checks-passed", count: 1, required: false }],
+      [],
     );
   });
 
@@ -482,6 +482,46 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
+  // regression: #32276 a check rerun on an unchanged head repeated "All N checks passed"
+  it.each([false, true])("reports a pass once when its checks rerun (required: %s)", (required) => {
+    const test = (status: PullRequestCheck["status"]) => ({ ...check("test", status), required });
+    const green = detail({ checks: [test("success")] });
+    const first = evaluatePullRequestWatch(watch(), green, noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 1, required }]);
+    const rerun = evaluatePullRequestWatch(
+      first.next,
+      detail({ checks: [test("pending")] }),
+      noRemarks,
+    );
+    assert.deepEqual(rerun.changes, []);
+    assert.isTrue(rerun.next.checksPending);
+    assert.deepEqual(evaluatePullRequestWatch(rerun.next, green, noRemarks).changes, []);
+
+    // A rerun that fails first makes the next pass news again.
+    const failed = evaluatePullRequestWatch(
+      rerun.next,
+      detail({ checks: [test("failure")] }),
+      noRemarks,
+    );
+    assert.deepEqual(failed.changes, [{ kind: "checks-failed", failed: [test("failure")] }]);
+    assert.deepEqual(evaluatePullRequestWatch(failed.next, green, noRemarks).changes, [
+      { kind: "checks-passed", count: 1, required },
+    ]);
+
+    // A check not in the reported pass is still awaited, even while a reported one reruns.
+    const late = { ...check("e2e", "pending"), required };
+    const joined = evaluatePullRequestWatch(
+      rerun.next,
+      detail({ checks: [test("pending"), late] }),
+      noRemarks,
+    );
+    assert.deepEqual(joined.changes, []);
+    const both = detail({ checks: [test("success"), { ...late, status: "success" }] });
+    assert.deepEqual(evaluatePullRequestWatch(joined.next, both, noRemarks).changes, [
+      { kind: "checks-passed", count: 2, required },
+    ]);
+  });
+
   // regression: #23712 required checks woke the agent early and the rest finishing never did
   it("wakes again when the other checks finish after the required ones passed", () => {
     const required = (name: string, status: PullRequestCheck["status"]) => ({
@@ -497,11 +537,15 @@ describe("evaluatePullRequestWatch", () => {
     const done = detail({
       checks: [required("test", "success"), check("e2e", "success")],
     });
-    const final = evaluatePullRequestWatch(first.next, done, noRemarks);
-    assert.deepEqual(
-      final.changes.map((change) => change.kind),
-      ["checks-passed"],
+    // A required check rerunning meanwhile keeps the wake the other checks are owed.
+    const rerun = evaluatePullRequestWatch(
+      first.next,
+      detail({ checks: [required("test", "pending"), check("e2e", "success")] }),
+      noRemarks,
     );
+    assert.deepEqual(rerun.changes, []);
+    const final = evaluatePullRequestWatch(rerun.next, done, noRemarks);
+    assert.deepEqual(final.changes, [{ kind: "checks-passed", count: 2, required: false }]);
     assert.deepEqual(evaluatePullRequestWatch(final.next, done, noRemarks).changes, []);
     // A later advisory job running and passing is not more news.
     const botPending = detail({ checks: [...done.checks, check("bot", "pending")] });
@@ -579,6 +623,22 @@ describe("evaluatePullRequestWatch", () => {
     const saved = evaluatePullRequestWatch(told, green, noRemarks);
     assert.deepEqual(saved.changes, []);
     assert.deepEqual(saved.next.passedChecks, ["test"]);
+
+    // Its pass named no checks, so a required check found pending is not taken as reported.
+    const lint = (status: PullRequestCheck["status"]) => ({
+      ...check("lint", status),
+      required: true,
+    });
+    const joined = evaluatePullRequestWatch(
+      told,
+      detail({ checks: [...green.checks, lint("pending")] }),
+      noRemarks,
+    );
+    assert.deepEqual(joined.changes, []);
+    const grown = detail({ checks: [...green.checks, lint("success")] });
+    assert.deepEqual(evaluatePullRequestWatch(joined.next, grown, noRemarks).changes, [
+      { kind: "checks-passed", count: 2, required: true },
+    ]);
   });
 
   it("keeps remarks for a later pass when the conversation was not read whole", () => {

@@ -126,14 +126,24 @@ export function evaluatePullRequestWatch(
     const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
     // Required checks can finish between sweeps; detect new names. With no required checks, ignore advisory gate growth.
     const gateGrew = required.length > 0 && gateNames.some((name) => !told.includes(name));
+    // A rerun of checks already reported passing on this head is not news when it passes again.
+    // A failure, an approval hold, or a check not yet reported (none are, on a legacy watch)
+    // forgets the report, so the next pass is told.
+    const reported =
+      passed &&
+      awaitingApproval.length === 0 &&
+      gate.every(
+        (check) =>
+          !isFailedCheck(check) &&
+          (check.status !== "pending" || passedChecks.includes(check.name)),
+      );
     // Other checks still pending when required ones passed are owed one wake when all settle.
     // Only those are owed, so later advisory churn never wakes. One turned required is gate news.
-    const owed =
-      passedNow && passed
-        ? checks
-            .filter((check) => check.required !== true && owedChecks.includes(check.name))
-            .map((check) => check.name)
-        : [];
+    const owed = reported
+      ? checks
+          .filter((check) => check.required !== true && owedChecks.includes(check.name))
+          .map((check) => check.name)
+      : [];
     const settled =
       failed.length === 0 &&
       awaitingApproval.length === 0 &&
@@ -153,8 +163,8 @@ export function evaluatePullRequestWatch(
       changes.push({ kind: "checks-passed", count: checks.length, required: false });
       owedChecks = [];
     }
-    passed = passedNow;
-    passedChecks = passedNow ? gateNames : [];
+    passed = passedNow || reported;
+    passedChecks = passedNow ? gateNames : reported ? passedChecks : [];
   }
 
   // Only a head never read with checks waits for them; a legacy watch's clock starts at its next
