@@ -95,17 +95,6 @@ describe("loadOpenCode2Catalog", () => {
     }),
   );
 
-  it.effect("lists no models yet when the model list does not answer", () =>
-    Effect.gen(function* () {
-      const fiber = yield* Effect.forkChild(
-        readCatalog({ "/api/provider": PROVIDERS_BODY }, ["/api/model"]),
-      );
-      yield* TestClock.adjust("8 seconds");
-
-      assert.deepStrictEqual(yield* Fiber.join(fiber), []);
-    }),
-  );
-
   // regression: #17424 only the provider list is optional; a model-list failure fails the read
   it.effect("fails the read when the model list fails", () =>
     Effect.gen(function* () {
@@ -119,14 +108,16 @@ describe("loadOpenCode2Catalog", () => {
     }),
   );
 
-  // regression: #30251 a cold OpenCode 2 holds each model read 5 seconds, then 503s until plugins activate
+  // regression: #30251 a busy cold OpenCode 2 holds each model read past 5 seconds, then 503s
   it.effect("lists models once OpenCode 2 finishes activating its plugins", () =>
     Effect.gen(function* () {
       const activatedAt = (yield* Clock.currentTimeMillis) + 60_000;
+      // Timings measured from OpenCode 2.2.7 on a CPU-throttled cold start.
       const listModels = Effect.gen(function* () {
-        const remaining = activatedAt - (yield* Clock.currentTimeMillis);
-        if (remaining <= 0) return MODELS_BODY;
-        yield* Effect.sleep("5050 millis");
+        if ((yield* Clock.currentTimeMillis) >= activatedAt) {
+          return yield* Effect.as(Effect.sleep("9 seconds"), MODELS_BODY);
+        }
+        yield* Effect.sleep("14 seconds");
         return { status: 503, body: PLUGINS_ACTIVATING_BODY };
       });
       const load = yield* makeOpenCode2ModelLoader(
@@ -136,6 +127,18 @@ describe("loadOpenCode2Catalog", () => {
       yield* TestClock.adjust("2 minutes");
 
       assert.strictEqual((yield* Fiber.join(fiber)).length, 2);
+    }),
+  );
+
+  it.effect("lists no models once a model list that never answers reaches the deadline", () =>
+    Effect.gen(function* () {
+      const load = yield* makeOpenCode2ModelLoader(
+        readCatalog({ "/api/provider": PROVIDERS_BODY }, ["/api/model"]),
+      );
+      const fiber = yield* Effect.forkChild(load);
+      yield* TestClock.adjust("2 minutes");
+
+      assert.deepStrictEqual(yield* Fiber.join(fiber), []);
     }),
   );
 });
