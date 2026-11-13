@@ -7,6 +7,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { kimiOAuthKey, kimiUsageResponseToLimits, readKimiUsageLimits } from "./kimiUsageLimits.ts";
 
@@ -334,7 +335,9 @@ describe("readKimiUsageLimits", () => {
             access_token: "rotated-access",
             refresh_token: "rotated-refresh",
           });
-          // Refreshed tokens must not leak through a wider file mode.
+          // Refreshed tokens must not leak through a wider file mode; Windows
+          // does not implement the POSIX bits the check reads.
+          if (HostProcess.Platform.defaultValue() === "win32") return;
           const credentialPath = kimi.path.join(
             kimi.homeDirectory,
             "credentials",

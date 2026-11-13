@@ -69,6 +69,8 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
 
       yield* writeFileStringAtomically({ filePath, contents: "secret", mode: 0o600 });
 
+      // Windows does not implement the POSIX permission bits.
+      if (HostProcess.Platform.defaultValue() === "win32") return;
       const mode = (yield* fs.stat(filePath)).mode & 0o777;
       assert.strictEqual(mode, 0o600);
     }),
@@ -87,9 +89,10 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
         mode: 0o600,
       });
 
+      assert.strictEqual(yield* fs.readFileString(filePath), "secret");
+      if (HostProcess.Platform.defaultValue() === "win32") return;
       const mode = (yield* fs.stat(filePath)).mode & 0o777;
       assert.strictEqual(mode, 0o600);
-      assert.strictEqual(yield* fs.readFileString(filePath), "secret");
     }),
   );
 
