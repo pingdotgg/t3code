@@ -23,6 +23,7 @@ const POWERLINE_SOLID_LEFT = "\ue0b2";
 const POWERLINE_ROUND_RIGHT = "\ue0b4";
 const POWERLINE_ROUND_LEFT = "\ue0b6";
 const FULL_BLOCK = "\u2588";
+const BOX_OVERDRAW = 1;
 
 function cssColor(color: GhosttyColor): string {
   return `rgb(${color.r}, ${color.g}, ${color.b})`;
@@ -187,8 +188,9 @@ function fullBlockExtent(
   return extent;
 }
 
-// Box-drawing runs are stretched so the font's full block spans the row exactly,
-// which makes vertical lines and blocks meet the rows above and below.
+// Box-drawing runs are stretched so the font's full block overfills the row by
+// BOX_OVERDRAW on each side; the row clip trims it, so hinting and anti-aliasing
+// cannot leave a light seam where vertical lines and blocks meet the next row.
 function fillGhosttyCellsText(
   context: CanvasRenderingContext2D,
   cells: readonly GhosttyCell[],
@@ -209,8 +211,8 @@ function fillGhosttyCellsText(
       : null;
   if (box) {
     context.save();
-    context.translate(0, top);
-    context.scale(1, height / (box.ascent + box.descent));
+    context.translate(0, top - BOX_OVERDRAW);
+    context.scale(1, (height + 2 * BOX_OVERDRAW) / (box.ascent + box.descent));
     fillGhosttyRunText(context, cells, start, end, text, left, box.ascent, metrics.width);
     context.restore();
     return;
@@ -460,6 +462,10 @@ export function renderGhosttySnapshot(options: {
         if (isSolidPowerlineSeparator(cell.text)) {
           fillSolidPowerlineSeparator(context, cell.text, left, top, metrics.width, height, 0);
         } else {
+          context.save();
+          context.beginPath();
+          context.rect(left, top, width, height);
+          context.clip();
           context.font = fontForCell(cell, fontSize, fontFamily);
           fillGhosttyCellsText(
             context,
@@ -474,6 +480,7 @@ export function renderGhosttySnapshot(options: {
             fontSize,
             fontFamily,
           );
+          context.restore();
         }
       }
     }

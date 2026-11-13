@@ -198,20 +198,21 @@ describe.each([1.25, 2.2])("renderGhosttySnapshot at a %sx device pixel ratio", 
     };
     renderGhosttySnapshot({ ...layout, context, snapshot, forceFull: true, cursorOn: false });
 
-    expect(darkPixelsInCellRow(context, 1, 4.5)).toBeGreaterThan(0);
-    expect(darkPixelsInCellRow(context, 1, 20.5)).toBeGreaterThan(0);
+    // The row's first and last device scanlines are as dark as its middle.
+    const middle = darkestInCellRow(context, 1, 12.5);
+    expect(middle).toBeLessThan(128);
+    expect(darkestInCellRow(context, 1, 4.5)).toBeLessThanOrEqual(middle + 8);
+    expect(darkestInCellRow(context, 1, 20.5)).toBeLessThanOrEqual(middle + 8);
   });
 });
 
-/** Dark device pixels on one scanline across a cell of `layout`. */
-function darkPixelsInCellRow(context: CanvasRenderingContext2D, column: number, y: number): number {
+/** The darkest red channel value on one scanline across a cell of `layout`. */
+function darkestInCellRow(context: CanvasRenderingContext2D, column: number, y: number): number {
   const { a, d } = context.getTransform();
   const left = Math.ceil((layout.padding + column * layout.metrics.width) * a);
   const right = Math.floor((layout.padding + (column + 1) * layout.metrics.width) * a);
   const { data } = context.getImageData(left, Math.floor(y * d), right - left, 1);
-  let count = 0;
-  for (let index = 0; index < data.length; index += 4) {
-    if (data[index]! < 128 && data[index + 1]! < 128 && data[index + 2]! < 128) count += 1;
-  }
-  return count;
+  let darkest = 255;
+  for (let index = 0; index < data.length; index += 4) darkest = Math.min(darkest, data[index]!);
+  return darkest;
 }
