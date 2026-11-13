@@ -175,9 +175,14 @@ const command = Effect.fn("nativeClient.command")(function* (
   args: string[],
   inherit = false,
   cwd?: string,
+  withoutEnvironment: ReadonlyArray<string> = [],
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const environment = yield* HostProcess.Environment;
+  const environment = Object.fromEntries(
+    Object.entries(yield* HostProcess.Environment).filter(
+      ([name]) => !withoutEnvironment.includes(name),
+    ),
+  );
   const log = inherit ? yield* BuildLog : null;
   const spawn = yield* resolveSpawnCommand(program === "adb" ? yield* resolveAdb : program, args);
   const child = yield* spawner.spawn(
@@ -1111,6 +1116,11 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
   const workspace = yield* HostProcess.WorkingDirectory;
   // A session behind a gateway (a device pool) is reachable only with the config that opened it.
   const target = ["--session", session, ...(config ? ["--config", config] : [])];
+  // Daemon variables in the shell (a device-pool login) override the config and authenticate
+  // as someone who does not hold this lease; T3 Code's own launcher drops them the same way.
+  const agentDeviceEnvironment = config
+    ? ["AGENT_DEVICE_DAEMON_BASE_URL", "AGENT_DEVICE_DAEMON_AUTH_TOKEN", "AGENT_DEVICE_CONFIG"]
+    : [];
   const deviceAbi = platform === "android" ? abi : null;
   const task = deviceAbi ? `native-client:android-${deviceAbi}` : `native-client:${platform}`;
   const current = yield* fingerprint(platform);
@@ -1124,6 +1134,7 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
         [agentDevice, "install-from-source", source.url, "--header", source.header, ...target],
         true,
         workspace,
+        agentDeviceEnvironment,
       ).pipe(
         Effect.as(true),
         Effect.catch((error) =>
@@ -1148,6 +1159,7 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
           [agentDevice, "install", bundleId, local.file, ...target],
           true,
           workspace,
+          agentDeviceEnvironment,
         );
         return local;
       });
@@ -1164,6 +1176,7 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
       ],
       true,
       workspace,
+      agentDeviceEnvironment,
     );
   }
   yield* reportTelemetry(
