@@ -1,4 +1,5 @@
 import type { ServerProviderUsageLimits, ServerProviderUsageWindow } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
@@ -17,6 +18,7 @@ import {
 } from "@t3tools/provider-core/server/usageLimits";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Toml from "smol-toml";
 
 /** Kimi Code reports limits from `{base_url}/usages` with its stored OAuth token. */
 const DEFAULT_KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1";
@@ -37,6 +39,13 @@ const DEFAULT_MANAGED_ENVIRONMENTS: ReadonlyArray<{
 const REFRESH_THRESHOLD_MS = 60 * 1_000;
 const REQUEST_TIMEOUT = "10 seconds";
 const SESSION_MINS = 5 * 60;
+// The CLI's OAuthManager serializes credential rotation with a lock file next
+// to the credential; the reader is a guest and must not hang the quota lookup
+// on it, so acquisition is bounded and best-effort.
+const CREDENTIAL_LOCK_RETRY_COUNT = 5;
+const CREDENTIAL_LOCK_RETRY_DELAY = "20 millis";
+// A lock older than this belongs to a dead process; break it once and retry.
+const CREDENTIAL_LOCK_STALE_MS = 2 * 1_000;
 
 const KimiStoredCredential = Schema.Struct({
   access_token: Schema.String,
@@ -92,6 +101,54 @@ const encodeEnvironmentJson = Schema.encodeSync(
 );
 
 const textEncoder = new TextEncoder();
+
+const MANAGED_KIMI_CODE_PROVIDER_KEY = "managed:kimi-code";
+
+/**
+ * Reads `providers["managed:kimi-code"]` (and its `oauth` sub-table) from the
+ * CLI's config.toml as real TOML, so both single- and double-quoted spellings
+ * count. Malformed config behaves like a missing section, never a crash.
+ */
+function managedKimiCodeConfig(config: string): {
+  readonly baseUrl: string | undefined;
+  readonly oauthHost: string | undefined;
+  readonly key: string | undefined;
+  readonly apiKey: string | undefined;
+  readonly apiKeyEnv: string | undefined;
+} {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = Toml.parse(config) as Record<string, unknown>;
+  } catch {
+    return {
+      baseUrl: undefined,
+      oauthHost: undefined,
+      key: undefined,
+      apiKey: undefined,
+      apiKeyEnv: undefined,
+    };
+  }
+  const providers = readRecord(parsed["providers"]);
+  const provider = readRecord(providers[MANAGED_KIMI_CODE_PROVIDER_KEY]);
+  const oauth = readRecord(provider["oauth"]);
+  return {
+    baseUrl: readString(provider["base_url"]),
+    oauthHost: readString(oauth["oauth_host"]),
+    key: readString(oauth["key"]),
+    apiKey: readString(provider["api_key"]),
+    apiKeyEnv: readString(provider["api_key_env"]),
+  };
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
 
 function normalizeEndpoint(value: string | undefined, fallback: string): string {
   return (value ?? fallback).trim().replace(/\/+$/, "");
@@ -149,10 +206,16 @@ function minutesFromWindow(window: typeof KimiUsageWindow.Type): number | undefi
   return Math.round(window.duration * multiplier);
 }
 
-/** Kimi names its ratio rows `limit_5h` and `limit_month_*`. */
-function kindFromUsageName(name: string): ServerProviderUsageWindow["kind"] {
-  if (name.startsWith("limit_month")) return "monthly";
-  if (name.startsWith("limit_5h") || name.includes("5h")) return "session";
+/**
+ * Kimi names its ratio rows `limit_5h`, `limit_7d`, and `limit_month_total`;
+ * other `limit_month_*` rows are breakdowns, not quota windows.
+ */
+function kindFromUsageName(name: string): ServerProviderUsageWindow["kind"] | undefined {
+  if (name.startsWith("limit_month")) {
+    return name === "limit_month_total" ? "monthly" : undefined;
+  }
+  if (name.startsWith("limit_7d")) return "weekly";
+  if (name.includes("5h")) return "session";
   return "other";
 }
 
@@ -211,8 +274,15 @@ export function kimiUsageResponseToLimits(
   for (const [name, ratio] of Object.entries(response.usages ?? {})) {
     if (!Number.isFinite(ratio.used_ratio)) continue;
     const kind = kindFromUsageName(name);
+    if (kind === undefined) continue;
     const minutes =
-      kind === "session" ? SESSION_MINS : kind === "monthly" ? 30 * 24 * 60 : undefined;
+      kind === "session"
+        ? SESSION_MINS
+        : kind === "weekly"
+          ? 7 * 24 * 60
+          : kind === "monthly"
+            ? 30 * 24 * 60
+            : undefined;
     // Ratios carry float noise (0.3616 * 100 === 36.199999999999996).
     const usedPercent = Math.round(ratio.used_ratio * 100 * 100) / 100;
     push(kind, clampPercent(usedPercent), isoFromInstant(ratio.reset_time?.trim()), minutes);
@@ -251,6 +321,102 @@ function serializeStoredCredential(
   })}\n`;
 }
 
+/** Compares the fields a rotation can change; extras like `expires_in` never differ in practice. */
+function storedCredentialFingerprint(value: KimiStoredCredential): string {
+  return `${value.access_token}\u{0}${value.refresh_token}\u{0}${value.expires_at}`;
+}
+
+/**
+ * Best-effort cross-process lock matching the CLI's `{configDir}/oauth/{name}.lock`
+ * protocol: exclusive create, bounded wait, stale break, and proceed unlocked on
+ * exhaustion. Files errors are swallowed — an unwritable directory must not take
+ * the quota lookup down (the re-read before writeback is the correctness backstop).
+ */
+const withCredentialLock = Effect.fn("kimiUsageLimits.withCredentialLock")(function* <A, E, R>(
+  lockPath: string,
+  use: () => Effect.Effect<A, E, R>,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const owner = `${process.pid}-${yield* Clock.currentTimeMillis}`;
+  for (let attempt = 0; attempt <= CREDENTIAL_LOCK_RETRY_COUNT; attempt += 1) {
+    const acquired = yield* fileSystem.writeFileString(lockPath, owner, { flag: "wx" }).pipe(
+      Effect.as(true),
+      // A held lock loses with AlreadyExists; any other failure (unwritable
+      // directory, permissions) also means "no lock" rather than a failed probe.
+      Effect.orElseSucceed(() => false),
+    );
+    if (acquired) {
+      return yield* Effect.scoped(
+        Effect.acquireRelease(Effect.succeed(lockPath), (locked) =>
+          fileSystem.remove(locked, { force: true }).pipe(Effect.ignore({ log: true })),
+        ).pipe(Effect.andThen(use)),
+      );
+    }
+    if (attempt === CREDENTIAL_LOCK_RETRY_COUNT) break;
+    // Prior process died holding it: break the stale lock once and retry.
+    const stale = yield* fileSystem.stat(lockPath).pipe(
+      Effect.flatMap((info) =>
+        Clock.currentTimeMillis.pipe(
+          Effect.map(
+            (now) =>
+              Option.isSome(info.mtime) &&
+              now - info.mtime.value.getTime() > CREDENTIAL_LOCK_STALE_MS,
+          ),
+        ),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
+    if (stale) {
+      yield* fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore({ log: true }));
+    }
+    yield* Effect.sleep(CREDENTIAL_LOCK_RETRY_DELAY);
+  }
+  // Proceed without the lock; the re-read before writeback keeps the writeback safe.
+  return yield* use();
+});
+
+/**
+ * Writes the refreshed credential back after re-reading the file. When the CLI
+ * rotated it mid-flight, the CLI's on-disk snapshot wins (its refresh token is
+ * the live one); only the fresh access token is ours to persist.
+ */
+const persistRefreshedCredential = Effect.fn("kimiUsageLimits.persistRefreshedCredential")(
+  function* (input: {
+    readonly fileSystem: FileSystem.FileSystem;
+    readonly credentialsPath: string;
+    readonly stored: KimiStoredCredential;
+    readonly token: typeof KimiTokenRefresh.Type;
+    readonly nowMs: number;
+  }) {
+    const latestContents = yield* input.fileSystem.readFileString(input.credentialsPath).pipe(
+      Effect.catchTags({
+        PlatformError: (error) =>
+          error.reason._tag === "NotFound" ? Effect.succeed("") : Effect.fail(error),
+      }),
+    );
+    const latest = Option.getOrUndefined(
+      yield* decodeStoredCredential(latestContents).pipe(Effect.option),
+    );
+    const rotated =
+      latest !== undefined &&
+      storedCredentialFingerprint(latest) !== storedCredentialFingerprint(input.stored);
+    const persistedStored = rotated ? latest : input.stored;
+    const persistedToken: typeof KimiTokenRefresh.Type = rotated
+      ? { ...input.token, refresh_token: latest!.refresh_token }
+      : input.token;
+    const expiresAt =
+      input.token.expires_at ?? Math.floor(input.nowMs / 1000) + (input.token.expires_in ?? 900);
+    // Atomic like the config writer: a truncated credential file would sign the
+    // CLI itself out. The CLI re-refreshes fine either way. Secrets stay
+    // owner-only, like the CLI writes them.
+    yield* writeFileStringAtomically({
+      filePath: input.credentialsPath,
+      contents: serializeStoredCredential(persistedStored, persistedToken, expiresAt),
+      mode: 0o600,
+    }).pipe(Effect.catchTags({ PlatformError: () => Effect.void }));
+  },
+);
+
 /**
  * Reads Kimi Code subscription usage limits from the CLI's own credential
  * store. `undefined` means no managed credential applies (custom auth keeps
@@ -282,23 +448,26 @@ export const readKimiUsageLimits = Effect.fn("readKimiUsageLimits")(function* (
         error.reason._tag === "NotFound" ? Effect.succeed("") : Effect.fail(error),
     }),
   );
-  const providerSection = config.match(/\[providers\."managed:kimi-code"\]([^[]*)/);
-  const oauthSection = config.match(/\[providers\."managed:kimi-code"\.oauth\]([^[]*)/);
+  const managedConfig = managedKimiCodeConfig(config);
+  // An `api_key`/`api_key_env` override replaces OAuth entirely, so a stored
+  // OAuth credential belongs to a different account and is out of scope.
+  if (managedConfig.apiKey !== undefined || managedConfig.apiKeyEnv !== undefined) {
+    return undefined;
+  }
   // The CLI's own resolution order: `KIMI_CODE_BASE_URL` and
   // `KIMI_CODE_OAUTH_HOST`/`KIMI_OAUTH_HOST` override the config file, and the
   // credential slot is derived from the resolved endpoints.
   const baseUrl = normalizeEndpoint(
-    input.environment.KIMI_CODE_BASE_URL ??
-      providerSection?.[1]?.match(/^\s*base_url\s*=\s*"([^"]+)"/m)?.[1],
+    input.environment.KIMI_CODE_BASE_URL ?? managedConfig.baseUrl,
     DEFAULT_KIMI_CODE_BASE_URL,
   );
   const oauthHost = normalizeEndpoint(
     input.environment.KIMI_CODE_OAUTH_HOST ??
       input.environment.KIMI_OAUTH_HOST ??
-      oauthSection?.[1]?.match(/^\s*oauth_host\s*=\s*"([^"]+)"/m)?.[1],
+      managedConfig.oauthHost,
     DEFAULT_KIMI_OAUTH_HOST,
   );
-  const configuredKey = oauthSection?.[1]?.match(/^\s*key\s*=\s*"([^"]+)"/m)?.[1];
+  const configuredKey = managedConfig.key;
   // An env override re-derives the slot even where the config pins one, exactly
   // like the CLI's runtime auth resolution.
   const hasEnvOverride =
@@ -318,6 +487,10 @@ export const readKimiUsageLimits = Effect.fn("readKimiUsageLimits")(function* (
         });
 
   const credentialsPath = path.join(homeDirectory, "credentials", `${oauthKey}.json`);
+  // A lock file next to the credential, matching the CLI's OAuthManager
+  // (`{configDir}/oauth/{name}.lock`), so a concurrent CLI refresh and this
+  // reader's writeback do not clobber each other's rotated tokens.
+  const lockPath = path.join(path.dirname(credentialsPath), `${oauthKey}.lock`);
   const contents = yield* fileSystem.readFileString(credentialsPath).pipe(
     Effect.catchTags({
       PlatformError: (error) =>
@@ -329,43 +502,52 @@ export const readKimiUsageLimits = Effect.fn("readKimiUsageLimits")(function* (
   if (stored === undefined) return undefined;
 
   // Kimi mints 15-minute access tokens; refresh proactively and persist the
-  // result so the CLI's next run reuses it too.
+  // result so the CLI's next run reuses it too. The whole read → refresh →
+  // write sequence shares the CLI's lock; when the lock cannot be taken the
+  // re-read below still keeps the writeback from reverting a CLI rotation.
   let accessToken = stored.access_token;
   if (stored.expires_at * 1_000 - nowMs <= REFRESH_THRESHOLD_MS) {
-    const refreshed = yield* Effect.gen(function* () {
-      const request = HttpClientRequest.post(`${oauthHost}/api/oauth/token`).pipe(
-        HttpClientRequest.bodyUrlParams({
-          client_id: KIMI_CODE_CLIENT_ID,
-          grant_type: "refresh_token",
-          refresh_token: stored.refresh_token,
-        }),
-      );
-      const body: unknown = yield* client.execute(request).pipe(
-        Effect.flatMap(HttpClientResponse.filterStatusOk),
-        Effect.flatMap((response) => response.json),
-        // Headers and body arrive separately; a stalled body must not hang the probe.
-        Effect.timeout(REQUEST_TIMEOUT),
-      );
-      return decodeTokenRefresh(body);
-    }).pipe(Effect.option, Effect.map(Option.flatten));
-    const token = Option.getOrUndefined(refreshed);
-    if (token === undefined) {
+    const refreshed = yield* withCredentialLock(lockPath, () =>
+      Effect.gen(function* () {
+        const request = HttpClientRequest.post(`${oauthHost}/api/oauth/token`).pipe(
+          HttpClientRequest.bodyUrlParams({
+            client_id: KIMI_CODE_CLIENT_ID,
+            grant_type: "refresh_token",
+            refresh_token: stored.refresh_token,
+          }),
+        );
+        const body: unknown = yield* client.execute(request).pipe(
+          Effect.flatMap(HttpClientResponse.filterStatusOk),
+          Effect.flatMap((response) => response.json),
+          // Headers and body arrive separately; a stalled body must not hang the probe.
+          Effect.timeout(REQUEST_TIMEOUT),
+        );
+        return decodeTokenRefresh(body);
+      }).pipe(
+        Effect.option,
+        Effect.map(Option.flatten),
+        Effect.flatMap((decoded) =>
+          Option.isNone(decoded)
+            ? Effect.succeed(Option.none<string>())
+            : persistRefreshedCredential({
+                fileSystem,
+                credentialsPath,
+                stored,
+                token: decoded.value,
+                nowMs,
+              }).pipe(Effect.as(Option.some(decoded.value.access_token))),
+        ),
+      ),
+    );
+    const freshAccessToken = Option.getOrUndefined(refreshed);
+    if (freshAccessToken === undefined) {
       return makeUnavailableUsageLimits({
         checkedAt,
         reason: "probeFailed",
         message: "Kimi Code usage limits could not be read. Try `kimi login` again.",
       });
     }
-    accessToken = token.access_token;
-    const expiresAt = token.expires_at ?? Math.floor(nowMs / 1000) + (token.expires_in ?? 900);
-    // Atomic like the config writer: a truncated credential file would sign the
-    // CLI itself out. The CLI re-refreshes fine either way. Secrets stay
-    // owner-only, like the CLI writes them.
-    yield* writeFileStringAtomically({
-      filePath: credentialsPath,
-      contents: serializeStoredCredential(stored, token, expiresAt),
-      mode: 0o600,
-    }).pipe(Effect.catchTags({ PlatformError: () => Effect.void }));
+    accessToken = freshAccessToken;
   }
 
   const response = yield* Effect.gen(function* () {

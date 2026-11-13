@@ -135,6 +135,44 @@ describe("kimiUsageResponseToLimits", () => {
       },
     ]);
   });
+
+  it("keeps the code breakdown from shadowing the total monthly quota", () => {
+    const limits = kimiUsageResponseToLimits(
+      {
+        usages: {
+          limit_month_code: { used_ratio: 0.1 },
+          limit_month_total: { used_ratio: 0.8 },
+        },
+      },
+      "2026-11-13T12:00:00.000Z",
+    );
+    expect(limits.windows).toEqual([
+      {
+        id: "monthly",
+        kind: "monthly",
+        label: "Monthly",
+        usedPercent: 80,
+        windowDurationMins: 30 * 24 * 60,
+      },
+    ]);
+  });
+
+  it("maps `limit_7d` ratios to the weekly window", () => {
+    const limits = kimiUsageResponseToLimits(
+      { usages: { limit_7d: { used_ratio: 0.5, reset_time: "2026-11-17T00:00:00Z" } } },
+      "2026-11-13T12:00:00.000Z",
+    );
+    expect(limits.windows).toEqual([
+      {
+        id: "weekly",
+        kind: "weekly",
+        label: "Weekly",
+        usedPercent: 50,
+        resetsAt: "2026-11-17T00:00:00.000Z",
+        windowDurationMins: 10080,
+      },
+    ]);
+  });
 });
 
 /**
@@ -348,6 +386,121 @@ describe("readKimiUsageLimits", () => {
         }),
       );
 
+      it.effect("keeps a CLI rotation that lands mid-refresh, instead of reverting it", () =>
+        Effect.gen(function* () {
+          const kimi = yield* kimiHomeWithHttpClient({
+            respond: ({ url }) => {
+              if (url.endsWith("/api/oauth/token")) {
+                // The CLI rotates the same credential file while the reader's
+                // refresh call is in flight.
+                return {
+                  status: 200,
+                  body: JSON.stringify({
+                    access_token: "reader-access",
+                    refresh_token: "reader-refresh",
+                    expires_at: Math.floor(Date.parse("2026-11-13T12:10:00.000Z") / 1000),
+                  }),
+                };
+              }
+              return { status: 200, body: usagesBody };
+            },
+          });
+          const credentialPath = kimi.path.join(
+            kimi.homeDirectory,
+            "credentials",
+            "kimi-code.json",
+          );
+          yield* kimi.fileSystem.makeDirectory(kimi.path.join(kimi.homeDirectory, "credentials"), {
+            recursive: true,
+          });
+          yield* kimi.writeCredential(JSON.stringify(STALE_CREDENTIAL));
+          // The refresh handler answers before the writeback, and the CLI's
+          // rotation lands between the reader's initial read and that writeback.
+          const originalClient = kimi.client;
+          const rotatingClient = HttpClient.make((request) =>
+            Effect.gen(function* () {
+              const response = yield* originalClient.execute(request);
+              if (request.url.endsWith("/api/oauth/token")) {
+                // The CLI's rotation is best-effort inside the stub: this test
+                // only cares that it lands before the reader's writeback.
+                yield* kimi.fileSystem
+                  .writeFileString(
+                    credentialPath,
+                    JSON.stringify({
+                      ...STALE_CREDENTIAL,
+                      access_token: "cli-access",
+                      refresh_token: "cli-rotated-refresh",
+                      expires_at: Math.floor(Date.parse("2026-11-13T12:20:00.000Z") / 1000),
+                    }),
+                  )
+                  .pipe(Effect.orElseSucceed(() => undefined));
+              }
+              return response;
+            }),
+          );
+          const limits = yield* readKimiUsageLimits({
+            environment: { KIMI_CODE_HOME: kimi.homeDirectory },
+            nowMs: Date.parse("2026-11-13T12:00:00.000Z"),
+          }).pipe(Effect.provideService(HttpClient.HttpClient, rotatingClient));
+          // The lookup proceeds with the reader's fresh access token.
+          expect(limits).toMatchObject({
+            windows: [{ id: "session", usedPercent: 19 }],
+          });
+          // The CLI's rotated refresh token must survive the reader's writeback.
+          const persisted = JSON.parse(yield* kimi.fileSystem.readFileString(credentialPath));
+          expect(persisted).toMatchObject({
+            access_token: "reader-access",
+            refresh_token: "cli-rotated-refresh",
+          });
+          expect(persisted.refresh_token).not.toBe("reader-refresh");
+        }),
+      );
+
+      it.effect("keeps a config-level api_key override out of the OAuth scope", () =>
+        Effect.gen(function* () {
+          const kimi = yield* kimiHomeWithHttpClient({
+            respond: () => ({ status: 500, body: "{}" }),
+          });
+          yield* kimi.fileSystem.makeDirectory(kimi.path.join(kimi.homeDirectory, "credentials"), {
+            recursive: true,
+          });
+          yield* kimi.writeCredential(JSON.stringify(FRESH_CREDENTIAL));
+          yield* kimi.fileSystem.writeFileString(
+            kimi.path.join(kimi.homeDirectory, "config.toml"),
+            ['[providers."managed:kimi-code"]', 'api_key = "sk-custom-key"', ""].join("\n"),
+          );
+          const limits = yield* readKimiUsageLimits({
+            environment: { KIMI_CODE_HOME: kimi.homeDirectory } as NodeJS.ProcessEnv,
+            nowMs: Date.parse("2026-11-13T12:00:00.000Z"),
+          }).pipe(Effect.provideService(HttpClient.HttpClient, kimi.client));
+          expect(limits).toBeUndefined();
+        }),
+      );
+
+      it.effect("keeps a config-level api_key_env override out of the OAuth scope", () =>
+        Effect.gen(function* () {
+          const kimi = yield* kimiHomeWithHttpClient({
+            respond: () => ({ status: 500, body: "{}" }),
+          });
+          yield* kimi.fileSystem.makeDirectory(kimi.path.join(kimi.homeDirectory, "credentials"), {
+            recursive: true,
+          });
+          yield* kimi.writeCredential(JSON.stringify(FRESH_CREDENTIAL));
+          yield* kimi.fileSystem.writeFileString(
+            kimi.path.join(kimi.homeDirectory, "config.toml"),
+            ['[providers."managed:kimi-code"]', 'api_key_env = "MY_KEY"', ""].join("\n"),
+          );
+          const limits = yield* readKimiUsageLimits({
+            environment: {
+              KIMI_CODE_HOME: kimi.homeDirectory,
+              MY_KEY: "sk-custom-key",
+            } as NodeJS.ProcessEnv,
+            nowMs: Date.parse("2026-11-13T12:00:00.000Z"),
+          }).pipe(Effect.provideService(HttpClient.HttpClient, kimi.client));
+          expect(limits).toBeUndefined();
+        }),
+      );
+
       it.effect("honors KIMI_CODE_BASE_URL and KIMI_CODE_OAUTH_HOST over the config file", () =>
         Effect.gen(function* () {
           const kimi = yield* kimiHomeWithHttpClient({
@@ -426,6 +579,105 @@ describe("readKimiUsageLimits", () => {
           });
         }),
       );
+
+      it.effect("reads single-quoted TOML spellings of the managed config", () =>
+        Effect.gen(function* () {
+          const kimi = yield* kimiHomeWithHttpClient({
+            respond: ({ url }) =>
+              url.startsWith("https://config.test")
+                ? { status: 200, body: usagesBody }
+                : { status: 500, body: "{}" },
+          });
+          yield* kimi.fileSystem.makeDirectory(kimi.path.join(kimi.homeDirectory, "credentials"), {
+            recursive: true,
+          });
+          // TOML permits literal (single-quoted) keys and values; the same
+          // sections resolve identically to the double-quoted spelling.
+          yield* kimi.fileSystem.writeFileString(
+            kimi.path.join(kimi.homeDirectory, "config.toml"),
+            [
+              "[providers.'managed:kimi-code']",
+              "base_url = 'https://config.test/coding/v1'",
+              "",
+              "[providers.'managed:kimi-code'.oauth]",
+              "oauth_host = 'https://auth.kimi.com'",
+              "key = 'oauth/config-slot'",
+              "",
+            ].join("\n"),
+          );
+          yield* kimi.fileSystem.writeFileString(
+            kimi.path.join(kimi.homeDirectory, "credentials", "config-slot.json"),
+            JSON.stringify(FRESH_CREDENTIAL),
+          );
+          const limits = yield* readKimiUsageLimits({
+            environment: { KIMI_CODE_HOME: kimi.homeDirectory } as NodeJS.ProcessEnv,
+            nowMs: Date.parse("2026-11-13T12:00:00.000Z"),
+          }).pipe(Effect.provideService(HttpClient.HttpClient, kimi.client));
+          expect(limits).toMatchObject({
+            windows: [{ id: "session", usedPercent: 19 }],
+          });
+        }),
+      );
     },
+  );
+
+  // TestClock would freeze the lock's bounded retry sleeps forever, so the
+  // held-lock case runs against the real clock outside the shared layer block.
+  it.live("completes the lookup when the credential lock is already held", () =>
+    Effect.gen(function* () {
+      const usagesBody = JSON.stringify({
+        limits: [
+          {
+            window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+            detail: { limit: "100", used: "19" },
+          },
+        ],
+      });
+      const kimi = yield* kimiHomeWithHttpClient({
+        respond: ({ url }) =>
+          url.endsWith("/api/oauth/token")
+            ? {
+                status: 200,
+                body: JSON.stringify({
+                  access_token: "rotated-access",
+                  refresh_token: "rotated-refresh",
+                  expires_at: Math.floor(Date.parse("2026-11-13T12:10:00.000Z") / 1000),
+                }),
+              }
+            : { status: 200, body: usagesBody },
+      });
+      yield* kimi.fileSystem.makeDirectory(kimi.path.join(kimi.homeDirectory, "credentials"), {
+        recursive: true,
+      });
+      yield* kimi.writeCredential(JSON.stringify(STALE_CREDENTIAL));
+      // Another process (the CLI) holds the lock and never releases it.
+      yield* kimi.fileSystem.writeFileString(
+        kimi.path.join(kimi.homeDirectory, "credentials", "kimi-code.lock"),
+        "held-by-cli",
+      );
+      const limits = yield* readKimiUsageLimits({
+        environment: { KIMI_CODE_HOME: kimi.homeDirectory } as NodeJS.ProcessEnv,
+        nowMs: Date.parse("2026-11-13T12:00:00.000Z"),
+      }).pipe(Effect.provideService(HttpClient.HttpClient, kimi.client));
+      // The bounded wait expires and the lookup proceeds without the lock.
+      expect(limits).toMatchObject({
+        windows: [{ id: "session", usedPercent: 19 }],
+      });
+      // Proceeding without the lock still wrote back a consistent credential.
+      const persisted = JSON.parse(
+        yield* kimi.fileSystem.readFileString(
+          kimi.path.join(kimi.homeDirectory, "credentials", "kimi-code.json"),
+        ),
+      );
+      expect(persisted).toMatchObject({
+        access_token: "rotated-access",
+        refresh_token: "rotated-refresh",
+      });
+      // The holder's lock file is left in place: this reader released nothing.
+      const lockHeld = yield* kimi.fileSystem.exists(
+        kimi.path.join(kimi.homeDirectory, "credentials", "kimi-code.lock"),
+      );
+      expect(lockHeld).toBe(true);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
