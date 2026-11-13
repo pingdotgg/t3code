@@ -477,7 +477,7 @@ export const make = Effect.gen(function* () {
             pulls.delete(candidate.number);
             continue;
           }
-          pulls.set(current.number, current);
+          // Not written back: a refresh may have stored a newer copy while this was read.
           results.push(...matching([current]));
         }
         return results;
