@@ -123,6 +123,7 @@ import {
 } from "../../provider/EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
+import { codexLoopbackProxyBypass } from "../../provider/codexLoopbackProxyBypass.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -1695,6 +1696,8 @@ export const layerAppServerClientFactory: Layer.Layer<
   CodexAppServerClientFactory,
   never,
   | ChildProcessSpawner.ChildProcessSpawner
+  | FileSystem.FileSystem
+  | Path.Path
   | PortScanner.PortDiscovery
   | ProviderEventLoggers.ProviderEventLoggers
 > = Layer.effect(
@@ -1704,18 +1707,33 @@ export const layerAppServerClientFactory: Layer.Layer<
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
     const portDiscovery = yield* PortScanner.PortDiscovery;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
 
     return CodexAppServerClientFactory.of({
       open: Effect.fn("CodexAdapterV2.open")(function* (input) {
         const scope = yield* Scope.Scope;
+        const homeDirectory = yield* HostProcess.HomeDirectory;
+        const codexHome = input.settings.homePath
+          ? expandHomePath(input.settings.homePath, homeDirectory)
+          : input.environment.CODEX_HOME || path.join(homeDirectory, ".codex");
+        const proxyBypass = codexLoopbackProxyBypass({
+          environment: input.environment,
+          platform: yield* HostProcess.Platform,
+          codexConfig: yield* fileSystem
+            .readFileString(path.join(codexHome, "config.toml"))
+            .pipe(Effect.orElseSucceed(() => "")),
+        });
         const environment = {
           ...codexAppServerEnvironment(input.environment),
+          ...proxyBypass.env,
           ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
         };
         const command = yield* makeCodexAppServerSpawnCommand({
           command: input.settings.binaryPath || "codex",
           args: codexAppServerArgs(
             resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
+            proxyBypass.args,
           ),
           env: environment,
           threadId: input.threadId,

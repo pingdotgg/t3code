@@ -44,6 +44,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import { resolveAttachmentPathById } from "../../attachmentStore.ts";
@@ -1062,6 +1063,7 @@ describe("CodexAdapterV2 process exit", () => {
           ),
         ),
       ),
+      Layer.provide(Layer.mergeAll(FileSystem.layerNoop({}), Path.layer)),
     );
     return Effect.gen(function* () {
       const factory = yield* CodexAdapterV2.CodexAppServerClientFactory;
