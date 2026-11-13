@@ -1273,6 +1273,40 @@ it.effect("restores a checkpoint before the first commit without staging its fil
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("restores later edits to skip-worktree files whose checkpoint matches HEAD", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-skip-restore-" });
+    yield* runGit(cwd, ["init"]);
+    yield* runGit(cwd, ["config", "user.email", "test@test.com"]);
+    yield* runGit(cwd, ["config", "user.name", "Test"]);
+    yield* fileSystem.writeFileString(path.join(cwd, "flagged.txt"), "baseline\n");
+    yield* fileSystem.writeFileString(path.join(cwd, "control.txt"), "baseline\n");
+    yield* runGit(cwd, ["add", "."]);
+    yield* runGit(cwd, ["commit", "-m", "baseline"]);
+    yield* runGit(cwd, ["update-index", "--skip-worktree", "flagged.txt"]);
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/skip-restore");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    yield* fileSystem.writeFileString(path.join(cwd, "flagged.txt"), "later\n");
+    yield* fileSystem.writeFileString(path.join(cwd, "control.txt"), "later\n");
+
+    assert.isTrue(
+      yield* driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false }),
+    );
+
+    assert.strictEqual(
+      yield* fileSystem.readFileString(path.join(cwd, "control.txt")),
+      "baseline\n",
+    );
+    assert.strictEqual(
+      yield* fileSystem.readFileString(path.join(cwd, "flagged.txt")),
+      "baseline\n",
+    );
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 // The real VCS process, spawning `command` wherever the driver runs git.
 const vcsProcessSpawning = (command: string) =>
   Layer.effect(
