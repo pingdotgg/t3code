@@ -41,7 +41,10 @@ export function usePreviewAvailable(environmentId: EnvironmentId | null): boolea
   return isPreviewSupportedInRuntime() || serverBrowser;
 }
 
-type RuntimeSnapshot = Pick<PreviewSessionSnapshot, "runtime" | "headless" | "automationOwner">;
+type RuntimeSnapshot = Pick<
+  PreviewSessionSnapshot,
+  "threadId" | "tabId" | "runtime" | "headless" | "automationOwner"
+>;
 
 /** The desktop app hosts this server tab, in a panel `<webview>` or a background window. */
 function desktopHostsServerTab(
@@ -58,6 +61,34 @@ function desktopHostsServerTab(
   );
 }
 
+// Fixed when a tab first appears: moving a page between hosts would replace it.
+const backgroundHostedTabs = new Map<string, boolean>();
+
+/**
+ * A panel `<webview>` created while the app window is hidden or minimized never paints, so an
+ * agent tab that appears then runs in a never-shown desktop window and the panel streams it.
+ */
+export function hostsServerTabInBackground(
+  environmentId: EnvironmentId,
+  primaryEnvironmentId: EnvironmentId | null,
+  snapshot: RuntimeSnapshot | null | undefined,
+): boolean {
+  if (
+    !snapshot ||
+    snapshot.automationOwner === undefined ||
+    !desktopHostsServerTab(environmentId, primaryEnvironmentId, snapshot)
+  ) {
+    return false;
+  }
+  const key = `${environmentId}\u0000${snapshot.threadId}\u0000${snapshot.tabId}`;
+  let background = backgroundHostedTabs.get(key);
+  if (background === undefined) {
+    background = window.desktopBridge?.getWindowShown?.() === false;
+    backgroundHostedTabs.set(key, background);
+  }
+  return background;
+}
+
 export function rendersServerTabNatively(
   environmentId: EnvironmentId,
   primaryEnvironmentId: EnvironmentId | null,
@@ -65,23 +96,7 @@ export function rendersServerTabNatively(
 ): boolean {
   return (
     desktopHostsServerTab(environmentId, primaryEnvironmentId, snapshot) &&
-    snapshot?.automationOwner === undefined
-  );
-}
-
-/**
- * Agent tabs run in a never-shown desktop window, because a panel `<webview>`
- * created while the app is hidden never paints and agents open tabs whenever
- * they like. The panel streams them like any other server tab.
- */
-export function hostsServerTabInBackground(
-  environmentId: EnvironmentId,
-  primaryEnvironmentId: EnvironmentId | null,
-  snapshot: RuntimeSnapshot | null | undefined,
-): boolean {
-  return (
-    desktopHostsServerTab(environmentId, primaryEnvironmentId, snapshot) &&
-    snapshot?.automationOwner !== undefined
+    !hostsServerTabInBackground(environmentId, primaryEnvironmentId, snapshot)
   );
 }
 

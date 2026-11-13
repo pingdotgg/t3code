@@ -1165,6 +1165,8 @@ export interface DesktopBridge {
   onSnapShotEvent: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
   onQuitShortcut: (listener: (event: QuitShortcutHintEvent) => void) => () => void;
   getWindowFullscreenState: () => boolean;
+  /** Whether the app window is on screen: not hidden and not minimized. */
+  getWindowShown: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getWindowZoomFactor: () => number;
   getUpdateState: () => Promise<DesktopUpdateState>;

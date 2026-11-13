@@ -102,6 +102,15 @@ function setup(): Disposable {
   };
 }
 
+function stubDesktopWindowShown(shown: boolean): Disposable {
+  window.desktopBridge = { getWindowShown: () => shown, getWindowZoomFactor: () => 1 } as never;
+  return {
+    [Symbol.dispose]() {
+      delete window.desktopBridge;
+    },
+  };
+}
+
 async function renderHost() {
   await using stack = new AsyncDisposableStack();
   const screen = stack.use(
@@ -170,33 +179,46 @@ describe("ElectronBrowserHost", () => {
     expect(after.every((node, index) => node.isSameNode(before[index]!))).toBe(true);
   });
 
-  it("hosts an agent's tab in a background window instead of a panel webview", async () => {
-    using _state = setup();
-    reconcilePreviewServerSessions(threadRef, {
-      sessions: [
-        {
-          ...snapshot("tab_agent", "2026-01-01T00:00:01.000Z"),
-          runtime: "server",
-          automationOwner: "agent-session",
-        },
-      ],
-      serverEpoch: "server-a",
-      revision: 1,
-    });
-    await using screen = await renderHost();
+  it.each([
+    { shown: false, tabId: "tab_agent_hidden" },
+    { shown: true, tabId: "tab_agent_shown" },
+  ])(
+    "hosts an agent's tab in a background window only if the app window is hidden (shown $shown)",
+    async ({ shown, tabId }) => {
+      using _state = setup();
+      using _bridge = stubDesktopWindowShown(shown);
+      reconcilePreviewServerSessions(threadRef, {
+        sessions: [
+          {
+            ...snapshot(tabId, "2026-01-01T00:00:01.000Z"),
+            runtime: "server",
+            automationOwner: "agent-session",
+          },
+        ],
+        serverEpoch: "server-a",
+        revision: 1,
+      });
+      await using screen = await renderHost();
 
-    await vi.waitFor(() =>
-      expect(mocks.createTab).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          serverTab: { threadId: threadRef.threadId, tabId: "tab_agent" },
-          background: expect.objectContaining({
-            environmentId: threadRef.environmentId,
-            url: "https://example.com/tab_agent",
+      await vi.waitFor(() =>
+        expect(mocks.createTab).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({
+            serverTab: { threadId: threadRef.threadId, tabId },
           }),
-        }),
-      ),
-    );
-    expect(screen.container.querySelectorAll("webview")).toHaveLength(0);
-  });
+        ),
+      );
+      const [, defaults] = mocks.createTab.mock.calls[0]!;
+      if (shown) {
+        expect(defaults?.background).toBeUndefined();
+        expect(screen.container.querySelectorAll("webview")).toHaveLength(1);
+      } else {
+        expect(defaults?.background).toMatchObject({
+          environmentId: threadRef.environmentId,
+          url: `https://example.com/${tabId}`,
+        });
+        expect(screen.container.querySelectorAll("webview")).toHaveLength(0);
+      }
+    },
+  );
 });
