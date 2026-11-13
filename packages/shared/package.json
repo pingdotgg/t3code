@@ -267,6 +267,10 @@
       "types": "./src/composerTrigger.ts",
       "import": "./src/composerTrigger.ts"
     },
+    "./triagePrompt": {
+      "types": "./src/triagePrompt.ts",
+      "import": "./src/triagePrompt.ts"
+    },
     "./pullRequestComposerTrigger": {
       "types": "./src/pullRequestComposerTrigger.ts",
       "import": "./src/pullRequestComposerTrigger.ts"
