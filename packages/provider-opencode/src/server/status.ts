@@ -26,6 +26,7 @@ import {
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import type { ProbedOpenCode } from "./versionProbe.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
+import { ServiceUnavailableError } from "@opencode/protocol/errors";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 
 const OPENCODE_PRESENTATION = {
@@ -498,6 +499,15 @@ const catalogFingerprint = (models: ReadonlyArray<OpenCode2Model>) =>
     .toSorted()
     .join("\n");
 
+// A cold OpenCode 2.2.5 503s model reads for about a minute while its location plugins activate.
+const PLUGIN_ACTIVATION_DEADLINE = "2 minutes";
+
+const isServiceUnavailable = Schema.is(ServiceUnavailableError);
+const isActivatingPlugins = (error: unknown): boolean =>
+  OpenCodeRuntime.isOpenCodeRuntimeError(error)
+    ? isActivatingPlugins(error.cause)
+    : isServiceUnavailable(error) && error.service === "plugin";
+
 /** A cold server can list a partial catalog; two agreeing reads reduce that startup race. */
 const settleOpenCode2Catalog = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
@@ -536,17 +546,22 @@ export const makeOpenCode2ModelLoader = <E>(
         ),
       );
       // The first read can include a cold server start, so only settling shares the budget.
+      // Each retry borrows the managed server, so retries well inside its idle TTL keep it alive.
       return tracked.pipe(
+        Effect.retry({ while: isActivatingPlugins, schedule: Schedule.spaced("1 second") }),
+        Effect.timeoutOption(PLUGIN_ACTIVATION_DEADLINE),
         Effect.flatMap((first) =>
-          settleOpenCode2Catalog(tracked, first).pipe(
-            Effect.timeoutOption(
-              resolveProviderProbeTimeoutMs(
-                "opencode",
-                OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS,
-                environment,
+          Option.isNone(first)
+            ? Effect.succeedNone
+            : settleOpenCode2Catalog(tracked, first.value).pipe(
+                Effect.timeoutOption(
+                  resolveProviderProbeTimeoutMs(
+                    "opencode",
+                    OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS,
+                    environment,
+                  ),
+                ),
               ),
-            ),
-          ),
         ),
         Effect.catch((error) =>
           latest.length > 0 ? Effect.succeedSome(latest) : Effect.fail(error),

@@ -334,6 +334,11 @@ export function PreviewView({
     else if (previewBridge && runtimeTabId) void previewBridge.refresh(runtimeTabId);
   };
 
+  const handleStopLoading = () => {
+    if (isServerTab) serverSurfaceRef.current?.stopLoading();
+    else if (previewBridge && runtimeTabId) void previewBridge.stopLoading(runtimeTabId);
+  };
+
   const adjustServerTab = async (change: Omit<PreviewAdjustInput, "threadId" | "tabId">) => {
     if (!tabId) return;
     const result = await adjust({
@@ -984,6 +989,7 @@ export function PreviewView({
         onBack={handleBack}
         onForward={handleForward}
         onRefresh={handleRefresh}
+        onStopLoading={handleStopLoading}
         onSubmit={(next) => void handleSubmitUrl(next)}
         onOpenInBrowser={tabId ? handleOpenInBrowser : undefined}
         onCapture={previewBridge && tabId && !isServerTab ? handleCapture : undefined}
