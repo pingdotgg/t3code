@@ -171,6 +171,7 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
     const usageURL = URL.parse(workspace.usageURL);
     return {
       ...makeUsageLimits({ checkedAt, windows }),
+      credentialFingerprint: `opencode-workspace:${workspace.id}`,
       ...(usageURL?.protocol === "http:" || usageURL?.protocol === "https:"
         ? { externalUsage: { label: workspace.name?.trim() || workspace.id, url: usageURL.href } }
         : {}),
