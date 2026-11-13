@@ -194,15 +194,13 @@ export function orderRoutesByGrant(
   const ordered: Array<ConnectionRoute> = [];
   for (const route of routes) {
     const grant = grants.get(connectionRouteId(route.target));
-    const index =
-      grant === undefined
-        ? -1
-        : ordered.findIndex((placed) => {
-            const placedGrant = grants.get(connectionRouteId(placed.target));
-            return placedGrant !== undefined && grantIsBroader(grant, placedGrant);
-          });
-    if (index === -1) ordered.push(route);
-    else ordered.splice(index, 0, route);
+    let index = ordered.length;
+    while (grant !== undefined && index > 0) {
+      const placedGrant = grants.get(connectionRouteId(ordered[index - 1]!.target));
+      if (placedGrant === undefined || !grantIsBroader(grant, placedGrant)) break;
+      index -= 1;
+    }
+    ordered.splice(index, 0, route);
   }
   return ordered;
 }

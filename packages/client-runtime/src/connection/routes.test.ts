@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { type AuthGrantScope, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
 
@@ -18,6 +18,7 @@ import {
   entryWithRoutes,
   isNearbyAddress,
   mergeLearnedRoutes,
+  orderRoutesByGrant,
   pendingRouteOrder,
   removedWithRelay,
   routeKeepsItsHost,
@@ -129,6 +130,17 @@ describe("connection routes", () => {
     const vpn = direct("vpn", "http://100.101.102.103:3773/");
     const pasted = direct("ts-2", "http://[fd7a:115c:a1e0::2]:3773/");
     expect(upsertRoute([vpn, TAILNET], pasted)).toEqual([vpn, pasted, TAILNET]);
+  });
+
+  it("moves a route only ahead of routes whose grant it strictly exceeds", () => {
+    const grants = new Map<string, ReadonlySet<AuthGrantScope>>([
+      [connectionRouteId(LAN.target), new Set(["orchestration:read"])],
+      [connectionRouteId(TAILNET.target), new Set(["filesystem:read"])],
+      [connectionRouteId(RELAY.target), new Set(["orchestration:read", "terminal:operate"])],
+    ]);
+    expect(orderRoutesByGrant([LAN, RELAY], grants)).toEqual([RELAY, LAN]);
+    expect(orderRoutesByGrant([LAN, TAILNET, RELAY], grants)).toEqual([LAN, TAILNET, RELAY]);
+    expect(orderRoutesByGrant([LAN, PUBLIC, RELAY], grants)).toEqual([LAN, PUBLIC, RELAY]);
   });
 
   it("shows a dragged order only until the saved routes catch up or change", () => {
