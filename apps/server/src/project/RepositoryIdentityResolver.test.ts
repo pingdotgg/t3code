@@ -344,6 +344,46 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
+  it.effect("follows an OWNER/REPO mark only to a remote that fetches that repository", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-gh-parent-test-",
+      });
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const resolveFresh = () => resolver.resolve(cwd, { refresh: true });
+
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["remote", "add", "fork", "https://github.com/julius/t3code-fork.git"]);
+      yield* git(cwd, ["remote", "add", "main", "https://github.com/T3Tools/t3code.git"]);
+      yield* git(cwd, ["remote", "add", "upstream", "https://github.com/other/t3code.git"]);
+      yield* git(cwd, ["config", "remote.fork.gh-resolved", "t3tools/t3code"]);
+      const parent = yield* resolveFresh();
+      expect(parent?.canonicalKey).toBe("github.com/t3tools/t3code");
+      expect(parent?.locator).toEqual({
+        source: "git-remote",
+        remoteName: "main",
+        remoteUrl: "https://github.com/T3Tools/t3code.git",
+      });
+
+      // No remote fetches the marked repository, and several marks leave gh's choice unknown.
+      yield* git(cwd, ["config", "remote.fork.gh-resolved", "someone/else"]);
+      expect((yield* resolveFresh())?.locator.remoteName).toBe("upstream");
+      yield* git(cwd, ["config", "remote.fork.gh-resolved", "base"]);
+      yield* git(cwd, ["config", "remote.main.gh-resolved", "base"]);
+      expect((yield* resolveFresh())?.locator.remoteName).toBe("upstream");
+
+      // The same path on another HTTPS port is a different server.
+      yield* git(cwd, ["config", "--unset", "remote.fork.gh-resolved"]);
+      yield* git(cwd, ["config", "--unset", "remote.main.gh-resolved"]);
+      yield* git(cwd, ["remote", "add", "backup", "https://ghe.example.com:9443/acme/web.git"]);
+      yield* git(cwd, ["remote", "add", "ghe-fork", "https://ghe.example.com:8443/me/web.git"]);
+      yield* git(cwd, ["remote", "add", "ghe-parent", "https://ghe.example.com:8443/acme/web.git"]);
+      yield* git(cwd, ["config", "remote.ghe-fork.gh-resolved", "acme/web"]);
+      expect((yield* resolveFresh())?.locator.remoteName).toBe("ghe-parent");
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
   it.effect("reads the project's gh default when the server inherited GIT_DIR", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
