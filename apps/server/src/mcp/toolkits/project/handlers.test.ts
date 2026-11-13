@@ -25,6 +25,7 @@ import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import type { Json } from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -476,7 +477,7 @@ it.effect("strict launches require an explicit model before creating a thread or
         McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
       ),
     );
-    const launch = (input: typeof ProjectToolkit.tools.t3_thread_launch.parametersSchema.Type) =>
+    const launch = (input: Json) =>
       toolkit
         .handle("t3_thread_launch", input)
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
