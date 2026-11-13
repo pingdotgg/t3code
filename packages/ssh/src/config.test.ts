@@ -70,7 +70,7 @@ describe("ssh config", () => {
           ]),
         ],
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("skips directories and implicit dotfile Include matches but keeps explicit ones", () =>
@@ -117,7 +117,7 @@ describe("ssh config", () => {
           ["team", "team.example.com", "ssh-config"],
         ],
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("discovers ssh config hosts across included files", () =>
@@ -222,7 +222,7 @@ describe("ssh config", () => {
           source: "ssh-config",
         },
       ]);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("retains raw targets when included hostnames are inactive or uncertain", () =>
@@ -293,7 +293,7 @@ describe("ssh config", () => {
       assert.equal(hosts.find((host) => host.alias === "prod")?.hostname, "prod");
       assert.equal(hosts.find((host) => host.alias === "work")?.hostname, "work");
       assert.equal(hosts.find((host) => host.alias === "matched")?.hostname, "matched");
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps each explicit known_hosts port as its own destination", () =>
@@ -320,7 +320,7 @@ describe("ssh config", () => {
           .toSorted((left, right) => left.localeCompare(right)),
         ["100.64.0.1 2222", "100.64.0.1 2223", "fd7a:115c:a1e0::1 2222"],
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps known_hosts ports that a configured alias for the address does not use", () =>
@@ -362,7 +362,7 @@ describe("ssh config", () => {
         hosts.map((host) => `${host.alias} ${host.port}`),
         ["192.0.2.10 2222", "192.0.2.10 2223", "box null", "fixture null", "prod null"],
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("parses known_hosts entries without returning hashed hosts", () =>

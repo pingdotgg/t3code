@@ -631,7 +631,7 @@ describe("UsageService", () => {
         Effect.scoped,
         Effect.provide(layerService({ prefix: "usage-compressed-codex", home, settings })),
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps the first host identity across recreation and explicit override removal", () =>
@@ -662,7 +662,7 @@ describe("UsageService", () => {
         const source = summary.sources.find((source) => source.fingerprint.provider === "claude");
         assert.strictEqual(source?.fingerprint.hostId, expected);
       }
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("concurrent initialization keeps one host identity across service recreation", () =>
@@ -718,7 +718,7 @@ describe("UsageService", () => {
         const source = summary.sources.find((source) => source.fingerprint.provider === "claude");
         assert.strictEqual(source?.fingerprint.hostId, hostId);
       }
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect(
@@ -870,7 +870,7 @@ describe("UsageService", () => {
             }),
           ),
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect(
@@ -966,7 +966,7 @@ describe("UsageService", () => {
             }),
           ),
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect(
@@ -1155,7 +1155,7 @@ describe("UsageService", () => {
             }),
           ),
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect(
@@ -1377,7 +1377,7 @@ describe("UsageService", () => {
             }),
           ),
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("returns other providers' usage while Muse home discovery is still pending", () =>
@@ -1437,7 +1437,7 @@ describe("UsageService", () => {
       assert.deepStrictEqual(museSources(refreshed), [
         [NodePath.join(museHome, "sessions"), "ok", undefined],
       ]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect(
@@ -1502,7 +1502,7 @@ describe("UsageService", () => {
           Effect.scoped,
           Effect.provide(layerService({ prefix: "usage-pi-malformed", home, settings })),
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("discovers Pi history in its default home and directory overrides", () =>
@@ -1609,7 +1609,7 @@ describe("UsageService", () => {
           Effect.provideService(HostProcess.HomeDirectory, home),
         );
       }
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("reads shared managed default and disabled extra account history once", () =>
@@ -1689,7 +1689,7 @@ describe("UsageService", () => {
         ).length,
         1,
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("restores the Cursor account cache after a restart", () =>
@@ -1731,7 +1731,7 @@ describe("UsageService", () => {
           }),
         ),
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("reads the Cursor account of an API key or T3 sign-in instead of a CLI login", () =>
@@ -1783,7 +1783,7 @@ describe("UsageService", () => {
         ]);
         assert.strictEqual(cursorSource(summary)?.status, "ok");
       }
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("does not show a previous Cursor account's history after the API key changes", () =>
@@ -1825,7 +1825,7 @@ describe("UsageService", () => {
           }),
         ),
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps a new Cursor key's refresh visible beside a failing key", () =>
@@ -1910,7 +1910,7 @@ describe("UsageService", () => {
           }),
         ),
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("reports one Cursor source when two API keys belong to the same account", () =>
@@ -1972,7 +1972,7 @@ describe("UsageService", () => {
           }),
         ),
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect(
@@ -2029,7 +2029,7 @@ describe("UsageService", () => {
             ?.distinctSessions,
           1,
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("counts unpriced tokens from the unpriced records of a mixed model", () =>
@@ -2066,7 +2066,7 @@ describe("UsageService", () => {
       assert.strictEqual(model?.costUsd, 1);
       assert.strictEqual(model?.totalTokens, 10_000);
       assert.strictEqual(model?.unpricedTokens, 9_900);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("includes host and merged OpenCode instance histories once across list aliases", () =>
@@ -2145,7 +2145,7 @@ describe("UsageService", () => {
           .sort((a, b) => a - b),
         [5, 7, 11],
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("counts aliased OpenCode and Antigravity directories once", () =>
@@ -2199,7 +2199,7 @@ describe("UsageService", () => {
         sourcesFor("antigravity")[0]?.fingerprint.resolvedHomePath,
         yield* Effect.promise(() => NodeFSP.realpath(conversations)),
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("reads Antigravity history from each instance's data directory", () =>
@@ -2270,7 +2270,7 @@ describe("UsageService", () => {
           outputTokens,
         );
       }
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("reads configured and disabled accounts once across shared and aliased homes", () =>
@@ -2389,7 +2389,7 @@ describe("UsageService", () => {
         sources.filter((source) => source.fingerprint.provider === "codex").length,
         1,
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect(
@@ -2472,7 +2472,7 @@ describe("UsageService", () => {
             }),
           ),
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect(
@@ -2518,7 +2518,7 @@ describe("UsageService", () => {
             .resolvedHomePath,
           NodePath.join(home, "grok", "sessions"),
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32" || process.getuid?.() === 0)(
@@ -2546,7 +2546,7 @@ describe("UsageService", () => {
         }).pipe(
           Effect.provide(layerService({ prefix: "usage-service-unreadable", home, settings })),
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect(
@@ -2615,7 +2615,7 @@ describe("UsageService", () => {
           Effect.scoped,
           Effect.provide(layerService({ prefix: "usage-service-provisional", home, settings })),
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("filters original model IDs before aliases, pricing, buckets and session counts", () =>
@@ -2720,7 +2720,7 @@ describe("UsageService", () => {
           }),
         ),
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("reprices unchanged transcripts when custom prices are added, edited, or removed", () =>
@@ -2764,7 +2764,7 @@ describe("UsageService", () => {
           layerService({ prefix: "usage-service-price-overrides-test", home, settings }),
         ),
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect(
@@ -2887,7 +2887,7 @@ describe("UsageService", () => {
             }),
           ),
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect(
@@ -2946,7 +2946,7 @@ describe("UsageService", () => {
             }),
           ),
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect(
@@ -3001,7 +3001,7 @@ describe("UsageService", () => {
             }),
           ),
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect.each([4, 5, 6, 7, 8, 10, 11, 12, 13, 14])(
@@ -3132,7 +3132,7 @@ describe("UsageService", () => {
             }),
           ),
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("re-parses a clean v10 Codex rollout that grew after an interrupted request", () =>
@@ -3232,7 +3232,7 @@ describe("UsageService", () => {
           }),
         ),
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("preserves saved tokens, costs and sessions after transcript cleanup and restart", () =>
@@ -3333,7 +3333,7 @@ describe("UsageService", () => {
           }),
         ),
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("credits the same copy of a duplicate after its transcripts are deleted", () =>
@@ -3371,7 +3371,7 @@ describe("UsageService", () => {
       }).pipe(
         Effect.provide(layerService({ prefix: "usage-service-copy-order-test", home, settings })),
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("credits the same copy of a duplicate from the last scan as an exact read does", () =>
@@ -3429,7 +3429,7 @@ describe("UsageService", () => {
       }).pipe(
         Effect.provide(layerService({ prefix: "usage-service-narrow-order-test", home, settings })),
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
@@ -3459,7 +3459,7 @@ describe("UsageService", () => {
         }).pipe(
           Effect.provide(layerService({ prefix: "usage-service-stale-read-test", home, settings })),
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect(
@@ -3505,7 +3505,7 @@ describe("UsageService", () => {
             layerService({ prefix: "usage-service-missing-diagnostics", home, settings }),
           ),
         );
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("reports saved usage of a removed directory only for windows it reaches", () =>
@@ -3539,7 +3539,7 @@ describe("UsageService", () => {
       assert.deepStrictEqual(later.buckets, []);
       assert.strictEqual(later.sources[0]?.status, "missing");
       assert.strictEqual(later.sources[0]?.scannedFiles, 0);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("does not share an in-flight scan after custom prices change", () =>
@@ -3608,7 +3608,7 @@ describe("UsageService", () => {
       }).pipe(
         Effect.provide(layerService({ prefix: "usage-service-price-race-test", home, settings })),
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each(["network", "http", "invalidJson", "empty"] as const)(
@@ -3667,7 +3667,7 @@ describe("UsageService", () => {
         assert.strictEqual(cached.pricing.status, "cached");
         assert.deepStrictEqual(cached.buckets, summary.buckets);
         assert.strictEqual(requests.length, 2);
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("does not orphan an in-flight scan when its first caller is interrupted", () =>
@@ -3745,6 +3745,6 @@ describe("UsageService", () => {
         orphanedAt,
         `interruption left the next matching request pending at scheduler check ${orphanedAt}`,
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 });

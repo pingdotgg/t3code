@@ -324,39 +324,6 @@ describe("DesktopBackendPool", () => {
   it.effect(
     "keeps the update marker after HTTP readiness until the backend publishes its runtime",
     () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fixture = yield* makeUpdateMarkerFixture();
-          yield* Effect.gen(function* () {
-            const pool = yield* DesktopBackendPool.DesktopBackendPool;
-            const primary = yield* pool.primary;
-            yield* primary.start;
-            yield* Deferred.succeed(fixture.allowReady, undefined);
-            yield* Queue.take(fixture.readyRuns);
-            assert.isTrue(
-              fixture.files.has(markerPath),
-              "a launcher could neither wait nor adopt between readiness and publication",
-            );
-            yield* Deferred.await(fixture.runtimeChecked);
-            yield* TestClock.adjust(Duration.seconds(5));
-            assert.isTrue(fixture.files.has(markerPath));
-            fixture.publishRuntime(456);
-            yield* TestClock.adjust(Duration.seconds(1));
-            assert.isTrue(
-              fixture.files.has(markerPath),
-              "another process's runtime is not the replacement",
-            );
-            fixture.publishRuntime(123);
-            yield* TestClock.adjust(Duration.seconds(1));
-            yield* Deferred.await(fixture.markerRemoved);
-            assert.deepEqual(fixture.removed, [markerPath]);
-          }).pipe(Effect.provide(fixture.layer));
-        }),
-      ),
-  );
-
-  it.effect("leaves a replacement update marker written while an earlier wait is pending", () =>
-    Effect.scoped(
       Effect.gen(function* () {
         const fixture = yield* makeUpdateMarkerFixture();
         yield* Effect.gen(function* () {
@@ -365,127 +332,150 @@ describe("DesktopBackendPool", () => {
           yield* primary.start;
           yield* Deferred.succeed(fixture.allowReady, undefined);
           yield* Queue.take(fixture.readyRuns);
-          yield* Deferred.await(fixture.runtimeChecked);
-          yield* TestClock.adjust(Duration.millis(DESKTOP_UPDATE_IN_PROGRESS_TTL_MS - 1_000));
-          const replacement = JSON.stringify({ startedAt: 59_000, expiresAt: 119_000 });
-          fixture.files.set(markerPath, replacement);
-          yield* TestClock.adjust(Duration.millis(DESKTOP_UPDATE_IN_PROGRESS_TTL_MS));
-          assert.equal(fixture.files.get(markerPath), replacement);
-          assert.deepEqual(fixture.removed, []);
-        }).pipe(Effect.provide(fixture.layer));
-      }),
-    ),
-  );
-
-  it.effect("a later backend run's readiness supersedes the earlier run's marker wait", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fixture = yield* makeUpdateMarkerFixture();
-        yield* Effect.gen(function* () {
-          const pool = yield* DesktopBackendPool.DesktopBackendPool;
-          const primary = yield* pool.primary;
-          yield* primary.start;
-          yield* Deferred.succeed(fixture.allowReady, undefined);
-          yield* Queue.take(fixture.readyRuns);
-          yield* Deferred.await(fixture.runtimeChecked);
-          yield* TestClock.adjust(Duration.seconds(30));
-          yield* primary.stop();
-          yield* primary.start;
-          yield* Queue.take(fixture.readyRuns);
-          yield* TestClock.adjust(Duration.seconds(31));
           assert.isTrue(
             fixture.files.has(markerPath),
-            "the earlier run's wait must not end the later run's handoff",
+            "a launcher could neither wait nor adopt between readiness and publication",
           );
-          assert.deepEqual(fixture.removed, []);
-          fixture.publishRuntime(124);
-          yield* TestClock.adjust(Duration.millis(100));
+          yield* Deferred.await(fixture.runtimeChecked);
+          yield* TestClock.adjust(Duration.seconds(5));
+          assert.isTrue(fixture.files.has(markerPath));
+          fixture.publishRuntime(456);
+          yield* TestClock.adjust(Duration.seconds(1));
+          assert.isTrue(
+            fixture.files.has(markerPath),
+            "another process's runtime is not the replacement",
+          );
+          fixture.publishRuntime(123);
+          yield* TestClock.adjust(Duration.seconds(1));
           yield* Deferred.await(fixture.markerRemoved);
           assert.deepEqual(fixture.removed, [markerPath]);
         }).pipe(Effect.provide(fixture.layer));
       }),
-    ),
+  );
+
+  it.effect("leaves a replacement update marker written while an earlier wait is pending", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeUpdateMarkerFixture();
+      yield* Effect.gen(function* () {
+        const pool = yield* DesktopBackendPool.DesktopBackendPool;
+        const primary = yield* pool.primary;
+        yield* primary.start;
+        yield* Deferred.succeed(fixture.allowReady, undefined);
+        yield* Queue.take(fixture.readyRuns);
+        yield* Deferred.await(fixture.runtimeChecked);
+        yield* TestClock.adjust(Duration.millis(DESKTOP_UPDATE_IN_PROGRESS_TTL_MS - 1_000));
+        const replacement = JSON.stringify({ startedAt: 59_000, expiresAt: 119_000 });
+        fixture.files.set(markerPath, replacement);
+        yield* TestClock.adjust(Duration.millis(DESKTOP_UPDATE_IN_PROGRESS_TTL_MS));
+        assert.equal(fixture.files.get(markerPath), replacement);
+        assert.deepEqual(fixture.removed, []);
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
+  it.effect("a later backend run's readiness supersedes the earlier run's marker wait", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeUpdateMarkerFixture();
+      yield* Effect.gen(function* () {
+        const pool = yield* DesktopBackendPool.DesktopBackendPool;
+        const primary = yield* pool.primary;
+        yield* primary.start;
+        yield* Deferred.succeed(fixture.allowReady, undefined);
+        yield* Queue.take(fixture.readyRuns);
+        yield* Deferred.await(fixture.runtimeChecked);
+        yield* TestClock.adjust(Duration.seconds(30));
+        yield* primary.stop();
+        yield* primary.start;
+        yield* Queue.take(fixture.readyRuns);
+        yield* TestClock.adjust(Duration.seconds(31));
+        assert.isTrue(
+          fixture.files.has(markerPath),
+          "the earlier run's wait must not end the later run's handoff",
+        );
+        assert.deepEqual(fixture.removed, []);
+        fixture.publishRuntime(124);
+        yield* TestClock.adjust(Duration.millis(100));
+        yield* Deferred.await(fixture.markerRemoved);
+        assert.deepEqual(fixture.removed, [markerPath]);
+      }).pipe(Effect.provide(fixture.layer));
+    }),
   );
 
   it.effect("unregister during pool quit does not interrupt sibling stops", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const backend = yield* makeFakeBackendProcess();
-        yield* Effect.gen(function* () {
-          const pool = yield* DesktopBackendPool.DesktopBackendPool;
-          const id = DesktopBackendPool.BackendInstanceId("wsl:Ubuntu");
-          const ready = yield* Deferred.make<void>();
-          const siblingStarted = yield* Deferred.make<void>();
-          const finishSibling = yield* Deferred.make<void>();
-          let siblingCompleted = false;
-          const instance = yield* pool.register({
-            id,
-            label: Effect.succeed("WSL (Ubuntu)"),
-            configResolve: Effect.succeed(runningConfig),
-            onReady: () => Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
-          });
-          yield* instance.start;
-          yield* backend.started;
-          yield* Deferred.await(ready);
-          const quitFiber = yield* Effect.all(
-            [
-              instance.stop({ timeout: Duration.seconds(5) }),
-              Deferred.succeed(siblingStarted, undefined).pipe(
-                Effect.andThen(Deferred.await(finishSibling)),
-                Effect.andThen(
-                  Effect.sync(() => {
-                    siblingCompleted = true;
-                  }),
-                ),
-              ),
-            ],
-            { concurrency: "unbounded" },
-          ).pipe(Effect.forkChild);
-          yield* Deferred.await(siblingStarted);
-          assert.equal(yield* Queue.take(backend.signals), "SIGTERM");
-          const unregisterFiber = yield* pool.unregister(id).pipe(Effect.forkChild);
-          yield* TestClock.adjust(Duration.seconds(5));
-          assert.equal(yield* Queue.take(backend.signals), "SIGKILL");
-          assert.isUndefined(quitFiber.pollUnsafe());
-          assert.isUndefined(unregisterFiber.pollUnsafe());
-          assert.isTrue(yield* backend.isRunning);
-          yield* TestClock.adjust(backend.killWait);
-          yield* Fiber.join(unregisterFiber);
-          yield* Deferred.succeed(finishSibling, undefined);
-          yield* Fiber.join(quitFiber);
-
-          assert.isTrue(siblingCompleted);
-          assert.isFalse(yield* backend.isRunning);
-          assert.isTrue(Option.isNone((yield* instance.snapshot).activePid));
-          assert.isTrue(Option.isNone(yield* pool.get(id)));
-        }).pipe(Effect.provide(layerPool(Ref.makeUnsafe("Windows"), { backend })));
-      }),
-    ),
-  );
-
-  it.effect("unregister stops the registered instance", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const id = DesktopBackendPool.BackendInstanceId("wsl:Ubuntu");
+    Effect.gen(function* () {
+      const backend = yield* makeFakeBackendProcess();
+      yield* Effect.gen(function* () {
         const pool = yield* DesktopBackendPool.DesktopBackendPool;
+        const id = DesktopBackendPool.BackendInstanceId("wsl:Ubuntu");
+        const ready = yield* Deferred.make<void>();
+        const siblingStarted = yield* Deferred.make<void>();
+        const finishSibling = yield* Deferred.make<void>();
+        let siblingCompleted = false;
         const instance = yield* pool.register({
           id,
           label: Effect.succeed("WSL (Ubuntu)"),
-          configResolve: Effect.succeed({
-            ...runningConfig,
-            preflightFailure: Option.some({ reason: "WSL starting", fatal: false }),
-          }),
+          configResolve: Effect.succeed(runningConfig),
+          onReady: () => Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
         });
         yield* instance.start;
-        assert.equal((yield* instance.snapshot).restartScheduled, true);
+        yield* backend.started;
+        yield* Deferred.await(ready);
+        const quitFiber = yield* Effect.all(
+          [
+            instance.stop({ timeout: Duration.seconds(5) }),
+            Deferred.succeed(siblingStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(finishSibling)),
+              Effect.andThen(
+                Effect.sync(() => {
+                  siblingCompleted = true;
+                }),
+              ),
+            ),
+          ],
+          { concurrency: "unbounded" },
+        ).pipe(Effect.forkChild);
+        yield* Deferred.await(siblingStarted);
+        assert.equal(yield* Queue.take(backend.signals), "SIGTERM");
+        const unregisterFiber = yield* pool.unregister(id).pipe(Effect.forkChild);
+        yield* TestClock.adjust(Duration.seconds(5));
+        assert.equal(yield* Queue.take(backend.signals), "SIGKILL");
+        assert.isUndefined(quitFiber.pollUnsafe());
+        assert.isUndefined(unregisterFiber.pollUnsafe());
+        assert.isTrue(yield* backend.isRunning);
+        yield* TestClock.adjust(backend.killWait);
+        yield* Fiber.join(unregisterFiber);
+        yield* Deferred.succeed(finishSibling, undefined);
+        yield* Fiber.join(quitFiber);
 
-        yield* pool.unregister(id);
+        assert.isTrue(siblingCompleted);
+        assert.isFalse(yield* backend.isRunning);
+        assert.isTrue(Option.isNone((yield* instance.snapshot).activePid));
+        assert.isTrue(Option.isNone(yield* pool.get(id)));
+      }).pipe(Effect.provide(layerPool(Ref.makeUnsafe("Windows"), { backend })));
+    }),
+  );
 
-        const stopped = yield* instance.snapshot;
-        assert.equal(stopped.desiredRunning, false);
-        assert.equal(stopped.restartScheduled, false);
-        assert.equal(Option.isNone(yield* pool.get(id)), true);
-      }).pipe(Effect.provide(layerPool(Ref.makeUnsafe("Windows")))),
-    ),
+  it.effect("unregister stops the registered instance", () =>
+    Effect.gen(function* () {
+      const id = DesktopBackendPool.BackendInstanceId("wsl:Ubuntu");
+      const pool = yield* DesktopBackendPool.DesktopBackendPool;
+      const instance = yield* pool.register({
+        id,
+        label: Effect.succeed("WSL (Ubuntu)"),
+        configResolve: Effect.succeed({
+          ...runningConfig,
+          preflightFailure: Option.some({ reason: "WSL starting", fatal: false }),
+        }),
+      });
+      yield* instance.start;
+      assert.equal((yield* instance.snapshot).restartScheduled, true);
+
+      yield* pool.unregister(id);
+
+      const stopped = yield* instance.snapshot;
+      assert.equal(stopped.desiredRunning, false);
+      assert.equal(stopped.restartScheduled, false);
+      assert.equal(Option.isNone(yield* pool.get(id)), true);
+    }).pipe(Effect.provide(layerPool(Ref.makeUnsafe("Windows")))),
   );
 });

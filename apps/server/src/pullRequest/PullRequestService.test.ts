@@ -1429,174 +1429,160 @@ it.effect(
 );
 
 it.effect("publishes a merge for immediate settlement only after host confirmation", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const mergedAt = "2026-09-03T02:00:00.000Z";
-      let state: "open" | "merged" = "open";
-      let confirmationFails = false;
-      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
-      const service = yield* makeService({
-        projects: [
-          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
-        ],
-        providers: [
-          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-            getChangeRequestSummary: () =>
-              confirmationFails
-                ? Effect.fail(
-                    new PullRequestProviderError({
-                      provider: SourceControlProviderKind.make("github"),
-                      operation: "getChangeRequestSummary",
-                      reason: "failed",
-                      detail: "HTTP 504",
-                    }),
-                  )
-                : Effect.succeed({ ...changeRequest(1, mergedAt), state, mergedAt }),
-          }),
-        ],
-      });
-      const merges = yield* service.subscribeMerges;
-      const observedMerge = yield* Stream.runHead(merges).pipe(
-        Effect.forkChild({ startImmediately: true }),
-      );
+  Effect.gen(function* () {
+    const mergedAt = "2026-09-03T02:00:00.000Z";
+    let state: "open" | "merged" = "open";
+    let confirmationFails = false;
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequestSummary: () =>
+            confirmationFails
+              ? Effect.fail(
+                  new PullRequestProviderError({
+                    provider: SourceControlProviderKind.make("github"),
+                    operation: "getChangeRequestSummary",
+                    reason: "failed",
+                    detail: "HTTP 504",
+                  }),
+                )
+              : Effect.succeed({ ...changeRequest(1, mergedAt), state, mergedAt }),
+        }),
+      ],
+    });
+    const merges = yield* service.subscribeMerges;
+    const observedMerge = yield* Stream.runHead(merges).pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
 
-      assert.isUndefined(yield* service.runAction({ ...reference, action: "merge" }));
-      const queuedRefresh = Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes));
-      confirmationFails = true;
-      yield* service.runAction({ ...reference, action: "merge" });
-      assert.isAbove(
-        Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes)),
-        queuedRefresh,
-      );
-      confirmationFails = false;
-      state = "merged";
-      // The event carries the host's merge time, not the moment the confirmation ran.
-      yield* TestClock.setTime(Date.parse(mergedAt) + 60_000);
-      yield* service.runAction({
-        ...reference,
-        repository: " ACME/WEB ",
-        action: "merge",
-        mergeMethod: "merge",
-      });
+    assert.isUndefined(yield* service.runAction({ ...reference, action: "merge" }));
+    const queuedRefresh = Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes));
+    confirmationFails = true;
+    yield* service.runAction({ ...reference, action: "merge" });
+    assert.isAbove(
+      Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes)),
+      queuedRefresh,
+    );
+    confirmationFails = false;
+    state = "merged";
+    // The event carries the host's merge time, not the moment the confirmation ran.
+    yield* TestClock.setTime(Date.parse(mergedAt) + 60_000);
+    yield* service.runAction({
+      ...reference,
+      repository: " ACME/WEB ",
+      action: "merge",
+      mergeMethod: "merge",
+    });
 
-      assert.deepStrictEqual(Option.getOrThrow(yield* Fiber.join(observedMerge)), {
-        ...reference,
-        mergedAt,
-      });
-    }),
-  ),
+    assert.deepStrictEqual(Option.getOrThrow(yield* Fiber.join(observedMerge)), {
+      ...reference,
+      mergedAt,
+    });
+  }),
 );
 
 it.effect("returns the host's merged reply as a summary and trusts it without another read", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const mergedAt = "2026-09-03T02:00:00.000Z";
-      const merged = {
-        number: 1,
-        title: "Change request 1",
-        url: "https://host/pull/1",
-        headBranch: "feat/1",
-        baseBranch: "main",
-        state: "merged" as const,
-        isDraft: false,
-        updatedAt: mergedAt,
-        mergedAt,
-        headSha: "abc123",
-        autoMergeEnabled: false,
-      };
-      let summaryReads = 0;
-      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
-      const service = yield* makeService({
-        projects: [
-          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
-        ],
-        providers: [
-          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-            runAction: () => Effect.succeed(merged),
-            getChangeRequestSummary: () =>
-              Effect.sync(() => {
-                summaryReads++;
-                return { ...changeRequest(1, mergedAt), state: "merged" as const, mergedAt };
-              }),
-          }),
-        ],
-      });
-      const merges = yield* service.subscribeMerges;
-      const observedMerge = yield* Stream.runHead(merges).pipe(
-        Effect.forkChild({ startImmediately: true }),
-      );
-      const observedAt = Date.parse("2026-09-03T02:00:01.000Z");
-      yield* TestClock.setTime(observedAt);
+  Effect.gen(function* () {
+    const mergedAt = "2026-09-03T02:00:00.000Z";
+    const merged = {
+      number: 1,
+      title: "Change request 1",
+      url: "https://host/pull/1",
+      headBranch: "feat/1",
+      baseBranch: "main",
+      state: "merged" as const,
+      isDraft: false,
+      updatedAt: mergedAt,
+      mergedAt,
+      headSha: "abc123",
+      autoMergeEnabled: false,
+    };
+    let summaryReads = 0;
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          runAction: () => Effect.succeed(merged),
+          getChangeRequestSummary: () =>
+            Effect.sync(() => {
+              summaryReads++;
+              return { ...changeRequest(1, mergedAt), state: "merged" as const, mergedAt };
+            }),
+        }),
+      ],
+    });
+    const merges = yield* service.subscribeMerges;
+    const observedMerge = yield* Stream.runHead(merges).pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
+    const observedAt = Date.parse("2026-09-03T02:00:01.000Z");
+    yield* TestClock.setTime(observedAt);
 
-      // Clients that did not ask decode the success as void, so they must get nothing back.
-      assert.isUndefined(yield* service.runAction({ ...reference, action: "merge" }));
-      const result = yield* service.runAction({
-        ...reference,
-        action: "merge",
-        replyWithSummary: true,
-      });
+    // Clients that did not ask decode the success as void, so they must get nothing back.
+    assert.isUndefined(yield* service.runAction({ ...reference, action: "merge" }));
+    const result = yield* service.runAction({
+      ...reference,
+      action: "merge",
+      replyWithSummary: true,
+    });
 
-      assert.deepStrictEqual(result, {
-        ...merged,
-        provider: SourceControlProviderKind.make("github"),
-        projectId: reference.projectId,
-        repository: reference.repository,
-        observedAt,
-      });
-      assert.strictEqual(summaryReads, 0);
-      assert.deepStrictEqual(Option.getOrThrow(yield* Fiber.join(observedMerge)), {
-        ...reference,
-        mergedAt,
-      });
-    }),
-  ),
+    assert.deepStrictEqual(result, {
+      ...merged,
+      provider: SourceControlProviderKind.make("github"),
+      projectId: reference.projectId,
+      repository: reference.repository,
+      observedAt,
+    });
+    assert.strictEqual(summaryReads, 0);
+    assert.deepStrictEqual(Option.getOrThrow(yield* Fiber.join(observedMerge)), {
+      ...reference,
+      mergedAt,
+    });
+  }),
 );
 
 it.effect("refreshes every reader before a queued merge confirmation finishes", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const confirmationStarted = yield* Deferred.make<void>();
-      const confirm = yield* Deferred.make<void>();
-      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
-      const service = yield* makeService({
-        projects: [
-          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
-        ],
-        providers: [
-          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-            getChangeRequestSummary: () =>
-              Effect.gen(function* () {
-                yield* Deferred.succeed(confirmationStarted, undefined);
-                yield* Deferred.await(confirm);
-                return changeRequest(1, "2026-09-16T00:00:00.000Z");
-              }),
-          }),
-        ],
-      });
-      const merges = yield* service.subscribeMerges;
-      const observedMerge = yield* Stream.runHead(merges).pipe(
-        Effect.forkChild({ startImmediately: true }),
-      );
-      const readers = yield* Effect.forEach([0, 1], () =>
-        Stream.runHead(service.subscribeRefreshes).pipe(
-          Effect.forkChild({ startImmediately: true }),
-        ),
-      );
-      const action = yield* service
-        .runAction({ ...reference, action: "merge" })
-        .pipe(Effect.forkChild({ startImmediately: true }));
-      yield* Deferred.await(confirmationStarted);
-      const revisions = yield* Effect.forEach(readers, (reader) =>
-        Fiber.join(reader).pipe(Effect.map(Option.getOrThrow)),
-      );
-      assert.isAbove(revisions[0]!, 0);
-      assert.strictEqual(revisions[0], revisions[1]);
-      assert.isUndefined(action.pollUnsafe());
-      yield* Deferred.succeed(confirm, undefined);
-      yield* Fiber.join(action);
-      assert.isUndefined(observedMerge.pollUnsafe());
-    }),
-  ),
+  Effect.gen(function* () {
+    const confirmationStarted = yield* Deferred.make<void>();
+    const confirm = yield* Deferred.make<void>();
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequestSummary: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(confirmationStarted, undefined);
+              yield* Deferred.await(confirm);
+              return changeRequest(1, "2026-09-16T00:00:00.000Z");
+            }),
+        }),
+      ],
+    });
+    const merges = yield* service.subscribeMerges;
+    const observedMerge = yield* Stream.runHead(merges).pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
+    const readers = yield* Effect.forEach([0, 1], () =>
+      Stream.runHead(service.subscribeRefreshes).pipe(Effect.forkChild({ startImmediately: true })),
+    );
+    const action = yield* service
+      .runAction({ ...reference, action: "merge" })
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(confirmationStarted);
+    const revisions = yield* Effect.forEach(readers, (reader) =>
+      Fiber.join(reader).pipe(Effect.map(Option.getOrThrow)),
+    );
+    assert.isAbove(revisions[0]!, 0);
+    assert.strictEqual(revisions[0], revisions[1]);
+    assert.isUndefined(action.pollUnsafe());
+    yield* Deferred.succeed(confirm, undefined);
+    yield* Fiber.join(action);
+    assert.isUndefined(observedMerge.pollUnsafe());
+  }),
 );
 
 it.effect("runs branch deletion only when the host and viewer support it, never for a stack", () =>
@@ -2864,56 +2850,52 @@ it.effect("a read during a refresh cannot keep the provider's old change request
 );
 
 it.effect("close and reopen notify subscribed readers after invalidating their cached state", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      let hostCalls = 0;
-      let state: "open" | "closed" = "open";
-      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
-      const service = yield* makeService({
-        projects: [
-          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
-        ],
-        providers: [
-          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-            getChangeRequestSummary: () =>
-              Effect.succeed({ ...changeRequest(1, "2026-09-16T00:00:00.000Z"), state }),
-            runAction: (input) =>
-              Effect.sync(() => {
-                state = input.action === "close" ? "closed" : "open";
-              }),
-            listChangeRequests: () => {
-              hostCalls += 1;
-              return Effect.succeed({ items: [], truncated: false, continues: false });
-            },
-          }),
-        ],
-      });
-
-      yield* service.refreshAfterTurn(reference.projectId);
-      yield* service.list({ state: "open" });
-      assert.strictEqual((yield* service.summary(reference)).state, "open");
-      for (const action of ["close", "reopen"] as const) {
-        const refreshed = yield* service.subscribeRefreshes.pipe(
-          Stream.drop(1),
-          Stream.take(1),
-          Stream.mapEffect(() =>
-            Effect.gen(function* () {
-              yield* service.list({ state: "open" });
-              return yield* service.summary(reference);
+  Effect.gen(function* () {
+    let hostCalls = 0;
+    let state: "open" | "closed" = "open";
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequestSummary: () =>
+            Effect.succeed({ ...changeRequest(1, "2026-09-16T00:00:00.000Z"), state }),
+          runAction: (input) =>
+            Effect.sync(() => {
+              state = input.action === "close" ? "closed" : "open";
             }),
-          ),
-          Stream.runHead,
-          Effect.forkChild({ startImmediately: true }),
-        );
-        yield* service.runAction({ ...reference, action });
-        assert.strictEqual(
-          Option.getOrThrow(yield* Fiber.join(refreshed)).state,
-          action === "close" ? "closed" : "open",
-        );
-      }
-      assert.strictEqual(hostCalls, 3);
-    }),
-  ),
+          listChangeRequests: () => {
+            hostCalls += 1;
+            return Effect.succeed({ items: [], truncated: false, continues: false });
+          },
+        }),
+      ],
+    });
+
+    yield* service.refreshAfterTurn(reference.projectId);
+    yield* service.list({ state: "open" });
+    assert.strictEqual((yield* service.summary(reference)).state, "open");
+    for (const action of ["close", "reopen"] as const) {
+      const refreshed = yield* service.subscribeRefreshes.pipe(
+        Stream.drop(1),
+        Stream.take(1),
+        Stream.mapEffect(() =>
+          Effect.gen(function* () {
+            yield* service.list({ state: "open" });
+            return yield* service.summary(reference);
+          }),
+        ),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* service.runAction({ ...reference, action });
+      assert.strictEqual(
+        Option.getOrThrow(yield* Fiber.join(refreshed)).state,
+        action === "close" ? "closed" : "open",
+      );
+    }
+    assert.strictEqual(hostCalls, 3);
+  }),
 );
 
 it.effect("reads a host's repositories in one search, and files the rows back under each", () =>

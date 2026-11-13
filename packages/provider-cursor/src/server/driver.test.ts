@@ -183,7 +183,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
         ).toBe("Failure");
         expect(openedKeys).toEqual(["instance-browser-key"]);
         expect(closed).toBe(1);
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("budgets handoffs for the SDK model across catalog refreshes and option changes", () =>
@@ -405,6 +405,6 @@ it.layer(layerTest)("CursorDriver", (it) => {
         },
         retainedDefault: catalogDefault,
       });
-    }).pipe(Effect.scoped),
+    }),
   );
 });

@@ -308,7 +308,7 @@ describe("environment shell synchronization", () => {
       expect(Option.getOrThrow(resetState.snapshot).threads).toEqual([
         { ...resetRow, title: "After completion" },
       ]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("skips unchanged shell writes, persists resets and flushes changed rows", () =>

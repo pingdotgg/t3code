@@ -149,7 +149,7 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
         ),
         [cmd],
       );
-    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 });
 
