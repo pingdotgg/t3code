@@ -19,6 +19,7 @@ import {
 } from "@react-navigation/native-stack";
 import { use, type ComponentProps } from "react";
 
+import { BottomSheetContext } from "../../components/ui/BottomSheetContext";
 import { RoutedFormSheetContext } from "../../components/ui/RoutedFormSheetContext";
 
 import {
@@ -131,7 +132,11 @@ function WorkspaceStackNavigator({
                 ...(descriptor.options.presentation === "formSheet"
                   ? {
                       render: () => (
-                        <RoutedFormSheetContext value>{descriptor.render()}</RoutedFormSheetContext>
+                        <BottomSheetContext value>
+                          <RoutedFormSheetContext value>
+                            {descriptor.render()}
+                          </RoutedFormSheetContext>
+                        </BottomSheetContext>
                       ),
                     }
                   : undefined),
