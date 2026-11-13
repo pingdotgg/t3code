@@ -450,14 +450,37 @@ export const make = Effect.gen(function* () {
         const pulls = yield* unfiltered.lock.withPermits(1)(
           readUnfilteredPulls(input, repo.repository, unfiltered, firstPage),
         );
-        return matching(pulls.values())
-          .toSorted(
-            (left, right) =>
-              Option.getOrElse(Option.map(right.updatedAt, DateTime.toEpochMillis), () => 0) -
-                Option.getOrElse(Option.map(left.updatedAt, DateTime.toEpochMillis), () => 0) ||
-              right.number - left.number,
-          )
-          .slice(0, limit);
+        const candidates = matching(pulls.values()).toSorted(
+          (left, right) =>
+            Option.getOrElse(Option.map(right.updatedAt, DateTime.toEpochMillis), () => 0) -
+              Option.getOrElse(Option.map(left.updatedAt, DateTime.toEpochMillis), () => 0) ||
+            right.number - left.number,
+        );
+        // A deleted pull request leaves the list without moving anything in it, so a remembered
+        // match is read again before it is returned.
+        const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
+        for (const candidate of candidates) {
+          if (results.length >= limit) break;
+          const current = yield* request(
+            {
+              ...input,
+              path: `${repositoryPath(repo.repository)}/pulls/${candidate.number}`,
+            },
+            ForgejoPullRequestSchema,
+          ).pipe(
+            Effect.catchIf(
+              (error) => isForgejoCliError(error) && error.httpStatus === 404,
+              () => Effect.undefined,
+            ),
+          );
+          if (current?.number !== candidate.number) {
+            pulls.delete(candidate.number);
+            continue;
+          }
+          pulls.set(current.number, current);
+          results.push(...matching([current]));
+        }
+        return results;
       },
       (effect, input) => effect.pipe(mapError("listChangeRequests", input.cwd)),
     ),

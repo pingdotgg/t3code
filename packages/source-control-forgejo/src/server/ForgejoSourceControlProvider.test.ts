@@ -1056,6 +1056,7 @@ it.effect("reads only the changed front of a Gitea pull request list it has read
   let pulls = Array.from({ length: 120 }, (_, index) =>
     pull(120 - index, 120 - index, 120 - index === 5 ? "feature" : `other-${120 - index}`),
   );
+  // List pages read; a match is also read once by number before it is returned.
   let requests = 0;
   return Effect.gen(function* () {
     const provider = yield* ForgejoSourceControlProvider.make;
@@ -1074,10 +1075,15 @@ it.effect("reads only the changed front of a Gitea pull request list it has read
     assert.deepStrictEqual(yield* find("alice:feature"), [[5, "closed"]]);
     assert.strictEqual(requests, 6);
 
-    yield* TestClock.adjust("1 hour");
+    // Deleting a pull request moves nothing in the list.
     pulls = pulls.filter((entry) => entry.number !== 121);
     assert.deepStrictEqual(yield* find("later"), []);
-    assert.strictEqual(requests, 10);
+    assert.strictEqual(requests, 7);
+
+    pulls = pulls.filter((entry) => entry.number !== 120);
+    yield* TestClock.adjust("1 hour");
+    assert.deepStrictEqual(yield* find("other-120"), []);
+    assert.strictEqual(requests, 11);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -1091,6 +1097,20 @@ it.effect("reads only the changed front of a Gitea pull request list it has read
               baseUrl: "https://forgejo.test",
             }),
           api: (input) => {
+            const single = /\/pulls\/(\d+)$/.exec(input.path)?.[1];
+            if (single !== undefined) {
+              const found = pulls.find((entry) => entry.number === Number(single));
+              return found
+                ? encodeJsonEffect(found).pipe(Effect.orDie, Effect.map(processOutput))
+                : Effect.fail(
+                    new ForgejoCli.ForgejoCliError({
+                      command: "tea",
+                      cwd: input.cwd,
+                      httpStatus: 404,
+                      detail: "Forgejo API request failed (HTTP 404): Not Found",
+                    }),
+                  );
+            }
             requests++;
             const page = Number(new URLSearchParams(input.path.split("?")[1]).get("page"));
             return encodeJsonEffect(pulls.slice((page - 1) * 50, page * 50)).pipe(
