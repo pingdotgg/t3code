@@ -11,6 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
+import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import type { OpenCodeSettings } from "../settings.ts";
@@ -93,6 +94,18 @@ export interface OpenCodeUsageReadResult {
   readonly error: boolean;
 }
 
+interface CachedRow {
+  readonly updated: unknown;
+  readonly size: unknown;
+  readonly created: unknown;
+  readonly record: UsageRecord | null;
+}
+
+// Parsed rows by `${databasePath}\0${table}`, then rowid, so unchanged rows are not read again.
+const rowCache = new Map<string, { version: string; rows: Map<number, CachedRow> }>();
+// Concurrent scans of the same database would each read every uncached row.
+const scanLock = Semaphore.makeUnsafe(1);
+
 const isNotFound = (cause: PlatformError.PlatformError) => cause.reason._tag === "NotFound";
 const MESSAGE_PAGE_SIZE = 64;
 
@@ -116,6 +129,7 @@ const LEGACY_STAT_BATCH = 256;
 export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
   root: string,
   sinceMs: number,
+  retentionCutoffMs = sinceMs,
 ): Effect.fn.Return<OpenCodeUsageReadResult, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -164,6 +178,22 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
     found = true;
     const file = { path: path.join(root, name), records: [] as UsageRecord[] };
     files.push(file);
+    // Taken before the snapshot opens, so a write that races the scan invalidates its rows.
+    const [main, wal] = yield* Effect.forEach([file.path, `${file.path}-wal`], (target) =>
+      Effect.option(fileSystem.stat(target)),
+    );
+    const stamp = (info: Option.Option<FileSystem.File.Info>) =>
+      Option.match(info, {
+        onNone: () => "none",
+        onSome: (stat) => `${stat.size}:${Option.getOrNull(stat.mtime)?.getTime()}`,
+      });
+    // A replaced or restored database can repeat rowids and change markers, so every key includes
+    // the main file; WAL commits leave it alone until a checkpoint.
+    const identity = Option.match(main!, {
+      onNone: () => "none",
+      onSome: (stat) =>
+        `${stat.dev}:${Option.getOrNull(stat.ino)}:${Option.getOrNull(stat.birthtime)?.getTime()}/${stamp(main!)}`,
+    });
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       // Fail promptly on live-writer locks instead of stalling the server.
@@ -182,30 +212,53 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
           ),
         );
         const timestamp = columns.has("time_created") ? "time_created" : "NULL";
+        const updated = columns.has("time_updated") ? "time_updated" : "NULL";
+        // Without time_updated an in-place edit can keep the length, so any database write counts.
+        const version = updated === "NULL" ? `${identity}/${stamp(wal!)}` : identity;
         const predicates = table === "session_message" ? ["type = 'assistant'"] : [];
         if (timestamp !== "NULL") predicates.push("time_created >= ?");
-        // List only rowids so SQLite can use time indexes without reading message bodies.
-        const listed = (yield* sql.unsafe<{ readonly row_id: number }>(
-          `SELECT rowid AS row_id FROM ${table}
+        // List rowids and change markers so SQLite can use time indexes without reading message
+        // bodies; octet_length comes from the record header.
+        const listed = (yield* sql.unsafe<{
+          readonly row_id: number;
+          readonly updated: unknown;
+          readonly size: unknown;
+          readonly created: unknown;
+        }>(
+          `SELECT rowid AS row_id, ${updated} AS updated, octet_length(data) AS size,
+             ${timestamp} AS created
+           FROM ${table}
            ${predicates.length ? `WHERE ${predicates.join(" AND ")}` : ""}`,
           timestamp === "NULL" ? [] : [sinceMs],
         )).toSorted((a, b) => a.row_id - b.row_id);
         databaseRows += listed.length;
+        const key = `${file.path}\0${table}`;
+        const previous = rowCache.get(key);
+        const reusable = previous?.version === version ? previous.rows : undefined;
+        const cached = new Map<number, CachedRow>();
+        const misses: typeof listed = [];
+        for (const row of listed) {
+          const hit = reusable?.get(row.row_id);
+          if (hit && hit.updated === row.updated && hit.size === row.size)
+            cached.set(row.row_id, hit);
+          else misses.push(row);
+        }
         // Filter and project in SQLite: user diffs and assistant bodies can be hundreds of MB.
         const validAssistant = `CASE WHEN typeof(data) = 'text' AND json_valid(data)
           THEN json_type(data, '$.role') IS NULL OR data ->> '$.role' = 'assistant' END`;
         // Omit per-page spans; the enclosing scan records row and page counts.
-        for (let start = 0; start < listed.length; start += MESSAGE_PAGE_SIZE) {
-          const page = listed.slice(start, start + MESSAGE_PAGE_SIZE);
+        for (let start = 0; start < misses.length; start += MESSAGE_PAGE_SIZE) {
+          const page = misses.slice(start, start + MESSAGE_PAGE_SIZE);
           databasePages++;
           const rows = yield* sql
             .unsafe<{
+              readonly row_id: number;
               readonly id: unknown;
               readonly session_id: unknown;
               readonly data: unknown;
               readonly created: unknown;
             }>(
-              `SELECT id, session_id, ${timestamp} AS created, json_object(
+              `SELECT rowid AS row_id, id, session_id, ${timestamp} AS created, json_object(
                  'tokens', data -> '$.tokens', 'cost', data -> '$.cost',
                  'model', data -> '$.model', 'modelID', data -> '$.modelID',
                  'providerID', data -> '$.providerID',
@@ -217,9 +270,10 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
               page.map((row) => row.row_id),
             )
             .pipe(Effect.withTracerEnabled(false));
+          const parsed = new Map<number, UsageRecord | null>();
           for (const row of rows) {
-            append(
-              file.records,
+            parsed.set(
+              row.row_id,
               parseOpenCodeMessage(text(row.data), {
                 id: text(row.id),
                 sessionId: text(row.session_id),
@@ -227,12 +281,28 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
               }),
             );
           }
+          // Rows the SQL filter dropped are cached as empty so they are not read again either.
+          for (const row of page) {
+            cached.set(row.row_id, { ...row, record: parsed.get(row.row_id) ?? null });
+          }
           yield* Effect.yieldNow;
         }
+        for (const row of listed) append(file.records, cached.get(row.row_id)!.record);
+        // Rows before this window were not listed; keep them for a wider window until retention.
+        for (const [rowId, entry] of reusable ?? []) {
+          const created = entry.created;
+          if (typeof created === "number" && created < sinceMs && created >= retentionCutoffMs)
+            cached.set(rowId, entry);
+        }
+        rowCache.set(key, { version, rows: cached });
       }
     }).pipe(
       (read) => Effect.flatMap(SqlClient.SqlClient, (sql) => sql.withTransaction(read)),
-      Effect.provide(NodeSqliteClient.layer({ filename: file.path, readonly: true })),
+      // Run the scan on a reader worker so large databases do not block the server's event loop.
+      NodeSqliteClient.readOnly,
+      Effect.provide(
+        NodeSqliteClient.layer({ filename: file.path, readonly: true, readerWorker: true }),
+      ),
       Effect.catchTags({
         SqlError: () => {
           error = true;
@@ -312,7 +382,7 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
     "usage.database_pages": databasePages,
   });
   return { files, missing: !found && !error, error };
-});
+}, scanLock.withPermit);
 
 const resolveOpenCodeDataDirs = Effect.fn("resolveOpenCodeDataDirs")(function* (
   environment: NodeJS.ProcessEnv,
@@ -346,7 +416,11 @@ export type OpenCodeUsageReaderEnv = FileSystem.FileSystem | Path.Path;
 export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCodeUsageReaderEnv> = {
   kind: "scan",
   provider: "opencode",
-  scan: Effect.fn("openCodeUsageReader.scan")(function* ({ instances, windowStartMs }) {
+  scan: Effect.fn("openCodeUsageReader.scan")(function* ({
+    instances,
+    windowStartMs,
+    retentionCutoffMs,
+  }) {
     const roots = new Set<string>();
     for (const instance of instances) {
       for (const root of yield* resolveOpenCodeDataDirs(instance.environment)) roots.add(root);
@@ -354,7 +428,7 @@ export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCode
     return yield* Effect.forEach(
       roots,
       (dir) =>
-        readOpenCodeUsage(dir, windowStartMs).pipe(
+        readOpenCodeUsage(dir, windowStartMs, retentionCutoffMs).pipe(
           Effect.map((result) => ({
             dir,
             files: result.missing && !result.error ? null : result.files,
