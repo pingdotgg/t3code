@@ -1,6 +1,4 @@
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest inside the pure provider mapping.
-import * as NodeCrypto from "node:crypto";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -185,9 +183,7 @@ import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as NpmRelease from "./cloud/npmRelease.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
-import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as ServerSettings from "./serverSettings.ts";
-import { invalidateSettingsSecrets } from "./sourceControl/sourceControlHostSecrets.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
@@ -279,6 +275,7 @@ import {
 } from "@t3tools/shared/usageLimits";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
+import * as ProviderRefresh from "./provider/ProviderRefresh.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import { requestUrl } from "./requestUrl.ts";
 
@@ -432,63 +429,6 @@ export const resolveOpenDiscoveryForConfig = <T, D, E1, R1, E2, R2, E3, R3, E4, 
     },
     { concurrency: "unbounded" },
   ).pipe(Effect.map(({ editorConfig, ...endpoints }) => ({ ...editorConfig, ...endpoints })));
-// A failed scan leaves no cwd snapshot, so a client without the machine catalog gets it
-// as a pending snapshot, which it shows while it retries the scan.
-function workspaceSnapshotOrCatalog(
-  provider: ServerProvider,
-  cwd: string,
-  catalogOnDemand: boolean,
-) {
-  const snapshots = (provider.workspaceSnapshots ?? []).filter((snapshot) => snapshot.cwd === cwd);
-  if (snapshots.length > 0 || !catalogOnDemand) return snapshots;
-  return [
-    {
-      cwd,
-      checkedAt: provider.checkedAt,
-      slashCommands: provider.slashCommands,
-      slashCommandsPending: true,
-      skills: provider.skills,
-    },
-  ];
-}
-
-// What an on-demand catalog client keeps of the machine catalog: full entries come from the
-// cwd snapshot it fetches, and skill names and labels keep skill links working without one.
-function machineCatalogNames(provider: Pick<ServerProvider, "slashCommands" | "skills">) {
-  return {
-    slashCommands: provider.slashCommands.map(({ name }) => ({ name })),
-    skills: provider.skills.map(({ description: _d, shortDescription: _s, ...skill }) => skill),
-  };
-}
-
-// Stable across restarts, so a client's cached lists stay current until the catalog changes.
-// It covers the full entries: a changed description or input hint must reach the client too.
-const machineCatalogDigest = (provider: Pick<ServerProvider, "slashCommands" | "skills">) =>
-  NodeCrypto.createHash("sha256")
-    .update(JSON.stringify([provider.slashCommands, provider.skills]))
-    .digest("hex")
-    .slice(0, 16);
-
-// Names, or the digest that stands for them, still change the config when the machine catalog
-// does, so the client refetches its cwd snapshot.
-function withoutWorkspaceSnapshots(
-  providers: ReadonlyArray<ServerProvider>,
-  catalogsPerCwd: ReadonlySet<string> = new Set(),
-  catalogDigests = false,
-): ServerProvider[] {
-  return providers.map(({ workspaceSnapshots: _workspaceSnapshots, ...provider }) => {
-    if (!catalogsPerCwd.has(provider.instanceId)) return provider;
-    return catalogDigests
-      ? {
-          ...provider,
-          slashCommands: [],
-          skills: [],
-          catalogDigest: machineCatalogDigest(provider),
-        }
-      : { ...provider, ...machineCatalogNames(provider) };
-  });
-}
-
 // Deltas are taken from the list this client last received, which a late snapshot replaces.
 const withProviderStatusDeltas = (sent: ReadonlyArray<ServerProvider>) =>
   Stream.mapAccum(
@@ -1521,6 +1461,7 @@ export const layerWsRpc = (
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+      const providerRefresh = yield* ProviderRefresh.ProviderRefresh;
       const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
       const acpRegistryCatalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
       const acpRegistryRuntimeCoordinator =
@@ -1536,7 +1477,6 @@ export const layerWsRpc = (
       const storageCleanup = yield* StorageCleanup.StorageCleanup;
       const databaseStorage = yield* DatabaseStorage.DatabaseStorage;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
-      const secretResolver = yield* SecretResolver.SecretResolver;
       const peerLinks = yield* PeerLinks.PeerLinks;
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
@@ -1802,7 +1742,7 @@ export const layerWsRpc = (
           ? withUsageLimitsCommands(currentProviders, yield* usageLimitSources.current)
           : currentProviders;
         const providers = options.workspaceSnapshotsOnDemand
-          ? withoutWorkspaceSnapshots(
+          ? ProviderRefresh.withoutWorkspaceSnapshots(
               commandProviders,
               options.catalogsPerCwd,
               options.catalogDigests,
@@ -2420,103 +2360,7 @@ export const layerWsRpc = (
               }),
             ),
           ),
-        [WS_METHODS.serverRefreshProviders]:
-          /* Request instrumentation already owns the span; keep this helper in that context. */
-          Effect.fnUntraced(function* (input) {
-            if (input.modelCatalogOnly === true) {
-              yield* providerRegistry.refreshModelCatalog;
-              return { providers: [] };
-            }
-            if (input.refreshModels) {
-              yield* providerRegistry.invalidateModelCaches({
-                instanceId: input.instanceId,
-                cwd: input.cwd,
-                fresh: input.fresh,
-              });
-            }
-            if (input.reloadSecrets === true && input.instanceId === undefined) {
-              yield* invalidateSettingsSecrets(secretResolver, serverSettings.getSettings);
-            }
-            // Await refresh; RPC scope closure would interrupt a fork before the hub answered.
-            if (input.instanceId === undefined) {
-              yield* usageLimitSources.refresh;
-            }
-            let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
-              ? providerRegistry.refreshWorkspaceSnapshot({
-                  instanceId: input.instanceId,
-                  cwd: input.cwd,
-                  scanCwd: yield* projectService.workspaceScanDirectory(input.cwd),
-                  fresh: input.fresh === true,
-                })
-              : input.reloadSecrets === true
-                ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)
-                : input.instanceId !== undefined
-                  ? providerRegistry.refreshInstance(input.instanceId)
-                  : providerRegistry.refresh();
-            if (input.refreshModels) {
-              const instances = yield* providerInstances.listInstances;
-              for (const instance of instances) {
-                if (
-                  !instance.refreshModels ||
-                  (input.instanceId !== undefined && input.instanceId !== instance.instanceId) ||
-                  !providers.some(
-                    (provider) =>
-                      provider.instanceId === instance.instanceId &&
-                      provider.enabled &&
-                      provider.installed,
-                  )
-                )
-                  continue;
-                yield* instance.refreshModels().pipe(
-                  Effect.mapError(
-                    (error) =>
-                      new ProviderSetupError({
-                        instanceId: instance.instanceId,
-                        operation: "refresh-models",
-                        detail: error.detail,
-                      }),
-                  ),
-                );
-                providers = yield* providerRegistry.refreshInstance(instance.instanceId);
-              }
-            }
-            const { instanceId, cwd } = input;
-            if (input.omitProviders === true && (instanceId === undefined || cwd === undefined)) {
-              return { providers: [] };
-            }
-            if (input.workspaceSnapshotsOnDemand !== true) return { providers };
-            const commandProviders =
-              input.usageLimitsCommand === true
-                ? withUsageLimitsCommands(providers, yield* usageLimitSources.current)
-                : providers;
-            if (instanceId === undefined || cwd === undefined) {
-              return { providers: withoutWorkspaceSnapshots(commandProviders) };
-            }
-            const catalogOnDemand =
-              input.providerCatalogsOnDemand === true &&
-              (yield* providerInstances.getInstance(instanceId))?.snapshotForCwd !== undefined;
-            return {
-              providers: commandProviders
-                .filter((provider) => provider.instanceId === instanceId)
-                .map((provider) => {
-                  const catalog =
-                    catalogOnDemand && input.machineCatalog === true
-                      ? machineCatalogNames(provider)
-                      : undefined;
-                  return {
-                    ...provider,
-                    // Callers read only the cwd snapshot; the config stream carries the rest.
-                    models: [],
-                    slashCommands: catalog?.slashCommands ?? [],
-                    skills: catalog?.skills ?? [],
-                    ...(catalog === undefined
-                      ? {}
-                      : { catalogDigest: machineCatalogDigest(provider) }),
-                    workspaceSnapshots: workspaceSnapshotOrCatalog(provider, cwd, catalogOnDemand),
-                  };
-                }),
-            };
-          }),
+        [WS_METHODS.serverRefreshProviders]: (input) => providerRefresh.refresh(input),
         [WS_METHODS.mcpAppsCallTool]: (input) => mcpAppRequests.callTool(input),
         [WS_METHODS.mcpAppsToolInfo]: (input) => mcpAppRequests.toolInfo(input),
         [WS_METHODS.mcpAppsUpdateModelContext]: (input) => mcpAppRequests.updateModelContext(input),
@@ -3341,7 +3185,7 @@ export const layerWsRpc = (
                   workspaceSnapshotsOnDemand
                     ? currentCatalogsPerCwd.pipe(
                         Effect.map((catalogsPerCwd) =>
-                          withoutWorkspaceSnapshots(
+                          ProviderRefresh.withoutWorkspaceSnapshots(
                             commandProviders,
                             catalogsPerCwd,
                             catalogDigests,
@@ -3512,7 +3356,7 @@ export const layerWsRpc = (
         yield* OtherWsRpcGroup.toHandlers(otherHandlers),
       );
     }),
-  );
+  ).pipe(Layer.provide(ProviderRefresh.layer));
 
 // Default socket-level Defect frames end every pending client request.
 export const WS_RPC_SERVER_OPTIONS = {

@@ -1590,6 +1590,7 @@ export function createServerEnvironmentAtoms<R, E>(
                 ?.providers.find((candidate) => candidate.instanceId === instanceId);
         return requestGuarded(WS_METHODS.serverRefreshProviders, {
           ...input,
+          usage: input.usage ?? false,
           workspaceSnapshotsOnDemand: true,
           ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
           ...(options.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
@@ -1638,6 +1639,10 @@ export function createServerEnvironmentAtoms<R, E>(
             input.cwd ?? null,
             input.fresh ?? false,
             input.refreshModels ?? false,
+            input.reloadSecrets ?? false,
+            input.usage ?? false,
+            input.usageSources ?? false,
+            input.usageProviders === undefined ? null : [...new Set(input.usageProviders)].sort(),
             input.modelCatalogOnly ?? false,
           ]),
       },

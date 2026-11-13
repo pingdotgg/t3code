@@ -168,7 +168,11 @@ import {
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
 } from "./provider.ts";
-import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ProviderInstanceMutation,
+} from "./providerInstance.ts";
 import {
   GuestShareCreateError,
   GuestShareCreateInput,
@@ -659,6 +663,9 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
     instanceId: Schema.optional(ProviderInstanceId),
     cwd: Schema.optional(TrimmedNonEmptyString),
     fresh: Schema.optional(Schema.Boolean),
+    usage: Schema.optional(Schema.Boolean),
+    usageSources: Schema.optional(Schema.Boolean),
+    usageProviders: Schema.optional(Schema.Array(ProviderDriverKind)),
     /** Bypass model caches; explicit rediscovery may open sessions, background refreshes must not. */
     refreshModels: Schema.optional(Schema.Boolean),
     /**
@@ -689,7 +696,10 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
      */
     machineCatalog: Schema.optional(Schema.Boolean),
   }),
-  success: ServerProviderUpdatedPayload,
+  success: Schema.Struct({
+    ...ServerProviderUpdatedPayload.fields,
+    serverTime: Schema.optional(NonNegativeInt),
+  }),
   error: Schema.Union([EnvironmentAuthorizationError, ProviderSetupError]),
 });
 

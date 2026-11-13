@@ -38,7 +38,8 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSummaries } from "../state/presentation";
-import { environmentServerConfigsAtom } from "../state/server";
+import { environmentServerConfigsAtom, serverEnvironment } from "../state/server";
+import { refreshNewThreadUsage } from "@t3tools/client-runtime/state/usage";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { getClientSettings } from "./useSettings";
@@ -90,7 +91,7 @@ export function createNewThreadHandler(router: AnyRouter) {
     return resolveThreadRouteTarget(currentRouteParams);
   };
 
-  return (
+  return async (
     projectRef: ScopedProjectRef,
     options?: {
       branch?: string | null;
@@ -161,8 +162,44 @@ export function createNewThreadHandler(router: AnyRouter) {
       project?.id ?? null,
       project,
     );
+    const logicalProjectKey = project
+      ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
+      : scopedProjectKey(projectRef);
+    const hasBranchOption = options?.branch !== undefined;
+    const hasWorktreePathOption = options?.worktreePath !== undefined;
+    const hasEnvModeOption = options?.envMode !== undefined;
+    const hasStartFromOriginOption = options?.startFromOrigin !== undefined;
+    const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
+    const storedDraftThreadRef = storedDraftThread
+      ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
+      : null;
+    const reusableStoredDraftThread =
+      storedDraftThread !== null &&
+      storedDraftThread.promotedTo == null &&
+      storedDraftThreadRef !== null &&
+      readThreadShell(storedDraftThreadRef) === null
+        ? storedDraftThread
+        : null;
+    if (storedDraftThreadRef && reusableStoredDraftThread === null) {
+      markPromotedDraftThreadByRef(storedDraftThreadRef);
+    }
+    const emptyStoredDraftThread =
+      reusableStoredDraftThread &&
+      !composerDraftHasUserContent(getComposerDraft(reusableStoredDraftThread.draftId))
+        ? reusableStoredDraftThread
+        : null;
+    const storedDraftChanged = () => {
+      if (!emptyStoredDraftThread) return false;
+      const current = getDraftSessionByLogicalProjectKey(logicalProjectKey);
+      return (
+        current?.draftId !== emptyStoredDraftThread.draftId ||
+        current.promotedTo != null ||
+        (storedDraftThreadRef !== null && readThreadShell(storedDraftThreadRef) !== null) ||
+        composerDraftHasUserContent(getComposerDraft(emptyStoredDraftThread.draftId))
+      );
+    };
     const configuredDefaultModelSelection = projectSettings.settings.defaultModelSelection ?? null;
-    const fallbackResolution = resolveNewThreadModelSelection({
+    const selectionInput = {
       defaultSelection:
         configuredDefaultModelSelection ??
         (carryModelSelection || useComposerDraftStore.getState().stickyActiveProvider !== null
@@ -177,7 +214,19 @@ export function createNewThreadHandler(router: AnyRouter) {
       settings: targetServerSettings,
       projectId: projectRef.projectId,
       now: Date.now(),
-    });
+    };
+    const providers =
+      emptyStoredDraftThread &&
+      hasExplicitComposerModelSelection(getComposerDraft(emptyStoredDraftThread.draftId))
+        ? selectionInput.providers
+        : await refreshNewThreadUsage({
+            registry: appAtomRegistry,
+            server: serverEnvironment,
+            environmentId: projectRef.environmentId,
+            input: selectionInput,
+          });
+    if (abandonedSinceRequest() || storedDraftChanged()) return null;
+    const fallbackResolution = resolveNewThreadModelSelection({ ...selectionInput, providers });
     const projectDefaultModelSelection = fallbackResolution.fallback
       ? fallbackResolution.selection
       : configuredDefaultModelSelection;
@@ -223,32 +272,6 @@ export function createNewThreadHandler(router: AnyRouter) {
           ) > 0,
       });
     };
-    const logicalProjectKey = project
-      ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
-      : scopedProjectKey(projectRef);
-    const hasBranchOption = options?.branch !== undefined;
-    const hasWorktreePathOption = options?.worktreePath !== undefined;
-    const hasEnvModeOption = options?.envMode !== undefined;
-    const hasStartFromOriginOption = options?.startFromOrigin !== undefined;
-    const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
-    const storedDraftThreadRef = storedDraftThread
-      ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
-      : null;
-    const reusableStoredDraftThread =
-      storedDraftThread !== null &&
-      storedDraftThread.promotedTo == null &&
-      storedDraftThreadRef !== null &&
-      readThreadShell(storedDraftThreadRef) === null
-        ? storedDraftThread
-        : null;
-    if (storedDraftThreadRef && reusableStoredDraftThread === null) {
-      markPromotedDraftThreadByRef(storedDraftThreadRef);
-    }
-    const emptyStoredDraftThread =
-      reusableStoredDraftThread &&
-      !composerDraftHasUserContent(getComposerDraft(reusableStoredDraftThread.draftId))
-        ? reusableStoredDraftThread
-        : null;
     const latestActiveDraftThread: DraftThreadState | null = currentRouteTarget
       ? currentRouteTarget.kind === "server"
         ? getDraftThread(currentRouteTarget.threadRef)
@@ -274,15 +297,7 @@ export function createNewThreadHandler(router: AnyRouter) {
           const openedMeanwhile =
             routeTargetNow?.kind === "draft" &&
             routeTargetNow.draftId === emptyStoredDraftThread.draftId;
-          const promotedMeanwhile =
-            storedDraftThreadRef !== null && readThreadShell(storedDraftThreadRef) !== null;
-          const remappedMeanwhile =
-            getDraftSessionByLogicalProjectKey(logicalProjectKey)?.draftId !==
-            emptyStoredDraftThread.draftId;
-          const investedMeanwhile = composerDraftHasUserContent(
-            getComposerDraft(emptyStoredDraftThread.draftId),
-          );
-          if (openedMeanwhile || promotedMeanwhile || remappedMeanwhile || investedMeanwhile) {
+          if (openedMeanwhile || storedDraftChanged()) {
             return null;
           }
           workspaceContext = {

@@ -6,6 +6,7 @@ import {
   resolveProjectProviderInstanceEnabled,
   type UsageLimitsReport,
   type ProviderInstanceId,
+  type ProviderDriverKind,
   type ProviderConsumeResetCreditInput,
   type ServerProviderSlashCommand,
   isProviderAvailable,
@@ -19,9 +20,18 @@ import {
 
 import * as DateTime from "effect/DateTime";
 
+export const STALE_USAGE_NOTICE = "Showing the last reading. Usage refresh failed.";
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
+
+export function modelUsesProviderQuota(
+  driver: ProviderDriverKind | undefined,
+  model: string,
+): boolean {
+  return driver !== "opencode" || model.startsWith("opencode-go/");
+}
 
 export function exhaustedUsageWindow(
   provider: ServerProvider | undefined,
@@ -68,11 +78,26 @@ export function exhaustedUsageWindow(
     }
     case "opencode":
       return exhausted.find(
-        (window) => !window.id.startsWith("go_") || model.startsWith("opencode-go/"),
+        (window) => !window.id.startsWith("go_") || modelUsesProviderQuota(provider.driver, model),
       );
     default:
       return exhausted[0];
   }
+}
+
+export function isNewThreadFallbackEligible(
+  provider: ServerProvider | undefined,
+  settings?: ServerSettings,
+  projectId?: ProjectId | null,
+): boolean {
+  return (
+    !!provider?.enabled &&
+    provider.installed &&
+    provider.auth.status !== "unauthenticated" &&
+    isProviderAvailable(provider) &&
+    (!settings ||
+      resolveProjectProviderInstanceEnabled(settings, projectId ?? null, provider.instanceId))
+  );
 }
 
 export function resolveNewThreadModelSelection(input: {
@@ -95,17 +120,8 @@ export function resolveNewThreadModelSelection(input: {
   if (
     !provider ||
     !window ||
-    !fallback?.enabled ||
-    !fallback.installed ||
-    fallback.auth.status === "unauthenticated" ||
-    !isProviderAvailable(fallback) ||
-    exhaustedUsageWindow(fallback, input.now, input.fallbackSelection.model) ||
-    (input.settings &&
-      !resolveProjectProviderInstanceEnabled(
-        input.settings,
-        input.projectId ?? null,
-        fallback.instanceId,
-      ))
+    !isNewThreadFallbackEligible(fallback, input.settings, input.projectId) ||
+    exhaustedUsageWindow(fallback, input.now, input.fallbackSelection.model)
   )
     return unchanged;
   return {
@@ -417,8 +433,16 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
       const notice = provider.usageLimits ? limitsNotice(provider.usageLimits) : null;
       const name = provider.displayName?.trim() || String(provider.driver);
       if (notice) notices.add(`${label(environmentLabel, name)}: ${notice}`);
+      if (provider.usageLimits?.stale)
+        notices.add(`${label(environmentLabel, name)}: ${STALE_USAGE_NOTICE}`);
     }
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
+      for (const account of source.accounts) {
+        if (account.usageLimits.stale)
+          notices.add(
+            `${label(environmentLabel, account.email ?? source.label)}: ${STALE_USAGE_NOTICE}`,
+          );
+      }
       if (source.error) {
         notices.add(`${label(environmentLabel, source.label)}: ${source.error}`);
       } else if (source.accounts.length === 0) {
@@ -820,6 +844,14 @@ export function hasProviderUsageLimits(
 ): boolean {
   return (
     providersWithLimits(providers).some((provider) => provider.driver === driver) ||
+    providers.some(
+      (provider) =>
+        provider.driver === driver &&
+        provider.supportsUsageLimits === true &&
+        provider.enabled &&
+        provider.installed &&
+        isProviderAvailable(provider),
+    ) ||
     sources.some(
       (source) =>
         source.accounts.some((account) => account.driver === driver) ||
@@ -852,6 +884,15 @@ export function withUsageLimitsCommands(
 ): ServerProvider[] {
   const supportedDrivers = new Set([
     ...providersWithLimits(providers).map((provider) => provider.driver),
+    ...providers
+      .filter(
+        (provider) =>
+          provider.supportsUsageLimits === true &&
+          provider.enabled &&
+          provider.installed &&
+          isProviderAvailable(provider),
+      )
+      .map((provider) => provider.driver),
     ...sources.flatMap((source) => source.accounts.map((account) => account.driver)),
   ]);
   const unreadableSource = sources.some(
@@ -1002,6 +1043,9 @@ export function collectProviderUsageLimits(
     if (source.error && (matching.length > 0 || source.accounts.length === 0)) {
       notices.push(`${source.label}: ${source.error}`);
     }
+  }
+  for (const account of accounts) {
+    if (account.limits.stale) notices.push(`${account.label}: ${STALE_USAGE_NOTICE}`);
   }
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
 }

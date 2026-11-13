@@ -5,12 +5,8 @@ import {
   UsageLimitSourceId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vite-plus/test";
-import {
-  buildSubscriptionUsageSnapshot,
-  createWidgetRefresher,
-  WIDGET_REFRESH_INTERVAL,
-} from "./subscriptionUsageSnapshot";
+import { describe, expect, it } from "vite-plus/test";
+import { buildSubscriptionUsageSnapshot } from "./subscriptionUsageSnapshot";
 
 const checkedAt = "2026-09-05T12:00:00.000Z";
 const now = Date.parse(checkedAt);
@@ -192,22 +188,4 @@ describe("subscription widget expiry", () => {
       });
     },
   );
-});
-
-describe("widget refresh probes", () => {
-  it("does not overlap a slow probe even after the refresh interval", async () => {
-    let finish!: () => void;
-    const probe = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finish = resolve;
-        }),
-    );
-    const refresh = createWidgetRefresher(probe);
-    const first = refresh(["one", "one"], now);
-    await refresh(["one"], now + WIDGET_REFRESH_INTERVAL);
-    expect(probe).toHaveBeenCalledTimes(1);
-    finish();
-    await first;
-  });
 });

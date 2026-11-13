@@ -40,7 +40,10 @@ import {
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { composerContextImportsAtom } from "../../state/use-composer-drafts";
-import { abortComposerDraftOperations } from "../../state/composerDraftOperations";
+import {
+  abortComposerDraftOperations,
+  waitForComposerDraftOperations,
+} from "../../state/composerDraftOperations";
 import { composerContextSendBlockReason } from "../../lib/composerContext";
 import { ComposerInlineControl } from "../../components/ComposerToolbar";
 
@@ -75,6 +78,7 @@ import {
 } from "../../lib/modelOptions";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import {
+  environmentConnectedAtom,
   useRemoteConnections,
   useRemoteEnvironmentRuntime,
 } from "../../state/use-remote-environment-registry";
@@ -92,6 +96,8 @@ import {
 import { incomingShareImports, useIncomingShare } from "../sharing/IncomingShareProvider";
 import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImport";
 import { newTaskFlowKey } from "./new-task-flow-state";
+import { serverEnvironment } from "../../state/server";
+import { vcsEnvironment } from "../../state/vcs";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -247,27 +253,8 @@ export function NewTaskDraftScreen(props: {
       navigation.dispatch(StackActions.replace("Home"));
     }
   };
-  const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
-  const attachmentBlockReason = selectedProject
-    ? composerAttachmentUploadBlockReason({
-        environmentId: selectedProject.environmentId,
-        attachments: flow.attachments,
-        connected: environmentConnected,
-        serverConfig: selectedEnvironmentServerConfig,
-        states: uploadStates,
-      })
-    : null;
-  const attachmentsUploading =
-    environmentConnected &&
-    selectedProject !== null &&
-    composerAttachmentsStillUploading({
-      environmentId: selectedProject.environmentId,
-      attachments: flow.attachments,
-      serverConfig: selectedEnvironmentServerConfig,
-      states: uploadStates,
-    });
-  const queuesInsteadOfStarting = !environmentConnected || attachmentsUploading;
   const promptInputRef = useRef<ComposerEditorHandle>(null);
+  const submittingRef = useRef(false);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
   const [isReturningToProjectPicker, setIsReturningToProjectPicker] = useState(false);
   const incomingShare = props.incomingShareId ? getShare(props.incomingShareId) : null;
@@ -358,7 +345,10 @@ export function NewTaskDraftScreen(props: {
   const contextImports = useAtomValue(composerContextImportsAtom);
   const isImportingContext = flow.draftKey ? contextImports[flow.draftKey] === true : false;
   const isComposerInteractionLocked =
-    isIncomingShareTransferPending || flow.submitting || isImportingContext;
+    isIncomingShareTransferPending ||
+    flow.submitting ||
+    isImportingContext ||
+    flow.switchingToEnvironmentId !== null;
   const { environments, selectedEnvironmentId, switchEnvironment, switchingToEnvironmentId } = flow;
   const cycleEnvironment = () => {
     if (isComposerInteractionLocked) return true;
@@ -566,6 +556,14 @@ export function NewTaskDraftScreen(props: {
   });
 
   async function handleStart(): Promise<import("@t3tools/contracts").MessageId | null> {
+    if (submittingRef.current) return null;
+    submittingRef.current = true;
+    return submitDraft().finally(() => {
+      submittingRef.current = false;
+    });
+  }
+
+  async function submitDraft(): Promise<import("@t3tools/contracts").MessageId | null> {
     const selectedProject = flow.selectedProject;
     const draftKey = flow.draftKey;
     if (
@@ -584,6 +582,9 @@ export function NewTaskDraftScreen(props: {
     ) {
       return null;
     }
+    const projectKey = flow.getSelectedProjectKey();
+    await waitForComposerDraftOperations(draftKey);
+    if (flow.getSelectedProjectKey() !== projectKey) return null;
     const draft = getComposerDraftSnapshot(draftKey);
     if (appAtomRegistry.get(composerContextImportsAtom)[draftKey]) return null;
     const modelSelection =
@@ -598,7 +599,15 @@ export function NewTaskDraftScreen(props: {
     const initialMessageText = draft.text.trim();
 
     if (
-      attachmentBlockReason !== null ||
+      composerAttachmentUploadBlockReason({
+        environmentId: selectedProject.environmentId,
+        attachments: draft.attachments,
+        connected: appAtomRegistry.get(environmentConnectedAtom(selectedProject.environmentId)),
+        serverConfig: appAtomRegistry.get(
+          serverEnvironment.configValueAtom(selectedProject.environmentId),
+        ),
+        states: appAtomRegistry.get(composerAttachmentUploadsAtom),
+      }) !== null ||
       !modelSelection ||
       (initialMessageText.length === 0 && draft.attachments.length === 0) ||
       flow.submitting ||
@@ -654,14 +663,41 @@ export function NewTaskDraftScreen(props: {
       return null;
     }
 
-    const message = flow.buildPendingTaskMessage(creationMetadata, {
-      currentCheckoutBranch: queuesInsteadOfStarting ? null : flow.currentCheckoutBranchName,
+    flow.setSubmitting(true);
+    const message = await flow.buildPendingTaskMessage(creationMetadata, {
+      currentCheckoutBranch: (attachments) => {
+        const environmentId = selectedProject.environmentId;
+        if (!appAtomRegistry.get(environmentConnectedAtom(environmentId))) return null;
+        const uploadInput = {
+          environmentId,
+          attachments,
+          connected: true,
+          serverConfig: appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId)),
+          states: appAtomRegistry.get(composerAttachmentUploadsAtom),
+        };
+        if (
+          composerAttachmentUploadBlockReason(uploadInput) ||
+          composerAttachmentsStillUploading(uploadInput)
+        )
+          return null;
+        return (
+          AsyncResult.getOrElse(
+            appAtomRegistry.get(
+              vcsEnvironment.status({
+                environmentId,
+                input: { cwd: selectedProject.workspaceRoot },
+              }),
+            ),
+            () => null,
+          )?.refName ?? null
+        );
+      },
     });
     if (!message) {
+      flow.setSubmitting(false);
       return null;
     }
     // Persist locally before clearing or leaving the draft; server setup runs on the thread.
-    flow.setSubmitting(true);
     const queued = await settlePromise(() => enqueueThreadOutboxMessage(message));
     flow.setSubmitting(false);
     if (AsyncResult.isFailure(queued)) {

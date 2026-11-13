@@ -1,3 +1,4 @@
+import { composerAttachmentsStillUploading } from "../../lib/composerAttachmentUploadQueue";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
@@ -5,6 +6,9 @@ import { createEnvironmentSubscriptionAtomFamily } from "@t3tools/client-runtime
 import {
   AuthFilesystemReadScope,
   DEFAULT_SERVER_SETTINGS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
   EnvironmentId,
   ProjectId,
   type VcsListRefsResult,
@@ -21,6 +25,7 @@ import type { ComposerDraft } from "../../state/use-composer-drafts";
 
 const mocks = vi.hoisted(() => ({
   projects: vi.fn(),
+  config: vi.fn(),
   status: vi.fn(),
   refs: vi.fn(),
   readFile: vi.fn(),
@@ -33,7 +38,6 @@ const mocks = vi.hoisted(() => ({
   retargetDraft: vi.fn(),
   writeSettings: vi.fn(),
   writeText: vi.fn(),
-  serverConfig: vi.fn(),
   openScratch: vi.fn(),
   prepareTriage: vi.fn(),
 }));
@@ -47,7 +51,7 @@ vi.mock("../../state/atom-registry", () => ({
 vi.mock("../../state/entities", () => ({
   useProjects: mocks.projects,
   useThreadShells: () => [],
-  useEnvironmentServerConfig: () => mocks.serverConfig() ?? null,
+  useEnvironmentServerConfig: mocks.config,
   useServerConfigs: () => new Map(),
 }));
 vi.mock("../../state/vcs", () => ({
@@ -61,6 +65,14 @@ vi.mock("../../state/session", () => ({
 }));
 vi.mock("../../state/presentation", () => ({
   useEnvironmentPresentation: mocks.presentation,
+}));
+vi.mock("../../state/server", () => ({
+  serverEnvironment: {
+    refreshProviders: {
+      label: "refresh providers",
+      run: async () => AsyncResult.success({ providers: [] }),
+    },
+  },
 }));
 vi.mock("../../state/orchestration", () => ({ orchestrationEnvironment: {} }));
 vi.mock("../../state/threads", () => ({ olderSettledThreads: {}, threadFamilies: {} }));
@@ -111,6 +123,7 @@ vi.mock("../../state/workspace", () => ({
 vi.mock("../../state/shell", () => ({ useEnvironmentShellReadiness: () => ({}) }));
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => 0 }));
 
+import { startComposerDraftOperation } from "../../state/composerDraftOperations";
 import { NewTaskFlowProvider, useNewTaskFlow } from "./new-task-flow-provider";
 
 function project(environment: string, id: string): EnvironmentProject {
@@ -134,6 +147,8 @@ function setup() {
   vi.clearAllMocks();
   const registry = AtomRegistry.make();
   mocks.registry.mockReturnValue(registry);
+  mocks.config.mockReturnValue(null);
+  mocks.openScratch.mockReset();
   const projects = [project("one", "a"), project("one", "b"), project("two", "b")];
   mocks.projects.mockReturnValue(projects);
   mocks.presentation.mockReturnValue({
@@ -368,12 +383,149 @@ it("uses cached repository capability and branch defaults while offline", async 
   expect(screen.current.selectedBranchName).toBe("main");
 });
 
+it.each([
+  "removed",
+  "disabled",
+  "valid",
+  "switch-pending",
+  "switch-during",
+  "picker",
+  "picker-explicit",
+] as const)("queues the displayed model when the saved pick is %s", async (state) => {
+  using screen = setup();
+  const primary = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+  const saved = { instanceId: ProviderInstanceId.make("claude_work"), model: "sonnet" };
+  const providers: ServerProvider[] = [primary, ...(state === "removed" ? [] : [saved])].map(
+    (selection) => ({
+      instanceId: selection.instanceId,
+      driver: ProviderDriverKind.make(selection === primary ? "codex" : "claudeAgent"),
+      enabled: selection === primary || state !== "disabled",
+      installed: true,
+      version: "1",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    }),
+  );
+  mocks.config.mockReturnValue({
+    providers,
+    scratchWorkspaceRoot: state === "picker-explicit" ? "/scratch" : "/a",
+    settings: {
+      ...DEFAULT_SERVER_SETTINGS,
+      defaultModelSelection: primary,
+      providerInstances: {
+        [primary.instanceId]: { driver: "codex", config: {} },
+        [saved.instanceId]: { driver: "claudeAgent", config: { enabled: state !== "disabled" } },
+      },
+    },
+  });
+  await screen.render(true);
+  act(() => {
+    screen.current.setPrompt("hello");
+    mocks.writeSettings(screen.current.draftKey!, { modelSelection: saved });
+  });
+  const shown = state === "removed" || state === "disabled" ? primary : saved;
+  expect(screen.current.selectedModel).toEqual(shown);
+  let completeSwitch!: (value: AsyncResult.Success<EnvironmentProject>) => void;
+  mocks.openScratch.mockReturnValue(
+    new Promise<AsyncResult.Success<EnvironmentProject>>((resolve) => {
+      completeSwitch = resolve;
+    }),
+  );
+  let switching: Promise<boolean> | undefined;
+  if (state === "switch-pending") {
+    act(() => {
+      switching = screen.current.switchEnvironment(EnvironmentId.make("two"));
+    });
+  }
+  const operation = state.startsWith("picker")
+    ? startComposerDraftOperation(screen.current.draftKey!)
+    : undefined;
+  let finished = false;
+  const pending = screen.current.buildPendingTaskMessage(
+    {
+      commandId: "command",
+      messageId: "message",
+      threadId: "thread",
+      createdAt: "2026-01-01T00:00:00Z",
+    },
+    {
+      currentCheckoutBranch: (attachments) =>
+        composerAttachmentsStillUploading({
+          environmentId: EnvironmentId.make("one"),
+          attachments,
+          serverConfig: {
+            environment: { capabilities: { fileAttachments: { maxUploadBytes: 10 } } },
+          },
+          states: {},
+        })
+          ? null
+          : "main",
+    },
+  );
+  pending.then(() => {
+    finished = true;
+  });
+  if (state === "switch-during") {
+    act(() => {
+      switching = screen.current.switchEnvironment(EnvironmentId.make("two"));
+    });
+  }
+  if (operation) {
+    await act(async () => {});
+    expect(finished).toBe(false);
+    act(() =>
+      mocks.writeSettings(screen.current.draftKey!, {
+        ...(state === "picker-explicit"
+          ? {
+              workspaceSelection: {
+                mode: "local",
+                branch: "chosen",
+                worktreePath: null,
+                startFromOrigin: false,
+              },
+            }
+          : {}),
+        attachments: [
+          {
+            type: "file",
+            id: "picked",
+            name: "picked.txt",
+            mimeType: "text/plain",
+            sizeBytes: 1,
+            fileUri: "file:///picked.txt",
+          },
+        ],
+      }),
+    );
+    operation.finish();
+  }
+  const message = await pending;
+  if (switching) {
+    expect(message).toBeNull();
+    await act(async () => {
+      completeSwitch(AsyncResult.success(screen.projects[2]!));
+      await switching;
+    });
+    expect(screen.current.selectedEnvironmentId).toBe("two");
+  } else {
+    expect(message?.modelSelection).toEqual(shown);
+    expect(message?.creation?.branch).toBe(
+      state === "picker-explicit" ? "chosen" : state === "picker" ? null : "main",
+    );
+    if (state.startsWith("picker"))
+      expect(message?.attachments).toMatchObject([{ id: "picked", name: "picked.txt" }]);
+  }
+});
 const playbookPrompt = (machine: string) =>
   `Read [triage-playbook.md](/${machine}/triage-playbook.md) and follow it. `;
 
 /** A triage draft on machine one's No project home; machine two opens its own. */
 async function renderTriageDraft(screen: ReturnType<typeof setup>) {
-  mocks.serverConfig.mockReturnValue({
+  mocks.config.mockReturnValue({
     scratchWorkspaceRoot: "/a",
     providers: [],
     settings: DEFAULT_SERVER_SETTINGS,

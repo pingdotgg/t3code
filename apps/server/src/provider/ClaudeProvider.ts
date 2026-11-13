@@ -277,6 +277,7 @@ export type ClaudeCapabilitiesProbe = {
   /** Undefined means get_usage failed; absent windows on success mean no subscription windows, as with API keys. */
   readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
   readonly usageCheckedAt?: string;
+  readonly usageRefreshAfter?: number;
   /** Each settings source's `maxEffortLevel` caps; Claude Code clamps every higher effort. */
   readonly effortCapSources?: ReadonlyArray<ClaudeEffortCapSource>;
 };
@@ -444,7 +445,8 @@ const probeClaudeCapabilities = (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
-  includeStatus = true,
+  includeUsage = true,
+  discoverModels = true,
 ) => {
   const abort = new AbortController();
   const abortProbe = Effect.sync(() => {
@@ -458,7 +460,7 @@ const probeClaudeCapabilities = (
     );
     const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
     // Workspace probes (no usage) discard models; the machine probe refreshes the shared cache.
-    const graceMs = includeStatus
+    const graceMs = discoverModels
       ? claudeGatewayDiscoveryGraceMs({
           ...claudeEnvironment,
           ...(yield* readClaudeSettingsEnv(claudeSettings, cwd, claudeEnvironment)),
@@ -474,7 +476,9 @@ const probeClaudeCapabilities = (
           options: buildClaudeCapabilitiesProbeQueryOptions({
             executablePath,
             abortController: abort,
-            environment: claudeEnvironment,
+            environment: includeUsage
+              ? claudeEnvironment
+              : { ...claudeEnvironment, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" },
             cwd,
             managedMcpConfig,
           }),
@@ -498,7 +502,7 @@ const probeClaudeCapabilities = (
         const { getSettings } = q as ClaudeSettingsQuery;
         const [usageResult, settingsResult] = yield* Effect.all(
           [
-            includeStatus
+            includeUsage
               ? Effect.tryPromise({
                   try: () =>
                     q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
@@ -508,7 +512,7 @@ const probeClaudeCapabilities = (
                     new ClaudeCapabilitiesProbeSdkError({ operation: "usage", cause }),
                 }).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.result)
               : Effect.undefined,
-            includeStatus && getSettings
+            discoverModels && getSettings
               ? Effect.tryPromise({
                   try: () => getSettings.call(q),
                   catch: (cause) =>
@@ -595,7 +599,9 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   // A deleted worktree can never answer the probe. Pending would make clients rescan it forever.
   const cwdExists = yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true));
   const probeResult = cwdExists
-    ? yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false).pipe(Effect.result)
+    ? yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false, false).pipe(
+        Effect.result,
+      )
     : undefined;
   const capabilities =
     probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
@@ -850,7 +856,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ...(authMetadata ? authMetadata : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
-      usageLimits: resetCredits ? { ...usageLimits, resetCredits } : usageLimits,
+      usageLimits: {
+        ...usageLimits,
+        ...(resetCredits ? { resetCredits } : {}),
+        ...(capabilities.usageRefreshAfter !== undefined
+          ? { refreshAfter: capabilities.usageRefreshAfter }
+          : {}),
+      },
     },
   });
 });

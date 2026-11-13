@@ -1,4 +1,7 @@
+import * as TestClock from "effect/testing/TestClock";
+import * as Deferred from "effect/Deferred";
 import {
+  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   ProjectId,
   ProviderDriverKind,
   type ModelSelection,
@@ -20,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
@@ -242,13 +246,18 @@ function withFakeCodexEnv<A, E, R>(
 }
 
 it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
-  it.effect.each(["exec", "mcp list"] as const)(
-    "kills a stalled %s CLI when its request is interrupted",
+  it.effect.each(["exec", "mcp list", "startup failure"] as const)(
+    "observes subprocess startup and cancellation: %s",
     (command) =>
       Effect.gen(function* () {
         const probe = yield* makeProcessProbe;
         yield* withFakeCodexEnv(
-          { output: "", lifecycle: { port: probe.port, command } },
+          {
+            output: "",
+            ...(command === "startup failure"
+              ? { exitCode: 1, stderr: "fixture failed before startup" }
+              : { lifecycle: { port: probe.port, command } }),
+          },
           (textGeneration) =>
             Effect.gen(function* () {
               const fiber = yield* textGeneration
@@ -258,7 +267,22 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
                   modelSelection: DEFAULT_TEST_MODEL_SELECTION,
                 })
                 .pipe(Effect.forkScoped);
-              yield* probe.started;
+              const startup = probe.started.pipe(
+                Effect.raceFirst(
+                  Fiber.join(fiber).pipe(
+                    Effect.andThen(Effect.die("Generation completed before fixture startup")),
+                  ),
+                ),
+              );
+              if (command === "startup failure") {
+                const exit = yield* Effect.exit(startup);
+                expect(Exit.isFailure(exit)).toBe(true);
+                if (Exit.isFailure(exit)) {
+                  expect(Cause.pretty(exit.cause)).toContain("fixture failed before startup");
+                }
+                return;
+              }
+              yield* startup;
 
               const interrupted = yield* Fiber.interrupt(fiber).pipe(Effect.forkScoped);
               yield* probe.exited;
@@ -615,24 +639,51 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
 
 const PREFLIGHT_PRIMARY_STATES = [
   "ready",
+  "primary non-Go",
+  "fallback non-Go",
   "pending",
   "exhausted",
+  "fallback exhausted",
   "not installed",
   "not installed, fallback disabled for project",
   "signed out",
   "signed out, fallback failed",
+  "primary slow",
+  "fallback slow",
+  "both slow",
   "cannot generate text",
   "model cannot generate text",
 ] as const;
 
 it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (primaryState) =>
   Effect.gen(function* () {
+    const slow = primaryState.endsWith("slow");
+    const primaryBlocked = primaryState === "primary slow";
+    const fallbackBlocked = primaryState === "fallback slow" || primaryState === "both slow";
+    const fallbackExhausted = primaryState === "fallback exhausted";
+    const exhausted =
+      primaryState === "exhausted" ||
+      primaryState === "fallback non-Go" ||
+      fallbackExhausted ||
+      slow;
+    let readStarted = yield* Deferred.make<void>();
+    const fallbackFailed = primaryState === "signed out, fallback failed";
+    const needsFallback =
+      exhausted ||
+      primaryState.startsWith("not installed") ||
+      primaryState.startsWith("signed out") ||
+      primaryState === "cannot generate text" ||
+      primaryState === "model cannot generate text";
     const primary = ProviderInstanceId.make("codex");
     const fallback = ProviderInstanceId.make("claude_work");
     const projectId = ProjectId.make("project-a");
+    const unrelated = ProviderInstanceId.make(
+      primaryState === "fallback non-Go" ? "opencode" : "antigravity",
+    );
+    const disabled = ProviderInstanceId.make("claude_disabled");
     const selection = {
       instanceId: primary,
-      model: "chat-model",
+      model: primaryState === "primary non-Go" ? "openai/gpt-5.4" : "chat-model",
       options: [{ id: "effort", value: "high" }],
     };
     const threadDefault = {
@@ -641,79 +692,113 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
       options: [{ id: "thinking", value: false }],
     };
     const calls: ModelSelection[] = [];
-    const instances: ProviderInstance[] = [primary, fallback].map((instanceId) => {
-      const driver = ProviderDriverKind.make(instanceId === primary ? "codex" : "claudeAgent");
-      const snapshot: ServerProvider = {
-        instanceId,
-        driver,
-        enabled: true,
-        installed: true,
-        status: "ready",
-        auth: { status: "authenticated" },
-        version: null,
-        checkedAt: "1970-01-01T00:00:00Z",
-        models: [],
-        slashCommands: [],
-        skills: [],
-        ...(primaryState === "pending" && instanceId === primary
-          ? { installed: false, status: "warning", auth: { status: "unknown" } }
-          : {}),
-        ...(primaryState.startsWith("not installed") && instanceId === primary
-          ? { installed: false, status: "error", auth: { status: "unknown" } }
-          : {}),
-        ...(primaryState.startsWith("signed out") && instanceId === primary
-          ? { status: "error", auth: { status: "unauthenticated" } }
-          : {}),
-        ...(primaryState === "signed out, fallback failed" && instanceId === fallback
-          ? { status: "error", auth: { status: "unknown" } }
-          : {}),
-        ...(primaryState === "cannot generate text" && instanceId === primary
-          ? { supportsTextGeneration: false }
-          : {}),
-        ...(primaryState === "model cannot generate text" && instanceId === primary
-          ? {
-              models: [
-                {
-                  slug: selection.model,
-                  name: selection.model,
-                  isCustom: false,
-                  supportsTextGeneration: false,
-                  capabilities: null,
+    const reads: ProviderInstanceId[] = [];
+    const instances: ProviderInstance[] = [primary, fallback, unrelated, disabled].map(
+      (instanceId) => {
+        let quotaRead = slow;
+        const driver = ProviderDriverKind.make(
+          instanceId === primary
+            ? primaryState === "primary non-Go"
+              ? "opencode"
+              : "codex"
+            : instanceId === unrelated
+              ? primaryState === "fallback non-Go"
+                ? "opencode"
+                : "antigravity"
+              : "claudeAgent",
+        );
+        const snapshot: ServerProvider = {
+          instanceId,
+          driver,
+          enabled: true,
+          installed: true,
+          status: "ready",
+          auth: { status: "authenticated" },
+          version: null,
+          checkedAt: "1970-01-01T00:00:00Z",
+          models: [],
+          slashCommands: [],
+          skills: [],
+          ...(primaryState === "pending" && instanceId === primary
+            ? { installed: false, status: "warning", auth: { status: "unknown" } }
+            : {}),
+          ...(primaryState.startsWith("not installed") && instanceId === primary
+            ? { installed: false, status: "error", auth: { status: "unknown" } }
+            : {}),
+          ...(primaryState.startsWith("signed out") && instanceId === primary
+            ? { status: "error", auth: { status: "unauthenticated" } }
+            : {}),
+          ...(fallbackFailed && instanceId !== primary ? { status: "error" } : {}),
+          ...(primaryState === "cannot generate text" && instanceId === primary
+            ? { supportsTextGeneration: false }
+            : {}),
+          ...(primaryState === "model cannot generate text" && instanceId === primary
+            ? {
+                models: [
+                  {
+                    slug: selection.model,
+                    name: selection.model,
+                    isCustom: false,
+                    supportsTextGeneration: false,
+                    capabilities: null,
+                  },
+                ],
+              }
+            : {}),
+          ...((exhausted && instanceId === primary) ||
+          (fallbackExhausted && instanceId === unrelated)
+            ? {
+                usageLimits: {
+                  checkedAt: "1970-01-01T00:00:00Z",
+                  windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 100 }],
                 },
-              ],
-            }
-          : {}),
-        ...(primaryState === "exhausted" && instanceId === primary
-          ? {
-              usageLimits: {
-                checkedAt: "1970-01-01T00:00:00Z",
-                windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 100 }],
-              },
-            }
-          : {}),
-      };
-      return {
-        instanceId,
-        driverKind: driver,
-        continuationIdentity: { driverKind: driver, continuationKey: instanceId },
-        displayName: undefined,
-        enabled: true,
-        snapshot: { getSnapshot: Effect.succeed(snapshot) } as ProviderInstance["snapshot"],
-        orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
-        textGeneration: TextGeneration.TextGeneration.of({
-          generateCommitMessage: () => Effect.die("unused"),
-          generatePrContent: () => Effect.die("unused"),
-          generateBranchName: () => Effect.die("unused"),
-          generateReviewGuide: () => Effect.die("unused"),
-          generateTranscriptionPostProcessing: () => Effect.die("unused"),
-          generateThreadTitle: (input) =>
-            Effect.sync(() => {
-              calls.push(input.modelSelection);
-              return { title: "Generated title" };
+              }
+            : {}),
+        };
+        return {
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: { driverKind: driver, continuationKey: instanceId },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            getSnapshot: Effect.sync(() =>
+              quotaRead ? snapshot : { ...snapshot, usageLimits: undefined },
+            ),
+            refreshUsage: Effect.gen(function* () {
+              reads.push(instanceId);
+              yield* Deferred.succeed(readStarted, undefined);
+              if (instanceId === primary && primaryBlocked) return yield* Effect.never;
+              if (instanceId === primary && primaryState === "both slow")
+                yield* Effect.sleep("3 seconds");
+              if (instanceId !== primary && fallbackBlocked) return yield* Effect.never;
+              quotaRead = true;
             }),
-        }),
-      };
-    });
+            resolveMaintenance: () => Effect.die("unused"),
+            refresh: Effect.die("unused"),
+            streamChanges: Stream.empty,
+            applyUsageLimits: () => Effect.void,
+          },
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: TextGeneration.TextGeneration.of({
+            generateCommitMessage: () => Effect.die("unused"),
+            generatePrContent: () => Effect.die("unused"),
+            generateBranchName: () => Effect.die("unused"),
+            generateReviewGuide: (input) =>
+              Effect.sync(() => {
+                calls.push(input.modelSelection);
+                return { stops: [] };
+              }),
+            generateTranscriptionPostProcessing: () => Effect.die("unused"),
+            generateThreadTitle: (input) =>
+              Effect.sync(() => {
+                calls.push(input.modelSelection);
+                return { title: "Generated title" };
+              }),
+          }),
+        };
+      },
+    );
     const service = yield* TextGeneration.make.pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -728,12 +813,27 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
                 driver: ProviderDriverKind.make("claudeAgent"),
                 config: { customModels: [threadDefault.model] },
               },
+              [unrelated]: {
+                driver: ProviderDriverKind.make(
+                  primaryState === "fallback non-Go" ? "opencode" : "antigravity",
+                ),
+                config: { enabled: true },
+              },
+              [disabled]: {
+                driver: ProviderDriverKind.make("claudeAgent"),
+                config: { enabled: false },
+              },
             },
             defaultModelSelection: threadDefault,
             ...(primaryState === "not installed, fallback disabled for project"
               ? {
                   projectSettingsOverrides: {
-                    [projectId]: { providerInstances: { [fallback]: { enabled: false } } },
+                    [projectId]: {
+                      providerInstances: {
+                        [fallback]: { enabled: false },
+                        [unrelated]: { enabled: false },
+                      },
+                    },
                   },
                 }
               : {}),
@@ -746,23 +846,83 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
         ),
       ),
     );
-    expect(
-      yield* service.generateThreadTitle({
-        cwd: "/tmp",
-        message: "hello",
-        linkedContext: "",
-        modelSelection: selection,
-        projectId,
-      }),
-    ).toEqual({ title: "Generated title" });
-    expect(calls).toEqual([
-      primaryState === "ready" ||
-      primaryState === "pending" ||
-      primaryState === "not installed, fallback disabled for project" ||
-      primaryState === "signed out, fallback failed"
-        ? selection
-        : threadDefault,
-    ]);
+    const actualReads: ProviderInstanceId[][] = [];
+    for (const operation of ["review", "title"] as const) {
+      calls.length = 0;
+      reads.length = 0;
+      readStarted = yield* Deferred.make<void>();
+      const generate = Effect.gen(function* () {
+        if (operation === "title")
+          return yield* service.generateThreadTitle({
+            cwd: "/tmp",
+            projectId,
+            message: "hello",
+            linkedContext: "",
+            modelSelection: selection,
+          });
+        return yield* service.generateReviewGuide({
+          cwd: "/tmp",
+          projectId,
+          number: 1,
+          title: "Change",
+          description: "",
+          baseBranch: "main",
+          baseCommit: "base",
+          settledReview: "",
+          modelSelection: selection,
+        });
+      });
+      let result;
+      if (slow) {
+        const finished = yield* Deferred.make<void>();
+        const fiber = yield* generate.pipe(
+          Effect.tap(() => Deferred.succeed(finished, undefined)),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(readStarted);
+        if (primaryState === "both slow") yield* TestClock.adjust("3 seconds");
+        yield* TestClock.adjust(primaryState === "both slow" ? "2 seconds" : "5 seconds");
+        expect(yield* Deferred.isDone(finished)).toBe(true);
+        result = yield* Fiber.join(fiber);
+      } else result = yield* generate;
+      expect(result).toEqual(operation === "title" ? { title: "Generated title" } : { stops: [] });
+      expect(calls).toEqual([
+        needsFallback &&
+        !fallbackFailed &&
+        primaryState !== "not installed, fallback disabled for project"
+          ? operation === "title" && !fallbackExhausted
+            ? {
+                instanceId: unrelated,
+                model:
+                  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[
+                    ProviderDriverKind.make(
+                      primaryState === "fallback non-Go" ? "opencode" : "antigravity",
+                    )
+                  ],
+              }
+            : threadDefault
+          : selection,
+      ]);
+      actualReads.push([...reads].sort());
+    }
+    expect(actualReads).toEqual(
+      (needsFallback &&
+      !fallbackFailed &&
+      primaryState !== "not installed, fallback disabled for project" &&
+      !primaryBlocked
+        ? [
+            [primary, fallback],
+            fallbackExhausted
+              ? [primary, unrelated, fallback]
+              : primaryState === "fallback non-Go"
+                ? [primary]
+                : [primary, unrelated],
+          ]
+        : primaryState === "primary non-Go"
+          ? [[], []]
+          : [[primary], [primary]]
+      ).map((ids) => ids.sort()),
+    );
   }),
 );
 

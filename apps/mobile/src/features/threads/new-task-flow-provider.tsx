@@ -1,5 +1,8 @@
+import { waitForComposerDraftOperations } from "../../state/composerDraftOperations";
 import { ActiveNewTaskContext } from "../../state/active-new-task";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+import { refreshNewThreadUsage } from "@t3tools/client-runtime/state/usage";
+import { serverEnvironment } from "../../state/server";
 import { useNowMinuteMs } from "../../lib/clock";
 import * as Dialog from "../../components/ui/Dialog";
 import React, { useEffect, useRef, useState } from "react";
@@ -194,9 +197,11 @@ type NewTaskFlowContextValue = {
   readonly buildPendingTaskMessage: (
     metadata: TurnCommandMetadata,
     options?: {
-      readonly currentCheckoutBranch?: string | null;
+      readonly currentCheckoutBranch?: (
+        attachments: ReadonlyArray<DraftComposerAttachment>,
+      ) => string | null;
     },
-  ) => QueuedThreadMessage | null;
+  ) => Promise<QueuedThreadMessage | null>;
   readonly setPrompt: (value: string) => void;
   readonly replaceAttachments: (attachments: ReadonlyArray<DraftComposerAttachment>) => void;
   /** Appends draft attachments; returns how many the live cap rejected. */
@@ -604,7 +609,9 @@ export function NewTaskFlowProvider(
     null,
   );
   const latestSwitchRef = useRef<object | null>(null);
+  const switchRevisionRef = useRef(0);
   const switchEnvironment = async (environmentId: EnvironmentId): Promise<boolean> => {
+    switchRevisionRef.current += 1;
     if (environmentId === selectedEnvironmentId) {
       latestSwitchRef.current = null;
       setSwitchingToEnvironmentId(null);
@@ -730,21 +737,66 @@ export function NewTaskFlowProvider(
     }
   };
 
-  const buildPendingTaskMessage = (
+  const buildPendingTaskMessage = async (
     metadata: TurnCommandMetadata,
-    options?: { readonly currentCheckoutBranch?: string | null },
-  ): QueuedThreadMessage | null => {
+    options?: {
+      readonly currentCheckoutBranch?: (
+        attachments: ReadonlyArray<DraftComposerAttachment>,
+      ) => string | null;
+    },
+  ): Promise<QueuedThreadMessage | null> => {
     if (!selectedProject || !selectedProjectDraftKey) {
       return null;
     }
-    const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
-    const text = draft.text.trim();
-    const draftModelSelection =
-      resolveSelectableModelSelection(
-        selectedEnvironmentServerConfig,
-        draft.modelSelection ?? null,
-        selectedProject.id,
-      ) ?? selectedModel;
+    const origin = readFlow();
+    const switchRevision = switchRevisionRef.current;
+    const changed = () => {
+      const current = readFlow();
+      return (
+        latestSwitchRef.current !== null ||
+        switchRevisionRef.current !== switchRevision ||
+        current.environmentId !== origin.environmentId ||
+        current.projectKey !== origin.projectKey ||
+        current.draftKey !== origin.draftKey
+      );
+    };
+    if (changed()) return null;
+    await waitForComposerDraftOperations(selectedProjectDraftKey);
+    if (changed()) return null;
+    let draft = getComposerDraftSnapshot(selectedProjectDraftKey);
+    let text = draft.text.trim();
+    const savedSelection = resolveSelectableModelSelection(
+      selectedEnvironmentServerConfig,
+      draft.modelSelection ?? null,
+      selectedProject.id,
+    );
+    const selectionInput = {
+      defaultSelection: selectedDefaultModel,
+      explicitSelection:
+        savedSelection ?? (projectDefaultModelSelection ? null : stickyModelSelection),
+      fallbackSelection: selectedEnvironmentServerConfig?.settings.fallbackModelSelection ?? null,
+      providers: selectedEnvironmentServerConfig?.providers ?? [],
+      ...(selectedEnvironmentServerConfig
+        ? { settings: selectedEnvironmentServerConfig.settings }
+        : {}),
+      projectId: selectedProject.id,
+      now: Date.now(),
+    };
+    const providers = await refreshNewThreadUsage({
+      registry: appAtomRegistry,
+      server: serverEnvironment,
+      environmentId: selectedProject.environmentId,
+      input: selectionInput,
+    });
+    await waitForComposerDraftOperations(selectedProjectDraftKey);
+    if (changed()) return null;
+    draft = getComposerDraftSnapshot(selectedProjectDraftKey);
+    text = draft.text.trim();
+    const refreshedSelection = resolveNewThreadModelSelection({
+      ...selectionInput,
+      providers,
+    }).selection;
+    const draftModelSelection = savedSelection ?? refreshedSelection;
     if ((text.length === 0 && draft.attachments.length === 0) || !draftModelSelection) {
       return null;
     }
@@ -787,7 +839,7 @@ export function NewTaskFlowProvider(
         branch: resolveProjectThreadCreationBranch({
           workspaceMode: mode,
           selectedBranch: workspaceSelection?.branch ?? null,
-          currentCheckoutBranch: options?.currentCheckoutBranch ?? null,
+          currentCheckoutBranch: options?.currentCheckoutBranch?.(draft.attachments) ?? null,
         }),
         worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
         ...((workspaceSelection?.startFromOrigin ?? startFromOrigin)

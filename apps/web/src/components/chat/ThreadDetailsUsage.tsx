@@ -1,3 +1,5 @@
+import type { EnvironmentId } from "@t3tools/contracts";
+import { useUsageLimitsRefresh } from "../../hooks/useUsageLimitsRefresh";
 import type {
   ProviderInstanceId,
   ServerProvider,
@@ -6,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
+  STALE_USAGE_NOTICE,
   formatDuration,
   type LimitPace,
   limitsNotice,
@@ -41,10 +44,17 @@ type UsageTone = "error" | "warning" | null;
 
 /** The selected provider's limit windows. Each row reads as room left. */
 export function ThreadDetailsUsage({
+  environmentId,
   providerInstanceId,
   providers,
   sources,
-}: Omit<ThreadDetailsUsageInput, "contextWindow">) {
+}: Omit<ThreadDetailsUsageInput, "contextWindow"> & { readonly environmentId: EnvironmentId }) {
+  useUsageLimitsRefresh(
+    environmentId,
+    providerInstanceId,
+    true,
+    providers.find((provider) => provider.instanceId === providerInstanceId)?.driver,
+  );
   const nowMinute = useNowMinute();
   const now = Date.parse(`${nowMinute}:00Z`);
   const report =
@@ -66,6 +76,15 @@ export function ThreadDetailsUsage({
       showHeading={false}
     >
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
+        {limits.stale ? (
+          <UsageRow
+            label="Limits"
+            fill={null}
+            tone={null}
+            value="Stale"
+            tooltip={<span className="text-foreground">{STALE_USAGE_NOTICE}</span>}
+          />
+        ) : null}
         {notice ? (
           <UsageRow
             label="Limits"

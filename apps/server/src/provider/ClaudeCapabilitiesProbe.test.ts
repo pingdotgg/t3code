@@ -50,17 +50,21 @@ it.effect("reports a deleted worktree's scan as finished, not pending", () =>
 it.effect("keeps the probe subprocess alive while gateway model discovery can finish", () =>
   Effect.gen(function* () {
     let abortSignal: AbortSignal | undefined;
+    const usage = vi.fn(
+      () => new Promise<never>((_, reject) => reject(new Error("usage unavailable"))),
+    );
+    const getSettings = vi.fn(async () => ({ effective: { maxEffortLevel: "high" } }));
     const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ options }) => {
       abortSignal = options?.abortController?.signal;
       return {
+        getSettings,
         initializationResult: async () => ({
           account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },
           commands: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],
           models: [{ value: "gateway/claude-relay", displayName: "Relay", description: "" }],
         }),
-        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () =>
-          new Promise((_, reject) => reject(new Error("usage unavailable"))),
-      } as ReturnType<typeof ClaudeSdk.query>;
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: usage,
+      } as unknown as ReturnType<typeof ClaudeSdk.query>;
     });
     yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
     const fileSystem = yield* FileSystem.FileSystem;
@@ -86,5 +90,27 @@ it.effect("keeps the probe subprocess alive while gateway model discovery can fi
     assert.equal(abortSignal?.aborted, false);
     yield* TestClock.adjust("3 seconds");
     assert.equal(abortSignal?.aborted, true);
+    yield* probeClaudeCapabilities(
+      yield* decodeClaudeSettings({ binaryPath: "claude" }),
+      { PATH: (yield* HostProcess.Environment).PATH, CLAUDE_CONFIG_DIR: configDir },
+      undefined,
+      false,
+      false,
+    );
+    assert.equal(usage.mock.calls.length, 1);
+    assert.equal(getSettings.mock.calls.length, 1);
+    const health = yield* probeClaudeCapabilities(
+      yield* decodeClaudeSettings({ binaryPath: "claude" }),
+      { PATH: (yield* HostProcess.Environment).PATH, CLAUDE_CONFIG_DIR: configDir },
+      undefined,
+      false,
+    );
+    assert.equal(usage.mock.calls.length, 1);
+    assert.equal(getSettings.mock.calls.length, 2);
+    assert.deepEqual(health.effortCapSources, [{ maxEffortLevel: "high" }]);
+    assert.equal(
+      query.mock.calls.at(-1)?.[0]?.options?.env?.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,
+      "1",
+    );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

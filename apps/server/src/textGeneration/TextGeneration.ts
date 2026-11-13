@@ -1,14 +1,20 @@
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ModelSelection, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import type {
+  ModelSelection,
+  ProjectId,
+  ProviderInstanceId,
+  ServerProvider,
+} from "@t3tools/contracts";
 import {
   isProviderAvailable,
   isProviderTextGenerationCapable,
   resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
+import { exhaustedUsageWindow, modelUsesProviderQuota } from "@t3tools/shared/usageLimits";
 import { fallbackTextGenerationModelSelection } from "@t3tools/shared/serverSettings";
 import * as ServerSettings from "../serverSettings.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
@@ -97,11 +103,18 @@ export const make = Effect.gen(function* () {
         selection,
       );
     }
-    const snapshots = yield* registry.listInstances.pipe(
-      Effect.flatMap((instances) =>
-        Effect.forEach(instances, (instance) => instance.snapshot.getSnapshot),
-      ),
+    const instances = yield* registry.listInstances;
+    const usageDeadline = (yield* Clock.currentTimeMillis) + 5_000;
+    const primaryInstance = instances.find(
+      (instance) => instance.instanceId === selection.instanceId,
     );
+    if (modelUsesProviderQuota(primaryInstance?.driverKind, selection.model))
+      yield* (primaryInstance?.snapshot.refreshUsage ?? Effect.void).pipe(
+        Effect.ignore,
+        Effect.timeoutOption(Math.max(0, usageDeadline - (yield* Clock.currentTimeMillis))),
+      );
+    const readSnapshots = Effect.forEach(instances, (instance) => instance.snapshot.getSnapshot);
+    let snapshots = yield* readSnapshots;
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     const selected = snapshots.find((provider) => provider.instanceId === selection.instanceId);
     // Only a failed probe counts: a pending one is also not installed yet.
@@ -124,26 +137,54 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-      selection =
-        fallbackTextGenerationModelSelection(
+      const canServe = (provider: ServerProvider) =>
+        provider.instanceId !== selection.instanceId &&
+        provider.enabled &&
+        resolveProjectProviderInstanceEnabled(settings, projectId ?? null, provider.instanceId) &&
+        provider.installed &&
+        provider.auth.status !== "unauthenticated" &&
+        provider.status !== "error" &&
+        isProviderAvailable(provider) &&
+        isProviderTextGenerationCapable(provider) &&
+        (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(provider.driver));
+      const attempted: ModelSelection[] = [];
+      while (true) {
+        const candidate = fallbackTextGenerationModelSelection(
           settings.providerInstances,
-          (instanceId, driver, model) => {
-            const provider = snapshots.find((candidate) => candidate.instanceId === instanceId);
+          (instanceId, _driver, model) => {
+            const provider = snapshots.find((provider) => provider.instanceId === instanceId);
             return (
-              instanceId !== selection.instanceId &&
-              provider?.enabled === true &&
-              resolveProjectProviderInstanceEnabled(settings, projectId ?? null, instanceId) &&
-              provider.installed &&
-              provider.auth.status !== "unauthenticated" &&
-              provider.status !== "error" &&
-              isProviderAvailable(provider) &&
-              isProviderTextGenerationCapable(provider) &&
-              (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(driver)) &&
-              !exhaustedUsageWindow(provider, now, model)
+              !attempted.some(
+                (candidate) => candidate.instanceId === instanceId && candidate.model === model,
+              ) &&
+              provider !== undefined &&
+              canServe(provider)
             );
           },
           { defaultModelSelection: settings.defaultModelSelection },
-        ) ?? selection;
+        );
+        if (candidate === null) break;
+        attempted.push(candidate);
+        const remaining = usageDeadline - (yield* Clock.currentTimeMillis);
+        const candidateInstance = instances.find(
+          (instance) => instance.instanceId === candidate.instanceId,
+        );
+        if (remaining > 0 && modelUsesProviderQuota(candidateInstance?.driverKind, candidate.model))
+          yield* (candidateInstance?.snapshot.refreshUsage ?? Effect.void).pipe(
+            Effect.ignore,
+            Effect.timeoutOption(remaining),
+          );
+        snapshots = yield* readSnapshots;
+        const provider = snapshots.find((provider) => provider.instanceId === candidate.instanceId);
+        if (
+          provider &&
+          canServe(provider) &&
+          !exhaustedUsageWindow(provider, now, candidate.model)
+        ) {
+          selection = candidate;
+          break;
+        }
+      }
     }
     if (textGeneratorCannotRun && selection.instanceId === textGeneratorId) {
       return yield* new TextGenerationError({

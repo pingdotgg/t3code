@@ -42,6 +42,8 @@ function shouldRefreshOnInterval(input: {
 
 // Survive remounts so returning to a view does not make fresh reads look overdue.
 const lastRefreshedAtByView = new Map<string, number>();
+const pendingRefreshesByView = new Map<string, Promise<unknown>>();
+const overdueRefreshesByView = new Set<string>();
 
 let lastInteractedAt = 0;
 const interactionWatchers = new Set<() => void>();
@@ -71,61 +73,151 @@ function watchInteraction(resume: () => void): () => void {
 }
 
 export function useLiveRefresh(
-  refresh: (() => void) | null,
+  refresh: (() => void | Promise<unknown>) | null,
   options: {
     readonly enabled?: boolean;
     readonly key?: string;
+    /** Shared deadlines for resources read by this view. */
+    readonly refreshKeys?: readonly string[];
+    readonly refreshDeadline?: (result: unknown) => number | undefined;
     /** `null` turns off the periodic refresh, for a read too costly to repeat unasked. */
     readonly intervalMs?: number | null;
     /**
-     * Refresh every time the view is enabled unless it read within the floor, skipping the
-     * first-read rule: for a view that stays mounted while hidden, so its mount-time read can be
-     * long stale when shown.
+     * Refresh on showing a view with stale data. Views that refresh while idle reuse their
+     * polling interval; other views use the minimum refresh floor.
      */
     readonly refreshOnShow?: boolean;
+    readonly refreshWhileIdle?: boolean;
   } = {},
 ): void {
   const {
     enabled = true,
     key,
+    refreshKeys,
     intervalMs = LIVE_REFRESH_INTERVAL_MS,
     refreshOnShow = false,
+    refreshWhileIdle = false,
   } = options;
+  const sharedKeys =
+    refreshWhileIdle && refreshKeys?.length ? JSON.stringify([...refreshKeys].sort()) : undefined;
   const runRefresh = useEffectEvent((viewId: string, now: number) => {
     if (refresh === null) return;
-    lastRefreshedAtByView.set(viewId, now);
-    refresh();
+    if (sharedKeys === undefined) lastRefreshedAtByView.set(viewId, now);
+    return refresh();
   });
+  const serverDeadline = useEffectEvent((result: unknown) => options.refreshDeadline?.(result));
   const fallbackViewId = useId();
   const viewId = key ?? fallbackViewId;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refresh interval tied to page visibility and user interaction listeners
   useEffect(() => {
     if (!enabled) return;
-    const read = (now: number) => runRefresh(viewId, now);
+    const resourceKeys = sharedKeys === undefined ? [viewId] : (JSON.parse(sharedKeys) as string[]);
+    const requestKey = sharedKeys === undefined ? viewId : `resources:${sharedKeys}`;
+    const lastRefresh = () => {
+      const last = Math.min(
+        ...resourceKeys.map((key) => lastRefreshedAtByView.get(key) ?? -Infinity),
+      );
+      return Number.isFinite(last) ? last : undefined;
+    };
+    let timer: ReturnType<typeof setInterval> | undefined;
+    let disposed = false;
+    let pending = false;
+    const refreshFloorMs =
+      refreshWhileIdle && intervalMs !== null
+        ? Math.max(LIVE_REFRESH_MIN_INTERVAL_MS, intervalMs)
+        : LIVE_REFRESH_MIN_INTERVAL_MS;
+    const read = (now: number) => {
+      if (refreshWhileIdle && pending) return;
+      if (!refreshWhileIdle) {
+        runRefresh(viewId, now);
+        return;
+      }
+      let result = pendingRefreshesByView.get(requestKey);
+      if (result === undefined) {
+        const refreshedKeys = resourceKeys.filter(
+          (key) => now - (lastRefreshedAtByView.get(key) ?? -Infinity) >= refreshFloorMs,
+        );
+        for (const key of refreshedKeys) lastRefreshedAtByView.set(key, now);
+        let deadline: number | undefined;
+        result = Promise.resolve(runRefresh(viewId, now))
+          .then((value) => {
+            deadline = serverDeadline(value);
+            return value;
+          })
+          .finally(() => {
+            pendingRefreshesByView.delete(requestKey);
+            const completedAt = Date.now();
+            const overdue = deadline !== undefined && deadline <= completedAt;
+            if (overdue && overdueRefreshesByView.has(requestKey)) {
+              deadline = completedAt + LIVE_REFRESH_MIN_INTERVAL_MS;
+            }
+            if (overdue) overdueRefreshesByView.add(requestKey);
+            else overdueRefreshesByView.delete(requestKey);
+            const observedAt =
+              deadline !== undefined
+                ? Math.min(completedAt, deadline - refreshFloorMs)
+                : completedAt;
+            for (const key of refreshedKeys) lastRefreshedAtByView.set(key, observedAt);
+          });
+        pendingRefreshesByView.set(requestKey, result);
+      }
+      pending = true;
+      clearInterval(timer);
+      const completed = () => {
+        pending = false;
+        if (disposed) return;
+        syncTimer();
+      };
+      void Promise.resolve(result).then(completed, completed);
+    };
     const visible = () => document.visibilityState === "visible";
     const onArrival = () => {
       const now = Date.now();
-      if (now - lastInteractedAt >= LIVE_REFRESH_IDLE_AFTER_MS) return;
-      const lastRefreshedAt = lastRefreshedAtByView.get(viewId);
-      if (lastRefreshedAt === undefined) {
-        lastRefreshedAtByView.set(viewId, now);
+      if (!refreshWhileIdle && now - lastInteractedAt >= LIVE_REFRESH_IDLE_AFTER_MS) return;
+      if (refreshWhileIdle && visible() && pendingRefreshesByView.has(requestKey)) {
+        read(now);
         return;
       }
+      const lastRefreshedAt = lastRefresh();
+      if (lastRefreshedAt === undefined) {
+        if (!refreshOnShow) {
+          for (const key of resourceKeys) {
+            if (!lastRefreshedAtByView.has(key)) lastRefreshedAtByView.set(key, now);
+          }
+        } else if (visible()) read(now);
+        return;
+      }
+      if (refreshWhileIdle && now - lastRefreshedAt < refreshFloorMs) return;
       if (shouldRefreshOnArrival({ visible: visible(), now, lastRefreshedAt })) read(now);
     };
     const onInterval = () => {
       const now = Date.now();
-      const lastRefreshedAt = lastRefreshedAtByView.get(viewId) ?? now;
-      if (shouldRefreshOnInterval({ visible: visible(), now, lastRefreshedAt, lastInteractedAt })) {
+      const lastRefreshedAt = lastRefresh() ?? now;
+      if (
+        (!refreshWhileIdle || now - lastRefreshedAt >= refreshFloorMs) &&
+        shouldRefreshOnInterval({
+          visible: visible(),
+          now,
+          lastRefreshedAt,
+          lastInteractedAt: refreshWhileIdle ? now : lastInteractedAt,
+        })
+      ) {
         read(now);
-      }
+      } else if (refreshWhileIdle) syncTimer();
     };
 
-    let timer: ReturnType<typeof setInterval> | undefined;
     const syncTimer = () => {
       clearInterval(timer);
-      timer = visible() && intervalMs !== null ? setInterval(onInterval, intervalMs) : undefined;
+      timer =
+        visible() && intervalMs !== null && !pending
+          ? refreshWhileIdle
+            ? setTimeout(
+                onInterval,
+                Math.max(0, refreshFloorMs - (Date.now() - (lastRefresh() ?? Date.now()))),
+              )
+            : setInterval(onInterval, intervalMs)
+          : undefined;
     };
     const onVisibilityChange = () => {
       onArrival();
@@ -136,10 +228,14 @@ export function useLiveRefresh(
       onArrival();
       syncTimer();
     });
-    if (refreshOnShow) {
+    if (refreshOnShow && visible()) {
       const now = Date.now();
-      const lastRefreshedAt = lastRefreshedAtByView.get(viewId);
-      if (lastRefreshedAt === undefined || now - lastRefreshedAt >= LIVE_REFRESH_MIN_INTERVAL_MS) {
+      const lastRefreshedAt = lastRefresh();
+      if (
+        (refreshWhileIdle && pendingRefreshesByView.has(requestKey)) ||
+        lastRefreshedAt === undefined ||
+        now - lastRefreshedAt >= refreshFloorMs
+      ) {
         read(now);
       }
     } else onArrival();
@@ -147,10 +243,11 @@ export function useLiveRefresh(
     window.addEventListener("focus", onArrival);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
+      disposed = true;
       clearInterval(timer);
       window.removeEventListener("focus", onArrival);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       stopWatchingInteraction();
     };
-  }, [enabled, viewId, intervalMs, refreshOnShow]);
+  }, [enabled, viewId, sharedKeys, intervalMs, refreshOnShow, refreshWhileIdle]);
 }
