@@ -1711,6 +1711,47 @@ describe("MessagesTimeline attachments", () => {
       }),
     );
   });
+
+  it("opens an image from an expanded tool row as a gallery of the turn's viewed images", async () => {
+    stubbedAsset.url =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    onTestFinished(() => {
+      stubbedAsset.url = "";
+    });
+    const onImageExpand = vi.fn<ComponentProps<typeof MessagesTimeline>["onImageExpand"]>();
+    const read = (name: string) =>
+      work(`read-${name}`, {
+        label: `Read ${name}`,
+        toolTitle: "Read",
+        tone: "tool",
+        itemType: "dynamic_tool",
+        toolLifecycleStatus: "completed",
+        viewedImagePath: `/repo/${name}`,
+      });
+    await using screen = await renderTimeline(
+      [read("first.png"), read("second.png"), read("third.png")],
+      { onImageExpand, workspaceRoot: "/repo" },
+    );
+    await click(screen.button(/^Read 3 files/));
+    await vi.waitFor(() => expect(screen.buttons("Read")).toHaveLength(3));
+    await click(screen.buttons("Read")[1]!);
+    const inRow = await vi.waitFor(() => {
+      const image = [...screen.container.querySelectorAll("img")].find(
+        (img) => img.alt === "second.png" && !img.closest("[data-image-gallery]"),
+      );
+      expect(image).toBeTruthy();
+      return image!;
+    });
+    await click(inRow.closest<HTMLElement>("button, [role=button]")!);
+    expect(onImageExpand).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        index: 1,
+        images: ["first.png", "second.png", "third.png"].map((name) =>
+          expect.objectContaining({ name }),
+        ),
+      }),
+    );
+  });
 });
 
 describe("MessagesTimeline thread find", () => {
