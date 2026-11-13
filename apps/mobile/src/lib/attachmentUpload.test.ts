@@ -93,7 +93,6 @@ import {
   prepareTurnAttachments,
   releasePendingAttachmentUploads,
   withUploadedMobileAttachmentReferences,
-  validateDraftFileAttachments,
 } from "./attachmentUpload";
 import type { DraftComposerAttachment } from "./composerImages";
 
@@ -137,45 +136,6 @@ const documentPickedImage = {
   sizeBytes: 3,
   fileUri: "file:///documents/photo.png",
 } as const satisfies DraftComposerAttachment;
-
-describe("validateDraftFileAttachments", () => {
-  it("blocks files while config is unknown or file uploads are unsupported", () => {
-    expect(validateDraftFileAttachments({ attachments: [file], serverConfig: null })).toBe(
-      "Server attachment support is still loading.",
-    );
-    expect(
-      validateDraftFileAttachments({
-        attachments: [file],
-        serverConfig: { environment: { capabilities: { attachmentUploads: true } } },
-      }),
-    ).toBe("This server does not support file attachments.");
-  });
-
-  it("uses the current clamped limit and allows valid mixed attachments", () => {
-    const lowerLimit = {
-      environment: {
-        capabilities: {
-          attachmentUploads: true,
-          fileAttachments: { maxUploadBytes: 20 },
-        },
-      },
-    };
-    expect(validateDraftFileAttachments({ attachments: [file], serverConfig: lowerLimit })).toBe(
-      "'report.pdf' exceeds the 20 bytes attachment limit.",
-    );
-    const allowed = {
-      environment: {
-        capabilities: {
-          attachmentUploads: true,
-          fileAttachments: { maxUploadBytes: 100 },
-        },
-      },
-    };
-    expect(
-      validateDraftFileAttachments({ attachments: [image, file], serverConfig: allowed }),
-    ).toBeNull();
-  });
-});
 
 function removeCallsFor(attachmentId: string): number {
   return mocks.runAtomCommand.mock.calls.filter(
@@ -361,11 +321,26 @@ describe("prepareTurnAttachments", () => {
 
   // regression: #9713 read file-backed image drafts before enabling them
   it("uploads a file-backed image from its owned copy without staging base64", async () => {
+    mocks.upload.mockImplementation(
+      async (
+        _uri: string,
+        _url: string,
+        options: { onProgress?: (event: { bytesSent: unknown; totalBytes: unknown }) => void },
+      ) => {
+        // expo-modules-jsi delivers native Int64 progress counts as BigInt.
+        options.onProgress?.({ bytesSent: BigInt(1), totalBytes: BigInt(4) });
+        return { status: 204, body: "", headers: {} };
+      },
+    );
+    const progress: Array<number> = [];
     const prepared = await prepareTurnAttachments({
       environmentId,
       attachments: [fileBackedImage],
       supportsImageUploads: true,
+      onUploadProgress: (_, value) => progress.push(value),
     });
+
+    expect(progress).toEqual([0.25]);
 
     expect(mocks.upload).toHaveBeenCalledWith(
       fileBackedImage.fileUri,

@@ -38,8 +38,8 @@ const emptyShellSnapshot = {
 } as OrchestrationV2ShellSnapshot;
 
 describe("subagent shell events", () => {
-  const stored = (threadId: string, type: string) =>
-    ({ event: { threadId, type } }) as ApplicationStoredEvent;
+  const stored = (threadId: string, type: string, itemType = "command_execution") =>
+    ({ event: { threadId, type, payload: { type: itemType } } }) as ApplicationStoredEvent;
 
   it("keeps regular threads and subagent state changes while omitting subagent transcript updates", () => {
     const subagents = new Set(["child"]);
@@ -49,6 +49,14 @@ describe("subagent shell events", () => {
     expect(
       shouldPublishShellApplicationEvent(stored("child", "turn-item.updated"), subagents),
     ).toBe(false);
+    for (const itemType of ["secret_request", "link_request", "user_message"]) {
+      expect(
+        shouldPublishShellApplicationEvent(
+          stored("child", "turn-item.updated", itemType),
+          subagents,
+        ),
+      ).toBe(true);
+    }
     expect(shouldPublishShellApplicationEvent(stored("child", "node.updated"), subagents)).toBe(
       false,
     );
@@ -198,7 +206,13 @@ describe("omitIdleSubagentShells", () => {
     expect(omitted.threads.map((thread) => thread.id)).toEqual(["root"]);
     expect(
       shouldPublishShellApplicationEvent(
-        { event: { threadId: "idle", type: "turn-item.updated" } } as ApplicationStoredEvent,
+        {
+          event: {
+            threadId: "idle",
+            type: "turn-item.updated",
+            payload: { type: "command_execution" },
+          },
+        } as ApplicationStoredEvent,
         omitted.subagentThreadIds,
       ),
     ).toBe(false);
@@ -235,9 +249,24 @@ describe("omitOlderSettledShells", () => {
     omitOlderSettledShells({ threads, snapshotSequence: 7, now });
 
   it("keeps the 25 newest settled threads and counts the rest per project", () => {
-    const result = omit([...newest, row("old", 30), row("b-old", 40), row("unsettled", null)]);
+    const sideChat = row("side-chat", 0, {
+      lineage: {
+        parentThreadId: ThreadId.make("new-0"),
+        relationshipToParent: "fork",
+        rootThreadId: ThreadId.make("new-0"),
+        sideChat: true,
+      },
+    });
+    const result = omit([
+      ...newest,
+      sideChat,
+      row("old", 30),
+      row("b-old", 40),
+      row("unsettled", null),
+    ]);
     expect(result.threads.map((thread) => thread.id)).toEqual([
       ...newest.map((thread) => thread.id),
+      "side-chat",
       "unsettled",
     ]);
     expect(result.olderSettled).toEqual({
@@ -262,7 +291,7 @@ describe("omitOlderSettledShells", () => {
     expect(result.olderSettled.counts).toEqual([]);
   });
 
-  it("keeps older rows that are snoozed, live, or above a kept subagent, and still counts them", () => {
+  it("keeps older rows that are snoozed, live, or above a kept subagent or side chat, and still counts them", () => {
     const threads = [
       ...newest,
       row("snoozed", 30, { snoozedUntil: DateTime.makeUnsafe(101 * DAY) }),
@@ -280,6 +309,15 @@ describe("omitOlderSettledShells", () => {
         settledOverride: null,
         settledAt: null,
       }),
+      row("side-chat-parent", 30),
+      row("side-chat", null, {
+        lineage: {
+          parentThreadId: ThreadId.make("side-chat-parent"),
+          relationshipToParent: "fork",
+          rootThreadId: ThreadId.make("side-chat-parent"),
+          sideChat: true,
+        },
+      }),
     ];
     const result = omit(threads);
     expect(result.threads.map((thread) => thread.id).slice(25)).toEqual([
@@ -287,8 +325,10 @@ describe("omitOlderSettledShells", () => {
       "running",
       "parent",
       "child",
+      "side-chat-parent",
+      "side-chat",
     ]);
-    expect(result.olderSettled.counts).toEqual([{ projectId: "project-a", count: 4 }]);
+    expect(result.olderSettled.counts).toEqual([{ projectId: "project-a", count: 5 }]);
   });
 });
 

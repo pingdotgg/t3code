@@ -1,4 +1,3 @@
-import { useNewTaskFlow } from "./new-task-flow-provider";
 import * as Dialog from "../../components/ui/Dialog";
 import {
   CommonActions,
@@ -7,7 +6,7 @@ import {
   usePreventRemoveContext,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { View } from "react-native";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -31,7 +30,8 @@ import {
   makeNewTaskBranchCheckouts,
 } from "./new-task-branch-checkout";
 import { liveNewTaskFlowKeys, newTaskFlowKey } from "./new-task-flow-state";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { AppBar } from "../../components/ui/AppBar";
+import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 
 import { ThreadScreenFallback } from "./ThreadScreenHost";
 import { NewTaskDraftScreen } from "./NewTaskDraftScreen";
@@ -90,14 +90,8 @@ const idleBranchCheckoutAtom = Atom.make(AsyncResult.initial<BranchCheckoutResul
 
 export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraftRouteParams>) {
   const currentRoute = useRoute();
+  const goBack = useWorkspaceBackNavigation();
   const params = route.params ?? {};
-  const { reset } = useNewTaskFlow();
-  const [initialized, setInitialized] = useState(false);
-  useLayoutEffect(() => {
-    reset();
-    // oxlint-disable-next-line react/set-state-in-effect -- Draft reset runs once before first paint; initialized gates the screen until then.
-    setInitialized(true);
-  }, [reset]);
   const draftId = Array.isArray(params.draftId) ? params.draftId[0] : params.draftId;
   const projects = useProjects();
   const { state: catalogState } = useWorkspaceState();
@@ -169,6 +163,7 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   // Native-stack reads the provider's prevent state, which commits a render
   // after usePreventRemove updates its registry; the deferred thread selection
   // (and the failure goBack) must wait for that commit.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the branch checkout to its route once native-stack has committed the prevent-remove state
   useEffect(() => {
     if (checkoutKey === null || checkoutPending || removalBlocked) return;
     branchCheckouts.release(checkoutKey);
@@ -201,12 +196,10 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   };
   const preparingBranch = checkoutPending || (needsPreparation && result?._tag !== "Success");
 
-  if (!initialized) return null;
   return (
     <>
       {preparingBranch ? (
-        <ThreadScreenFallback>
-          <NativeStackScreenOptions options={{ title: "New thread" }} />
+        <ThreadScreenFallback header={<AppBar title="New thread" onBack={goBack} />}>
           <View className="flex-1 items-center justify-center bg-screen">
             <Text className="text-foreground">Switching branch...</Text>
           </View>

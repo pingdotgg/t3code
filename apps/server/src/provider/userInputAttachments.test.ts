@@ -7,6 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
@@ -16,6 +17,7 @@ import * as ServerConfig from "../config.ts";
 import * as DocumentText from "./DocumentText.ts";
 import { extractDocumentText } from "./documentTextWorker.ts";
 import * as Cleanup from "../orchestration-v2/ResourceCleanupService.ts";
+import * as DeviceService from "../device/DeviceService.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -85,6 +87,114 @@ describe("question answer paths", () => {
           }),
         );
       }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect.each(["interrupted", "failed"])(
+    "extracts two documents at once and frees a slot when one is %s",
+    (outcome) =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const [first, second, third] = ["first", "second", "third"].map((name) =>
+          NodePath.join(config.attachmentsDir, `${name}.rtf`),
+        );
+        NodeFS.writeFileSync(first!, String.raw`{\rtf1 First}`);
+        NodeFS.writeFileSync(second!, "invalid document");
+        NodeFS.writeFileSync(third!, String.raw`{\rtf1 Third}`);
+        const started = yield* Queue.unbounded<string>();
+        const releases = new Map<string, Deferred.Deferred<void>>();
+        for (const path of [first!, second!, third!])
+          releases.set(path, yield* Deferred.make<void>());
+        yield* Effect.gen(function* () {
+          const documents = yield* DocumentText.DocumentText;
+          const leaving = yield* documents.ensure(first!).pipe(Effect.forkChild);
+          const staying = yield* documents.ensure(first!).pipe(Effect.forkChild);
+          const freed = yield* documents.ensure(second!).pipe(Effect.forkChild);
+          expect(new Set([yield* Queue.take(started), yield* Queue.take(started)])).toEqual(
+            new Set([first, second]),
+          );
+          const waiting = yield* documents.ensure(third!).pipe(Effect.forkChild);
+          yield* Fiber.interrupt(leaving);
+          if (outcome === "interrupted") yield* Fiber.interrupt(freed);
+          else {
+            yield* Deferred.succeed(releases.get(second!)!, undefined);
+            expect(yield* Fiber.join(freed)).toBeUndefined();
+          }
+          expect(yield* Queue.take(started)).toBe(third);
+          yield* Deferred.succeed(releases.get(first!)!, undefined);
+          yield* Deferred.succeed(releases.get(third!)!, undefined);
+          expect(yield* Fiber.join(staying)).toBe(first + ".txt");
+          expect(yield* Fiber.join(waiting)).toBe(third + ".txt");
+          expect(yield* Queue.size(started)).toBe(0);
+          expect(NodeFS.existsSync(second + ".txt")).toBe(false);
+          expect(
+            NodeFS.readdirSync(config.attachmentsDir).filter((file) => file.endsWith(".part")),
+          ).toEqual([]);
+        }).pipe(
+          Effect.provide(Layer.fresh(DocumentText.layer)),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            stat: (file) =>
+              Effect.gen(function* () {
+                yield* Queue.offer(started, file);
+                yield* Deferred.await(releases.get(file)!);
+                return yield* fs.stat(file);
+              }),
+          }),
+        );
+      }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("retries a document while its cancelled extraction is still publishing", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = NodePath.join(config.attachmentsDir, "retried.rtf");
+      NodeFS.writeFileSync(path, String.raw`{\rtf1 Retried}`);
+      const writing = yield* Deferred.make<void>();
+      const writeReleased = yield* Deferred.make<void>();
+      const renaming = yield* Deferred.make<void>();
+      const renameReleased = yield* Deferred.make<void>();
+      let writes = 0;
+      let renames = 0;
+      yield* Effect.gen(function* () {
+        const documents = yield* DocumentText.DocumentText;
+        const cancelled = yield* documents.ensure(path).pipe(Effect.forkChild);
+        yield* Deferred.await(writing);
+        const interrupting = yield* Fiber.interrupt(cancelled).pipe(Effect.forkChild);
+        const retry = yield* documents.ensure(path).pipe(Effect.forkChild);
+        yield* Deferred.await(renaming);
+        yield* Deferred.succeed(writeReleased, undefined);
+        yield* Fiber.join(interrupting);
+        yield* Deferred.succeed(renameReleased, undefined);
+        expect(yield* Fiber.join(retry)).toBe(path + ".txt");
+        expect(NodeFS.readFileSync(path + ".txt", "utf8")).toBe("Retried");
+        expect(
+          NodeFS.readdirSync(config.attachmentsDir).filter((file) => file.endsWith(".part")),
+        ).toEqual([]);
+      }).pipe(
+        Effect.provide(Layer.fresh(DocumentText.layer)),
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          writeFileString: (file, data) =>
+            Effect.gen(function* () {
+              if (++writes === 1) {
+                yield* Deferred.succeed(writing, undefined);
+                yield* Deferred.await(writeReleased);
+              }
+              return yield* fs.writeFileString(file, data);
+            }),
+          rename: (from, to) =>
+            Effect.gen(function* () {
+              if (++renames === 1) {
+                yield* Deferred.succeed(renaming, undefined);
+                yield* Deferred.await(renameReleased);
+              }
+              return yield* fs.rename(from, to);
+            }),
+        }),
+      );
+    }).pipe(Effect.provide(layer)),
   );
 
   it.effect.each(["spawn", "read"])("retries after a transient %s failure expires", (failure) =>
@@ -182,6 +292,7 @@ describe("question answer paths", () => {
     ],
     ["hyphen symbol fallback", String.raw`{\rtf1\ansi\uc3\u945\~\_\-Z}`, "αZ"],
     ["control word", String.raw`{\rtf1\ansi A\u9\tab X}`, "A\tX"],
+    ["line break paragraphs", "{\\rtf1\\ansi First\\\nSecond\\\r\nThird}", "First\nSecond\nThird"],
     ["group close", String.raw`{\rtf1\ansi{\u945}Z}`, "αZ"],
     ["group open", String.raw`{\rtf1\ansi\u945{Z}}`, "αZ"],
     ["hex byte", String.raw`{\rtf1\ansi\u945\'3fZ}`, "αZ"],
@@ -293,7 +404,7 @@ describe("question answer paths", () => {
         attachmentsDir: config.attachmentsDir,
         attachmentsByQuestionId: { q: [file] },
       });
-      expect(answers.q).toContain(`text extracted to: "${path}.txt"`);
+      expect(answers.q).toContain(`text extracted to: ${JSON.stringify(path + ".txt")}`);
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("Vessel: Larkspur");
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("301");
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("42");
@@ -327,6 +438,7 @@ describe("question answer paths", () => {
               Layer.mergeAll(
                 Layer.mock(TerminalManager.TerminalManager)({}),
                 Layer.mock(PreviewManager.PreviewManager)({}),
+                Layer.mock(DeviceService.DeviceService)({}),
                 Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
               ),
             ),
@@ -354,7 +466,7 @@ describe("question answer paths", () => {
             attachmentsDir: config.attachmentsDir,
             attachmentsByQuestionId: { q: [file] },
           });
-          expect(answers.q).toContain(path);
+          expect(answers.q).toContain(JSON.stringify(path));
           expect(answers.q).not.toContain("text extracted");
           expect(NodeFS.existsSync(`${path}.txt`)).toBe(false);
           expect(NodeFS.readFileSync(path, "utf8")).toBe("invalid document");
@@ -559,6 +671,25 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "word/document.xml":
+              '<w:document xmlns:w="urn:w" xmlns:mc="urn:mc"><w:body><w:p><w:r><w:t>Body</w:t></w:r></w:p><w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wps:wsp><wps:txbx><w:txbxContent><w:p><w:r><w:t>Callout box</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent><w:p><w:r><w:t>Callout box</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p></w:body></w:document>',
+          },
+          expected: ["Body\nCallout box"],
+          occurrences: { text: "Callout box", count: 1 },
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="urn:w" xmlns:mc="urn:mc"><w:body><w:p><w:r><mc:AlternateContent><mc:Choice Requires="cx"><w:drawing><cx:chart/></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent><w:p><w:r><w:t>Chart caption</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p></w:body></w:document>',
+          },
+          expected: ["Chart caption"],
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml":
               '<w:document xmlns:w="urn:w"><w:body><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Report &amp; totals</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>North</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>12</w:t></w:r></w:p><w:p><w:r><w:t>34</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Before</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Neighbor</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>',
           },
           expected: ["## Report & totals", "North\t12 34", "Before Inner After\tNeighbor"],
@@ -571,6 +702,26 @@ describe("question answer paths", () => {
               '<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>First</w:t><w:cr/><w:t>Second</w:t><w:br/><w:t>Third</w:t></w:r></w:p></w:body></w:document>',
           },
           expected: ["First\nSecond\nThird"],
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>Intro</w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> PAGEREF _Toc1 \\h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t> 3</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p><w:p><w:pPr><w:tabs><w:tab w:val="right" w:pos="9350"/></w:tabs></w:pPr><w:r><w:t xml:space="preserve">Fee </w:t></w:r><w:del><w:r><w:delText>$500</w:delText></w:r></w:del><w:ins><w:r><w:t>$700</w:t></w:r></w:ins><w:moveFrom><w:r><w:t>Moved</w:t></w:r></w:moveFrom><w:r><w:tab/><w:t>due</w:t></w:r></w:p></w:body></w:document>',
+          },
+          expected: ["Intro 3\nFee $700\tdue"],
+          absent: ["PAGEREF", "$500", "Moved"],
+        },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml":
+              "<document><text><tracked-changes><changed-region><deletion><change-info><creator>Reviewer</creator></change-info><p>$500</p></deletion></changed-region></tracked-changes><p>Fee <change/>$700</p></text></document>",
+          },
+          expected: ["Fee $700"],
+          absent: ["Reviewer", "$500"],
         },
         {
           ext: "docx",
@@ -1107,7 +1258,7 @@ describe("question answer paths", () => {
       expect(answers.q).toEqual([
         "First",
         "Second",
-        `Attached file "spec \\"final\\".txt": "${path}"`,
+        `Attached file "spec \\"final\\".txt": ${JSON.stringify(path)}`,
       ]);
       expect(answers.other).toBe("No file");
       expect(original.q).toEqual(["First", "Second"]);
@@ -1118,7 +1269,7 @@ describe("question answer paths", () => {
         attachmentsByQuestionId: { ["__proto__"]: [attachment] },
       });
       expect(Object.keys(specialKey)).toEqual(["__proto__"]);
-      expect(specialKey["__proto__"]).toContain(path);
+      expect(specialKey["__proto__"]).toContain(JSON.stringify(path));
     }).pipe(Effect.provide(layer)),
   );
   it.effect("does not send an unavailable attachment path", () =>

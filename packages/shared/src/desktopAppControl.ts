@@ -29,9 +29,14 @@ export function resolveDesktopAppControlAddress(input: {
 
   const userKey =
     input.userId === undefined ? shortHash(input.stateDir).slice(0, 12) : input.userId;
-  const directory = input.joinPath(input.tempDir, `t3code-${userKey}`);
+  const socketName = `${stateHash}.sock`;
+  const maxPathBytes = input.platform === "linux" ? 107 : 103;
+  let directory = input.joinPath(input.tempDir, `t3code-${userKey}`);
+  if (new TextEncoder().encode(input.joinPath(directory, socketName)).byteLength > maxPathBytes) {
+    directory = input.joinPath("/tmp", `t3code-${userKey}`);
+  }
   return {
-    address: input.joinPath(directory, `${stateHash}.sock`),
+    address: input.joinPath(directory, socketName),
     directory,
   };
 }
