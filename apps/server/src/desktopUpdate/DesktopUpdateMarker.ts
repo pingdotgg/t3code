@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 const UpdateMarker = Schema.fromJsonString(
-  Schema.Struct({ startedAt: Schema.optional(Schema.Unknown), expiresAt: Schema.Number }),
+  Schema.Struct({ startedAt: Schema.Number, expiresAt: Schema.Number }),
 );
 
 export class DesktopUpdateMarker extends Context.Service<
@@ -36,7 +36,6 @@ const make = Effect.gen(function* () {
     if (Option.isSome(marker)) {
       const { startedAt, expiresAt } = marker.value;
       if (
-        typeof startedAt === "number" &&
         Number.isFinite(startedAt) &&
         Number.isFinite(expiresAt) &&
         startedAt <= now &&

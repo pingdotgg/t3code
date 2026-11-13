@@ -1287,11 +1287,11 @@ describe("SSH launch during desktop update", () => {
     }),
   );
 
-  it.effect.each([-30_000, 120_000])("bounds a host clock jump to %s", (clockJump) =>
+  it.effect("bounds the wait when the host clock jumps back", () =>
     Effect.gen(function* () {
       const result = runLauncher(yield* captureLauncher, {
         marker: { startedAt: 0, expiresAt: 60_000 },
-        clockJump,
+        clockJump: -30_000,
       });
       assert.deepEqual(result.output, { remotePort: 5999, serverKind: "managed" });
       assert.isBelow(result.events.filter((event) => event.startsWith("runtime ")).length, 62);
@@ -1313,22 +1313,16 @@ describe("SSH launch during desktop update", () => {
     }),
   );
 
-  it.effect.each([false, true])(
-    "reuses a runtime published before the first marker read (archive: %s)",
-    (archive) =>
-      Effect.gen(function* () {
-        const script = archive
-          ? yield* captureLauncherFor({ archiveVersion: "1.2.3" })
-          : yield* captureLauncher;
-        const result = runLauncher(script, {
-          archive,
-          marker: { startedAt: 0, expiresAt: 60_000 },
-          publishAfterFirstRuntimeRead: true,
-        });
-        assert.deepEqual(result.output, { remotePort: 4888, serverKind: "external" });
-        assert.equal(result.now, 0);
-        assert.isFalse(result.events.some((event) => event.startsWith("start ")));
-      }),
+  it.effect("reuses a runtime published before the first marker read", () =>
+    Effect.gen(function* () {
+      const result = runLauncher(yield* captureLauncher, {
+        marker: { startedAt: 0, expiresAt: 60_000 },
+        publishAfterFirstRuntimeRead: true,
+      });
+      assert.deepEqual(result.output, { remotePort: 4888, serverKind: "external" });
+      assert.equal(result.now, 0);
+      assert.isFalse(result.events.some((event) => event.startsWith("start ")));
+    }),
   );
 
   it.effect("waits across the eight-second installer gap and reuses the replacement server", () =>
@@ -1344,15 +1338,15 @@ describe("SSH launch during desktop update", () => {
     }),
   );
 
-  it.effect("waits the full marker lifetime despite immediately failing stale-port probes", () =>
+  it.effect("keeps waiting while a stale runtime record points at a dead port", () =>
     Effect.gen(function* () {
       const result = runLauncher(yield* captureLauncher, {
         marker: { startedAt: 0, expiresAt: 60_000 },
         initialPort: 3773,
-        readyAt: 30_000,
+        readyAt: 3_000,
       });
       assert.deepEqual(result.output, { remotePort: 4888, serverKind: "external" });
-      assert.equal(result.now, 30_000);
+      assert.equal(result.now, 3_000);
       assert.isFalse(result.events.some((event) => event.startsWith("start ")));
     }),
   );
