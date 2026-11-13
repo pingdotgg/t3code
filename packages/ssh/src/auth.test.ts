@@ -84,7 +84,6 @@ describe("ssh auth", () => {
       assert.include(yield* fs.readFileString(askpassPath), 'printf "%s\\n" "$T3_SSH_AUTH_SECRET"');
     }).pipe(
       Effect.provide(Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "linux"))),
-      Effect.scoped,
     ),
   );
 
@@ -249,7 +248,6 @@ describe("ssh auth", () => {
       assert.include(yield* fs.readFileString(first), 'printf "%s\\n" "$T3_SSH_AUTH_SECRET"');
     }).pipe(
       Effect.provide(Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "linux"))),
-      Effect.scoped,
     ),
   );
 });
