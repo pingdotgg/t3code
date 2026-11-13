@@ -81,6 +81,203 @@ const remark = (
 const noRemarks: ReadonlyArray<PullRequestComment> = [];
 
 describe("evaluatePullRequestWatch", () => {
+  it.each([false, true])("baselines already-passed checks (required: %s)", (required) => {
+    const green = detail({ checks: [{ ...check("test", "success"), required }] });
+    const baseline = evaluatePullRequestWatch(watch({ awaitingBaseline: "all" }), green, noRemarks);
+    assert.deepEqual(baseline.changes, []);
+    assert.equal(baseline.next.headSha, green.headSha);
+    assert.isTrue(baseline.next.passed);
+    assert.deepEqual(baseline.next.passedChecks, ["test"]);
+    assert.isFalse(baseline.exhausted);
+    assert.deepEqual(evaluatePullRequestWatch(baseline.next, green, noRemarks).changes, []);
+
+    const pending = evaluatePullRequestWatch(
+      baseline.next,
+      detail({ checks: [{ ...check("test", "pending"), required }] }),
+      noRemarks,
+    );
+    assert.deepEqual(pending.changes, []);
+    const failed = evaluatePullRequestWatch(
+      pending.next,
+      detail({ checks: [{ ...check("test", "failure"), required }] }),
+      noRemarks,
+    );
+    assert.equal(failed.changes[0]?.kind, "checks-failed");
+    const passed = evaluatePullRequestWatch(failed.next, green, noRemarks);
+    assert.deepEqual(passed.changes, [{ kind: "checks-passed", count: 1, required }]);
+    assert.deepEqual(
+      evaluatePullRequestWatch(passed.next, { ...green, headSha: "bbbbbbbbbb" }, noRemarks).changes,
+      [{ kind: "checks-passed", count: 1, required }],
+    );
+  });
+
+  it("baselines existing failures and conflicts, then reports new ones", () => {
+    const broken = detail({
+      checks: [check("lint", "failure"), check("test", "pending")],
+      mergeability: "conflicting",
+    });
+    const baseline = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: "all" }),
+      broken,
+      noRemarks,
+    );
+    assert.deepEqual(baseline.changes, []);
+    assert.deepEqual(baseline.next.failedChecks, ["lint"]);
+    assert.isFalse(baseline.next.passed);
+    assert.isTrue(baseline.next.conflicting);
+    assert.deepEqual(evaluatePullRequestWatch(baseline.next, broken, noRemarks).changes, []);
+
+    const failed = evaluatePullRequestWatch(
+      baseline.next,
+      { ...broken, checks: [check("lint", "failure"), check("test", "failure")] },
+      noRemarks,
+    );
+    assert.deepEqual(failed.changes, [
+      { kind: "checks-failed", failed: [check("test", "failure")] },
+    ]);
+    const clean = evaluatePullRequestWatch(failed.next, detail(), noRemarks);
+    assert.deepEqual(clean.changes, []);
+    assert.deepEqual(evaluatePullRequestWatch(clean.next, broken, noRemarks).changes, [
+      { kind: "checks-failed", failed: [check("lint", "failure")] },
+      { kind: "conflicting" },
+    ]);
+  });
+
+  it("baselines checks already awaiting approval", () => {
+    const gated = detail({ checks: [{ ...check("CI", "action-required"), url: run(1) }] });
+    const baseline = evaluatePullRequestWatch(watch({ awaitingBaseline: "all" }), gated, noRemarks);
+    assert.deepEqual(baseline.changes, []);
+    assert.deepEqual(evaluatePullRequestWatch(baseline.next, gated, noRemarks).changes, []);
+  });
+
+  it("reports remarks after the watch started while baselining checks and conflicts", () => {
+    const green = detail({
+      checks: [check("test", "success")],
+      mergeability: "conflicting",
+    });
+    const comments = [
+      remark("reviewer", "2026-10-02T11:00:00Z"),
+      remark("reviewer", "2026-10-02T12:06:00Z"),
+    ];
+    const baseline = evaluatePullRequestWatch(watch({ awaitingBaseline: "all" }), green, comments);
+    assert.deepEqual(baseline.changes, [{ kind: "remarks", remarks: [comments[1]!] }]);
+    assert.isTrue(baseline.next.passed);
+    assert.isTrue(baseline.next.conflicting);
+    assert.equal(baseline.next.wakes, 1);
+    assert.deepEqual(evaluatePullRequestWatch(baseline.next, green, comments).changes, []);
+  });
+
+  it("reports a failure once the head SHA appears after a baseline without one", () => {
+    const waiting = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: "all" }),
+      detail({ headSha: undefined, checks: [check("test", "pending")] }),
+      noRemarks,
+    );
+    assert.deepEqual(waiting.changes, []);
+    const failed = evaluatePullRequestWatch(
+      waiting.next,
+      detail({ checks: [check("test", "failure")] }),
+      noRemarks,
+    );
+    assert.deepEqual(failed.changes, [
+      { kind: "checks-failed", failed: [check("test", "failure")] },
+    ]);
+  });
+
+  it("keeps a baseline taken without a head SHA once the SHA appears", () => {
+    const green = detail({ checks: [check("test", "success")] });
+    const baseline = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: "all" }),
+      { ...green, headSha: undefined },
+      noRemarks,
+    );
+    const known = evaluatePullRequestWatch(baseline.next, green, noRemarks);
+    assert.deepEqual(known.changes, []);
+    assert.equal(known.next.headSha, green.headSha);
+    const unknown = evaluatePullRequestWatch(
+      known.next,
+      { ...green, headSha: undefined },
+      noRemarks,
+    );
+    assert.equal(unknown.next.headSha, green.headSha);
+    assert.deepEqual(
+      evaluatePullRequestWatch(unknown.next, { ...green, headSha: "bbbbbbbbbb" }, noRemarks)
+        .changes,
+      [{ kind: "checks-passed", count: 1, required: false }],
+    );
+  });
+
+  it.each(["success", "failure"] as const)(
+    "reports %s on checks that appear after a first read without any",
+    (status) => {
+      const empty = evaluatePullRequestWatch(
+        watch({ awaitingBaseline: "all" }),
+        detail({ checks: [] }),
+        noRemarks,
+      );
+      assert.deepEqual(empty.changes, []);
+      assert.isUndefined(empty.next.awaitingBaseline);
+      assert.deepEqual(
+        evaluatePullRequestWatch(empty.next, detail({ checks: [check("test", status)] }), noRemarks)
+          .changes,
+        status === "success"
+          ? [{ kind: "checks-passed", count: 1, required: false }]
+          : [{ kind: "checks-failed", failed: [check("test", "failure")] }],
+      );
+    },
+  );
+
+  it("keeps the check baseline through a read whose approval lookup failed", () => {
+    const bot = check("bot", "success");
+    const unavailable = { ...check("Workflow approval status", "pending"), placeholder: true };
+    const partial = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: "all" }),
+      detail({ checks: [bot, unavailable] }),
+      noRemarks,
+    );
+    assert.deepEqual(partial.changes, []);
+    assert.equal(partial.next.awaitingBaseline, "checks");
+    const approval = { ...check("CI", "action-required"), url: run(1) };
+    for (const checks of [[bot], [bot, approval]]) {
+      assert.deepEqual(
+        evaluatePullRequestWatch(partial.next, detail({ checks }), noRemarks).changes,
+        [],
+      );
+    }
+  });
+
+  it("reports pending advisory checks finishing after a required-check baseline", () => {
+    const initial = detail({
+      checks: [{ ...check("test", "success"), required: true }, check("bot", "pending")],
+    });
+    const baseline = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: "all" }),
+      initial,
+      noRemarks,
+    );
+    assert.deepEqual(baseline.changes, []);
+    const settled = evaluatePullRequestWatch(
+      baseline.next,
+      {
+        ...initial,
+        checks: [initial.checks[0]!, check("bot", "success")],
+      },
+      noRemarks,
+    );
+    assert.deepEqual(settled.changes, [{ kind: "checks-passed", count: 2, required: false }]);
+    assert.deepEqual(
+      evaluatePullRequestWatch(
+        settled.next,
+        {
+          ...initial,
+          checks: [initial.checks[0]!, check("bot", "success")],
+        },
+        noRemarks,
+      ).changes,
+      [],
+    );
+  });
+
   it("waits for workflow approval once, through reads that miss it, until the run finishes", () => {
     const bot = check("bot", "success");
     const approval = { ...check("CI", "action-required"), url: run(1) };
@@ -528,6 +725,80 @@ describe("evaluatePullRequestWatch", () => {
     );
   });
 
+  it("reports each merge queue removal once while the head checks stay green", () => {
+    const green = detail({ checks: [check("test", "success")] });
+    const watching = evaluatePullRequestWatch(watch(), green, noRemarks).next;
+    const removed = (id: string, removedAt: string) =>
+      detail({ ...green, mergeQueueRemoval: { id, removedAt, reason: "Merge conflict" } });
+
+    const dropped = removed("first", "2026-10-02T12:10:00Z");
+    const first = evaluatePullRequestWatch(watching, dropped, noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "merge-queue-removed", reason: "Merge conflict" }]);
+    const wake = pullRequestWatchMessage({
+      number: 1,
+      url: "https://github.com/o/r/pull/1",
+      baseBranch: "main",
+      headSha: first.next.headSha,
+      report: first,
+    });
+    assert.deepEqual(wake.notification, {
+      source: { kind: "monitor" },
+      outcome: "failed",
+      summary: "#1: removed from merge queue",
+    });
+    assert.deepEqual(evaluatePullRequestWatch(first.next, dropped, noRemarks).changes, []);
+    // A read without queue news keeps the removal already told.
+    const quiet = evaluatePullRequestWatch(first.next, green, noRemarks);
+    assert.deepEqual(evaluatePullRequestWatch(quiet.next, dropped, noRemarks).changes, []);
+
+    const again = removed("second", "2026-10-02T12:20:00Z");
+    assert.equal(evaluatePullRequestWatch(first.next, again, noRemarks).changes.length, 1);
+    const before = removed("before", "2026-10-02T11:00:00Z");
+    const baseline = evaluatePullRequestWatch(
+      watch({ headSha: watching.headSha, passed: true, passedChecks: watching.passedChecks }),
+      before,
+      noRemarks,
+    );
+    assert.deepEqual(baseline.changes, []);
+    for (const prior of [watching, baseline.next]) {
+      const skewed = evaluatePullRequestWatch(
+        prior,
+        removed("new", "2026-10-02T11:59:58Z"),
+        noRemarks,
+      );
+      assert.deepEqual(skewed.changes, [{ kind: "merge-queue-removed", reason: "Merge conflict" }]);
+      assert.deepEqual(
+        evaluatePullRequestWatch(skewed.next, removed("new", "2026-10-02T11:59:58Z"), noRemarks)
+          .changes,
+        [],
+      );
+    }
+  });
+
+  it("reports a merge queue removal stamped in the second the watch started", () => {
+    const watching = watch({ startedAt: "2026-10-02T12:00:00.500Z" });
+    const removed = (removedAt: string) =>
+      detail({ mergeQueueRemoval: { id: "first", removedAt, reason: "CI failed" } });
+    assert.deepEqual(
+      evaluatePullRequestWatch(watching, removed("2026-10-02T12:00:00Z"), noRemarks).changes,
+      [{ kind: "merge-queue-removed", reason: "CI failed" }],
+    );
+    assert.deepEqual(
+      evaluatePullRequestWatch(watching, removed("2026-10-02T11:59:59Z"), noRemarks).changes,
+      [],
+    );
+  });
+
+  it("stays quiet when the queue lets go of a pull request by merging it", () => {
+    const watching = evaluatePullRequestWatch(watch(), detail(), noRemarks).next;
+    const merging = detail({
+      mergeQueueRemoval: { id: "landed", removedAt: "2026-10-02T12:10:00Z", reason: "merged" },
+    });
+    const read = evaluatePullRequestWatch(watching, merging, noRemarks);
+    assert.deepEqual(read.changes, []);
+    assert.equal(read.next.mergeQueueRemovalId, "landed");
+  });
+
   it("does not spend the comment wake limit on check results", () => {
     const tired = watch({ headSha: "aaaaaaaaaa", wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1 });
     const result = evaluatePullRequestWatch(
@@ -571,11 +842,19 @@ describe("evaluatePullRequestWatch", () => {
     const unknown = detail({
       checks: [{ ...check("Workflow approval status", "action-required"), placeholder: true }],
     });
-    assert.deepEqual(anHourLater(watch(), unknown).flat(), []);
-    const unread = evaluate(watch(), unknown, noRemarks, 0);
+    const fresh = watch({ awaitingBaseline: "all" });
+    assert.deepEqual(anHourLater(fresh, unknown).flat(), []);
+    const unread = evaluate(fresh, unknown, noRemarks, 0);
     assert.deepEqual(
       evaluate(unread.next, detail({ checks: [] }), noRemarks, 60 * 60_000).changes,
       [{ kind: "no-checks", minutes: 60 }],
+    );
+  });
+
+  it("starts the no-checks clock while a fresh watch awaits its baseline", () => {
+    assert.deepEqual(
+      anHourLater(watch({ awaitingBaseline: "all" }), detail({ checks: [] })).flat(),
+      ["no-checks"],
     );
   });
 
