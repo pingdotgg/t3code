@@ -44,8 +44,6 @@ import {
   holdFailures,
   PULL_REQUEST_WATCH_NO_CHECKS_MS,
   pullRequestWatchMessage,
-  type PullRequestWatchReport,
-  withHeldFailures,
 } from "./pullRequestWatch.ts";
 
 /** Checks take minutes; faster sweeps waste the account's shared host quota. */
@@ -453,8 +451,13 @@ export const make = Effect.gen(function* () {
   let held: Array<HeldWake> = [];
   const hold = (wake: HeldWake) => Effect.sync(() => void held.push(wake));
 
+  // Held news is cleared only once it reached the thread, so a failed send keeps it.
+  const clearHeld = (target: WatchTarget) =>
+    Effect.sync(() => void deferred.delete(watchKey(target)));
+
   const sendOne = (item: HeldWake) =>
     record(item.target, item.next, item.wake, item.endedWatch).pipe(
+      Effect.tap(() => clearHeld(item.target)),
       Effect.tap(() => woke(item.target)),
       Effect.tap(() => (item.reason === undefined ? Effect.void : ended(item.target, item.reason))),
       Effect.catchCause((cause) => {
@@ -502,7 +505,8 @@ export const make = Effect.gen(function* () {
     yield* Effect.forEach(
       items,
       (item) =>
-        woke(item.target).pipe(
+        clearHeld(item.target).pipe(
+          Effect.andThen(woke(item.target)),
           Effect.andThen(item.reason === undefined ? Effect.void : ended(item.target, item.reason)),
         ),
       { discard: true },
@@ -688,18 +692,12 @@ export const make = Effect.gen(function* () {
         fingerprint === null ? QUIET_REREAD_MS : FINGERPRINT_REREAD_MS,
       );
     let remarks = Option.isSome(activity) ? yield* remarksOf(activity.value) : null;
-    const reportsOf = () =>
-      group.targets.map((target) =>
-        withHeldFailures(
-          evaluatePullRequestWatch(target.watch, detail, remarks, now),
-          deferred.get(watchKey(target)),
-        ),
-      );
-    let reports = reportsOf();
+    const reportOf = (target: WatchTarget) =>
+      evaluatePullRequestWatch(target.watch, detail, remarks, now, deferred.get(watchKey(target)));
     // A wake lists the open review threads, so a pass that skipped them reads them before waking.
-    const wakes = (report: PullRequestWatchReport, index: number) =>
-      report.changes.length > 0 && !group.targets[index]!.thread.busy;
-    if (Option.isNone(activity) && reports.some(wakes)) {
+    const wakes = (target: WatchTarget) =>
+      !target.thread.busy && reportOf(target).changes.length > 0;
+    if (Option.isNone(activity) && group.targets.some(wakes)) {
       activity = yield* pullRequests.activity(reference).pipe(
         Effect.asSome,
         Effect.catch((error) =>
@@ -709,19 +707,17 @@ export const make = Effect.gen(function* () {
           }).pipe(Effect.as(Option.none<PullRequestActivity>())),
         ),
       );
-      if (Option.isSome(activity)) {
-        remarks = yield* remarksOf(activity.value);
-        reports = reportsOf();
-      }
+      if (Option.isSome(activity)) remarks = yield* remarksOf(activity.value);
     }
     const state = {
       checks: detail.checks,
+      // Without the flag a host cannot say whether it read every thread, so the wake leaves them out.
       reviewThreads: Option.match(activity, {
         onNone: () => null,
-        onSome: (read) => ({
-          threads: read.reviewThreads,
-          truncated: read.reviewThreadsTruncated === true,
-        }),
+        onSome: (read) =>
+          read.reviewThreadsTruncated === undefined
+            ? null
+            : { threads: read.reviewThreads, truncated: read.reviewThreadsTruncated },
       }),
     };
     lastReads.set(group.key, {
@@ -741,12 +737,11 @@ export const make = Effect.gen(function* () {
       remarks: fingerprint?.remarks ?? null,
     });
     yield* eachTarget(group, (target) => {
-      const report = reports[group.targets.indexOf(target)]!;
+      const report = reportOf(target);
       if (report.changes.length > 0 && target.thread.busy) {
         deferred.set(watchKey(target), holdFailures(deferred.get(watchKey(target)), report));
         return Effect.void;
       }
-      deferred.delete(watchKey(target));
       if (report.changes.length > 0) {
         const wake = {
           ...pullRequestWatchMessage({
@@ -773,7 +768,9 @@ export const make = Effect.gen(function* () {
             : { groupKey: group.key, target, next: report.next, wake },
         );
       }
-      return watchesEqual(report.next, target.watch) ? Effect.void : record(target, report.next);
+      return (
+        watchesEqual(report.next, target.watch) ? Effect.void : record(target, report.next)
+      ).pipe(Effect.tap(() => clearHeld(target)));
     });
   });
 

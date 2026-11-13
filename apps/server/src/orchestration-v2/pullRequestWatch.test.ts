@@ -8,15 +8,15 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
   evaluatePullRequestWatch as evaluate,
-  holdFailures,
   pullRequestWatchMessage,
-  withHeldFailures,
 } from "./pullRequestWatch.ts";
 
 // These cases read the head once or at one moment, so the no-checks notice never comes due.
 const evaluatePullRequestWatch = (
-  ...args: Parameters<typeof evaluate> extends [...infer Head, number] ? Head : never
-) => evaluate(...args, 0);
+  watch: Parameters<typeof evaluate>[0],
+  read: Parameters<typeof evaluate>[1],
+  remarks: Parameters<typeof evaluate>[2],
+) => evaluate(watch, read, remarks, 0);
 
 const STARTED = "2026-10-02T12:00:00.000Z";
 
@@ -692,45 +692,6 @@ describe("evaluatePullRequestWatch", () => {
     assert.include(text, `"${"x".repeat(196)}..."`);
   });
 
-  it("keeps a failure seen while the thread was busy until the head moves", () => {
-    const busy = evaluatePullRequestWatch(
-      watch(),
-      detail({ checks: [check("lint", "failure"), check("test", "failure")] }),
-      noRemarks,
-    );
-    const held = holdFailures(holdFailures(undefined, busy), busy);
-    assert.deepEqual(
-      held.failed.map((failed) => failed.name),
-      ["lint", "test"],
-    );
-
-    const idle = evaluatePullRequestWatch(
-      watch(),
-      detail({ checks: [check("lint", "success"), check("test", "failure")] }),
-      noRemarks,
-    );
-    assert.deepEqual(withHeldFailures(idle, held).changes, [
-      { kind: "checks-failed", failed: [check("test", "failure"), check("lint", "failure")] },
-    ]);
-    const passed = evaluatePullRequestWatch(
-      watch(),
-      detail({ checks: [check("lint", "success")] }),
-      noRemarks,
-    );
-    assert.deepEqual(withHeldFailures(passed, held).changes[0], {
-      kind: "checks-failed",
-      failed: [check("lint", "failure"), check("test", "failure")],
-    });
-
-    const pushed = evaluatePullRequestWatch(
-      watch(),
-      detail({ headSha: "bbbbbbbbbb", checks: [check("lint", "success")] }),
-      noRemarks,
-    );
-    assert.deepEqual(withHeldFailures(pushed, held), pushed);
-    assert.deepEqual(holdFailures(held, pushed).failed, []);
-  });
-
   it("tells the pull request's state with each wake", () => {
     const report = evaluatePullRequestWatch(watch(), detail(), [
       remark("reviewer", "2026-10-02T12:06:00Z"),
@@ -759,12 +720,7 @@ describe("evaluatePullRequestWatch", () => {
         report,
         state,
       }).text;
-    const checks = [
-      check("lint", "success"),
-      check("test", "failure"),
-      check("build", "pending"),
-      { ...check("deploy", "pending"), placeholder: true },
-    ];
+    const checks = [check("lint", "success"), check("test", "failure"), check("build", "pending")];
 
     const told = message({
       checks,
@@ -789,13 +745,12 @@ describe("evaluatePullRequestWatch", () => {
       ].join("\n"),
     );
     assert.include(told, "do not read the checks or review threads again");
-    assert.include(
-      message({
-        checks,
-        reviewThreads: { threads: [reviewThread("open", false, 4)], truncated: true },
-      }),
-      "- At least 1 unresolved review thread:",
-    );
+    const cut = message({
+      checks,
+      reviewThreads: { threads: [reviewThread("open", false, 4)], truncated: true },
+    });
+    assert.include(cut, "- At least 1 unresolved review thread:");
+    assert.include(cut, "do not read the checks again");
 
     const settled = message({
       checks: [],
@@ -813,6 +768,17 @@ describe("evaluatePullRequestWatch", () => {
     const unread = message({ checks, reviewThreads: null });
     assert.notInclude(unread, "review thread");
     assert.include(unread, "do not read the checks again");
+
+    // A check the host could not read stays out of the counts, and the agent may read them again.
+    const partial = message({
+      checks: [...checks, { ...check("deploy", "pending"), placeholder: true }],
+      reviewThreads: null,
+    });
+    assert.include(
+      partial,
+      "- Checks: 1 passed, 1 failed, 1 pending. Failing: test.\n- Some checks could not be read.",
+    );
+    assert.notInclude(partial, "do not read");
   });
 
   it("reports a conflict once, until the branch is clean again", () => {
@@ -867,6 +833,7 @@ describe("evaluatePullRequestWatch", () => {
       baseBranch: "main",
       headSha: first.next.headSha,
       report: first,
+      state: { checks: green.checks, reviewThreads: null },
     });
     assert.deepEqual(wake.notification, {
       source: { kind: "monitor" },
@@ -935,6 +902,22 @@ describe("evaluatePullRequestWatch", () => {
     );
     assert.isFalse(result.exhausted);
     assert.equal(result.next.wakes, 0);
+
+    // A failure held while the thread was busy is check news too, even after it passed again.
+    const recovered = evaluate(
+      tired,
+      detail({ checks: [check("lint", "success")] }),
+      [remark("reviewer", "2026-10-02T12:10:00Z")],
+      0,
+      { headSha: "aaaaaaaaaa", failed: [check("lint", "failure")] },
+    );
+    assert.deepEqual(recovered.changes[0], {
+      kind: "checks-failed",
+      failed: [],
+      recovered: [check("lint", "failure")],
+    });
+    assert.isFalse(recovered.exhausted);
+    assert.equal(recovered.next.wakes, 0);
   });
 
   it("stops after the wake limit unless the head moves", () => {

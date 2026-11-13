@@ -8191,10 +8191,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT payload_json, EXISTS (
             SELECT 1 FROM orchestration_v2_projection_runs AS run
             WHERE run.thread_id = orchestration_v2_projection_threads.thread_id
-              AND (
-                run.status IN ('preparing', 'starting', 'running', 'waiting')
-                OR (run.status = 'queued' AND json_extract(run.payload_json, '$.queueHeld') IS NOT 1)
-              )
+              AND run.status IN ('preparing', 'starting', 'running', 'waiting', 'queued')
+              AND (run.status <> 'queued' OR json_extract(run.payload_json, '$.queueHeld') IS NOT 1)
           ) AS busy
           FROM orchestration_v2_projection_threads
           WHERE deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND thread_id = ${threadId}`}

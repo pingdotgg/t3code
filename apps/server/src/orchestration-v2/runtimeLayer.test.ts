@@ -4209,7 +4209,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
       yield* watch(true, "start");
 
-      let failing = ["lint"];
+      let failing: Array<string> = [];
+      let headSha = "ad70160aaa";
       let comments: Array<PullRequestComment> = [];
       const host = Layer.mergeAll(
         NodeServices.layer,
@@ -4222,7 +4223,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 number: 12,
                 at: "2026-10-02T12:00:00.000Z",
               }),
-              headSha: "ad70160aaa",
+              headSha,
               checks: ["lint", "test", "build"].map((name) => ({
                 name,
                 status: failing.includes(name) ? ("failure" as const) : ("success" as const),
@@ -4236,6 +4237,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
               comments,
               commentCount: comments.length,
               commentsTruncated: false,
+              reviewThreadsTruncated: false,
               reviewThreads: [
                 {
                   id: "thread-open",
@@ -4275,6 +4277,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
       yield* reactor.sweep;
+      failing = ["lint"];
+      yield* TestClock.adjust("10 minutes");
+      yield* reactor.sweep;
       assert.deepEqual(
         (yield* wakes).map((message) => message.notification?.summary),
         ["#12: checks failed"],
@@ -4310,8 +4315,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ["#12: checks failed", "#12: checks failed, new comments"],
       );
       const text = told[1]?.text ?? "";
-      assert.include(text, "- Checks failed on ad70160:\n  - test");
-      assert.include(text, "  - build");
+      assert.include(text, "- Checks failed on ad70160:\n  - test\n  - build, passed again since");
       assert.include(text, "Please also cover the empty list.");
       assert.include(
         text,
@@ -4322,10 +4326,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         '- 1 unresolved review thread:\n  - reviewer on src/index.ts:4: "Handle the empty list."',
       );
 
-      yield* finishRuns(threadId);
+      // A failure held on a head the agent has since replaced is not news.
+      failing = ["lint", "test", "build"];
+      yield* TestClock.adjust("10 minutes");
+      yield* reactor.sweep;
+      headSha = "b81c2d3aaa";
+      failing = [];
       yield* TestClock.adjust("10 minutes");
       yield* reactor.sweep;
       assert.lengthOf(yield* wakes, 2);
+      yield* finishRuns(threadId);
+      yield* reactor.sweep;
+      const last = (yield* wakes)[2];
+      assert.strictEqual(last?.notification?.summary, "#12: checks passed");
+      assert.notInclude(last?.text ?? "", "failed");
       yield* watch(false, "end");
     }),
   );
@@ -5484,6 +5498,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* restarted.sweep;
       yield* worker.drain();
       removal = { ...removal, id: "second" };
+      yield* finishRuns(threadId);
       yield* restarted.sweep;
       yield* worker.drain();
       yield* restarted.sweep;
