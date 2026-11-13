@@ -87,6 +87,7 @@ no model. The `rust-*` scenarios spend about five Haiku turns.
 | `conn-provider-claude`  | The Claude provider over the `claude` CLI's stdio                     |
 | `conn-provider-codex`   | The Codex provider over `codex app-server` (JSON-RPC on stdio)        |
 | `conn-provider-support` | Ids, line framing and the process supervisor shared by CLI providers  |
+| `conn-mcp`              | `/mcp`: T3 tools over MCP Streamable HTTP; see its README             |
 | `conn-server`           | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
 
 Dependencies point one way: `conn-server` → `conn-engine` → `conn-provider` → `conn-contract`;

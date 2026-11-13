@@ -1,0 +1,18 @@
+# The T3 tools conn-server serves, one per line. `tools/gen-tools.mjs` writes their
+# definitions from apps/server into src/catalog.jsonl; a test checks every name has a handler.
+orchestrator_capabilities
+delegate_task
+task_status
+task_cancel
+t3_thread_list
+t3_thread_read
+t3_thread_update
+t3_thread_send
+t3_thread_wait
+t3_thread_interrupt
+t3_thread_search
+t3_pending_request
+t3_thread_launch
+t3_project_list
+t3_project_read
+t3_environment_read

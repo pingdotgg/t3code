@@ -24,6 +24,8 @@ pub struct Deps {
     pub providers: Vec<Arc<dyn Provider>>,
     /// Set by `main.rs`; without it the server config streams are not registered.
     pub environment: Option<Arc<Environment>>,
+    /// `/mcp`; `serve.rs` builds it with `routes::mcp::service`.
+    pub mcp: Option<Arc<conn_mcp::McpService>>,
 }
 
 pub fn register_all(table: &mut MethodTable, deps: &Deps) {

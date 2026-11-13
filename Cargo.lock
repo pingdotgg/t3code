@@ -126,6 +126,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "conn-mcp"
+version = "0.1.0"
+dependencies = [
+ "conn-contract",
+ "conn-engine",
+ "getrandom",
+ "http",
+ "serde_json",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
 name = "conn-provider"
 version = "0.1.0"
 dependencies = [
@@ -173,6 +186,7 @@ dependencies = [
  "axum",
  "conn-contract",
  "conn-engine",
+ "conn-mcp",
  "conn-provider",
  "conn-provider-claude",
  "conn-provider-codex",

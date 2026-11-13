@@ -127,11 +127,13 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
     config.projects = projects;
     config.providers = providers.clone();
     let engine: Arc<dyn Engine> = Arc::new(SqliteEngine::open(config).expect("engine"));
-    let deps = Deps {
+    let mut deps = Deps {
         engine: Some(engine.clone()),
         providers,
         environment: Some(environment.clone()),
+        mcp: None,
     };
+    deps.mcp = crate::routes::mcp::service(&deps);
     let state = AppState {
         table: Arc::new(method_table(&deps)),
         auth: auth.clone(),
@@ -151,6 +153,9 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
     let runtime = RuntimeState::new(&addr.ip().to_string(), addr.port(), auth::random_uuid());
     if let Err(error) = runtime.publish(&state_dir) {
         eprintln!("conn-server: could not write server-runtime.json: {error}");
+    }
+    if let Some(mcp) = &state.deps.mcp {
+        mcp.set_listen_address(addr);
     }
     println!("conn-server listening on http://{addr}");
     println!(
