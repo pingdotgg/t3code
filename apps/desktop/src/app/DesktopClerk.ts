@@ -19,6 +19,8 @@ import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/rela
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as DesktopAppActivation from "./DesktopAppActivation.ts";
+import { readOpenFolderArgument } from "./DesktopLinuxFolderMenu.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { openClerkTokenStorage } from "./ClerkTokenStore.ts";
@@ -60,6 +62,7 @@ export class DesktopClerk extends Context.Service<
       never,
       | ElectronApp.ElectronApp
       | ElectronWindow.ElectronWindow
+      | DesktopAppActivation.DesktopAppActivation
       | DesktopWebLinks.DesktopWebLinks
       | Scope.Scope
     >;
@@ -167,6 +170,7 @@ export const make = Effect.gen(function* () {
       const electronApp = yield* ElectronApp.ElectronApp;
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       const webLinks = yield* DesktopWebLinks.DesktopWebLinks;
+      const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
       const context = yield* Effect.context<ElectronWindow.ElectronWindow>();
       const runPromise = Effect.runPromiseWith(context);
 
@@ -220,8 +224,16 @@ export const make = Effect.gen(function* () {
         void runPromise(webLinks.receive(value));
         return true;
       };
+      const openFolder = (argv: ReadonlyArray<string>) => {
+        if (environment.platform !== "linux") return false;
+        const folder = readOpenFolderArgument(argv);
+        if (folder === null) return false;
+        void runPromise(appActivation.openWorkspace(folder));
+        return true;
+      };
       const args = yield* HostProcess.Arguments;
       args.some((value) => startProviderAuthHandoff(value) || openAppLink(value));
+      openFolder(args);
       const openWebLink = (url: string) => {
         if (!DesktopWebLinks.isWebLink(url)) return false;
         void runPromise(webLinks.receive(url));
@@ -239,6 +251,7 @@ export const make = Effect.gen(function* () {
         void runPromise(webLinks.receive(NodeURL.pathToFileURL(path).href));
       });
       handleSecondInstance = (argv) => {
+        if (openFolder(argv ?? [])) return;
         if (
           argv?.some(
             (value) =>

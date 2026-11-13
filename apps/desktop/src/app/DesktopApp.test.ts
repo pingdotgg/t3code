@@ -31,6 +31,7 @@ import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLegacyLocalStorage from "./DesktopLegacyLocalStorage.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
+import * as DesktopLinuxFolderMenu from "./DesktopLinuxFolderMenu.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
@@ -149,6 +150,9 @@ it.effect.each([false, true])(
           Effect.provideService(DesktopUpdates.DesktopUpdates, {
             configure: Effect.void,
           } as unknown as DesktopUpdates.DesktopUpdates["Service"]),
+          Effect.provideService(DesktopLinuxFolderMenu.DesktopLinuxFolderMenu, {
+            register: Effect.void,
+          }),
           Effect.provideService(DesktopLinuxUrlHandler.DesktopLinuxUrlHandler, {
             register: Deferred.succeed(registrationStarted, undefined).pipe(
               Effect.andThen(Deferred.await(releaseRegistration)),

@@ -102,6 +102,9 @@ The `.deb` updates itself like the other desktop builds. It asks for your
 password to install each update. If your desktop has no password prompt, the
 update fails. Download the new `.deb` and install it the same way.
 
+After its first launch, the desktop app adds **Open in T3 Code** for folders to
+Dolphin's **Actions** menu and to the **Scripts** menu in GNOME Files.
+
 The AUR packages currently support x86_64 only; on ARM64, use the AppImage.
 Update AUR installs with your AUR helper, such as `yay -Syu`, instead of the
 in-app updater.
