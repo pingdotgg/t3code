@@ -154,6 +154,18 @@ it.effect.each(["xai", "openrouter"] as const)(
         expect(yield* Effect.flip(service.synthesize(provider, request))).toMatchObject({
           reason: "rate-limit",
         });
+        upstream.mockResolvedValueOnce(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.error(new Error("private stream diagnostic"));
+              },
+            }),
+          ),
+        );
+        const streamFailure = yield* Effect.flip(service.synthesize(provider, request));
+        expect(streamFailure).toHaveProperty("cause");
+        expect(streamFailure.message).not.toContain("private stream diagnostic");
         for (const operation of ["catalog", "synthesis"] as const) {
           let pulls = 0;
           const cancel = vi.fn();

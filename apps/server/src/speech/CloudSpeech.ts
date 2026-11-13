@@ -40,6 +40,8 @@ import { applySpeechAliases } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
 import { decodeSpeechPcm, SpeechInvalidAudioError } from "./SpeechService.ts";
 
+const isSynthesisError = Schema.is(SpeechSynthesisError);
+
 const readSynthesisBody = Effect.fn("CloudSpeech.readSynthesisBody")(function* (
   response: HttpClientResponse.HttpClientResponse,
   provider: SpeechSynthesisProvider,
@@ -47,7 +49,10 @@ const readSynthesisBody = Effect.fn("CloudSpeech.readSynthesisBody")(function* (
 ) {
   const chunks: Uint8Array[] = [];
   let size = 0;
-  const unavailable = () => new SpeechSynthesisError({ provider, reason: "unavailable" });
+  const unavailable = (cause?: unknown) =>
+    isSynthesisError(cause)
+      ? cause
+      : new SpeechSynthesisError({ provider, reason: "unavailable", cause });
   yield* response.stream.pipe(
     Stream.runForEach((chunk) => {
       size += chunk.byteLength;
@@ -215,10 +220,11 @@ export const layer = Layer.effect(
         Effect.flatMap(decodeNativeCodexAuth),
         Effect.map((value) => value.tokens),
         Effect.mapError(
-          () =>
+          (cause) =>
             new SpeechSynthesisError({
               provider: "chatgpt",
               reason: "subscription-login-required",
+              cause,
             }),
         ),
       );
@@ -286,14 +292,19 @@ export const layer = Layer.effect(
           if (!source) return yield* new SpeechSynthesisError({ provider, reason: "missing-key" });
           if (isSecretReference(source)) yield* resolver.invalidate([source]);
           const key = yield* requireSettingsSecret(resolver, source).pipe(
-            Effect.mapError(() => new SpeechSynthesisError({ provider, reason: "unreadable-key" })),
+            Effect.mapError(
+              (cause) => new SpeechSynthesisError({ provider, reason: "unreadable-key", cause }),
+            ),
           );
           if (!isApiKey(key))
             return yield* new SpeechSynthesisError({ provider, reason: "unreadable-key" });
           const current = (yield* credentials).xai;
           if (!current || !sameCredential(source, current))
             return yield* new SpeechSynthesisError({ provider, reason: "key-changed" });
-          const unavailable = () => new SpeechSynthesisError({ provider, reason: "unavailable" });
+          const unavailable = (cause?: unknown) =>
+            isSynthesisError(cause)
+              ? cause
+              : new SpeechSynthesisError({ provider, reason: "unavailable", cause });
           const response = yield* execute(
             HttpClientRequest.get("https://api.x.ai/v1/tts/voices").pipe(
               HttpClientRequest.bearerToken(Redacted.make(key)),
@@ -313,7 +324,10 @@ export const layer = Layer.effect(
             ],
           };
         }
-        const unavailable = () => new SpeechSynthesisError({ provider, reason: "unavailable" });
+        const unavailable = (cause?: unknown) =>
+          isSynthesisError(cause)
+            ? cause
+            : new SpeechSynthesisError({ provider, reason: "unavailable", cause });
         const response = yield* execute(
           HttpClientRequest.get("https://openrouter.ai/api/v1/models?output_modalities=speech"),
         ).pipe(Effect.mapError(unavailable));
@@ -345,7 +359,10 @@ export const layer = Layer.effect(
     );
     const synthesize = Effect.fn("CloudSpeech.synthesize")(
       function* (provider: SpeechSynthesisProvider, request: SpeechSynthesisRequest) {
-        const unavailable = () => new SpeechSynthesisError({ provider, reason: "unavailable" });
+        const unavailable = (cause?: unknown) =>
+          isSynthesisError(cause)
+            ? cause
+            : new SpeechSynthesisError({ provider, reason: "unavailable", cause });
         let key: string | undefined;
         let source: SettingsSecretValue | undefined;
         const subscription = provider === "chatgpt" ? yield* subscriptionAuth() : null;
@@ -355,7 +372,9 @@ export const layer = Layer.effect(
           if (!source) return yield* new SpeechSynthesisError({ provider, reason: "missing-key" });
           if (isSecretReference(source)) yield* resolver.invalidate([source]);
           key = yield* requireSettingsSecret(resolver, source).pipe(
-            Effect.mapError(() => new SpeechSynthesisError({ provider, reason: "unreadable-key" })),
+            Effect.mapError(
+              (cause) => new SpeechSynthesisError({ provider, reason: "unreadable-key", cause }),
+            ),
           );
           if (!isApiKey(key))
             return yield* new SpeechSynthesisError({ provider, reason: "unreadable-key" });
