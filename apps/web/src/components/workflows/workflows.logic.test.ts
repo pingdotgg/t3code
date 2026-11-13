@@ -2,13 +2,16 @@ import type { WorkflowQuestion, WorkflowRun, WorkflowStep } from "@t3tools/contr
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  allWorkflowRunNodes,
   buildWorkflowTimeline,
   defaultWorkflowRunId,
   groupWorkflowRuns,
   readWorkflowQuestion,
   workflowBeatSpan,
   workflowResultLines,
+  workflowAnswer,
   workflowRunActivity,
+  workflowTriggerLine,
 } from "./workflows.logic";
 
 const at = (minute: number, second = 0) =>
@@ -45,6 +48,7 @@ const step = (
   detail: null,
   threadId: null,
   environmentId: null,
+  result: null,
   startedAt: from,
   endedAt: to,
   ...fields,
@@ -58,31 +62,75 @@ const question = (runId: string, request: unknown = { title: "Ship?" }): Workflo
 });
 
 describe("groupWorkflowRuns", () => {
-  it("puts what waits on a person first, and a piece of work in one place", () => {
+  const registered = [
+    { name: "release", version: 1, triggers: ["webhook tags"] },
+    { name: "check", version: 1, triggers: [] },
+    { name: "report", version: 2, triggers: ["daily at 09:00"] },
+  ];
+
+  it("puts what waits on a person first, then each workflow with its own runs", () => {
     const groups = groupWorkflowRuns(
+      registered,
       [
         run("done", { status: "completed", endedAt: at(9) }),
         run("busy"),
         run("parent", { status: "waiting", detail: "check" }),
         // The child is what is paused, so its parent is the entry that needs someone.
-        run("child", { status: "paused", parentRunId: "parent", parentStep: "check" }),
-        run("asks", { status: "waiting", detail: "approve" }),
-        run("orphan", { status: "completed", endedAt: at(8), parentRunId: "gone" }),
+        run("child", {
+          workflow: "check",
+          status: "paused",
+          parentRunId: "parent",
+          parentStep: "check",
+        }),
+        run("asks", { workflow: "old", status: "waiting", detail: "approve" }),
+        run("orphan", { workflow: "old", status: "completed", endedAt: at(8), parentRunId: "x" }),
       ],
       [question("asks")],
     );
     expect(groups.needsYou.map((node) => node.run.runId)).toEqual(["parent", "asks"]);
     expect(groups.needsYou[0]?.children.map((node) => node.run.runId)).toEqual(["child"]);
-    expect(groups.active.map((node) => node.run.runId)).toEqual(["busy"]);
-    expect(groups.finished.map((node) => node.run.runId)).toEqual(["done", "orphan"]);
+    expect(
+      groups.workflows.map((section) => [
+        section.name,
+        workflowTriggerLine(section),
+        [...section.active, ...section.finished].map((node) => node.run.runId),
+      ]),
+    ).toEqual([
+      // What is under way comes first, then what has run, then what only exists.
+      ["release", "Starts on webhook tags", ["busy", "done"]],
+      ["old", "No longer registered on this server", ["orphan"]],
+      ["check", "Runs as part of other workflows", []],
+      ["report", "Starts on daily at 09:00", []],
+    ]);
+    expect(allWorkflowRunNodes(groups).map((node) => node.run.runId)).toEqual([
+      "parent",
+      "child",
+      "asks",
+      "busy",
+      "done",
+      "orphan",
+    ]);
     // Opening the page lands on the first thing to act on, not on its untroubled parent.
     expect(defaultWorkflowRunId(groups)).toBe("child");
   });
 
-  it("opens the newest run when nothing waits on anyone", () => {
-    const groups = groupWorkflowRuns([run("old", { endedAt: at(2) }), run("live")], []);
-    expect(defaultWorkflowRunId(groups)).toBe("live");
-    expect(defaultWorkflowRunId(groupWorkflowRuns([], []))).toBeNull();
+  it("opens a run that is under way when nothing waits on anyone, else the newest", () => {
+    const quiet = groupWorkflowRuns(
+      registered,
+      [run("old", { endedAt: at(2), updatedAt: at(2) }), run("live", { workflow: "report" })],
+      [],
+    );
+    expect(defaultWorkflowRunId(quiet)).toBe("live");
+    const over = groupWorkflowRuns(
+      registered,
+      [
+        run("first", { endedAt: at(2), updatedAt: at(2) }),
+        run("last", { workflow: "report", endedAt: at(5), updatedAt: at(5) }),
+      ],
+      [],
+    );
+    expect(defaultWorkflowRunId(over)).toBe("last");
+    expect(defaultWorkflowRunId(groupWorkflowRuns(registered, [], []))).toBeNull();
   });
 });
 
@@ -196,5 +244,20 @@ describe("readWorkflowQuestion", () => {
       choices: [],
       body: null,
     });
+  });
+});
+
+describe("workflowAnswer", () => {
+  it("reads a person's answer off a question's result", () => {
+    expect(workflowAnswer({ choice: "Ship", reason: " " })).toEqual({
+      choice: "Ship",
+      reason: null,
+    });
+    expect(workflowAnswer({ choice: "Hold", reason: "Too risky" })).toEqual({
+      choice: "Hold",
+      reason: "Too risky",
+    });
+    expect(workflowAnswer("done")).toBeNull();
+    expect(workflowAnswer(null)).toBeNull();
   });
 });

@@ -21,6 +21,7 @@ import {
   CircleHelpIcon,
   CornerDownRightIcon,
   HourglassIcon,
+  MessagesSquareIcon,
   MoonIcon,
   SplitIcon,
   WorkflowIcon,
@@ -52,9 +53,11 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   buildWorkflowTimeline,
+  allWorkflowRunNodes,
   defaultWorkflowRunId,
-  flattenWorkflowRunNodes,
   groupWorkflowRuns,
+  workflowAnswer,
+  workflowTriggerLine,
   readWorkflowQuestion,
   workflowBeatSpan,
   workflowResultLines,
@@ -68,8 +71,10 @@ import {
 
 const WORKFLOWS_GUIDE_URL = "https://github.com/pingdotgg/t3code/blob/main/docs/user/workflows.md";
 const LINK_CLASS_NAME = "underline underline-offset-2 hover:text-foreground";
-// A history is read from the top; the rest is one click away instead of a long page to scroll.
-const FINISHED_SHOWN = 15;
+// Per workflow: a few say how it has gone lately, the rest are one click away.
+const FINISHED_SHOWN = 3;
+// An agent that returns a dozen fields has said the gist in the first few.
+const RESULT_LINES_SHOWN = 4;
 
 export interface WorkflowsSearch {
   readonly env?: string;
@@ -200,7 +205,7 @@ export function WorkflowsEnvironment({
   readonly onSelect: (runId: string | null) => void;
 }) {
   const live = useEnvironmentQuery(serverEnvironment.workflowsLive({ environmentId, input: {} }));
-  const [showAllFinished, setShowAllFinished] = useState(false);
+  const [opened, setOpened] = useState<ReadonlyArray<string>>([]);
   const snapshot = live.data;
   if (live.error) {
     return <WorkflowsEmpty title="Could not load workflow runs" description={live.error} />;
@@ -212,7 +217,7 @@ export function WorkflowsEnvironment({
       </p>
     );
   }
-  if (snapshot.runs.length === 0) {
+  if (snapshot.runs.length === 0 && snapshot.workflows.length === 0) {
     return (
       <WorkflowsEmpty
         title="No workflow runs yet"
@@ -234,37 +239,24 @@ export function WorkflowsEnvironment({
       />
     );
   }
-  const groups = groupWorkflowRuns(snapshot.runs, snapshot.questions);
-  const all = flattenWorkflowRunNodes([...groups.needsYou, ...groups.active, ...groups.finished]);
+  const groups = groupWorkflowRuns(snapshot.workflows, snapshot.runs, snapshot.questions);
+  const all = allWorkflowRunNodes(groups);
   const shownRunId =
     all.find((node) => node.run.runId === selectedRunId)?.run.runId ?? defaultWorkflowRunId(groups);
   const shown = all.find((node) => node.run.runId === shownRunId) ?? null;
-  const finished = showAllFinished ? groups.finished : groups.finished.slice(0, FINISHED_SHOWN);
-  const list = (title: string, nodes: ReadonlyArray<WorkflowRunNode>, tone?: "attention") =>
-    nodes.length === 0 ? null : (
-      <section aria-label={title} className="space-y-1">
-        <h2
-          className={cn(
-            "flex items-center gap-2 px-2 text-xs font-medium",
-            tone === "attention" ? "text-foreground" : "text-muted-foreground",
-          )}
-        >
-          {title}
-          <span className="text-muted-foreground tabular-nums">{nodes.length}</span>
-        </h2>
-        <ul>
-          {nodes.map((node) => (
-            <WorkflowRunListItem
-              key={node.run.runId}
-              node={node}
-              depth={0}
-              shownRunId={shownRunId}
-              onSelect={onSelect}
-            />
-          ))}
-        </ul>
-      </section>
-    );
+  const rows = (nodes: ReadonlyArray<WorkflowRunNode>) => (
+    <ul>
+      {nodes.map((node) => (
+        <WorkflowRunListItem
+          key={node.run.runId}
+          node={node}
+          depth={0}
+          shownRunId={shownRunId}
+          onSelect={onSelect}
+        />
+      ))}
+    </ul>
+  );
   return (
     <div className="flex min-h-0 flex-1">
       {/* Below md there is room for one of the two: the list, or the run picked from it. */}
@@ -276,14 +268,46 @@ export function WorkflowsEnvironment({
       >
         <ScrollArea className="min-h-0 flex-1">
           <nav aria-label="Workflow runs" className="space-y-5 p-3">
-            {list("Needs you", groups.needsYou, "attention")}
-            {list("Under way", groups.active)}
-            {list("Finished", finished)}
-            {groups.finished.length > finished.length ? (
-              <Button size="sm" variant="ghost" onClick={() => setShowAllFinished(true)}>
-                Show {groups.finished.length - finished.length} more
-              </Button>
-            ) : null}
+            {groups.needsYou.length === 0 ? null : (
+              <section aria-label="Needs you" className="space-y-1">
+                <h2 className="flex items-center gap-2 px-2 text-xs font-medium text-foreground">
+                  Needs you
+                  <span className="text-muted-foreground tabular-nums">
+                    {groups.needsYou.length}
+                  </span>
+                </h2>
+                {rows(groups.needsYou)}
+              </section>
+            )}
+            {groups.workflows.map((section) => {
+              // The finished ones are history: a few say how it has gone, the rest wait a click.
+              const open = opened.includes(section.name);
+              const finished = open ? section.finished : section.finished.slice(0, FINISHED_SHOWN);
+              return (
+                <section key={section.name} aria-label={section.name} className="space-y-1">
+                  <div className="px-2">
+                    <h2 className="font-mono text-xs font-medium text-foreground">
+                      {section.name}
+                    </h2>
+                    <p className="text-xs text-muted-foreground">{workflowTriggerLine(section)}</p>
+                  </div>
+                  {rows(section.active)}
+                  {rows(finished)}
+                  {section.finished.length > finished.length ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setOpened([...opened, section.name])}
+                    >
+                      {section.finished.length - finished.length} earlier
+                    </Button>
+                  ) : null}
+                  {section.neverRan ? (
+                    <p className="px-2 text-xs text-muted-foreground">Has not run yet.</p>
+                  ) : null}
+                </section>
+              );
+            })}
           </nav>
         </ScrollArea>
       </div>
@@ -345,7 +369,9 @@ function WorkflowRunListItem({
           </Badge>
         </span>
         <span className="flex min-w-0 gap-1.5 text-xs text-muted-foreground">
-          <span className="min-w-0 flex-1 truncate">{activity ?? run.workflow}</span>
+          <span className="min-w-0 flex-1 truncate">
+            {activity ?? (depth > 0 ? run.workflow : "")}
+          </span>
           <span className="shrink-0">
             <RelativeLabel value={run.updatedAt} />
           </span>
@@ -653,8 +679,13 @@ function beatSummary(beat: WorkflowBeat, nowMs: number): string {
   switch (beat.kind) {
     case "agent":
       return under ? `Agent working for ${length}` : `Agent, ${length}`;
-    case "ask":
-      return under ? `Waiting for your answer for ${length}` : `Answered after ${length}`;
+    case "ask": {
+      if (under) return `Waiting for your answer for ${length}`;
+      const answer = workflowAnswer(beat.result);
+      return answer === null
+        ? `Not answered in ${length}`
+        : `Answered “${answer.choice}” after ${length}`;
+    }
     case "wait":
       return under ? `Waiting for a signal for ${length}` : `Waited ${length}`;
     case "sleep": {
@@ -715,7 +746,7 @@ function WorkflowBeatRow({
           <WorkflowThreadLink
             environmentId={environmentId}
             thread={beat.thread}
-            label={under ? "Watch the agent" : "Open thread"}
+            label={under ? "Watch live" : "Transcript"}
           />
         )}
         {beat.childRun === null ? null : (
@@ -741,7 +772,49 @@ function WorkflowBeatRow({
       {failed && beat.detail ? (
         <p className="text-xs break-words whitespace-pre-wrap text-destructive">{beat.detail}</p>
       ) : null}
+      <WorkflowBeatResult beat={beat} />
     </li>
+  );
+}
+
+/** What a beat produced, as far as a person wants it in passing; all of it on request. */
+function WorkflowBeatResult({ beat }: { readonly beat: WorkflowBeat }) {
+  const [open, setOpen] = useState(false);
+  if (beat.kind === "ask") {
+    const reason = workflowAnswer(beat.result)?.reason ?? null;
+    return reason === null ? null : (
+      <p className="text-xs break-words text-muted-foreground">Because: {reason}</p>
+    );
+  }
+  // An invoked run's outcome is on the run itself, a click away.
+  if (beat.kind === "run") return null;
+  const lines = workflowResultLines(beat.result);
+  if (lines.length === 0) return null;
+  const long = lines.length > RESULT_LINES_SHOWN || lines.some((line) => line.value.length > 240);
+  return (
+    <div className="space-y-0.5 rounded-md bg-muted/50 px-2 py-1.5 text-xs">
+      {(open ? lines : lines.slice(0, RESULT_LINES_SHOWN)).map((line) => (
+        <p
+          key={line.label ?? line.value}
+          className={cn("break-words whitespace-pre-wrap", open ? null : "line-clamp-2")}
+        >
+          {line.label === null ? null : (
+            <span className="text-muted-foreground">{line.label}: </span>
+          )}
+          {line.value}
+        </p>
+      ))}
+      {long ? (
+        <button
+          type="button"
+          aria-expanded={open}
+          className={cn("cursor-pointer text-muted-foreground", LINK_CLASS_NAME)}
+          onClick={() => setOpen(!open)}
+        >
+          {open ? "Show less" : "Show all of it"}
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -804,14 +877,20 @@ function WorkflowThreadLink({
     return <span className="text-xs text-muted-foreground">Thread on {threadEnvironmentId}</span>;
   }
   return (
-    <Link
-      to="/$environmentId/$threadId"
-      params={buildThreadRouteParams(
-        scopeThreadRef(threadEnvironmentId, ThreadId.make(thread.threadId)),
-      )}
-      className={cn("text-xs text-muted-foreground", LINK_CLASS_NAME)}
+    <Button
+      size="sm"
+      variant="outline"
+      render={
+        <Link
+          to="/$environmentId/$threadId"
+          params={buildThreadRouteParams(
+            scopeThreadRef(threadEnvironmentId, ThreadId.make(thread.threadId)),
+          )}
+        />
+      }
     >
+      <MessagesSquareIcon />
       {label}
-    </Link>
+    </Button>
   );
 }

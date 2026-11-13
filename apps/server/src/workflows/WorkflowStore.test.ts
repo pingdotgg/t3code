@@ -12,6 +12,7 @@ import Migration0101 from "../persistence/Migrations/101_WorkflowStepEnvironment
 import Migration0102 from "../persistence/Migrations/102_WorkflowRunInput.ts";
 import Migration0103 from "../persistence/Migrations/103_WorkflowStore.ts";
 import Migration0104 from "../persistence/Migrations/104_WorkflowRunParent.ts";
+import Migration0105 from "../persistence/Migrations/105_WorkflowStepResult.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
 const withStore = <A, E>(use: Effect.Effect<A, E, WorkflowStore.WorkflowStore>) =>
@@ -22,7 +23,15 @@ const withStore = <A, E>(use: Effect.Effect<A, E, WorkflowStore.WorkflowStore>) 
     const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
     const migrated = Layer.effectDiscard(
       Effect.all(
-        [Migration0099, Migration0100, Migration0101, Migration0102, Migration0103, Migration0104],
+        [
+          Migration0099,
+          Migration0100,
+          Migration0101,
+          Migration0102,
+          Migration0103,
+          Migration0104,
+          Migration0105,
+        ],
         { discard: true },
       ),
     );
