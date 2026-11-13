@@ -120,11 +120,12 @@ import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
+import { useCompactComposerEditor } from "./ThreadComposerParts";
 
 export const COMPOSER_COLLAPSED_CHROME = 60;
 
 const NO_MACHINES: ReadonlyArray<ComposerEnvironmentCandidate> = [];
-const COLLAPSED_EDITOR_DEFAULT_INSET = 6;
+export const COLLAPSED_EDITOR_DEFAULT_INSET = 6;
 // iOS puts line-height slack above glyphs. DM Sans's lowercase midline is
 // descender (0.31em) + half x-height (0.504em) above the line bottom.
 const LOWERCASE_MIDLINE_EM = 0.562;
@@ -133,74 +134,9 @@ function lowercaseMidline(text: ScaledTextRole): number {
   return text.lineHeight - LOWERCASE_MIDLINE_EM * text.fontSize;
 }
 
-function collapsedEditorInset(text: ScaledTextRole): number {
+export function collapsedEditorInset(text: ScaledTextRole): number {
   const shift = lowercaseMidline(text) - lowercaseMidline(MOBILE_TYPOGRAPHY.body);
   return Math.max(0, Math.round(COLLAPSED_EDITOR_DEFAULT_INSET - shift));
-}
-
-function useCompactComposerEditor(text: ScaledTextRole, value: string) {
-  const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
-  const [compactWidth, setCompactWidth] = useState(0);
-  const contentHeight = contentSize.height;
-  const rowWidth = useSharedValue(0);
-  const editorX = useSharedValue(0);
-  const editorWidth = useSharedValue(0);
-  const inset =
-    Platform.OS === "android" ? COLLAPSED_EDITOR_DEFAULT_INSET : collapsedEditorInset(text);
-  const minimum = Math.max(INLINE_EDITOR_HEIGHT, Math.ceil(text.lineHeight) + 2 * inset);
-  const height = Math.max(
-    minimum,
-    Math.min(text.lineHeight * 4 + 2 * inset, contentHeight + 2 * inset),
-  );
-  // A line that fits the expanded editor may still overflow its compact slot.
-  // Compare its measured width too so widening cannot trigger a collapse loop.
-  const isExpanded =
-    value.length > 0 &&
-    (contentHeight > text.lineHeight * 1.5 ||
-      (compactWidth > 0 && contentSize.width > compactWidth));
-  const compactRowHeight = Math.max(44, minimum);
-  const isRTL = I18nManager.isRTL;
-  const editorStyle = useAnimatedStyle(() => ({
-    position: "absolute",
-    overflow: "hidden",
-    height,
-    ...(isExpanded
-      ? { left: 14, right: 14 }
-      : compactEditorInsets({
-          slotX: editorX.value,
-          slotWidth: editorWidth.value,
-          rowWidth: rowWidth.value,
-          isRTL,
-        })),
-    // The full-width editor must move above the controls in the same frame it widens.
-    bottom: isExpanded ? 52 : (compactRowHeight - minimum) / 2,
-  }));
-  return {
-    isExpanded,
-    containerStyle: { height: isExpanded ? height + 52 : compactRowHeight },
-    editorStyle,
-    onRowLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
-      rowWidth.set(event.nativeEvent.layout.width);
-    },
-    onEditorLayout: (event: { nativeEvent: { layout: { x: number; width: number } } }) => {
-      // The expanded toolbar gives this slot to the model control. Keep the
-      // compact geometry for the return transition, rather than recording zero.
-      if (!isExpanded) {
-        editorX.set(event.nativeEvent.layout.x);
-        editorWidth.set(event.nativeEvent.layout.width);
-        setCompactWidth(Math.max(0, event.nativeEvent.layout.width - 8));
-      }
-    },
-    editorProps: {
-      singleLineCentered: !isExpanded,
-      scrollEnabled: Platform.OS === "android" || contentHeight >= text.lineHeight * 4,
-      contentInsetVertical: inset,
-      onContentSizeChange: (size: { width: number; height: number }) => {
-        setContentSize(size);
-      },
-      style: { flex: 1 },
-    },
-  };
 }
 
 export interface ThreadComposerProps {
@@ -281,7 +217,7 @@ const composerHeightTransition: LayoutAnimationFunction = (values) => {
 const COMPOSER_LAYOUT_TRANSITION = Platform.OS === "android" ? undefined : composerHeightTransition;
 // Share of the one-row composer the draft keeps; a long model name truncates first.
 const INLINE_EDITOR_MIN_WIDTH = "40%";
-const INLINE_EDITOR_HEIGHT = 36;
+export const INLINE_EDITOR_HEIGHT = 36;
 
 const COMPOSER_ATTACHMENT_ENTERING =
   Platform.OS === "android"

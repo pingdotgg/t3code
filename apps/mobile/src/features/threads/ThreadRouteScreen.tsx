@@ -120,13 +120,14 @@ import {
 } from "./thread-inspector-preview";
 import type { ThreadInspectorTarget } from "./thread-inspector-navigation";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { LiveThreadRouteController } from "./ThreadRouteScreenParts";
 
 function InspectorPaneRoleActivation() {
   useAdaptiveWorkspacePaneRole("inspector");
   return null;
 }
 
-function firstRouteParam(value: string | string[] | undefined): string | null {
+export function firstRouteParam(value: string | string[] | undefined): string | null {
   const first = Array.isArray(value) ? value[0] : value;
   return first === undefined || first.trim().length === 0 ? null : first;
 }
@@ -151,7 +152,7 @@ function ThreadRouteFallbackLayout(props: { readonly children: ReactNode }) {
   );
 }
 
-function OpeningThreadLoadingScreen() {
+export function OpeningThreadLoadingScreen() {
   return (
     <ThreadRouteFallbackLayout>
       <LoadingScreen
@@ -171,13 +172,13 @@ type ThreadRouteScreenRouteProps = StaticScreenProps<{
   readonly prompt?: string | string[];
 }>;
 
-interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
+export interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
   readonly inspectorPresentation?: ThreadInspectorPresentation;
   readonly onReturnToThread?: () => void;
   readonly renderInspector?: (headerInset: number) => ReactNode;
 }
 
-function ThreadUnavailableScreen(props: {
+export function ThreadUnavailableScreen(props: {
   readonly actionLabel: string;
   readonly onAction: () => void;
 }) {
@@ -205,7 +206,7 @@ function ThreadUnavailableScreen(props: {
 }
 
 /** A thread that can't load opens a new task in its environment instead of a dead end. */
-function UnavailableThreadDraftRedirect(props: { readonly environmentId: EnvironmentId }) {
+export function UnavailableThreadDraftRedirect(props: { readonly environmentId: EnvironmentId }) {
   const navigation = useNavigation();
   const projects = useProjects();
   const openDraft = useEffectEvent(() => {
@@ -244,109 +245,7 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
   );
 }
 
-function LiveThreadRouteController(props: ThreadRouteScreenProps) {
-  useAndroidWorkspaceBack("threads");
-  const connectionsReady = useConnectionsReady();
-  const { connectionState } = useRemoteConnectionStatus();
-  const { selectedThread } = useThreadSelection();
-  const params = props.route.params ?? {};
-  const environmentIdRaw = firstRouteParam(params.environmentId);
-  const threadIdRaw = firstRouteParam(params.threadId);
-  const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
-  const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
-  const routeEnvironmentShellState = useEnvironmentShellReadiness(environmentId);
-  const { onReconnectEnvironment } = useRemoteConnections();
-  const navigation = useNavigation();
-  const routeName = useRoute().name;
-  const routeConnectionState =
-    routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
-  const routeThreadKey =
-    environmentId !== null && threadIdRaw !== null
-      ? scopedThreadKey(environmentId, ThreadId.make(threadIdRaw))
-      : null;
-  const selectedThreadKey =
-    selectedThread === null
-      ? null
-      : scopedThreadKey(selectedThread.environmentId, selectedThread.id);
-  const selectedThreadDetailState = useSelectedThreadDetailState();
-  const detailError = selectedThreadDetailState.error;
-  const [errorBeforeConnected, setErrorBeforeConnected] = useState(() =>
-    routeConnectionState === "connected" ? Option.none<string>() : detailError,
-  );
-  if (routeConnectionState !== "connected" && errorBeforeConnected !== detailError) {
-    setErrorBeforeConnected(detailError);
-  }
-  const withInspectorHeader = (content: ReactNode) => (
-    <>
-      {props.inspectorPresentation ? (
-        <ThreadInspectorHeader
-          title={selectedThread?.title ?? "Thread"}
-          {...props.inspectorPresentation}
-        />
-      ) : null}
-      {content}
-    </>
-  );
-
-  if (environmentId === null || threadIdRaw === null) {
-    return withInspectorHeader(<OpeningThreadLoadingScreen />);
-  }
-
-  if (selectedThread !== null && selectedThreadKey === routeThreadKey) {
-    return withInspectorHeader(
-      <ThreadRouteContent {...props} selectedThreadDetailState={selectedThreadDetailState} />,
-    );
-  }
-
-  const stillHydrating = threadRouteIsHydrating({
-    isLoadingConnections: !connectionsReady,
-    environmentRegistered: routeEnvironmentRuntime !== null,
-    localCacheRead:
-      routeEnvironmentShellState.cacheRead &&
-      selectedThreadDetailState !== EMPTY_ENVIRONMENT_THREAD_STATE,
-    connectionState: routeConnectionState,
-    shellStatus: routeEnvironmentShellState.status,
-    shellHasError: routeEnvironmentShellState.hasError,
-    detailStatus: selectedThreadDetailState.status,
-    detailHasError: threadDetailErrorIsCurrent({
-      connectionState: routeConnectionState,
-      error: detailError,
-      errorBeforeConnected,
-    }),
-  });
-
-  if (stillHydrating) {
-    return withInspectorHeader(<OpeningThreadLoadingScreen />);
-  }
-
-  if (
-    routeName === "Thread" &&
-    !props.inspectorPresentation &&
-    threadRouteOpensDraft({
-      connectionState: routeConnectionState,
-      detailStatus: selectedThreadDetailState.status,
-    })
-  ) {
-    return <UnavailableThreadDraftRedirect environmentId={environmentId} />;
-  }
-
-  return withInspectorHeader(
-    <ThreadUnavailableScreen
-      actionLabel={
-        routeEnvironmentRuntime === null ? "Manage environments" : "Reconnect environment"
-      }
-      onAction={() => {
-        if (routeEnvironmentRuntime !== null) {
-          onReconnectEnvironment(environmentId);
-          return;
-        }
-        openSettings(navigation, "SettingsEnvironments");
-      }}
-    />,
-  );
-}
-
-function ThreadRouteContent(
+export function ThreadRouteContent(
   props: ThreadRouteScreenProps & {
     readonly selectedThreadDetailState: ReturnType<typeof useSelectedThreadDetailState>;
   },

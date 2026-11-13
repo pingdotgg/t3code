@@ -104,15 +104,16 @@ import Animated, {
 import { useAssetUrl } from "../../state/assets";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
+import { ThreadWorkLogRow } from "./thread-work-logParts";
 
 const SHIMMER_WIDTH = 72;
 const SHIMMER_SWEEP_MS = 1_350;
 const SHIMMER_PAUSE_MS = 1_450;
 const SHIMMER_ICON_AND_GAP_WIDTH = 30;
 export const THREAD_DISCLOSURE_TRANSITION_MS = 180;
-const WORK_LOG_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
-const WORK_LOG_DETAIL_ENTER_TRANSITION = FadeIn.duration(140);
-const WORK_LOG_DETAIL_EXIT_TRANSITION = FadeOut.duration(120);
+export const WORK_LOG_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
+export const WORK_LOG_DETAIL_ENTER_TRANSITION = FadeIn.duration(140);
+export const WORK_LOG_DETAIL_EXIT_TRANSITION = FadeOut.duration(120);
 type WorkContentIcon =
   | AppSymbolName
   | "browser"
@@ -121,7 +122,7 @@ type WorkContentIcon =
   | "t3-code"
   | "pull-request";
 
-function WorkLogIcon(props: {
+export function WorkLogIcon(props: {
   readonly icon: WorkContentIcon;
   readonly color: ColorValue;
   readonly colorClassName?: string;
@@ -384,7 +385,7 @@ export function ShimmeringWorkContent(props: {
   );
 }
 
-function workRowSymbolName(icon: ThreadFeedActivity["icon"]): WorkContentIcon {
+export function workRowSymbolName(icon: ThreadFeedActivity["icon"]): WorkContentIcon {
   switch (icon) {
     case "agent":
       return { ios: "sparkles", android: "auto_awesome" };
@@ -427,7 +428,7 @@ function workRowSymbolName(icon: ThreadFeedActivity["icon"]): WorkContentIcon {
 
 // Animate only fresh rows; virtualization remounts old rows during scrolling.
 const FRESH_ROW_WINDOW_MS = 3_000;
-function isFreshRow(createdAt: string): boolean {
+export function isFreshRow(createdAt: string): boolean {
   const timestamp = Date.parse(createdAt);
   return Number.isFinite(timestamp) && Date.now() - timestamp < FRESH_ROW_WINDOW_MS;
 }
@@ -466,7 +467,7 @@ export function collapsedWorkLogHeight(
   );
 }
 
-interface ThreadWorkLogProps {
+export interface ThreadWorkLogProps {
   readonly continuesWorkLog?: boolean | undefined;
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
   readonly anchorKey: string;
@@ -838,7 +839,7 @@ function workLogRowKey(row: ThreadFeedActivity): string {
   return row.id;
 }
 
-function WorkspacePreparationRetryButton(props: {
+export function WorkspacePreparationRetryButton(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly runId: RunId;
@@ -874,7 +875,7 @@ function WorkspacePreparationRetryButton(props: {
   );
 }
 
-function ReplCodeText({
+export function ReplCodeText({
   code,
   theme,
 }: {
@@ -905,422 +906,6 @@ function ReplCodeText({
     </Text>
   );
 }
-
-const ThreadWorkLogRow = function ThreadWorkLogRow(
-  props: Omit<
-    ThreadWorkLogProps,
-    | "continuesWorkLog"
-    | "activities"
-    | "copiedRowId"
-    | "edgeFadeColor"
-    | "expandedRows"
-    | "rowSizing"
-    | "scrollPositions"
-  > & {
-    readonly row: ThreadFeedActivity;
-    readonly copied: boolean;
-    readonly expanded: boolean;
-  },
-) {
-  const { row, expanded } = props;
-  const openLinkedThread = useOpenLinkedThread();
-  const streamsOutput =
-    useCommandOutputStreaming(props.environmentId) &&
-    row.projectedItem.item.type === "command_execution";
-  const fetchedDetail = useTurnItemDetail(
-    expanded && row.fetchesDetail && !streamsOutput
-      ? { environmentId: props.environmentId, row: row.projectedItem }
-      : null,
-  );
-  const failureItem = row.projectedItem.item;
-  if (failureItem.type === "error" && failureItem.status === "failed") {
-    const warning = failureItem.failure.class === "usage_limit";
-    const timestamp = new Date(row.createdAt);
-    const resetAt = failureItem.failure.resetAt;
-    // The reset time is the viewer's local time; naming the zone keeps it unambiguous.
-    const resetTime = resetAt
-      ? `${new Date(resetAt).toLocaleString(undefined, {
-          month: "short",
-          day: "numeric",
-          hour: "numeric",
-          minute: "2-digit",
-        })} (${new Intl.DateTimeFormat().resolvedOptions().timeZone})`
-      : null;
-    const label = warning
-      ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
-      : row.summary;
-    return (
-      <WorkLogPressable
-        accessibilityLabel={warning ? label : `${row.summary}: ${failureItem.failure.message}`}
-        accessibilityHint="Long press to copy."
-        onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
-      >
-        <View className="flex-1 py-1">
-          <View className="flex-row items-center gap-1.5">
-            <WorkLogIconSlot>
-              <WorkLogIcon
-                icon="exclamationmark.circle"
-                color={props.iconSubtleColor}
-                colorClassName={warning ? "accent-warning-foreground" : "accent-danger-foreground"}
-              />
-            </WorkLogIconSlot>
-            <Text
-              className={
-                warning
-                  ? "min-w-0 flex-1 font-t3-medium text-sm text-warning-foreground"
-                  : "min-w-0 flex-1 font-t3-medium text-sm text-adaptive-rose-600-400"
-              }
-            >
-              {label}
-            </Text>
-            {props.copied ? (
-              <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
-                Copied
-              </Text>
-            ) : null}
-            <Text
-              accessibilityLabel={timestamp.toLocaleString()}
-              className="shrink-0 text-xs text-foreground-subtle"
-            >
-              {timestamp.toLocaleString(undefined, {
-                month: "short",
-                day: "numeric",
-                hour: "numeric",
-                minute: "2-digit",
-              })}
-            </Text>
-          </View>
-          {!warning ? (
-            <Text selectable className="ml-7 text-sm text-foreground">
-              {failureItem.failure.message}
-            </Text>
-          ) : null}
-          {failureItem.failure.code === ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE &&
-          failureItem.runId !== null ? (
-            <WorkspacePreparationRetryButton
-              environmentId={props.environmentId}
-              threadId={failureItem.threadId}
-              runId={failureItem.runId}
-            />
-          ) : null}
-        </View>
-      </WorkLogPressable>
-    );
-  }
-  const notifiedSubagentThreadId =
-    row.projectedItem.item.type === "notification"
-      ? notificationChildThreadId(row.projectedItem.item.source)
-      : undefined;
-  const canExpand = row.canExpand && notifiedSubagentThreadId === undefined;
-  const reasoning = row.projectedItem.item.type === "reasoning" ? row.projectedItem.item : null;
-  const fetchedItem = fetchedDetail.data?.item ?? null;
-  const isRead = toolGroupAction(row.workEntry) === "read";
-  const shownItem = fetchedItem ?? row.projectedItem.item;
-  const call =
-    expanded && !isRead && shownItem.type === "command_execution"
-      ? toolCallLines({ command: shownItem.input })
-      : expanded && !isRead && shownItem.type === "dynamic_tool"
-        ? toolCallLines({ args: shownItem.input })
-        : expanded && shownItem.type === "file_search"
-          ? toolCallLines({ args: { pattern: shownItem.pattern } })
-          : expanded && shownItem.type === "web_search"
-            ? toolCallLines({ args: { query: shownItem.patterns?.join(", ") } })
-            : null;
-  const failedExitCode =
-    call && shownItem.type === "command_execution" && shownItem.exitCode
-      ? shownItem.exitCode
-      : null;
-  const fullDetail =
-    expanded && !reasoning && !call
-      ? fetchedItem && !isRead
-        ? formatItemFullDetail(row.projectedItem, fetchedItem)
-        : row.getFullDetail()
-      : null;
-  const outputImages = expanded && fetchedItem ? turnItemOutputImages(fetchedItem) : [];
-  const viewedImagePath = workEntryViewedImagePath(row.workEntry);
-  const fetchedOutput =
-    !expanded || streamsOutput
-      ? null
-      : shownItem.type === "file_search" || shownItem.type === "web_search"
-        ? turnItemOutputText(shownItem)
-        : fetchedItem
-          ? (turnItemOutputText(fetchedItem) ??
-            (outputImages.length > 0 || viewedImagePath ? null : "No output."))
-          : fetchedDetail.error
-            ? `Couldn't load output: ${fetchedDetail.error}`
-            : row.fetchesDetail
-              ? fetchedDetail.data
-                ? "Output is no longer available."
-                : "Loading output…"
-              : null;
-  const exitLine =
-    failedExitCode === null ? null : (
-      <Text className="mt-1.5 font-mono text-2xs leading-normal text-danger-foreground">
-        exit {failedExitCode}
-      </Text>
-    );
-  const toolPresentation = resolveWorkEntryToolPresentation(row.workEntry);
-  const previewText = row.groupStandIn?.label ?? workEntryRowLabel(row.workEntry);
-  const answerPreview = row.workEntry.questionAnswer
-    ? getQuestionAnswerPreview(row.workEntry.questionAnswer)
-    : null;
-  const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
-  const displayText = row.groupStandIn?.label ?? workEntryRowLabel(row.workEntry, expanded);
-  const isSystemNotice = row.projectedItem.item.type === "system_notice";
-  const isUsageLimit =
-    row.projectedItem.item.type === "error" &&
-    row.projectedItem.item.failure.class === "usage_limit" &&
-    row.projectedItem.item.status !== "completed";
-  const iconIsDestructive =
-    !isSystemNotice && !isUsageLimit && (row.icon === "alert" || row.icon === "warning");
-  const failed = row.status === "failure";
-  const toolIcon = row.workEntry.toolIcon ?? row.workEntry.toolSource?.icon;
-  const icon = reasoning ? "brain" : (toolPresentation?.icon ?? workRowSymbolName(row.icon));
-
-  return (
-    <Animated.View
-      layout={WORK_LOG_LAYOUT_TRANSITION}
-      className="overflow-hidden"
-      {...(isFreshRow(row.createdAt) ? { entering: FadeIn.duration(200) } : {})}
-    >
-      <WorkLogPressable
-        accessibilityRole={
-          notifiedSubagentThreadId !== undefined ? "link" : canExpand ? "button" : undefined
-        }
-        accessibilityLabel={failed ? `${accessiblePreview}, tool call failed` : accessiblePreview}
-        accessibilityHint={
-          notifiedSubagentThreadId !== undefined
-            ? "Opens this agent's thread. Long press to copy."
-            : canExpand
-              ? `Double tap to ${expanded ? "hide" : "show"} full details. Long press to copy.`
-              : "Long press to copy."
-        }
-        accessibilityState={canExpand ? { expanded } : undefined}
-        onPress={() => {
-          if (notifiedSubagentThreadId !== undefined) {
-            openLinkedThread({
-              environmentId: String(props.environmentId),
-              threadId: String(notifiedSubagentThreadId),
-            });
-            return;
-          }
-          if (canExpand) {
-            void Haptics.selectionAsync();
-            props.onToggleRow(row.id, props.anchorKey, row.groupStandIn?.groupId);
-          }
-        }}
-        onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
-      >
-        {row.live && !expanded ? (
-          <ShimmeringWorkContent
-            environmentId={props.environmentId}
-            icon={icon}
-            iconSubtleColor={props.iconSubtleColor}
-            label={displayText}
-            showIcon
-            themeAppearance={props.themeAppearance}
-            toolIcon={toolIcon}
-          />
-        ) : (
-          <>
-            <WorkLogIconSlot>
-              {toolIcon ? (
-                <ToolActivityIconView
-                  environmentId={props.environmentId}
-                  icon={toolIcon}
-                  fallback={icon}
-                  fallbackColor={props.iconSubtleColor}
-                  themeAppearance={props.themeAppearance}
-                />
-              ) : (
-                <WorkLogIcon
-                  icon={icon}
-                  color={props.iconSubtleColor}
-                  colorClassName={
-                    isUsageLimit
-                      ? "accent-warning-foreground"
-                      : iconIsDestructive
-                        ? "accent-adaptive-rose-600-400"
-                        : failed
-                          ? "accent-danger-foreground/40"
-                          : undefined
-                  }
-                />
-              )}
-            </WorkLogIconSlot>
-            <WorkLogLabel
-              tone={isUsageLimit ? "warning" : iconIsDestructive ? "danger" : "default"}
-            >
-              {displayText}
-              {answerPreview ? (
-                <Text
-                  className={
-                    !expanded &&
-                    row.workEntry.questionAnswer &&
-                    hasQuestionAnswer(row.workEntry.questionAnswer)
-                      ? "text-foreground"
-                      : "text-foreground-subtle"
-                  }
-                >{`  ${answerPreview}`}</Text>
-              ) : null}
-            </WorkLogLabel>
-          </>
-        )}
-
-        <View className="shrink-0 flex-row items-center gap-px">
-          {props.copied ? (
-            <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
-              Copied
-            </Text>
-          ) : null}
-          {failed && toolIcon !== undefined ? (
-            <View
-              className="h-4 w-4 items-center justify-center"
-              accessibilityElementsHidden
-              importantForAccessibility="no-hide-descendants"
-            >
-              <SymbolView
-                name="xmark"
-                size={11}
-                tintColorClassName="accent-danger-foreground/40"
-                type="monochrome"
-              />
-            </View>
-          ) : null}
-          <View className="h-4 w-4 items-center justify-center">
-            {canExpand ? (
-              <ThreadDisclosureChevron
-                expanded={expanded}
-                collapsedDirection="down"
-                size={11}
-                tintColor={props.iconSubtleColor}
-              />
-            ) : null}
-          </View>
-        </View>
-      </WorkLogPressable>
-
-      {expanded &&
-      (reasoning ||
-        fullDetail ||
-        call ||
-        fetchedOutput ||
-        viewedImagePath ||
-        outputImages.length > 0 ||
-        row.workEntry.questionAnswer) ? (
-        <Animated.View
-          entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
-          exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
-          layout={WORK_LOG_LAYOUT_TRANSITION}
-          className={reasoning ? "ml-7 py-1" : "pb-1 pt-0.5"}
-        >
-          {row.workEntry.questionAnswer ? (
-            <QuestionAnswerHistory
-              environmentId={props.environmentId}
-              answer={row.workEntry.questionAnswer}
-            />
-          ) : null}
-          {viewedImagePath ? (
-            <View className="pb-1.5">
-              {props.renderImage({ href: viewedImagePath, alt: null, title: null })}
-            </View>
-          ) : null}
-          <FilePreviewGallery
-            value={outputImages.map((resource) => ({
-              kind: "image",
-              environmentId: props.environmentId,
-              resource,
-            }))}
-          >
-            {outputImages.map((resource) => (
-              <View key={resource.index} className="pb-1.5">
-                <ThreadMarkdownImage
-                  environmentId={props.environmentId}
-                  resource={resource}
-                  alt={null}
-                  onPressPreview={props.onPressPreview}
-                />
-              </View>
-            ))}
-          </FilePreviewGallery>
-          <ScrollView
-            nestedScrollEnabled
-            directionalLockEnabled
-            showsVerticalScrollIndicator
-            className="max-h-60"
-            contentContainerStyle={{ paddingRight: 8 }}
-          >
-            {reasoning ? (
-              props.renderReasoning(reasoning.text)
-            ) : call ? (
-              [
-                call.command,
-                ...(call.args ?? []).map(([key, value]) =>
-                  key === "code" &&
-                  shownItem.type === "dynamic_tool" &&
-                  isJavaScriptReplTool(shownItem.toolName) ? (
-                    <View key={key}>
-                      <Text className="font-mono text-2xs leading-normal text-foreground-muted">
-                        {key}
-                      </Text>
-                      <ReplCodeText code={value} theme={props.themeAppearance} />
-                    </View>
-                  ) : (
-                    `${key} ${value}`
-                  ),
-                ),
-                call.argsText,
-              ]
-                .filter((line) => Boolean(line))
-                .map(
-                  (line, index) =>
-                    /* oxlint-disable react/no-array-index-key -- Log lines are stateless positions within this output. */ typeof line ===
-                    "string" ? (
-                      <Text
-                        key={`${index}:${line}`}
-                        selectable
-                        className="font-mono text-2xs leading-normal text-foreground"
-                      >
-                        {line}
-                      </Text>
-                    ) : (
-                      line
-                    ) /* oxlint-enable react/no-array-index-key */,
-                )
-            ) : fullDetail ? (
-              <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
-                {fullDetail}
-              </Text>
-            ) : null}
-            {fetchedOutput ? (
-              <Text
-                selectable
-                className={cn(
-                  "font-mono text-2xs leading-normal text-foreground-muted",
-                  (!call || call.command || call.args || call.argsText) && "mt-1.5",
-                )}
-              >
-                {fetchedOutput}
-              </Text>
-            ) : null}
-            {streamsOutput ? null : exitLine}
-          </ScrollView>
-          {streamsOutput ? (
-            <>
-              <ThreadCommandOutput
-                environmentId={props.environmentId}
-                threadId={row.projectedItem.sourceThreadId}
-                itemId={row.projectedItem.sourceItemId}
-                themeAppearance={props.themeAppearance}
-              />
-              {exitLine}
-            </>
-          ) : null}
-        </Animated.View>
-      ) : null}
-    </Animated.View>
-  );
-};
 
 export function ThreadWorkGroupToggle(props: {
   readonly environmentId: EnvironmentId;
@@ -1444,7 +1029,7 @@ export function ThreadThinkingRow(props: {
   );
 }
 
-function ToolActivityIconView(props: {
+export function ToolActivityIconView(props: {
   readonly environmentId: EnvironmentId;
   readonly icon?: ToolActivityIcon;
   readonly fallback: WorkContentIcon;

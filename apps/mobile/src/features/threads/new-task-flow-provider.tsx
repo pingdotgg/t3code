@@ -109,8 +109,9 @@ import {
 } from "./new-task-flow-state";
 import { useEnvironmentShellReadiness } from "../../state/shell";
 import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
+import { NewTaskFlowContextValue } from "./new-task-flow-providerParts";
 
-type WorkspaceMode = "local" | "worktree";
+export type WorkspaceMode = "local" | "worktree";
 
 export function branchBadgeLabel(input: {
   readonly branch: VcsRef;
@@ -130,91 +131,6 @@ export function branchBadgeLabel(input: {
   }
   return null;
 }
-
-type NewTaskFlowContextValue = {
-  readonly activeNewTask: { readonly pendingKey: string | null } | null;
-  readonly projectScopes: ReadonlyArray<HomeProjectScope>;
-  readonly selectedEnvironmentId: EnvironmentId | null;
-  readonly selectedProjectKey: string | null;
-  readonly selectedModelKey: string | null;
-  readonly workspaceMode: WorkspaceMode;
-  readonly isGitRepo: boolean;
-  readonly isGitRepoKnown: boolean;
-  readonly canChooseWorkspace: boolean;
-  readonly selectedBranchName: string | null;
-  readonly selectedWorktreePath: string | null;
-  readonly resolveWorkspaceSelection: (
-    selection: ComposerDraftWorkspaceSelection | undefined,
-  ) => ComposerDraftWorkspaceSelection;
-  readonly startFromOrigin: boolean;
-  readonly pullRequestReference: string | undefined;
-  readonly draftKey: string | null;
-  readonly prompt: string;
-  readonly attachments: ReadonlyArray<DraftComposerAttachment>;
-  readonly submitting: boolean;
-  readonly branchesLoading: boolean;
-  readonly availableBranches: ReadonlyArray<VcsRef>;
-  readonly currentCheckoutBranchName: string | null;
-  readonly runtimeMode: RuntimeMode;
-  readonly interactionMode: ProviderInteractionMode;
-  readonly planModeEnabled: boolean;
-  readonly expandedProvider: string | null;
-  readonly environments: ReadonlyArray<{
-    readonly environmentId: EnvironmentId;
-    readonly environmentLabel: string;
-  }>;
-  readonly selectedProject: EnvironmentProject | null;
-  /** The machines the selected project's environment links to, whose threads it can read. */
-  readonly linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
-  readonly isScratchDraft: boolean;
-  readonly modelOptions: ReadonlyArray<ModelOption>;
-  readonly selectedModel: ModelSelection | null;
-  readonly selectedModelOption: ModelOption | null;
-  readonly selectedProviderStatus: ServerProvider | null;
-  readonly providerGroups: ReadonlyArray<ProviderGroup>;
-  readonly setProject: (project: EnvironmentProject) => void;
-  /** The flow's project, read when a continuation resumes after an await. */
-  readonly getSelectedProjectKey: () => string | null;
-  /**
-   * The draft id of the route this flow serves when that draft, or its
-   * project, is gone. Only the topmost draft route is served, so a screen
-   * compares this with its own draft id.
-   */
-  readonly missingRouteDraftId: string | null;
-  readonly selectEnvironment: (environmentId: EnvironmentId) => void;
-  readonly switchEnvironment: (environmentId: EnvironmentId) => Promise<boolean>;
-  readonly switchingToEnvironmentId: EnvironmentId | null;
-  readonly setSelectedModelKey: (
-    key: string | null,
-    options?: ReadonlyArray<ProviderOptionSelection>,
-  ) => void;
-  readonly setWorkspaceMode: (mode: WorkspaceMode) => void;
-  readonly selectBranch: (branch: VcsRef) => void;
-  readonly setStartFromOrigin: (value: boolean) => void;
-  readonly buildPendingTaskMessage: (
-    metadata: TurnCommandMetadata,
-    options?: {
-      readonly currentCheckoutBranch?: string | null;
-    },
-  ) => QueuedThreadMessage | null;
-  readonly setPrompt: (value: string) => void;
-  readonly replaceAttachments: (attachments: ReadonlyArray<DraftComposerAttachment>) => void;
-  /** Appends draft attachments; returns how many the live cap rejected. */
-  readonly appendAttachments: (
-    attachments: ReadonlyArray<DraftComposerAttachment>,
-    insertion?: ComposerDraftInsertion,
-  ) => number;
-  readonly removeAttachment: (imageId: string) => void;
-  readonly clearAttachments: () => void;
-  readonly setSubmitting: (value: boolean) => void;
-  readonly loadBranches: () => void;
-  readonly setRuntimeMode: (value: RuntimeMode) => void;
-  readonly setInteractionMode: (value: ProviderInteractionMode) => void;
-  readonly setSelectedModelOptions: (
-    value: ReadonlyArray<ProviderOptionSelection> | undefined,
-  ) => void;
-  readonly setExpandedProvider: (value: string | null) => void;
-};
 
 const NewTaskFlowContext = React.createContext<NewTaskFlowContextValue | null>(null);
 

@@ -110,7 +110,7 @@ function KeybindingPill({ value }: { value: string }) {
   );
 }
 
-function KeybindingsSearchInput({
+export function KeybindingsSearchInput({
   query,
   onChange,
   inputRef,
@@ -700,7 +700,7 @@ function keybindingRowDraftReducer(
   return { ...state, ...patch };
 }
 
-function rowKeybindingTarget(row: KeybindingRow): ServerRemoveKeybindingInput {
+export function rowKeybindingTarget(row: KeybindingRow): ServerRemoveKeybindingInput {
   return {
     command: row.command,
     key: row.key,
@@ -774,7 +774,7 @@ function useKeybindingRowEditor({
 
 type KeybindingRowEditor = ReturnType<typeof useKeybindingRowEditor>;
 
-interface KeybindingRowActions {
+export interface KeybindingRowActions {
   allRows: ReadonlyArray<KeybindingRow>;
   variables: ReadonlyArray<WhenVariableOption>;
   onSave: (input: ServerUpsertKeybindingInput) => void;
@@ -1216,7 +1216,7 @@ function NewKeybindingCancelIcon({
   );
 }
 
-function NewKeybindingSettingsRow(props: NewKeybindingProps) {
+export function NewKeybindingSettingsRow(props: NewKeybindingProps) {
   const { commandOptions, allRows, variables, isSaving, onSave, onCancel } = props;
   const draft = useNewKeybindingDraft({ allRows, onSave });
 
@@ -1255,7 +1255,7 @@ interface KeybindingsGroupsProps extends KeybindingRowActions {
   savingCommand: KeybindingCommand | null;
 }
 
-function KeybindingsGroups(props: KeybindingsGroupsProps) {
+export function KeybindingsGroups(props: KeybindingsGroupsProps) {
   const { groups, anchorIds, savingCommand, ...rowActions } = props;
   return groups.map((group) => (
     <SettingsSection key={group.id} id={`keybindings-${group.id}`} title={group.title}>
@@ -1272,7 +1272,7 @@ function KeybindingsGroups(props: KeybindingsGroupsProps) {
   ));
 }
 
-function BrowserKeybindingNotice() {
+export function BrowserKeybindingNotice() {
   const message = "The browser may claim some shortcuts first. The desktop app receives them all.";
   return (
     <Tooltip>
@@ -1291,7 +1291,7 @@ function BrowserKeybindingNotice() {
   );
 }
 
-function keybindingAnchorIds(rows: ReturnType<typeof buildKeybindingRows>) {
+export function keybindingAnchorIds(rows: ReturnType<typeof buildKeybindingRows>) {
   const ids = new Map<string, string>();
   const seen = new Set<KeybindingCommand>();
   for (const row of rows) {
@@ -1303,7 +1303,7 @@ function keybindingAnchorIds(rows: ReturnType<typeof buildKeybindingRows>) {
 }
 
 // Cache rows in a separate hook so the compiler does not rebuild them per search keystroke.
-function useKeybindingCatalog() {
+export function useKeybindingCatalog() {
   const serverKeybindings = useSettingsScope().environment?.serverConfig?.keybindings;
   const merged = mergeWithDefaultKeybindings(serverKeybindings ?? []);
   return {
@@ -1311,234 +1311,4 @@ function useKeybindingCatalog() {
     allRows: buildKeybindingRows(merged),
   };
 }
-
-export function KeybindingsSettingsPanel() {
-  const { environment: primaryEnvironment, connectedEnvironments } = useSettingsScope();
-  const canOpenKeybindingsFile = useEnvironmentScope(
-    primaryEnvironment?.environmentId ?? null,
-    AuthOrchestrationOperateScope,
-  );
-  const writableIds = useEnvironmentsWithScope(connectedEnvironments, AuthSettingsWriteScope);
-  const canWriteSettings =
-    connectedEnvironments.length > 0 &&
-    connectedEnvironments.every((target) => writableIds.has(target.environmentId));
-  const keybindingsConfigPath = primaryEnvironment?.serverConfig?.keybindingsConfigPath ?? null;
-  const availableEditors = primaryEnvironment?.serverConfig?.availableEditors ?? [];
-  const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
-    reportFailure: false,
-  });
-  const removeKeybindingMutation = useAtomCommand(serverEnvironment.removeKeybinding, {
-    reportFailure: false,
-  });
-  const openInPreferredEditor = useOpenInPreferredEditor(
-    primaryEnvironment?.environmentId ?? null,
-    availableEditors,
-  );
-  const [query, setQuery] = useState("");
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const [savingCommand, setSavingCommand] = useState<KeybindingCommand | null>(null);
-  const [isAddingBinding, setIsAddingBinding] = useState(false);
-  const searchTargetId = useLocation({ select: (location) => location.hash.replace(/^#/, "") });
-  const [handledSearchTargetId, setHandledSearchTargetId] = useState(searchTargetId);
-
-  if (searchTargetId !== handledSearchTargetId) {
-    setHandledSearchTargetId(searchTargetId);
-    if (searchTargetId.startsWith("keybinding-")) setQuery("");
-  }
-  const whenVariables = buildWhenVariableOptions();
-  const { commandOptions, allRows } = useKeybindingCatalog();
-  const rows = filterKeybindingRows(allRows, query);
-  const groups = groupKeybindingRows(rows);
-  const anchorIds = keybindingAnchorIds(rows);
-
-  const openKeybindingsFile = () => {
-    if (
-      !keybindingsConfigPath ||
-      !primaryEnvironment ||
-      !readEnvironmentScope(primaryEnvironment.environmentId, AuthOrchestrationOperateScope)
-    )
-      return;
-    void (async () => {
-      const result = await openInPreferredEditor(keybindingsConfigPath);
-      if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
-        return;
-      }
-      const error = squashAtomCommandFailure(result);
-      toastManager.add({
-        title: "Unable to open keybindings file",
-        description:
-          error instanceof Error ? error.message : "The keybindings file was not opened.",
-        type: "error",
-      });
-    })();
-  };
-
-  const saveKeybinding = (input: ServerUpsertKeybindingInput) => {
-    if (
-      !primaryEnvironment ||
-      !connectedEnvironments.every((target) =>
-        readEnvironmentScope(target.environmentId, AuthSettingsWriteScope),
-      )
-    )
-      return;
-    setSavingCommand(input.command);
-    const payload: ServerUpsertKeybindingInput = {
-      command: input.command,
-      key: input.key.trim(),
-      ...(input.when?.trim() ? { when: input.when.trim() } : {}),
-      ...(input.replace ? { replace: input.replace } : {}),
-    };
-    void (async () => {
-      const results = await Promise.all(
-        connectedEnvironments.map((target) =>
-          upsertKeybinding({ environmentId: target.environmentId, input: payload }),
-        ),
-      );
-      setSavingCommand(null);
-      const failed = results.find((result) => result._tag === "Failure");
-      if (!failed) {
-        setIsAddingBinding(false);
-        return;
-      }
-      if (!isAtomCommandInterrupted(failed)) {
-        const error = squashAtomCommandFailure(failed);
-        toastManager.add({
-          title: "Unable to save keybinding",
-          description: error instanceof Error ? error.message : "The keybinding was not saved.",
-          type: "error",
-        });
-      }
-    })();
-  };
-
-  const removeKeybinding = (row: KeybindingRow) => {
-    if (
-      !primaryEnvironment ||
-      !connectedEnvironments.every((target) =>
-        readEnvironmentScope(target.environmentId, AuthSettingsWriteScope),
-      )
-    )
-      return;
-    setSavingCommand(row.command);
-    void (async () => {
-      const results = await Promise.all(
-        connectedEnvironments.map((target) =>
-          removeKeybindingMutation({
-            environmentId: target.environmentId,
-            input: rowKeybindingTarget(row),
-          }),
-        ),
-      );
-      setSavingCommand(null);
-      const result = results.find((entry) => entry._tag === "Failure") ?? results[0];
-      if (result?._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add({
-          title: "Unable to remove keybinding",
-          description: error instanceof Error ? error.message : "The keybinding was not removed.",
-          type: "error",
-        });
-      }
-    })();
-  };
-
-  const resetKeybinding = (row: KeybindingRow) => {
-    if (!row.defaultKey) return;
-    saveKeybinding({
-      command: row.command,
-      key: row.defaultKey,
-      when: row.defaultWhen.trim().length > 0 ? row.defaultWhen : undefined,
-      replace: {
-        command: row.command,
-        key: row.key,
-        ...(row.when.trim().length > 0 ? { when: row.when } : {}),
-      },
-    });
-  };
-
-  const cancelAdd = () => setIsAddingBinding(false);
-
-  const rowActions: KeybindingRowActions = {
-    allRows,
-    variables: whenVariables,
-    onSave: saveKeybinding,
-    onReset: resetKeybinding,
-    onRemove: removeKeybinding,
-  };
-
-  return (
-    <SettingsPageContainer>
-      <SettingsSection
-        {...searchableSetting("keybindings")}
-        headerAction={!isElectron ? <BrowserKeybindingNotice /> : null}
-      >
-        <div className="flex flex-wrap items-center gap-2 px-3 py-3 sm:px-4">
-          <KeybindingsSearchInput query={query} onChange={setQuery} inputRef={searchInputRef} />
-          <Button
-            type="button"
-            variant="outline"
-            disabled={isAddingBinding || !canWriteSettings}
-            onClick={() => setIsAddingBinding(true)}
-          >
-            <PlusIcon aria-hidden className="size-4" />
-            Add keybinding
-          </Button>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  disabled={!keybindingsConfigPath || !canOpenKeybindingsFile}
-                  onClick={openKeybindingsFile}
-                  aria-label="Open keybindings.json"
-                >
-                  <FileJsonIcon aria-hidden className="size-4" />
-                </Button>
-              }
-            />
-            <TooltipPopup side="top">Open keybindings.json</TooltipPopup>
-          </Tooltip>
-        </div>
-      </SettingsSection>
-
-      {!canWriteSettings ? (
-        <p className="text-xs text-muted-foreground">
-          {connectedEnvironments.length === 0
-            ? "Connect an environment to change keybindings."
-            : "This connection can view keybindings but cannot change them."}
-        </p>
-      ) : null}
-      <div inert={!canWriteSettings} className="flex flex-col gap-8">
-        {isAddingBinding ? (
-          <SettingsGroup>
-            <NewKeybindingSettingsRow
-              commandOptions={commandOptions}
-              allRows={allRows}
-              variables={whenVariables}
-              isSaving={savingCommand !== null}
-              onSave={saveKeybinding}
-              onCancel={cancelAdd}
-            />
-          </SettingsGroup>
-        ) : null}
-
-        {groups.length > 0 ? (
-          <KeybindingsGroups
-            groups={groups}
-            anchorIds={anchorIds}
-            savingCommand={savingCommand}
-            {...rowActions}
-          />
-        ) : (
-          <SettingsGroup>
-            <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-              No keybindings match your search.
-            </div>
-          </SettingsGroup>
-        )}
-      </div>
-    </SettingsPageContainer>
-  );
-}
+export * from "./KeybindingsSettingsParts";

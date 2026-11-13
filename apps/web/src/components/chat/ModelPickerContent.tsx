@@ -64,6 +64,7 @@ import {
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
+import { ModelPickerList } from "./ModelPickerContentParts";
 
 type ModelPickerItem = {
   slug: string;
@@ -162,13 +163,13 @@ function adjacentModelPickerProvider(input: {
 }
 
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
-const MODEL_LIST_ESTIMATED_ITEM_SIZE = 32;
+export const MODEL_LIST_ESTIMATED_ITEM_SIZE = 32;
 // Rendered heights in `--spacing` units. Chrome is the search box and list padding, plus a 1px border.
 const ROW_UNITS = 8;
 const ROW_SEPARATOR_UNITS = 0.5;
 const LIST_CHROME_UNITS = 15.5;
 
-function ModelListSeparator() {
+export function ModelListSeparator() {
   return <div className="h-0.5" />;
 }
 
@@ -250,87 +251,6 @@ function ModelPickerProviderNotices({
   );
 }
 
-function ModelPickerList({
-  listRef,
-  itemKeys,
-  extraData,
-  renderItem,
-}: {
-  listRef: RefObject<LegendListRef | null>;
-  itemKeys: ReadonlyArray<string>;
-  extraData: unknown;
-  renderItem: (props: { item: string; index: number }) => ReactNode;
-}) {
-  const [showTopScrollFade, setShowTopScrollFade] = useState(false);
-  const [showBottomScrollFade, setShowBottomScrollFade] = useState(false);
-  const updateScrollFades = () => {
-    const scrollElement = listRef.current?.getScrollableNode();
-    if (!(scrollElement instanceof HTMLElement)) {
-      return;
-    }
-    const maxScrollOffset = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
-    setShowTopScrollFade(scrollElement.scrollTop > 1);
-    setShowBottomScrollFade(maxScrollOffset - scrollElement.scrollTop > 1);
-  };
-
-  // Disabled-reason closures rebuild identical key arrays; compare contents.
-  const itemListKey = JSON.stringify(itemKeys);
-  const [fadesResetFor, setFadesResetFor] = useState(itemListKey);
-  if (fadesResetFor !== itemListKey) {
-    setFadesResetFor(itemListKey);
-    setShowTopScrollFade(false);
-    setShowBottomScrollFade(itemKeys.length > 5);
-  }
-  const measureScrollFades = useEffectEvent(updateScrollFades);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the list scroller in animation frames after a new list lays out to set scroll fades
-  useLayoutEffect(() => {
-    let nestedFrame = 0;
-    const frame = window.requestAnimationFrame(() => {
-      measureScrollFades();
-      nestedFrame = window.requestAnimationFrame(() => measureScrollFades());
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.cancelAnimationFrame(nestedFrame);
-    };
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new list re-measures its scroll fades once it has laid out.
-  }, [itemListKey]);
-
-  return (
-    <div
-      className={cn(
-        "relative min-h-0 overflow-hidden pr-px",
-        itemKeys.length > 0 ? "flex-1" : "h-0",
-      )}
-    >
-      <ComboboxListVirtualized>
-        <LegendList<string>
-          ref={listRef}
-          data={itemKeys}
-          extraData={extraData}
-          keyExtractor={(modelKey) => modelKey}
-          renderItem={renderItem}
-          estimatedItemSize={MODEL_LIST_ESTIMATED_ITEM_SIZE}
-          drawDistance={480}
-          recycleItems
-          contentContainerClassName="pl-2 pr-px"
-          ItemSeparatorComponent={ModelListSeparator}
-          onLayout={updateScrollFades}
-          onScroll={updateScrollFades}
-          className={cn(
-            "scrollbar-gutter-stable h-full overflow-x-hidden overscroll-y-contain py-1.5 [&::-webkit-scrollbar-track]:my-2",
-            getVirtualizedScrollFadeClassName({
-              top: showTopScrollFade,
-              bottom: showBottomScrollFade,
-            }),
-          )}
-        />
-      </ComboboxListVirtualized>
-    </div>
-  );
-}
-
-// Capture gives picker shortcuts priority over the composer.
 function WindowKeyDownListener({ onKeyDown }: { onKeyDown: (event: KeyboardEvent) => void }) {
   const handleKeyDown = useEffectEvent(onKeyDown);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a capture-phase window keydown listener for the picker's lifetime

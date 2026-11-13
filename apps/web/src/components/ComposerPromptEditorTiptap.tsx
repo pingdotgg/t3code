@@ -126,6 +126,7 @@ import { composerCodeBlockHighlight } from "./composerCodeBlockHighlight";
 import { importPastedComposerText } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
+import { createComposerExtensions } from "./ComposerPromptEditorTiptapParts";
 
 export interface ComposerPromptEditorHandle {
   focus: () => void;
@@ -235,7 +236,7 @@ function resolvedThemeFromDocument(): "light" | "dark" {
 const CHIP_NODE_SELECTION_CLASS_NAME =
   "relative inline-flex min-w-0 max-w-full select-none items-baseline data-[composer-chip-selected]:after:pointer-events-none data-[composer-chip-selected]:after:absolute data-[composer-chip-selected]:after:inset-0 data-[composer-chip-selected]:after:rounded-sm data-[composer-chip-selected]:after:bg-[Highlight] data-[composer-chip-selected]:after:opacity-30 data-[composer-chip-selected]:after:content-['']";
 
-const ComposerMentionExtension = Node.create({
+export const ComposerMentionExtension = Node.create({
   name: "composer-mention",
   group: "inline",
   inline: true,
@@ -297,7 +298,7 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
   );
 }
 
-const ComposerSkillExtension = Node.create({
+export const ComposerSkillExtension = Node.create({
   name: "composer-skill",
   group: "inline",
   inline: true,
@@ -362,7 +363,7 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
   );
 }
 
-const ComposerCitationExtension = Node.create({
+export const ComposerCitationExtension = Node.create({
   name: "composer-citation",
   group: "inline",
   inline: true,
@@ -487,7 +488,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   );
 }
 
-const ComposerContextReferenceExtension = Node.create({
+export const ComposerContextReferenceExtension = Node.create({
   name: "composer-context-reference",
   group: "inline",
   inline: true,
@@ -565,7 +566,7 @@ function collectStyledRanges(doc: ProseMirrorNode): StyledRange[] {
 }
 
 /** Wait for a character after '- ' so task markers reach their input rule before becoming bullets. */
-function listMarkerInputRule(find: RegExp, listType: "bulletList" | "orderedList"): InputRule {
+export function listMarkerInputRule(find: RegExp, listType: "bulletList" | "orderedList"): InputRule {
   return new InputRule({
     find,
     handler: ({ state, range, match, chain }) => {
@@ -588,7 +589,7 @@ function listMarkerInputRule(find: RegExp, listType: "bulletList" | "orderedList
   });
 }
 
-const bulletToTaskInputRule = new InputRule({
+export const bulletToTaskInputRule = new InputRule({
   find: /^\[([ xX])\] $/,
   handler: ({ state, range, match, chain }) => {
     const $from = state.doc.resolve(range.from);
@@ -606,7 +607,7 @@ const bulletToTaskInputRule = new InputRule({
   },
 });
 
-function taskInputRule(type: NodeType): InputRule {
+export function taskInputRule(type: NodeType): InputRule {
   const rule = wrappingInputRule({
     find: /^- \[([ xX])\] $/,
     type,
@@ -626,7 +627,7 @@ function hasAncestor($pos: ResolvedPos, name: string): boolean {
   return false;
 }
 
-const blockquoteInputRule = new InputRule({
+export const blockquoteInputRule = new InputRule({
   find: /^>(\s)$/,
   handler: ({ state, range, match, chain }) => {
     const $from = state.doc.resolve(range.from);
@@ -640,7 +641,7 @@ const blockquoteInputRule = new InputRule({
 });
 
 /** Require a space after *** or ___ to preserve bold typing. Lists and quotes cannot serialize rules. */
-const horizontalRuleInputRule = new InputRule({
+export const horizontalRuleInputRule = new InputRule({
   find: /^(---|\*\*\*|___)\s?$/,
   handler: ({ state, range, match, chain }) => {
     const source = match[0] ?? "---";
@@ -667,7 +668,7 @@ const horizontalRuleInputRule = new InputRule({
 });
 
 /** Require a space to preserve PR references; lists and quotes cannot serialize headings. */
-const headingInputRule = new InputRule({
+export const headingInputRule = new InputRule({
   find: /^(#{1,6})(\s)$/,
   handler: ({ state, range, match, chain }) => {
     const $from = state.doc.resolve(range.from);
@@ -746,7 +747,7 @@ function decorationsForSelection(state: EditorState): DecorationSet {
   return DecorationSet.create(doc, decorations);
 }
 
-const ComposerMarkersExtension = Extension.create({
+export const ComposerMarkersExtension = Extension.create({
   name: "composer-rich-markers",
   addProseMirrorPlugins() {
     return [ComposerMarkerPlugin];
@@ -799,7 +800,7 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
 }
 
 /** Decide grouping in dispatch middleware before the history plugin applies the transaction. */
-const ComposerUndoGroupingExtension = Extension.create<
+export const ComposerUndoGroupingExtension = Extension.create<
   Record<string, never>,
   { previous: ComposerChangeKind | null }
 >({
@@ -814,111 +815,6 @@ const ComposerUndoGroupingExtension = Extension.create<
 });
 
 // Module scope keeps extension identity stable; Tiptap hooks read config through this.
-function createComposerExtensions(richText: boolean) {
-  return [
-    StarterKit.configure({
-      blockquote: false,
-      bulletList: false,
-      codeBlock: false,
-      heading: false,
-      horizontalRule: false,
-      listItem: false,
-      link: false,
-      orderedList: false,
-      underline: false,
-      dropcursor: false,
-      gapcursor: false,
-      trailingNode: false,
-      code: false,
-      listKeymap: false,
-      undoRedo: { newGroupDelay: COMPOSER_UNDO_GROUP_DELAY },
-      italic: false,
-      bold: false,
-      strike: false,
-    }),
-    ComposerUndoGroupingExtension,
-    ComposerTextDirectionExtension,
-    ComposerMentionExtension,
-    ComposerSkillExtension,
-    ComposerCitationExtension,
-    ComposerContextReferenceExtension,
-    ComposerMarkersExtension,
-    ...(richText
-      ? [
-          ComposerBoldSelectionOnlyExtension,
-          ComposerItalicExtension,
-          ComposerBoldExtension,
-          ComposerStrikeExtension,
-          ComposerCodeExtension,
-          ComposerCodeBlockExtension.extend({
-            addNodeView() {
-              return ReactNodeViewRenderer(ComposerCodeBlockNodeView, {
-                // Tiptap shields only the button; header clicks would move ProseMirror's selection.
-                stopEvent: ({ event }) =>
-                  event.target instanceof Element &&
-                  event.target.closest(".chat-markdown-codeblock-header") !== null,
-              });
-            },
-            // Tiptap's fence rule allows unserializable lists/quotes; use top-level Enter instead.
-            addInputRules() {
-              return [];
-            },
-          }),
-          composerCodeBlockHighlight({
-            resolveTheme: () =>
-              resolveDiffThemeName(
-                document.documentElement.classList.contains("dark") ? "dark" : "light",
-              ),
-          }),
-          ...ComposerBlockExtensions.map((extension) =>
-            extension.name === "blockquote"
-              ? extension.extend({
-                  addInputRules() {
-                    return [blockquoteInputRule];
-                  },
-                })
-              : extension.name === "horizontalRule"
-                ? extension.extend({
-                    addInputRules() {
-                      return [horizontalRuleInputRule];
-                    },
-                  })
-                : extension.name === "heading"
-                  ? extension.extend({
-                      addInputRules() {
-                        return [headingInputRule];
-                      },
-                    })
-                  : extension,
-          ),
-          ...ComposerListExtensions.map((extension) =>
-            extension.name === "listItem"
-              ? extension
-              : extension.extend({
-                  addInputRules() {
-                    return this.name === "bulletList"
-                      ? [
-                          listMarkerInputRule(/^(?<marker>[*+])(?<space>\s)$/, "bulletList"),
-                          listMarkerInputRule(
-                            /^(?<marker>-)(?<space>[ \t]+)(?<carried>[^\s[])$/,
-                            "bulletList",
-                          ),
-                        ]
-                      : [listMarkerInputRule(/^(?<marker>\d+[.)])(?<space>\s)$/, "orderedList")];
-                  },
-                }),
-          ),
-          ComposerTaskListExtension,
-          ComposerTaskItemExtension.extend({
-            addInputRules() {
-              return [taskInputRule(this.type), bulletToTaskInputRule];
-            },
-          }),
-        ]
-      : []),
-  ];
-}
-
 const RICH_TEXT_EXTENSIONS = createComposerExtensions(true);
 const PLAIN_TEXT_EXTENSIONS = createComposerExtensions(false);
 

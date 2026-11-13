@@ -53,6 +53,7 @@ import {
   settleHandoffAuthorizationPage,
   settleProviderInstall,
 } from "./CodexSetupSection.logic";
+import { CodexSetupSection } from "./CodexSetupSectionParts";
 
 const noop = () => undefined;
 
@@ -87,7 +88,7 @@ function readSignInRouting(environmentId: EnvironmentId) {
   };
 }
 
-interface CodexSetupSectionProps {
+export interface CodexSetupSectionProps {
   readonly environmentId: EnvironmentId;
   readonly instanceId: ProviderInstanceId;
   readonly provider: ServerProvider | undefined;
@@ -100,114 +101,6 @@ interface CodexSetupSectionProps {
   readonly displayName?: string | undefined;
   readonly onAutoStartConsumed?: () => void;
   readonly onSignInCancelled?: (() => void) | undefined;
-}
-
-export function CodexSetupSection(props: CodexSetupSectionProps) {
-  const [requested, setRequested] = useState(false);
-  // A policy that owns Codex's launch settings also rules out ChatGPT's own runtime.
-  const codexLocks = managedInstanceLocks(
-    useManagedPolicy(props.environmentId),
-    ProviderDriverKind.make("codex"),
-  );
-  const chatGptDenial = codexLocks?.configKeys.has("setupMode") ? codexLocks.reason : undefined;
-  const existingState = getOnboardingProviderState(props.provider);
-  const existingReady = props.enabled && existingState === "ready";
-  const existingAuthenticated = props.provider?.auth.status === "authenticated";
-  const existingChecking = existingState === "checking";
-  const existingSummary = getProviderSummary(props.provider);
-  const content =
-    props.mode === "existing" && props.presentation === "onboarding" ? (
-      <CodexWelcomeCard
-        title={props.displayName || props.provider?.displayName || "Codex"}
-        description={
-          existingReady ? (
-            props.provider?.auth.email?.trim() ? (
-              <>
-                Signed in as{" "}
-                <RedactedSensitiveText
-                  value={props.provider.auth.email.trim()}
-                  ariaLabel="Toggle account email visibility"
-                  revealTooltip="Click to reveal email"
-                  hideTooltip="Click to hide email"
-                  className="break-all"
-                />
-                .
-              </>
-            ) : (
-              "Connected with your Codex CLI."
-            )
-          ) : existingChecking ? (
-            "Checking your Codex CLI..."
-          ) : props.provider?.installed ? (
-            existingSummary.headline
-          ) : (
-            "Code with your ChatGPT subscription."
-          )
-        }
-        control={
-          existingReady ? (
-            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success-foreground">
-              <CheckIcon className="size-3.5" />
-              Ready
-            </span>
-          ) : existingChecking ? (
-            <span className="text-xs text-muted-foreground">Checking...</span>
-          ) : existingAuthenticated ? (
-            <span className="text-xs text-muted-foreground">{existingSummary.headline}</span>
-          ) : (
-            <ManagedControl reason={chatGptDenial}>
-              <ChatGptConnectionButton
-                size="sm"
-                disabled={props.readOnly}
-                onClick={() => {
-                  setRequested(true);
-                  props.onModeChange("managed");
-                }}
-              >
-                Continue with ChatGPT
-              </ChatGptConnectionButton>
-            </ManagedControl>
-          )
-        }
-        secondaryControl={
-          !existingAuthenticated && !existingReady && !existingChecking ? (
-            <Button size="sm" variant="ghost-muted" onClick={() => props.onModeChange("existing")}>
-              Use existing CLI
-            </Button>
-          ) : null
-        }
-      />
-    ) : props.mode === "existing" ? null : !props.provider?.setup?.canAuthenticate ? (
-      props.presentation === "onboarding" ? (
-        <CodexWelcomeCard
-          title={props.displayName || props.provider?.displayName || "Codex"}
-          description={<CodexSignInDescription />}
-          control={
-            <Button size="sm" variant="outline" className="min-w-44" disabled>
-              Open sign-in page
-            </Button>
-          }
-          secondaryControl={
-            <Button size="sm" variant="ghost-muted" disabled>
-              Cancel
-            </Button>
-          }
-        />
-      ) : (
-        <SettingsRow title="ChatGPT account" description="Preparing sign-in." />
-      )
-    ) : (
-      <ManagedCodexSetup
-        key={`${props.environmentId}:${props.instanceId}`}
-        {...props}
-        autoStart={requested || props.autoStart === true}
-        onAutoStartConsumed={() => {
-          setRequested(false);
-          props.onAutoStartConsumed?.();
-        }}
-      />
-    );
-  return content;
 }
 
 export function AddManagedCodexAccountDialog({
@@ -247,7 +140,7 @@ export function AddManagedCodexAccountDialog({
   );
 }
 
-function ManagedCodexSetup({
+export function ManagedCodexSetup({
   environmentId,
   instanceId,
   provider,
@@ -1120,7 +1013,7 @@ export function CodexManagedRuntimeFields({
   );
 }
 
-function CodexSignInDescription({
+export function CodexSignInDescription({
   label = "Complete sign-in in your browser.",
   expanded = false,
   controls,
@@ -1147,7 +1040,7 @@ function CodexSignInDescription({
   );
 }
 
-function CodexWelcomeCard({
+export function CodexWelcomeCard({
   title,
   description,
   control,
@@ -1182,3 +1075,4 @@ function CodexWelcomeCard({
     </div>
   );
 }
+export * from "./CodexSetupSectionParts";

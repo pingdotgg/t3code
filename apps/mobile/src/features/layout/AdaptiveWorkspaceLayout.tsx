@@ -122,66 +122,6 @@ export function useAdaptiveWorkspacePaneRole(role: WorkspaceAuxiliaryPaneRole) {
 }
 
 /** Capture inspector navigation contexts. Register on focus events because frozen blurred screens may never clean up. */
-export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefined) {
-  const { registerWorkspaceInspector } = useAdaptiveWorkspaceLayout();
-  const navigation = use(NavigationContext);
-  const route = use(NavigationRouteContext);
-
-  const wrappedRender = (() => {
-    if (render === undefined) {
-      return undefined;
-    }
-    return () => (
-      <NavigationContext.Provider value={navigation}>
-        <NavigationRouteContext.Provider value={route}>{render()}</NavigationRouteContext.Provider>
-      </NavigationContext.Provider>
-    );
-  })();
-
-  const focusedRef = useRef(false);
-  const deactivateRef = useRef<(() => void) | null>(null);
-
-  const syncRegistration = useEffectEvent(() => {
-    if (!focusedRef.current || wrappedRender === undefined) {
-      deactivateRef.current?.();
-      return;
-    }
-    deactivateRef.current = registerWorkspaceInspector(wrappedRender);
-  });
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Navigation focus events own the inspector registration lifetime.
-  useEffect(() => {
-    if (navigation === undefined) return;
-    const focus = () => {
-      if (focusedRef.current) return;
-      focusedRef.current = true;
-      syncRegistration();
-    };
-    const blur = () => {
-      focusedRef.current = false;
-      syncRegistration();
-    };
-    if (navigation.isFocused()) focus();
-    const unsubscribeFocus = navigation.addListener("focus", focus);
-    const unsubscribeBlur = navigation.addListener("blur", blur);
-    return () => {
-      unsubscribeFocus();
-      unsubscribeBlur();
-      focusedRef.current = false;
-      deactivateRef.current?.();
-      deactivateRef.current = null;
-    };
-  }, [navigation]);
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Changed pane content replaces the focused inspector registration.
-  useEffect(() => {
-    if (focusedRef.current) {
-      syncRegistration();
-    }
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Changed pane content replaces its existing native workspace registration.
-  }, [wrappedRender]);
-}
-
 export function AdaptiveWorkspaceLayout(props: {
   readonly children: ReactNode;
   readonly pathname: string;
@@ -1093,3 +1033,4 @@ function AdaptiveWorkspaceLayoutContent(
     </HomeListOptionsProvider>
   );
 }
+export * from "./AdaptiveWorkspaceLayoutParts";

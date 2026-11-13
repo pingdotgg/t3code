@@ -129,13 +129,13 @@ function platformFromOs(os: string | null | undefined): string {
   return "";
 }
 
-function errorMessage(error: unknown): string {
+export function errorMessage(error: unknown): string {
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
     : "An error occurred.";
 }
 
-function stringParam(value: string | string[] | undefined): string | null {
+export function stringParam(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) return value[0] ?? null;
   return value ?? null;
 }
@@ -158,7 +158,7 @@ function SectionTitle(props: { readonly children: string }) {
   );
 }
 
-function AddProjectShell(props: { readonly children: ReactNode; readonly title: string }) {
+export function AddProjectShell(props: { readonly children: ReactNode; readonly title: string }) {
   const insets = useSafeAreaInsets();
 
   return (
@@ -180,7 +180,7 @@ function AddProjectShell(props: { readonly children: ReactNode; readonly title: 
   );
 }
 
-function ListSection(props: { readonly children: ReactNode }) {
+export function ListSection(props: { readonly children: ReactNode }) {
   return (
     <View
       className={
@@ -194,7 +194,7 @@ function ListSection(props: { readonly children: ReactNode }) {
   );
 }
 
-function ListRow(props: {
+export function ListRow(props: {
   readonly title: string;
   readonly subtitle?: string | null;
   readonly icon: ReactNode;
@@ -262,7 +262,7 @@ function ListRow(props: {
   );
 }
 
-function PrimaryActionButton(props: {
+export function PrimaryActionButton(props: {
   readonly label: string;
   readonly disabled?: boolean;
   readonly loading?: boolean;
@@ -379,7 +379,7 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
   return { isBrowseNavigating, pathInput, setPathInput, navigateToBrowsePath };
 }
 
-function useEnvironmentOptions(
+export function useEnvironmentOptions(
   selectedEnvironmentId: EnvironmentId | null = null,
 ): ReadonlyArray<EnvironmentOption> {
   const serverConfigByEnvironmentId = useServerConfigs();
@@ -442,7 +442,7 @@ function useSelectedEnvironment(requestedEnvironmentId: EnvironmentId | null): {
   };
 }
 
-function EmptyEnvironmentState() {
+export function EmptyEnvironmentState() {
   const navigation = useNavigation();
 
   return (
@@ -667,14 +667,14 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
   );
 }
 
-function getActiveRoute(navigation: {
+export function getActiveRoute(navigation: {
   getState: () => NavigationState<ParamListBase> | undefined;
 }) {
   const state = navigation.getState();
   return state?.routes[state.index];
 }
 
-function useOpenNewTaskDraft() {
+export function useOpenNewTaskDraft() {
   const navigation = useNavigation<NativeStackNavigationProp<ReactNavigation.RootParamList>>();
   const selectDetail = useSelectWorkspaceDetail();
   return (
@@ -1009,272 +1009,6 @@ function FolderBrowser(props: {
   );
 }
 
-export function AddProjectNewScreen(props: { readonly environmentId?: string | string[] }) {
-  const openNewTaskDraft = useOpenNewTaskDraft();
-  const navigation = useNavigation();
-  const environmentOptions = useEnvironmentOptions().filter(
-    (option) => option.newProjectsRoot !== null,
-  );
-  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState(
-    () => stringParam(props.environmentId) as EnvironmentId | null,
-  );
-  const environment = resolveAddProjectEnvironment(environmentOptions, selectedEnvironmentId);
-  const createNew = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
-  const checkPublishedAppAccess = useAtomCommand(sourceControlEnvironment.checkAppAccess, {
-    reportFailure: false,
-    reportDefect: false,
-  });
-  const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
-    reportFailure: false,
-  });
-  const discoveryState = useEnvironmentQuery(
-    environment === null
-      ? null
-      : sourceControlEnvironment.discovery({
-          environmentId: environment.environmentId,
-          input: {},
-        }),
-  );
-  const publishTargets = getNewProjectPublishTargets(discoveryState.data);
-  const [name, setName] = useState("");
-  const [publishes, setPublishes] = useState(false);
-  const [publishKind, setPublishKind] = useState<SourceControlProviderKind | null>(null);
-  const publishTarget = getNewProjectPublishTarget(publishTargets, publishKind);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const trimmedName = name.trim();
-  const pathPreview =
-    environment?.newProjectsRoot != null
-      ? getNewProjectPathPreview(environment.newProjectsRoot, trimmedName)
-      : null;
-
-  const showMachines =
-    environmentOptions.length > 1 || (environment === null && environmentOptions.length > 0);
-  const machineRows = showMachines ? (
-    <ListSection>
-      {environmentOptions.map((option, index) => {
-        const selected = option.environmentId === environment?.environmentId;
-        return (
-          <ListRow
-            key={option.environmentId}
-            title={option.label}
-            icon={
-              <EnvironmentMachineSymbol
-                kind={option.machine}
-                size={Platform.OS === "android" ? 24 : 17}
-                tintColorClassName="accent-icon"
-              />
-            }
-            selected={selected}
-            disabled={isSubmitting}
-            isFirst={index === 0}
-            right={
-              selected ? (
-                <SymbolView
-                  name="checkmark"
-                  size={Platform.OS === "android" ? 20 : 14}
-                  tintColorClassName="accent-icon"
-                  type="monochrome"
-                />
-              ) : null
-            }
-            onPress={() => setSelectedEnvironmentId(option.environmentId)}
-          />
-        );
-      })}
-    </ListSection>
-  ) : null;
-
-  // State lags a render behind, so a double tap could start a second create.
-  const submittingRef = useRef(false);
-  const submit = async () => {
-    if (!environment || trimmedName.length === 0 || submittingRef.current) return;
-    const originRoute = getActiveRoute(navigation);
-    submittingRef.current = true;
-    setError(null);
-    setIsSubmitting(true);
-    const result = await createNew({
-      environmentId: environment.environmentId,
-      input: { name: trimmedName },
-    });
-    if (AsyncResult.isFailure(result)) {
-      submittingRef.current = false;
-      setIsSubmitting(false);
-      setError(errorMessage(Cause.squash(result.cause)));
-      return;
-    }
-    const { projectId, workspaceRoot, commitError } = result.value;
-    if (commitError !== undefined) {
-      Dialog.alert("Created without a first commit", commitError);
-    }
-    if (publishes && publishTarget !== null) {
-      void publishRepository({
-        environmentId: environment.environmentId,
-        input: {
-          cwd: workspaceRoot,
-          provider: publishTarget.definition.kind,
-          repository: getNewProjectRepository(publishTarget, workspaceRoot),
-          visibility: "private",
-        },
-      }).then((publishResult) => {
-        if (AsyncResult.isFailure(publishResult)) {
-          Dialog.alert(
-            `Could not create the ${publishTarget.definition.label} repository`,
-            errorMessage(Cause.squash(publishResult.cause)),
-          );
-        } else {
-          void suggestAppAccessForRemote(
-            checkPublishedAppAccess,
-            environment.environmentId,
-            publishResult.value.remoteUrl,
-          );
-        }
-      });
-    }
-    // The draft screen resolves its project from the client store, so it
-    // must not open before the create event has arrived.
-    const project = await waitForProject(
-      { environmentId: environment.environmentId, projectId },
-      15_000,
-    );
-    submittingRef.current = false;
-    setIsSubmitting(false);
-    if (project === null) {
-      setName("");
-      setError(
-        "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
-      );
-      return;
-    }
-    openNewTaskDraft(
-      {
-        environmentId: environment.environmentId,
-        projectId,
-        title: trimmedName,
-      },
-      originRoute,
-    );
-  };
-
-  return (
-    <AddProjectShell title="New project">
-      {error ? <ErrorBanner message={error} /> : null}
-      {environment ? (
-        <>
-          <TextInput
-            className="h-12 min-h-12 rounded-[24px] px-4 py-0 text-base leading-snug"
-            value={name}
-            onChangeText={setName}
-            autoCorrect={false}
-            autoFocus
-            placeholder="Project name"
-            returnKeyType="done"
-            onSubmitEditing={() => void submit()}
-          />
-          {pathPreview !== null ? (
-            <Text className="px-1 text-sm leading-snug text-foreground-muted" numberOfLines={2}>
-              {trimmedName.length > 0
-                ? `Creates ${pathPreview}`
-                : `Goes in ${environment.newProjectsRoot}`}
-              {showMachines ? ` on ${environment.label}` : null}
-            </Text>
-          ) : null}
-          {machineRows}
-          {publishTarget !== null ? (
-            <ListSection>
-              <ListRow
-                title={`Create private repository on ${publishTarget.definition.label}`}
-                subtitle={
-                  trimmedName.length > 0 && pathPreview !== null
-                    ? getNewProjectRepository(publishTarget, pathPreview)
-                    : publishTarget.owner
-                }
-                icon={
-                  <SourceControlIcon
-                    icon={publishTarget.definition.icon}
-                    size={Platform.OS === "android" ? 24 : 18}
-                    colorClassName="accent-icon"
-                  />
-                }
-                isFirst
-                right={
-                  <ThemedSwitch
-                    accessibilityLabel={`Create private repository on ${publishTarget.definition.label}`}
-                    value={publishes}
-                    onValueChange={setPublishes}
-                  />
-                }
-                onPress={() => setPublishes((current) => !current)}
-              />
-              {publishes && publishTargets.length > 1
-                ? publishTargets.map((target) => {
-                    const selected = target.definition.kind === publishTarget.definition.kind;
-                    return (
-                      <ListRow
-                        key={target.definition.kind}
-                        title={target.definition.label}
-                        icon={
-                          <SourceControlIcon
-                            icon={target.definition.icon}
-                            size={Platform.OS === "android" ? 24 : 17}
-                            colorClassName="accent-icon"
-                          />
-                        }
-                        selected={selected}
-                        disabled={isSubmitting}
-                        right={
-                          selected ? (
-                            <SymbolView
-                              name="checkmark"
-                              size={Platform.OS === "android" ? 20 : 14}
-                              tintColorClassName="accent-icon"
-                              type="monochrome"
-                            />
-                          ) : null
-                        }
-                        onPress={() => setPublishKind(target.definition.kind)}
-                      />
-                    );
-                  })
-                : null}
-            </ListSection>
-          ) : null}
-          <PrimaryActionButton
-            label="Create project"
-            disabled={isSubmitting || trimmedName.length === 0}
-            onPress={() => void submit()}
-            loading={isSubmitting}
-          />
-          <ListSection>
-            <ListRow
-              title="Add existing project"
-              subtitle="Open a folder or clone a repository"
-              icon={
-                <SymbolView
-                  name="folder.badge.plus"
-                  size={Platform.OS === "android" ? 24 : 17}
-                  tintColorClassName="accent-icon"
-                  type="monochrome"
-                />
-              }
-              isFirst
-              onPress={() =>
-                navigation.canGoBack()
-                  ? navigation.goBack()
-                  : navigation.dispatch(StackActions.replace("AddProject"))
-              }
-            />
-          </ListSection>
-        </>
-      ) : environmentOptions.length > 0 ? (
-        machineRows
-      ) : (
-        <EmptyEnvironmentState />
-      )}
-    </AddProjectShell>
-  );
-}
-
 export function AddProjectLocalFolderScreen(props: { readonly environmentId?: string | string[] }) {
   const environment = useEnvironmentFromParam(props.environmentId);
   const canCreateProject = useEnvironmentScope(
@@ -1483,3 +1217,4 @@ export function AddProjectDestinationScreen(props: {
     </AddProjectShell>
   );
 }
+export * from "./AddProjectScreenParts";

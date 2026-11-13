@@ -207,114 +207,8 @@ import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
+import { ThreadDetailScreenProps } from "./ThreadDetailScreenParts";
 
-export interface ThreadDetailScreenProps {
-  readonly header?: React.ReactNode;
-  readonly draftMode?: {
-    readonly content: (
-      headerInset: number,
-      bottomInset: number,
-      availableHeight: number,
-    ) => React.ReactNode;
-    readonly controls: React.ReactNode;
-    readonly editorRef: React.RefObject<ComposerEditorHandle | null>;
-    readonly sendBlockedReason: string | null;
-    readonly interactionLocked: boolean;
-  };
-  readonly worktreeSetup?: WorktreeSetupCardProps | null;
-  readonly setupWorkingStartedAt?: string | null;
-  readonly canOperateThread: boolean;
-  readonly selectedThread: EnvironmentThreadShell;
-  /** Use this for detail reads; it stays null until queued creation reaches the server. */
-  readonly selectedThreadDetailRef: ScopedThreadRef | null;
-  readonly contentPresentation: ThreadContentPresentation;
-  readonly screenTone: StatusTone;
-  readonly connectionError: string | null;
-  readonly environmentLabel: string | null;
-  readonly feedbackSubmissions: ReadonlyArray<CodexFeedbackSubmission>;
-  readonly onDismissFeedback: (id: MessageId) => void;
-  readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
-  readonly pendingHandoff?: HandoffEndpoints | null;
-  readonly activityRun: ThreadFeedLatestRun | null;
-  readonly activeWorkStartedAt: string | null;
-  readonly runlessWorkActive?: boolean;
-  readonly providerSubagentStatus?: ProviderSubagentStatus | null;
-  readonly isCompacting: boolean;
-  readonly creationState:
-    | {
-        readonly kind: "preparing";
-        readonly preparingWorktree: boolean;
-        readonly serverOwned: boolean;
-      }
-    | { readonly kind: "failed"; readonly reason: string; readonly onEditTask: () => void }
-    | null;
-  readonly activePendingApproval: PendingApproval | null;
-  readonly activePendingApprovals: ReadonlyArray<PendingApproval>;
-  readonly respondingApprovalId: RuntimeRequestId | null;
-  readonly activePendingUserInput: PendingUserInput | null;
-  readonly activePendingUserInputDrafts: Record<string, PendingUserInputDraftAnswer>;
-  readonly activePendingUserInputAnswers: Record<string, string | ReadonlyArray<string>> | null;
-  readonly respondingUserInputId: RuntimeRequestId | null;
-  readonly connectionStateLabel: EnvironmentConnectionPhase;
-  readonly threadSyncStatus?: EnvironmentThreadStatus;
-  readonly historyControls?: ThreadFeedHistoryControls;
-  readonly activeThreadBusy: boolean;
-  readonly canStopThread: boolean;
-  readonly queuedRunEdit: QueuedRunEdit | null;
-  readonly composerDraftKey: string | null;
-  readonly followUpBehavior: FollowUpBehavior;
-  readonly canSteerActiveTurn: boolean;
-  readonly isSavingQueuedEdit: boolean;
-  readonly onCancelQueuedRunEdit: () => void;
-  readonly onRemoveQueuedEditAttachment: (attachmentId: string) => void;
-  readonly environmentId: EnvironmentId;
-  readonly projectWorkspaceRoot: string | null;
-  readonly threadCwd: string | null;
-  readonly selectedThreadQueueCount: number;
-  readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
-  readonly dispatchingMessageId: MessageId | null;
-  readonly serverConfig: T3ServerConfig | null;
-  readonly layoutVariant?: LayoutVariant;
-  readonly usesAutomaticContentInsets?: boolean;
-  readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
-  readonly onOpenConnectionEditor: () => void;
-  readonly onChangeDraftMessage: (value: string) => void;
-  readonly onPickDraftMedia: () => Promise<void>;
-  readonly onPickDraftFiles: () => Promise<void>;
-  readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
-  readonly onNativePasteText: (paste: ComposerTextPaste) => Promise<void>;
-  readonly onRemoveDraftImage: (imageId: string) => void;
-  readonly onStopThread: () => void;
-  /** Present while the thread's queue is held. */
-  readonly onResumeQueue: (() => Promise<void>) | null;
-  readonly onSendMessage: (
-    followUp?: ActiveTurnComposerAction,
-    beforeDispatch?: (
-      text: string,
-      hasAttachmentsOrContext: boolean,
-    ) => Promise<boolean | "responded">,
-    onWillEnqueue?: () => void,
-  ) => Promise<MessageId | null>;
-  readonly onReconnectEnvironment: () => void;
-  readonly canSwitchThreadProvider: boolean;
-  readonly onUpdateThreadInteractionMode?: (interactionMode: ProviderInteractionMode) => void;
-  readonly onRespondToApproval: ApprovalResponder;
-  readonly onSelectUserInputOption: (
-    requestId: RuntimeRequestId,
-    question: ThreadUserInputQuestion,
-    value: string,
-  ) => void;
-  readonly onChangeUserInputCustomAnswer: (
-    requestId: RuntimeRequestId,
-    questionId: string,
-    customAnswer: string,
-  ) => void;
-  readonly onSubmitUserInput: () => Promise<unknown>;
-  readonly onDismissUserInput: () => Promise<unknown>;
-  readonly showContent?: boolean;
-}
-
-// iOS questions overlay the controls; Android questions stack with child approvals.
 const ComposerPanels = Platform.OS === "android" ? Animated.ScrollView : Animated.View;
 const USAGE_LIMITS_PANEL_GAP = 12;
 const USAGE_LIMITS_PANEL_MIN_HEIGHT = 44;
@@ -1867,3 +1761,4 @@ function ThreadDetailBody(
     </View>
   );
 }
+export * from "./ThreadDetailScreenParts";

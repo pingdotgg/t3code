@@ -273,6 +273,7 @@ import {
   SidebarSectionHeader,
   SidebarSectionPlaceholder,
 } from "./sidebar/SidebarListMarkers";
+import { useSidebarThreads } from "./SidebarParts";
 
 function sameSidebarProviderEntries(
   left: ReadonlyMap<string, SidebarProviderEntry>,
@@ -324,17 +325,17 @@ const sidebarProviderEntriesAtom = Atom.make((get) => {
 }).pipe(Atom.withLabel("sidebar-provider-entries"));
 
 const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, SidebarProviderEntry> = new Map();
-const EMPTY_THREADS: readonly EnvironmentThreadShell[] = [];
+export const EMPTY_THREADS: readonly EnvironmentThreadShell[] = [];
 
-const SETTLED_TAIL_INITIAL_COUNT = 10;
-const SETTLED_TAIL_PAGE_COUNT = 25;
-const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
-const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
-const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
+export const SETTLED_TAIL_INITIAL_COUNT = 10;
+export const SETTLED_TAIL_PAGE_COUNT = 25;
+export const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
+export const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
+export const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
 
-const inboxReturns = createInboxReturnTracker();
+export const inboxReturns = createInboxReturnTracker();
 
-type SidebarOptimisticDrop = {
+export type SidebarOptimisticDrop = {
   readonly key: string;
   readonly sourceSection: SidebarSection;
   readonly section: "pinned" | "active" | "settled";
@@ -367,7 +368,7 @@ function scrollSidebarToTop(content: HTMLElement | null) {
   content?.closest("[data-slot=scroll-area-viewport]")?.scrollTo({ top: 0 });
 }
 
-function threadShellKey(thread: Pick<SidebarThreadSummary, "environmentId" | "id">): string {
+export function threadShellKey(thread: Pick<SidebarThreadSummary, "environmentId" | "id">): string {
   return scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
 }
 
@@ -403,7 +404,7 @@ function resolveDraggedOrders(input: {
   };
 }
 
-function routeThreadOnly(
+export function routeThreadOnly(
   threads: readonly EnvironmentThreadShell[],
   routeThreadKey: string | null,
 ): readonly EnvironmentThreadShell[] {
@@ -413,219 +414,7 @@ function routeThreadOnly(
 }
 
 // Separate hooks cache maps independently of later Sidebar hooks and preserve dnd-kit inputs.
-function useSidebarThreads(input: {
-  readonly projectScopeKey: string | null;
-  readonly scopedProjectKeys: ReadonlySet<string> | null;
-  readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
-  readonly connectedEnvironmentIds: readonly EnvironmentId[];
-  readonly optimisticDrop: SidebarOptimisticDrop | null;
-  readonly threads: readonly EnvironmentThreadShell[];
-  readonly delegatedUnderParent: ReadonlySet<string>;
-  readonly routeRowThreadKey: string | null;
-  // Set in boring mode: the project groups to fold active threads into, in order.
-  readonly folderGroups: readonly SidebarProjectSnapshot[] | null;
-  // Keeps folders with no active threads, so a project the user filtered to or pinned can start one.
-  readonly keepEmptyFolders: (group: SidebarProjectSnapshot) => boolean;
-}) {
-  const {
-    projectScopeKey,
-    scopedProjectKeys,
-    serverConfigs,
-    connectedEnvironmentIds,
-    optimisticDrop,
-    threads,
-    delegatedUnderParent,
-    routeRowThreadKey,
-    folderGroups,
-    keepEmptyFolders: keepEmpty,
-  } = input;
-  // Folders already separate the work, so boring mode has no Working shelf.
-  const workingShelfEnabled =
-    useClientSettings((s) => s.sidebarWorkingShelfEnabled) && folderGroups === null;
-  const environmentConnections = useEnvironmentConnectionSummaries();
-  const liveShellEnvironmentIds = useAtomValue(liveShellEnvironmentIdsAtom);
-  const disconnectedEnvironmentIds = new Set(
-    environmentConnections
-      .filter((environment) =>
-        isSidebarEnvironmentDisconnected(
-          environment.connectionState,
-          liveShellEnvironmentIds.has(environment.environmentId),
-        ),
-      )
-      .map((environment) => environment.environmentId),
-  );
-  const inboxReturnsVersion = useSyncExternalStore(
-    inboxReturns.subscribe,
-    inboxReturns.getSnapshot,
-  );
-  const nowMinute = useNowMinute();
-  // Minute-quantized clocks would delay second-precise snooze wakes by up to a minute.
-  const snoozeWakeClock = useSnoozeWakeClock(threads);
-  const [settledShelfExpanded, setSettledShelfExpanded] = useLocalStorage(
-    SETTLED_SHELF_EXPANDED_KEY,
-    false,
-    Schema.Boolean,
-  );
-  const [snoozedShelfExpanded, setSnoozedShelfExpanded] = useLocalStorage(
-    SNOOZED_SHELF_EXPANDED_KEY,
-    false,
-    Schema.Boolean,
-  );
-  const [workingShelfExpanded, setWorkingShelfExpanded] = useLocalStorage(
-    WORKING_SHELF_EXPANDED_KEY,
-    false,
-    Schema.Boolean,
-  );
-  // Shared with the old per-project sidebar, so folders keep their open state.
-  const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
-  const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
-  const [settledTail, setSettledTail] = useState({
-    scopeKey: projectScopeKey,
-    count: SETTLED_TAIL_INITIAL_COUNT,
-  });
-  if (settledTail.scopeKey !== projectScopeKey) {
-    setSettledTail({ scopeKey: projectScopeKey, count: SETTLED_TAIL_INITIAL_COUNT });
-  }
-  const settledVisibleCount =
-    settledTail.scopeKey === projectScopeKey ? settledTail.count : SETTLED_TAIL_INITIAL_COUNT;
-
-  const partition = partitionSidebarThreads({
-    threads,
-    scopedProjectKeys,
-    delegatedUnderParent,
-    serverConfigs,
-    connectedEnvironmentIds,
-    optimisticDrop,
-    workingShelfEnabled,
-    sortActiveBySend: folderGroups !== null,
-    disconnectedEnvironmentIds,
-    clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}`,
-  });
-
-  const { pinnedThreads, activeThreads, workingThreads, snoozedThreads, settledThreads } =
-    partition;
-  // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
-  const olderSettledShelf = useOlderSettledShelf({
-    scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
-    expanded: settledShelfExpanded,
-    visibleCount: settledVisibleCount,
-  });
-  const listedSettledThreads = settledThreads.filter(olderSettledShelf.isListed);
-  useOlderSettledShelfGrowth(olderSettledShelf, listedSettledThreads);
-  const settledCount =
-    settledThreads.length + olderSettledShelf.unloadedCount(partition.visibleThreads);
-  const visibleSettledThreads = (() => {
-    const visible = listedSettledThreads.slice(0, settledVisibleCount);
-    if (
-      routeRowThreadKey !== null &&
-      !visible.some((thread) => threadShellKey(thread) === routeRowThreadKey)
-    ) {
-      const routeThread = settledThreads.find(
-        (thread) => threadShellKey(thread) === routeRowThreadKey,
-      );
-      if (routeThread !== undefined) visible.push(routeThread);
-    }
-    return visible.length === settledThreads.length ? settledThreads : visible;
-  })();
-  const renderedSettledThreads = settledShelfExpanded
-    ? visibleSettledThreads
-    : routeThreadOnly(visibleSettledThreads, routeRowThreadKey);
-  const visibleSnoozedThreads = snoozedShelfExpanded
-    ? snoozedThreads
-    : routeThreadOnly(snoozedThreads, routeRowThreadKey);
-  const visibleWorkingThreads = workingShelfExpanded
-    ? workingThreads
-    : routeThreadOnly(workingThreads, routeRowThreadKey);
-  const projectFolders =
-    folderGroups === null
-      ? null
-      : groupSidebarThreadsByProject(folderGroups, activeThreads, keepEmpty).map((folder) => {
-          const collapsed = !resolveProjectExpanded(
-            projectExpandedById,
-            sidebarFolderExpansionKeys(folder.group),
-          );
-          return {
-            group: folder.group,
-            collapsed,
-            // A closed folder still shows the open thread, and hints at the rest.
-            threads: collapsed
-              ? routeThreadOnly(folder.threads, routeRowThreadKey)
-              : folder.threads,
-            hiddenThreads: collapsed
-              ? folder.threads.filter((thread) => threadShellKey(thread) !== routeRowThreadKey)
-              : EMPTY_THREADS,
-          };
-        });
-  const orderedThreads = [
-    ...pinnedThreads,
-    ...(projectFolders === null
-      ? activeThreads
-      : projectFolders.flatMap((folder) => folder.threads)),
-    ...visibleWorkingThreads,
-    ...visibleSnoozedThreads,
-    ...renderedSettledThreads,
-  ];
-  const sectionByThreadKey = new Map<string, SidebarSection>();
-  for (const [list, section] of [
-    [pinnedThreads, "pinned"],
-    [activeThreads, "active"],
-    [workingThreads, "working"],
-    [snoozedThreads, "snoozed"],
-    [settledThreads, "settled"],
-  ] as const) {
-    for (const thread of list) sectionByThreadKey.set(threadShellKey(thread), section);
-  }
-  return {
-    ...partition,
-    threads,
-    workingShelfEnabled,
-    searchableThreads: [
-      ...pinnedThreads,
-      ...activeThreads,
-      ...workingThreads,
-      ...snoozedThreads,
-      ...settledThreads,
-    ],
-    settledVisibleCount,
-    settledCount,
-    olderSettledShelf,
-    hiddenSettledCount: Math.max(0, settledCount - visibleSettledThreads.length),
-    showMoreSettled: () =>
-      setSettledTail((current) => ({
-        scopeKey: current.scopeKey,
-        count: current.count + SETTLED_TAIL_PAGE_COUNT,
-      })),
-    settledShelfExpanded,
-    toggleSettledShelf: () => setSettledShelfExpanded((value) => !value),
-    snoozedShelfExpanded,
-    toggleSnoozedShelf: () => setSnoozedShelfExpanded((value) => !value),
-    workingShelfExpanded,
-    toggleWorkingShelf: () => setWorkingShelfExpanded((value) => !value),
-    projectFolders,
-    toggleProjectFolder: (group: SidebarProjectSnapshot) => {
-      const keys = sidebarFolderExpansionKeys(group);
-      setProjectExpanded(keys, !resolveProjectExpanded(projectExpandedById, keys));
-    },
-    renderedSettledThreads,
-    visibleSnoozedThreads,
-    visibleWorkingThreads,
-    orderedThreadKeys: orderedThreads.map(threadShellKey),
-    threadByKey: new Map(orderedThreads.map((thread) => [threadShellKey(thread), thread] as const)),
-    settledThreadKeys: new Set(settledThreads.map(threadShellKey)),
-    snoozedThreadKeys: new Set(snoozedThreads.map(threadShellKey)),
-    sectionByThreadKey,
-    pinnedKeys: pinnedThreads.map(threadShellKey),
-    activeKeys: activeThreads.map(threadShellKey),
-    pinnedKeysById: new Map(
-      threads.map((thread) => [threadShellKey(thread), thread.pinOrderKey ?? null] as const),
-    ),
-    activeKeysById: new Map(
-      threads.map((thread) => [threadShellKey(thread), thread.activeOrderKey ?? null] as const),
-    ),
-  };
-}
-
-function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
+export function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   const {
     threads,
     scopedProjectKeys,
@@ -732,7 +521,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
 }
 
 /** The sidebar's scope per environment: the scoped projects there, or every project. */
-function olderSettledScopes(
+export function olderSettledScopes(
   environmentIds: ReadonlyArray<EnvironmentId>,
   scopedProjectKeys: ReadonlySet<string> | null,
 ): ReadonlyArray<OlderSettledScope> {
