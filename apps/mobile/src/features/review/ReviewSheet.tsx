@@ -723,7 +723,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
               ) : parsedDiff.kind === "files" ? (
                 <ContentBand spacing="roomy">
                   <Text className="text-xs leading-normal text-foreground-muted">
-                    Native diff view unavailable. Showing the raw patch.
+                    {selectedSection.truncated
+                      ? "This preview exceeds the size limit. Showing the raw excerpt; changes shown are incomplete."
+                      : "Native diff view unavailable. Showing the raw patch."}
                   </Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
                     <Text selectable className="font-mono text-xs leading-relaxed text-foreground">
