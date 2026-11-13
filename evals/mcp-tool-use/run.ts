@@ -1303,17 +1303,16 @@ export const t3Default = (
     case "unwatch_pull_request":
       return { ...pr(), watching: false, wasWatching: true };
     case "list_thread_pull_requests": {
-      const linked = [...sample.linked].map((url) => ({
-        ...linkedEntry(sample, url),
-        source: "agent",
-        watching: false,
-      }));
+      const states = Array.isArray(input.states) ? input.states : undefined;
+      const matching = [...sample.linked]
+        .map((url) => ({ ...linkedEntry(sample, url), source: "agent", watching: false }))
+        .filter((entry) => states === undefined || states.includes(entry.state));
       const start = Number(valueText(input.cursor)) || 0;
       const end = start + 50;
       return {
-        pullRequests: linked.slice(start, end),
+        pullRequests: matching.slice(start, end),
         chains: [],
-        nextCursor: end < linked.length ? String(end) : null,
+        nextCursor: end < matching.length ? String(end) : null,
       };
     }
     case "t3_thread_read": {
