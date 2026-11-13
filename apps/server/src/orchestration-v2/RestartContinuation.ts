@@ -3,6 +3,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   IDLE_COMPACTION_TEXT,
+  idleCompactionOf,
   isCompactionCommandMessage,
   isOrchestrationV2WorkActive,
   latestProviderTurnForAttempt,
@@ -337,7 +338,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         // Agent + server with no idleCompaction reads as an automatic idle compaction.
         createdBy: !recompact
           ? "agent"
-          : sourceMessage.idleCompaction === undefined
+          : idleCompactionOf(sourceMessage) === undefined
             ? "user"
             : sourceMessage.createdBy,
         creationSource: "server",

@@ -1079,10 +1079,11 @@ it.effect("does not continue a run the user asked to stop before the restart", (
 
 it.effect("compacts again after a cut /compact turn, and does not continue a cut /logout", () =>
   Effect.gen(function* () {
-    for (const [text, idleCompaction, expected] of [
-      [" /Compact ", undefined, ["user:/compact"]],
-      ["/compact", "beforeCacheExpires", ["agent:/compact"]],
-      [" /LOGOUT ", undefined, []],
+    for (const [text, creationSource, expected] of [
+      [" /Compact ", "mcp", ["user:/compact"]],
+      // Servers before `idleCompaction` marked their own compaction this way.
+      ["/compact", "server", ["agent:/compact"]],
+      [" /LOGOUT ", "mcp", []],
     ] as const) {
       const sent = yield* continuationDispatches({
         ...cutMidTurn(),
@@ -1091,9 +1092,9 @@ it.effect("compacts again after a cut /compact turn, and does not continue a cut
             id: MessageId.make("message:user"),
             role: "user",
             createdBy: "agent",
+            creationSource,
             text,
             attachments: [],
-            idleCompaction,
           },
         ],
       } as unknown as OrchestrationV2ThreadProjection);
