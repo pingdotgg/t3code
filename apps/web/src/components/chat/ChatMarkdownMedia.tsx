@@ -343,6 +343,7 @@ type ChatMarkdownAssetResource = Extract<
       | "workspace-file"
       | "media-file"
       | typeof SOURCE_CONTROL_MEDIA_ASSET
+      | "azure-devops-media"
       | "tool-output-image";
   }
 >;
