@@ -1772,7 +1772,6 @@ describe("AcpRegistryAdapterV2", () => {
   // its documented foreground-done signal is the opt-in assistant.idle session event.
   it.effect("settles Copilot's reply on assistant.idle while an async shell holds the prompt", () =>
     Effect.gen(function* () {
-      const gate = makeProviderReplayGate(["shell-exit"]);
       const sessionId = "copilot-session";
       const sessionEvent = (type: string) => ({
         type: "emit_inbound",
@@ -1830,17 +1829,17 @@ describe("AcpRegistryAdapterV2", () => {
           update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } }),
           sessionEvent("assistant.idle"),
           update({ sessionUpdate: "session_info_update", title: "after foreground idle" }),
+          // The shell never exits, so the first session/prompt is never answered.
           {
-            type: "emit_inbound",
-            frame: {
-              kind: "response",
-              method: "session/prompt",
-              result: { stopReason: "end_turn" },
-            },
-            label: "shell-exit",
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
           },
+          sessionEvent("assistant.turn_start"),
+          update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "two" } }),
+          sessionEvent("assistant.idle"),
+          update({ sessionUpdate: "session_info_update", title: "after second idle" }),
         ],
-        gate,
+        undefined,
         false,
         "github-copilot-cli",
       );
@@ -1851,6 +1850,10 @@ describe("AcpRegistryAdapterV2", () => {
       const terminal = foreground.find((event) => event.type === "turn.terminal");
       assert.isDefined(terminal, "the run settles once Copilot's foreground work is idle");
       assert.equal(terminal?.type === "turn.terminal" ? terminal.status : null, "completed");
+      yield* session.runtime.startTurn(session.turnInput(2));
+      const second = yield* session.throughMarker("after second idle");
+      const secondTerminal = second.find((event) => event.type === "turn.terminal");
+      assert.equal(secondTerminal?.type === "turn.terminal" ? secondTerminal.runOrdinal : null, 2);
     }).pipe(Effect.provide(layerTest)),
   );
 
