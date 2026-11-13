@@ -9,9 +9,9 @@ const TOKEN_PREFIX =
 const JWT = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/gu;
 const CREDENTIAL_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@]+@\S+/giu;
 const EMAIL = /[A-Za-z0-9.!#$%&'*+=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/gu;
-// Where an absolute path starts: `/a/`, `~/`, `file://`, a drive, or a redacted known prefix.
+// Where an absolute path starts: `/a/`, `~/`, `file://`, a drive, UNC, or a redacted known prefix.
 const pathStart = (outside: string) =>
-  String.raw`(?:/[^${outside}/]*/|~/|file://|[A-Za-z]:[\\/]|\[redacted\][\\/])`;
+  String.raw`(?:/[^${outside}/]*/|~/|file://|[A-Za-z]:[\\/]|\\\\|\[redacted\][\\/])`;
 // A path inside quotes, spaces included, up to the quote that opened it.
 const QUOTED_PATH = new RegExp(
   ['"', "'", "\\x60"]
@@ -19,8 +19,8 @@ const QUOTED_PATH = new RegExp(
     .join("|"),
   "gu",
 );
-// Where an unquoted path starts: `/a/b`, `~/`, `file://`, a drive, or a redacted known prefix
-// followed by a separator. URLs, `3/10`, `and/or` and one-segment `/compact` do not start one.
+// Where an unquoted path starts: `/a/b`, `~/`, `file://`, a drive, `\\host\`, or a redacted known
+// prefix followed by a separator. URLs, `3/10`, `and/or` and one-segment `/compact` do not start one.
 // The first segment cannot hold a space, or `/mcp /compact` would read as a path.
 const PATH_START = [
   String.raw`\[redacted\](?=[\\/])`,
@@ -28,6 +28,7 @@ const PATH_START = [
   String.raw`(?<![\w~-])~/`,
   String.raw`\bfile://`,
   String.raw`\b[A-Za-z]:[\\/]`,
+  String.raw`(?<![\w\\])\\\\[^\s\\/]+\\`,
 ].join("|");
 // Where a path ends is unknowable (names hold spaces and `. `), so the rest of its line goes too.
 const PATH = new RegExp(String.raw`(?:${PATH_START})[^\n]*`, "gu");
@@ -48,9 +49,29 @@ const entropy = (value: string) => {
 const looksRandom = (value: string) =>
   (value.match(/\d/gu)?.length ?? 0) >= 2 && /[A-Za-z]/u.test(value) && entropy(value) >= 3.5;
 
+/** Replaces the union of what the patterns and values match, so overlaps redact whole. */
+const redactAll = (text: string, patterns: ReadonlyArray<RegExp>) => {
+  const spans = patterns
+    .flatMap((pattern) =>
+      Array.from(text.matchAll(pattern), (match) => [match.index, match.index + match[0].length]),
+    )
+    .sort(([a = 0], [b = 0]) => a - b);
+  let result = "";
+  let at = 0;
+  for (const [start = 0, end = 0] of spans) {
+    if (start < at) {
+      at = Math.max(at, end);
+      continue;
+    }
+    result += `${text.slice(at, start)}${REDACTED}`;
+    at = end;
+  }
+  return result + text.slice(at);
+};
+
 /**
- * Removes values the server knows are private to this caller, then file paths and
- * anything shaped like a secret, email address, or URL with credentials, and caps
+ * Removes anything shaped like a secret, email address, or URL with credentials,
+ * values the server knows are private to this caller, then file paths, and caps
  * the result at FEEDBACK_TEXT_MAX_CHARS characters.
  */
 export function scrubFeedback(text: string, sensitive: ReadonlyArray<string>): string {
@@ -58,23 +79,13 @@ export function scrubFeedback(text: string, sensitive: ReadonlyArray<string>): s
   let scrubbed = Array.from(text)
     .slice(0, FEEDBACK_TEXT_MAX_CHARS * 4)
     .join("");
-  // Longest first, so a path is replaced whole before the username inside it.
   const known = [...new Set(sensitive.map((value) => value.trim()))]
     .filter((value) => value.length >= 3)
-    .sort((a, b) => b.length - a.length);
-  for (const value of known) {
-    scrubbed = scrubbed.replaceAll(
-      new RegExp(`(?<![A-Za-z0-9_])${escapeRegExp(value)}(?![A-Za-z0-9_])`, "gu"),
-      REDACTED,
-    );
-  }
-  scrubbed = scrubbed
-    .replaceAll(CREDENTIAL_URL, REDACTED)
+    .map((value) => new RegExp(`(?<![A-Za-z0-9_])${escapeRegExp(value)}(?![A-Za-z0-9_])`, "gu"));
+  // Secrets and known values on the original text, before either can break the other's match.
+  scrubbed = redactAll(scrubbed, [CREDENTIAL_URL, TOKEN_PREFIX, JWT, EMAIL, ...known])
     .replaceAll(QUOTED_PATH, (quoted) => `${quoted[0]}${REDACTED}${quoted[0]}`)
     .replaceAll(PATH, REDACTED)
-    .replaceAll(TOKEN_PREFIX, REDACTED)
-    .replaceAll(JWT, REDACTED)
-    .replaceAll(EMAIL, REDACTED)
     .replaceAll(LONG_RUN, (value) => (looksRandom(value) ? REDACTED : value));
   return Array.from(scrubbed).slice(0, FEEDBACK_TEXT_MAX_CHARS).join("");
 }

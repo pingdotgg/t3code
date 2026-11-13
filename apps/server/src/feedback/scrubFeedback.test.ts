@@ -105,6 +105,24 @@ describe("scrubFeedback", () => {
       [],
       "Saw [redacted]\nand/or https://github.com/org/repo stays\nthen [redacted]",
     ],
+    [
+      "secrets before the known values inside them",
+      "Mail alice@privatecompany.com with sk-proj-abcdefghij1234567890 from git@github.com:acme/app.git",
+      ["alice", "proj", "git@github.com:acme/app.git"],
+      "Mail [redacted] with [redacted] from [redacted]",
+    ],
+    [
+      "UNC paths",
+      `Opened \\\\fileserver\\finance\\payroll.xlsx\nand "\\\\fs\\My Share\\a.txt" then`,
+      [],
+      'Opened [redacted]\nand "[redacted]" then',
+    ],
+    [
+      "a two-letter username such as t3",
+      "t3 thread send failed for t3",
+      ["t3"],
+      "t3 thread send failed for t3",
+    ],
     ["a 1,200-character adversarial path", `/a/b${" x/".repeat(398)}`, [], "[redacted]"],
   ])("scrubs %s", (_, text, sensitive, expected) => {
     expect(scrubFeedback(text, sensitive)).toBe(expected);
