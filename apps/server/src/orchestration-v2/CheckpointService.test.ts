@@ -1,4 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
@@ -15,11 +19,14 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
@@ -232,4 +239,68 @@ it.effect("records a repository probe failure as an error checkpoint, not a miss
 
     assert.deepEqual(statuses, { baseline: "error", turn: "error" });
   }),
+);
+
+it.effect("a turn's changed files leave out edits another thread made while it was idle", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const vcsProcess = yield* VcsProcess.VcsProcess;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "checkpoint-shared-" });
+    const git = (...args: ReadonlyArray<string>) =>
+      vcsProcess.run({ operation: "test.git", command: "git", cwd, args, timeoutMs: 10_000 });
+    yield* git("init");
+    yield* git("config", "user.email", "test@test.com");
+    yield* git("config", "user.name", "Test");
+    yield* fileSystem.writeFileString(NodePath.join(cwd, "other-thread.txt"), "one\n");
+    yield* git("add", ".");
+    yield* git("commit", "-m", "initial");
+
+    const scope: OrchestrationV2CheckpointScope = {
+      id: CheckpointScopeId.make("checkpoint-scope:shared-checkout"),
+      threadId: ThreadId.make("thread:shared-checkout"),
+      runId: RunId.make("run:shared-checkout:1"),
+      nodeId: NodeId.make("node:shared-checkout:1"),
+      parentScopeId: null,
+      providerThreadId: ProviderThreadId.make("provider-thread:shared-checkout"),
+      kind: "root_run",
+      ordinalWithinParent: 0,
+      advancesAppRunCount: true,
+      cwd,
+      createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
+    };
+    const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+    // RunExecutionService captures the baseline at ordinal `run.ordinal - 1` before each turn.
+    const runTurn = (ordinal: number) =>
+      checkpoints.captureBaseline({ scope, ordinalWithinScope: ordinal - 1 }).pipe(
+        Effect.andThen(
+          checkpoints.capture({
+            scope,
+            ordinalWithinScope: ordinal,
+            runId: scope.runId!,
+            nodeId: scope.nodeId!,
+            appRunOrdinal: ordinal,
+            capturedAt: scope.createdAt,
+          }),
+        ),
+      );
+
+    assert.deepEqual((yield* runTurn(1)).files, []);
+    // Another thread working in the same checkout edits a file between this thread's turns.
+    yield* fileSystem.writeFileString(NodePath.join(cwd, "other-thread.txt"), "one\ntwo\n");
+    const second = yield* runTurn(2);
+
+    assert.strictEqual(second.status, "ready");
+    assert.deepEqual(second.files, []);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      CheckpointService.layer.pipe(
+        Layer.provide(IdAllocator.layer),
+        Layer.provide(CheckpointStore.layer),
+        Layer.provideMerge(VcsDriverRegistry.layer),
+        Layer.provideMerge(VcsProcess.layer),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
 );
