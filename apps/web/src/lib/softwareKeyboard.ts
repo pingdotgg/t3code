@@ -82,53 +82,62 @@ export function createSoftwareKeyboardStore(win: KeyboardWindow | undefined, isD
   return { getSnapshot, subscribe };
 }
 
-type PinWindow = Pick<Window, "visualViewport"> & {
-  readonly document: { readonly documentElement: HTMLElement };
-};
+type PinWindow = Pick<Window, "visualViewport" | "scrollTo" | "requestAnimationFrame" | "document">;
 
 /**
- * Safari ignores `interactive-widget=resizes-content`: its keyboard shrinks only the visual
- * viewport and Safari pans the page to the focused field. While that happens, pin the shell to
- * the visible area (see index.css). `innerHeight` follows the keyboard on iPadOS, so the gap is
- * measured from `documentElement.clientHeight`.
+ * Safari ignores `interactive-widget=resizes-content` and scrolls the page to the focused field.
+ * While a keyboard overlays the page, size the shell to the visible area (see index.css) and keep
+ * the page unscrolled. `innerHeight` follows the keyboard on iPadOS, so measure `clientHeight`.
  */
 export function pinShellToKeyboardViewport(win: PinWindow, isDesktop: boolean): () => void {
   const viewport = win.visualViewport;
   if (isDesktop || !viewport) return () => {};
   const root = win.document.documentElement;
-  let pinned = "";
+  let pinnedHeight = 0;
 
   const unpin = () => {
-    pinned = "";
+    pinnedHeight = 0;
     delete root.dataset.keyboardViewport;
     root.style.removeProperty("--keyboard-viewport-height");
-    root.style.removeProperty("--keyboard-viewport-top");
   };
 
   const update = () => {
     const height = Math.round(viewport.height);
-    const top = Math.max(0, Math.round(viewport.offsetTop));
     // Pinch zoom also shrinks the visual viewport, and the page must stay pannable then.
-    const overlaid = viewport.scale <= 1.01 && root.clientHeight - height > KEYBOARD_THRESHOLD;
-    const next = overlaid ? `${height}:${top}` : "";
-    if (next === pinned) return;
-    if (!overlaid) {
-      unpin();
+    if (viewport.scale > 1.01 || root.clientHeight - height <= KEYBOARD_THRESHOLD) {
+      if (pinnedHeight) unpin();
       return;
     }
-    pinned = next;
-    root.style.setProperty("--keyboard-viewport-height", `${height}px`);
-    root.style.setProperty("--keyboard-viewport-top", `${top}px`);
-    root.dataset.keyboardViewport = "";
+    if (height !== pinnedHeight) {
+      pinnedHeight = height;
+      root.style.setProperty("--keyboard-viewport-height", `${height}px`);
+      root.dataset.keyboardViewport = "";
+    }
+    if (viewport.offsetTop > 0) win.scrollTo(0, 0);
+  };
+
+  // Safari animates that scroll with the keyboard, before any viewport event fires, so undoing
+  // it still shows motion. Safari skips fields that are invisible at focus, and the frame
+  // callback restores the opacity before anything paints.
+  const hideFocusFromSafari = (event: FocusEvent) => {
+    const field = event.target as HTMLElement | null;
+    if (!field?.style) return;
+    const opacity = field.style.opacity;
+    field.style.opacity = "0";
+    win.requestAnimationFrame(() => {
+      field.style.opacity = opacity;
+    });
   };
 
   update();
+  win.document.addEventListener("focusin", hideFocusFromSafari, true);
   viewport.addEventListener("resize", update);
-  // Safari pans the visual viewport with scroll events alone while it reveals a focused field.
+  // Safari reveals the focused field by scrolling the page, which only fires scroll events.
   viewport.addEventListener("scroll", update);
   return () => {
     viewport.removeEventListener("resize", update);
     viewport.removeEventListener("scroll", update);
+    win.document.removeEventListener("focusin", hideFocusFromSafari, true);
     unpin();
   };
 }

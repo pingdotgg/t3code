@@ -137,57 +137,86 @@ describe("software keyboard detection", () => {
 
 describe("pinning the shell to the keyboard viewport", () => {
   function pinFixture(desktop = false) {
-    const viewport = Object.assign(new EventTarget(), { height: 1244, offsetTop: 0, scale: 1 });
+    const viewport = Object.assign(new EventTarget(), { height: 1290, offsetTop: 0, scale: 1 });
     const properties = new Map<string, string>();
     const root = {
-      clientHeight: 1244,
+      clientHeight: 1290,
       dataset: {} as DOMStringMap,
       style: {
         setProperty: (key: string, value: string) => properties.set(key, value),
         removeProperty: (key: string) => properties.delete(key),
       },
     };
+    let onFocus: ((event: { target: unknown }) => void) | undefined;
+    const document = {
+      documentElement: root,
+      addEventListener: (_type: string, listener: typeof onFocus) => (onFocus = listener),
+      removeEventListener: () => (onFocus = undefined),
+    };
+    const frames: Array<() => void> = [];
+    class FakeElement extends EventTarget {
+      style = { opacity: "" };
+    }
+    const scrollTo = vi.fn(() => Object.assign(viewport, { offsetTop: 0 }));
     const stop = pinShellToKeyboardViewport(
-      { visualViewport: viewport, document: { documentElement: root } } as unknown as Window,
+      {
+        visualViewport: viewport,
+        document,
+        scrollTo,
+        requestAnimationFrame: (callback: () => void) => frames.push(callback),
+      } as unknown as Window,
       desktop,
     );
     const move = (event: "resize" | "scroll", height: number, offsetTop: number, scale = 1) => {
       Object.assign(viewport, { height, offsetTop, scale });
       viewport.dispatchEvent(new Event(event));
     };
-    return { root, properties, stop, move };
+    const focus = () => {
+      const field = new FakeElement();
+      onFocus?.({ target: field });
+      return field;
+    };
+    return { root, properties, stop, move, scrollTo, frames, focus };
   }
 
-  // iPad Pro 13-inch Safari geometry: the layout viewport keeps its height under the keyboard.
-  it("follows the keyboard and Safari's pan, then restores the layout", () => {
-    const { root, properties, stop, move } = pinFixture();
-    move("resize", 1176, 0);
+  // iPad Pro 13-inch Safari: the layout viewport keeps its height under the keyboard.
+  it("sizes the shell to the keyboard and undoes Safari's scroll, then restores the layout", () => {
+    const { root, properties, stop, move, scrollTo } = pinFixture();
+    move("resize", 1222, 0);
     expect(root.dataset.keyboardViewport).toBeUndefined();
 
-    move("resize", 841, 0);
-    move("scroll", 841, 403);
+    move("resize", 887, 0);
     expect(root.dataset.keyboardViewport).toBe("");
-    expect(Object.fromEntries(properties)).toEqual({
-      "--keyboard-viewport-height": "841px",
-      "--keyboard-viewport-top": "403px",
-    });
+    expect(Object.fromEntries(properties)).toEqual({ "--keyboard-viewport-height": "887px" });
+    move("scroll", 887, 403);
+    expect(scrollTo).toHaveBeenCalledWith(0, 0);
 
-    move("resize", 1244, 0);
+    move("resize", 1290, 0);
     expect(root.dataset.keyboardViewport).toBeUndefined();
     expect(properties.size).toBe(0);
 
     move("resize", 400, 300, 2);
     expect(root.dataset.keyboardViewport).toBeUndefined();
+    expect(scrollTo).toHaveBeenCalledTimes(1);
 
-    move("resize", 841, 403);
+    move("resize", 887, 0);
     stop();
     expect(root.dataset.keyboardViewport).toBeUndefined();
     expect(properties.size).toBe(0);
   });
 
+  it("hides a field from Safari's reveal only until the next frame", () => {
+    const { focus, frames } = pinFixture();
+    const field = focus();
+    expect(field.style.opacity).toBe("0");
+    for (const frame of frames) frame();
+    expect(field.style.opacity).toBe("");
+  });
+
   it("never pins on desktop", () => {
-    const { root, move } = pinFixture(true);
-    move("resize", 841, 403);
+    const { root, move, focus } = pinFixture(true);
+    move("resize", 887, 0);
     expect(root.dataset.keyboardViewport).toBeUndefined();
+    expect(focus().style.opacity).toBe("");
   });
 });

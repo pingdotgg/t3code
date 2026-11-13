@@ -2651,7 +2651,7 @@ html[data-keyboard-viewport] body {
 html[data-keyboard-viewport] [data-slot="sidebar-wrapper"] {
   position: fixed;
   inset-inline: 0;
-  top: var(--keyboard-viewport-top);
+  top: 0;
   /* The desktop sidebar is position: fixed; this makes it follow the shell. */
   contain: layout;
 }
