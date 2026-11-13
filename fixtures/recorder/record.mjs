@@ -1,0 +1,319 @@
+#!/usr/bin/env node
+// Records real web-client sessions against the TypeScript server at this checkout.
+// Usage: node native/conn-server/fixtures/recorder/record.mjs [scenario ...] [--explore]
+// See ../README.md.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeModule from "node:module";
+import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
+import { redactText, redactValue, addSecret } from "./redact.mjs";
+import { SCENARIOS } from "./scenarios.mjs";
+
+const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const repo = NodePath.resolve(here, "../../../..");
+const sessionsDir = NodePath.resolve(here, "../sessions");
+const require = NodeModule.createRequire(NodePath.join(repo, "apps/server/package.json"));
+const { chromium } = require("playwright-core");
+
+const args = process.argv.slice(2);
+const explore = args.includes("--explore");
+const wanted = args.filter((a) => !a.startsWith("--"));
+const order = Object.keys(SCENARIOS);
+const selected = wanted.length === 0 ? order : order.filter((n) => wanted.includes(n));
+
+const log = (...m) => console.error("[record]", ...m);
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const s = NodeNet.createServer();
+    s.once("error", reject);
+    s.listen(0, "127.0.0.1", () => {
+      const { port } = s.address();
+      s.close(() => resolve(port));
+    });
+  });
+}
+
+async function startServer() {
+  if (!NodeFS.existsSync(NodePath.join(repo, "apps/web/dist/index.html"))) {
+    log("building apps/web (no dist yet)");
+    NodeChildProcess.execFileSync("vp", ["build"], {
+      cwd: NodePath.join(repo, "apps/web"),
+      stdio: "inherit",
+    });
+  }
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-rec-"));
+  const base = NodePath.join(root, "base");
+  const project = NodePath.join(root, "project");
+  NodeFS.mkdirSync(base);
+  NodeFS.mkdirSync(project);
+  NodeFS.writeFileSync(NodePath.join(project, "README.md"), "# scratch\n");
+  // The host's user Claude settings may allow Bash outright; an ask rule wins over allow, so the
+  // permission scenario gets its prompt.
+  NodeFS.mkdirSync(NodePath.join(project, ".claude"));
+  NodeFS.writeFileSync(
+    NodePath.join(project, ".claude/settings.json"),
+    JSON.stringify({ permissions: { ask: ["Bash"] } }, null, 2) + "\n",
+  );
+  const git = (...a) => NodeChildProcess.execFileSync("git", a, { cwd: project, stdio: "ignore" });
+  git("init", "-q", "-b", "main");
+  git("-c", "user.name=rec", "-c", "user.email=rec@example.com", "add", ".");
+  git("-c", "user.name=rec", "-c", "user.email=rec@example.com", "commit", "-qm", "init");
+
+  const port = await freePort();
+  // env -i: the service launcher IPC channel of an outer T3 must not leak in.
+  const env = {
+    HOME: NodeOS.homedir(),
+    USER: NodeOS.userInfo().username,
+    PATH: [
+      NodePath.dirname(process.execPath),
+      NodePath.join(NodeOS.homedir(), ".local/bin"),
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+      "/usr/bin",
+      "/bin",
+    ].join(":"),
+    T3CODE_HOME: base,
+    T3CODE_NO_BROWSER: "1",
+    T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "1",
+  };
+  const child = NodeChildProcess.spawn(
+    process.execPath,
+    [
+      NodePath.join(repo, "apps/server/src/bin.ts"),
+      "--no-browser",
+      "--auto-bootstrap-project-from-cwd",
+      "--port",
+      String(port),
+      "--host",
+      "127.0.0.1",
+      "--base-dir",
+      base,
+      project,
+    ],
+    { cwd: project, env, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  const logFile = NodeFS.createWriteStream(NodePath.join(root, "server.log"));
+  // The server must never outlive the recorder, even when startup fails.
+  process.once("exit", () => child.exitCode === null && child.kill("SIGKILL"));
+  child.stderr.pipe(logFile);
+  const token = await new Promise((resolve, reject) => {
+    let out = "";
+    const timer = setTimeout(
+      () => reject(new Error("server did not print a token in 90 s")),
+      90_000,
+    );
+    const onData = (d) => {
+      out += d;
+      const m = out.match(/Token: (\S+)/) ?? out.match(/\/pair#token=([A-Za-z0-9_-]+)/);
+      if (m) {
+        clearTimeout(timer);
+        resolve(m[1]);
+      }
+    };
+    child.stdout.on("data", (d) => (logFile.write(d), onData(d)));
+    child.stderr.on("data", onData);
+    child.once("exit", (code) =>
+      reject(new Error(`server exited ${code}; see ${root}/server.log`)),
+    );
+  });
+  addSecret(token);
+  log(`server pid ${child.pid} on ${port}, root ${root}`);
+  return { root, base, project, port, token, child, origin: `http://127.0.0.1:${port}` };
+}
+
+const STATIC = /\/assets\/|\.(png|ico|svg|webmanifest|woff2?|css|js)(\?|$)|third-party-licenses/;
+
+/** Captures every /ws frame and non-static HTTP exchange of one page, for the hosts in `hosts`. */
+function capture(page, server) {
+  const lines = [];
+  const http = [];
+  // A scenario may swap this to record a different server (see `remote`).
+  const hosts = new Set([new URL(server.origin).host]);
+  const accept = (url) => hosts.has(new URL(url).host);
+  // Raw times from page start; writeSession rebases them on the first /ws open.
+  const start = performance.now();
+  const clock = { wsOpen: null };
+  let wsCount = 0;
+  const ms = () => performance.now() - start;
+  page.on("websocket", (ws) => {
+    if (!new URL(ws.url()).pathname.startsWith("/ws") || !accept(ws.url())) return;
+    if (clock.wsOpen === null) clock.wsOpen = ms();
+    const idx = wsCount++;
+    http.push({ ms: ms(), ws: idx, method: "GET", url: ws.url(), upgrade: "websocket" });
+    const wsHost = new URL(ws.url()).host;
+    let pending = "";
+    let parts = 0;
+    const push = (dir, text, nParts) => {
+      if (!hosts.has(wsHost)) return;
+      let value;
+      try {
+        value = JSON.parse(text);
+      } catch {
+        lines.push({ dir, ms: ms(), ws: idx, unparsed: text });
+        return;
+      }
+      const frames = Array.isArray(value) ? value : [value];
+      for (const frame of frames) {
+        const line = { dir, ms: ms(), ws: idx, frame };
+        if (nParts > 1) line.parts = nParts;
+        if (Array.isArray(value)) line.batch = frames.length;
+        lines.push(line);
+      }
+    };
+    ws.on("framesent", (f) => push("in", String(f.payload), 1));
+    ws.on("framereceived", (f) => {
+      const text = String(f.payload);
+      if (text.startsWith("\u001e")) {
+        pending += text.slice(1);
+        parts++;
+        return;
+      }
+      const whole = pending + text;
+      const n = parts + 1;
+      pending = "";
+      parts = 0;
+      push("out", whole, n);
+    });
+    ws.on("close", () => http.push({ ms: ms(), ws: idx, closed: true }));
+  });
+  page.on("requestfinished", async (req) => {
+    const url = req.url();
+    if (!accept(url) || STATIC.test(new URL(url).pathname)) return;
+    const entry = { ms: ms(), method: req.method(), url };
+    http.push(entry);
+    try {
+      entry.requestHeaders = pickHeaders(await req.allHeaders());
+      const body = req.postData();
+      if (body) entry.requestBody = parseMaybe(body);
+      const res = await req.response();
+      if (res) {
+        entry.status = res.status();
+        entry.responseHeaders = pickHeaders(await res.allHeaders());
+        const ct = res.headers()["content-type"] ?? "";
+        if (ct.includes("json")) entry.responseBody = parseMaybe(await res.text());
+        else if (ct.includes("html")) entry.responseBody = "<html>";
+      }
+    } catch (e) {
+      entry.error = String(e.message ?? e);
+    }
+  });
+  page.on("requestfailed", (req) => {
+    if (accept(req.url()) && !STATIC.test(new URL(req.url()).pathname))
+      http.push({
+        ms: ms(),
+        method: req.method(),
+        url: req.url(),
+        failed: req.failure()?.errorText,
+      });
+  });
+  /** Records only `host` from now on and forgets everything captured so far. */
+  const only = (host) => {
+    hosts.clear();
+    hosts.add(host);
+    lines.length = 0;
+    http.length = 0;
+    clock.wsOpen = null;
+  };
+  return { lines, http, clock, hosts, only };
+}
+
+const KEEP_HEADERS =
+  /^(authorization|cookie|set-cookie|content-type|dpop|x-t3-[\w-]+|origin|location|www-authenticate|cache-control)$/i;
+function pickHeaders(h) {
+  return Object.fromEntries(Object.entries(h).filter(([k]) => KEEP_HEADERS.test(k)));
+}
+function parseMaybe(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function writeSession(name, cap) {
+  NodeFS.mkdirSync(sessionsDir, { recursive: true });
+  const zero = cap.clock.wsOpen ?? 0;
+  const rebase = (l) => ({ ...l, ms: Math.round(l.ms - zero) });
+  // Pass 1 redacts by key and learns those secret values; pass 2 removes them everywhere else.
+  const wireValues = cap.lines.map(rebase).map((l) => redactValue(l));
+  const httpValues = cap.http
+    .sort((a, b) => a.ms - b.ms)
+    .map(rebase)
+    .map((l) => redactValue(l));
+  const wire = wireValues.map((l) => redactText(JSON.stringify(l))).join("\n") + "\n";
+  const http = httpValues.map((l) => redactText(JSON.stringify(l))).join("\n") + "\n";
+  NodeFS.writeFileSync(NodePath.join(sessionsDir, `${name}.ndjson`), wire);
+  NodeFS.writeFileSync(NodePath.join(sessionsDir, `${name}.http.ndjson`), http);
+  log(`${name}: ${cap.lines.length} frames, ${cap.http.length} http entries`);
+}
+
+for (const sig of ["SIGINT", "SIGTERM"]) process.once(sig, () => process.exit(130));
+const server = await startServer();
+const extraServers = [];
+const browser = await chromium.launch({ headless: true });
+const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+let failed = false;
+try {
+  for (const name of selected) {
+    const page = await context.newPage();
+    const cap = capture(page, server);
+    const shots = NodePath.join(server.root, "shots", name);
+    NodeFS.mkdirSync(shots, { recursive: true });
+    let step = 0;
+    const ctx = {
+      page,
+      server,
+      log: (...m) => log(name, ...m),
+      shot: async (label) => {
+        if (!explore) return;
+        const file = NodePath.join(shots, `${String(step++).padStart(2, "0")}-${label}.png`);
+        await page.screenshot({ path: file });
+        log(name, "shot", file);
+      },
+      cap,
+      startServer: async () => {
+        const extra = await startServer();
+        extraServers.push(extra);
+        return extra;
+      },
+    };
+    try {
+      log(`scenario ${name}`);
+      await SCENARIOS[name](ctx);
+      for (const c of await context.cookies()) addSecret(c.value);
+      writeSession(name, cap);
+    } catch (e) {
+      failed = true;
+      log(`scenario ${name} FAILED: ${e.stack ?? e}`);
+      await page.screenshot({ path: NodePath.join(shots, "failure.png") }).catch(() => {});
+      log(`failure screenshot ${NodePath.join(shots, "failure.png")}`);
+      for (const c of await context.cookies()) addSecret(c.value);
+      writeSession(`${name}.partial`, cap);
+    } finally {
+      await page.close();
+    }
+  }
+} finally {
+  await browser.close();
+  for (const s of [server, ...extraServers]) {
+    s.child.kill("SIGTERM");
+    await new Promise((r) => {
+      if (s.child.exitCode !== null) return r();
+      const t = setTimeout(() => {
+        s.child.kill("SIGKILL");
+        r();
+      }, 10_000);
+      s.child.once("exit", () => {
+        clearTimeout(t);
+        r();
+      });
+    });
+    if (explore || failed) log(`kept ${s.root} for inspection; remove it when done`);
+    else NodeFS.rmSync(s.root, { recursive: true, force: true });
+  }
+}
+process.exitCode = failed ? 1 : 0;

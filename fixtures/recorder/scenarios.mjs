@@ -1,0 +1,192 @@
+// Scenario drivers. Each gets a fresh page in a shared browser context, so scenario 2 onward
+// reuses the session cookie that scenario 1 earned by pairing.
+
+/** Waits until no /ws frame or HTTP exchange arrived for `quietMs`. */
+async function settle(ctx, quietMs = 3000, maxMs = 30_000) {
+  const start = Date.now();
+  let last = -1;
+  let lastChange = Date.now();
+  while (Date.now() - start < maxMs) {
+    const n =
+      ctx.cap.lines.filter((l) => l.frame?._tag !== "Ping" && l.frame?._tag !== "Pong").length +
+      ctx.cap.http.length;
+    if (n !== last) {
+      last = n;
+      lastChange = Date.now();
+    } else if (Date.now() - lastChange >= quietMs) return;
+    await ctx.page.waitForTimeout(250);
+  }
+}
+
+async function dump(ctx, label) {
+  await ctx.shot(label);
+  if (process.argv.includes("--explore")) {
+    const names = await ctx.page
+      .locator("button, [role=button], a[href], textarea, [contenteditable=true]")
+      .evaluateAll((els) =>
+        els
+          .filter((e) => e.offsetParent !== null)
+          .map(
+            (e) =>
+              `${e.tagName.toLowerCase()} "${(e.getAttribute("aria-label") ?? e.textContent ?? "").trim().slice(0, 60)}"${e.getAttribute("href") ? ` href=${e.getAttribute("href")}` : ""}`,
+          ),
+      );
+    ctx.log(label, "url", ctx.page.url(), "\n  " + names.join("\n  "));
+  }
+}
+
+async function pairing(ctx) {
+  await ctx.page.goto(`${ctx.server.origin}/pair#token=${ctx.server.token}`);
+  await ctx.page.waitForURL((u) => !u.pathname.startsWith("/pair"), { timeout: 30_000 });
+  await settle(ctx);
+  await dump(ctx, "after-pair");
+  if (new URL(ctx.page.url()).pathname === "/welcome") {
+    // Fresh server: skip importing the host's agent history; keep only the bootstrapped project.
+    const box = ctx.page.getByRole("checkbox").first();
+    if (await box.isChecked().catch(() => false)) await box.click();
+    await ctx.page.getByRole("button", { name: "Start", exact: true }).click();
+    await ctx.page.waitForURL((u) => u.pathname !== "/welcome", { timeout: 30_000 });
+    await settle(ctx);
+  }
+  await dump(ctx, "idle");
+}
+
+async function reconnect(ctx) {
+  await ctx.page.goto(`${ctx.server.origin}/`);
+  await ctx.page.getByRole("button", { name: "New thread" }).first().waitFor({ timeout: 30_000 });
+  await settle(ctx);
+  await dump(ctx, "idle");
+}
+
+/** Opens the app, starts a draft thread in the project, and picks Claude Haiku 5.5. */
+async function newHaikuThread(ctx, runtimeLabel) {
+  await reconnect(ctx);
+  await ctx.page.getByRole("button", { name: "New thread", exact: true }).first().click();
+  await ctx.page.waitForURL((u) => u.pathname.startsWith("/draft/"), { timeout: 15_000 });
+  await ctx.page
+    .getByRole("button", { name: /^(GPT|Claude|Codex)/ })
+    .first()
+    .click();
+  await ctx.page.getByPlaceholder("Search models...").fill("Haiku 5.5");
+  await ctx.page
+    .getByRole("option", { name: /Claude Haiku 5\.5/ })
+    .first()
+    .click();
+  if (runtimeLabel) {
+    // The permissions menu sits in the model picker's footer.
+    await ctx.page.locator("[data-composer-permissions-trigger]").first().click();
+    await ctx.page.getByRole("menuitemradio", { name: runtimeLabel, exact: true }).click();
+    await ctx.page.keyboard.press("Escape");
+  }
+  await ctx.page.keyboard.press("Escape");
+  await dump(ctx, "draft");
+}
+
+async function send(ctx, text) {
+  const box = ctx.page.locator("[contenteditable=true]").first();
+  await box.click();
+  await ctx.page.keyboard.type(text);
+  await ctx.page.getByRole("button", { name: "Submit message" }).click();
+  await ctx.page
+    .waitForURL((u) => !u.pathname.startsWith("/draft/"), { timeout: 30_000 })
+    .catch(() => {});
+}
+
+const stopButton = (ctx) => ctx.page.getByRole("button", { name: /^(Stop generation|Stopping)$/ });
+
+async function waitTurnEnd(ctx, timeout = 120_000) {
+  await stopButton(ctx)
+    .first()
+    .waitFor({ state: "visible", timeout: 30_000 })
+    .catch(() => {});
+  await stopButton(ctx).first().waitFor({ state: "detached", timeout });
+  await settle(ctx, 4000, 60_000);
+}
+
+async function turn(ctx) {
+  await newHaikuThread(ctx, null);
+  await send(ctx, "Reply with exactly: hello from haiku");
+  await waitTurnEnd(ctx);
+  await dump(ctx, "done");
+}
+
+async function permission(ctx) {
+  await newHaikuThread(ctx, "Supervised");
+  await send(
+    ctx,
+    "Run the shell command `echo conn-recording` with your Bash tool, then reply with its output only.",
+  );
+  const approve = ctx.page.getByRole("button", { name: /^(Approve|Allow once)$/ }).first();
+  await approve.waitFor({ state: "visible", timeout: 120_000 });
+  await settle(ctx, 1500, 15_000);
+  await dump(ctx, "approval");
+  await approve.click();
+  await waitTurnEnd(ctx);
+  await dump(ctx, "done");
+}
+
+async function interrupt(ctx) {
+  await newHaikuThread(ctx, null);
+  // A slow tool call gives a stable window to interrupt in; Haiku's text answers arrive too fast.
+  await send(
+    ctx,
+    "Run the shell command `ping -c 30 127.0.0.1` with your Bash tool, then reply with: done",
+  );
+  await stopButton(ctx).first().waitFor({ state: "visible", timeout: 30_000 });
+  // The scratch project's ask rule may prompt for Bash even in full access; approve so it runs.
+  const approve = ctx.page.getByRole("button", { name: /^(Approve|Allow once)$/ }).first();
+  await approve.waitFor({ state: "visible", timeout: 20_000 }).then(
+    () => approve.click(),
+    () => {},
+  );
+  const deadline = Date.now() + 60_000;
+  while (
+    Date.now() < deadline &&
+    !ctx.cap.lines.some((l) => l.dir === "out" && JSON.stringify(l.frame).includes("ping -c 30"))
+  ) {
+    await ctx.page.waitForTimeout(200);
+  }
+  await ctx.page.waitForTimeout(2000);
+  await dump(ctx, "running");
+  await stopButton(ctx).first().click();
+  await stopButton(ctx).first().waitFor({ state: "detached", timeout: 60_000 });
+  await settle(ctx, 4000, 60_000);
+  await dump(ctx, "done");
+}
+
+/**
+ * Pairs a second, fresh server as a remote environment from Settings > Connections. This is the
+ * path Conn desktop takes to an Orbit container: bearer tokens and WebSocket tickets, not the
+ * same-origin session cookie. Only traffic to the second server is recorded.
+ */
+async function remote(ctx) {
+  const target = await ctx.startServer();
+  await ctx.page.goto(`${ctx.server.origin}/settings/connections`);
+  await settle(ctx);
+  ctx.cap.only(new URL(target.origin).host);
+  await ctx.page.getByRole("button", { name: "Add environment" }).first().click();
+  const dialog = ctx.page.getByRole("dialog", { name: "Add Environment" });
+  const remoteCard = dialog.getByRole("button", { name: /Remote link/ });
+  if ((await remoteCard.getAttribute("aria-pressed")) !== "true") await remoteCard.click();
+  await dialog
+    .getByPlaceholder("backend.example.com")
+    .fill(`${target.origin}/pair#token=${target.token}`);
+  await dump(ctx, "dialog");
+  await dialog.getByRole("button", { name: "Add environment", exact: true }).click();
+  await dialog.waitFor({ state: "detached", timeout: 30_000 });
+  const deadline = Date.now() + 30_000;
+  while (
+    Date.now() < deadline &&
+    !ctx.cap.lines.some((l) => l.frame?.tag === "orchestration.subscribeShell")
+  ) {
+    await ctx.page.waitForTimeout(200);
+  }
+  await settle(ctx, 4000, 60_000);
+  await dump(ctx, "added");
+  // The thread list now shows the remote environment's bootstrapped thread.
+  await ctx.page.goto(`${ctx.server.origin}/`);
+  await settle(ctx, 4000, 60_000);
+  await dump(ctx, "home");
+}
+
+export const SCENARIOS = { pairing, reconnect, turn, permission, interrupt, remote };
