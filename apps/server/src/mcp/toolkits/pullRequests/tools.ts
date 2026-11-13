@@ -810,7 +810,8 @@ const CheckLogsTool = Tool.make("ci_logs", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWithoutForge);
 
 const RerunChecksTool = Tool.make("ci_rerun", {
   description: "Re-run a PR's failing checks, or one named check.",
@@ -826,7 +827,8 @@ const RerunChecksTool = Tool.make("ci_rerun", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWithoutForge);
 
 export const PullRequestsToolkit = Toolkit.make(
   LinkPullRequestTool,
