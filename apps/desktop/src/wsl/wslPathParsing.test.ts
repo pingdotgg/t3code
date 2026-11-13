@@ -85,6 +85,7 @@ describe("wslUncPathToLinuxPath", () => {
 
   it("rejects invalid distro names and non-WSL paths", () => {
     expect(wslUncPathToLinuxPath("\\\\wsl.localhost\\bad!name\\home")).toBeNull();
+    expect(wslUncPathToLinuxPath("\\\\wsl.localhost\\..\\home")).toBeNull();
     expect(wslUncPathToLinuxPath("C:\\Users\\Josh\\repo")).toBeNull();
   });
 });
