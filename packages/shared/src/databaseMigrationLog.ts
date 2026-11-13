@@ -3,6 +3,8 @@
 export const DATABASE_MIGRATIONS_STARTED_MESSAGE = "Running database migrations";
 export const DATABASE_MIGRATION_PROGRESS_MESSAGE = "Upgrading database";
 export const DATABASE_MIGRATIONS_FINISHED_MESSAGE = "Migrations ran successfully";
+// The server's startup 503 carries this header while migrations run, so clients keep waiting.
+export const DATABASE_MIGRATION_STATUS_HEADER = "x-t3-database-migration";
 
 export function isRunningDatabaseMigrations(output: string): boolean {
   return (

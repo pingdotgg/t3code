@@ -266,6 +266,10 @@ export const hasPendingMigrations = Effect.fn("hasPendingMigrations")(function* 
 
 const run = Migrator.make({});
 
+// Read by the raw Node startup guard, which answers requests before Effect serves them.
+let migrationProgress: string | undefined;
+export const currentDatabaseMigrationProgress = (): string | undefined => migrationProgress;
+
 export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
 }
@@ -274,7 +278,10 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
   // The desktop waits past its readiness budget until the finished line follows this one.
-  if (yield* hasPendingMigrations()) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
+  if (yield* hasPendingMigrations()) {
+    migrationProgress = "starting";
+    yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
+  }
   const includesV2 =
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
   const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];
@@ -301,15 +308,18 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   const executedMigrations: Array<readonly [id: number, name: string]> = [...previewMigrations];
   for (const [index, [id, name]] of pending.entries()) {
     if (latestRecordedId > 0) {
+      const progress = `${index + 1} of ${pending.length}`;
+      migrationProgress = progress;
       yield* Effect.log(DATABASE_MIGRATION_PROGRESS_MESSAGE).pipe(
         Effect.annotateLogs({
           migration: `${id}_${name}`,
-          progress: `${index + 1} of ${pending.length}`,
+          progress,
         }),
       );
     }
     executedMigrations.push(...(yield* run({ loader: makeMigrationLoader(id) })));
   }
+  migrationProgress = undefined;
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")

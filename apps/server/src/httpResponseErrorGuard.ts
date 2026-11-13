@@ -3,6 +3,8 @@
 import type * as NodeHttp from "node:http";
 import type * as NodeStream from "node:stream";
 
+import { DATABASE_MIGRATION_STATUS_HEADER } from "@t3tools/shared/databaseMigrationLog";
+
 export function guardHttpResponseWriteErrors<T extends NodeHttp.Server>(
   server: T,
   onError?: (error: unknown) => void,
@@ -51,13 +53,30 @@ export function keepIdleConnections<T extends NodeHttp.Server>(server: T): T {
  * between would hang. Install this after the write-error guards so only the
  * serving handlers trigger the handoff.
  */
-export function rejectRequestsUntilServing<T extends NodeHttp.Server>(server: T): T {
+export function rejectRequestsUntilServing<T extends NodeHttp.Server>(
+  server: T,
+  readMigrationProgress: () => string | undefined = () => undefined,
+): T {
+  const rejection = () => {
+    const progress = readMigrationProgress();
+    if (progress === undefined) return { headers: {}, body: "" };
+    return {
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        [DATABASE_MIGRATION_STATUS_HEADER]: progress,
+      },
+      body: `Upgrading database, ${progress}`,
+    };
+  };
   const rejectRequest = (_request: NodeHttp.IncomingMessage, response: NodeHttp.ServerResponse) => {
-    response.writeHead(503, { "retry-after": "1", connection: "close" }).end();
+    const { headers, body } = rejection();
+    response.writeHead(503, { ...headers, "retry-after": "1", connection: "close" }).end(body);
   };
   const rejectUpgrade = (_request: NodeHttp.IncomingMessage, socket: NodeStream.Duplex) => {
+    const { headers, body } = rejection();
+    const headerLines = Object.entries(headers).map(([name, value]) => `${name}: ${value}\r\n`);
     socket.end(
-      "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+      `HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\n${headerLines.join("")}Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
     );
   };
   server.on("request", rejectRequest);

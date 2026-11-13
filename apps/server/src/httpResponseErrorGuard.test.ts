@@ -4,6 +4,8 @@ import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
+import { DATABASE_MIGRATION_STATUS_HEADER } from "@t3tools/shared/databaseMigrationLog";
+
 import * as HttpResponseErrorGuard from "./httpResponseErrorGuard.ts";
 
 const { guardHttpResponseWriteErrors } = HttpResponseErrorGuard;
@@ -205,18 +207,31 @@ describe("keepIdleConnections", () => {
 describe("rejectRequestsUntilServing", () => {
   it("rejects early HTTP and upgrades, then hands each off to its serving handler", async () => {
     const writeErrors: unknown[] = [];
+    let migrationProgress: string | undefined;
     const server = HttpResponseErrorGuard.rejectRequestsUntilServing(
       guardHttpResponseWriteErrors(NodeHttp.createServer(), (error) => writeErrors.push(error)),
+      () => migrationProgress,
     );
     const port = await listen(server);
 
     const earlyHttp = await fetchResponse(port, "/");
     expect(earlyHttp.statusCode).toBe(503);
     expect(earlyHttp.headers["retry-after"]).toBe("1");
+    expect(earlyHttp.headers[DATABASE_MIGRATION_STATUS_HEADER]).toBeUndefined();
 
     const earlyUpgrade = await fetchResponse(port, "/rpc", true);
     expect(earlyUpgrade.statusCode).toBe(503);
     expect(earlyUpgrade.headers["retry-after"]).toBe("1");
+
+    migrationProgress = "2 of 3";
+    const migratingHttp = await fetchResponse(port, "/");
+    expect(migratingHttp.statusCode).toBe(503);
+    expect(migratingHttp.headers[DATABASE_MIGRATION_STATUS_HEADER]).toBe("2 of 3");
+
+    const migratingUpgrade = await fetchResponse(port, "/rpc", true);
+    expect(migratingUpgrade.statusCode).toBe(503);
+    expect(migratingUpgrade.headers[DATABASE_MIGRATION_STATUS_HEADER]).toBe("2 of 3");
+    migrationProgress = undefined;
 
     server.on("request", (_request, response) => response.writeHead(204).end());
 

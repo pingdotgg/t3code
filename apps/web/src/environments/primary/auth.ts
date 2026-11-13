@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpClientError } from "effect/http";
 
+import { DATABASE_MIGRATION_STATUS_HEADER } from "@t3tools/shared/databaseMigrationLog";
 import {
   getPairingTokenFromUrl,
   stripPairingTokenFromUrl as stripPairingTokenUrl,
@@ -274,13 +275,26 @@ async function retryTransientBootstrap<T>(operation: () => Promise<T>): Promise<
         throw error;
       }
 
-      if (Date.now() - startedAt >= BOOTSTRAP_RETRY_TIMEOUT_MS) {
+      // A database upgrade can take minutes; the server says so while it runs.
+      if (
+        !isDatabaseMigrationInProgress(error) &&
+        Date.now() - startedAt >= BOOTSTRAP_RETRY_TIMEOUT_MS
+      ) {
         throw error;
       }
 
       await waitForBootstrapRetry(BOOTSTRAP_RETRY_STEP_MS);
     }
   }
+}
+
+function isDatabaseMigrationInProgress(error: unknown): boolean {
+  if (!isPrimaryEnvironmentRequestError(error) || error.status !== 503) return false;
+  const cause = error.cause;
+  return (
+    HttpClientError.isHttpClientError(cause) &&
+    cause.response?.headers[DATABASE_MIGRATION_STATUS_HEADER] !== undefined
+  );
 }
 
 function waitForBootstrapRetry(delayMs: number): Promise<void> {
