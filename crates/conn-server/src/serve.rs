@@ -101,11 +101,13 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
     config.projects = projects;
     config.providers = providers.clone();
     let engine: Arc<dyn Engine> = Arc::new(SqliteEngine::open(config).expect("engine"));
-    let deps = Deps {
+    let mut deps = Deps {
         engine: Some(engine.clone()),
         providers,
         environment: Some(environment.clone()),
+        mcp: None,
     };
+    deps.mcp = crate::routes::mcp::service(&deps);
     let state = AppState {
         table: Arc::new(method_table(&deps)),
         auth: auth.clone(),
@@ -116,6 +118,9 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
 
     let listener = tokio::net::TcpListener::bind(listen).await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
+    if let Some(mcp) = &state.deps.mcp {
+        mcp.set_listen_address(addr);
+    }
     let pairing = auth.issue_pairing_code(None, auth::STARTUP_PAIRING_CODE_TTL_MS);
     println!("conn-server listening on http://{addr}");
     println!(
