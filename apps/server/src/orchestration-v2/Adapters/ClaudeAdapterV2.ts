@@ -6386,8 +6386,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* endClaudeMonitorTasks((_taskId, task) => task.nativeThreadId === nativeThreadId);
           });
 
-        // Session crons live in the CLI process: only its exit or replacement drops them. A failed
-        // result (usage limit, overload) leaves the process and its crons running.
+        // Session crons pin the session with no cap, so never keep a count the latest turn did not
+        // report: a failed turn (usage limit, overload) ends through StopFailure, which has none.
         const clearSessionCronCountForNativeThread = (nativeThreadId: string) =>
           Ref.update(pendingSessionCronCountByNativeThread, (current) => {
             if (!current.has(nativeThreadId)) return current;
@@ -12393,6 +12393,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 reason: "previous_turn_active",
               });
             }
+            // Only this turn's Stop hook may report crons; a failed turn ends without one.
+            yield* clearSessionCronCountForNativeThread(nativeThreadId);
             yield* Ref.update(lastTurnRouteByNativeThread, (current) => {
               const updated = new Map(current);
               updated.set(nativeThreadId, {

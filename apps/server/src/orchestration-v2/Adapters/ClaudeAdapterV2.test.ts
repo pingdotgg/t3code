@@ -12379,7 +12379,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("keeps session crons pinned when the next turn fails without closing the CLI", () =>
+  it.effect("drops a session cron count the failed next turn did not confirm", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
@@ -12401,8 +12401,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* harness.awaitTerminal(1);
         assert.isTrue(yield* scheduledWork(harness));
 
-        // A usage limit fails the turn through StopFailure, which carries no crons, and the
-        // CLI keeps running with the job still scheduled.
+        // A usage limit fails the turn through StopFailure, which carries no crons, so a
+        // CronDelete earlier in the turn would leave the old count pinning the session forever.
         yield* harness.runtime.startTurn(turn(2, "Keep going."));
         yield* harness.offerAndWait(
           makeResultFrame({
@@ -12415,9 +12415,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         yield* harness.awaitTerminal(2);
         assert.equal(harness.terminalEvents()[1]?.status, "failed");
-        assert.isTrue(
+        assert.isFalse(
           yield* scheduledWork(harness),
-          "a failed turn must not forget crons the live CLI still holds",
+          "a failed turn must not keep a cron count it never reported",
         );
       }).pipe(
         Effect.provide(
