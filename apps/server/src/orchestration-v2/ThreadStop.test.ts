@@ -513,8 +513,9 @@ it.effect.each([
 it.effect.each([
   ["another task's queued turn", "node:stop-queued-task", ["running", "cancelled"], false],
   ["the live turn's task", "node:stop-live-task", ["interrupted", "queued:held"], true],
+  ["a task whose turn already ran", "node:stop-ran-task", ["interrupted", "queued:held"], true],
 ] as const)(
-  "cancelling %s leaves the other task's turn and the tasks under it alone",
+  "cancelling %s spares another task's turn and the tasks under it only for a task that never ran",
   ([_name, stoppedTaskId, runs, stopsDescendants]) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

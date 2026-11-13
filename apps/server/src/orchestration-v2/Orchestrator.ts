@@ -782,13 +782,21 @@ function hasLiveRun(projection: Pick<OrchestrationV2ThreadProjection, "runs">): 
   return projection.runs.some(isLiveRun);
 }
 
-/** A task whose child thread is running another task's turn owns only its own queued turns. */
+/**
+ * A task none of whose turns has started, on a child thread running another task's turn, owns
+ * only its queued turns. One that has run still stops the thread and the tasks it delegated.
+ */
 function delegatedTaskYieldsLiveRun(
   runs: ReadonlyArray<OrchestrationV2Run>,
   taskId: NodeId | undefined,
 ): boolean {
+  if (taskId === undefined) return false;
+  const own = runs.filter((run) => run.delegatedTaskId === taskId);
   return (
-    taskId !== undefined &&
+    own.length > 0 &&
+    own.every(
+      (run) => run.startedAt === null && (run.status === "queued" || run.status === "cancelled"),
+    ) &&
     runs.some(
       (run) =>
         isLiveRun(run) && run.delegatedTaskId !== undefined && run.delegatedTaskId !== taskId,
