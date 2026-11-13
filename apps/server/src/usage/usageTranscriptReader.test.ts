@@ -99,6 +99,30 @@ describe("compressed transcripts", () => {
     assert.isAbove(listed.files.find((file) => file.path === compressed)?.size ?? 0, 0);
   });
 
+  it("lists files in directory order when more directories wait than it reads at once", async () => {
+    for (let index = 0; index < 40; index += 1) {
+      const nested = NodePath.join(dir, `project-${index}`, "sessions");
+      await NodeFSP.mkdir(nested, { recursive: true });
+      await NodeFSP.writeFile(NodePath.join(nested, "a.jsonl"), "");
+      await NodeFSP.writeFile(NodePath.join(nested, "..", "b.jsonl"), "");
+    }
+    // Usage that two transcripts share counts in the first one listed, so the order is part of the result.
+    const inOrder = async (folder: string): Promise<string[]> => {
+      const paths: string[] = [];
+      for (const entry of await NodeFSP.readdir(folder, { withFileTypes: true })) {
+        const child = NodePath.join(folder, entry.name);
+        if (entry.isDirectory()) paths.push(...(await inOrder(child)));
+        else paths.push(child);
+      }
+      return paths;
+    };
+    const listed = await listTranscriptFiles(dir, 0);
+    assert.deepStrictEqual(
+      listed.files.map((file) => file.path),
+      await inOrder(dir),
+    );
+  });
+
   it.each([
     { parser: "native", streamingThresholdBytes: undefined },
     { parser: "projected", streamingThresholdBytes: 1024 },
