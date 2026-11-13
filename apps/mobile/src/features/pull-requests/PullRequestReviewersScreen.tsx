@@ -209,7 +209,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
           ref={listRef}
           data={candidates}
           keyExtractor={(candidate) => `${candidate.kind}:${candidate.id}`}
-          extraData={{ allowed, pending }}
+          extraData={{ allowed, draft }}
           estimatedItemSize={64}
           recycleItems
           renderScrollComponent={NativeScrollView}
