@@ -104,7 +104,7 @@ fn policy(mode: &str, cwd: &str) -> Value {
 }
 
 fn model() -> Value {
-    json!({"instanceId": "claudeAgent", "model": "haiku"})
+    json!({"instanceId": "claudeAgent", "model": "claude-haiku-5-5"})
 }
 
 async fn open(
@@ -305,11 +305,9 @@ async fn live_interrupt_then_continue() {
     let scratch = Scratch::new("interrupt");
     // The concrete session, to check which process served each turn.
     let (tx, mut events) = mpsc::channel(crate::session::EVENT_CAPACITY);
-    let session = ClaudeSession::open(
-        "provider-session-live".into(),
-        provider().config().clone(),
-        tx,
-    );
+    let config = provider().config().clone();
+    let helper = crate::Helper::new(config.helper.clone());
+    let session = ClaudeSession::open("provider-session-live".into(), config, helper, tx);
     let thread = new_thread(&session, "full-access", &scratch.cwd()).await;
     session
         .start_turn(turn(
@@ -346,8 +344,8 @@ async fn live_interrupt_then_continue() {
             .clone(),
     )
     .unwrap();
-    let pid = session.live_pid();
-    assert!(pid.is_some());
+    let query = session.live_query();
+    assert!(query.is_some());
     session
         .start_turn(turn(
             2,
@@ -362,9 +360,9 @@ async fn live_interrupt_then_continue() {
     assert_eq!(seen.last().unwrap()["status"], "completed");
     assert!(assistant_text(&seen).to_lowercase().contains("alive"));
     assert_eq!(
-        pid,
-        session.live_pid(),
-        "the same process served both turns"
+        query,
+        session.live_query(),
+        "the same query served both turns"
     );
     session.close().await;
 }
@@ -450,10 +448,12 @@ fn thread_of(events: &[Value]) -> conn_contract::ProviderThread {
     from_json(last_of(events, "provider_thread.updated")["providerThread"].clone()).unwrap()
 }
 
-fn concrete(config: ClaudeConfig) -> (ClaudeSession, mpsc::Receiver<ProviderEvent>) {
+fn concrete(config: ClaudeConfig) -> (ClaudeSession, crate::Helper, mpsc::Receiver<ProviderEvent>) {
     let (tx, events) = mpsc::channel(crate::session::EVENT_CAPACITY);
+    let helper = crate::Helper::new(config.helper.clone());
     (
-        ClaudeSession::open("provider-session-live".into(), config, tx),
+        ClaudeSession::open("provider-session-live".into(), config, helper.clone(), tx),
+        helper,
         events,
     )
 }
@@ -478,7 +478,7 @@ async fn run_turn(
 #[ignore = "runs the real claude CLI"]
 async fn live_steer_is_taken_into_the_running_turn() {
     let scratch = Scratch::new("steer");
-    let (session, mut events) = concrete(provider().config().clone());
+    let (session, _helper, mut events) = concrete(provider().config().clone());
     let thread = new_thread(&session, "full-access", &scratch.cwd()).await;
     session
         .start_turn(turn(
@@ -535,7 +535,7 @@ async fn live_idle_close_then_resume() {
         idle_timeout: Some(Duration::from_secs(3)),
         ..provider().config().clone()
     };
-    let (session, mut events) = concrete(config);
+    let (session, helper, mut events) = concrete(config);
     let thread = new_thread(&session, "full-access", &scratch.cwd()).await;
     let prompt = format!("Remember the word {word}. Reply only: ok");
     let seen = run_turn(
@@ -544,13 +544,15 @@ async fn live_idle_close_then_resume() {
         turn(1, &thread, &prompt, "full-access", &scratch.cwd()),
     )
     .await;
-    let first = session.live_pid().expect("a live process after the turn");
+    let first = session.live_query().expect("a live query after the turn");
+    let helper_pid = helper.pid().expect("the helper runs during the query");
     // The live test waits on the real idle timer; nothing else can signal it.
-    tokio::time::sleep(Duration::from_secs(5)).await;
-    assert_eq!(session.live_pid(), None, "the idle child was closed");
+    tokio::time::sleep(Duration::from_secs(12)).await;
+    assert_eq!(session.live_query(), None, "the idle query was closed");
+    assert_eq!(helper.pid(), None, "the idle helper stopped");
     assert!(
-        !conn_provider_support::process::pid_alive(first),
-        "the idle child exited"
+        !conn_provider_support::process::pid_alive(helper_pid),
+        "the helper exited"
     );
     let seen = run_turn(
         &session,
@@ -565,7 +567,7 @@ async fn live_idle_close_then_resume() {
     )
     .await;
     assert!(assistant_text(&seen).to_lowercase().contains(&word));
-    assert_ne!(session.live_pid(), Some(first), "a new process resumed it");
+    assert_ne!(session.live_query(), Some(first), "a new query resumed it");
     session.close().await;
 }
 
@@ -697,7 +699,7 @@ mod mcp {
 async fn live_mcp_server_tool_call() {
     let scratch = Scratch::new("mcp");
     let server = mcp::start().await;
-    let (session, mut events) = concrete(provider().config().clone());
+    let (session, _helper, mut events) = concrete(provider().config().clone());
     session
         .set_mcp_servers(vec![McpServer {
             name: "probe".into(),
@@ -784,7 +786,7 @@ const ASK_WORDS: &str = "List every secret word I told you in this conversation,
 #[ignore = "runs the real claude CLI"]
 async fn live_fork_from_a_turn() {
     let scratch = Scratch::new("fork");
-    let (session, mut events) = concrete(provider().config().clone());
+    let (session, _helper, mut events) = concrete(provider().config().clone());
     let (a, b, source, turns) = two_words(&session, &mut events, &scratch.cwd()).await;
     let forked = session
         .fork_thread(ForkThreadInput {
@@ -821,7 +823,7 @@ async fn live_fork_from_a_turn() {
 #[ignore = "runs the real claude CLI"]
 async fn live_rollback_to_a_turn() {
     let scratch = Scratch::new("rollback");
-    let (session, mut events) = concrete(provider().config().clone());
+    let (session, _helper, mut events) = concrete(provider().config().clone());
     let (a, b, thread, turns) = two_words(&session, &mut events, &scratch.cwd()).await;
     let snapshot = session
         .rollback_thread(RollbackThreadInput {

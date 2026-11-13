@@ -1,18 +1,22 @@
-//! The Claude provider: drives the `claude` CLI over its stdio stream-JSON protocol and
-//! implements [`conn_provider::Provider`].
+//! The Claude provider: runs Claude through the official Claude Agent SDK in a small Node
+//! helper (`helpers/claude-sdk`), as the T3 server does, and implements
+//! [`conn_provider::Provider`].
 //!
-//! - [`protocol`]: typed CLI messages with a raw-JSON fallback.
-//! - [`launch`]: executable, argv and environment, matching what `ClaudeAdapterV2` passes.
-//! - [`mapper`]: CLI messages → `ProviderEvent`s and CLI replies (pure, replay-tested).
-//! - [`session`]: the `Session` implementation. The child process and ids come from
+//! - [`helper`]: the shared helper process and its JSON-lines protocol.
+//! - [`launch`]: the `query()` option object and environment, as `ClaudeAdapterV2` builds them.
+//! - [`protocol`]: typed SDK messages with a raw-JSON fallback.
+//! - [`mapper`]: SDK messages → `ProviderEvent`s and callback answers (pure, replay-tested).
+//! - [`session`]: the `Session` implementation. The helper child and ids come from
 //!   `conn-provider-support`.
 //!
 //! Reference behaviour: `ClaudeAdapterV2.ts` in `apps/server/src/orchestration-v2/Adapters`.
 //! See `README.md` in this crate for the event mapping and its known differences.
 
 pub mod attachments;
+pub mod helper;
 pub mod launch;
 pub mod mapper;
+pub mod ordered;
 pub mod protocol;
 pub mod session;
 
@@ -32,6 +36,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 pub use conn_provider_support::ids;
+pub use helper::{Helper, HelperCommand};
 pub use launch::ClaudeConfig;
 pub use session::ClaudeSession;
 
@@ -41,18 +46,26 @@ pub const DRIVER: &str = "claudeAgent";
 pub struct ClaudeProvider {
     instance_id: ProviderInstanceId,
     config: ClaudeConfig,
+    /// One helper for all sessions; it runs only while a query is open.
+    helper: Helper,
 }
 
 impl ClaudeProvider {
     pub fn new(instance_id: ProviderInstanceId, config: ClaudeConfig) -> Self {
+        let helper = Helper::new(config.helper.clone());
         Self {
             instance_id,
             config,
+            helper,
         }
     }
 
     pub fn config(&self) -> &ClaudeConfig {
         &self.config
+    }
+
+    pub fn helper(&self) -> &Helper {
+        &self.helper
     }
 }
 
@@ -103,7 +116,12 @@ impl Provider for ClaudeProvider {
             };
             tx.try_send(event)
                 .map_err(|_| ProviderError::SessionStopped)?;
-            let session = ClaudeSession::open(input.provider_session_id, self.config.clone(), tx);
+            let session = ClaudeSession::open(
+                input.provider_session_id,
+                self.config.clone(),
+                self.helper.clone(),
+                tx,
+            );
             Ok(OpenedSession {
                 session: Box::new(session),
                 events,

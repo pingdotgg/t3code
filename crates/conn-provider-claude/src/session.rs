@@ -1,14 +1,15 @@
-//! [`ClaudeSession`]: one provider session, at most one live `claude` process.
+//! [`ClaudeSession`]: one provider session, at most one live SDK query.
 //!
-//! The process starts lazily on the first turn (as T3 opens its SDK query then), and again after
-//! it died, went idle, or the thread, working directory or launch flags changed. A driver task
-//! per process reads its output, feeds the [`Mapper`], and forwards events and replies in order.
-//! An idle watcher per process ends it after [`ClaudeConfig::idle_timeout`]; the next turn
-//! resumes the conversation with `--resume`. State sits behind one `std` mutex that is never
-//! held across an `.await`.
+//! A query is the SDK's `query()` in the shared helper process ([`crate::helper`]); the SDK
+//! starts and drives the `claude` CLI. The query opens lazily on the first turn (as T3 opens
+//! its SDK query then), and again after it ended, went idle, or the thread, working directory
+//! or launch options changed. A driver task per query reads its events, feeds the [`Mapper`],
+//! and forwards provider events and callback answers in order. An idle watcher per query ends
+//! it after [`ClaudeConfig::idle_timeout`]; the next turn resumes the conversation. State sits
+//! behind one `std` mutex that is never held across an `.await`.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
@@ -19,25 +20,32 @@ use conn_provider::{
     ProviderEvent, ProviderResult, ResumeThreadInput, RollbackTarget, RollbackThreadInput,
     RuntimePolicy, RuntimeRequestResponse, Session, SteerInput, ThreadSnapshot, TurnInput,
 };
-use serde_json::{Value, json};
-use tokio::sync::{mpsc, oneshot};
+use serde_json::{Map, Value, json};
+use tokio::sync::{mpsc, watch};
 
 use crate::DRIVER;
 use crate::attachments;
+use crate::helper::{Helper, QueryEnd, QueryEvent, QueryHandle};
 use crate::ids::{self, Env, SystemEnv};
-use crate::launch::{self, ClaudeConfig, LaunchInput, T3_MCP_SERVER};
+use crate::launch::{
+    self, BypassAvailability, ClaudeConfig, PolicyInput, QueryInput, QueryPolicy, T3_MCP_SERVER,
+};
 use crate::mapper::{Mapper, Out};
-use crate::protocol::{Delivery, Inbound, control_request, user_message};
-use conn_provider_support::lines::Line;
-use conn_provider_support::process::{ExitInfo, ProcEvent, Process};
+use crate::protocol::{
+    CanUseTool, ControlRequest, Delivery, Elicitation, Inbound, UserDialog, user_message_value,
+};
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
-/// The SDK leaves boot unbounded; T3 gives it about two minutes on busy hosts.
-const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(120);
+/// `CLAUDE_BOOT_TIMEOUT`: the SDK leaves boot unbounded.
+const BOOT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// `CLAUDE_MCP_REGISTRATION_TIMEOUT`.
 const MCP_REGISTRATION_TIMEOUT: Duration = Duration::from_secs(90);
 /// `CLAUDE_T3_MCP_TOOL_TIMEOUT_MS`.
 const MCP_TOOL_TIMEOUT_MS: u64 = 65 * 60 * 1000;
+/// How long a closing query may take: the SDK's 2 s grace, SIGTERM, then SIGKILL after 5 s.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(20);
+/// The helper's session-file calls (T3's worker timeout).
+const FUNCTION_TIMEOUT: Duration = Duration::from_secs(30);
 const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 pub const EVENT_CAPACITY: usize = 256;
 const LOGGED_SKIPS_CAP: usize = 64;
@@ -49,6 +57,7 @@ pub struct ClaudeSession {
 
 struct Inner {
     config: ClaudeConfig,
+    helper: Helper,
     state: Mutex<State>,
 }
 
@@ -57,32 +66,37 @@ struct State {
     events: Option<mpsc::Sender<ProviderEvent>>,
     live: Option<Live>,
     generation: u64,
-    /// Native ids that have a conversation on disk, so the next process uses `--resume`.
+    /// Native ids that have a conversation on disk, so the next query uses `resume`.
     resumable: HashSet<String>,
-    controls: HashMap<String, oneshot::Sender<Result<Value, String>>>,
-    next_control: u64,
     mcp_servers: Vec<McpServer>,
     /// Inline attachment bytes sent so far (`claudeAttachmentBudget`).
     attachment_bytes: u64,
+    /// `resolveBypassAvailability`, cached per working directory (T3's `bypassCache`).
+    bypass_cache: Option<(Option<String>, BypassAvailability)>,
     closed: bool,
     logged_skips: HashSet<String>,
 }
 
 struct Live {
-    process: Process,
+    query: QueryHandle,
     generation: u64,
+    /// Becomes true when the query's `end` arrived.
+    ended: watch::Receiver<bool>,
     native_thread_id: String,
     cwd: Option<String>,
+    policy: QueryPolicy,
+    /// The permission mode now in force (a denied ExitPlanMode can leave `plan`).
     permission_mode: String,
     model: String,
     effort: Option<String>,
-    /// The MCP servers this process got; a different list needs `mcp_set_servers`.
+    selection_settings: Map<String, Value>,
+    /// The MCP servers this query got; a different list needs `setMcpServers`.
     mcp_servers: Vec<McpServer>,
-    /// `--allowedTools` is a launch flag: gaining or losing the T3 server needs a new process.
+    /// `allowedTools` is a launch option: gaining or losing the T3 server needs a new query.
     t3_mcp: bool,
     restart_needed: bool,
     last_activity: Instant,
-    /// Since when background work keeps this idle process alive.
+    /// Since when background work keeps this idle query alive.
     held_since: Option<Instant>,
 }
 
@@ -90,21 +104,22 @@ impl ClaudeSession {
     pub(crate) fn open(
         id: ProviderSessionId,
         config: ClaudeConfig,
+        helper: Helper,
         events: mpsc::Sender<ProviderEvent>,
     ) -> Self {
         let mapper = Mapper::new(SystemEnv, id.as_str());
         let inner = Arc::new(Inner {
             config,
+            helper,
             state: Mutex::new(State {
                 mapper,
                 events: Some(events),
                 live: None,
                 generation: 0,
                 resumable: HashSet::new(),
-                controls: HashMap::new(),
-                next_control: 0,
                 mcp_servers: Vec::new(),
                 attachment_bytes: 0,
+                bypass_cache: None,
                 closed: false,
                 logged_skips: HashSet::new(),
             }),
@@ -113,8 +128,12 @@ impl ClaudeSession {
     }
 
     #[cfg(test)]
-    pub(crate) fn live_pid(&self) -> Option<u32> {
-        self.inner.lock().live.as_ref().map(|l| l.process.pid)
+    pub(crate) fn live_query(&self) -> Option<String> {
+        self.inner
+            .lock()
+            .live
+            .as_ref()
+            .map(|l| l.query.id().to_string())
     }
 }
 
@@ -123,8 +142,8 @@ impl Inner {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Sends events and CLI replies in order. Holds no lock.
-    async fn deliver(&self, writer: Option<&mpsc::Sender<String>>, outs: Vec<Out>) {
+    /// Sends events and callback answers in order. Holds no lock.
+    async fn deliver(&self, query: Option<&QueryHandle>, outs: Vec<Out>) {
         if outs.is_empty() {
             return;
         }
@@ -137,8 +156,8 @@ impl Inner {
                     }
                 }
                 Out::Write(line) => {
-                    if let Some(writer) = writer {
-                        let _ = writer.send(line).await;
+                    if let (Some(query), Some((id, result))) = (query, callback_answer(&line)) {
+                        query.answer(&id, result).await;
                     }
                 }
                 Out::Skipped(kind) => {
@@ -148,54 +167,31 @@ impl Inner {
                         && state.logged_skips.insert(kind.clone());
                     drop(state);
                     if new {
-                        eprintln!("conn-provider-claude: skipped CLI message kind `{kind}`");
+                        eprintln!("conn-provider-claude: skipped SDK message kind `{kind}`");
                     }
                 }
             }
         }
     }
 
-    async fn control(&self, request: Value, timeout: Duration) -> ProviderResult<Value> {
-        let subtype = request["subtype"].as_str().unwrap_or("control").to_string();
-        let (id, rx, writer) = {
-            let mut state = self.lock();
-            let Some(live) = &state.live else {
-                return Err(ProviderError::SessionStopped);
-            };
-            let writer = live.process.writer();
-            state.next_control += 1;
-            let id = format!("conn_{}", state.next_control);
-            let (tx, rx) = oneshot::channel();
-            state.controls.insert(id.clone(), tx);
-            (id, rx, writer)
-        };
-        if writer.send(control_request(&id, request)).await.is_err() {
-            self.lock().controls.remove(&id);
-            return Err(ProviderError::SessionStopped);
-        }
-        match tokio::time::timeout(timeout, rx).await {
-            Ok(Ok(Ok(value))) => Ok(value),
-            Ok(Ok(Err(detail))) => Err(ProviderError::Failed {
-                operation: "control",
-                detail: format!("{subtype}: {detail}"),
-            }),
-            Ok(Err(_)) => Err(ProviderError::SessionStopped),
-            Err(_) => {
-                self.lock().controls.remove(&id);
-                Err(ProviderError::Failed {
-                    operation: "control",
-                    detail: format!("{subtype}: no answer from Claude"),
-                })
-            }
-        }
+    fn live_query(&self) -> ProviderResult<QueryHandle> {
+        self.lock()
+            .live
+            .as_ref()
+            .map(|l| l.query.clone())
+            .ok_or(ProviderError::SessionStopped)
     }
 
-    /// `mcp_set_servers`, as the TS query runner sends it after `initialize`. Credentials stay
-    /// out of argv. Servers that fail to connect are logged by name only, as TS does.
+    async fn call(&self, method: &str, args: Value, timeout: Duration) -> ProviderResult<Value> {
+        self.live_query()?.call(method, args, timeout).await
+    }
+
+    /// `setMcpServers`, as the T3 query runner calls it after `initializationResult`.
+    /// Credentials stay out of argv. Servers that fail to connect are logged by name only.
     async fn set_mcp_servers(&self, servers: &[McpServer]) -> ProviderResult<()> {
-        let mut map = serde_json::Map::new();
+        let mut map = Map::new();
         for server in servers {
-            let headers: serde_json::Map<String, Value> = server
+            let headers: Map<String, Value> = server
                 .headers
                 .iter()
                 .map(|(k, v)| (k.clone(), json!(v)))
@@ -206,19 +202,14 @@ impl Inner {
             );
         }
         let answer = self
-            .control(
-                json!({"subtype": "mcp_set_servers", "servers": map}),
-                MCP_REGISTRATION_TIMEOUT,
-            )
+            .call("setMcpServers", json!([map]), MCP_REGISTRATION_TIMEOUT)
             .await;
         let failed: Vec<String> = match &answer {
             Ok(value) => value["errors"]
                 .as_object()
                 .map(|e| e.keys().cloned().collect())
                 .unwrap_or_default(),
-            Err(ProviderError::Failed { detail, .. })
-                if detail.ends_with("no answer from Claude") =>
-            {
+            Err(ProviderError::Failed { detail, .. }) if detail.ends_with("no answer in time") => {
                 return Err(failed_err(
                     "set_mcp_servers",
                     "Claude did not register the MCP servers in time.",
@@ -240,70 +231,129 @@ impl Inner {
     }
 }
 
-/// A process event with its stdout line already decoded.
-#[allow(clippy::large_enum_variant)] // Moved once per line; boxing adds an allocation each.
-enum Event {
-    Message(Inbound),
-    Oversized(usize),
-    Exited(ExitInfo),
+/// A mapper reply (a CLI `control_response` line) as a callback answer.
+fn callback_answer(line: &str) -> Option<(String, Result<Value, String>)> {
+    let mut value: Value = serde_json::from_str(line).ok()?;
+    let response = value.get_mut("response")?;
+    let id = response.get("request_id")?.as_str()?.to_string();
+    if response.get("subtype").and_then(Value::as_str) == Some("success") {
+        Some((
+            id,
+            Ok(response
+                .get_mut("response")
+                .map(Value::take)
+                .unwrap_or(Value::Null)),
+        ))
+    } else {
+        let error = response
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("control request failed")
+            .to_string();
+        Some((id, Err(error)))
+    }
 }
 
-/// A line longer than this is dropped. Large tool results (images as base64) stay below it.
-const MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
+/// An SDK callback as the CLI control request the mapper reads. The SDK passes the request's
+/// fields renamed (`can_use_tool` → `canUseTool(toolName, input, {toolUseID, ...})`).
+fn callback_request(kind: &str, args: &Value) -> Option<ControlRequest> {
+    let text = |v: &Value, key: &str| v.get(key).and_then(Value::as_str).map(str::to_string);
+    match kind {
+        "canUseTool" => {
+            let options = args.get("options").unwrap_or(&Value::Null);
+            Some(ControlRequest::CanUseTool(CanUseTool {
+                tool_name: text(args, "toolName").unwrap_or_default(),
+                input: args.get("input").cloned().unwrap_or(Value::Null),
+                tool_use_id: text(options, "toolUseID").unwrap_or_default(),
+                permission_suggestions: options.get("suggestions").cloned(),
+                decision_reason: text(options, "decisionReason"),
+                title: text(options, "title"),
+                display_name: text(options, "displayName"),
+                description: text(options, "description"),
+                blocked_path: text(options, "blockedPath"),
+                agent_id: text(options, "agentID"),
+            }))
+        }
+        "elicitation" => Some(ControlRequest::Elicitation(Elicitation {
+            mcp_server_name: text(args, "serverName").unwrap_or_default(),
+            message: text(args, "message").unwrap_or_default(),
+            mode: text(args, "mode"),
+            requested_schema: args.get("requestedSchema").cloned(),
+            title: text(args, "title"),
+            display_name: text(args, "displayName"),
+        })),
+        "userDialog" => Some(ControlRequest::UserDialog(UserDialog {
+            dialog_kind: text(args, "dialogKind").unwrap_or_default(),
+            payload: args.get("payload").cloned().unwrap_or(Value::Null),
+            tool_use_id: text(args, "toolUseID"),
+        })),
+        _ => None,
+    }
+}
 
-/// The driver: one per process, ends after the process's `Exited`.
-async fn drive(inner: Arc<Inner>, generation: u64, mut rx: mpsc::Receiver<ProcEvent>) {
+/// The driver: one per query, ends after the query's `End`.
+async fn drive(
+    inner: Arc<Inner>,
+    generation: u64,
+    query: QueryHandle,
+    mut rx: mpsc::Receiver<QueryEvent>,
+    ended: watch::Sender<bool>,
+) {
     loop {
         let dirty = inner.lock().mapper.has_dirty_streams();
         let event = if dirty {
             tokio::select! {
                 event = rx.recv() => event,
                 _ = tokio::time::sleep(FLUSH_INTERVAL) => {
-                    let (outs, writer) = {
-                        let mut state = inner.lock();
-                        (state.mapper.flush(), writer_for(&state, generation))
-                    };
-                    inner.deliver(writer.as_ref(), outs).await;
+                    let outs = inner.lock().mapper.flush();
+                    inner.deliver(Some(&query), outs).await;
                     continue;
                 }
             }
         } else {
             rx.recv().await
         };
-        let event = event.map(|event| match event {
-            ProcEvent::Line(Line::Text(text)) => Event::Message(Inbound::decode(&text)),
-            ProcEvent::Line(Line::Oversized(bytes)) => Event::Oversized(bytes),
-            ProcEvent::Exited(info) => Event::Exited(info),
-        });
-        if matches!(event, Some(Event::Message(_))) {
-            touch(&mut inner.lock(), Some(generation));
-        }
-        match event {
-            Some(Event::Message(Inbound::ControlResponse { request_id, result })) => {
-                if let Some(tx) = inner.lock().controls.remove(&request_id) {
-                    let _ = tx.send(result);
+        let message = match event {
+            Some(QueryEvent::Message(value)) => Inbound::from_value(value),
+            Some(QueryEvent::Callback { id, kind, args }) => match callback_request(&kind, &args) {
+                Some(request) => Inbound::ControlRequest {
+                    request_id: id,
+                    request,
+                },
+                None => {
+                    query
+                        .answer(&id, Err(format!("unsupported callback {kind}")))
+                        .await;
+                    continue;
                 }
-            }
-            Some(Event::Message(message)) => {
-                let (outs, writer) = {
-                    let mut state = inner.lock();
-                    (state.mapper.handle(message), writer_for(&state, generation))
-                };
-                inner.deliver(writer.as_ref(), outs).await;
-            }
-            Some(Event::Oversized(bytes)) => {
-                eprintln!("conn-provider-claude: dropped a {bytes}-byte CLI line");
-            }
-            Some(Event::Exited(info)) => {
-                on_exit(&inner, generation, &info).await;
+            },
+            Some(QueryEvent::Cancel { id }) => Inbound::ControlCancel { request_id: id },
+            Some(QueryEvent::End(end)) => {
+                on_end(&inner, generation, &end).await;
+                let _ = ended.send(true);
                 return;
             }
-            None => return,
-        }
+            None => {
+                on_end(
+                    &inner,
+                    generation,
+                    &QueryEnd {
+                        helper_error: Some("the Claude helper stopped".into()),
+                        ..QueryEnd::default()
+                    },
+                )
+                .await;
+                let _ = ended.send(true);
+                return;
+            }
+        };
+        touch(&mut inner.lock(), Some(generation));
+        let outs = inner.lock().mapper.handle(message);
+        inner.deliver(Some(&query), outs).await;
     }
 }
 
-/// Marks the live process (of `generation`, if given) as active now.
+/// Marks the live query (of `generation`, if given) as active now.
 fn touch(state: &mut State, generation: Option<u64>) {
     if let Some(live) = state
         .live
@@ -315,14 +365,14 @@ fn touch(state: &mut State, generation: Option<u64>) {
     }
 }
 
-/// Ends the process after `timeout` without a turn or output. Background work (a running
+/// Ends the query after `timeout` without a turn or output. Background work (a running
 /// subagent, output held for a continuation) holds it up to `max_hold`, as T3's session
 /// manager does with `hasPendingBackgroundWork`.
 async fn idle_watch(inner: Arc<Inner>, generation: u64, timeout: Duration, max_hold: Duration) {
     loop {
         let wait = {
             let mut state = inner.lock();
-            let busy = state.mapper.turn_active() || !state.controls.is_empty();
+            let busy = state.mapper.turn_active();
             let background = state.mapper.has_pending_background_work();
             let Some(live) = state.live.as_mut().filter(|l| l.generation == generation) else {
                 return;
@@ -353,21 +403,26 @@ async fn idle_watch(inner: Arc<Inner>, generation: u64, timeout: Duration, max_h
         }
     };
     if let Some(live) = live {
-        live.process.shutdown().await;
+        end_query(&inner.helper, live).await;
     }
 }
 
-/// The process's stdin, looked up per use: a clone held for the process's life would keep
-/// stdin open after `close` and turn every graceful shutdown into a kill.
-fn writer_for(state: &State, generation: u64) -> Option<mpsc::Sender<String>> {
-    state
-        .live
-        .as_ref()
-        .filter(|l| l.generation == generation)
-        .map(|l| l.process.writer())
+/// Closes a query and waits for its end, then stops the helper if nothing else uses it.
+async fn end_query(helper: &Helper, live: Live) {
+    let Live {
+        query, mut ended, ..
+    } = live;
+    query.close().await;
+    if tokio::time::timeout(CLOSE_TIMEOUT, ended.wait_for(|done| *done))
+        .await
+        .is_err()
+    {
+        eprintln!("conn-provider-claude: a Claude query did not end in time");
+    }
+    helper.stop_if_idle().await;
 }
 
-async fn on_exit(inner: &Inner, generation: u64, info: &ExitInfo) {
+async fn on_end(inner: &Inner, generation: u64, end: &QueryEnd) {
     let outs = {
         let mut state = inner.lock();
         let current = state
@@ -379,51 +434,105 @@ async fn on_exit(inner: &Inner, generation: u64, info: &ExitInfo) {
         }
         let expected = state.closed;
         state.live = None;
-        // Fail requests still waiting for the dead process.
-        state.controls.clear();
-        let detail = exit_detail(info);
+        let detail = end_detail(end);
         state.mapper.on_exit(expected, &detail)
     };
     inner.deliver(None, outs).await;
+    // The query ended by itself (crash, bad resume id): the helper may now be idle.
+    inner.helper.stop_if_idle().await;
 }
 
-/// What the user sees for a process that died mid-turn. stderr can hold private text, so only
-/// known lines are passed on, as the TS adapter does.
-fn exit_detail(info: &ExitInfo) -> String {
-    let known = info
-        .stderr_tail
-        .lines()
-        .find(|l| l.contains("No conversation found with session ID"));
-    match known {
-        Some(line) => format!("Claude exited ({}): {}", info.describe(), line.trim()),
-        None => format!(
-            "The Claude process exited unexpectedly ({}).",
-            info.describe()
-        ),
+/// What the user sees for a query that ended mid-turn. stderr and the SDK's error message
+/// can hold private text, so only known lines and the SDK's telemetry message are passed on,
+/// as the TS adapter does (`claudeProcessExitFailure`).
+fn end_detail(end: &QueryEnd) -> String {
+    if let Some(helper) = &end.helper_error {
+        return helper.clone();
     }
+    let known = end
+        .stderr
+        .iter()
+        .flat_map(|s| s.lines())
+        .chain(
+            end.error
+                .iter()
+                .filter_map(|e| e["message"].as_str())
+                .flat_map(str::lines),
+        )
+        .find(|l| l.contains("No conversation found with session ID"));
+    if let Some(line) = known {
+        return format!("Claude exited: {}", line.trim());
+    }
+    if let Some(telemetry) = end
+        .error
+        .as_ref()
+        .and_then(|e| e["telemetryMessage"].as_str())
+    {
+        return format!("{telemetry}.");
+    }
+    let exit = end
+        .exit
+        .as_ref()
+        .map(|e| match (e["code"].as_i64(), e["signal"].as_str()) {
+            (_, Some(signal)) => format!("signal {signal}"),
+            (Some(code), None) => format!("exit code {code}"),
+            _ => "unknown exit".into(),
+        })
+        .unwrap_or_else(|| "no exit status".into());
+    format!("The Claude process exited unexpectedly ({exit}).")
 }
 
-fn model_effort(selection: &conn_contract::ModelSelection) -> (String, Option<String>) {
+/// `compileClaudeModelSelection` without the model catalog: model, effort and the boolean
+/// options the selection sets.
+fn model_selection(
+    selection: &conn_contract::ModelSelection,
+) -> (String, Option<String>, Map<String, Value>) {
     let value = to_json(selection);
     let model = value["model"].as_str().unwrap_or("default").to_string();
-    let effort = value["options"]
-        .as_array()
-        .into_iter()
-        .flatten()
+    let options = value["options"].as_array().cloned().unwrap_or_default();
+    let effort = options
+        .iter()
         .find(|o| o["id"] == "effort")
         .and_then(|o| o["value"].as_str())
         .map(|e| if e == "ultrathink" { "high" } else { e })
         .filter(|e| matches!(*e, "low" | "medium" | "high" | "xhigh" | "max"))
         .map(str::to_string);
-    (model, effort)
+    let mut settings = Map::new();
+    for (id, key) in [
+        ("thinking", "alwaysThinkingEnabled"),
+        ("fastMode", "fastMode"),
+        ("ultracode", "ultracode"),
+    ] {
+        if let Some(flag) = options
+            .iter()
+            .find(|o| o["id"] == id)
+            .and_then(|o| o["value"].as_bool())
+        {
+            settings.insert(key.into(), json!(flag));
+        }
+    }
+    (model, effort, settings)
 }
 
-fn policy_mode(policy: &RuntimePolicy) -> &'static str {
+fn policy_input(policy: &RuntimePolicy) -> (String, String) {
     let runtime = to_json(&policy.runtime_mode);
     let interaction = to_json(&policy.interaction_mode);
-    launch::permission_mode(
-        runtime.as_str().unwrap_or("full-access"),
-        interaction.as_str().unwrap_or("default"),
+    (
+        runtime.as_str().unwrap_or("full-access").to_string(),
+        interaction.as_str().unwrap_or("default").to_string(),
+    )
+}
+
+/// The policy without settings (no bypass check): for live mode changes.
+fn plain_policy(policy: &RuntimePolicy) -> QueryPolicy {
+    let (runtime, interaction) = policy_input(policy);
+    launch::query_policy(
+        &PolicyInput {
+            runtime_mode: &runtime,
+            interaction_mode: &interaction,
+            ..PolicyInput::default()
+        },
+        BypassAvailability::default(),
     )
 }
 
@@ -440,20 +549,6 @@ fn conversation_head(thread: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// A fork that has not run yet: its source's native id.
-fn pending_fork_source(thread: &Value) -> Option<String> {
-    if !thread["lastRunOrdinal"].is_null() {
-        return None;
-    }
-    thread["forkedFrom"]["providerThreadId"]
-        .as_str()?
-        .strip_prefix(&format!(
-            "provider-thread:provider:{}:native-thread:",
-            DRIVER
-        ))
-        .map(str::to_string)
-}
-
 /// A turn cursor the CLI can resume at: an assistant message uuid, not the `turn:` stand-in.
 fn turn_cursor(turn: &Value) -> Option<String> {
     let id = turn["nativeTurnRef"]["nativeId"].as_str()?;
@@ -467,26 +562,163 @@ fn failed_err(operation: &'static str, detail: impl Into<String>) -> ProviderErr
     }
 }
 
-/// What a turn must do before it writes the prompt.
+/// What a turn must do before it offers the prompt.
 enum Plan {
     Reuse {
-        set_model: Option<String>,
-        set_effort: Option<String>,
+        set_selection: bool,
         set_mode: Option<String>,
         set_mcp: bool,
     },
-    Launch(Box<LaunchInput>),
+    Launch(Box<QueryInput>),
+}
+
+/// `claudeSdkBypassSettings`: keep the disable switches only when they say `disable`.
+fn sdk_bypass_settings(mut settings: Value) -> Value {
+    if let Some(map) = settings.as_object_mut() {
+        if map.get("disableAutoMode") != Some(&json!("disable")) {
+            map.remove("disableAutoMode");
+        }
+        if let Some(permissions) = map.get_mut("permissions").and_then(Value::as_object_mut) {
+            for key in ["disableBypassPermissionsMode", "disableAutoMode"] {
+                if permissions.get(key) != Some(&json!("disable")) {
+                    permissions.remove(key);
+                }
+            }
+        }
+    }
+    settings
+}
+
+/// `claudeBypassAvailability`.
+fn availability(settings: &Value) -> BypassAvailability {
+    let disable = json!("disable");
+    BypassAvailability {
+        bypass_disabled: settings["permissions"]["disableBypassPermissionsMode"] == disable,
+        auto_disabled: settings["disableAutoMode"] == disable
+            || settings["permissions"]["disableAutoMode"] == disable,
+    }
+}
+
+/// Reads a settings file; a missing file is `{}`, an unreadable one an error (T3).
+fn read_settings(path: &std::path::Path) -> Result<Value, String> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
 }
 
 impl ClaudeSession {
-    /// Ensures a process for the turn's thread, with its model, effort, mode and MCP servers.
-    /// Returns the permission mode in force.
-    async fn prepare(&self, input: &TurnInput) -> ProviderResult<String> {
+    /// The process environment the CLI gets, with the entrypoint from Claude's settings.
+    async fn environment(&self, thread_id: &str, resume: bool) -> Map<String, Value> {
+        let config = self.inner.config.clone();
+        let thread_id = thread_id.to_string();
+        let built = tokio::task::spawn_blocking(move || {
+            let host: Vec<(String, String)> = std::env::vars().collect();
+            let draft = launch::query_env(&config, &thread_id, resume, host.clone(), None);
+            let entry = launch::settings_entrypoint(&launch::config_dir(&config, &draft));
+            launch::query_env(&config, &thread_id, resume, host, entry)
+        })
+        .await;
+        built.unwrap_or_default()
+    }
+
+    /// `resolveBypassAvailability` for this working directory: Claude's effective settings
+    /// (through the SDK's `resolveSettings`), the custom home's settings and the remote ones.
+    /// A failure counts as bypass disabled, as in T3.
+    async fn bypass_availability(&self, cwd: Option<&str>) -> BypassAvailability {
+        if let Some((cached_cwd, availability)) = &self.inner.lock().bypass_cache
+            && cached_cwd.as_deref() == cwd
+        {
+            return *availability;
+        }
+        let config = &self.inner.config;
+        let custom_home = config.home_path.is_some()
+            || config
+                .instance_env
+                .iter()
+                .any(|(k, _)| k == "CLAUDE_CONFIG_DIR");
+        let env = self.environment("", false).await;
+        let home = launch::config_dir(config, &env);
+        let files = tokio::task::spawn_blocking(move || {
+            let remote = read_settings(&home.join("remote-settings.json"))?;
+            let own = if custom_home {
+                read_settings(&home.join("settings.json"))?
+            } else {
+                json!({})
+            };
+            Ok::<_, String>((remote, own))
+        })
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|r| r);
+        let result = match files {
+            Ok((remote, own)) => {
+                let mut options = json!({
+                    "settingSources": if custom_home { json!(["project", "local"]) } else { json!(["user", "project", "local"]) },
+                    "serverManagedSettings": sdk_bypass_settings(remote.clone()),
+                });
+                if let Some(cwd) = cwd {
+                    options["cwd"] = json!(cwd);
+                }
+                self.inner
+                    .helper
+                    .function("resolveSettings", json!([options]), None, FUNCTION_TIMEOUT)
+                    .await
+                    .map(|resolved| {
+                        let sources = [&resolved["effective"], &own, &remote].map(availability);
+                        BypassAvailability {
+                            bypass_disabled: sources.iter().any(|s| s.bypass_disabled),
+                            auto_disabled: sources.iter().any(|s| s.auto_disabled),
+                        }
+                    })
+                    .map_err(|e| e.to_string())
+            }
+            Err(e) => Err(e),
+        };
+        match result {
+            Ok(availability) => {
+                self.inner.lock().bypass_cache = Some((cwd.map(str::to_string), availability));
+                availability
+            }
+            Err(detail) => {
+                eprintln!(
+                    "conn-provider-claude: could not read Claude's bypass settings: {detail}"
+                );
+                BypassAvailability {
+                    bypass_disabled: true,
+                    auto_disabled: false,
+                }
+            }
+        }
+    }
+
+    /// `queryPolicyForTurn`.
+    async fn turn_policy(&self, policy: &RuntimePolicy) -> QueryPolicy {
+        let plain = plain_policy(policy);
+        if plain.permission_mode != "bypassPermissions" {
+            return plain;
+        }
+        let availability = self.bypass_availability(policy.cwd.as_deref()).await;
+        let (runtime, interaction) = policy_input(policy);
+        launch::query_policy(
+            &PolicyInput {
+                runtime_mode: &runtime,
+                interaction_mode: &interaction,
+                ..PolicyInput::default()
+            },
+            availability,
+        )
+    }
+
+    /// Ensures a query for the turn's thread, with its model, effort, mode and MCP servers.
+    /// Returns the policy in force.
+    async fn prepare(&self, input: &TurnInput) -> ProviderResult<QueryPolicy> {
         let inner = &self.inner;
         let native = native_thread_id(&input.provider_thread)
             .ok_or_else(|| failed_err("start_turn", "provider thread has no native Claude id"))?;
-        let (model, effort) = model_effort(&input.model_selection);
-        let mode = policy_mode(&input.runtime_policy).to_string();
+        let (model, effort, selection_settings) = model_selection(&input.model_selection);
+        let policy = self.turn_policy(&input.runtime_policy).await;
         let cwd = input.runtime_policy.cwd.clone();
         let thread = to_json(&input.provider_thread);
         let title = to_json(&input.app_thread)["title"]
@@ -500,74 +732,84 @@ impl ClaudeSession {
             }
             let t3_mcp = state.mcp_servers.iter().any(|s| s.name == T3_MCP_SERVER);
             let reusable = state.live.as_ref().is_some_and(|l| {
-                !l.process.has_exited()
+                l.query.is_open()
                     && !l.restart_needed
                     && l.native_thread_id == native
                     && l.cwd == cwd
-                    && (l.effort == effort || effort.is_some())
+                    && l.policy == policy
                     && l.t3_mcp == t3_mcp
-                    && (l.permission_mode == mode
-                        || (mode != "bypassPermissions"
-                            && l.permission_mode != "bypassPermissions"))
+                    // canApplyClaudeSelectionLive
+                    && l.selection_settings.get("alwaysThinkingEnabled")
+                        == selection_settings.get("alwaysThinkingEnabled")
+                    && (effort.is_some() || l.effort.is_none())
             });
             if let Some(live) = state.live.as_ref().filter(|_| reusable) {
                 let plan = Plan::Reuse {
-                    set_model: (live.model != model).then(|| model.clone()),
-                    set_effort: effort.clone().filter(|e| live.effort.as_ref() != Some(e)),
-                    set_mode: (live.permission_mode != mode).then(|| mode.clone()),
+                    set_selection: live.model != model
+                        || live.effort != effort
+                        || live.selection_settings != selection_settings,
+                    // A denied ExitPlanMode leaves Claude in plan mode; restore only from plan.
+                    set_mode: (live.permission_mode == "plan"
+                        && live.policy.permission_mode != "plan")
+                        .then(|| live.policy.permission_mode.clone()),
                     set_mcp: live.mcp_servers != state.mcp_servers,
                 };
                 (plan, None)
             } else {
-                let fork_from =
-                    pending_fork_source(&thread).filter(|_| !state.resumable.contains(&native));
-                let resume = state.resumable.contains(&native) || input.provider_turn_ordinal > 1;
-                let launch = LaunchInput {
+                // A persisted turn requires resume, also after an idle release.
+                let resume = state.resumable.contains(&native)
+                    || input.provider_turn_ordinal > 1
+                    || conversation_head(&thread).is_some();
+                let read_only = false;
+                let query = QueryInput {
                     thread_id: input.thread_id.as_str().into(),
                     native_thread_id: native.clone(),
-                    resume: resume || fork_from.is_some(),
+                    resume,
                     model: model.clone(),
                     effort: effort.clone(),
-                    permission_mode: mode.clone(),
+                    selection_settings: selection_settings.clone(),
+                    allowed_tools: launch::mcp_allowed_tools(&policy, t3_mcp, read_only),
+                    policy: policy.clone(),
                     cwd: cwd.clone(),
                     resume_at: conversation_head(&thread),
-                    fork_from,
-                    allowed_tools: if t3_mcp {
-                        vec![format!("mcp__{T3_MCP_SERVER}__*")]
-                    } else {
-                        Vec::new()
-                    },
+                    title,
+                    t3_mcp,
+                    prompt_suggestions: false,
                 };
-                (Plan::Launch(Box::new(launch)), state.live.take())
+                (Plan::Launch(Box::new(query)), state.live.take())
             }
         };
         if let Some(old) = old {
-            old.process.shutdown().await;
+            end_query(&inner.helper, old).await;
         }
 
         match plan {
-            Plan::Launch(launch) => self.launch(*launch, title.as_deref()).await?,
+            Plan::Launch(query) => self.launch(*query).await?,
             Plan::Reuse {
-                set_model,
-                set_effort,
+                set_selection,
                 set_mode,
                 set_mcp,
             } => {
-                if let Some(model) = set_model {
-                    self.apply_model(model).await?;
-                }
-                if let Some(effort) = set_effort {
-                    self.apply_effort(effort).await?;
+                if set_selection {
+                    self.apply_live_selection(&model, effort.as_deref(), &selection_settings)
+                        .await?;
                 }
                 if let Some(mode) = set_mode {
-                    inner
-                        .control(
-                            json!({"subtype": "set_permission_mode", "mode": mode}),
-                            CONTROL_TIMEOUT,
-                        )
-                        .await?;
+                    let restored = match inner
+                        .call("setPermissionMode", json!([mode]), CONTROL_TIMEOUT)
+                        .await
+                    {
+                        Ok(_) => mode,
+                        Err(_) if mode == "bypassPermissions" => {
+                            inner
+                                .call("setPermissionMode", json!(["default"]), CONTROL_TIMEOUT)
+                                .await?;
+                            "default".to_string()
+                        }
+                        Err(e) => return Err(e),
+                    };
                     if let Some(live) = &mut inner.lock().live {
-                        live.permission_mode = mode;
+                        live.permission_mode = restored;
                     }
                 }
                 if set_mcp {
@@ -579,61 +821,77 @@ impl ClaudeSession {
         let mut state = inner.lock();
         state.resumable.insert(native);
         touch(&mut state, None);
-        Ok(mode)
+        state.mapper.set_policy_asks(launch::asks_user(&policy));
+        Ok(policy)
     }
 
-    async fn apply_model(&self, model: String) -> ProviderResult<()> {
+    /// `applySelectionLive`: `setModel` when the model changed, then `applyFlagSettings`.
+    async fn apply_live_selection(
+        &self,
+        model: &str,
+        effort: Option<&str>,
+        settings: &Map<String, Value>,
+    ) -> ProviderResult<()> {
+        let model_changed = self
+            .inner
+            .lock()
+            .live
+            .as_ref()
+            .is_some_and(|l| l.model != model);
+        if model_changed {
+            self.inner
+                .call("setModel", json!([model]), CONTROL_TIMEOUT)
+                .await?;
+        }
+        let mut flags = Map::new();
+        if let Some(effort) = effort {
+            flags.insert("effortLevel".into(), json!(effort));
+        }
+        flags.insert(
+            "fastMode".into(),
+            settings.get("fastMode").cloned().unwrap_or(Value::Null),
+        );
+        flags.insert(
+            "ultracode".into(),
+            settings.get("ultracode").cloned().unwrap_or(Value::Null),
+        );
         self.inner
-            .control(
-                json!({"subtype": "set_model", "model": model}),
-                CONTROL_TIMEOUT,
-            )
+            .call("applyFlagSettings", json!([flags]), CONTROL_TIMEOUT)
             .await?;
         if let Some(live) = &mut self.inner.lock().live {
-            live.model = model;
+            live.model = model.to_string();
+            live.effort = effort.map(str::to_string);
+            live.selection_settings = settings.clone();
         }
         Ok(())
     }
 
-    /// `applyFlagSettings({effortLevel})`: effort changes without a new process.
-    async fn apply_effort(&self, effort: String) -> ProviderResult<()> {
-        self.inner
-            .control(
-                json!({"subtype": "apply_flag_settings", "settings": {"effortLevel": effort}}),
-                CONTROL_TIMEOUT,
-            )
-            .await?;
-        if let Some(live) = &mut self.inner.lock().live {
-            live.effort = Some(effort);
-        }
-        Ok(())
-    }
-
-    /// Applies a selection to the live process: model by `set_model`, a new effort by
-    /// `apply_flag_settings`. Clearing an effort needs a new process.
+    /// Applies a selection to the live query, or marks it for a new one when the change
+    /// cannot apply live (thinking toggled, effort cleared).
     async fn apply_selection(
         &self,
         selection: &conn_contract::ModelSelection,
     ) -> ProviderResult<()> {
-        let (model, effort) = model_effort(selection);
-        let (model_change, effort_change) = {
+        let (model, effort, settings) = model_selection(selection);
+        let live_change = {
             let mut state = self.inner.lock();
             match &mut state.live {
                 Some(live) => {
-                    live.restart_needed |= effort.is_none() && live.effort.is_some();
-                    (
-                        live.model != model,
-                        effort.clone().filter(|e| live.effort.as_ref() != Some(e)),
-                    )
+                    let can_apply = live.selection_settings.get("alwaysThinkingEnabled")
+                        == settings.get("alwaysThinkingEnabled")
+                        && (effort.is_some() || live.effort.is_none());
+                    live.restart_needed |= !can_apply;
+                    can_apply
+                        && (live.model != model
+                            || live.effort != effort
+                            || live.selection_settings != settings)
                 }
-                None => (false, None),
+                None => false,
             }
         };
-        if model_change {
-            self.apply_model(model).await?;
-        }
-        if let Some(effort) = effort_change {
-            self.apply_effort(effort).await?;
+        if live_change {
+            self.apply_live_selection(&model, effort.as_deref(), &settings)
+                .await?;
         }
         Ok(())
     }
@@ -645,27 +903,36 @@ impl ClaudeSession {
                 "the previous turn is still running",
             ));
         }
-        let mode = self.prepare(&input).await?;
+        let policy = self.prepare(&input).await?;
         let content = self
             .content(&input.message.text, &input.message.attachments)
             .await;
         let inner = &self.inner;
-        let (outs, writer, uuid) = {
+        let (outs, query, uuid) = {
             let mut state = inner.lock();
-            let writer = state
+            let query = state
                 .live
                 .as_ref()
-                .map(|l| l.process.writer())
+                .map(|l| l.query.clone())
                 .ok_or(ProviderError::SessionStopped)?;
+            let mode = state
+                .live
+                .as_ref()
+                .map_or(policy.permission_mode.clone(), |l| {
+                    l.permission_mode.clone()
+                });
             let outs = state.mapper.begin_turn(&input, &mode);
-            (outs, writer, SystemEnv.uuid())
+            (outs, query, SystemEnv.uuid())
         };
-        inner.deliver(Some(&writer), outs).await;
-        if writer
-            .send(user_message(content, &uuid, Delivery::Turn))
-            .await
-            .is_err()
-        {
+        inner.deliver(Some(&query), outs).await;
+        let offered = query
+            .call(
+                "offer",
+                json!([user_message_value(content, &uuid, Delivery::Turn)]),
+                CONTROL_TIMEOUT,
+            )
+            .await;
+        if offered.is_err() {
             let outs = inner
                 .lock()
                 .mapper
@@ -700,38 +967,46 @@ impl ClaudeSession {
         }
     }
 
-    async fn launch(&self, input: LaunchInput, title: Option<&str>) -> ProviderResult<()> {
+    async fn launch(&self, input: QueryInput) -> ProviderResult<()> {
         let inner = &self.inner;
-        let spec = launch::launch_spec(&inner.config, &input);
-        let (tx, rx) = mpsc::channel(EVENT_CAPACITY);
-        let process = Process::spawn(&spec, MAX_LINE_BYTES, tx).map_err(|e| {
-            failed_err(
-                "start_turn",
-                format!("Could not start Claude ({}): {e}", spec.program.display()),
-            )
-        })?;
-        let t3_mcp = !input.allowed_tools.is_empty();
+        let env = self.environment(&input.thread_id, input.resume).await;
+        let options = launch::query_options(&inner.config, &input, env);
+        let mut query = inner.helper.open(options, json!({}))?;
+        let Some(rx) = query.take_events() else {
+            return Err(failed_err("start_turn", "the query has no event stream"));
+        };
+        let handle = query.handle();
+        let (ended_tx, ended) = watch::channel(false);
         let generation = {
             let mut state = inner.lock();
             state.generation += 1;
             let generation = state.generation;
             state.live = Some(Live {
-                process,
+                query: handle.clone(),
                 generation,
+                ended,
                 native_thread_id: input.native_thread_id.clone(),
                 cwd: input.cwd.clone(),
-                permission_mode: input.permission_mode.clone(),
+                permission_mode: input.policy.permission_mode.clone(),
+                policy: input.policy.clone(),
                 model: input.model.clone(),
                 effort: input.effort.clone(),
+                selection_settings: input.selection_settings.clone(),
                 mcp_servers: Vec::new(),
-                t3_mcp,
+                t3_mcp: input.t3_mcp,
                 restart_needed: false,
                 last_activity: Instant::now(),
                 held_since: None,
             });
             generation
         };
-        tokio::spawn(drive(inner.clone(), generation, rx));
+        tokio::spawn(drive(
+            inner.clone(),
+            generation,
+            handle.clone(),
+            rx,
+            ended_tx,
+        ));
         if let Some(timeout) = inner.config.idle_timeout {
             tokio::spawn(idle_watch(
                 inner.clone(),
@@ -740,22 +1015,31 @@ impl ClaudeSession {
                 inner.config.idle_max_hold,
             ));
         }
-        let extra = inner.config.mcp_instructions.as_deref().filter(|_| t3_mcp);
-        let init = launch::initialize_request(&inner.config, title, extra);
-        let mut result = inner.control(init, INITIALIZE_TIMEOUT).await.map(|_| ());
+        // As T3: only a query with MCP servers waits for boot, then registers them.
         let servers = inner.lock().mcp_servers.clone();
-        if result.is_ok() && !servers.is_empty() {
+        if servers.is_empty() {
+            return Ok(());
+        }
+        let mut result = handle
+            .call("initializationResult", json!([]), BOOT_TIMEOUT)
+            .await
+            .map(|_| ());
+        if matches!(&result, Err(ProviderError::Failed { .. })) {
+            // T3 ignores a failed initialization here; the message stream reports it.
+            result = Ok(());
+        }
+        if result.is_ok() {
             result = inner.set_mcp_servers(&servers).await;
         }
         if let Err(error) = result {
             let live = inner.lock().live.take();
             if let Some(live) = live {
-                live.process.shutdown().await;
+                end_query(&inner.helper, live).await;
             }
             return Err(match error {
                 ProviderError::SessionStopped => failed_err(
                     "start_turn",
-                    "Claude exited before it answered initialize (an unknown --resume id, a bad flag, or no credentials)",
+                    "Claude ended before it registered the MCP servers (an unknown resume id, a bad option, or no credentials)",
                 ),
                 other => other,
             });
@@ -763,7 +1047,7 @@ impl ClaudeSession {
         Ok(())
     }
 
-    /// Ends the live process if it serves `native`; the next turn starts a new one.
+    /// Ends the live query if it serves `native`; the next turn starts a new one.
     async fn release(&self, native: &str) {
         let live = {
             let mut state = self.inner.lock();
@@ -778,7 +1062,7 @@ impl ClaudeSession {
             }
         };
         if let Some(live) = live {
-            live.process.shutdown().await;
+            end_query(&self.inner.helper, live).await;
         }
     }
 
@@ -789,6 +1073,20 @@ impl ClaudeSession {
             });
         }
         Ok(())
+    }
+
+    /// The `CLAUDE_CONFIG_DIR` the SDK's session-file functions must read, when it is not the
+    /// helper's own (T3 runs those in a worker then).
+    fn function_config_dir(&self) -> Option<String> {
+        let config = &self.inner.config;
+        if let Some(home) = &config.home_path {
+            return Some(home.to_string_lossy().into_owned());
+        }
+        config
+            .instance_env
+            .iter()
+            .find(|(k, _)| k == "CLAUDE_CONFIG_DIR")
+            .map(|(_, v)| launch::expand_home(v).to_string_lossy().into_owned())
     }
 }
 
@@ -859,10 +1157,8 @@ impl Session for ClaudeSession {
                 failed_err("resume_thread", "provider thread has no native Claude id")
             })?;
             let mut thread = to_json(&input.provider_thread);
-            // A fork that never ran has no conversation of its own yet.
-            if pending_fork_source(&thread).is_none() {
-                self.inner.lock().resumable.insert(native);
-            }
+            // A fork's transcript exists from the moment `forkSession` made it.
+            self.inner.lock().resumable.insert(native);
             thread["providerSessionId"] = json!(self.id.as_str());
             thread["status"] = json!("idle");
             thread["updatedAt"] = json!(SystemEnv.now());
@@ -876,7 +1172,7 @@ impl Session for ClaudeSession {
 
     fn start_continuation_turn(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
-            let (outs, writer) = {
+            let (outs, query) = {
                 let mut state = self.inner.lock();
                 if state.mapper.turn_active() {
                     return Err(failed_err("start_continuation_turn", "a turn is running"));
@@ -884,11 +1180,11 @@ impl Session for ClaudeSession {
                 let Some(live) = &state.live else {
                     return Err(ProviderError::SessionStopped);
                 };
-                let writer = live.process.writer();
+                let query = live.query.clone();
                 let mode = live.permission_mode.clone();
-                (state.mapper.begin_continuation(&input, &mode), writer)
+                (state.mapper.begin_continuation(&input, &mode), query)
             };
-            self.inner.deliver(Some(&writer), outs).await;
+            self.inner.deliver(Some(&query), outs).await;
             Ok(())
         })
     }
@@ -902,12 +1198,12 @@ impl Session for ClaudeSession {
                 .content(&input.message.text, &input.message.attachments)
                 .await;
             let uuid = SystemEnv.uuid();
-            let (writer, outs) = {
+            let (query, outs) = {
                 let mut state = self.inner.lock();
-                let writer = state
+                let query = state
                     .live
                     .as_ref()
-                    .map(|l| l.process.writer())
+                    .map(|l| l.query.clone())
                     .ok_or(ProviderError::SessionStopped)?;
                 if state.mapper.active_turn_id() != Some(input.provider_turn_id.as_str()) {
                     return Err(failed_err("steer_turn", "that turn is not running"));
@@ -916,14 +1212,17 @@ impl Session for ClaudeSession {
                 let outs = state
                     .mapper
                     .steer_sent(&uuid, input.message.message_id.as_str());
-                (writer, outs)
+                (query, outs)
             };
-            self.inner.deliver(Some(&writer), outs).await;
-            if writer
-                .send(user_message(content, &uuid, Delivery::Steer))
-                .await
-                .is_err()
-            {
+            self.inner.deliver(Some(&query), outs).await;
+            let offered = query
+                .call(
+                    "offer",
+                    json!([user_message_value(content, &uuid, Delivery::Steer)]),
+                    CONTROL_TIMEOUT,
+                )
+                .await;
+            if offered.is_err() {
                 let outs = self.inner.lock().mapper.steer_failed(&uuid);
                 self.inner.deliver(None, outs).await;
                 return Err(ProviderError::SessionStopped);
@@ -944,7 +1243,7 @@ impl Session for ClaudeSession {
                 state.mapper.mark_interrupted();
             }
             self.inner
-                .control(json!({"subtype": "interrupt"}), CONTROL_TIMEOUT)
+                .call("interrupt", json!([]), CONTROL_TIMEOUT)
                 .await
                 .map(|_| ())
         })
@@ -964,34 +1263,39 @@ impl Session for ClaudeSession {
         policy: RuntimePolicy,
     ) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
-            let mode = policy_mode(&policy).to_string();
+            let next = plain_policy(&policy);
             {
                 let mut state = self.inner.lock();
                 let Some(live) = &mut state.live else {
                     return Ok(());
                 };
-                if live.permission_mode == mode {
+                if live.policy == next {
                     return Ok(());
                 }
-                // Bypass needs a launch flag, so entering or leaving it takes a new process.
-                if mode == "bypassPermissions" || live.permission_mode == "bypassPermissions" {
+                // The policy key is part of the query: like T3, a change opens a new query on
+                // the next turn. A plain mode change between asking modes applies live.
+                let live_change = next.permission_mode != "bypassPermissions"
+                    && live.policy.permission_mode != "bypassPermissions"
+                    && next.tools == live.policy.tools
+                    && next.allowed_tools == live.policy.allowed_tools;
+                if !live_change {
                     live.restart_needed = true;
                     return Err(ProviderError::Unsupported {
                         operation: "apply_runtime_policy",
                     });
                 }
             }
+            let mode = next.permission_mode.clone();
             self.inner
-                .control(
-                    json!({"subtype": "set_permission_mode", "mode": mode}),
-                    CONTROL_TIMEOUT,
-                )
+                .call("setPermissionMode", json!([mode]), CONTROL_TIMEOUT)
                 .await?;
             let mut state = self.inner.lock();
             if let Some(live) = &mut state.live {
                 live.permission_mode = mode.clone();
+                live.policy = next.clone();
             }
             state.mapper.set_permission_mode(&mode);
+            state.mapper.set_policy_asks(launch::asks_user(&next));
             Ok(())
         })
     }
@@ -1001,15 +1305,15 @@ impl Session for ClaudeSession {
         input: RuntimeRequestResponse,
     ) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
-            let (outs, writer) = {
+            let (outs, query) = {
                 let mut state = self.inner.lock();
-                let writer = state.live.as_ref().map(|l| l.process.writer());
-                let Some(writer) = writer else {
+                let query = state.live.as_ref().map(|l| l.query.clone());
+                let Some(query) = query else {
                     return Err(ProviderError::SessionStopped);
                 };
-                (state.mapper.respond(&input)?, writer)
+                (state.mapper.respond(&input)?, query)
             };
-            self.inner.deliver(Some(&writer), outs).await;
+            self.inner.deliver(Some(&query), outs).await;
             Ok(())
         })
     }
@@ -1021,7 +1325,7 @@ impl Session for ClaudeSession {
                 state.mcp_servers = servers.clone();
                 let t3 = servers.iter().any(|s| s.name == T3_MCP_SERVER);
                 match &mut state.live {
-                    // The T3 allow rule is a launch flag; a change waits for a new process.
+                    // The T3 allow rule is a launch option; a change waits for a new query.
                     Some(live) if live.t3_mcp != t3 => {
                         live.restart_needed = true;
                         false
@@ -1105,9 +1409,8 @@ impl Session for ClaudeSession {
         })
     }
 
-    /// Lazy: the new thread records its source and cut point, and its first turn starts the
-    /// CLI with `--resume <source> --fork-session --session-id <new> [--resume-session-at]`.
-    /// The SDK's `forkSession` copies the transcript file; the CLI makes the same copy.
+    /// The SDK's `forkSession` copies the source transcript (up to the fork turn) into a new
+    /// session, as T3 does; the new thread resumes that session on its first turn.
     fn fork_thread(&self, input: ForkThreadInput) -> BoxFuture<'_, ProviderResult<ProviderThread>> {
         Box::pin(async move {
             self.require_idle("fork")?;
@@ -1145,23 +1448,40 @@ impl Session for ClaudeSession {
                     }
                 }
             };
+            let options = match &up_to {
+                Some(id) => json!({"upToMessageId": id}),
+                None => json!({}),
+            };
+            let config_dir = self.function_config_dir();
+            let forked = self
+                .inner
+                .helper
+                .function(
+                    "forkSession",
+                    json!([source_native, options]),
+                    config_dir.as_deref(),
+                    FUNCTION_TIMEOUT,
+                )
+                .await?;
+            let native = forked["sessionId"]
+                .as_str()
+                .ok_or_else(|| failed_err("fork_thread", "forkSession returned no session id"))?
+                .to_string();
+            self.inner.lock().resumable.insert(native.clone());
             let mut forked_from = json!({"providerThreadId": source["id"]});
             if let Some(turn_id) = &input.provider_turn_id {
                 forked_from["providerTurnId"] = json!(turn_id.as_str());
             }
-            let head = up_to
-                .map(|id| json!({"driver": DRIVER, "nativeId": id, "strength": "weak"}))
-                .unwrap_or(Value::Null);
             let thread = new_thread(
                 self.id.as_str(),
                 json!(input.target_thread_id.as_str()),
-                &SystemEnv.uuid(),
+                &native,
                 input
                     .owner_node_id
                     .as_ref()
                     .map_or(Value::Null, |n| json!(n.as_str())),
                 forked_from,
-                head,
+                Value::Null,
             );
             from_json(thread).map_err(|e| failed_err("fork_thread", e.to_string()))
         })
@@ -1179,7 +1499,7 @@ impl Session for ClaudeSession {
                 state.live.take()
             };
             if let Some(live) = live {
-                live.process.shutdown().await;
+                end_query(&self.inner.helper, live).await;
             }
             // A turn still open ends as interrupted; then the event channel closes.
             let outs = self
@@ -1188,9 +1508,74 @@ impl Session for ClaudeSession {
                 .mapper
                 .on_exit(true, "The session closed.");
             self.inner.deliver(None, outs).await;
-            let mut state = self.inner.lock();
-            state.events = None;
-            state.controls.clear();
+            self.inner.lock().events = None;
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn callbacks_become_the_control_requests_the_mapper_reads() {
+        let args = json!({
+            "toolName": "Bash",
+            "input": {"command": "ls"},
+            "options": {"toolUseID": "toolu_1", "blockedPath": "/x", "suggestions": [{"type": "addRules"}], "requestId": "r1"},
+        });
+        let Some(ControlRequest::CanUseTool(request)) = callback_request("canUseTool", &args)
+        else {
+            panic!("not a can_use_tool request");
+        };
+        assert_eq!(request.tool_name, "Bash");
+        assert_eq!(request.tool_use_id, "toolu_1");
+        assert_eq!(request.blocked_path.as_deref(), Some("/x"));
+        assert!(request.permission_suggestions.is_some());
+        assert!(callback_request("hook", &args).is_none());
+    }
+
+    #[test]
+    fn mapper_replies_become_callback_answers() {
+        let ok = crate::protocol::control_success("r1", json!({"behavior": "allow"}));
+        assert_eq!(
+            callback_answer(&ok),
+            Some(("r1".into(), Ok(json!({"behavior": "allow"}))))
+        );
+        let err = crate::protocol::control_error("r2", "no");
+        assert_eq!(callback_answer(&err), Some(("r2".into(), Err("no".into()))));
+    }
+
+    #[test]
+    fn bypass_settings_read_like_t3() {
+        let remote = json!({"permissions": {"disableBypassPermissionsMode": "disable", "allow": []}, "disableAutoMode": false});
+        let sdk = sdk_bypass_settings(remote.clone());
+        assert_eq!(
+            sdk,
+            json!({"permissions": {"disableBypassPermissionsMode": "disable", "allow": []}})
+        );
+        assert_eq!(
+            availability(&remote),
+            BypassAvailability {
+                bypass_disabled: true,
+                auto_disabled: false
+            }
+        );
+    }
+
+    #[test]
+    fn end_details_keep_private_text_out() {
+        let end = QueryEnd {
+            error: Some(
+                json!({"message": "exit 1: secret stderr", "telemetryMessage": "Claude Code process exited with code 1"}),
+            ),
+            ..QueryEnd::default()
+        };
+        assert_eq!(end_detail(&end), "Claude Code process exited with code 1.");
+        let missing = QueryEnd {
+            stderr: Some("No conversation found with session ID: abc\n".into()),
+            ..QueryEnd::default()
+        };
+        assert!(end_detail(&missing).contains("No conversation found"));
     }
 }
