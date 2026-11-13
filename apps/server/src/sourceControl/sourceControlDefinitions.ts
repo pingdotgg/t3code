@@ -25,3 +25,25 @@ export const isChangeRequestCloseCommand = (command: string) =>
   sourceControlDefinitions.definitions.some(
     (definition) => definition.changeRequestCloseCommand?.test(command) === true,
   );
+
+const NAMED_CHANGE_REQUEST = /(?:^|\s)#?(\d+)(?=\s|$)|\/(?:pulls?|merge_requests)\/(\d+)/gu;
+
+/**
+ * The change request numbers a merge or close command names, or "any" when one names none, as a
+ * bare `gh pr merge` on the checked-out branch or `gh stack merge` does.
+ */
+export function changeRequestsClosedBy(command: string): ReadonlySet<number> | "any" {
+  const named = new Set<number>();
+  for (const { changeRequestCloseCommand: close } of sourceControlDefinitions.definitions) {
+    if (close === undefined) continue;
+    for (const match of command.matchAll(new RegExp(close.source, `${close.flags}g`))) {
+      const args = command.slice(match.index + match[0].length).split(/[;&|\n]/u, 1)[0] ?? "";
+      const numbers = [...args.matchAll(NAMED_CHANGE_REQUEST)].map(([, bare, url]) =>
+        Number(bare ?? url),
+      );
+      if (numbers.length === 0) return "any";
+      for (const number of numbers) named.add(number);
+    }
+  }
+  return named.size === 0 ? "any" : named;
+}
