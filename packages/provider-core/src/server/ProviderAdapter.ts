@@ -535,6 +535,8 @@ export interface ProviderAdapterV2TurnInput {
   readonly rootNodeId: NodeId;
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly message: ProviderAdapterV2TurnMessage;
+  /** Leading characters of `message.text` that are inline handoff context, not the user's words. */
+  readonly inlineContextLength?: number;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;

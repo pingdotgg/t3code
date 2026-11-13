@@ -1118,7 +1118,8 @@ export const recordingEncoderScript = (frameRate: BrowserRecordingFrameRate) => 
   window.__t3Recorder = {
     async frame(base64, cssWidth) {
       if (tooLarge) return false;
-      const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+      // A per-character atob copy costs ~30 ms on a 3200x1800 frame and throttles recordings.
+      const bytes = Uint8Array.fromBase64(base64);
       const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));
       if (tooLarge) { bitmap.close(); return false; }
       if (!recorder) {
