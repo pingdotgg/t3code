@@ -1856,6 +1856,54 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("imports a Codex prompt whose inline image exceeds the history budget", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        yield* writeTranscript({
+          filePath: path.join(codexHomePath, "sessions", "2026", "08", "24", "rollout-image.jsonl"),
+          contents: [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: "image-session", cwd: workspace },
+            }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              payload: {
+                type: "user_message",
+                message: "Describe this screenshot",
+                images: [`data:image/png;base64,${"A".repeat(17 * 1024 * 1024)}`],
+              },
+            }),
+            encodeTranscriptRecord({
+              type: "response_item",
+              payload: {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "A login form." }],
+              },
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(threads[0]?.messages.map((message) => message.text)).toEqual([
+          "Describe this screenshot",
+          "A login form.",
+        ]);
+      }),
+    );
+
     it.effect("suppresses duplicate session copies without reporting a skipped import", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -3288,7 +3336,7 @@ describe("parseAgentSessionTranscript", () => {
     expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
   });
 
-  it("imports only Codex user events when the rollout records them", () => {
+  it("imports a Codex turn's user event instead of its response copies", () => {
     const responseUser = (text: string) =>
       encodeTranscriptRecord({
         type: "response_item",
@@ -3302,6 +3350,8 @@ describe("parseAgentSessionTranscript", () => {
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
       contents: [
         encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+        responseUser("Older actual prompt"),
+        assistant("Older answer"),
         responseUser("<user_instructions>\nBe friendly.\n</user_instructions>"),
         responseUser("<environment_context>\n<cwd>/tmp/project</cwd>\n</environment_context>"),
         responseUser("Which database should we use?"),
@@ -3338,9 +3388,13 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
+    expect(thread?.title).toBe("Older actual prompt");
     expect(thread?.messages.map((message) => message.text)).toEqual([
+      "Older actual prompt",
+      "Older answer",
       "Which database should we use?",
       "Pick one?",
+      "> Which database?\n\nUse PostgreSQL",
       "PostgreSQL it is.",
       "[Image #1]",
       "Nice screenshot.",

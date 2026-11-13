@@ -135,7 +135,6 @@ const TranscriptRecord = Schema.Struct({
       type: Schema.optional(Schema.String),
       role: Schema.optional(Schema.String),
       message: Schema.optional(Schema.String),
-      images: Schema.optional(Schema.Unknown),
       local_images: Schema.optional(Schema.Unknown),
       model: Schema.optional(Schema.String),
       cwd: Schema.optional(Schema.String),
@@ -416,9 +415,8 @@ function codexUserEventText(record: DecodedTranscriptRecord): string | null {
   if (record.type !== "event_msg") return null;
   const payload = record.payload;
   if (payload?.type === "user_message") {
-    const imageCount =
-      (Array.isArray(payload.images) ? payload.images.length : 0) +
-      (Array.isArray(payload.local_images) ? payload.local_images.length : 0);
+    // Only local image paths are read: inline `images` hold whole data URLs.
+    const imageCount = Array.isArray(payload.local_images) ? payload.local_images.length : 0;
     return codexImagePlaceholders(payload.message ?? "", imageCount);
   }
   if (payload?.type === "item_completed" && payload.item?.type === "UserMessage") {
@@ -576,10 +574,29 @@ function parseAgentSessionRecords(
   let hasCodexSessionId = false;
   const messages: Array<AgentSessionThreadMessage> = [];
   let firstUserMessage: AgentSessionThreadMessage | undefined;
-  // Like Codex's own history, rollouts with user events show only those; their
-  // response copies add injected context. Rollouts without them only have responses.
-  const hasCodexUserEvents =
-    input.source === "codex" && records.some((record) => codexUserEventText(record) !== null);
+  // Like Codex's own history, a turn with a user event shows only that; its response
+  // copies add injected context. Turns without one, as in older rollouts, only have responses.
+  const codexEventBackedResponseUsers = new Set<DecodedTranscriptRecord>();
+  if (input.source === "codex") {
+    let turnResponseUsers: Array<DecodedTranscriptRecord> = [];
+    let turnHasUserEvent = false;
+    const finishTurn = () => {
+      if (turnHasUserEvent) {
+        for (const record of turnResponseUsers) codexEventBackedResponseUsers.add(record);
+      }
+      turnResponseUsers = [];
+      turnHasUserEvent = false;
+    };
+    for (const record of records) {
+      if (codexUserEventText(record) !== null) {
+        turnHasUserEvent = true;
+      } else if (record.type === "response_item" && record.payload?.type === "message") {
+        if (record.payload.role === "assistant") finishTurn();
+        else if (record.payload.role === "user") turnResponseUsers.push(record);
+      }
+    }
+    finishTurn();
+  }
   let codexTurnUserEvents: Array<{ readonly type: string | undefined; readonly text: string }> = [];
 
   let conversationMessageCount = 0;
@@ -646,7 +663,7 @@ function parseAgentSessionRecords(
     if (record.payload.role === "assistant") {
       codexTurnUserEvents = [];
       retainMessage("assistant", extractText(record.payload.content), record.timestamp);
-    } else if (record.payload.role === "user" && !hasCodexUserEvents) {
+    } else if (record.payload.role === "user" && !codexEventBackedResponseUsers.has(record)) {
       retainMessage("user", codexUserText(extractText(record.payload.content)), record.timestamp);
     }
   }
