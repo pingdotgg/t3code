@@ -41,6 +41,7 @@ export function useEnvironmentScopeAccess(
   environmentId: EnvironmentId | null,
   scope: AuthEnvironmentScope,
 ): EnvironmentScopeAccess {
+  // Select the access: every revalidation emits a new result, and most consumers are list rows.
   return useAtomValue(
     environmentId === null
       ? EMPTY_SESSION_STATE_ATOM
@@ -53,13 +54,7 @@ export function useEnvironmentScope(
   environmentId: EnvironmentId | null,
   scope: AuthEnvironmentScope,
 ): boolean {
-  // Select the grant: every revalidation emits a new result, and most consumers are list rows.
-  return useAtomValue(
-    environmentId === null
-      ? EMPTY_SESSION_STATE_ATOM
-      : environmentSession.sessionStateAtom(environmentId),
-    (result) => sessionHasScope(result, scope),
-  );
+  return useEnvironmentScopeAccess(environmentId, scope) === "granted";
 }
 
 export function useEnvironmentsWithScope(
