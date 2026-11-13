@@ -42,7 +42,7 @@ const POWERSHELL_PROMPT_PATH_PATTERN = /^PS ((?:[A-Za-z]:[\\/]|\\\\|\/)[^>\r\n]*
 // For the same reason `]` needs its `[`: trimming a long run of `]` is quadratic.
 // Parenthesized path segments need a following slash to distinguish compiler locations.
 const FILE_PATH_PATTERN =
-  /(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|(?<![\p{L}\p{M}\p{N}._-])[\p{L}\p{M}\p{N}._-]+(?:[\\/](?:[\p{L}\p{M}\p{N}._$+@-]|\[{1,2}[\p{L}\p{M}\p{N}._-]+\]{1,2}|\([\p{L}\p{M}\p{N}._-]+\)(?=[\\/]))+)+(?:(?::\d+){1,2}|\(\d+,\d+\))?/gu;
+  /(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|(?<![\p{L}\p{M}\p{N}._-])[\p{L}\p{M}\p{N}._-]+(?:[\\/](?:[\p{L}\p{M}\p{N}._$+@-]|\[{1,2}[\p{L}\p{M}\p{N}._-]+\]{1,2}|\([\p{L}\p{M}\p{N}._-]+\)(?=[\\/]))+)+(?:(?::\d+){1,2}|\(\d+,\d+\)(?=:\s+(?:error|warning) TS\d+:))?/gu;
 const QUOTED_FILE_PATH_PATTERN =
   /(["'`])(?<path>(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\|[\p{L}\p{M}\p{N}._ -]+[\\/])[^\r\n]*?|[\p{L}\p{M}\p{N}._ -]+\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2})\1(?<position>(?::\d+){0,2})/gu;
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;

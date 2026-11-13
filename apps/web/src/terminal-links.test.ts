@@ -314,7 +314,8 @@ describe("resolvePathLinkTarget", () => {
   it.each([
     [String.raw`PS C:\dev\folder (42,7)> `, String.raw`C:\dev\folder (42,7)`],
     ["/tmp/report(42,7)", "/tmp/report(42,7)"],
-  ])("keeps a literal parenthesized path in %s", (line, target) => {
+    ["src/Program.cs(3,10): error CS1002: x", "/repo/src/Program.cs"],
+  ])("preserves existing path targets in %s", (line, target) => {
     const [link] = extractTerminalLinks(line);
     expect(resolveTerminalLinkTarget(link?.text ?? "", "/repo")).toBe(target);
   });
