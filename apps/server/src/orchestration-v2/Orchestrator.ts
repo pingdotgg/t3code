@@ -11169,7 +11169,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const projection = yield* loadProjectionForCommand(
       command,
       ["runs", "messages", "nodes", "attempts", "subagents", "turnItems"],
-      { turnItemTypes: [], messageRoles: ["user"] },
+      // Cancelling reads the queued run's own message and root node, never a settled leaf.
+      {
+        turnItemTypes: [],
+        messageRoles: ["user"],
+        messageRunIds: [command.runId],
+        omitSettledLeafNodes: true,
+      },
     );
     const queuedRun = projection.runs.find((candidate) => candidate.id === command.runId);
     if (queuedRun === undefined || queuedRun.status !== "queued") {
@@ -15281,7 +15287,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             if (stored.event.type !== "provider-turn.updated") return;
             const threadId = stored.event.threadId;
             const turn = stored.event.payload;
-            const projection = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
+            const projection = yield* projectionStore.getThreadRecords(threadId, ["runs"], {
+              runStatuses: ["queued", "running"],
+            });
             const run = projection.runs.find(
               (candidate) =>
                 candidate.activeAttemptId === turn.runAttemptId && candidate.status === "running",
