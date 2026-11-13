@@ -80,6 +80,8 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly bootstrap: DesktopBackendBootstrapValue;
   readonly bootstrapDelivery: DesktopBackendBootstrapDelivery;
   readonly httpBaseUrl: URL;
+  /** Probed with `httpBaseUrl`; readiness publishes whichever answers, preferring `httpBaseUrl`. */
+  readonly fallbackHttpBaseUrl?: URL;
   readonly captureOutput: boolean;
   readonly preflightFailure: Option.Option<PreflightFailure>;
   readonly runningDistro?: string;
