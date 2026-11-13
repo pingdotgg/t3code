@@ -971,6 +971,7 @@ it.effect("loads Forgejo pull request references from files and commits views", 
 );
 
 // Gitea ignores `head=` on the pull request list, so each page holds every branch's pull requests.
+// The second lookup still asks for the front of the list: a pull request may have been opened.
 it.effect("reads a Gitea pull request list at most once for branches that have none", () => {
   const listPages: Array<string> = [];
   return Effect.gen(function* () {
@@ -983,7 +984,7 @@ it.effect("reads a Gitea pull request list at most once for branches that have n
       });
       assert.deepStrictEqual(found, []);
     }
-    assert.isAtMost(listPages.length, 4);
+    assert.isAtMost(listPages.length, 5);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -1020,6 +1021,7 @@ it.effect("reads a Gitea pull request list at most once for branches that have n
                       html_url: `https://forgejo.test/maria/project/pulls/${number}`,
                       state: "open",
                       merged: false,
+                      updated_at: `2026-10-12T00:0${Math.floor(number / 60)}:${String(number % 60).padStart(2, "0")}Z`,
                       base: { ref: "main", label: "main", sha: "base", repo },
                       head: {
                         ref: `feature-${number}`,
@@ -1065,18 +1067,17 @@ it.effect("reads only the changed front of a Gitea pull request list it has read
     assert.deepStrictEqual(yield* find("alice:feature"), [[5, "open"]]);
     assert.strictEqual(requests, 4);
 
-    yield* TestClock.adjust("6 seconds");
     pulls = [pull(121, 202, "later"), pull(5, 201, "feature", "closed"), ...pulls].filter(
       (entry, index, all) => all.findIndex((other) => other.number === entry.number) === index,
     );
     assert.deepStrictEqual(yield* find("later"), [[121, "open"]]);
     assert.deepStrictEqual(yield* find("alice:feature"), [[5, "closed"]]);
-    assert.strictEqual(requests, 5);
+    assert.strictEqual(requests, 6);
 
     yield* TestClock.adjust("1 hour");
     pulls = pulls.filter((entry) => entry.number !== 121);
     assert.deepStrictEqual(yield* find("later"), []);
-    assert.strictEqual(requests, 9);
+    assert.strictEqual(requests, 10);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(

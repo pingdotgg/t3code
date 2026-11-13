@@ -285,8 +285,6 @@ const repositoryPath = (repository: string) =>
 type ForgejoPull = typeof ForgejoPullRequestSchema.Type;
 const updatedMillis = (pull: ForgejoPull) =>
   pull.updated_at?.pipe(Option.map(DateTime.toEpochMillis), Option.getOrUndefined);
-// Lookups this close together (the startup backfill asks about every thread) share one read.
-const UNFILTERED_PULLS_REUSE_MS = 5_000;
 // Renaming a fork or deleting a pull request moves nothing in the list, so it is re-read in full.
 const UNFILTERED_PULLS_MAX_AGE_MS = 60 * 60_000;
 /** Every pull request of a repository whose server ignores `head=` (Gitea, Forgejo before 16). */
@@ -296,7 +294,6 @@ interface UnfilteredPulls {
   /** The newest `updated_at` on the list's first page when it was last read. */
   newest: number | undefined;
   scannedAt: number;
-  refreshedAt: number;
 }
 
 export const make = Effect.gen(function* () {
@@ -354,8 +351,6 @@ export const make = Effect.gen(function* () {
     );
   });
   const unfilteredPulls = new Map<string, UnfilteredPulls>();
-  const unfilteredKey = (repo: { readonly baseUrl: string; readonly repository: string }) =>
-    `${repo.baseUrl}\n${repo.repository}`;
   // Call holding `state.lock`. The list is sorted newest update first, so after one full read
   // everything that changed since sits ahead of the first pull request older than `newest`.
   const readUnfilteredPulls = Effect.fn("ForgejoSourceControlProvider.readUnfilteredPulls")(
@@ -366,7 +361,6 @@ export const make = Effect.gen(function* () {
       firstPage: ReadonlyArray<ForgejoPull> | undefined,
     ) {
       const now = yield* Clock.currentTimeMillis;
-      if (state.pulls && now - state.refreshedAt < UNFILTERED_PULLS_REUSE_MS) return state.pulls;
       const since =
         state.pulls && now - state.scannedAt < UNFILTERED_PULLS_MAX_AGE_MS
           ? state.newest
@@ -395,7 +389,6 @@ export const make = Effect.gen(function* () {
       if (since === undefined) state.scannedAt = now;
       state.pulls = pulls;
       state.newest = newest;
-      state.refreshedAt = now;
       return pulls;
     },
   );
@@ -424,7 +417,7 @@ export const make = Effect.gen(function* () {
           }
           return results;
         };
-        const key = unfilteredKey(repo);
+        const key = `${repo.baseUrl}\n${repo.repository}`;
         let unfiltered = unfilteredPulls.get(key);
         let firstPage: ReadonlyArray<ForgejoPull> | undefined;
         if (!unfiltered) {
@@ -444,7 +437,6 @@ export const make = Effect.gen(function* () {
                 pulls: undefined,
                 newest: undefined,
                 scannedAt: 0,
-                refreshedAt: 0,
               };
               unfilteredPulls.set(key, unfiltered);
               if (page === 1 && input.state === "all") firstPage = items;
@@ -492,11 +484,6 @@ export const make = Effect.gen(function* () {
             body: yield* fs.readFileString(input.bodyFile),
           },
         });
-        const created = unfilteredPulls.get(
-          unfilteredKey({ ...repo, repository: input.target?.repository ?? repo.repository }),
-        );
-        // The next lookup has to see this pull request, so it may not reuse an earlier read.
-        if (created) created.refreshedAt = Number.NEGATIVE_INFINITY;
       },
       (effect, input) => effect.pipe(mapError("createChangeRequest", input.cwd)),
     ),
