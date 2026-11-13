@@ -1,12 +1,15 @@
 import type {
   NodeId,
+  OrchestrationV2ConversationMessage,
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderTurn,
   OrchestrationV2RestartCancelledBackgroundWork,
   OrchestrationV2Run,
   OrchestrationV2RunAttempt,
+  OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { subagentHoldsCompletion } from "@t3tools/provider-core/server/subagentProjection";
 import { latestRootProviderFailure, runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 
 type Work = OrchestrationV2RestartCancelledBackgroundWork;
@@ -187,14 +190,56 @@ export function cancelledBeforeStart(
   return run.status === "cancelled" && neverStarted(run);
 }
 
+/** A follow-up task's runs: those tagged with it, and the untagged wakes for subagents they started. */
+export function delegatedTaskRuns(
+  projection: {
+    readonly runs: ReadonlyArray<OrchestrationV2Run>;
+    readonly messages: ReadonlyArray<
+      Pick<OrchestrationV2ConversationMessage, "runId" | "delegatedCompletion">
+    >;
+  },
+  taskId: NodeId,
+): ReadonlyArray<OrchestrationV2Run> {
+  const owned = new Set(
+    projection.runs.filter((run) => run.delegatedTaskId === taskId).map((run) => run.id),
+  );
+  const untagged = new Set(
+    projection.runs.filter((run) => run.delegatedTaskId === undefined).map((run) => run.id),
+  );
+  for (let grew = owned.size > 0; grew;) {
+    grew = false;
+    for (const { runId, delegatedCompletion } of projection.messages) {
+      if (
+        runId === null ||
+        !untagged.has(runId) ||
+        owned.has(runId) ||
+        delegatedCompletion === undefined ||
+        !owned.has(delegatedCompletion.parentRunId)
+      )
+        continue;
+      owned.add(runId);
+      grew = true;
+    }
+  }
+  return projection.runs.filter((run) => owned.has(run.id));
+}
+
+/** A follow-up task's runs still owe a subagent they started its result. */
+export function delegatedTaskAwaitsSubagents(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  subagents: ReadonlyArray<
+    Pick<OrchestrationV2Subagent, "runId" | "status" | "completionDelivery">
+  >,
+): boolean {
+  const runIds = new Set<string | null>(runs.map((run) => run.id));
+  return subagents.some((task) => runIds.has(task.runId) && subagentHoldsCompletion(task));
+}
+
 /** A follow-up task's latest run, passing over queued work it no longer waits on, as the original task does. */
 export function delegatedTaskResultRun(
   runs: ReadonlyArray<OrchestrationV2Run>,
-  taskId: NodeId,
 ): OrchestrationV2Run | undefined {
-  const taskRuns = runs
-    .filter((run) => run.delegatedTaskId === taskId)
-    .toSorted((a, b) => b.ordinal - a.ordinal);
+  const taskRuns = runs.toSorted((a, b) => b.ordinal - a.ordinal);
   const awaited = taskRuns.filter(
     (run) => !cancelledBeforeStart(run) && !(run.status === "queued" && run.queueHeld === true),
   );
