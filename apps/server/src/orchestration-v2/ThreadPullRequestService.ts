@@ -188,6 +188,26 @@ export const make = Effect.gen(function* () {
       JSON.stringify([thread.projectId, thread.worktreePath, thread.branch]),
     );
 
+    // A thread's own events and a backfill read at once; only scheduled sweeps wait.
+    const scheduled = new Map(
+      request.threadId !== null
+        ? []
+        : [...groups].filter(
+            ([, group]) =>
+              group[0]!.branch !== null &&
+              group.every(
+                (thread) => thread.branchPullRequest == null && !pendingBackfill.has(thread.id),
+              ),
+          ),
+    );
+    const scheduledLookups = noPullRequestRechecks.select(
+      nowMs,
+      Array.from(scheduled, ([key, group]) => ({
+        key,
+        activityAtMs: Math.max(...group.map((thread) => DateTime.toEpochMillis(thread.updatedAt))),
+      })),
+    );
+
     yield* Effect.forEach(
       groups,
       ([key, group]) =>
@@ -195,20 +215,7 @@ export const make = Effect.gen(function* () {
           const first = group[0]!;
           const project = projects.get(first.projectId);
           if (project === undefined) return finishBackfill(group);
-          // A thread's own events and a backfill read at once; only scheduled sweeps wait.
-          if (
-            request.threadId === null &&
-            group.every(
-              (thread) => thread.branchPullRequest == null && !pendingBackfill.has(thread.id),
-            ) &&
-            noPullRequestRechecks.waiting(
-              key,
-              nowMs,
-              Math.max(...group.map((thread) => DateTime.toEpochMillis(thread.updatedAt))),
-            )
-          ) {
-            return;
-          }
+          if (scheduled.has(key) && !scheduledLookups.has(key)) return;
           const { project: resolvedProject, repository } =
             yield* resolveProjectForPullRequestDiscovery(project, repositoryIdentities, {
               refresh: request.refresh,

@@ -1783,6 +1783,38 @@ describe("ThreadSettlementServiceV2 worker", () => {
     }),
   );
 
+  it.effect("a sweep looks up a few branches without a pull request, not every one", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const threads = Array.from({ length: 10 }, (_, index) =>
+        makeThread(`idle-${index}`, {
+          branch: `idle-${index}`,
+          latestUserMessageAt: DateTime.makeUnsafe(Date.parse(NOW) - (index + 10) * 60 * 1_000),
+        }),
+      );
+      const fixture = yield* makeHarness({ snapshot: makeSnapshot(threads) });
+      const branches = Ref.get(fixture.branchCalls).pipe(
+        Effect.map((calls) => calls.map((call) => call.branch).sort()),
+      );
+
+      yield* Effect.gen(function* () {
+        const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+        yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+        // The most recently active first, then the rest in turn, each once.
+        assert.deepStrictEqual(yield* branches, ["idle-0", "idle-1", "idle-2", "idle-3"]);
+        for (let minute = 1; minute <= 5; minute += 1) {
+          yield* TestClock.adjust("1 minute");
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+        }
+        assert.deepStrictEqual(
+          yield* branches,
+          threads.map((thread) => thread.branch),
+        );
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
   it.effect("a merged branch PR that cannot settle its thread rereads no git state", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(NOW));

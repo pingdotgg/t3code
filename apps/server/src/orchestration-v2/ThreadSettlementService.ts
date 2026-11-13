@@ -553,15 +553,7 @@ export const make = Effect.gen(function* () {
       }
       const refresh = group.filter((member) => shellClosedThreads.delete(member.id)).length > 0;
       const key = lookupKey(thread);
-      // A merge, a shell close and a thread's own events read at once; only scheduled sweeps wait.
-      if (
-        mergedPullRequest === null &&
-        threadId === undefined &&
-        !refresh &&
-        noPullRequestRechecks.waiting(key, nowMs, Math.max(...group.map(threadActivityAtMs)))
-      ) {
-        return undefined;
-      }
+      if (scheduledLookups !== null && !refresh && !scheduledLookups.has(key)) return undefined;
       // Remembered git state is enough to rule a thread out; only an answer
       // that would settle it is confirmed against fresh git state.
       const remembered = yield* git.branchPullRequest(
@@ -573,6 +565,20 @@ export const make = Effect.gen(function* () {
       if (!(yield* wouldSettle(group, remembered))) return undefined;
       return yield* git.branchPullRequest({ cwd, branch: thread.branch }, { freshGitState: true });
     });
+
+    // A merge, a shell close and a thread's own events read at once; only scheduled sweeps wait.
+    const scheduledLookups =
+      mergedPullRequest !== null || threadId !== undefined
+        ? null
+        : noPullRequestRechecks.select(
+            nowMs,
+            [...groups]
+              .filter(([key]) => key.startsWith('["branch",'))
+              .map(([key, group]) => ({
+                key,
+                activityAtMs: Math.max(...group.map(threadActivityAtMs)),
+              })),
+          );
 
     yield* Effect.forEach(
       groups.values(),
