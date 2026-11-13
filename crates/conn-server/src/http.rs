@@ -443,12 +443,16 @@ mod tests {
     use super::*;
 
     async fn serve() -> (std::net::SocketAddr, Arc<AuthStore>) {
+        serve_with(None).await
+    }
+
+    async fn serve_with(engine: Option<Arc<dyn Engine>>) -> (std::net::SocketAddr, Arc<AuthStore>) {
         let auth = AuthStore::in_memory();
         let state = AppState {
             table: Arc::new(MethodTable::new()),
             auth: auth.clone(),
             descriptor: Arc::new(crate::environment::descriptor("env-test", "Test")),
-            engine: None,
+            engine,
         };
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -582,6 +586,58 @@ mod tests {
         )
         .await;
         assert_eq!(status, 401);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn orchestration_snapshots_need_the_protocol_header_and_a_bearer() {
+        let dir = std::env::temp_dir().join(format!("conn-server-http-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut config = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
+        config.projects = vec![conn_engine::ProjectConfig {
+            title: "P".into(),
+            workspace_root: "/tmp/p".into(),
+        }];
+        let engine: Arc<dyn Engine> = Arc::new(conn_engine::SqliteEngine::open(config).unwrap());
+        let (addr, auth) = serve_with(Some(engine)).await;
+        let access = auth
+            .exchange(
+                &auth
+                    .issue_pairing_code(None, auth::PAIRING_CODE_TTL_MS)
+                    .code,
+                None,
+                None,
+            )
+            .unwrap()
+            .token;
+        let bearer = format!("authorization: Bearer {access}");
+        let header = "x-t3-orchestration-protocol: 2";
+        let get = |path: &str, headers: &[&str]| {
+            let head = [format!("GET {path} HTTP/1.1")]
+                .into_iter()
+                .chain(headers.iter().map(|h| (*h).to_owned()))
+                .collect::<Vec<_>>()
+                .join("\r\n");
+            async move { call(addr, &head, "").await }
+        };
+
+        let shell = "/api/orchestration/shell";
+        assert_eq!(get(shell, &[&bearer]).await.0, 400);
+        assert_eq!(get(shell, &[header]).await.0, 401);
+        assert_eq!(
+            get(shell, &[header, "authorization: Bearer forged"])
+                .await
+                .0,
+            401
+        );
+        let (status, body) = get(shell, &[header, &bearer]).await;
+        assert_eq!(status, 200, "{body}");
+        let snapshot: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(snapshot["projects"][0]["title"], "P");
+        // An unknown thread is a plain 404, never the structured not-found error.
+        let (status, body) = get("/api/orchestration/threads/nope", &[header, &bearer]).await;
+        assert_eq!((status, body.as_str()), (404, ""));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test(flavor = "current_thread")]

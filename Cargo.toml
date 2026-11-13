@@ -39,6 +39,8 @@ axum = { version = "0.8", default-features = false, features = [
 unsafe_code = "forbid"
 
 [profile.release]
+# Smaller than opt-level 3 on every measure (README, "Memory"): binary, RSS and footprint.
+opt-level = "z"
 codegen-units = 1
 lto = "thin"
 panic = "abort"

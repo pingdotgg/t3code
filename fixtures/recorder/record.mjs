@@ -345,6 +345,24 @@ try {
           s.child.once("exit", () => r());
           s.child.kill("SIGTERM");
         }),
+      /** RSS and macOS `footprint` of one server process, in KB. Only the server, no children. */
+      memory: (s) => {
+        const rss = Number(
+          NodeChildProcess.execFileSync("ps", ["-o", "rss=", "-p", String(s.child.pid)], {
+            encoding: "utf8",
+          }).trim(),
+        );
+        let footprint = null;
+        try {
+          // macOS only; elsewhere the tool is missing and RSS stands alone.
+          const out = NodeChildProcess.execFileSync("footprint", [String(s.child.pid)], {
+            encoding: "utf8",
+          });
+          const m = /Footprint: ([\d.]+) (KB|MB)/.exec(out);
+          if (m) footprint = Number(m[1]) * (m[2] === "MB" ? 1024 : 1);
+        } catch {}
+        return { rss, footprint };
+      },
       shotAlways: async (label) => {
         const file = NodePath.join(shots, `${label}.png`);
         await page.screenshot({ path: file });

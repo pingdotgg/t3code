@@ -240,10 +240,24 @@ async function rustHaikuDraft(ctx, runtimeLabel) {
 
 async function rustTurn(ctx) {
   const target = await pairRust(ctx);
+  const memory = { idle: ctx.memory(target), during: { rss: 0, footprint: 0 } };
   await rustHaikuDraft(ctx, null);
   await send(ctx, "Reply with exactly: hello from haiku");
+  // Peak while the stop button shows: the turn is running.
+  await stopButton(ctx)
+    .first()
+    .waitFor({ state: "visible", timeout: 30_000 })
+    .catch(() => {});
+  while (await stopButton(ctx).first().isVisible()) {
+    const now = ctx.memory(target);
+    memory.during.rss = Math.max(memory.during.rss, now.rss);
+    memory.during.footprint = Math.max(memory.during.footprint, now.footprint ?? 0);
+    await ctx.page.waitForTimeout(100);
+  }
   await waitTurnEnd(ctx);
   await ctx.page.getByText("hello from haiku").last().waitFor({ timeout: 30_000 });
+  memory.after = ctx.memory(target);
+  ctx.log(`memory KB ${JSON.stringify(memory)}`);
   await ctx.shotAlways("turn");
   ctx.rust = target;
 }
