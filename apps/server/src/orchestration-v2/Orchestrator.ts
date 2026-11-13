@@ -631,6 +631,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pull-request-link.sync":
     case "thread.pull-request.watch":
     case "thread.pull-request-watch.sync":
+    case "thread.pull-request-watch.checks-reopen":
     case "thread.pull-request.sync":
     case "thread.title.regeneration.complete":
     case "thread.project.adopt-folder":
@@ -781,6 +782,26 @@ function withPullRequestWatch(
   const ended = previous ?? endedWatch;
   return ended === undefined ? rest : { ...rest, endedWatch: ended };
 }
+
+function syncedPullRequestWatch(
+  existing: ThreadPullRequestWatch | undefined,
+  command: {
+    readonly watch: ThreadPullRequestWatch | null;
+    readonly checksPendingBefore?: boolean | undefined;
+  },
+): ThreadPullRequestWatch | undefined {
+  if (command.watch === null) return undefined;
+  // A push cleared the answer while this read was in flight, so its answer is the old head's.
+  if (command.checksPendingBefore === undefined || existing?.checksPending !== undefined) {
+    return command.watch;
+  }
+  return withoutChecksAnswer(command.watch);
+}
+
+const withoutChecksAnswer = ({
+  checksPending: _answer,
+  ...watch
+}: ThreadPullRequestWatch): ThreadPullRequestWatch => watch;
 
 function legacyPullRequestLink(
   thread: OrchestrationV2AppThread,
@@ -1400,14 +1421,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) {
     const adapter = yield* providerAdapters.get(providerInstanceId).pipe(mapDispatchError(command));
     const { driver } = adapter;
-    if (driver === "opencode") {
+    if (driver === "opencode" || driver === "antigravity") {
       const capabilities = yield* adapter.getCapabilities().pipe(mapDispatchError(command));
       return capabilities.turns.supportsNativeGoals === true ? driver : undefined;
     }
     return driver === "codex" || driver === "claudeAgent" ? driver : undefined;
   });
 
-  /** Claude Code reads `/goal pause` and `/goal resume` as new goals named "pause" and "resume". */
+  /** Unsupported goal controls can become new objectives in native providers. */
   const ensureGoalCommandSupported = Effect.fn("Orchestrator.ensureGoalCommandSupported")(
     function* (
       command: OrchestrationV2ServerCommand,
@@ -1415,8 +1436,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       providerInstanceId: ProviderInstanceId,
     ) {
       const goalCommand = parseGoalCommand(message);
-      if (goalCommand?.type !== "pause" && goalCommand?.type !== "resume") return;
-      if ((yield* goalDriverFor(command, providerInstanceId)) !== "claudeAgent") return;
+      if (goalCommand === null || goalCommand.type === "set") return;
+      const driver = yield* goalDriverFor(command, providerInstanceId);
+      if (driver === "antigravity") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause:
+            "Antigravity accepts /goal followed by an objective. Interrupt the running turn, then ask Antigravity to stop the current goal.",
+        });
+      }
+      if (goalCommand.type !== "pause" && goalCommand.type !== "resume") return;
+      if (driver !== "claudeAgent") return;
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -1963,13 +1994,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const projection = yield* projectionStore.getThreadRecords(
       threadId,
       ["runs", "nodes", "attempts", "providerThreads", "turnItems", "messages"],
-      { turnItemTypes: [], messageRoles: ["user"] },
+      { turnItemTypes: ["user_message"], messageRoles: ["user"] },
     );
     const queuedRun =
       queuedRunId === undefined
         ? nextQueuedRun(projection)
         : projection.runs.find((run) => run.id === queuedRunId && run.status === "queued");
     if (queuedRun === undefined) return;
+    // A steer that fell back to the queue keeps its user item, hidden while the
+    // run is queued. Republish it before the failure so clients whose bounded
+    // snapshot omitted it can show the prompt beside the error.
+    const retainedUserItems = projection.turnItems.filter(
+      (item) => item.type === "user_message" && item.runId === queuedRun.id,
+    );
     const now = yield* DateTime.now;
     const rootNode = projection.nodes.find((node) => node.id === queuedRun.rootNodeId);
     const attempt = projection.attempts.find((entry) => entry.id === queuedRun.activeAttemptId);
@@ -1995,6 +2032,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       class: handoffUnsupported ? "validation_error" : "unknown",
     });
     yield* writeSystemEvents([
+      ...retainedUserItems.map((item) => ({
+        type: "turn-item.updated" as const,
+        threadId,
+        runId: queuedRun.id,
+        ...(rootNode === undefined ? {} : { nodeId: rootNode.id }),
+        providerInstanceId: queuedRun.providerInstanceId,
+        occurredAt: now,
+        payload: { ...item, status: "failed" as const, completedAt: now, updatedAt: now },
+      })),
       ...(attempt !== undefined && rootNode !== undefined
         ? [
             {
@@ -3846,6 +3892,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.pull-request-link.sync"
           | "thread.pull-request.watch"
           | "thread.pull-request-watch.sync"
+          | "thread.pull-request-watch.checks-reopen"
           | "thread.pull-request.sync"
           | "thread.title.regeneration.complete"
           | "thread.runtime-mode.set"
@@ -3968,6 +4015,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandType: command.type,
         cause: `Thread ${command.threadId} is already archived.`,
       });
+    }
+    if (command.type === "thread.archive") {
+      const records = yield* projectionStore
+        .getThreadRecords(command.threadId, ["subagents"])
+        .pipe(mapDispatchError(command));
+      if (
+        records.subagents.some(
+          (task) =>
+            task.origin === "app_owned" &&
+            task.childThreadId !== null &&
+            isOrchestrationV2WorkActive(task.status),
+        )
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has running delegated tasks. Wait for them or cancel them before archiving.`,
+        });
+      }
     }
     if (command.type === "thread.unarchive" && thread.archivedAt === null) {
       return yield* new OrchestratorDispatchError({
@@ -4644,6 +4710,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: command.type === "thread.pull-request-link.sync" ? thread.updatedAt : now,
           };
         }
+        case "thread.pull-request-watch.checks-reopen": {
+          const linked = threadPullRequestsOf(thread);
+          if (!linked.some((link) => link.watch?.checksPending !== undefined)) return thread;
+          return {
+            ...thread,
+            pullRequests: linked.map((link) =>
+              link.watch?.checksPending === undefined
+                ? link
+                : { ...link, watch: withoutChecksAnswer(link.watch) },
+            ),
+          };
+        }
         case "thread.pull-request.watch":
         case "thread.pull-request-watch.sync": {
           const key = normalizeThreadPullRequestKey(command);
@@ -4680,7 +4758,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const watch =
             command.type === "thread.pull-request-watch.sync"
               ? existing.watch?.startedAt === command.startedAt
-                ? (command.watch ?? undefined)
+                ? syncedPullRequestWatch(existing.watch, command)
                 : existing.watch
               : !command.watching
                 ? undefined
@@ -4699,6 +4777,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       passedChecks: existing.endedWatch.passedChecks,
                       conflicting: existing.endedWatch.conflicting,
                     }),
+                    awaitingBaseline: existing.endedWatch
+                      ? existing.endedWatch.awaitingBaseline
+                      : "all",
                     ...(existing.endedWatch?.owedChecks !== undefined && {
                       owedChecks: existing.endedWatch.owedChecks,
                     }),
@@ -4708,6 +4789,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ...(existing.endedWatch?.approvalAnnounced !== undefined && {
                       approvalAnnounced: existing.endedWatch.approvalAnnounced,
                     }),
+                    // A finished-checks answer may be an older head's; a fresh read decides.
+                    ...(existing.endedWatch?.checksPending === true && { checksPending: true }),
                     ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
                       checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
                     }),
@@ -4768,6 +4851,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? {
                 ...thread,
                 ...(command.title === undefined ? {} : { title: command.title }),
+                ...(command.outcome === undefined
+                  ? {}
+                  : {
+                      lastTitleRegeneration: {
+                        ...command.outcome,
+                        requestId: command.requestId,
+                        completedAt: now,
+                      },
+                    }),
                 titleRegeneration: null,
                 updatedAt: now,
               }
@@ -4786,6 +4878,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
       }
     })();
+    if (command.type === "thread.pull-request-watch.checks-reopen") {
+      if (updatedThread === thread) return;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.pull-request-synced",
+        threadId: command.threadId,
+        providerInstanceId: updatedThread.providerInstanceId,
+        occurredAt: now,
+        payload: updatedThread,
+      });
+      return;
+    }
     if (
       command.type === "thread.pull-request-link.sync" ||
       command.type === "thread.pull-request-watch.sync"
@@ -14444,6 +14550,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "provider.switch":
         yield* dispatchThreadMutation(command, events, effects);
         break;
+      case "thread.pull-request-watch.checks-reopen":
+        yield* dispatchThreadMutation(command, events, effects);
+        break;
       case "thread.pull-request-watch.sync":
         yield* dispatchPullRequestWatchSync(command, events, effects);
         break;
@@ -14801,6 +14910,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           planned.events.length > 0 ||
           isUnobservedAcknowledgement(command) ||
           command.type === "thread.background-work.settle" ||
+          // A read can answer a watch again before a push's reopen lands; nothing is left to clear.
+          command.type === "thread.pull-request-watch.checks-reopen" ||
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
