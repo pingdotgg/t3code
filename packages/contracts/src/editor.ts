@@ -157,6 +157,8 @@ export type FileManagerRevealKind = typeof FileManagerRevealKind.Type;
 export const LaunchEditorInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   editor: EditorId,
+  /** Workspace the target belongs to; JetBrains IDEs open positioned files in this project. */
+  projectRoot: Schema.optional(TrimmedNonEmptyString),
   /** Only for file-manager; requires the server's shellRevealInFileManager capability. */
   reveal: Schema.optional(Schema.Boolean),
 });
@@ -173,6 +175,19 @@ export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
   const editor = EDITORS.find((candidate) => candidate.id === id);
   return editor === undefined ? undefined : remoteSchemeOf(editor);
 };
+
+// `goto` editors share VS Code's `file:line:col` addressing, so their remote schemes also open
+// a local file as `<scheme>://file/<absolute path>[:line[:col]]`. Zed and JetBrains differ.
+export const LOCAL_FILE_LINK_SCHEMES: ReadonlyArray<string> = EDITORS.flatMap((editor) =>
+  editor.launchStyle === "goto" && "remoteScheme" in editor ? [editor.remoteScheme] : [],
+);
+
+export const isLocalEditorFileUrl = (url: URL): boolean =>
+  LOCAL_FILE_LINK_SCHEMES.includes(url.protocol.slice(0, -1)) &&
+  url.host === "file" &&
+  url.username.length === 0 &&
+  url.password.length === 0 &&
+  url.pathname.length > 1;
 
 export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
@@ -214,7 +229,16 @@ export const buildRemoteOpenUrl = (input: {
     return `${scheme}://ssh/${zedDestination}${encodedZedPath}`;
   }
   const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
-  const destination = input.username === undefined ? input.host : `${input.username}@${input.host}`;
+  const plainDestination =
+    input.username === undefined ? input.host : `${input.username}@${input.host}`;
+  // Remote-SSH splits the decoded authority on "+", so a destination containing one must use its
+  // hex-encoded JSON form instead.
+  const destination = plainDestination.includes("+")
+    ? Array.from(
+        new TextEncoder().encode(JSON.stringify({ hostName: input.host, user: input.username })),
+        (byte) => byte.toString(16).padStart(2, "0"),
+      ).join("")
+    : plainDestination;
   // VS Code opens a bare vscode-remote path as a folder; a trailing position makes it open the file.
   return `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(destination)}${encodedPath}${input.isFile ? ":1:1" : ""}`;
 };

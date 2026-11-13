@@ -34,14 +34,9 @@ export function fnv1a32(
 }
 
 function buildPatchCacheKey(patch: string, scope = "diff-panel"): string {
-  const normalizedPatch = patch.trim();
-  const primary = fnv1a32(normalizedPatch, FNV_OFFSET_BASIS_32, FNV_PRIME_32).toString(36);
-  const secondary = fnv1a32(
-    normalizedPatch,
-    SECONDARY_HASH_SEED,
-    SECONDARY_HASH_MULTIPLIER,
-  ).toString(36);
-  return `${scope}:${normalizedPatch.length}:${primary}:${secondary}`;
+  const primary = fnv1a32(patch, FNV_OFFSET_BASIS_32, FNV_PRIME_32).toString(36);
+  const secondary = fnv1a32(patch, SECONDARY_HASH_SEED, SECONDARY_HASH_MULTIPLIER).toString(36);
+  return `${scope}:${patch.length}:${primary}:${secondary}`;
 }
 
 export type RenderablePatch =
@@ -164,15 +159,12 @@ export function getRenderablePatch(
   cacheScope = "diff-panel",
   options: RenderablePatchOptions = {},
 ): RenderablePatch | null {
-  if (!patch) return null;
-  const normalizedPatch = patch.trim();
-  if (normalizedPatch.length === 0) return null;
+  if (!patch?.trim()) return null;
 
   try {
-    const parsedPatches = parsePatchFiles(
-      normalizedPatch,
-      buildPatchCacheKey(normalizedPatch, cacheScope),
-    );
+    const parsedPatches = parsePatchFiles(patch, {
+      cacheKeyPrefix: buildPatchCacheKey(patch, cacheScope),
+    });
     const sourceFiles = parsedPatches.flatMap((parsedPatch) => parsedPatch.files);
     const files = sourceFiles.map((file) => {
       const filtered = options.ignoreWhitespace ? hideWhitespaceChanges(file) : file;
@@ -184,13 +176,13 @@ export function getRenderablePatch(
 
     return {
       kind: "raw",
-      text: normalizedPatch,
+      text: patch,
       reason: "Unsupported diff format. Showing raw patch.",
     };
   } catch {
     return {
       kind: "raw",
-      text: normalizedPatch,
+      text: patch,
       reason: "Failed to parse patch. Showing raw patch.",
     };
   }
@@ -301,37 +293,37 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
   --diffs-bg-buffer-override: color-mix(in srgb, var(--code-background) 90%, var(--code-foreground));
 
   --diffs-bg-addition-override: light-dark(
-    color-mix(in srgb, var(--code-background) 50%, var(--diff-addition)),
-    color-mix(in srgb, var(--code-background) 70%, var(--diff-addition))
+    color-mix(in srgb, var(--code-background) calc(50% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-addition)),
+    color-mix(in srgb, var(--code-background) calc(70% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-addition))
   );
   --diffs-bg-addition-number-override: light-dark(
-    color-mix(in srgb, var(--code-background) 35%, var(--diff-addition)),
-    color-mix(in srgb, var(--code-background) 60%, var(--diff-addition))
+    color-mix(in srgb, var(--code-background) calc(35% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-addition)),
+    color-mix(in srgb, var(--code-background) calc(60% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-addition))
   );
   --diffs-bg-addition-hover-override: color-mix(in srgb, var(--code-background) 85%, var(--diff-addition));
-  --diffs-bg-addition-emphasis-override: color-mix(
-    in srgb,
-    var(--code-background) 80%,
-    var(--diff-addition)
+  /* Pierre resolves emphasis on the host, before the diff's overrides can inherit. */
+  /* Light emphasis stays above t3-light's readable syntax luminance floor. */
+  --diffs-bg-addition-emphasis: light-dark(
+    rgb(from var(--diffs-addition-base) r g b / 15%),
+    rgb(from var(--diffs-addition-base) r g b / calc(20% + var(--appearance-contrast-boost, 0%) / 4))
   );
 
   --diffs-bg-deletion-override: light-dark(
-    color-mix(in srgb, var(--code-background) 50%, var(--diff-deletion)),
-    color-mix(in srgb, var(--code-background) 70%, var(--diff-deletion))
+    color-mix(in srgb, var(--code-background) calc(50% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-deletion)),
+    color-mix(in srgb, var(--code-background) calc(70% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-deletion))
   );
   --diffs-bg-deletion-number-override: light-dark(
-    color-mix(in srgb, var(--code-background) 35%, var(--diff-deletion)),
-    color-mix(in srgb, var(--code-background) 60%, var(--diff-deletion))
+    color-mix(in srgb, var(--code-background) calc(35% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-deletion)),
+    color-mix(in srgb, var(--code-background) calc(60% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-deletion))
   );
   --diffs-bg-deletion-hover-override: color-mix(
     in srgb,
     var(--code-background) 85%,
     var(--diff-deletion)
   );
-  --diffs-bg-deletion-emphasis-override: color-mix(
-    in srgb,
-    var(--code-background) 80%,
-    var(--diff-deletion)
+  --diffs-bg-deletion-emphasis: light-dark(
+    rgb(from var(--diffs-deletion-base) r g b / 15%),
+    rgb(from var(--diffs-deletion-base) r g b / calc(20% + var(--appearance-contrast-boost, 0%) / 4))
   );
 
   background-color: var(--diffs-bg) !important;

@@ -4,13 +4,17 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  pendingThreadCreationShell,
   resolvePendingThreadCreation,
   selectThreadCreationDetail,
+  withLaunchingThreads,
   type PendingThreadCreation,
 } from "./pending-thread-creation";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
@@ -60,7 +64,7 @@ describe("resolvePendingThreadCreation", () => {
       threadKey,
       pending,
       previous,
-      detail: { messages: [], latestTurn: null, session: null },
+      detail: { messages: [], runs: [] },
     });
     expect(previous).toBe(pending);
 
@@ -68,7 +72,7 @@ describe("resolvePendingThreadCreation", () => {
       threadKey,
       pending,
       previous,
-      detail: { messages: [prompt], latestTurn: null, session: { status: "starting" } },
+      detail: { messages: [prompt], runs: [] },
     });
     expect(previous).toBe(pending);
 
@@ -76,7 +80,7 @@ describe("resolvePendingThreadCreation", () => {
       threadKey,
       pending: null,
       previous,
-      detail: { messages: [prompt], latestTurn: null, session: { status: "starting" } },
+      detail: { messages: [prompt], runs: [] },
     });
     expect(previous).toBe(pending);
 
@@ -87,8 +91,7 @@ describe("resolvePendingThreadCreation", () => {
         previous,
         detail: {
           messages: [prompt],
-          latestTurn: { turnId: "turn-1" },
-          session: { status: "running" },
+          runs: [{ status: "running" }],
         },
       }),
     ).toBeNull();
@@ -100,7 +103,7 @@ describe("resolvePendingThreadCreation", () => {
         threadKey,
         pending,
         previous: null,
-        detail: { messages: [], latestTurn: { turnId: "turn-1" }, session: { status: "running" } },
+        detail: { messages: [], runs: [{ status: "running" }] },
       }),
     ).toBe(pending);
   });
@@ -115,7 +118,7 @@ describe("resolvePendingThreadCreation", () => {
         threadKey,
         pending: failed,
         previous: pending,
-        detail: { messages: [], latestTurn: null, session: { status: "error" } },
+        detail: { messages: [], runs: [] },
       }),
     ).toBe(failed);
   });
@@ -185,5 +188,32 @@ describe("selectThreadCreationDetail", () => {
         outcomes: {},
       }),
     ).toEqual({ pendingCreation: null, detailRef: threadRef });
+  });
+});
+
+describe("withLaunchingThreads", () => {
+  it("reads as working from Send until the thread's first run arrives", () => {
+    const launch = (threads: Parameters<typeof withLaunchingThreads>[0]["threads"]) =>
+      withLaunchingThreads({ threads, launches: [creation], hiddenThreadKeys: new Set() });
+    // Before the shell arrives, and after the server commits the thread without its run.
+    const created = { ...pendingThreadCreationShell(creation)!, title: "Server title" };
+    for (const threads of [launch([]), launch([created])]) {
+      expect(threads).toHaveLength(1);
+      expect(isThreadWorking(threads[0]!)).toBe(true);
+    }
+    expect(launch([created])[0]!.title).toBe("Server title");
+
+    const started = {
+      ...created,
+      latestRun: {
+        runId: RunId.make("run-1"),
+        status: "completed" as const,
+        requestedAt: null,
+        startedAt: null,
+        completedAt: null,
+        assistantMessageId: null,
+      },
+    };
+    expect(launch([started])[0]).toBe(started);
   });
 });

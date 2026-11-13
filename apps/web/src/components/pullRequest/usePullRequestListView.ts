@@ -35,11 +35,15 @@ import {
 } from "./pullRequestList.logic";
 import type { PullRequestExpectedHost } from "./PullRequestListFilters";
 import type { PullRequestListPreferences, PullRequestListSort } from "./pullRequestListPreferences";
-import { assignProjectsToEnvironments } from "./pullRequestProjectAssignment.logic";
-import { pullRequestFilterProjects } from "./pullRequestProjectFilter.logic";
+import {
+  pullRequestProjectQueries,
+  type PullRequestHostAvailability,
+} from "./pullRequestProjectAssignment.logic";
+import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import { pullRequestListEntryId } from "./pullRequestListGroups.logic";
 
 export interface PullRequestsSearch extends PullRequestListPreferences {
+  readonly selectedUrl?: string;
   readonly environmentId?: EnvironmentId;
   readonly projectId?: ProjectId;
   readonly host?: string;
@@ -53,14 +57,15 @@ export interface PullRequestsSearch extends PullRequestListPreferences {
 const SEARCH_DEBOUNCE_MS = 250;
 
 /** Which servers and projects the page reads, from the URL and what this client knows. */
-export function usePullRequestScope(search: PullRequestsSearch) {
+export function usePullRequestScope(
+  search: PullRequestsSearch,
+  hostAvailability: PullRequestHostAvailability,
+) {
   const { environments } = useEnvironments();
   const allProjects = useProjects();
   const projectsKnown = useAllEnvironmentShellsBootstrapped();
   const capableEnvironments = environments
-    .filter(
-      (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
-    )
+    .filter((environment) => environment.serverConfig !== null)
     .toSorted((left, right) => left.environmentId.localeCompare(right.environmentId));
   const scopedEnvironmentId =
     capableEnvironments.find((environment) => environment.environmentId === search.environmentId)
@@ -116,31 +121,32 @@ export function usePullRequestScope(search: PullRequestsSearch) {
     scopedProjectId,
     projectsKnown,
   );
-  const environmentQueries = ((): ReadonlyArray<{
+  const queriesFor = (
+    availability?: PullRequestHostAvailability,
+  ): ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly projectIds?: ReadonlyArray<ProjectId>;
   }> => {
     const plain = queryEnvironmentIds.map((environmentId) => ({ environmentId }));
     if (!projectsKnown || scopedProjectId !== undefined) return plain;
-    const assignment = assignProjectsToEnvironments(
-      projects,
-      queryEnvironmentIds,
-      queryEnvironmentIds[0],
-    );
-    const totals = new Map<EnvironmentId, number>();
-    for (const project of projects) {
-      totals.set(project.environmentId, (totals.get(project.environmentId) ?? 0) + 1);
-    }
-    return queryEnvironmentIds.flatMap((environmentId) => {
-      const projectIds = assignment.get(environmentId);
-      if (projectIds === undefined) return [];
-      if (projectIds.length === (totals.get(environmentId) ?? 0)) return [{ environmentId }];
-      return [{ environmentId, projectIds }];
-    });
-  })();
+    return pullRequestProjectQueries(projects, queryEnvironmentIds, availability);
+  };
+  const environmentQueries = queriesFor(hostAvailability);
+  // What the page reads once a refresh forgets host reads; refresh must refetch these too.
+  const preferredEnvironmentQueries = queriesFor();
   const assignmentKey = environmentQueries
     .map(({ environmentId, projectIds }) => `${environmentId}#${projectIds?.join("+") ?? "*"}`)
     .join("|");
+  // The URL is user-controlled and stands in for the PR link until detail loads.
+  const selectedLink = search.selectedUrl
+    ? sourceControlClients.parseChangeRequestUrl(search.selectedUrl)?.link
+    : undefined;
+  const selectedUrl =
+    selectedLink !== undefined &&
+    selectedLink.number === search.number &&
+    selectedLink.repository.toLowerCase() === search.repository?.toLowerCase()
+      ? search.selectedUrl
+      : undefined;
   const linkedSelection =
     search.repository && search.number && selectedProject
       ? {
@@ -148,6 +154,7 @@ export function usePullRequestScope(search: PullRequestsSearch) {
           repository: search.repository,
           number: search.number,
           projectId: selectedProject.id,
+          ...(selectedUrl ? { url: selectedUrl, revealUrl: selectedUrl } : {}),
           ...(selectedHost ? { host: selectedHost } : {}),
         }
       : null;
@@ -176,6 +183,7 @@ export function usePullRequestScope(search: PullRequestsSearch) {
     selectedProject,
     queryEnvironmentIds,
     environmentQueries,
+    preferredEnvironmentQueries,
     assignmentKey,
     linkedSelection,
     expectedHosts,
@@ -185,6 +193,7 @@ export function usePullRequestScope(search: PullRequestsSearch) {
 
 export function usePullRequestQueryFilters(search: PullRequestsSearch, typedQuery: string) {
   const [sentQuery, setSentQuery] = useState(typedQuery);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- debounce timer that sends the typed query after SEARCH_DEBOUNCE_MS
   useEffect(() => {
     const timer = window.setTimeout(() => setSentQuery(typedQuery), SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);

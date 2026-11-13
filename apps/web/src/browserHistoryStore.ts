@@ -3,11 +3,12 @@ import {
   scopedThreadKey,
   scopeProjectRef,
 } from "@t3tools/client-runtime/environment";
-import type {
-  EnvironmentId,
-  PreviewSessionSnapshot,
-  ScopedProjectRef,
-  ScopedThreadRef,
+import {
+  type EnvironmentId,
+  INCOGNITO_BROWSER_PROFILE_ID,
+  type PreviewSessionSnapshot,
+  type ScopedProjectRef,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -45,7 +46,7 @@ import {
   derivePhysicalProjectKey,
   selectProjectGroupingSettings,
   type ProjectGroupingSettings,
-} from "./logicalProject";
+} from "@t3tools/client-runtime/state/project-grouping";
 import { buildPhysicalToLogicalProjectKeyMap } from "./sidebarProjectGrouping";
 import type { Project } from "./types";
 
@@ -54,7 +55,7 @@ export type BrowserHistoryEntry = { url: string; lastVisitedAt: number; title?: 
 export const BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT = 50;
 export const BROWSER_HISTORY_MAX_PROJECTS = 20;
 const BROWSER_HISTORY_MAX_URL_LENGTH = 2048;
-export const BROWSER_HISTORY_MAX_TITLE_LENGTH = 512;
+const BROWSER_HISTORY_MAX_TITLE_LENGTH = 512;
 const MAX_VALID_DATE_MS = 8_640_000_000_000_000;
 
 export function isValidHistoryTimestamp(value: unknown): value is number {
@@ -122,7 +123,7 @@ export function upsertHistoryEntry(
   return next.slice(0, BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT);
 }
 
-export function evictExcessProjects(
+function evictExcessProjects(
   byProjectKey: Record<string, BrowserHistoryEntry[]>,
 ): Record<string, BrowserHistoryEntry[]> {
   const keys = Object.keys(byProjectKey);
@@ -468,6 +469,7 @@ function recordPreviewTitles(
   );
   for (const session of sessions) {
     const status = session.navStatus;
+    if (session.profileId === INCOGNITO_BROWSER_PROFILE_ID) continue;
     if (status._tag !== "Success" || !status.title || !include(session, status.url)) continue;
     state.setTitleForUrl(projectKey, status.url, status.title, environmentHostname);
   }

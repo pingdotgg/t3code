@@ -1,10 +1,9 @@
 import * as NodeModule from "node:module";
 import { describe, expect, it } from "vite-plus/test";
 import {
-  androidWorkspaceTabFromNavigationState,
   androidWorkspaceTabNavigationState,
   type AndroidWorkspaceNavigationTab,
-} from "../features/workspace/android-workspace-tabs";
+} from "../features/layout/workspace/android-workspace-tabs";
 import {
   linkedThreadStep,
   parentThreadIsBelow,
@@ -86,13 +85,12 @@ function names(state: ReturnType<typeof router.getInitialState>) {
 }
 
 describe("Android workspace navigation", () => {
-  it("returns to a distinct previous thread, otherwise to the workspace list", () => {
+  it("returns to the previous page, otherwise to the workspace list", () => {
     const parent = withThread();
     let state = apply(
       parent,
       StackActions.push("Thread", { ...thread.params, threadId: "child-a" }),
     );
-    let listSelected = false;
     const navigation = {
       dispatch: (action: RootStackResetAction) => {
         state = apply(state, action);
@@ -103,39 +101,41 @@ describe("Android workspace navigation", () => {
         state = apply(state, StackActions.pop());
       },
     };
-    const back = () =>
-      returnToAndroidWorkspaceList(navigation, () => {
-        listSelected = true;
-      });
+    const back = () => returnToAndroidWorkspaceList(navigation);
 
     back();
     expect(state.routes).toEqual(parent.routes);
     expect(state.index).toBe(parent.index);
-    expect(listSelected).toBe(false);
 
     back();
     expect(state.routes).toEqual([parent.routes[0]]);
     expect(state.index).toBe(0);
-    expect(listSelected).toBe(true);
 
     state = apply(
       parent,
       StackActions.push("Thread", { ...thread.params, environmentId: "environment-b" }),
     );
-    listSelected = false;
     back();
     expect(state.routes).toEqual(parent.routes);
     expect(state.index).toBe(parent.index);
-    expect(listSelected).toBe(false);
+
+    const pullRequestOverThread = legacyHistory();
+    state = pullRequestOverThread;
+    back();
+    expect(state.routes).toEqual(pullRequestOverThread.routes.slice(0, 2));
 
     // Confirming a Git action from the inline inspector can duplicate the current thread.
     state = apply(parent, StackActions.push("Thread", thread.params));
     back();
-    expect({ routes: names(state), index: state.index, listSelected }).toEqual({
-      routes: ["Home"],
-      index: 0,
-      listSelected: true,
-    });
+    expect({ routes: names(state), index: state.index }).toEqual({ routes: ["Home"], index: 0 });
+
+    const child = { ...thread.params, threadId: "child-a" };
+    state = apply(
+      apply(parent, StackActions.push("Thread", child)),
+      StackActions.push("Thread", child),
+    );
+    back();
+    expect(state.routes).toEqual(parent.routes);
   });
 
   it("opens a linked thread above the current one so Back returns to it", () => {
@@ -223,13 +223,10 @@ describe("Android Settings tab", () => {
   type Tab = AndroidWorkspaceNavigationTab;
   const openTab = (state: State, tab: Tab, columns = false) =>
     apply(state, CommonActions.reset(androidWorkspaceTabNavigationState(state, tab, columns)));
-  const selectedTab = (state: State, previous: Tab) =>
-    androidWorkspaceTabFromNavigationState(state, previous);
 
   it("opens a default Settings page beside the category list in wide layouts", () => {
     const settings = openTab(legacyHistory(), "settings", true);
     expect(names(settings)).toEqual(["Home", "Settings", "SettingsEnvironments"]);
-    expect(selectedTab(settings, "threads")).toBe("settings");
     expect(names(apply(settings, StackActions.pop()))).toEqual(["Home", "Settings"]);
   });
 
@@ -248,28 +245,16 @@ describe("Android Settings tab", () => {
     const settings = openTab(previous, "settings");
     expect(names(settings)).toEqual(["Home", "Settings"]);
     expect(settings.routes[0]?.key).toBe(previous.routes[0]?.key);
-    expect(selectedTab(settings, "threads")).toBe("settings");
     const back = apply(settings, StackActions.pop());
     expect(names(back)).toEqual(["Home"]);
     expect(back.routes[0]?.key).toBe(previous.routes[0]?.key);
-    expect(selectedTab(back, "settings")).not.toBe("settings");
   });
 
   it("stays selected under a settings page until a list tab returns to Home", () => {
     const previous = legacyHistory();
     const usage = apply(openTab(previous, "settings"), StackActions.push("SettingsUsage"));
-    expect(selectedTab(usage, "threads")).toBe("settings");
     const list = openTab(usage, "pullRequests");
     expect(names(list)).toEqual(["Home"]);
     expect(list.routes[0]?.key).toBe(previous.routes[0]?.key);
-    expect(selectedTab(list, "pullRequests")).toBe("pullRequests");
-  });
-
-  it("leaves a settings page opened from the Usage tab in that tab", () => {
-    const account = apply(
-      router.getInitialState(options),
-      StackActions.push("SettingsUsageAccount"),
-    );
-    expect(selectedTab(account, "usage")).toBe("usage");
   });
 });
