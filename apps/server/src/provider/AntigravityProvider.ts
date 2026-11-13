@@ -79,15 +79,18 @@ export function buildAntigravityModelsFromSession(
   );
   const currentValue =
     config?.type === "select" ? config.currentValue : setup.models?.currentModelId;
-  const entries =
-    config?.type === "select"
+  // Antigravity has exposed account models through both ACP model state and the
+  // model config option. Keep their union so a narrower/partial config update
+  // cannot hide Claude or GPT models that the session already advertised.
+  const entries = [
+    ...(config?.type === "select"
       ? config.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options))
-      : config === undefined
-        ? (setup.models?.availableModels.map((model) => ({
-            value: model.modelId,
-            name: model.name,
-          })) ?? [])
-        : [];
+      : []),
+    ...(setup.models?.availableModels.map((model) => ({
+      value: model.modelId,
+      name: model.name,
+    })) ?? []),
+  ];
   const currentThinking = antigravityThinkingConfig(setup.configOptions);
   const seen = new Set<string>();
   // The agent can list two IDs under one name; label the later ones so the picker tells them apart.
@@ -153,6 +156,7 @@ function isMissingInstallation(error: EffectAcpErrors.AcpError | ProviderSetupEr
 interface AntigravityProviderState {
   readonly draft: ServerProviderDraft;
   readonly authRevision: number;
+  readonly sessionModels: SessionSetupResult["models"] | undefined;
 }
 
 interface AntigravityProviderOptions {
@@ -211,6 +215,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   const metadata = yield* SubscriptionRef.make<AntigravityProviderState>({
     draft: initialDraft,
     authRevision: 0,
+    sessionModels: undefined,
   });
   // Preserve disk-discovered skills when callbacks replace workspace commands; the registry will not rescan them.
   const discoveredSkills = new Map<string, ServerProvider["skills"]>();
@@ -384,6 +389,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       const workspace = cwd ? workspaces.find((entry) => entry.cwd === cwd) : undefined;
       return {
         authRevision: state.authRevision + 1,
+        sessionModels: started.sessionSetupResult.models,
         draft: {
           ...draft,
           installed: true,
@@ -420,9 +426,15 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   ) {
     observeThinkingLevels(configOptions);
-    const models = buildAntigravityModelsFromSession({ configOptions }, thinkingLevels);
     yield* SubscriptionRef.update(metadata, (state) => {
       if (state.draft.auth.status !== "authenticated") return state;
+      const models = buildAntigravityModelsFromSession(
+        {
+          configOptions,
+          ...(state.sessionModels === undefined ? {} : { models: state.sessionModels }),
+        },
+        thinkingLevels,
+      );
       return { ...state, draft: { ...state.draft, models } };
     });
   });
@@ -471,6 +483,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       (state) =>
         ({
           authRevision: state.authRevision + 1,
+          sessionModels: undefined,
           draft: {
             ...state.draft,
             auth: {
