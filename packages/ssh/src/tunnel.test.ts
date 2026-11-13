@@ -1246,7 +1246,7 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
       const launch = (
         launchTarget: typeof renamed,
         nodeScriptPath: string,
-        launcherId = "a".repeat(32),
+        launcherId: string | null = "a".repeat(32),
       ) =>
         SshTunnel.launchOrReuseRemoteServer(
           launchTarget,
@@ -1305,6 +1305,16 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
       launchedPids.push(yield* runtimePid);
       assert.equal(renamedAndUpdated.remoteServerKind, "managed");
       assert.isFalse(yield* isRunning(updatedPid), "a rename with an update kept the old server");
+
+      // A server that a launch without an ID started under a reused key is not this desktop's.
+      const again = { ...target, alias: "devbox-again" };
+      process.kill(yield* runtimePid, "SIGKILL");
+      assert.equal((yield* launch(again, fakeServer, null)).remoteServerKind, "managed");
+      const unownedPid = yield* runtimePid;
+      launchedPids.push(unownedPid);
+      const final = yield* launch({ ...target, alias: "devbox-final" }, updatedServer);
+      assert.equal(final.remoteServerKind, "external");
+      assert.isTrue(yield* isRunning(unownedPid), "a stale launcher ID claimed another's server");
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
