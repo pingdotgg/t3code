@@ -21,6 +21,7 @@ use conn_contract::{
     AuthClientMetadata, AuthClientMetadataDeviceType, AuthClientSession, AuthEnvironmentScope,
     AuthPairingLink, from_json,
 };
+use conn_files::signer::{constant_time_eq, hmac_sha256};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
@@ -66,6 +67,8 @@ pub const PAIRING_CODE_TTL_MS: u64 = 5 * MINUTE_MS;
 pub const STARTUP_PAIRING_CODE_TTL_MS: u64 = 24 * 60 * MINUTE_MS;
 pub const SESSION_TTL_MS: u64 = 30 * 24 * 60 * MINUTE_MS;
 pub const TICKET_TTL_MS: u64 = 5 * MINUTE_MS;
+/// The longest life a session or pairing link can get: ten years.
+pub const MAX_TTL_MS: u64 = 10 * 366 * 24 * 60 * MINUTE_MS;
 
 /// Subjects as `EnvironmentAuth.ts` names them.
 pub const SUBJECT_ONE_TIME_TOKEN: &str = "one-time-token";
@@ -126,7 +129,7 @@ impl DesktopBootstrap {
         Self {
             token,
             secret,
-            expires_at_ms: now_ms() + DESKTOP_TOKEN_TTL_MS,
+            expires_at_ms: expires_at(now_ms(), DESKTOP_TOKEN_TTL_MS),
             remote_reachable,
         }
     }
@@ -155,29 +158,6 @@ pub fn desktop_token(secret: &str, window: u64) -> String {
         secret.as_bytes(),
         format!("t3-desktop-bootstrap:{window}").as_bytes(),
     ))
-}
-
-fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
-    let mut block = [0u8; 64];
-    if key.len() > 64 {
-        block[..32].copy_from_slice(&Sha256::digest(key));
-    } else {
-        block[..key.len()].copy_from_slice(key);
-    }
-    let pad = |byte: u8| block.map(|b| b ^ byte);
-    let inner = Sha256::new()
-        .chain_update(pad(0x36))
-        .chain_update(message)
-        .finalize();
-    Sha256::new()
-        .chain_update(pad(0x5c))
-        .chain_update(inner)
-        .finalize()
-        .into()
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// `authScopeResponse`: legacy `scopes` plus the full grant as `permissions`.
@@ -566,7 +546,7 @@ impl AuthStore {
             subject: SUBJECT_ONE_TIME_TOKEN.into(),
             label: request.label,
             created_at_ms: now,
-            expires_at_ms: now + request.ttl_ms,
+            expires_at_ms: expires_at(now, request.ttl_ms),
         };
         let issued = IssuedPairingCode {
             id: link.id.clone(),
@@ -732,7 +712,7 @@ impl AuthStore {
             .get(&session)
             .filter(|s| s.expires_at_ms > now)?;
         let ticket = random_hex(32);
-        let expires_at_ms = now + TICKET_TTL_MS;
+        let expires_at_ms = expires_at(now, TICKET_TTL_MS);
         state.tickets.insert(
             hash(&ticket),
             Ticket {
@@ -1042,7 +1022,7 @@ fn new_session(
         method: METHOD_BEARER.into(),
         client,
         issued_at_ms: now,
-        expires_at_ms: now + ttl_ms,
+        expires_at_ms: expires_at(now, ttl_ms),
         last_connected_at_ms: None,
     };
     (token, session)
@@ -1062,6 +1042,12 @@ fn narrow(grant: Vec<String>, requested: Option<&[String]>) -> Vec<String> {
     granted
 }
 
+/// When something made at `now` with `ttl_ms` to live expires. The life is capped at
+/// [`MAX_TTL_MS`], so no TTL overflows.
+fn expires_at(now: u64, ttl_ms: u64) -> u64 {
+    now.saturating_add(ttl_ms.min(MAX_TTL_MS))
+}
+
 fn principal_of(session: &StoredSession) -> Principal {
     Principal {
         session_id: session.id.clone(),
@@ -1078,11 +1064,14 @@ fn contract_scopes(scopes: &[&String]) -> Vec<AuthEnvironmentScope> {
         .collect()
 }
 
+/// The full grant. A scope this build does not know is left out, as the client's decode
+/// would drop it anyway.
 fn permissions(scopes: &[String]) -> Option<Vec<Option<AuthEnvironmentScope>>> {
     Some(
         scopes
             .iter()
-            .map(|s| from_json(serde_json::Value::String(s.clone())).ok())
+            .filter_map(|s| from_json(serde_json::Value::String(s.clone())).ok())
+            .map(Some)
             .collect(),
     )
 }
@@ -1789,6 +1778,47 @@ mod tests {
             seen.push(change);
         }
         assert!(seen.contains(&AccessChange::ClientRemoved(first.principal.session_id)));
+    }
+
+    /// A scope this build does not know (a newer CLI wrote it) is left out of `permissions`,
+    /// never sent as `null`.
+    #[test]
+    fn unknown_scopes_are_left_out_of_permissions() {
+        let store = AuthStore::in_memory();
+        let issued = store
+            .issue_session(SessionRequest {
+                scopes: vec!["orchestration:read".into(), "future:scope".into()],
+                label: None,
+                subject: None,
+                ttl_ms: SESSION_TTL_MS,
+            })
+            .unwrap();
+        let listed = store
+            .client_session(&issued.principal.session_id, None)
+            .unwrap();
+        let json = serde_json::to_value(&listed).unwrap();
+        assert_eq!(
+            json["permissions"],
+            serde_json::json!(["orchestration:read"])
+        );
+    }
+
+    /// No TTL can overflow an expiry; the CLI takes any number.
+    #[test]
+    fn huge_ttls_saturate_to_the_cap() {
+        let store = AuthStore::in_memory();
+        let issued = store
+            .issue_session(SessionRequest {
+                scopes: vec!["orchestration:read".into()],
+                label: None,
+                subject: None,
+                ttl_ms: u64::MAX,
+            })
+            .unwrap();
+        assert!(store.authenticate_bearer(&issued.token).is_some());
+        assert!(issued.principal.expires_at_ms <= now_ms() + MAX_TTL_MS);
+        let code = store.issue_pairing_code(None, u64::MAX).unwrap();
+        assert!(code.expires_at_ms > now_ms());
     }
 
     #[test]

@@ -181,7 +181,7 @@ impl Args {
         self.flags.iter().any(|(n, _)| n == name)
     }
 
-    fn state_dir(&self) -> PathBuf {
+    fn state_dir(&self) -> Result<PathBuf, String> {
         home::resolve_state_dir(
             self.value("--state-dir").map(PathBuf::from),
             self.value("--base-dir")
@@ -232,7 +232,7 @@ pub fn parse(raw: Vec<String>) -> Result<Command, String> {
         return Ok(Command::Version);
     }
     let words: Vec<&str> = args.positionals.iter().map(String::as_str).collect();
-    let state_dir = args.state_dir();
+    let state_dir = args.state_dir()?;
     let json = args.has("--json");
     match words.as_slice() {
         ["help", ..] => Ok(Command::Help),

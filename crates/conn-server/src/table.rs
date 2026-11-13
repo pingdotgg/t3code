@@ -23,7 +23,8 @@ pub struct CallContext {
     /// Names the WebSocket connection the call came on, unique per process. `session::run`
     /// sets it; it is zero for a call made outside a session (tests, fixtures).
     pub connection_id: u64,
-    /// The request headers merged with the WebSocket upgrade headers, as Effect does.
+    /// The headers the client sent with this request. Effect puts the WebSocket upgrade
+    /// headers first; `/ws` starts this list empty, so it holds only the request's own.
     pub headers: Vec<(String, String)>,
     /// The session that authenticated the WebSocket upgrade.
     pub principal: Option<Arc<crate::auth::Principal>>,

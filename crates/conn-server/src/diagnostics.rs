@@ -206,7 +206,7 @@ pub fn signal_process(pid: i64, started_at_ms: i64, signal: &str) -> Value {
     };
     let now = now_ms();
     let known = tree(&rows, server_pid).into_iter().any(|(row, depth, _)| {
-        depth > 0 && row.pid == pid && (start_time_ms(&row, now) - started_at_ms).abs() <= 2000
+        depth > 0 && row.pid == pid && same_start(start_time_ms(&row, now), started_at_ms)
     });
     if !known {
         return refuse(format!(
@@ -229,9 +229,23 @@ pub fn signal_process(pid: i64, started_at_ms: i64, signal: &str) -> Value {
     }
 }
 
+/// Whether two start times name the same process: within two seconds of each other.
+fn same_start(a: i64, b: i64) -> bool {
+    a.abs_diff(b) <= 2000
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A caller sends `startTimeMs`; no value may overflow the comparison.
+    #[test]
+    fn start_times_compare_without_overflow() {
+        assert!(same_start(10_000, 8_000));
+        assert!(!same_start(10_000, 7_999));
+        assert!(!same_start(1_000, i64::MIN));
+        assert!(!same_start(i64::MAX, -1));
+    }
 
     #[test]
     fn reads_ps_lines_and_elapsed_times() {
