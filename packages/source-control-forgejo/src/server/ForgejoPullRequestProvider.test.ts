@@ -224,3 +224,74 @@ it.effect("merges with Forgejo's fast-forward-only style", () =>
     ]);
   }),
 );
+
+it.effect("keeps a failing check whose status lies past 500 newer records of another", () =>
+  Effect.gen(function* () {
+    const statuses = Array.from({ length: 501 }, (_, index) => ({
+      id: 501 - index,
+      context: index === 500 ? "slow-check" : "frequent-check",
+      status: index === 500 ? "failure" : "success",
+      description: "",
+      target_url: "",
+      updated_at: "2026-10-12T00:00:00Z",
+    }));
+    const provider = yield* ForgejoPullRequestProvider.make.pipe(
+      Effect.provide(
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          api: (input) => {
+            const [path, query] = input.path.split("?");
+            const reply = (value: unknown, stderr?: string) =>
+              Effect.succeed(
+                TestSourceControlHost.processOutput(JSON.stringify(value), { stderr }),
+              );
+            switch (path) {
+              case "repos/maria/project/pulls/3":
+                return reply({
+                  number: 3,
+                  title: "Busy checks",
+                  body: "",
+                  html_url: "https://forge.example:3000/maria/project/pulls/3",
+                  user: { login: "maria" },
+                  state: "open",
+                  merged: false,
+                  head: { ref: "feature", sha: "head-sha", repo: null },
+                  base: { ref: "main", sha: "base-sha", repo: null },
+                  created_at: "2026-10-12T00:00:00Z",
+                  updated_at: "2026-10-12T00:00:00Z",
+                  closed_at: null,
+                  merged_at: null,
+                  labels: [],
+                });
+              case "repos/maria/project/branches/main":
+                return reply({});
+              case "repos/maria/project/statuses/head-sha": {
+                const page = Number(new URLSearchParams(query).get("page"));
+                const rows = statuses.slice((page - 1) * 50, page * 50);
+                const next = page * 50 < statuses.length;
+                return reply(
+                  rows,
+                  next
+                    ? `link: <https://forge.example:3000/api/v1/repos/maria/project/statuses/head-sha?page=${page + 1}>; rel="next"`
+                    : "",
+                );
+              }
+              default:
+                return Effect.die(`unexpected request ${input.path}`);
+            }
+          },
+        }),
+      ),
+    );
+    assert.isDefined(provider.getChangeRequestChecks);
+    const result = yield* provider.getChangeRequestChecks!({
+      cwd: "/forgejo",
+      repository: "maria/project",
+      host: "forge.example:3000",
+      number: 3,
+    });
+    assert.deepStrictEqual(result.checks.map((check) => [check.name, check.status]).toSorted(), [
+      ["frequent-check", "success"],
+      ["slow-check", "failure"],
+    ]);
+  }),
+);
