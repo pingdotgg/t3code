@@ -484,24 +484,44 @@ const POPUP_WINDOW_OPTIONS = {
   },
 } satisfies Electron.BrowserWindowConstructorOptions;
 
+const isSameOriginHttpUrl = (left: string, right: string): boolean => {
+  const from = URL.parse(left);
+  const to = URL.parse(right);
+  return (
+    from !== null &&
+    to !== null &&
+    (from.protocol === "http:" || from.protocol === "https:") &&
+    from.origin === to.origin
+  );
+};
+
 /**
- * OAuth needs a surviving popup opener. `blob:`, app links (behind the session's `openExternal`
- * prompt) and form POSTs stay in place.
+ * OAuth needs a surviving popup opener. Same-origin `window.open` without features is a Chromium
+ * foreground-tab; opening it as a T3 tab via URL navigation drops `window.opener`.
+ * `blob:`, app links (behind the session's `openExternal` prompt) and form POSTs stay in place.
  */
-export const previewWindowOpenAction = (details: {
-  readonly url: string;
-  readonly disposition: Electron.HandlerDetails["disposition"];
-  readonly postBody?: Electron.PostBody;
-}): "popup" | "new-tab" | "navigate" | "deny" => {
+export const previewWindowOpenAction = (
+  details: {
+    readonly url: string;
+    readonly disposition: Electron.HandlerDetails["disposition"];
+    readonly postBody?: Electron.PostBody;
+  },
+  openerUrl?: string,
+): "popup" | "new-tab" | "navigate" | "deny" => {
   const protocol = URL.parse(details.url)?.protocol;
   // MSAL redirects on a denied blank popup; navigating the tab would destroy that fallback.
   if (protocol === undefined || IN_PLACE_DENIED_PROTOCOLS.has(protocol)) return "deny";
   if (!POPUP_PROTOCOLS.has(protocol)) return "navigate";
   if (details.disposition === "new-window") return "popup";
-  return !details.postBody &&
+  if (
+    !details.postBody &&
     (details.disposition === "foreground-tab" || details.disposition === "background-tab")
-    ? "new-tab"
-    : "navigate";
+  ) {
+    return openerUrl !== undefined && isSameOriginHttpUrl(details.url, openerUrl)
+      ? "popup"
+      : "new-tab";
+  }
+  return "navigate";
 };
 
 const isPreviewRefreshShortcut = (input: Electron.Input, platform: NodeJS.Platform): boolean =>
@@ -1646,7 +1666,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.ipc.on(PAGE_UNHANDLED_SHORTCUT_CHANNEL, pageUnhandledShortcut);
         detachPasskeys = passkeys.attachGuest(wc);
         wc.setWindowOpenHandler((details) => {
-          const action = previewWindowOpenAction(details);
+          const openerUrl = wc.isDestroyed() ? undefined : wc.getURL();
+          const action = previewWindowOpenAction(details, openerUrl);
           if (action === "popup") {
             return { action: "allow", overrideBrowserWindowOptions: POPUP_WINDOW_OPTIONS };
           }
