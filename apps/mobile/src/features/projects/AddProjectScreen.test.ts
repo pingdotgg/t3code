@@ -26,7 +26,9 @@ const state = vi.hoisted(() => ({
     id: string;
     title: string;
     workspaceRoot: string;
+    repositoryIdentity?: { canonicalKey: string };
   }[],
+  cloneDestinations: [] as string[],
   createResult: null as Promise<unknown> | null,
   createNewResult: null as Promise<unknown> | null,
   startCloneResult: null as Promise<unknown> | null,
@@ -156,6 +158,7 @@ vi.mock("../../state/sourceControl", () => ({
   sourceControlEnvironment: {
     discovery: (input: unknown) => input,
     startProjectClone: async ({ input }: { input: { destinationPath: string } }) => {
+      state.cloneDestinations.push(input.destinationPath);
       if (state.startCloneResult) return state.startCloneResult;
       NodeFS.mkdirSync(input.destinationPath);
       return AsyncResult.success(undefined);
@@ -242,7 +245,7 @@ function cloneAction() {
     renderScreen(() =>
       AddProjectDestinationScreen({
         environmentId: "environment",
-        remoteUrl: "https://example.com/repo.git",
+        remoteUrl: "https://example.com/owner/repo.git",
         repositoryName: "repo",
       }),
     ),
@@ -287,23 +290,35 @@ describe("clone project permissions", () => {
     },
   );
 
-  it("opens the existing project instead of cloning into its folder", async () => {
+  it.each([
+    [
+      "opens the existing project of that repository instead of cloning into its folder",
+      "example.com/owner/repo",
+      false,
+    ],
+    ["leaves a folder holding another repository to the clone", "example.com/owner/other", true],
+  ])("%s", async (_name, canonicalKey, clones) => {
     state.scopes.add(AuthOrchestrationOperateScope);
+    state.cloneDestinations = [];
+    state.startCloneResult = Promise.resolve(
+      AsyncResult.failure(Cause.fail(new Error("Destination is not empty"))),
+    );
     state.existingProjects = [
       {
         environmentId: "environment",
         id: "existing",
         title: "repo",
         workspaceRoot: NodePath.join(state.baseDirectory, "repo"),
+        repositoryIdentity: { canonicalKey },
       },
     ];
     try {
       await cloneAction()();
 
-      expect(NodeFS.existsSync(NodePath.join(state.baseDirectory, "repo"))).toBe(false);
-      expect(state.projects).toEqual([]);
+      expect(state.cloneDestinations.length > 0).toBe(clones);
     } finally {
       state.existingProjects = [];
+      state.startCloneResult = null;
     }
   });
 });

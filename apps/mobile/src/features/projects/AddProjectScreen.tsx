@@ -759,7 +759,7 @@ function useOpenExistingProject(environment: EnvironmentOption | null) {
   return async (
     path: string,
     originRoute: ReturnType<typeof getActiveRoute>,
-    prompt?: string | null,
+    clone?: { readonly remoteUrl: string; readonly prompt: string | null },
   ): Promise<boolean> => {
     if (!environment) return false;
     const existing = findExistingAddProject({
@@ -768,6 +768,15 @@ function useOpenExistingProject(environment: EnvironmentOption | null) {
       path,
     });
     if (!existing) return false;
+    // A folder holding another repository is not this clone; let the clone report it occupied.
+    if (
+      clone &&
+      existing.repositoryIdentity?.canonicalKey !==
+        sourceControlClients.repositoryKeyFromRemote(clone.remoteUrl)
+    ) {
+      return false;
+    }
+    const prompt = clone?.prompt;
     // Adding an archived project's folder again brings the project back.
     const unarchived =
       existing.archivedAt == null ||
@@ -1483,7 +1492,12 @@ export function AddProjectDestinationScreen(props: {
 
     const originRoute = getActiveRoute(navigation);
     setIsSubmitting(true);
-    if (await openExistingProject(await resolveHomePath(resolved.path), originRoute, prompt)) {
+    if (
+      await openExistingProject(await resolveHomePath(resolved.path), originRoute, {
+        remoteUrl,
+        prompt: prompt ?? null,
+      })
+    ) {
       setIsSubmitting(false);
       return;
     }
