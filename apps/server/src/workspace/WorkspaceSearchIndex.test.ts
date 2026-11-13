@@ -1,11 +1,8 @@
-import {
-  FileFinder,
-  type FileItem,
-  type GrepCursor,
-  type GrepOptions,
-  type GrepResult,
-} from "@ff-labs/fff-node";
+// @effect-diagnostics nodeBuiltinImport:off -- observes the real search process.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeEvents from "node:events";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { FileItem, GrepCursor, GrepOptions, GrepResult } from "@ff-labs/fff-node";
 import { afterEach, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -17,10 +14,49 @@ import { vi } from "vite-plus/test";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
-const testLayer = VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer));
+vi.mock("node:child_process", { spy: true });
+
+const testLayer = Layer.mergeAll(VcsProcess.layer, WorkspaceSearchIndex.layerWorker).pipe(
+  Layer.provideMerge(NodeServices.layer),
+);
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.mocked(NodeChildProcess.spawn).mockClear();
+});
+
+const withFinder = (finder: Partial<WorkspaceSearchIndex.RemoteFileFinder>) =>
+  Effect.provideService(WorkspaceSearchIndex.WorkspaceSearchWorker, {
+    create: async () => ({
+      ok: true,
+      value: {
+        alive: true,
+        destroy: vi.fn(async () => {}),
+        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+        ...finder,
+      } as WorkspaceSearchIndex.RemoteFileFinder,
+    }),
+  });
+
+const spawnedWorkers = () =>
+  vi
+    .mocked(NodeChildProcess.spawn)
+    .mock.results.map((result) => result.value as NodeChildProcess.ChildProcess);
+
+const searchNeedle = (searchIndex: WorkspaceSearchIndex.WorkspaceSearchIndex["Service"]) =>
+  searchIndex.searchContents({
+    query: "needle",
+    limit: 10,
+    caseSensitive: true,
+    wholeWord: false,
+    useRegex: false,
+  });
+
+const makeNeedleWorkspace = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-search-worker-" });
+  yield* fileSystem.writeFileString(`${cwd}/notes.ts`, "const needle = 1;\n");
+  return cwd;
 });
 
 function fileItem(relativePath: string): FileItem {
@@ -43,7 +79,7 @@ it.effect("filters image searches before applying the result limit", () =>
         ...Array.from({ length: 200 }, (_, index) => fileItem(`src/file-${index}.ts`)),
         fileItem("public/icon.svg"),
       ];
-      const fileSearch = vi.fn(() => ({
+      const fileSearch = vi.fn(async () => ({
         ok: true as const,
         value: {
           items,
@@ -52,14 +88,9 @@ it.effect("filters image searches before applying the result limit", () =>
           totalFiles: items.length,
         },
       }));
-      const finder = {
-        destroy: vi.fn(),
-        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-        fileSearch,
-      } as unknown as FileFinder;
-      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
-
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project").pipe(
+        withFinder({ fileSearch }),
+      );
       const resultWithoutKind = yield* searchIndex.search("", 200, undefined, true);
       const resultWithDirectoryKind = yield* searchIndex.search("", 200, "directory", true);
 
@@ -89,7 +120,7 @@ it.effect("fetches past a first page of Git-ignored results", () =>
         fileItem("hidden/c.ts"),
         fileItem("src/a.ts"),
       ];
-      const fileSearch = vi.fn((_query: string, options?: { pageSize?: number }) => ({
+      const fileSearch = vi.fn(async (_query: string, options?: { pageSize?: number }) => ({
         ok: true as const,
         value: {
           items: items.slice(0, options?.pageSize),
@@ -98,14 +129,8 @@ it.effect("fetches past a first page of Git-ignored results", () =>
           totalFiles: items.length,
         },
       }));
-      const finder = {
-        destroy: vi.fn(),
-        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-        fileSearch,
-      } as unknown as FileFinder;
-      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
-      const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
+      const searchIndex = yield* WorkspaceSearchIndex.make(cwd).pipe(withFinder({ fileSearch }));
       const result = yield* searchIndex.search("a", 1, "file", false);
 
       expect(result).toEqual({ entries: [{ kind: "file", path: "src/a.ts" }], truncated: false });
@@ -120,17 +145,14 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     Effect.scoped(
       Effect.gen(function* () {
         const items = [fileItem("dir\\one/report.txt")];
-        const finder = {
-          destroy: vi.fn(),
-          waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-          fileSearch: vi.fn(() => ({
-            ok: true as const,
-            value: { items, scores: [], totalMatched: 1, totalFiles: 1 },
-          })),
-        } as unknown as FileFinder;
-        vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+        const fileSearch = vi.fn(async () => ({
+          ok: true as const,
+          value: { items, scores: [], totalMatched: 1, totalFiles: 1 },
+        }));
 
-        const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
+        const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project").pipe(
+          withFinder({ fileSearch }),
+        );
         const result = yield* searchIndex.search("report", 50, "file");
 
         expect(result.entries).toEqual([{ kind: "file", path: "dir\\one/report.txt" }]);
@@ -174,7 +196,7 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
         filteredFileCount: 1,
         nextCursor: cursor,
       });
-      const grep = vi.fn((_query: string, options?: GrepOptions) =>
+      const grep = vi.fn(async (_query: string, options?: GrepOptions) =>
         options?.cursor
           ? { ok: true as const, value: grepResult("needle", [[0, 6]], null) }
           : {
@@ -182,14 +204,9 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
               value: grepResult("needleSuffix", [[0, 6]], nextCursor),
             },
       );
-      const finder = {
-        destroy: vi.fn(),
-        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-        grep,
-      } as unknown as FileFinder;
-      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
-
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content").pipe(
+        withFinder({ grep }),
+      );
       const result = yield* searchIndex.searchContents({
         query: "needle",
         limit: 1,
@@ -213,6 +230,92 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
       expect(grep.mock.calls[1]?.[1]?.cursor).toBe(nextCursor);
     }),
   ).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("reads an incomplete scan from the finder that answers the search", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let firstExited = false;
+      const timedOutScan = vi.fn(async () => ({ ok: true as const, value: false }));
+      const fileSearch = vi.fn(async () => ({
+        ok: true as const,
+        value: { items: [fileItem("src/a.ts")], scores: [], totalMatched: 1, totalFiles: 1 },
+      }));
+      const first = {
+        get alive() {
+          return !firstExited;
+        },
+        destroy: vi.fn(async () => {}),
+        waitForIndexReady: timedOutScan,
+        // The scan finished, then the process exited right after replying.
+        isScanning: vi.fn(async () => {
+          firstExited = true;
+          return false;
+        }),
+        fileSearch: vi.fn(async () => {
+          throw new Error("The workspace search worker exited.");
+        }),
+      } as unknown as WorkspaceSearchIndex.RemoteFileFinder;
+      const rebuilt = {
+        alive: true,
+        destroy: vi.fn(async () => {}),
+        waitForIndexReady: timedOutScan,
+        isScanning: vi.fn(async () => true),
+        fileSearch,
+      } as unknown as WorkspaceSearchIndex.RemoteFileFinder;
+      const finders = [first, rebuilt];
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project").pipe(
+        Effect.provideService(WorkspaceSearchIndex.WorkspaceSearchWorker, {
+          create: async () => ({ ok: true, value: finders.shift()! }),
+        }),
+      );
+
+      const duringExit = yield* searchIndex.search("", 10, "file").pipe(
+        Effect.map(({ truncated }) => truncated),
+        Effect.catchTags({
+          WorkspaceSearchIndexSearchFailed: (error) => Effect.succeed(error._tag),
+        }),
+      );
+      const afterRebuild = yield* searchIndex.search("", 10, "file");
+
+      expect(duringExit).toBe("WorkspaceSearchIndexSearchFailed");
+      expect(afterRebuild).toEqual({
+        entries: [{ kind: "file", path: "src/a.ts" }],
+        truncated: true,
+      });
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+it.live("rebuilds the index in a new search process after the worker exits", () =>
+  Effect.gen(function* () {
+    const cwd = yield* makeNeedleWorkspace;
+    const searchIndex = yield* WorkspaceSearchIndex.make(cwd, "content");
+    const before = yield* searchNeedle(searchIndex);
+    const [crashed] = spawnedWorkers();
+    yield* Effect.promise(() => {
+      const exited = NodeEvents.EventEmitter.once(crashed!, "exit");
+      crashed!.kill();
+      return exited;
+    });
+
+    expect(yield* searchNeedle(searchIndex)).toEqual(before);
+    expect(before.matches.map((match) => match.path)).toEqual(["notes.ts"]);
+    expect(spawnedWorkers()).toHaveLength(2);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.live("ends the search process once its last index closes", () =>
+  Effect.gen(function* () {
+    const cwd = yield* makeNeedleWorkspace;
+    yield* Effect.scoped(Effect.flatMap(WorkspaceSearchIndex.make(cwd, "content"), searchNeedle));
+    const [worker] = spawnedWorkers();
+
+    const code =
+      worker!.exitCode ??
+      (yield* Effect.promise(() => NodeEvents.EventEmitter.once(worker!, "exit")))[0];
+    expect(code).toBe(0);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
 // fff reads HOME on Linux and macOS but the user profile on Windows, so a temp HOME cannot stand in there.

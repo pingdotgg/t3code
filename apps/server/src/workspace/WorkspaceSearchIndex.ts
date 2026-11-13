@@ -1,18 +1,24 @@
-import * as NodeModule from "node:module";
+// @effect-diagnostics nodeBuiltinImport:off -- the search process is an external runtime boundary.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeURL from "node:url";
 
 import type {
   DirItem,
   FileItem,
   FileFinder as FileFinderType,
   GrepCursor,
+  InitOptions,
   MixedItem,
   Result,
 } from "@ff-labs/fff-node";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as LayerMap from "effect/LayerMap";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 
 import type {
   ProjectEntry,
@@ -26,10 +32,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-
-// fff-node's native library stays external; single-executables require disk packages instead of importing them.
-const requireForFff = NodeModule.createRequire(import.meta.url);
-const { FileFinder } = requireForFff("@ff-labs/fff-node") as typeof import("@ff-labs/fff-node");
 
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
@@ -290,6 +292,151 @@ function withDirectoryAncestors(entries: ReadonlyArray<ProjectEntry>): ProjectEn
   return [...entryByPath.values()];
 }
 
+type RemoteFinderMethod =
+  | "destroy"
+  | "directorySearch"
+  | "fileSearch"
+  | "grep"
+  | "isScanning"
+  | "mixedSearch"
+  | "scanFilesAsync"
+  | "waitForIndexReady";
+
+export type RemoteFileFinder = {
+  readonly [Method in RemoteFinderMethod]: (
+    ...args: Parameters<FileFinderType[Method]>
+  ) => Promise<Awaited<ReturnType<FileFinderType[Method]>>>;
+} & {
+  // False once the process holding the native index has exited.
+  readonly alive: boolean;
+};
+
+// One process owns every finder. Native calls already ran one at a time on the server thread, so a
+// pool would add runtimes and index copies without making any single search faster.
+export class WorkspaceSearchWorker extends Context.Service<
+  WorkspaceSearchWorker,
+  {
+    readonly create: (options: InitOptions) => Promise<Result<RemoteFileFinder>>;
+  }
+>()("t3/workspace/WorkspaceSearchIndex/WorkspaceSearchWorker") {}
+
+const makeWorker = Effect.gen(function* () {
+  const executable = yield* HostProcess.ExecutablePath;
+  const isExecutable = yield* HostProcess.IsExecutable;
+  const environment = yield* HostProcess.Environment;
+  // In a bundle import.meta.url is a chunk beside bin.mjs; development and tests use this source module.
+  const entry = NodeURL.fileURLToPath(
+    new URL(import.meta.url.endsWith(".ts") ? "../bin.ts" : "./bin.mjs", import.meta.url),
+  );
+  let nextId = 0;
+  let current: ReturnType<typeof start> | undefined;
+
+  function start() {
+    const child = NodeChildProcess.spawn(
+      executable,
+      [...(isExecutable ? [] : [entry]), "__workspace-search"],
+      {
+        stdio: ["ignore", "ignore", "inherit", "ipc"],
+        serialization: "advanced",
+        windowsHide: true,
+        env: { ...environment, ELECTRON_RUN_AS_NODE: "1" },
+      },
+    );
+    const pending = new Map<number, PromiseWithResolvers<unknown> & { readonly method: string }>();
+    const worker = {
+      child,
+      finders: 0,
+      exited: false,
+      request: (finderId: number, method: string, args: ReadonlyArray<unknown>) => {
+        if (worker.exited) return Promise.reject(new Error("The workspace search worker exited."));
+        const id = ++nextId;
+        const request = { ...Promise.withResolvers<unknown>(), method };
+        pending.set(id, request);
+        child.send({ id, finderId, method, args }, (error) => {
+          if (error) child.kill();
+        });
+        return request.promise;
+      },
+      release: () => {
+        if (--worker.finders > 0 || worker !== current) return;
+        // The last index expired; the next search starts a fresh process.
+        current = undefined;
+        child.disconnect();
+      },
+    };
+    const exit = () => {
+      worker.exited = true;
+      if (current === worker) current = undefined;
+      for (const request of pending.values()) {
+        // The native index went with the process, so there is nothing left to destroy.
+        if (request.method === "destroy") request.resolve(undefined);
+        else request.reject(new Error("The workspace search worker exited."));
+      }
+      pending.clear();
+    };
+    child.on("message", (reply: { id: number; value?: unknown; error?: unknown }) => {
+      const request = pending.get(reply.id);
+      pending.delete(reply.id);
+      if ("error" in reply) request?.reject(reply.error);
+      else request?.resolve(reply.value);
+    });
+    child.once("exit", exit);
+    child.once("error", exit);
+    return worker;
+  }
+
+  yield* Effect.addFinalizer(() => Effect.sync(() => current?.child.kill()));
+
+  return WorkspaceSearchWorker.of({
+    create: async (options) => {
+      const worker = (current ??= start());
+      const finderId = ++nextId;
+      worker.finders++;
+      const created = (await worker
+        .request(finderId, "create", [options])
+        .catch((error: unknown) => {
+          worker.release();
+          throw error;
+        })) as Result<void>;
+      if (!created.ok) {
+        worker.release();
+        return created;
+      }
+      const call =
+        <Method extends RemoteFinderMethod>(method: Method) =>
+        (...args: Parameters<FileFinderType[Method]>) =>
+          worker.request(finderId, method, args) as Promise<
+            Awaited<ReturnType<FileFinderType[Method]>>
+          >;
+      return {
+        ok: true,
+        value: {
+          get alive() {
+            return !worker.exited;
+          },
+          destroy: async () => {
+            if (worker.exited) return;
+            try {
+              await worker.request(finderId, "destroy", []);
+            } finally {
+              worker.release();
+            }
+          },
+          directorySearch: call("directorySearch"),
+          fileSearch: call("fileSearch"),
+          grep: call("grep"),
+          isScanning: call("isScanning"),
+          mixedSearch: call("mixedSearch"),
+          scanFilesAsync: call("scanFilesAsync"),
+          waitForIndexReady: call("waitForIndexReady"),
+        },
+      };
+    },
+  });
+});
+
+export const layerWorker = Layer.effect(WorkspaceSearchWorker, makeWorker);
+
 // fff applies .gitignore files only; Git also ignores paths from .git/info/exclude and the global excludes file.
 const listGitIgnoredPaths = Effect.fn("WorkspaceSearchIndex.listGitIgnoredPaths")(function* (
   vcsProcess: VcsProcess.VcsProcess["Service"],
@@ -325,6 +472,13 @@ const listGitIgnoredPaths = Effect.fn("WorkspaceSearchIndex.listGitIgnoredPaths"
   );
 });
 
+function withIncompleteScan<T extends { readonly truncated: boolean }>(
+  result: T,
+  incompleteBeforeQuery: boolean,
+): T {
+  return incompleteBeforeQuery ? { ...result, truncated: true } : result;
+}
+
 function mixedItemPath(item: MixedItem): string {
   return item.item.relativePath;
 }
@@ -346,12 +500,13 @@ function isIgnoredPath(
 }
 
 const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
+  worker: WorkspaceSearchWorker["Service"],
   cwd: string,
   variant: WorkspaceSearchIndexVariant,
 ) {
-  const result = yield* Effect.try({
+  const result = yield* Effect.tryPromise({
     try: () =>
-      FileFinder.create({
+      worker.create({
         basePath: cwd,
         disableMmapCache: true,
         // Content indexing costs CPU/memory; path-only consumers use the lightweight index.
@@ -374,7 +529,7 @@ const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
 
 const waitForIndexReady = Effect.fn("WorkspaceSearchIndex.waitForIndexReady")(function* <E>(
   cwd: string,
-  finder: FileFinderType,
+  finder: RemoteFileFinder,
   onFailure: (input: { readonly reason: string; readonly cause?: unknown }) => E,
 ): Effect.fn.Return<void, E | WorkspaceSearchIndexScanTimedOut> {
   const result = yield* Effect.tryPromise({
@@ -400,46 +555,85 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant = "paths",
 ) {
+  const worker = yield* WorkspaceSearchWorker;
   const hostIsWindows = yield* HostProcess.isWindows;
-  const finder = yield* Effect.acquireRelease(createFinder(cwd, variant), (finder) =>
-    Effect.try({
-      try: () => finder.destroy(),
-      catch: (cause) => new WorkspaceSearchIndexDestroyFailed({ cwd, cause }),
-    }).pipe(Effect.orDie),
-  );
-  let initialScanTimedOut = false;
   const vcsProcess = yield* VcsProcess.VcsProcess;
-  let ignoredPaths = yield* listGitIgnoredPaths(vcsProcess, cwd, hostIsWindows);
-  yield* waitForIndexReady(
-    cwd,
-    finder,
-    ({ reason, cause }) =>
-      new WorkspaceSearchIndexCreateFailed({
+  let ignoredPaths: ReadonlySet<string> = new Set();
+  const indexScope = yield* Effect.scope;
+  const reopenLock = yield* Semaphore.make(1);
+  let initialScanTimedOut = false;
+  const open = Effect.fn("WorkspaceSearchIndex.open")(function* () {
+    const scope = yield* Scope.fork(indexScope);
+    return yield* Effect.gen(function* () {
+      const finder = yield* Effect.acquireRelease(createFinder(worker, cwd, variant), (finder) =>
+        Effect.tryPromise({
+          try: () => finder.destroy(),
+          catch: (cause) => new WorkspaceSearchIndexDestroyFailed({ cwd, cause }),
+        }).pipe(Effect.orDie),
+      );
+      initialScanTimedOut = false;
+      ignoredPaths = yield* listGitIgnoredPaths(vcsProcess, cwd, hostIsWindows);
+      yield* waitForIndexReady(
         cwd,
-        reason,
-        cause,
-      }),
-  ).pipe(
-    Effect.catchTags({
-      WorkspaceSearchIndexScanTimedOut: (error) =>
-        variant === "paths"
-          ? Effect.sync(() => {
-              initialScanTimedOut = true;
-            })
-          : Effect.fail(error),
-    }),
+        finder,
+        ({ reason, cause }) =>
+          new WorkspaceSearchIndexCreateFailed({
+            cwd,
+            reason,
+            cause,
+          }),
+      ).pipe(
+        Effect.catchTags({
+          WorkspaceSearchIndexScanTimedOut: (error) =>
+            variant === "paths"
+              ? Effect.sync(() => {
+                  initialScanTimedOut = true;
+                })
+              : Effect.fail(error),
+        }),
+      );
+      return finder;
+    }).pipe(
+      Scope.provide(scope),
+      Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))),
+    );
+  });
+  let finder = yield* open();
+  // A search worker that exited took the native index with it; the next use rebuilds it.
+  const currentFinder = reopenLock.withPermits(1)(
+    Effect.suspend(() =>
+      finder.alive
+        ? Effect.succeed(finder)
+        : open().pipe(Effect.map((opened) => (finder = opened))),
+    ),
   );
-
-  const hasIncompleteInitialScan = () => initialScanTimedOut && finder.isScanning();
 
   const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
     query: string,
     pageSize: number,
     operation: "directorySearch" | "fileSearch" | "grep" | "mixedSearch",
-    execute: () => Result<A>,
-  ): Effect.fn.Return<A, WorkspaceSearchIndexSearchFailed> {
-    const result = yield* Effect.try({
-      try: execute,
+    execute: (finder: RemoteFileFinder) => Promise<Result<A>>,
+  ): Effect.fn.Return<
+    { readonly value: A; readonly incompleteBeforeQuery: boolean },
+    WorkspaceSearchIndexSearchFailed
+  > {
+    const finder = yield* currentFinder.pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceSearchIndexSearchFailed({
+            cwd,
+            queryLength: query.length,
+            pageSize,
+            reason: "The workspace search index could not be reopened.",
+            cause,
+          }),
+      ),
+    );
+    // Read from the finder that answers, before it answers: a scan finishing mid-query still leaves a partial result.
+    const incompleteBeforeQuery =
+      initialScanTimedOut && (yield* Effect.promise(() => finder.isScanning().catch(() => true)));
+    const result = yield* Effect.tryPromise({
+      try: () => execute(finder),
       catch: (cause) =>
         new WorkspaceSearchIndexSearchFailed({
           cwd,
@@ -457,7 +651,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         reason: result.error,
       });
     }
-    return result.value;
+    return { value: result.value, incompleteBeforeQuery };
   });
 
   // Grows the first page until hidden entries can no longer crowd visible ones out of it.
@@ -465,14 +659,24 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     query: string,
     pageSize: number,
     operation: "directorySearch" | "fileSearch" | "mixedSearch",
-    execute: (pageSize: number) => Result<SearchPage<I>>,
+    execute: (finder: RemoteFileFinder, pageSize: number) => Promise<Result<SearchPage<I>>>,
     pathOf: (item: I) => string,
-  ): Effect.fn.Return<SearchPage<I>, WorkspaceSearchIndexSearchFailed> {
+  ): Effect.fn.Return<
+    { readonly value: SearchPage<I>; readonly incompleteBeforeQuery: boolean },
+    WorkspaceSearchIndexSearchFailed
+  > {
     let size = pageSize;
+    let incomplete = false;
     while (true) {
       const fetchSize = size;
-      const result = yield* runSearch(query, fetchSize, operation, () => execute(fetchSize));
-      if (ignoredPaths.size === 0) return result;
+      const { value: result, incompleteBeforeQuery } = yield* runSearch(
+        query,
+        fetchSize,
+        operation,
+        (finder) => execute(finder, fetchSize),
+      );
+      incomplete ||= incompleteBeforeQuery;
+      if (ignoredPaths.size === 0) return { value: result, incompleteBeforeQuery: incomplete };
       const items = result.items.filter(
         (item) => !isIgnoredPath(ignoredPaths, pathOf(item), hostIsWindows),
       );
@@ -482,8 +686,11 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         fetchSize >= WORKSPACE_INDEX_PAGE_SIZE
       ) {
         return {
-          items,
-          totalMatched: result.totalMatched - (result.items.length - items.length),
+          value: {
+            items,
+            totalMatched: result.totalMatched - (result.items.length - items.length),
+          },
+          incompleteBeforeQuery: incomplete,
         };
       }
       size = Math.min(WORKSPACE_INDEX_PAGE_SIZE, fetchSize * 4);
@@ -493,6 +700,16 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
     "WorkspaceSearchIndex.refresh",
   )(function* () {
+    const finder = yield* currentFinder.pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceSearchIndexRefreshFailed({
+            cwd,
+            reason: "The workspace search index could not be reopened.",
+            cause,
+          }),
+      ),
+    );
     // scanFiles waits on fff's picker lock, which its watcher can hold for seconds.
     const result = yield* Effect.tryPromise({
       try: () => finder.scanFilesAsync(),
@@ -526,12 +743,11 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
     function* () {
-      const incompleteBeforeQuery = hasIncompleteInitialScan();
-      const result = yield* searchVisible(
+      const { value: result, incompleteBeforeQuery } = yield* searchVisible(
         "",
         WORKSPACE_INDEX_PAGE_SIZE,
         "mixedSearch",
-        (pageSize) => finder.mixedSearch("", { pageSize }),
+        (finder, pageSize) => finder.mixedSearch("", { pageSize }),
         mixedItemPath,
       );
       const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES, hostIsWindows);
@@ -555,33 +771,42 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   ) {
     const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
     if (kind === "file" || imageOnly) {
-      const result = yield* searchVisible(
+      const { value: result, incompleteBeforeQuery } = yield* searchVisible(
         query,
         pageSize,
         "fileSearch",
-        (size) => finder.fileSearch(query, { pageSize: size }),
+        (finder, size) => finder.fileSearch(query, { pageSize: size }),
         (item) => item.relativePath,
       );
-      return mapFileSearchResult(result, limit, hostIsWindows, imageOnly);
+      return withIncompleteScan(
+        mapFileSearchResult(result, limit, hostIsWindows, imageOnly),
+        incompleteBeforeQuery,
+      );
     }
     if (kind === "directory") {
-      const result = yield* searchVisible(
+      const { value: result, incompleteBeforeQuery } = yield* searchVisible(
         query,
         pageSize,
         "directorySearch",
-        (size) => finder.directorySearch(query, { pageSize: size }),
+        (finder, size) => finder.directorySearch(query, { pageSize: size }),
         (item) => item.relativePath,
       );
-      return mapDirectorySearchResult(result, limit, hostIsWindows);
+      return withIncompleteScan(
+        mapDirectorySearchResult(result, limit, hostIsWindows),
+        incompleteBeforeQuery,
+      );
     }
-    const result = yield* searchVisible(
+    const { value: result, incompleteBeforeQuery } = yield* searchVisible(
       query,
       pageSize,
       "mixedSearch",
-      (size) => finder.mixedSearch(query, { pageSize: size }),
+      (finder, size) => finder.mixedSearch(query, { pageSize: size }),
       mixedItemPath,
     );
-    return mapMixedSearchResult(result, limit, hostIsWindows);
+    return withIncompleteScan(
+      mapMixedSearchResult(result, limit, hostIsWindows),
+      incompleteBeforeQuery,
+    );
   });
 
   const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
@@ -591,12 +816,11 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     // matching is subsequence-based, so dropping them still matches "[id]" and "a{b}" paths.
     // "{" is dropped only when the query finds nothing as a glob, so "*.{ts,tsx}" keeps working.
     const query = rawQuery.replaceAll("[", "");
-    const incompleteBeforeQuery = hasIncompleteInitialScan();
     let mapped = yield* searchNames(query, limit, kind, imageOnly);
     if (mapped.entries.length === 0 && query.includes("{")) {
       mapped = yield* searchNames(query.replaceAll("{", ""), limit, kind, imageOnly);
     }
-    return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
+    return mapped;
   });
 
   const searchContents: WorkspaceSearchIndex["Service"]["searchContents"] = Effect.fn(
@@ -615,7 +839,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
     do {
       const remainingTimeBudgetMs = Math.max(1, Math.ceil(deadline - performance.now()));
-      const result = yield* runSearch(input.query, input.limit, "grep", () =>
+      const { value: result } = yield* runSearch(input.query, input.limit, "grep", (finder) =>
         finder.grep(searchQuery, {
           mode: regexMode ? "regex" : "plain",
           smartCase: !input.caseSensitive && !regexMode,
@@ -692,5 +916,6 @@ export class WorkspaceSearchIndexMap extends LayerMap.Service<WorkspaceSearchInd
   {
     lookup: layer,
     idleTimeToLive: WORKSPACE_INDEX_IDLE_TTL,
+    dependencies: [layerWorker],
   },
 ) {}

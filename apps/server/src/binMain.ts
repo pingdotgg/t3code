@@ -19,6 +19,9 @@ export async function runCliCommand() {
       // Exit 2 identifies document rejections; OS and process failures remain retryable.
       process.exitCode = 2;
     }
+  } else if (command === "__workspace-search") {
+    const { runWorkspaceSearchWorker } = await import("./workspace/workspaceSearchWorker.ts");
+    runWorkspaceSearchWorker();
   } else if (command === "__managed-chatgpt-token") {
     const { runManagedChatGptTokenCli } = await import("./cli/managedChatGptToken.ts");
     await runManagedChatGptTokenCli(process.argv.slice(3));
