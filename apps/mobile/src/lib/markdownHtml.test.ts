@@ -108,6 +108,28 @@ describe("HTML in native Markdown", () => {
     ]);
   });
 
+  it.each([
+    "one<p>two</p>",
+    "one<div>two</div>",
+    "one<summary>two</summary>",
+    "<p>one</p><p>two</p>",
+  ])("keeps a table row intact when a cell contains block HTML: %s", async (cell) => {
+    const native = await parseMarkdown(
+      markdownForNativeRendering(
+        `| A | B |\n| - | - |\n| ${cell} | x |`,
+        ENRICHED_INLINE_FILE_LINK_REGEX,
+      ),
+    );
+    const text = (node: { content?: string; children?: unknown[] }): string =>
+      (node.content ?? "") +
+      (node.children ?? []).map((child) => text(child as typeof node)).join("");
+    expect(native.children).toHaveLength(1);
+    expect(native.children?.[0]?.children?.[1]?.children?.[0]?.children?.map(text)).toEqual([
+      expect.stringMatching(/one\s*two/),
+      "x",
+    ]);
+  });
+
   it("keeps a table row intact when an anchor href contains a pipe", () => {
     const document = parseMarkdownDocument(
       "| Preview | Logs |\n| - | - |\n| <a href='https://example.com/?a=1&#124;2'>Open</a> | done |",
