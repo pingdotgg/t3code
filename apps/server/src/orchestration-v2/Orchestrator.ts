@@ -4438,7 +4438,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           )
           .map((message) => message.id),
       );
-      if (queuedRuns.some((run) => !automaticMessageIds.has(run.userMessageId))) {
+      const userRuns = queuedRuns.filter((run) => !automaticMessageIds.has(run.userMessageId));
+      const latest = latestExecutedRun(projection.runs);
+      // User work held behind a usage limit waits for the reset either way, so it may sleep through it.
+      const heldBehindLimit =
+        userRuns.length > 0 &&
+        userRuns.every((run) => run.queueHeld === true) &&
+        latest?.status === "failed" &&
+        latestRootProviderFailure(
+          latest,
+          (yield* loadProjectionForCommand(command, ["turnItems"], {
+            turnItemTypes: ["error"],
+            turnItemRunIds: [latest.id],
+          })).turnItems,
+        )?.class === "usage_limit";
+      if (userRuns.length > 0 && !heldBehindLimit) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,

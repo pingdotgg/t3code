@@ -9276,8 +9276,8 @@ it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (
 });
 
 it.layer(layerTest)("snooze queued runs", (it) => {
-  it.effect.each(["notification", "delegated-completion", "user"] as const)(
-    "only user messages block snooze with a held %s run",
+  it.effect.each(["notification", "delegated-completion", "user", "limited-user"] as const)(
+    "only user messages block snooze with a held %s run, unless a usage limit holds them",
     (kind) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -9346,8 +9346,8 @@ it.layer(layerTest)("snooze queued runs", (it) => {
           attachments: [],
           modelSelection,
           dispatchMode: { type: "queue_after_active" },
-          createdBy: kind === "user" ? "user" : "agent",
-          creationSource: kind === "user" ? "web" : "server",
+          createdBy: kind === "user" || kind === "limited-user" ? "user" : "agent",
+          creationSource: kind === "user" || kind === "limited-user" ? "web" : "server",
           ...(kind === "notification"
             ? {
                 notification: {
@@ -9381,10 +9381,51 @@ it.layer(layerTest)("snooze queued runs", (it) => {
             payload:
               run.status === "queued"
                 ? { ...run, queueHeld: true }
-                : { ...run, status: "cancelled" as const, completedAt: now },
+                : {
+                    ...run,
+                    status: kind === "limited-user" ? ("failed" as const) : ("cancelled" as const),
+                    completedAt: now,
+                  },
           })),
           effects: [],
         });
+        if (kind === "limited-user") {
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`limited:${threadId}`),
+                type: "turn-item.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  id: TurnItemId.make(`limited:${threadId}`),
+                  type: "error",
+                  threadId,
+                  runId: activeRun.id,
+                  nodeId: activeRun.rootNodeId,
+                  providerThreadId: null,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 2,
+                  status: "failed",
+                  title: "Usage limit reached",
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                  // A proxied provider can report no reset time.
+                  failure: {
+                    class: "usage_limit",
+                    message: "Claude API rate limit reached. Try again later.",
+                    code: "api_error_429",
+                    retryable: true,
+                    resetAt: null,
+                  },
+                },
+              },
+            ],
+          });
+        }
         const beforeSnooze = yield* orchestrator.getThreadProjection(threadId);
         assert.isTrue(beforeSnooze.runs.some((run) => run.status === "queued" && run.queueHeld));
         const snooze = orchestrator.dispatch({
