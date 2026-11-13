@@ -21,6 +21,7 @@ const state = vi.hoisted(() => ({
   mint: vi.fn(),
   download: vi.fn(),
   png: vi.fn(),
+  print: vi.fn(),
   showMenu: vi.fn(),
   openFile: vi.fn(),
   clipboard: vi.fn(),
@@ -59,6 +60,7 @@ vi.mock("../../rpc/atomRegistry", () => ({
   },
 }));
 vi.mock("./mediaContent", () => ({ downloadMedia: state.download, readMediaPng: state.png }));
+vi.mock("./printMedia", () => ({ printMedia: state.print }));
 vi.mock("../ui/tooltip", () => ({
   Tooltip: "Tooltip",
   TooltipTrigger: "TooltipTrigger",
@@ -72,6 +74,7 @@ vi.mock("../ui/toast", () => ({
       return "toast";
     },
     update: () => state.menuFinished?.(),
+    close: () => state.menuFinished?.(),
   },
 }));
 
@@ -126,6 +129,7 @@ beforeEach(() => {
     .mockResolvedValue(AsyncResult.success({ relativeUrl: "/api/assets/image.png", expiresAt: 1 }));
   state.download.mockReset().mockResolvedValue(undefined);
   state.png.mockReset().mockResolvedValue(new Blob(["png"], { type: "image/png" }));
+  state.print.mockReset().mockResolvedValue(undefined);
   state.showMenu.mockReset().mockResolvedValue(null);
   state.openFile.mockReset();
   state.copyText.mockReset().mockResolvedValue(true);
@@ -151,19 +155,22 @@ it.each(["workspace-file", "media-file"] as const)(
       expect.arrayContaining([
         expect.objectContaining({ id: "save", disabled: true }),
         expect.objectContaining({ id: "copy-image", disabled: true }),
+        expect.objectContaining({ id: "print", disabled: true }),
         expect.objectContaining({ id: "open-file", disabled: true }),
       ]),
       { x: 1, y: 1 },
     );
     await expect(useMediaActions(source).save()).rejects.toThrow("cannot read host files");
     await expect(useMediaActions(source).copyImage()).rejects.toThrow("cannot read host files");
+    await expect(useMediaActions(source).print()).rejects.toThrow("cannot read host files");
     expect(state.mint).not.toHaveBeenCalled();
     expect(state.download).not.toHaveBeenCalled();
     expect(state.clipboard).not.toHaveBeenCalled();
+    expect(state.print).not.toHaveBeenCalled();
   },
 );
 
-it.each(["save", "copy-image", "open-file"])(
+it.each(["save", "copy-image", "print", "open-file"])(
   "rechecks access when %s is selected from an already open native menu",
   async (action) => {
     state.sessions.set(environmentId, granted);
@@ -181,6 +188,7 @@ it.each(["save", "copy-image", "open-file"])(
     expect(state.mint).not.toHaveBeenCalled();
     expect(state.download).not.toHaveBeenCalled();
     expect(state.clipboard).not.toHaveBeenCalled();
+    expect(state.print).not.toHaveBeenCalled();
     expect(state.openFile).not.toHaveBeenCalled();
   },
 );

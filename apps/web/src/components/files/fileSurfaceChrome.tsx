@@ -1,7 +1,10 @@
-import type { ReactNode } from "react";
+import { PrinterIcon } from "lucide-react";
+import { useState, type ReactNode } from "react";
 
+import { printMedia } from "~/components/media/printMedia";
 import { Spinner } from "~/components/ui/spinner";
 import { Button } from "~/components/ui/button";
+import { toastManager } from "~/components/ui/toast";
 import { Toggle } from "~/components/ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
@@ -99,6 +102,38 @@ export function FileSurfaceAction(props: {
       />
       <TooltipPopup>{props.label}</TooltipPopup>
     </Tooltip>
+  );
+}
+
+export function FilePrintAction(props: {
+  readonly name: string;
+  readonly kind: "image" | "pdf";
+  readonly resolveUrl: () => Promise<string | null>;
+}) {
+  const [printing, setPrinting] = useState(false);
+  return (
+    <FileSurfaceAction
+      label={printing ? "Preparing to print…" : "Print"}
+      disabled={printing}
+      onPress={() => {
+        setPrinting(true);
+        void (async () => {
+          const url = await props.resolveUrl();
+          if (!url) throw new Error("Reconnect to the environment and try again.");
+          await printMedia(url, props.name, props.kind);
+        })()
+          .catch((cause: unknown) =>
+            toastManager.add({
+              type: "error",
+              title: "Could not print file",
+              description: cause instanceof Error ? cause.message : "Try again.",
+            }),
+          )
+          .finally(() => setPrinting(false));
+      }}
+    >
+      <PrinterIcon className="size-3.5" />
+    </FileSurfaceAction>
   );
 }
 

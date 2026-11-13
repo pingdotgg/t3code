@@ -40,6 +40,7 @@ import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
 import {
   FILE_SURFACE_SUBHEADER_CLASS,
+  FilePrintAction,
   FileSurfaceAction,
   FileSurfaceFailure,
   FileSurfaceLoading,
@@ -457,6 +458,13 @@ export function AttachmentFilePreview(props: {
           >
             {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
           </FileSurfaceAction>
+        ) : null}
+        {url && (kind === "image" || kind === "pdf") ? (
+          <FilePrintAction
+            name={props.name}
+            kind={kind}
+            resolveUrl={props.file ? () => Promise.resolve(url) : refresh}
+          />
         ) : null}
         {url ? (
           <FileSurfaceAction

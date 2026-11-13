@@ -398,9 +398,9 @@ save, or add it to chat.
 Select an image or video attachment or link to preview it. Playback support depends
 on your browser or device; save an unsupported video to open it in another app.
 
-On web and desktop, right-click media to save it or copy its path or URL. On mobile,
-touch and hold an image or video thumbnail and choose **Save or share**. On iOS,
-return to the thumbnail to open this menu after watching a full-screen video.
+On web and desktop, right-click media to save it or copy its path or URL, or to print an
+image. On mobile, touch and hold an image or video thumbnail and choose **Save or share**.
+On iOS, return to the thumbnail to open this menu after watching a full-screen video.
 
 File links refer to the environment's machine, including when you connect remotely.
 Previews use the original file, even outside the workspace. Moving or deleting it
@@ -420,6 +420,9 @@ automatically. HTML previews cannot access your T3 Code session.
 
 The file viewer recognizes images, HTML, and PDF files by their filename extension,
 including filenames or folders containing `#` or `?`.
+
+To print an image or PDF on web or desktop, open it in the file viewer and select **Print** in
+its header. It prints on the device you are using, even when connected to a remote environment.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.

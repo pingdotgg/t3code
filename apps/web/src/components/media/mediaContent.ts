@@ -59,7 +59,7 @@ async function fetchMediaBlob(src: string): Promise<Blob> {
   );
 }
 
-async function readMediaBlob(src: string): Promise<Blob> {
+export async function readMediaBlob(src: string): Promise<Blob> {
   if (/^data:/i.test(src)) return readDataUrlBlob(src);
   const blob = await fetchMediaBlob(src);
   if (blob.type.split(";", 1)[0] === "text/html") {
