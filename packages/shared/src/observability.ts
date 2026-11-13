@@ -14,6 +14,7 @@ import * as Tracer from "effect/Tracer";
 import { OtlpResource, OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import { makeAsyncRotatingFileSink } from "./logging.ts";
+import { LocalFileSpan } from "./observabilitySpans.ts";
 
 export const OtlpProtocol = Schema.Literals(["http/json", "http/protobuf"]);
 export type OtlpProtocol = typeof OtlpProtocol.Type;
@@ -372,7 +373,7 @@ export function truncateTraceAttributes(attributes: TraceAttributes): TraceAttri
   return truncated ?? attributes;
 }
 
-function spanToTraceRecord(span: SerializableSpan): EffectTraceRecord {
+export function spanToTraceRecord(span: SerializableSpan): EffectTraceRecord {
   const status = span.status as Extract<Tracer.SpanStatus, { _tag: "Ended" }>;
   const parentSpanId = Option.getOrUndefined(span.parent)?.spanId;
 
@@ -407,7 +408,7 @@ function spanToTraceRecord(span: SerializableSpan): EffectTraceRecord {
 // WebSocket tickets and their DPoP proofs ride in URL queries and stay valid after the request.
 const URL_CREDENTIAL_PARAMS = /(^|[?&"\s])(wsTicket|dpop)=[^&#"\\\s]*/g;
 
-const redactUrlCredentials = (text: string) =>
+export const redactUrlCredentials = (text: string) =>
   text.replace(URL_CREDENTIAL_PARAMS, "$1$2=<redacted>");
 
 export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: TraceSinkOptions) {
@@ -558,93 +559,12 @@ export function redactCauseCredentials(cause: Cause.Cause<unknown>): Cause.Cause
   return redacted === pretty ? cause : Cause.die(new Error(redacted));
 }
 
-function redactExitCredentials(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unknown, unknown> {
+export function redactExitCredentials(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unknown, unknown> {
   if (ExitRuntime.isSuccess(exit)) {
     return exit;
   }
   const cause = redactCauseCredentials(exit.cause);
   return cause === exit.cause ? exit : ExitRuntime.failCause(cause);
-}
-
-class LocalFileSpan implements Tracer.Span {
-  readonly _tag = "Span";
-  readonly name: string;
-  readonly spanId: string;
-  readonly traceId: string;
-  readonly parent: Option.Option<Tracer.AnySpan>;
-  readonly annotations: Tracer.Span["annotations"];
-  readonly links: Array<Tracer.SpanLink>;
-  readonly sampled: boolean;
-  readonly kind: Tracer.SpanKind;
-
-  status: Tracer.SpanStatus;
-  attributes: Map<string, unknown>;
-  events: Array<[name: string, startTime: bigint, attributes: Record<string, unknown>]>;
-  private readonly delegate: Tracer.Span;
-  private readonly push: (record: EffectTraceRecord) => void;
-
-  constructor(
-    options: Parameters<Tracer.Tracer["span"]>[0],
-    delegate: Tracer.Span,
-    push: (record: EffectTraceRecord) => void,
-  ) {
-    this.delegate = delegate;
-    this.push = push;
-    this.name = delegate.name;
-    this.spanId = delegate.spanId;
-    this.traceId = delegate.traceId;
-    this.parent = options.parent;
-    this.annotations = options.annotations;
-    this.links = [...options.links];
-    this.sampled = delegate.sampled;
-    this.kind = delegate.kind;
-    this.status = {
-      _tag: "Started",
-      startTime: options.startTime,
-    };
-    this.attributes = new Map();
-    this.events = [];
-  }
-
-  end(endTime: bigint, exit: Exit.Exit<unknown, unknown>): void {
-    // Cached lookup fibers retain parent spans. Traces need success status, not result payloads.
-    const traceExit = ExitRuntime.isSuccess(exit) ? ExitRuntime.void : exit;
-    this.status = {
-      _tag: "Ended",
-      startTime: this.status.startTime,
-      endTime,
-      exit: traceExit,
-    };
-    this.delegate.end(endTime, redactExitCredentials(traceExit));
-
-    if (this.sampled) {
-      this.push(spanToTraceRecord(this));
-    }
-  }
-
-  attribute(key: string, value: unknown): void {
-    const recorded =
-      (key === "url.full" || key === "url.query") && typeof value === "string"
-        ? redactUrlCredentials(value)
-        : value;
-    this.attributes.set(key, recorded);
-    this.delegate.attribute(key, recorded);
-  }
-
-  event(name: string, startTime: bigint, attributes?: Record<string, unknown>): void {
-    const cause = attributes?.["effect.cause"];
-    const nextAttributes =
-      typeof cause === "string"
-        ? { ...attributes, "effect.cause": redactUrlCredentials(cause) }
-        : (attributes ?? {});
-    this.events.push([name, startTime, nextAttributes]);
-    this.delegate.event(name, startTime, nextAttributes);
-  }
-
-  addLinks(links: ReadonlyArray<Tracer.SpanLink>): void {
-    this.links.push(...links);
-    this.delegate.addLinks(links);
-  }
 }
 
 export const makeLocalFileTracer = Effect.fn("makeLocalFileTracer")(function* (
