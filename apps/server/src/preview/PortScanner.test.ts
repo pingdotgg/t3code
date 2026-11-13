@@ -915,6 +915,63 @@ effectIt.effect.each(["linux", "darwin"] as const)(
   },
 );
 
+effectIt.effect.each(["linux", "darwin"] as const)(
+  "does not list the agent CLI's own listener on %s, only the servers it started",
+  (platform) => {
+    const cliPort = 43_126;
+    const jobPort = 43_127;
+    const thread = `${PortScanner.AGENT_THREAD_ENV}=thread-agent`;
+    const missing = FileSystem.makeNoop({});
+    const procEnviron: Record<string, string> = {
+      "/proc/7000/environ": `PATH=/usr/bin\0${thread}\0`,
+      "/proc/7100/environ": `PATH=/usr/bin\0${thread}\0`,
+    };
+    const layer = PortScanner.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          FileSystem.layerNoop({
+            readFileString: (path) => {
+              const content = procEnviron[path];
+              return content === undefined ? missing.readFileString(path) : Effect.succeed(content);
+            },
+          }),
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: (input) =>
+              Effect.succeed(
+                processOutput(
+                  input.command === "lsof"
+                    ? `p7000\ncclaude\nn127.0.0.1:${cliPort}\np7100\ncnode\nn127.0.0.1:${jobPort}\n`
+                    : `  7000 claude --output-format stream-json PATH=/usr/bin ${thread}\n` +
+                        `  7100 node server.js PATH=/usr/bin ${thread}\n`,
+                ),
+              ),
+          }),
+          Layer.succeed(HostProcess.Platform, platform),
+          FetchHttpClient.layer.pipe(
+            Layer.provide(Layer.succeed(FetchHttpClient.Fetch, globalThis.fetch)),
+          ),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      scanner.trackAgent(7000);
+      expect(yield* scanner.scan()).toEqual([
+        {
+          host: "localhost",
+          port: jobPort,
+          url: `http://localhost:${jobPort}`,
+          processName: "node",
+          pid: 7100,
+          terminal: null,
+          agent: { threadId: "thread-agent" },
+        },
+      ]);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
 effectIt.effect("stops only a job's own process group", () =>
   Effect.sync(() => {
     const serverPid = 100;
