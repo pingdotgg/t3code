@@ -138,6 +138,37 @@ describe("decodePullRequestJson", () => {
     const detail = expectSuccess(decodePullRequestJson(asJson(pullRequest())));
 
     expect(detail?.location).toEqual({ project: "platform", repository: "web" });
+
+    const withApiUrl = (url: string) =>
+      expectSuccess(
+        decodePullRequestJson(
+          asJson(pullRequest({ repository: { name: "web", project: { name: "platform" }, url } })),
+        ),
+      )?.location;
+    expect(withApiUrl("https://dev.azure.com/acme/p1/_apis/git/repositories/r1")).toEqual({
+      project: "platform",
+      repository: "web",
+      apiUrl: "https://dev.azure.com/acme/p1/_apis/git/repositories/r1",
+    });
+    expect(withApiUrl("https://acme.visualstudio.com/p1/_apis/git/repositories/r1")).toEqual({
+      project: "platform",
+      repository: "web",
+      apiUrl: "https://acme.visualstudio.com/p1/_apis/git/repositories/r1",
+    });
+    // Only Azure DevOps Services is sent an Entra token; anything else is read through az.
+    for (const url of [
+      "http://tfs.local/_apis/git/repositories/r1",
+      "https://tfs.example.com/tfs/c/p1/_apis/git/repositories/r1",
+      "https://attacker.example/p1/_apis/git/repositories/r1",
+      "https://dev.azure.com.attacker.example/acme/_apis/git/repositories/r1",
+      "https://dev.azure.com@attacker.example/acme/_apis/git/repositories/r1",
+      "https://user@dev.azure.com/acme/p1/_apis/git/repositories/r1",
+      "https://dev.azure.com:8443/acme/p1/_apis/git/repositories/r1",
+      "https://dev.azure.com/acme/p1/_apis/git/repositories/r1?x=1",
+      "https://dev.azure.com/acme/p1/_apis/git/repositories/r1#x",
+    ]) {
+      expect(withApiUrl(url)).toEqual({ project: "platform", repository: "web" });
+    }
   });
 
   it("reports no repository location when Azure said too little to name one", () => {

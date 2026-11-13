@@ -160,11 +160,17 @@ export const make = Effect.gen(function* () {
 
   const EMPTY_DIFF_SLICE: ProviderDiffSlice = { patch: "", truncated: false, nextCursor: null };
 
-  // PR locations are immutable; caching avoids full PR reads for viewed-file checks.
+  // PR locations are immutable; caching avoids full PR reads for viewed-file checks. The key holds
+  // the repository, which names the organization, so a checkout pointed at another organization
+  // cannot reuse the old one's location and REST URL.
   const locations = new Map<string, AzureDevOpsRepositoryLocation>();
 
-  const locationOf = (input: { readonly cwd: string; readonly number: number }) => {
-    const key = `${input.cwd} ${input.number}`;
+  const locationOf = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly number: number;
+  }) => {
+    const key = JSON.stringify([input.cwd, input.repository.toLowerCase(), input.number]);
     const held = locations.get(key);
     if (held !== undefined) {
       locations.delete(key);
@@ -187,6 +193,7 @@ export const make = Effect.gen(function* () {
 
   const diffScope = Effect.fn("AzureDevOpsPullRequestProvider.diffScope")(function* (input: {
     readonly cwd: string;
+    readonly repository: string;
     readonly number: number;
   }) {
     const location = yield* locationOf(input);

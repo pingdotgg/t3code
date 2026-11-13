@@ -347,3 +347,37 @@ describe("what one diff slice spends", () => {
     }),
   );
 });
+
+describe("pull request locations", () => {
+  it.effect(
+    "reads the location again when the checkout's repository names another organization",
+    () =>
+      Effect.gen(function* () {
+        const read: string[] = [];
+        const provider = yield* make.pipe(
+          Effect.provide(
+            Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+              getPullRequest: () =>
+                Effect.sync(() => {
+                  read.push("pr");
+                  return PULL_REQUEST;
+                }),
+              listIterations: () => Effect.succeed([ITERATION]),
+              listIterationChanges: () =>
+                Effect.succeed({ changes: [change("a.ts")], truncated: false }),
+              readItemContent: () =>
+                Effect.succeed({ contents: side("new", 2, 4), isBinary: false }),
+            }),
+          ),
+        );
+        const readDiff = (repository: string) =>
+          provider.getDiff({ cwd: "/w", repository, host: "dev.azure.com", number: 7 });
+
+        yield* readDiff("acme/web/_git/web");
+        yield* readDiff("acme/web/_git/web");
+        expect(read).toHaveLength(1);
+        yield* readDiff("globex/web/_git/web");
+        expect(read).toHaveLength(2);
+      }),
+  );
+});
