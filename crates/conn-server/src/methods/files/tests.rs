@@ -6,7 +6,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use super::*;
 use crate::{
     auth::{AuthStore, Principal},
-    table::{Handler, MethodTable},
+    table::{CallContext, Handler, MethodTable},
 };
 
 struct Setup {
@@ -103,7 +103,7 @@ async fn registers_the_area_and_checks_scopes() {
         panic!("expected a typed failure")
     };
     assert_eq!(error["_tag"], "EnvironmentAuthorizationError");
-    assert_eq!(error["requiredScope"], "filesystem:read");
+    assert_eq!(error["requiredPermission"], "filesystem:read");
 
     // A host file asset needs filesystem:read; a favicon only orchestration:read.
     let media = json!({"resource": {"_tag": "media-file", "threadId": "t", "path": "/etc/hosts"}});
@@ -117,7 +117,7 @@ async fn registers_the_area_and_checks_scopes() {
     else {
         panic!()
     };
-    assert_eq!(error["requiredScope"], "filesystem:read");
+    assert_eq!(error["requiredPermission"], "filesystem:read");
 
     // Contract limits the generated types do not check end as defects, never a panic.
     let long = json!({"cwd": cwd, "query": "x".repeat(300), "limit": 5,

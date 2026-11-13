@@ -31,8 +31,7 @@ struct SetupInput {
 pub fn register(table: &mut MethodTable, deps: &Deps) {
     table.stream(
         "provider.auth.subscribe",
-        |ctx, input: SetupInput| async move {
-            super::server::require(&ctx, "providers:manage")?;
+        |_, input: SetupInput| async move {
             // `credentialOwner: provider`: the CLI holds its own credentials (or the router's key).
             Ok(open_with(json!({
                 "instanceId": input.instance_id,
@@ -47,32 +46,28 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         },
     );
     let deps = deps.clone();
-    table.stream(
-        "provider.install.subscribe",
-        move |ctx, input: SetupInput| {
-            let driver = deps
-                .providers
-                .iter()
-                .find(|p| p.instance_id().as_str() == input.instance_id)
-                .map(|p| p.driver().to_owned())
-                .unwrap_or_else(|| input.instance_id.clone());
-            async move {
-                super::server::require(&ctx, "orchestration:read")?;
-                Ok(open_with(json!({
-                    "driver": driver,
-                    "operationId": null,
-                    "phase": "idle",
-                    "downloadedBytes": 0,
-                    "totalBytes": null,
-                    "version": null,
-                    "installedVersion": null,
-                    "source": "local",
-                    "canRemove": false,
-                    "message": null,
-                })))
-            }
-        },
-    );
+    table.stream("provider.install.subscribe", move |_, input: SetupInput| {
+        let driver = deps
+            .providers
+            .iter()
+            .find(|p| p.instance_id().as_str() == input.instance_id)
+            .map(|p| p.driver().to_owned())
+            .unwrap_or_else(|| input.instance_id.clone());
+        async move {
+            Ok(open_with(json!({
+                "driver": driver,
+                "operationId": null,
+                "phase": "idle",
+                "downloadedBytes": 0,
+                "totalBytes": null,
+                "version": null,
+                "installedVersion": null,
+                "source": "local",
+                "canRemove": false,
+                "message": null,
+            })))
+        }
+    });
 }
 
 /// One state, then open until the client unsubscribes.
