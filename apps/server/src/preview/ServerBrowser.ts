@@ -591,29 +591,45 @@ const make = Effect.gen(function* () {
   // Playwright cannot reload a crashed page, so a fresh page takes over its tab.
   const reopenCrashedTab = async (tab: ServerTab) => {
     if (tab.desktop) return dropTab(tab, true);
-    if (tabs.get(tabKey(tab.threadId, tab.tabId)) !== tab) return;
+    const key = tabKey(tab.threadId, tab.tabId);
+    if (tabs.get(key) !== tab) return;
     tab.crash = {
       url: ServerBrowserPage.withoutDataPayload(tab.page.url()).slice(0, 2048),
       code: -2,
       description: "Page crashed",
     };
-    // The session must name the crash before a new page reads it, or it would load the URL again.
-    await runPromise(
-      manager
-        .reportStatus({
-          threadId: tab.threadId,
-          tabId: tab.tabId,
-          serverControlled: true,
-          navStatus: { _tag: "LoadFailed", title: "", ...tab.crash },
-          canGoBack: false,
-          canGoForward: false,
-        })
-        .pipe(Effect.ignore),
-    );
-    dropTab(tab, false, true);
-    // A context that is still closing would take the new page down with it.
-    if (tab.isolatedContext) await tab.page.context().close().catch(constVoid);
-    await runPromise(findTab(tab.threadId, tab.tabId).pipe(Effect.ignore));
+    const reopening = (async () => {
+      // The session must name the crash before a new page reads it, or it would load the URL again.
+      await runPromise(
+        manager
+          .reportStatus({
+            threadId: tab.threadId,
+            tabId: tab.tabId,
+            serverControlled: true,
+            navStatus: { _tag: "LoadFailed", title: "", ...tab.crash },
+            canGoBack: false,
+            canGoForward: false,
+          })
+          .pipe(Effect.ignore),
+      );
+      dropTab(tab, false, true);
+      // A context that is still closing would take the new page down with it.
+      if (tab.isolatedContext) await tab.page.context().close().catch(constVoid);
+      const { sessions } = await runPromise(manager.list({ threadId: tab.threadId }));
+      const snapshot = sessions.find(
+        (session) => session.tabId === tab.tabId && session.runtime === "server",
+      );
+      if (!snapshot) {
+        throw new ServerBrowserTabNotFoundError({ threadId: tab.threadId, tabId: tab.tabId });
+      }
+      return createTab(snapshot);
+    })().finally(() => {
+      pendingTabs.delete(key);
+      closedPendingTabs.delete(key);
+    });
+    // Reserved before the dead page leaves, so a lookup in between waits for its replacement.
+    pendingTabs.set(key, { agentId: tab.control.agentId, promise: reopening });
+    await reopening.catch(constVoid);
   };
 
   const dialogStatus = (tab: ServerTab) =>
