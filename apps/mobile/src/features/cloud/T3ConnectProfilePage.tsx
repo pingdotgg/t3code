@@ -81,6 +81,32 @@ export function T3ConnectProfilePage() {
       });
       environmentsState.refresh();
       void refreshRelayEnvironments();
+      if (result.value.cleanup === "unconfirmed") {
+        const cause = result.value.cause;
+        const traceId = findErrorTraceId(cause);
+        console.warn("[t3-connect] Server removed but deregistration cleanup is unconfirmed", {
+          environmentId: environment.environmentId,
+          traceId,
+          cause,
+        });
+        Dialog.alert(
+          "Server removed; cleanup unconfirmed",
+          "The server is no longer registered to your account, but tunnel cleanup could not be confirmed. Retry to finish cleanup." +
+            (traceId ? `\n\nTrace ID: ${traceId}` : ""),
+          [
+            { text: "Retry cleanup", onPress: () => void handleDeregister(environment) },
+            ...(traceId
+              ? [
+                  {
+                    text: "Copy trace ID",
+                    onPress: () => copyTextWithHaptic(traceId, { target: "connection-trace-id" }),
+                  },
+                ]
+              : []),
+            { text: "OK", style: "cancel" },
+          ],
+        );
+      }
       return;
     }
     if (isAtomCommandInterrupted(result)) return;
