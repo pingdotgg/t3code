@@ -29,6 +29,7 @@ import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2ContextTransfer,
   OrchestrationV2DomainEvent,
+  OrchestrationV2ArchivedShellCursor,
   OrchestrationV2OlderSettledCount,
   OrchestrationV2OlderSettledCursor,
   OrchestrationV2ProjectedTurnItem,
@@ -454,6 +455,11 @@ export interface ShellSnapshotOptions {
   readonly familyOf?: ThreadId;
   readonly worktreePath?: string;
   readonly threadIds?: ReadonlyArray<ThreadId>;
+  /** Only the `limit` newest archived threads below `before` (`archivedAt` desc, then id asc). */
+  readonly archivePage?: {
+    readonly before?: OrchestrationV2ArchivedShellCursor | undefined;
+    readonly limit: number;
+  };
 }
 
 /** What a shell subscriber's trims read from an active thread, without building its shell. */
@@ -7829,6 +7835,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
 
+    // Ids first: sorting the shell query itself would run its subqueries for every archived row.
+    const selectArchivePageThreadIds = ({
+      before,
+      limit,
+    }: NonNullable<ShellSnapshotOptions["archivePage"]>) =>
+      sql<{ readonly thread_id: string }>`
+        SELECT t.thread_id
+        FROM orchestration_v2_projection_threads t
+        WHERE t.deleted_at IS NULL AND t.archived_at IS NOT NULL${
+          before === undefined
+            ? sql``
+            : sql` AND (t.archived_at < ${before.archivedAt}
+                OR (t.archived_at = ${before.archivedAt} AND t.thread_id > ${before.threadId}))`
+        }
+        ORDER BY t.archived_at DESC, t.thread_id ASC
+        LIMIT ${limit}
+      `;
+
     const selectShellRunRows = (threadIds?: ReadonlyArray<ThreadId>) =>
       threadIds === undefined
         ? sql<ShellRunRow>`
@@ -8438,7 +8462,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const readShellSnapshotRows = Effect.fn("ProjectionStore.readShellSnapshotRows")(function* (
       options: ShellSnapshotOptions | undefined,
     ) {
-      const targetThreadRows = yield* selectShellThreadRows(undefined, options);
+      const targetThreadRows = yield* selectShellThreadRows(
+        undefined,
+        options?.archivePage === undefined
+          ? options
+          : {
+              ...options,
+              location: "archive",
+              threadIds: (yield* selectArchivePageThreadIds(options.archivePage)).map((row) =>
+                ThreadId.make(row.thread_id),
+              ),
+            },
+      );
       const targetThreadIds = new Set(targetThreadRows.map((row) => ThreadId.make(row.thread_id)));
       const rowsByThreadId = new Map(
         targetThreadRows.map((row) => [ThreadId.make(row.thread_id), row] as const),

@@ -1038,7 +1038,10 @@ it.effect(
             Effect.forkChild({ startImmediately: true }),
           );
         const a = yield* exportThread("a");
-        const b = yield* exportThread("b");
+        // Whole-thread snapshots for API clients take the same slots as transcripts.
+        const b = yield* threads
+          .getThreadSnapshotExport(ThreadId.make("b"))
+          .pipe(Effect.forkChild({ startImmediately: true }));
         const c = yield* exportThread("c");
         const d = yield* exportThread("d");
         const e = yield* exportThread("e");

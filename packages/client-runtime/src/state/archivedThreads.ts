@@ -1,10 +1,13 @@
 import {
   EnvironmentId,
   type OrchestrationV2ArchivedShellSnapshot,
+  type OrchestrationV2GetArchivedShellSnapshotInput,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
+import * as Effect from "effect/Effect";
 import { pipe } from "effect/Function";
+import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -42,6 +45,43 @@ function parseArchivedThreadsEnvironmentKey(key: string): ReadonlyArray<Environm
     Arr.map((environmentId) => EnvironmentId.make(environmentId)),
   );
 }
+
+// Small enough that the newest archived threads show at once, however large the archive is.
+const ARCHIVED_THREADS_PAGE_SIZE = 200;
+
+/**
+ * Reads the whole archive a page at a time, newest first, so no single request reads it all.
+ * `emit` shows the pages read so far once they cover what is already on screen: a first load
+ * fills in as pages arrive, a reload never shrinks the list, and a failed page keeps what was
+ * shown. A partial snapshot keeps its `nextCursor`. Servers without paging answer with everything.
+ */
+export const loadArchivedShellSnapshot = Effect.fnUntraced(function* <E, R>(options: {
+  readonly readPage: (
+    input: OrchestrationV2GetArchivedShellSnapshotInput,
+  ) => Effect.Effect<OrchestrationV2ArchivedShellSnapshot, E, R>;
+  readonly emit: (snapshot: OrchestrationV2ArchivedShellSnapshot) => Effect.Effect<void>;
+  readonly previous: Option.Option<OrchestrationV2ArchivedShellSnapshot>;
+}) {
+  const shownCount = Option.match(options.previous, {
+    onNone: () => 0,
+    onSome: (snapshot) => snapshot.threads.length,
+  });
+  let snapshot = yield* options.readPage({ limit: ARCHIVED_THREADS_PAGE_SIZE });
+  while (snapshot.nextCursor !== undefined) {
+    if (snapshot.threads.length >= shownCount) yield* options.emit(snapshot);
+    const page = yield* options.readPage({
+      limit: ARCHIVED_THREADS_PAGE_SIZE,
+      before: snapshot.nextCursor,
+    });
+    // A thread archived again between two reads sits in both pages.
+    const loaded = new Set(snapshot.threads.map((thread) => thread.id));
+    snapshot = {
+      ...page,
+      threads: [...snapshot.threads, ...page.threads.filter((thread) => !loaded.has(thread.id))],
+    };
+  }
+  return snapshot;
+});
 
 export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
   readonly getSnapshotAtom: (

@@ -13,6 +13,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { HttpClient } from "effect/http";
 import { Atom } from "effect/reactivity";
 
+import { loadArchivedShellSnapshot } from "./archivedThreads.ts";
 import {
   applyCommandOutputFrame,
   EMPTY_COMMAND_OUTPUT,
@@ -239,6 +240,12 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     archivedShellSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:archived-shell-snapshot",
       tag: ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
+      execute: (_input, emit, previous) =>
+        loadArchivedShellSnapshot({
+          readPage: (page) => request(ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot, page),
+          emit,
+          previous,
+        }),
     }),
     threadFamily: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:thread-family-for-delete",

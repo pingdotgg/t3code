@@ -126,7 +126,7 @@ export const layer = HttpApiBuilder.group(
         | "orchestration_thread_bounded_snapshot_failed"
         | "orchestration_thread_history_failed",
     ) {
-      return yield* threadManagement.getThreadSnapshot(threadId).pipe(
+      return yield* threadManagement.getThreadSnapshotExport(threadId).pipe(
         Effect.map((snapshot) => ({
           ...snapshot,
           projection: projectThreadProjectionForWire(snapshot.projection),

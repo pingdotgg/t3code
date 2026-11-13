@@ -57,6 +57,7 @@ import {
   THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
   THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
 } from "./threadHistoryPaging.ts";
+import { archivedShellPage } from "./ShellStream.ts";
 import { buildBoundedThreadStreamSnapshot } from "./ThreadStream.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 
@@ -2838,7 +2839,7 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("SQL list older settled threads below a cursor", () =>
+it.effect("SQL list older settled and archived threads below a cursor", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const now = yield* DateTime.now;
@@ -2849,7 +2850,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
       readonly settledDay: number | null;
       readonly project?: string;
       readonly subagent?: boolean;
-      readonly archived?: boolean;
+      readonly archivedDay?: number;
       readonly snoozedUntilDay?: number;
     }) =>
       store.apply({
@@ -2878,7 +2879,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
           forkedFrom: null,
           createdAt: now,
           updatedAt: now,
-          archivedAt: input.archived === true ? now : null,
+          archivedAt: input.archivedDay === undefined ? null : at(input.archivedDay),
           settledOverride: input.settledDay === null ? null : "settled",
           settledAt: input.settledDay === null ? null : at(input.settledDay),
           snoozedUntil: input.snoozedUntilDay === undefined ? null : at(input.snoozedUntilDay),
@@ -2894,7 +2895,10 @@ it.effect("SQL list older settled threads below a cursor", () =>
     yield* createThread({ name: "recent", settledDay: 20 });
     yield* createThread({ name: "unsettled", settledDay: null });
     yield* createThread({ name: "child", settledDay: 1, subagent: true });
-    yield* createThread({ name: "archived", settledDay: 1, archived: true });
+    yield* createThread({ name: "archived", settledDay: 1, archivedDay: 1 });
+    yield* createThread({ name: "archived-b", settledDay: null, archivedDay: 2 });
+    yield* createThread({ name: "archived-c", settledDay: null, archivedDay: 2 });
+    yield* createThread({ name: "archived-new", settledDay: null, archivedDay: 3 });
 
     const list = (
       before: { readonly settledAt: string; readonly threadId?: ThreadId },
@@ -2929,6 +2933,31 @@ it.effect("SQL list older settled threads below a cursor", () =>
       threadIds: [],
       counts: [{ projectId: ProjectId.make("project:b"), count: 1 }],
     });
+
+    // The archive pages newest first, one row past the page telling whether more remain.
+    const archivePage = Effect.fnUntraced(function* (
+      before?: ReturnType<typeof archivedShellPage>["nextCursor"],
+    ) {
+      const read = yield* store.getShellSnapshot({ archivePage: { before, limit: 3 } });
+      assert.deepEqual(read.threads, []);
+      return archivedShellPage(read.archivedThreads, 2);
+    });
+    const newest = yield* archivePage();
+    assert.deepEqual(
+      newest.threads.map((thread) => thread.id),
+      [id("archived-new"), id("archived-b")],
+    );
+    // The cursor is the last row: the tie on day 2 continues by id.
+    assert.deepEqual(newest.nextCursor, {
+      archivedAt: DateTime.formatIso(at(2)),
+      threadId: id("archived-b"),
+    });
+    const oldest = yield* archivePage(newest.nextCursor);
+    assert.deepEqual(
+      oldest.threads.map((thread) => thread.id),
+      [id("archived-c"), id("archived")],
+    );
+    assert.isUndefined(oldest.nextCursor);
   }).pipe(Effect.provide(layerTest)),
 );
 

@@ -59,6 +59,7 @@ import {
   SETTINGS_SECRET_REFERENCES_CAPABILITY,
   ORCHESTRATION_PROTOCOL_VERSION,
   OrchestrationV2DispatchCommandError,
+  type OrchestrationV2GetArchivedShellSnapshotInput,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
@@ -130,6 +131,7 @@ import {
   coalesceShellApplicationEvents,
   composeShellStreamWithEnrichment,
   dedupeShellEnrichment,
+  archivedShellPage,
   loadOlderSettledThreadsPage,
   loadShellSnapshotParts,
   shellStreamItemFromEnrichmentRefresh,
@@ -1893,25 +1895,31 @@ export const layerWsRpc = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
-      const getOrchestrationV2ArchivedShellSnapshot = Effect.gen(function* () {
-        const { threads, projects, snapshotSequence } = yield* loadShellSnapshotParts({
-          sql,
-          readThreads: threadManagement.readShellSnapshot({ location: "archive" }),
-          listProjects: projectStore.listShells(),
-          latestSequence: applicationEvents.latestApplicationSequence,
-        });
-        return {
-          schemaVersion: threads.schemaVersion,
-          snapshotSequence,
-          projects,
-          threads: threads.archivedThreads,
-        } as const;
-      }).pipe(
-        Effect.flatMap((snapshot) =>
-          enrichProjectShells(snapshot.projects).pipe(
-            Effect.map(({ projects }) => ({ ...snapshot, projects })),
-          ),
-        ),
+      const getOrchestrationV2ArchivedShellSnapshot = Effect.fn(
+        "ws.orchestrationV2.getArchivedShellSnapshot",
+      )(
+        function* (input: OrchestrationV2GetArchivedShellSnapshotInput) {
+          const { limit } = input;
+          const { threads, projects, snapshotSequence } = yield* loadShellSnapshotParts({
+            sql,
+            readThreads: threadManagement.readShellSnapshot(
+              limit === undefined
+                ? { location: "archive" }
+                : { archivePage: { before: input.before, limit: limit + 1 } },
+            ),
+            listProjects: projectStore.listShells(),
+            latestSequence: applicationEvents.latestApplicationSequence,
+          });
+          const enriched = yield* enrichProjectShells(projects);
+          return {
+            schemaVersion: threads.schemaVersion,
+            snapshotSequence,
+            projects: enriched.projects,
+            ...(limit === undefined
+              ? { threads: threads.archivedThreads }
+              : archivedShellPage(threads.archivedThreads, limit)),
+          };
+        },
         Effect.mapError(
           (cause) =>
             new OrchestrationV2GetShellSnapshotError({
@@ -2060,8 +2068,8 @@ export const layerWsRpc = (
                 }),
             ),
           ),
-        [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
-          getOrchestrationV2ArchivedShellSnapshot,
+        [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: (input) =>
+          getOrchestrationV2ArchivedShellSnapshot(input),
         [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: (input) =>
           readOmittableShellRows({ familyOf: input.threadId }, "Failed to load the thread family"),
         [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: (input) =>

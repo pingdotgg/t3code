@@ -410,6 +410,8 @@ export interface ThreadManagementServiceShape {
   ) => Effect.Effect<OrchestrationV2ThreadProjection, Orchestrator.OrchestratorV2Error>;
   readonly getCheckpointContext: Orchestrator.OrchestratorV2["Service"]["getCheckpointContext"];
   readonly getThreadSnapshot: Orchestrator.OrchestratorV2["Service"]["getThreadSnapshot"];
+  /** `getThreadSnapshot` for API clients, which share two slots with `getThreadTranscript`. */
+  readonly getThreadSnapshotExport: Orchestrator.OrchestratorV2["Service"]["getThreadSnapshot"];
   readonly getThreadTranscript: (
     threadId: ThreadId,
   ) => Effect.Effect<
@@ -438,7 +440,10 @@ export interface ThreadManagementServiceShape {
   readonly listActiveShellIndex: Orchestrator.OrchestratorV2["Service"]["listActiveShellIndex"];
   readonly listOlderSettledThreads: Orchestrator.OrchestratorV2["Service"]["listOlderSettledThreads"];
   readonly readShellSnapshot: (
-    options?: Pick<ShellSnapshotOptions, "location" | "familyOf" | "worktreePath" | "threadIds">,
+    options?: Pick<
+      ShellSnapshotOptions,
+      "location" | "familyOf" | "worktreePath" | "threadIds" | "archivePage"
+    >,
   ) => Effect.Effect<
     Effect.Effect<OrchestrationV2ThreadShellSnapshot, Orchestrator.OrchestratorV2Error>,
     Orchestrator.OrchestratorV2Error
@@ -703,7 +708,10 @@ const make = Effect.gen(function* () {
       Effect.andThen(orchestrator.getThreadSnapshot(threadId)),
     );
   // Full-thread exports can otherwise hold every SQLite reader and stall ordinary thread opens.
-  const transcriptExportPermits = yield* Semaphore.make(2);
+  const threadExportPermits = yield* Semaphore.make(2);
+  const getThreadSnapshotExport: ThreadManagementServiceShape["getThreadSnapshotExport"] = (
+    threadId,
+  ) => getThreadSnapshot(threadId).pipe(threadExportPermits.withPermits(1));
   const getThreadTranscript = Effect.fn("orchestrationV2.threadManagement.getThreadTranscript")(
     function* (threadId: ThreadId) {
       yield* ensureProjectionTranscript(threadId);
@@ -737,7 +745,7 @@ const make = Effect.gen(function* () {
       }
       return transcript;
     },
-    transcriptExportPermits.withPermits(1),
+    threadExportPermits.withPermits(1),
   );
   const getThreadSnapshotWindow: ThreadManagementServiceShape["getThreadSnapshotWindow"] = (
     threadId,
@@ -1712,6 +1720,7 @@ const make = Effect.gen(function* () {
     getThreadProjection,
     getCheckpointContext,
     getThreadSnapshot,
+    getThreadSnapshotExport,
     getThreadTranscript,
     getThreadSnapshotWindow,
     getProjectThreadRecords,

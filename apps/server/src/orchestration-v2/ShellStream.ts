@@ -1,6 +1,7 @@
 import type {
   ApplicationStoredEvent,
   OrchestrationProjectShell,
+  OrchestrationV2ArchivedShellCursor,
   OrchestrationV2OlderSettledCount,
   OrchestrationV2OlderSettledThreads,
   OrchestrationV2ShellSnapshot,
@@ -481,6 +482,42 @@ export const loadShellSnapshotParts = Effect.fn("ShellStream.loadShellSnapshotPa
     snapshotSequence: read.snapshotSequence,
   };
 });
+
+/**
+ * The `limit` newest of the archived shells read for a page, in the store's `archivePage` order.
+ * Read one more than `limit`: a row left over means another page, starting below the last one kept.
+ */
+export function archivedShellPage(
+  threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+  limit: number,
+): {
+  readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
+  readonly nextCursor?: OrchestrationV2ArchivedShellCursor;
+} {
+  // ISO strings in one format, so string order is the store's order.
+  const sorted = threads
+    .map((thread) => ({
+      thread,
+      archivedAt: thread.archivedAt === null ? "" : DateTime.formatIso(thread.archivedAt),
+    }))
+    .toSorted((left, right) =>
+      left.archivedAt !== right.archivedAt
+        ? left.archivedAt < right.archivedAt
+          ? 1
+          : -1
+        : left.thread.id < right.thread.id
+          ? -1
+          : 1,
+    );
+  const page = sorted.slice(0, limit);
+  const last = page.at(-1);
+  return {
+    threads: page.map(({ thread }) => thread),
+    ...(last !== undefined && sorted.length > limit
+      ? { nextCursor: { archivedAt: last.archivedAt, threadId: last.thread.id } }
+      : {}),
+  };
+}
 
 /** A page of older settled threads, read and decoded like `loadShellSnapshotParts`. */
 export const loadOlderSettledThreadsPage = Effect.fn("ShellStream.loadOlderSettledThreadsPage")(

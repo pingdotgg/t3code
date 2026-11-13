@@ -186,8 +186,27 @@ export function ArchivedThreadsPanel() {
     reportFailure(result, "Archived thread action failed");
   };
 
+  // A page that failed leaves the newer threads on screen, so say the list stops short.
+  const archiveCutShort =
+    archiveError !== null &&
+    !isLoadingArchive &&
+    archivedSnapshots.some(({ snapshot }) => snapshot.nextCursor !== undefined);
+
   return (
     <SettingsPageContainer>
+      {archiveCutShort && archivedGroups.length > 0 ? (
+        <SettingsSection title={searchableSetting("archive").title}>
+          <SettingsRow
+            title={
+              <span className="inline-flex items-center gap-2">
+                <ArchiveIcon className="size-3.5 text-muted-foreground" />
+                Could not load older archived threads
+              </span>
+            }
+            description={archiveError}
+          />
+        </SettingsSection>
+      ) : null}
       {archivedGroups.length === 0 ? (
         <SettingsSection
           id={isLoadingArchive ? undefined : searchableSetting("archive").id}

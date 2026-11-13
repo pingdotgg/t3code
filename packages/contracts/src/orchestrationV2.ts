@@ -3830,11 +3830,29 @@ export const OrchestrationV2PromptSuggestion = Schema.NullOr(
 );
 export type OrchestrationV2PromptSuggestion = typeof OrchestrationV2PromptSuggestion.Type;
 
+/** The last archived thread of a page: the next page starts below it. */
+export const OrchestrationV2ArchivedShellCursor = Schema.Struct({
+  archivedAt: IsoDateTime,
+  threadId: ThreadId,
+});
+export type OrchestrationV2ArchivedShellCursor = typeof OrchestrationV2ArchivedShellCursor.Type;
+
+/** Without `limit` the whole archive is read at once, as clients older than paging expect. */
+export const OrchestrationV2GetArchivedShellSnapshotInput = Schema.Struct({
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 500 }))),
+  before: Schema.optionalKey(OrchestrationV2ArchivedShellCursor),
+});
+export type OrchestrationV2GetArchivedShellSnapshotInput =
+  typeof OrchestrationV2GetArchivedShellSnapshotInput.Type;
+
+/** With `limit`, threads are newest archived first (`archivedAt` desc, then id asc). */
 export const OrchestrationV2ArchivedShellSnapshot = Schema.Struct({
   schemaVersion: PositiveInt,
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProjectShell),
   threads: Schema.Array(OrchestrationV2ThreadShell),
+  /** Present when archived threads remain below this page. */
+  nextCursor: Schema.optionalKey(OrchestrationV2ArchivedShellCursor),
 });
 export type OrchestrationV2ArchivedShellSnapshot = typeof OrchestrationV2ArchivedShellSnapshot.Type;
 
@@ -4451,7 +4469,7 @@ export const OrchestrationV2RpcSchemas = {
     output: OrchestrationGetFullThreadDiffResult,
   },
   getArchivedShellSnapshot: {
-    input: Schema.Struct({}),
+    input: OrchestrationV2GetArchivedShellSnapshotInput,
     output: OrchestrationV2ArchivedShellSnapshot,
   },
   getThreadFamily: {
