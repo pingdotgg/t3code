@@ -1,4 +1,5 @@
 import {
+  CHECKPOINT_DIFF_TRUNCATED_MARKER,
   type CheckpointRef,
   OrchestrationGetTurnDiffResult,
   type OrchestrationGetFullThreadDiffInput,
@@ -36,7 +37,6 @@ import { isGitImport, parseTurnDiffFilesFromNumstat, type TurnDiffFileSummary } 
 
 // Windows limits a command line to 32,767 characters. Leave room for the rest of git's arguments.
 const MAX_PATHSPEC_CHARS = 24_000;
-const DIFF_TRUNCATED_MARKER = "\n\n[truncated]";
 
 function batchFilePaths(files: ReadonlyArray<TurnDiffFileSummary>) {
   const batches: string[][] = [];
@@ -368,10 +368,11 @@ export const make = Effect.gen(function* () {
           new TextDecoder().decode(
             Buffer.from(diff).subarray(
               0,
-              CHECKPOINT_DIFF_MAX_OUTPUT_BYTES - Buffer.byteLength(DIFF_TRUNCATED_MARKER),
+              CHECKPOINT_DIFF_MAX_OUTPUT_BYTES -
+                Buffer.byteLength(CHECKPOINT_DIFF_TRUNCATED_MARKER),
             ),
             { stream: true },
-          ) + DIFF_TRUNCATED_MARKER;
+          ) + CHECKPOINT_DIFF_TRUNCATED_MARKER;
       }
 
       const turnDiff = buildTurnDiffResult(input, diff);

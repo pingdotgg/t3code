@@ -81,7 +81,7 @@ describe("OpenCode2Client event subscription", () => {
       assert.strictEqual(error._tag, "HttpClientError");
       assert.strictEqual(error.reason._tag, "TransportError");
       assert.isTrue(Cause.isTimeoutError(error.cause));
-    }).pipe(Effect.scoped),
+    }),
   );
 });
 
@@ -198,7 +198,7 @@ it.effect("closes an event subscription that recovery has not started reading", 
     assert.isFalse(signals[0]!.aborted);
     yield* Scope.close(scope, Exit.void);
     assert.isTrue(signals[0]!.aborted);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 describe("OpenCode2Client native image jobs", () => {

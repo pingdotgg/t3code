@@ -7152,13 +7152,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (candidate) => candidate.id === projection.thread.activeProviderThreadId,
     );
     const activeRun = projection.runs.find(isActiveRun);
-    // A message queued during worktree setup can arrive after that setup failed
-    // without a worktree. It waits, held, like the messages queued before the
-    // failure, instead of starting in the project checkout.
+    // Messages after failed or stopped worktree setup must wait for a worktree,
+    // rather than start in the project checkout.
     const latestRun = latestExecutedRun(projection.runs);
     const worktreeMissingRun =
       activeRun === undefined &&
-      dispatchMode.type === "queue_after_active" &&
+      (dispatchMode.type === "queue_after_active" || dispatchMode.type === "start_immediately") &&
       (latestRun?.status === "failed" || latestRun?.status === "interrupted") &&
       latestRun.workspacePreparation?.type === "worktree" &&
       projection.thread.worktreePath === null
@@ -10907,8 +10906,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         "runtimeRequests",
         "subagents",
       ],
-      // User messages measure a restart's model switch.
-      { turnItemTypes: ["user_message"], messageRoles: ["user"] },
+      // User messages measure a restart's model switch. Steering reads root and live nodes only.
+      { turnItemTypes: ["user_message"], messageRoles: ["user"], omitSettledLeafNodes: true },
     );
     if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
       return yield* new OrchestratorDispatchError({
@@ -12712,6 +12711,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           "reasoning",
         ],
         turnItemStatuses: ["pending", "running", "waiting"],
+        // Stop reads root nodes and ends open ones; a settled leaf has nothing left to end.
+        omitSettledLeafNodes: true,
       },
     );
     const run = projection.runs.find((candidate) => candidate.id === command.runId);

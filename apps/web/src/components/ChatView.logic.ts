@@ -36,6 +36,7 @@ import {
   type PreviewAnnotationPayload,
   ProviderDriverKind,
   type ProviderInstanceId,
+  type ProviderThreadId,
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
@@ -1576,4 +1577,13 @@ export function deriveAvailableRevertTurnCounts(projection: ThreadStructure | nu
     if (providerTurn?.providerThreadId === providerThread.id) available.add(run.ordinal);
   }
   return available;
+}
+
+/** An imported native session is bound before it has messages or runs, and its cwd is fixed. */
+export function isThreadEnvironmentLocked(input: {
+  readonly messageCount: number;
+  readonly hasRuntime: boolean;
+  readonly activeProviderThreadId: ProviderThreadId | null;
+}): boolean {
+  return input.messageCount > 0 || input.hasRuntime || input.activeProviderThreadId !== null;
 }
