@@ -13,6 +13,7 @@ import { MediaActions, type MediaActionSource } from "./MediaActions";
 interface MediaVideoPlayerProps {
   readonly src: string | null;
   readonly label: string;
+  readonly unavailableDetail?: string | undefined;
   readonly sourceFailed?: boolean | undefined;
   readonly originalUrl?: string | undefined;
   readonly revision?: string | null | undefined;
@@ -31,6 +32,7 @@ interface MediaVideoPlayerProps {
 export function MediaVideoPlayer({
   src: latestSrc,
   label,
+  unavailableDetail,
   sourceFailed = false,
   originalUrl,
   revision = null,
@@ -132,13 +134,15 @@ export function MediaVideoPlayer({
         <span
           role="alert"
           className={cn(
-            "flex aspect-video max-h-full w-full flex-col items-center justify-center gap-3 rounded-lg border border-border/40 bg-muted/40 p-4 text-center text-sm text-muted-foreground",
+            "flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-lg border border-border/40 bg-muted/40 p-4 text-center text-sm text-muted-foreground",
+            // Narrow authored videos are too small for the explanation, so let the card grow.
+            !unavailableDetail && "max-h-full",
             stateClassName,
           )}
         >
           <span className="inline-flex items-center gap-1.5">
             <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
-            Video unavailable{label ? ` · ${label}` : ""}
+            {["Video unavailable", label, unavailableDetail].filter(Boolean).join(" · ")}
           </span>
           <span className="flex flex-wrap items-center justify-center gap-2">
             {latestSrc !== null || onRetry ? (
