@@ -182,8 +182,11 @@ pass `--fix` to run the recommended ones without a prompt (for scripts), or
 `--dry-run` to only report. An installed background service for the same data
 directory is stopped for the repair and started again afterwards, also when
 the repair fails. Quit a server you started by hand, or the desktop app, first:
-the repair refuses to touch a database that is in use. Use `--base-dir` for a
-different data directory.
+the repair refuses to touch a database that is in use, and names the server
+process that holds it when it can tell. While the repair runs, a server started
+for the same data directory, for example by a desktop app connecting over SSH,
+is refused until the repair ends. Use `--base-dir` for a different data
+directory.
 
 The repair's time grows with the size of the whole database, not only the
 space it reclaims, and can exceed an hour on a large database or a slow disk;
