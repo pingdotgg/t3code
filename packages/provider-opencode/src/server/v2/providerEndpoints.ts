@@ -14,11 +14,26 @@ export const readProviderEndpoints = Effect.fn("OpenCode2Client.providerEndpoint
   return yield* connection.client.provider.list({ location: { directory } }).pipe(
     Effect.map((list) => {
       const endpoints = new Map<string, string>();
+      // Two providers that claim one integration with different endpoints leave
+      // it unknown: the probe must not guess which one meters the key.
+      const conflicting = new Set<string>();
+      const record = (key: string, baseURL: string) => {
+        if (conflicting.has(key)) return;
+        const known = endpoints.get(key);
+        if (known === undefined) {
+          endpoints.set(key, baseURL);
+          return;
+        }
+        if (known !== baseURL) {
+          endpoints.delete(key);
+          conflicting.add(key);
+        }
+      };
       for (const provider of list.data) {
         const baseURL = provider.settings?.baseURL;
         if (typeof baseURL !== "string") continue;
-        endpoints.set(provider.id, baseURL);
-        if (provider.integrationID !== undefined) endpoints.set(provider.integrationID, baseURL);
+        record(provider.id, baseURL);
+        if (provider.integrationID !== undefined) record(provider.integrationID, baseURL);
       }
       return endpoints;
     }),
