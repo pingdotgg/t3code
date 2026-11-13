@@ -26,6 +26,8 @@ it.each([
 
 it.each([
   ["gh pr merge 19 --squash", [19]],
+  ['gh pr merge "19" --squash', [19]],
+  ['/bin/zsh -lc "gh pr merge 19"', [19]],
   ["gh pr merge --squash --match-head-commit 3b2f958 #19", [19]],
   ["gh pr close https://github.com/o/r/pull/19 && gh pr merge 20", [19, 20]],
   ["glab mr merge https://gitlab.com/o/r/-/merge_requests/7", [7]],
