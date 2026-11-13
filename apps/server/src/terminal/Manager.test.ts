@@ -65,6 +65,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   readonly writes: string[] = [];
   readonly resizeCalls: Array<{ cols: number; rows: number }> = [];
   readonly killSignals: Array<string | undefined> = [];
+  clearCalls = 0;
   readonly pid: number;
   writeFailure: unknown | undefined;
   resizeFailure: unknown | undefined;
@@ -90,6 +91,10 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
       throw this.resizeFailure;
     }
     this.resizeCalls.push({ cols, rows });
+  }
+
+  clear(): void {
+    this.clearCalls += 1;
   }
 
   kill(signal?: string): void {
@@ -558,6 +563,18 @@ it.layer(
       assert.equal(second.threadId, "thread-1");
       assert.equal(third.threadId, "thread-1");
       expect(ptyAdapter.spawnInputs).toHaveLength(1);
+    }),
+  );
+
+  it.effect("clearing a terminal also clears the PTY's own screen buffer", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+
+      expect(process.clearCalls).toBe(1);
     }),
   );
 
