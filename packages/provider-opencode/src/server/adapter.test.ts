@@ -1487,8 +1487,12 @@ describe("OpenCodeAdapterV2", () => {
           },
           abort: async () => ({ data: true }),
           children: async () => ({ data: [] }),
+          // OpenCode may have stored the resume prompt before its event reaches the adapter.
           messages: async () => ({
-            data: [{ info: { id: "msg_child_first", role: "user" }, parts: [] }],
+            data: [
+              { info: { id: "msg_child_first", role: "user" }, parts: [] },
+              { info: { id: "msg_child_resume", role: "user" }, parts: [] },
+            ],
           }),
         },
       });
