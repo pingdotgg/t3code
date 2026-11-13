@@ -16,12 +16,15 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderAdapterOpenSessionError } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
@@ -32,6 +35,7 @@ import * as EffectWorker from "./EffectWorker.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
 const nativeSessionId = "account-switch-wake-session";
 const settings = Schema.decodeSync(ClaudeSettings)({});
@@ -165,8 +169,13 @@ const makeAccount = Effect.fn("makeAccount")(function* (input: {
   return { adapter, processes };
 });
 
-it.live.each(["sent after", "queued behind", "stopped after direct handoff"] as const)(
-  "preserves Claude background-work ownership for a switch %s",
+it.live.each([
+  "sent after",
+  "queued behind",
+  "stopped after direct handoff",
+  "stopped after failed target start",
+] as const)(
+  "preserves Claude background-work ownership and target selection for a switch %s",
   (variant) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -186,7 +195,25 @@ it.live.each(["sent after", "queued behind", "stopped after direct handoff"] as 
           continuations,
           closed,
         });
-        const adapters = [first.adapter, second.adapter];
+        const failedStart = variant === "stopped after failed target start";
+        const stopping = variant.startsWith("stopped after");
+        const adapters = [
+          first.adapter,
+          failedStart
+            ? {
+                ...second.adapter,
+                openSession: (input: Parameters<typeof second.adapter.openSession>[0]) =>
+                  Effect.fail(
+                    new ProviderAdapterOpenSessionError({
+                      driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+                      providerSessionId: input.providerSessionId,
+                      requiresSignIn: true,
+                      cause: "Controlled target sign-in refusal before first provider turn",
+                    }),
+                  ),
+              }
+            : second.adapter,
+        ];
         // Two accounts of one Claude install resume each other's native history.
         const registry = Layer.succeed(
           ProviderAdapterRegistry.ProviderAdapterRegistryV2,
@@ -203,10 +230,9 @@ it.live.each(["sent after", "queued behind", "stopped after direct handoff"] as 
             getMetadata: (instanceId) =>
               Effect.succeed({
                 driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-                continuationKey:
-                  variant === "stopped after direct handoff"
-                    ? `claude:${instanceId}`
-                    : "claude:shared-native-account-history",
+                continuationKey: stopping
+                  ? `claude:${instanceId}`
+                  : "claude:shared-native-account-history",
                 enabled: true,
                 capabilities: ClaudeProviderCapabilitiesV2,
               }),
@@ -275,18 +301,20 @@ it.live.each(["sent after", "queued behind", "stopped after direct handoff"] as 
 
           if (!queued) yield* send(2, secondAccount);
           yield* worker.drain();
-          if (variant === "stopped after direct handoff") {
-            const secondSettling = yield* runStatus("send-2", "waiting");
-            yield* Queue.offer(second.processes[0]!, resultFrame("turn-2", "Handoff complete."));
-            yield* Fiber.join(secondSettling);
-            yield* worker.drain();
+          if (stopping) {
+            if (!failedStart) {
+              const secondSettling = yield* runStatus("send-2", "waiting");
+              yield* Queue.offer(second.processes[0]!, resultFrame("turn-2", "Handoff complete."));
+              yield* Fiber.join(secondSettling);
+              yield* worker.drain();
+            }
             const beforeStop = yield* orchestrator.getThreadProjection(threadId);
             const source = beforeStop.providerThreads.find(
               (thread) => thread.providerInstanceId === firstAccount.instanceId,
             )!;
             assert.deepEqual(
               beforeStop.runs.map((run) => run.status),
-              ["completed", "completed"],
+              ["completed", failedStart ? "failed" : "completed"],
             );
             assert.equal(source.pendingBackgroundTasks?.[0]?.taskId, "bash-build");
             assert.isFalse(
@@ -296,6 +324,32 @@ it.live.each(["sent after", "queued behind", "stopped after direct handoff"] as 
               "the background command is reported only by the roster",
             );
             assert.deepEqual(closed, []);
+            const sourceSession = Option.getOrThrow(
+              yield* (yield* ProviderSessionManager.ProviderSessionManagerV2).get(
+                source.providerSessionId!,
+              ),
+            );
+            assert.isTrue(yield* sourceSession.hasPendingBackgroundWorkForThread!(source));
+            const target = beforeStop.runs[1]!;
+            if (failedStart) {
+              assert.isFalse(
+                beforeStop.providerTurns.some(
+                  (turn) => turn.providerThreadId === target.providerThreadId,
+                ),
+              );
+              const directInterrupt = yield* orchestrator
+                .dispatch({
+                  type: "run.interrupt",
+                  commandId: CommandId.make("direct-target-stop"),
+                  threadId,
+                  runId: target.id,
+                })
+                .pipe(Effect.exit);
+              assert.isTrue(
+                Exit.isFailure(directInterrupt),
+                "a failed target alone is not interruptible",
+              );
+            }
             yield* orchestrator.dispatch({
               type: "thread.stop",
               commandId: CommandId.make("stop"),
@@ -313,6 +367,23 @@ it.live.each(["sent after", "queued behind", "stopped after direct handoff"] as 
                 ?.pendingBackgroundTasks,
               [],
             );
+            assert.isFalse(yield* sourceSession.hasPendingBackgroundWorkForThread!(source));
+            if (failedStart) {
+              assert.deepEqual(stopped.runs[1], target, "Stop preserves the target failure");
+              assert.deepEqual(stopped.attempts, beforeStop.attempts);
+              assert.deepEqual(stopped.nodes, beforeStop.nodes);
+              assert.deepEqual(stopped.providerTurns, beforeStop.providerTurns);
+              assert.deepEqual(
+                stopped.turnItems.filter((item) => item.type === "error"),
+                beforeStop.turnItems.filter((item) => item.type === "error"),
+              );
+              assert.isTrue(
+                stopped.turnItems.some(
+                  (item) => item.runId === target.id && item.type === "run_interrupt_request",
+                ),
+                "Stop still guards late tool calls on the failed target",
+              );
+            }
             assert.equal(
               stopped.thread.activeProviderThreadId,
               beforeStop.thread.activeProviderThreadId,
