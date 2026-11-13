@@ -66,16 +66,34 @@ export function assertClaudeBackgroundSubagentAfterRootOutput(
     (message) => message.id === projection.runs[1]?.userMessageId,
   );
   assert.equal(wakeMessage?.text, "SUB_FINAL_REPORT");
-  assert.isFalse(
-    result.domainEvents.some(
-      (event) =>
-        event.type === "provider-thread.updated" &&
-        (event.payload.pendingBackgroundTasks?.length ?? 0) > 0,
-    ),
-  );
   if (subagent?.childThreadId == null) {
     throw new Error("The background subagent is missing its child thread.");
   }
+  const rosters = result.domainEvents.flatMap((event, index) =>
+    event.type === "provider-thread.updated"
+      ? [{ index, tasks: event.payload.pendingBackgroundTasks ?? [] }]
+      : [],
+  );
+  const continuationStartIndex = result.domainEvents.findIndex(
+    (event) =>
+      event.type === "run.updated" &&
+      event.payload.id === projection.runs[1]?.id &&
+      event.payload.status === "starting",
+  );
+  assert.isAtLeast(continuationStartIndex, 0);
+  for (const roster of rosters) {
+    for (const task of roster.tasks) {
+      assert.equal(
+        task.kind === "subagent" ? task.childThreadId : undefined,
+        subagent.childThreadId,
+      );
+    }
+  }
+  assert.isTrue(
+    rosters.some((roster) => roster.index < continuationStartIndex && roster.tasks.length > 0),
+    "the subagent stays pending until its wake run starts",
+  );
+  assert.lengthOf(rosters.at(-1)?.tasks ?? [], 0);
   assert.deepEqual(backgroundNotifications(projection), [
     {
       summary: 'Subagent "Background subagent test" finished',
@@ -96,13 +114,6 @@ export function assertClaudeBackgroundSubagentAfterRootOutput(
       `subagent command ${command} must be in the child thread`,
     );
   }
-  const continuationStartIndex = result.domainEvents.findIndex(
-    (event) =>
-      event.type === "run.updated" &&
-      event.payload.id === projection.runs[1]?.id &&
-      event.payload.status === "starting",
-  );
-  assert.isAtLeast(continuationStartIndex, 0);
   const assertStoredWhileIdle = (
     label: string,
     matches: (event: OrchestrationV2DomainEvent) => boolean,
