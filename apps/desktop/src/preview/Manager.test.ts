@@ -619,6 +619,7 @@ describe("PreviewManager", () => {
                 setShown: () => {},
                 loadFailed: () => {},
                 humanStartedDownload: () => true,
+                agentLedPage: () => false,
                 placeDownload: () => true,
               }),
               Layer.mock(PreviewPasskeys.PreviewPasskeys)({
@@ -671,7 +672,7 @@ describe("PreviewManager", () => {
         if (existing) {
           expect(yield* fs.readFileString(`${downloads}/report.txt`)).toBe("existing download");
         }
-      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   effectIt.effect.each([
@@ -743,6 +744,69 @@ describe("PreviewManager", () => {
           }),
         platform,
       ),
+  );
+
+  effectIt.effect("keeps mouse back and forward buttons inside the preview tab", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        const goBack = vi.fn();
+        const goForward = vi.fn();
+        const send = vi.fn();
+        let canGoBack = false;
+        Object.assign(preview.webContents, {
+          navigationHistory: {
+            canGoBack: () => canGoBack,
+            canGoForward: () => true,
+            goBack,
+            goForward,
+          },
+          getZoomFactor: () => 2,
+          send,
+        });
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.createTab("tab_mouse_navigation");
+        yield* manager.registerWebview("tab_mouse_navigation", 42);
+
+        // Electron reports thumb buttons as "back"/"forward" for every frame of the guest, iframes included.
+        const beforeMouse = preview.listeners.get("before-mouse-event");
+        expect(beforeMouse, "guest has no before-mouse-event listener").toBeDefined();
+        const press = (type: "mouseDown" | "mouseUp", button: string) => {
+          const preventDefault = vi.fn();
+          beforeMouse!({ preventDefault } as never, { type, button, x: 10, y: 10 } as never);
+          return preventDefault;
+        };
+
+        // At the start of tab history the press is still swallowed, or the host app goes back instead.
+        expect(press("mouseDown", "back")).toHaveBeenCalledOnce();
+        expect(press("mouseUp", "back")).toHaveBeenCalledOnce();
+        expect(goBack).not.toHaveBeenCalled();
+
+        canGoBack = true;
+        expect(press("mouseDown", "back")).toHaveBeenCalledOnce();
+        expect(goBack).not.toHaveBeenCalled();
+        expect(press("mouseUp", "back")).toHaveBeenCalledOnce();
+        expect(goBack).toHaveBeenCalledOnce();
+        expect(press("mouseDown", "forward")).toHaveBeenCalledOnce();
+        expect(press("mouseUp", "forward")).toHaveBeenCalledOnce();
+        expect(goForward).toHaveBeenCalledOnce();
+        for (const button of ["left", "right"]) {
+          expect(press("mouseDown", button)).not.toHaveBeenCalled();
+          expect(press("mouseUp", button)).not.toHaveBeenCalled();
+        }
+        expect(goBack).toHaveBeenCalledOnce();
+        expect(goForward).toHaveBeenCalledOnce();
+        // The guest replays dropped presses for human input and recordings, in CSS px.
+        expect(send.mock.calls.filter(([channel]) => channel === "preview:thumb-press")).toEqual([
+          ["preview:thumb-press", "down", 5, 5, 3],
+          ["preview:thumb-press", "up", 5, 5, 3],
+          ["preview:thumb-press", "down", 5, 5, 3],
+          ["preview:thumb-press", "up", 5, 5, 3],
+          ["preview:thumb-press", "down", 5, 5, 4],
+          ["preview:thumb-press", "up", 5, 5, 4],
+        ]);
+      }),
+    ),
   );
 
   effectIt.effect("keeps editing and forwarded shortcuts in whichever tab holds focus", () =>
@@ -820,7 +884,7 @@ describe("PreviewManager", () => {
     ["linux", false],
     ["win32", false],
   ] as const)(
-    "lets the page and its iframes claim the find shortcut before the host opens find on %s",
+    "lets the page and its iframes claim the find and zoom shortcuts before the host acts on %s",
     ([platform, usesMeta]) =>
       withManager(
         (manager) =>
@@ -838,8 +902,23 @@ describe("PreviewManager", () => {
             yield* manager.registerWebview("tab_page_find", 42);
             yield* manager.setForwardedShortcuts([
               { command: "preview.find", shortcut: parseKeybindingShortcut("mod+f")! },
+              { command: "preview.zoomIn", shortcut: parseKeybindingShortcut("mod+=")! },
             ]);
             const beforeInput = preview.listeners.get("before-input-event")!;
+            const keepsZoom = vi.fn();
+            beforeInput(
+              { preventDefault: keepsZoom } as never,
+              {
+                type: "keyDown",
+                key: "=",
+                code: "Equal",
+                meta: usesMeta,
+                control: !usesMeta,
+                shift: false,
+                alt: false,
+              } as never,
+            );
+            expect(keepsZoom).not.toHaveBeenCalled();
             const findKey = {
               type: "keyDown",
               key: "f",
@@ -2056,7 +2135,7 @@ describe("PreviewManager", () => {
       expect(yield* nextType).toBe("attached");
       yield* manager.closeTab("tab_1");
       expect(yield* nextType).toBe("detached");
-    }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+    }).pipe(Effect.provide(managerLayer())),
   );
 
   effectIt.effect(
@@ -2115,6 +2194,71 @@ describe("PreviewManager", () => {
         expect(yield* Queue.take(capturing)).toBe(true);
         screenshot.resolve({ data: "" });
         expect(yield* Queue.take(capturing)).toBe(false);
+      }).pipe(Effect.provide(managerLayer())),
+  );
+
+  effectIt.effect(
+    "opens a new-tab link in the background only when the agent's input led to it",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+        const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
+        const contents = Object.assign(
+          makeTestPreviewWebContents(async () => {
+            throw new Error("unused");
+          }, 42),
+          {
+            isDevToolsOpened: () => false,
+            getUserAgent: () => "Electron",
+            focusedFrame: null,
+          },
+        );
+        fromId.mockReturnValue(contents);
+        const manager = yield* PreviewManager.PreviewManager;
+        const openLinks = yield* Queue.unbounded<boolean>();
+        yield* manager.subscribeOpenLinks(({ background }) =>
+          Queue.offer(openLinks, background).pipe(Effect.asVoid),
+        );
+        const attached = yield* Deferred.make<void>();
+        yield* host.events.pipe(
+          Stream.runForEach((line) =>
+            new TextDecoder().decode(line).includes('"type":"attached"')
+              ? Deferred.succeed(attached, undefined)
+              : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        yield* manager.createTab("tab_1", { serverTab });
+        yield* manager.registerWebview("tab_1", 42);
+        yield* Deferred.await(attached);
+        const openWindow = vi.mocked(contents.setWindowOpenHandler).mock.calls[0]![0];
+        const openBlankLink = Effect.suspend(() => {
+          openWindow({
+            url: "https://example.com/next",
+            disposition: "foreground-tab",
+          } as Electron.HandlerDetails);
+          return Queue.take(openLinks);
+        });
+
+        expect(yield* openBlankLink).toBe(false);
+
+        yield* host.handleCommandLine(
+          JSON.stringify({
+            type: "cdp",
+            ...serverTab,
+            message: JSON.stringify({
+              id: 1,
+              method: "Runtime.evaluate",
+              params: { expression: "document.querySelector('a').click()" },
+              sessionId: "t3-preview-page",
+            }),
+          }),
+        );
+        expect(yield* openBlankLink).toBe(true);
+
+        // A person clicking in the guest itself gives it a focused frame.
+        Object.assign(contents, { focusedFrame: {} });
+        expect(yield* openBlankLink).toBe(false);
       }).pipe(Effect.provide(managerLayer()), Effect.scoped),
   );
 
@@ -2206,7 +2350,7 @@ describe("PreviewManager", () => {
       expect(JSON.parse(yield* Queue.take(lines))).toEqual({ type: "detached", ...serverTab });
       expect(JSON.parse(yield* Queue.take(lines))).toEqual({ type: "attached", ...serverTab });
       expect(statuses.at(-1)?.kind).toBe("Success");
-    }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+    }).pipe(Effect.provide(managerLayer())),
   );
 
   effectIt.effect("discards a screenshot that resolves after its guest is replaced", () =>
