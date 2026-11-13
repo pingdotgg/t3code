@@ -18,7 +18,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as HttpClient from "effect/http/HttpClient";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -27,7 +26,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { AcpRegistryAdapterV2Driver, type AcpRegistryAdapterV2DriverEnv } from "./adapter.ts";
-import { readKimiUsageLimits } from "./kimiUsageLimits.ts";
+import { KimiUsageLimits } from "./kimiUsageLimits.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -539,10 +538,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const hostEnvironment = yield* HostProcess.Environment;
     const host = yield* ProviderHost.ProviderHost;
-    const httpClient = yield* HttpClient.HttpClient;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const pathService = yield* Path.Path;
-    const digestService = yield* Digest.Digest;
     const continuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER_KIND,
       instanceId,
@@ -656,13 +651,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       ) {
         return provider;
       }
+      const kimiUsageLimits = yield* KimiUsageLimits;
       const usageLimits = yield* Effect.option(
-        readKimiUsageLimits({ environment: processEnvironment }).pipe(
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, pathService),
-          Effect.provideService(Digest.Digest, digestService),
-        ),
+        kimiUsageLimits.read({ environment: processEnvironment }),
       );
       if (Option.isNone(usageLimits) || usageLimits.value === undefined) return provider;
       return { ...provider, usageLimits: usageLimits.value };

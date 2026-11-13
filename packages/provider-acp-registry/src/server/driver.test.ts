@@ -25,6 +25,7 @@ import * as Stream from "effect/Stream";
 
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
+import { KimiUsageLimits, KimiUsageLimitsLive, readKimiUsageLimits } from "./kimiUsageLimits.ts";
 import {
   AcpRegistryDriver,
   applyAcpRegistryAvailableCommands,
@@ -545,6 +546,7 @@ const driverLayer = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
       ProviderEventLoggers.NoOpProviderEventLoggers,
     ),
   ),
+  Layer.provideMerge(KimiUsageLimitsLive),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   Layer.provideMerge(FetchHttpClient.layer),
 );
@@ -769,6 +771,12 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
             }),
         }),
         Effect.provideService(HttpClient.HttpClient, kimiClient),
+        // The driver consumes the Kimi usage probe through its service; hand
+        // it the direct implementation so `read` resolves the stub HttpClient
+        // from this instance's ambient context, not the suite's FetchHttpClient.
+        Effect.provideService(KimiUsageLimits, {
+          read: (input) => readKimiUsageLimits(input),
+        }),
       );
 
       const waitForUsageLimits = kimiInstance.snapshot.streamChanges.pipe(

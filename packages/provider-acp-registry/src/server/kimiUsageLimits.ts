@@ -3,6 +3,8 @@ import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Context from "effect/Context";
 import * as FileSystem from "effect/FileSystem";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -45,8 +47,8 @@ const SESSION_MINS = 5 * 60;
 const CREDENTIAL_LOCK_RETRY_COUNT = 5;
 const CREDENTIAL_LOCK_RETRY_DELAY = "20 millis";
 // A lock older than this belongs to a dead process; break it once and retry.
-// The guarded refresh holds a live lock for up to REQUEST_TIMEOUT, so this
-// sits well above the longest legitimate hold.
+// It must exceed the longest hold (the 10s REQUEST_TIMEOUT refresh) or a live
+// reader could break a live peer's lock and double-refresh the same token.
 const CREDENTIAL_LOCK_STALE_MS = 15 * 1_000;
 
 const KimiStoredCredential = Schema.Struct({
@@ -330,13 +332,12 @@ function storedCredentialFingerprint(value: KimiStoredCredential): string {
 
 /**
  * Best-effort cross-process lock matching the CLI's `{configDir}/oauth/{name}.lock`
- * protocol: exclusive create, bounded wait, stale break, and proceed unlocked on
- * exhaustion. Files errors are swallowed — an unwritable directory must not take
- * the quota lookup down (the re-read before writeback is the correctness backstop).
+ * protocol. The callback receives `acquired`; without it the caller skips
+ * writes — the unverifiable protocol means concurrency is declined, not raced.
  */
 const withCredentialLock = Effect.fn("kimiUsageLimits.withCredentialLock")(function* <A, E, R>(
   lockPath: string,
-  use: () => Effect.Effect<A, E, R>,
+  use: (acquired: boolean) => Effect.Effect<A, E, R>,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const owner = `${process.pid}-${yield* Clock.currentTimeMillis}`;
@@ -351,7 +352,7 @@ const withCredentialLock = Effect.fn("kimiUsageLimits.withCredentialLock")(funct
       return yield* Effect.scoped(
         Effect.acquireRelease(Effect.succeed(lockPath), (locked) =>
           fileSystem.remove(locked, { force: true }).pipe(Effect.ignore({ log: true })),
-        ).pipe(Effect.andThen(use)),
+        ).pipe(Effect.andThen(use(true))),
       );
     }
     if (attempt === CREDENTIAL_LOCK_RETRY_COUNT) break;
@@ -373,14 +374,15 @@ const withCredentialLock = Effect.fn("kimiUsageLimits.withCredentialLock")(funct
     }
     yield* Effect.sleep(CREDENTIAL_LOCK_RETRY_DELAY);
   }
-  // Proceed without the lock; the re-read before writeback keeps the writeback safe.
-  return yield* use();
+  // Unverifiable protocol: without the lock the refresh is declined, not raced.
+  return yield* use(false);
 });
 
 /**
- * Writes the refreshed credential back after re-reading the file. When the CLI
- * rotated it mid-flight, the CLI's on-disk snapshot wins (its refresh token is
- * the live one); only the fresh access token is ours to persist.
+ * Writes the refreshed credential back after re-reading the file. The CLI owns
+ * the credential: a mid-flight rotation or removal (sign-out) means the reader
+ * has lost the file and writes nothing — mixing tokens from two sessions onto
+ * disk would strand the CLI until they expired.
  */
 const persistRefreshedCredential = Effect.fn("kimiUsageLimits.persistRefreshedCredential")(
   function* (input: {
@@ -399,13 +401,16 @@ const persistRefreshedCredential = Effect.fn("kimiUsageLimits.persistRefreshedCr
     const latest = Option.getOrUndefined(
       yield* decodeStoredCredential(latestContents).pipe(Effect.option),
     );
-    const rotated =
-      latest !== undefined &&
-      storedCredentialFingerprint(latest) !== storedCredentialFingerprint(input.stored);
-    const persistedStored = rotated ? latest : input.stored;
-    const persistedToken: typeof KimiTokenRefresh.Type = rotated
-      ? { ...input.token, refresh_token: latest!.refresh_token }
-      : input.token;
+    // A missing or undecodable file means the CLI removed or replaced it; the
+    // reader recreating it would sign the CLI back into an account it left.
+    if (latest === undefined) return;
+    // A changed fingerprint means the CLI rotated while this request was in
+    // flight. The fingerprint cannot tell a rotation from an account change,
+    // so the whole write is dropped rather than persisting a mixed pair. The
+    // fresh access token still serves this lookup from memory.
+    if (storedCredentialFingerprint(latest) !== storedCredentialFingerprint(input.stored)) {
+      return;
+    }
     const expiresAt =
       input.token.expires_at ?? Math.floor(input.nowMs / 1000) + (input.token.expires_in ?? 900);
     // Atomic like the config writer: a truncated credential file would sign the
@@ -413,7 +418,7 @@ const persistRefreshedCredential = Effect.fn("kimiUsageLimits.persistRefreshedCr
     // owner-only, like the CLI writes them.
     yield* writeFileStringAtomically({
       filePath: input.credentialsPath,
-      contents: serializeStoredCredential(persistedStored, persistedToken, expiresAt),
+      contents: serializeStoredCredential(latest, input.token, expiresAt),
       mode: 0o600,
     }).pipe(Effect.catchTags({ PlatformError: () => Effect.void }));
   },
@@ -504,13 +509,14 @@ export const readKimiUsageLimits = Effect.fn("readKimiUsageLimits")(function* (
   if (stored === undefined) return undefined;
 
   // Kimi mints 15-minute access tokens; refresh proactively and persist the
-  // result so the CLI's next run reuses it too. The whole read → refresh →
-  // write sequence shares the CLI's lock; when the lock cannot be taken the
-  // re-read below still keeps the writeback from reverting a CLI rotation.
+  // result so the CLI's next run reuses it too. Without the lock neither the
+  // refresh request nor the writeback runs: the contended credential is
+  // left to its owner rather than raced.
   let accessToken = stored.access_token;
   if (stored.expires_at * 1_000 - nowMs <= REFRESH_THRESHOLD_MS) {
-    const refreshed = yield* withCredentialLock(lockPath, () =>
+    const refreshed: Option.Option<string> = yield* withCredentialLock(lockPath, (acquired) =>
       Effect.gen(function* () {
+        if (!acquired) return Option.none();
         const request = HttpClientRequest.post(`${oauthHost}/api/oauth/token`).pipe(
           HttpClientRequest.bodyUrlParams({
             client_id: KIMI_CODE_CLIENT_ID,
@@ -518,15 +524,16 @@ export const readKimiUsageLimits = Effect.fn("readKimiUsageLimits")(function* (
             refresh_token: stored.refresh_token,
           }),
         );
-        const body: unknown = yield* client.execute(request).pipe(
+        // A rejected status or stall decodes to no token instead of failing the probe.
+        const body = yield* client.execute(request).pipe(
           Effect.flatMap(HttpClientResponse.filterStatusOk),
           Effect.flatMap((response) => response.json),
-          // Headers and body arrive separately; a stalled body must not hang the probe.
           Effect.timeout(REQUEST_TIMEOUT),
+          Effect.option,
         );
-        return decodeTokenRefresh(body);
+        // The flattened shape stays Option<Option<token>> for this gen's union.
+        return Option.some(Option.flatMap(body, decodeTokenRefresh));
       }).pipe(
-        Effect.option,
         Effect.map(Option.flatten),
         Effect.flatMap((decoded) =>
           Option.isNone(decoded)
@@ -577,3 +584,50 @@ export const readKimiUsageLimits = Effect.fn("readKimiUsageLimits")(function* (
   }
   return kimiUsageResponseToLimits(parsed, checkedAt);
 });
+/**
+ * The Kimi usage probe as a context service; without its layer the default
+ * reports no limits rather than failing the driver.
+ */
+export class KimiUsageLimits extends Context.Reference<{
+  /** The live layer closes over the static deps, so `read` needs no context. */
+  readonly read: (
+    input: KimiUsageInput,
+  ) => Effect.Effect<
+    Effect.Success<ReturnType<typeof readKimiUsageLimits>>,
+    Effect.Error<ReturnType<typeof readKimiUsageLimits>>
+  >;
+}>("@t3tools/provider-acp-registry/server/KimiUsageLimits", {
+  defaultValue: () => ({ read: () => Effect.undefined }),
+}) {}
+
+export const KimiUsageLimitsLive = Layer.effect(
+  KimiUsageLimits,
+  Effect.gen(function* () {
+    // Acquire the static dependencies once in the layer so the service's read
+    // is self-contained; callers only supply the per-call provider
+    // environment.
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const client = yield* HttpClient.HttpClient;
+    const digest = yield* Digest.Digest;
+    const homeDirectory = yield* HostProcess.HomeDirectory;
+    const platform = yield* HostProcess.Platform;
+    return {
+      read: Effect.fn("KimiUsageLimits.read")((input: KimiUsageInput) =>
+        readKimiUsageLimits(input).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(HttpClient.HttpClient, client),
+          Effect.provideService(Digest.Digest, digest),
+          Effect.provideService(HostProcess.HomeDirectory, homeDirectory),
+          Effect.provideService(HostProcess.Platform, platform),
+        ),
+      ) as (
+        input: KimiUsageInput,
+      ) => Effect.Effect<
+        Effect.Success<ReturnType<typeof readKimiUsageLimits>>,
+        Effect.Error<ReturnType<typeof readKimiUsageLimits>>
+      >,
+    };
+  }),
+);
