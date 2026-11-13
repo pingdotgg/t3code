@@ -1,4 +1,4 @@
-import * as NodeSqlite from "node:sqlite";
+import type * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -72,6 +72,29 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+
+const workerStatements = vi.hoisted(
+  (): Array<{ readonly readOnly: boolean; readonly sql: string }> => [],
+);
+
+vi.mock("node:worker_threads", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeWorkerThreads>();
+  class RecordedWorker extends actual.Worker {
+    readonly #readOnly: boolean;
+    constructor(...args: ConstructorParameters<typeof actual.Worker>) {
+      super(...args);
+      this.#readOnly = args[1]?.workerData?.readOnly === true;
+    }
+    override postMessage(...args: Parameters<NodeWorkerThreads.Worker["postMessage"]>) {
+      const [message] = args;
+      if (typeof message === "object" && message !== null && typeof message.sql === "string") {
+        workerStatements.push({ readOnly: this.#readOnly, sql: message.sql });
+      }
+      return super.postMessage(...args);
+    }
+  }
+  return { ...actual, Worker: RecordedWorker };
+});
 
 const isLiveStreamBufferError = Schema.is(LiveStreamBufferError);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -193,45 +216,22 @@ it.effect("discovers on the reader worker and deletes on the writer", () =>
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* seedCompaction();
-      // Establish the reader before recording main-thread statements.
+      // Establish the reader before recording statements.
       yield* sql`SELECT 1`.pipe(NodeSqliteClient.readOnly);
-      const reads: string[] = [];
-      const writes: string[] = [];
-      const all = NodeSqlite.StatementSync.prototype.all;
-      const run = NodeSqlite.StatementSync.prototype.run;
-      yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          const readSpy = vi
-            .spyOn(NodeSqlite.StatementSync.prototype, "all")
-            .mockImplementation(function (this: NodeSqlite.StatementSync, ...params) {
-              reads.push(this.sourceSQL);
-              return all.apply(this, params);
-            });
-          const writeSpy = vi
-            .spyOn(NodeSqlite.StatementSync.prototype, "run")
-            .mockImplementation(function (this: NodeSqlite.StatementSync, ...params) {
-              writes.push(this.sourceSQL);
-              return run.apply(this, params);
-            });
-          return { readSpy, writeSpy };
-        }),
-        ({ readSpy, writeSpy }) =>
-          Effect.sync(() => {
-            readSpy.mockRestore();
-            writeSpy.mockRestore();
-          }),
-      );
+      workerStatements.length = 0;
       const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
       const result = yield* maintenance.pruneEventStore();
       assert.equal(result.deletedEventCount, 150);
       assert.equal(result.deletedReceiptCount, 100);
+      const writer = workerStatements.filter((statement) => !statement.readOnly);
       // Only the in-transaction check for rows appended during the pass reads on the writer.
       assert.deepEqual(
-        reads.filter((query) => /\bSELECT\b/.test(query) && !query.includes("AS prompt_sequence")),
+        writer.filter(({ sql }) => /\bSELECT\b/.test(sql) && !sql.includes("AS prompt_sequence")),
         [],
       );
-      assert(writes.some((query) => query.includes("DELETE FROM orchestration_events")));
-      assert(writes.some((query) => query.includes("DELETE FROM orchestration_command_receipts")));
+      assert(workerStatements.some(({ readOnly, sql }) => readOnly && /\bSELECT\b/.test(sql)));
+      assert(writer.some(({ sql }) => sql.includes("DELETE FROM orchestration_events")));
+      assert(writer.some(({ sql }) => sql.includes("DELETE FROM orchestration_command_receipts")));
     }).pipe(
       Effect.provide(
         ProjectionMaintenance.layer.pipe(
