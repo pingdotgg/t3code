@@ -681,22 +681,31 @@ describe("ssh tunnel scripts", () => {
     }),
   );
 
-  it.effect("connects through a tunnel whose responses take longer than a second", () =>
+  it.effect("connects and reuses a tunnel whose responses take over a second", () =>
     Effect.gen(function* () {
       // Over a ~1s RTT link each request through the forward takes a few round trips.
       const RESPONSE_MS = 2_500;
       const tunnelSpawned = yield* Deferred.make<void>();
+      const reconnectProbed = yield* Deferred.make<void>();
+      const forwardReplaced = yield* Deferred.make<void>();
+      let forwards = 0;
+      let connected = false;
       const spawner = ChildProcessSpawner.make((command) =>
         commandArgs(command).includes("-N")
-          ? Deferred.succeed(tunnelSpawned, undefined).pipe(
+          ? Effect.sync(() => ++forwards).pipe(
+              Effect.flatMap((count) =>
+                Deferred.succeed(count === 1 ? tunnelSpawned : forwardReplaced, undefined),
+              ),
               Effect.as(makeRunningProcess(() => undefined)),
             )
           : Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n')),
       );
       const httpClient = HttpClient.make((request) =>
-        Effect.sleep(Duration.millis(RESPONSE_MS)).pipe(
-          Effect.as(HttpClientResponse.fromWeb(request, new Response("", { status: 200 }))),
-        ),
+        Effect.gen(function* () {
+          if (connected) yield* Deferred.succeed(reconnectProbed, undefined);
+          yield* Effect.sleep(Duration.millis(RESPONSE_MS));
+          return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+        }),
       );
       const layer = Layer.mergeAll(
         NodeServices.layer,
@@ -726,6 +735,17 @@ describe("ssh tunnel scripts", () => {
           Result.isSuccess(result),
           Result.isFailure(result) ? result.failure.message : undefined,
         );
+        if (Result.isFailure(result)) return;
+
+        connected = true;
+        const reconnect = yield* Effect.forkChild(manager.ensureEnvironment(result.success.target));
+        yield* Deferred.await(reconnectProbed);
+        yield* TestClock.adjust(Duration.seconds(60));
+        const outcome = yield* Effect.raceFirst(
+          Fiber.join(reconnect).pipe(Effect.map((environment) => environment.httpBaseUrl)),
+          Deferred.await(forwardReplaced).pipe(Effect.as("replaced the forward")),
+        );
+        assert.equal(outcome, result.success.httpBaseUrl);
       }).pipe(Effect.provide(layer), Effect.scoped);
     }),
   );
