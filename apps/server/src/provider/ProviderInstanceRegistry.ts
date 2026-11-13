@@ -127,7 +127,7 @@ const readInstanceSecrets = Effect.fn("ProviderInstanceRegistry.readInstanceSecr
   // An empty secret reads as unreadable, so a driver cannot fall back to an inherited credential.
   const next = () => {
     const secret = values[index++];
-    return secret === undefined || secret.trim() === "" ? undefined : secret;
+    return secret === undefined || secret === "" ? undefined : secret;
   };
   const environment: ResolvedProviderInstanceEnvironment = variables.flatMap((variable) => {
     if (typeof variable.value === "string") return [{ ...variable, value: variable.value }];

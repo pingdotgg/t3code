@@ -100,7 +100,7 @@ const make = Effect.gen(function* () {
     // The resolver keeps failed reads for the server's life; a retry after unlocking must re-read.
     yield* resolver.invalidate([reference]);
     const [value] = yield* resolver.read([reference]);
-    if (value === undefined || value.trim() === "") {
+    if (value === undefined || value === "") {
       return yield* new SecretRequestError({
         reason: "reference_unreadable",
         provider: yield* resolver.label(reference.provider),
