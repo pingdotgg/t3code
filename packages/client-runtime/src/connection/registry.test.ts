@@ -169,6 +169,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
     readonly directEndpoints?: ServerConfig["directEndpoints"];
     readonly reportedLabel?: string;
+    readonly cachedLabel?: string;
   },
 ) {
   const storedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>(initialTargets);
@@ -291,7 +292,14 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     loadThread: (_environmentId, _threadId) => Effect.succeedNone,
     saveThread: (_environmentId, _thread) => Effect.void,
     removeThread: (_environmentId, _threadId) => Effect.void,
-    loadServerConfig: () => Effect.succeedNone,
+    loadServerConfig: (environmentId) =>
+      Effect.succeed(
+        options?.cachedLabel === undefined
+          ? Option.none()
+          : Option.some({
+              environment: { environmentId, label: options.cachedLabel },
+            } as unknown as ServerConfig),
+      ),
     saveServerConfig: () => Effect.void,
     loadVcsRefs: () => Effect.succeedNone,
     saveVcsRefs: () => Effect.void,
@@ -2359,6 +2367,31 @@ describe("EnvironmentRegistry routes", () => {
             (target) => target.label,
           ),
         ).toEqual(["Renamed host"]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a name saved before the server last reported another one is kept as the user's", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [BEARER_TARGET],
+        [BEARER_PROFILE],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+        { reportedLabel: "Laptop", cachedLabel: "Laptop" },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* SubscriptionRef.changes(registry.entries).pipe(
+          Stream.filter((entries) => {
+            const target = entries.get(BEARER_TARGET.environmentId)?.target;
+            return target?._tag === "BearerConnectionTarget" && target.customLabel === true;
+          }),
+          Stream.runHead,
+        );
+        expect(
+          routesOf(yield* Ref.get(harness.storedTargets), BEARER_TARGET.environmentId),
+        ).toEqual([new BearerConnectionTarget({ ...BEARER_TARGET, customLabel: true })]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

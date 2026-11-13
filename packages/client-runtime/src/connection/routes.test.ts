@@ -184,6 +184,35 @@ describe("reported label", () => {
       ),
     ).toBeNull();
   });
+
+  it("keeps a paired name that differs from the label the server last reported", () => {
+    const saved = entry([learned("learned:lan", "http://192.168.1.10:3773/"), TAILNET, RELAY]);
+    expect(labels(routesWithReportedLabel(saved, "Laptop", "Desk"))?.[1]).toEqual([
+      "Laptop",
+      "Laptop",
+    ]);
+    const kept = routesWithReportedLabel(saved, "Laptop", "Laptop");
+    expect(labels(kept)).toEqual([
+      ["Desk", "Desk"],
+      ["Desk", "Desk"],
+      ["Desk", null],
+    ]);
+    expect(kept?.map((route) => "customLabel" in route.target)).toEqual([false, true, false]);
+    expect(routesWithReportedLabel(entry(kept!), "Phone", "Laptop")).toBeNull();
+    // Only learned and T3 Connect routes: none of them can carry a typed name.
+    expect(
+      labels(
+        routesWithReportedLabel(
+          entry([learned("learned:lan", "http://192.168.1.10:3773/"), RELAY]),
+          "Laptop",
+          "Laptop",
+        ),
+      ),
+    ).toEqual([
+      ["Laptop", "Laptop"],
+      ["Laptop", null],
+    ]);
+  });
 });
 
 describe("learned routes", () => {

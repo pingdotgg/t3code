@@ -66,24 +66,54 @@ export function entryWithRoutes(
 }
 
 /**
- * The saved routes renamed to the label the server reports, or null when
- * nothing changes. A label the user typed names the whole environment, so no
- * route of it is renamed.
+ * The saved routes renamed to the label the server reports, or null when nothing changes. A
+ * label the user typed names the whole environment. A paired route not saved under `lastReported`,
+ * the label before this connection, may be a name typed before `customLabel`: it is marked and kept.
  */
 export function routesWithReportedLabel(
   entry: ConnectionCatalogEntry,
   label: string,
+  lastReported?: string,
 ): ReadonlyArray<ConnectionRoute> | null {
   const routes = connectionRoutes(entry);
-  const userNamed = routes.some(
-    ({ target }) =>
-      (target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget") &&
-      target.customLabel === true,
-  );
-  if (userNamed || routes.every((route) => routeLabels(route).every((saved) => saved === label))) {
-    return null;
+  if (routes.some((route) => namedTarget(route)?.customLabel === true)) return null;
+  const keepsItsName = (route: ConnectionRoute) =>
+    lastReported !== undefined &&
+    namedTarget(route) !== undefined &&
+    !isLearned(route) &&
+    route.target.label !== lastReported;
+  if (routes.some(keepsItsName)) {
+    return routes.map((route) => {
+      const target = namedTarget(route);
+      if (target === undefined || !keepsItsName(route)) return route;
+      return {
+        target:
+          target._tag === "BearerConnectionTarget"
+            ? new BearerConnectionTarget({ ...target, customLabel: true })
+            : new SshConnectionTarget({ ...target, customLabel: true }),
+        profile: route.profile,
+      };
+    });
   }
+  if (routes.every((route) => routeLabels(route).every((saved) => saved === label))) return null;
   return routes.map((route) => withLabel(route, label));
+}
+
+/** The target of a route whose label a user can type. */
+function namedTarget({ target }: ConnectionRoute) {
+  return target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget"
+    ? target
+    : undefined;
+}
+
+/** Whether connecting must know the label the server last reported before it may rename. */
+export function hasUnmarkedPairedRoute(entry: ConnectionCatalogEntry): boolean {
+  return connectionRoutes(entry).some(
+    (route) =>
+      namedTarget(route) !== undefined &&
+      namedTarget(route)?.customLabel !== true &&
+      !isLearned(route),
+  );
 }
 
 function routeLabels(route: ConnectionRoute): ReadonlyArray<string> {
