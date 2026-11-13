@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
@@ -56,6 +57,7 @@ const stopEarlierBackgroundWork = ({
     const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
     const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
     const interrupts: ProviderAdapter.ProviderAdapterV2InterruptInput[] = [];
+    const interruptCalls = yield* Queue.unbounded<void>();
     const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
       instanceId,
       driver,
@@ -143,7 +145,7 @@ const stopEarlierBackgroundWork = ({
             interruptTurn: (interrupt) =>
               Effect.sync(() => {
                 interrupts.push(interrupt);
-              }),
+              }).pipe(Effect.andThen(Queue.offer(interruptCalls, undefined))),
             respondToRuntimeRequest: () => Effect.die("unused"),
             readThreadSnapshot: () => Effect.die("unused"),
             rollbackThread: () => Effect.die("unused"),
@@ -156,6 +158,13 @@ const stopEarlierBackgroundWork = ({
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
       const sink = yield* EventSink.EventSinkV2;
       const threadId = ThreadId.make("thread:background-work-stop");
+      // This provider never confirms Stop, so Stop gives up waiting at its bound.
+      const drainUnconfirmedStop = Effect.gen(function* () {
+        const drained = yield* Effect.forkChild(worker.drain());
+        yield* Queue.take(interruptCalls);
+        yield* TestClock.adjust("2 seconds");
+        yield* Fiber.join(drained);
+      });
       const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
         orchestrator.streamDomainEvents.pipe(
           Stream.filter(predicate),
@@ -219,7 +228,7 @@ const stopEarlierBackgroundWork = ({
         assert.isTrue(followUp?.queueHeld);
         assert.isTrue(wake?.queueHeld);
 
-        yield* worker.drain();
+        yield* drainUnconfirmedStop;
         yield* orchestrator.resumeQueuedRuns;
         yield* worker.drain();
         const after = yield* orchestrator.getThreadProjection(threadId);
@@ -404,7 +413,7 @@ const stopEarlierBackgroundWork = ({
                 threadId,
               },
         );
-        yield* worker.drain();
+        yield* stalledRun === "returned-interrupt" ? drainUnconfirmedStop : worker.drain();
         const after = yield* orchestrator.getThreadProjection(threadId);
         const interrupted = stalledRun !== "superseded-attempt";
         assert.equal(after.runs[0]?.status, interrupted ? "interrupted" : "running");

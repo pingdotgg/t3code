@@ -27,6 +27,7 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -618,7 +619,21 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
                     (turn) =>
                       ProviderTurnId.make(`provider-turn:${turn.attemptId}`) === providerTurnId,
                   ),
-                  (turn) => turnUpdated(turn, "interrupted"),
+                  (turn) =>
+                    turnUpdated(turn, "interrupted").pipe(
+                      Effect.andThen(
+                        Queue.offer(events, {
+                          type: "turn.terminal",
+                          driver,
+                          providerThreadId: turn.providerThread.id,
+                          providerTurnId,
+                          runOrdinal: turn.runOrdinal,
+                          status: "interrupted",
+                          failure: null,
+                          threadDisposition: "reusable",
+                        }),
+                      ),
+                    ),
                   { discard: true },
                 ),
               ),
@@ -675,6 +690,8 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
     });
     yield* worker.drain();
     yield* Fiber.join(running);
+    // Ingestion checks turn ownership under this lock after committing the running turn.
+    yield* (yield* ThreadCommandExecutor.ThreadCommandExecutor).withLock(threadId, Effect.void);
     return threadId;
   });
   return { cwd, events, started, steered, steeredSelections, interrupted, layer, startFirstTurn };
