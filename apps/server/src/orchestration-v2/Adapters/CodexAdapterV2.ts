@@ -460,11 +460,11 @@ const CODEX_MENTION_PATTERN = /(\[?)\$([\w:-]+)(?=(\]\()?)/g;
  * Codex runs a skill for `$name` anywhere in text, and for `[$label](path)` whatever the label.
  * Only a listed skill's name or the link form is broken, so other `$name` text stays as written.
  */
-function codexAgentAuthoredText(text: string, skillNames: ReadonlySet<string> | undefined): string {
+function codexAgentAuthoredText(text: string, skillNames: ReadonlySet<string>): string {
   return text.replace(
     CODEX_MENTION_PATTERN,
     (mention, open: string, name: string, link: string | undefined) =>
-      (open !== "" && link !== undefined) || skillNames?.has(name) === true
+      (open !== "" && link !== undefined) || skillNames.has(name)
         ? `${open}$\u2060${name}`
         : mention,
   );
@@ -3572,7 +3572,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           },
         );
 
-        // A failed or slow lookup yields no catalog: the message is delivered as written.
+        // Without the catalog a `$name` cannot be told from a skill, so the delivery fails instead.
         const enabledSkillNames = Effect.fn("CodexAdapterV2.enabledSkillNames")(function* (
           cwd: string | null,
         ) {
@@ -3586,10 +3586,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ),
                 ),
             ),
-            Effect.catch((cause) =>
-              Effect.logWarning("orchestration-v2.codex-agent-message-skills-unavailable", {
+            Effect.mapError((cause) =>
+              toProtocolError(
+                "Could not list Codex skills, so this agent-written message was not delivered.",
                 cause,
-              }).pipe(Effect.as(undefined)),
+              ),
             ),
           );
         });

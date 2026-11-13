@@ -2454,6 +2454,21 @@ describe("CursorAdapterV2", () => {
         });
         // Cursor hides `disable-model-invocation` skills from the model, so the SDK prompt must carry them.
         assert.include(steered.at(-1), "Ask one question at a time.");
+        // regression: #24667 an agent's message ran any skill it mentioned in the recipient
+        yield* runtime.steerTurn({
+          threadId,
+          runId: turn.runId,
+          providerThread,
+          providerTurnId,
+          message: {
+            messageId: MessageId.make("cursor-steer-agent-mention"),
+            createdBy: "agent",
+            creationSource: "mcp",
+            text: "$grill-me is what $review reported.",
+            attachments: [],
+          },
+        });
+        assert.equal(steered.at(-1), "$grill-me is what $review reported.");
 
         outcome = "revert_to_followup";
         const declined = yield* runtime

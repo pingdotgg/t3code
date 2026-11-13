@@ -3029,10 +3029,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         'Use ($\u2060review) or [$\u2060it](/skills/review/SKILL.md), then result=ready; printf "%s" "$result" in posts.$postId.tsx',
     },
     {
-      name: "keeps plain text when the skill catalog is unavailable",
+      name: "is not delivered when the skill catalog is unavailable",
       skillsFrame: { error: { code: -32603, message: "skills unavailable" } },
-      sentPrompt:
-        'Use ($review) or [$\u2060it](/skills/review/SKILL.md), then result=ready; printf "%s" "$result" in posts.$postId.tsx',
+      sentPrompt: undefined,
     },
   ])("another agent's message $name", ({ skillsFrame, sentPrompt }) =>
     Effect.scoped(
@@ -3041,7 +3040,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const nativeTurnId = "agent-mention-turn";
         const prompt =
           'Use ($review) or [$it](/skills/review/SKILL.md), then result=ready; printf "%s" "$result" in posts.$postId.tsx';
-        const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt, sentPrompt });
+        const preamble = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId,
+          prompt,
+          ...(sentPrompt === undefined ? {} : { sentPrompt }),
+        });
         const transcript = makeCodexReplayTranscript({
           scenario: "agent-skill-mention",
           entries: [
@@ -3052,19 +3056,23 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               frame: { id: 3, method: "skills/list", params: { cwds: ["/workspace"] } },
             },
             { type: "emit_inbound", label: "skills/list", frame: { id: 3, ...skillsFrame } },
-            ...preamble.slice(5, 7).map((entry) => withReplayRequestId(entry, 4)),
-            ...preamble.slice(7),
-            {
-              type: "emit_inbound",
-              label: "done",
-              frame: {
-                method: "turn/completed",
-                params: {
-                  threadId: nativeThreadId,
-                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
-                },
-              },
-            },
+            ...(sentPrompt === undefined
+              ? []
+              : [
+                  ...preamble.slice(5, 7).map((entry) => withReplayRequestId(entry, 4)),
+                  ...preamble.slice(7),
+                  {
+                    type: "emit_inbound" as const,
+                    label: "done",
+                    frame: {
+                      method: "turn/completed",
+                      params: {
+                        threadId: nativeThreadId,
+                        turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                      },
+                    },
+                  },
+                ]),
           ],
         });
         const harness = yield* makeCodexReplayHarness(transcript);
@@ -3075,10 +3083,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           attemptId: RunAttemptId.make("agent-mention-attempt"),
           text: prompt,
         });
-        yield* harness.runtime.startTurn({
-          ...turnInput,
-          message: { ...turnInput.message, createdBy: "agent", creationSource: "mcp" },
-        });
+        const started = yield* harness.runtime
+          .startTurn({
+            ...turnInput,
+            message: { ...turnInput.message, createdBy: "agent", creationSource: "mcp" },
+          })
+          .pipe(Effect.exit);
+        if (sentPrompt === undefined) {
+          if (!Exit.isFailure(started)) return yield* Effect.die("Expected delivery to fail");
+          assert.include(Cause.pretty(started.cause), "Could not list Codex skills");
+          return;
+        }
         yield* harness.firstTerminal;
         assert.equal(harness.terminalEvents()[0]?.status, "completed");
       }).pipe(
