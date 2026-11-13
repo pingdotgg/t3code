@@ -49,10 +49,28 @@ export function formatSubagentDisplayTitle(title: string): string {
   return name.replace(/(^|\s)\S/gu, (letter) => letter.toUpperCase()) || displayTitle;
 }
 
+// A native subagent runs on its parent's instance, but the user may have named its model on
+// another instance of the same driver. Borrow that name only when the instances agree on it.
+function siblingCatalogModel(
+  provider: Pick<ServerProvider, "driver" | "models"> | null | undefined,
+  providers: ReadonlyArray<Pick<ServerProvider, "driver" | "models">> | undefined,
+  model: string | undefined,
+) {
+  if (!provider || !providers || !model) return undefined;
+  const matches = providers.flatMap((candidate) => {
+    if (candidate.driver !== provider.driver) return [];
+    const slug = resolveSelectableModel(candidate.driver, model, candidate.models);
+    const entry = candidate.models.find((catalogEntry) => catalogEntry.slug === slug);
+    return entry ? [entry] : [];
+  });
+  return new Set(matches.map((entry) => entry.name)).size === 1 ? matches[0] : undefined;
+}
+
 export function resolveSubagentMetadata(input: {
   readonly model: string | null;
   readonly modelSelection?: Pick<ModelSelection, "model"> | undefined;
   readonly provider?: Pick<ServerProvider, "driver" | "models"> | null | undefined;
+  readonly providers?: ReadonlyArray<Pick<ServerProvider, "driver" | "models">> | undefined;
   readonly parentThread?:
     | Pick<OrchestrationV2ThreadShell, "projectId" | "worktreePath">
     | null
@@ -71,7 +89,9 @@ export function resolveSubagentMetadata(input: {
   const slug = input.provider
     ? resolveSelectableModel(input.provider.driver, model, input.provider.models)
     : model;
-  const catalogModel = input.provider?.models.find((candidate) => candidate.slug === slug);
+  const catalogModel =
+    input.provider?.models.find((candidate) => candidate.slug === slug) ??
+    siblingCatalogModel(input.provider, input.providers, model);
   const reportedLabel = catalogModel
     ? (resolveModelShortName(catalogModel, input.provider?.driver) ?? catalogModel.name)
     : model

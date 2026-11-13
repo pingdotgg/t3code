@@ -139,6 +139,7 @@ function SubagentMetadata(props: {
     model: subagent.model,
     modelSelection: selection,
     provider,
+    providers,
     parentThread: parent,
     childThread: child,
     parentProject,

@@ -49,7 +49,8 @@ export function ThreadWorkflowGroup(props: {
   readonly onOpen: (threadId: ThreadId) => void;
 }) {
   const { group } = props;
-  const provider = useEnvironmentServerConfig(props.environmentId)?.providers.find(
+  const providers = useEnvironmentServerConfig(props.environmentId)?.providers;
+  const provider = providers?.find(
     (candidate) => candidate.instanceId === props.subagent.providerInstanceId,
   );
   const [selected, setSelected] = useState<string | null>(null);
@@ -130,6 +131,7 @@ export function ThreadWorkflowGroup(props: {
               environmentId={props.environmentId}
               member={member}
               provider={provider}
+              providers={providers}
               onOpen={props.onOpen}
             />
           ))
@@ -143,6 +145,7 @@ function WorkflowMemberRow(props: {
   readonly environmentId: EnvironmentId;
   readonly member: RuntimeSubagent;
   readonly provider: ServerProvider | undefined;
+  readonly providers: ReadonlyArray<ServerProvider> | undefined;
   readonly onOpen: (threadId: ThreadId) => void;
 }) {
   const { member } = props;
@@ -159,7 +162,7 @@ function WorkflowMemberRow(props: {
     childThreadId: threadId,
   });
   const { detail, error } = workflowMemberDetail(member);
-  const metadata = workflowMemberMetadata(member, props.provider);
+  const metadata = workflowMemberMetadata(member, props.provider, props.providers);
   const labels = [metadata.model, metadata.effort].filter((value) => value !== null);
   return (
     <RowPressable

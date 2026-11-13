@@ -123,6 +123,30 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
     expect(resolveSubagentMetadata({ model: workflow!.model }).modelLabel).toBe("Not reported");
   });
 
+  it("names a subagent model that another instance of the parent's driver lists", () => {
+    const claude = ProviderDriverKind.make("claudeAgent");
+    const parent = {
+      driver: claude,
+      models: [
+        { slug: "claude-opus-5", name: "Claude Opus 5", isCustom: false, capabilities: null },
+      ],
+    };
+    const sibling = (name: string) => ({
+      driver: claude,
+      models: [{ slug: "kimi-k3", name, isCustom: true, capabilities: null }],
+    });
+    const otherDriver = {
+      driver: ProviderDriverKind.make("opencode"),
+      models: [{ slug: "kimi-k3", name: "Kimi K3", isCustom: false, capabilities: null }],
+    };
+    const label = (providers: ReadonlyArray<typeof parent>) =>
+      resolveSubagentMetadata({ model: "kimi-k3", provider: parent, providers }).modelLabel;
+
+    expect(label([parent, sibling("Kimi K3")])).toBe("Kimi K3");
+    expect(label([parent, otherDriver])).toBe("kimi-k3");
+    expect(label([parent, sibling("Kimi K3"), sibling("Kimi K3 256K")])).toBe("kimi-k3");
+  });
+
   it.each(["completed", "cancelled", "failed"] as const)(
     "settles unfinished members when the coordinator is %s",
     (status) => {

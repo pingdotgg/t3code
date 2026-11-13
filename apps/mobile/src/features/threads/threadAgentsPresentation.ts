@@ -174,9 +174,10 @@ function capitalize(value: string): string {
 export function workflowMemberMetadata(
   member: Pick<RuntimeSubagent, "model" | "effort" | "speed">,
   provider: Pick<ServerProvider, "driver" | "models"> | undefined,
+  providers?: ReadonlyArray<Pick<ServerProvider, "driver" | "models">>,
 ) {
   const model = member.model?.trim()
-    ? resolveSubagentMetadata({ model: member.model, provider }).modelLabel
+    ? resolveSubagentMetadata({ model: member.model, provider, providers }).modelLabel
     : null;
   const slug = provider
     ? resolveSelectableModel(provider.driver, member.model, provider.models)
