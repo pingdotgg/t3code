@@ -25,7 +25,6 @@ const state = vi.hoisted(() => ({
   interaction: vi.fn(),
   prepare: vi.fn(),
   checkout: vi.fn(),
-  releasePick: vi.fn(),
   modelUnavailable: vi.fn(() => false),
   familyMount: vi.fn(() => () => {}),
   threadShells: null as unknown as Atom.Writable<ReadonlyArray<unknown>>,
@@ -152,7 +151,6 @@ vi.mock("./use-composer-drafts", async () => {
     mergeComposerDraftContent: vi.fn(async (_key: string, input: { text: string }) => {
       state.draftText += `\n${input.text}`;
     }),
-    releaseDeliveredComposerDraftModelSelection: state.releasePick,
     replaceComposerDraftAttachments: vi.fn(),
     setFreshSessionPending: vi.fn(),
     undoComposerDraftMerge: vi.fn(),
@@ -225,7 +223,6 @@ beforeEach(() => {
     state.runtime,
     state.interaction,
     state.checkout,
-    state.releasePick,
   ]) {
     command.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   }
@@ -391,7 +388,7 @@ describe("queued task operation access", () => {
     expect(remaining()).toEqual([]);
   });
 
-  it("names a model only for a picked message, and releases the pick once delivered", async () => {
+  it("names a model only for a picked message", async () => {
     setOperateGrant("secondary", true);
     // This client's copy of the thread's model may be stale, so it is neither checked nor sent.
     state.modelUnavailable.mockReturnValue(true);
@@ -401,7 +398,6 @@ describe("queued task operation access", () => {
     for (const [call] of state.start.mock.calls) {
       expect(call.input).not.toHaveProperty("modelSelection");
     }
-    expect(state.releasePick).not.toHaveBeenCalled();
     expect(remaining()).toEqual([]);
 
     state.cleanups.splice(0).forEach((cleanup) => cleanup());
@@ -416,7 +412,6 @@ describe("queued task operation access", () => {
     );
     await runDrain();
     expect(state.start.mock.lastCall?.[0].input.modelSelection).toEqual(pick);
-    expect(state.releasePick).toHaveBeenCalledExactlyOnceWith("secondary:thread", pick);
     expect(remaining()).toEqual([]);
   });
 

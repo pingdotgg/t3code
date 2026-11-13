@@ -6,7 +6,10 @@ import { useAtomValue } from "@effect/atom-react";
 import { compactBeforeSendTokens } from "@t3tools/client-runtime/state/context-window";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
-import { threadSteersDuringCompaction } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  queuedRunOnAnotherModel,
+  threadSteersDuringCompaction,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import {
   announcedRun,
@@ -796,6 +799,17 @@ export function useThreadComposerState(input: {
       followUpDispatchMode === null &&
       appAtomRegistry.get(fullHistoryThreadKeysAtom)[threadKey] !== true &&
       resumeCompactionTokens(modelSelection, text, metadata.createdAt) !== null;
+    // This client's copy of the thread's model may be stale by delivery, so only a pick names
+    // one. A queued run on another model would take an unnamed message with it.
+    const sentModelSelection =
+      draft.modelSelection ??
+      (selectedEnvironmentRuntime?.connectionState === "connected" &&
+      queuedRunOnAnotherModel(
+        (queueWorkflow?.queuedRuns ?? []).map((queued) => queued.run),
+        thread.modelSelection,
+      )
+        ? thread.modelSelection
+        : undefined);
     const messageId = MessageId.make(metadata.messageId);
     onWillEnqueue?.();
     clearThreadComposerError(threadKey);
@@ -807,8 +821,7 @@ export function useThreadComposerState(input: {
       text,
       attachments,
       context: draft.context,
-      // Only a pick names a model; this client's copy of the thread's model may be stale by delivery.
-      modelSelection: draft.modelSelection,
+      modelSelection: sentModelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
       ...(compactBeforeSend

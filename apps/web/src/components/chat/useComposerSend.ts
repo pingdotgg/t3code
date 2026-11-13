@@ -100,13 +100,13 @@ import { useStableCallback } from "../../hooks/useStableCallback";
 import { environmentPresentations } from "../../state/presentation";
 import {
   approvalRedirectNotice,
-  draftModelPick,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
 } from "./composerSend.logic";
 import { useMultipleModelSend } from "./useMultipleModelSend";
 import { type ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
+import { queuedRunOnAnotherModel } from "@t3tools/client-runtime/state/thread-workflows";
 import {
   awaitAttachmentUploads,
   getUploadedAttachments,
@@ -181,6 +181,8 @@ interface ComposerSendInput {
   readonly activeMessageCount: number;
   readonly isServerThread: boolean;
   readonly isLocalDraftThread: boolean;
+  /** The thread's queued user runs, as far as its loaded detail knows them. */
+  readonly queuedRuns: ReadonlyArray<{ readonly modelSelection: ModelSelection }>;
   readonly isGitRepo: boolean;
   readonly phase: SessionPhase;
   readonly runtimeMode: RuntimeMode;
@@ -281,6 +283,7 @@ export function useComposerSend(input: ComposerSendInput) {
     activeMessageCount,
     isServerThread,
     isLocalDraftThread,
+    queuedRuns,
     isGitRepo,
     phase,
     runtimeMode,
@@ -1180,14 +1183,16 @@ export function useComposerSend(input: ComposerSendInput) {
       : null;
     // Keep new-thread flows from reusing this draft while attachments and worktree setup settle.
     if (sentDraftThreadRef) markPromotedDraftThreadByRef(sentDraftThreadRef);
-    // A new thread is created on the composer's model; a started one follows its own unless picked.
-    const sentModelPick = isServerThread
-      ? draftModelPick(useComposerDraftStore.getState().getComposerDraft(composerDraftTarget))
-      : null;
-    const sendModel =
-      sentModelPick === null || sentModelPick.held
-        ? { modelSelection: ctxSelectedModelSelection }
-        : {};
+    // A started thread runs on its own model, which this client's copy may trail, unless the
+    // draft holds a pick or a queued run would move an unnamed message to another model.
+    const namesModel =
+      !isServerThread ||
+      Object.keys(
+        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+          ?.modelSelectionByProvider ?? {},
+      ).length > 0 ||
+      queuedRunOnAnotherModel(queuedRuns, ctxSelectedModelSelection);
+    const sendModel = namesModel ? { modelSelection: ctxSelectedModelSelection } : {};
     promptRef.current = "";
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
@@ -1351,15 +1356,6 @@ export function useComposerSend(input: ComposerSendInput) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
-        // The delivered message took its pick with it; a newer pick is a different object.
-        if (sentModelPick?.active) {
-          useComposerDraftStore
-            .getState()
-            .releaseModelSelection(
-              scopeThreadRef(environmentId, threadIdForSend),
-              sentModelPick.active,
-            );
-        }
         if (checkoutPullRequestUrl) {
           linkCheckoutPullRequest(
             scopeThreadRef(environmentId, threadIdForSend),

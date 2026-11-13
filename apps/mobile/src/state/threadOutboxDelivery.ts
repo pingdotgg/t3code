@@ -82,7 +82,6 @@ import {
   removeDeliveredCloudQueuedMessage,
   undoComposerDraftMerge,
   updateComposerDraftSettings,
-  releaseDeliveredComposerDraftModelSelection,
   waitForComposerDraftsLoaded,
 } from "./use-composer-drafts";
 import {
@@ -974,12 +973,6 @@ export function createThreadOutboxDelivery(): {
       return restoreQueuedMessage(persistedMessage, failure.message);
     }
     acknowledgedExistingThreadMessageIds.add(persistedMessage.messageId);
-    if (queuedMessage.modelSelection !== undefined) {
-      await releaseDeliveredComposerDraftModelSelection(
-        scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId),
-        queuedMessage.modelSelection,
-      );
-    }
     const delivered =
       (await completeQueuedMessageDelivery(
         persistedMessage,

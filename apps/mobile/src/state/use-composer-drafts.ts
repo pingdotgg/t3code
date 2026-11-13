@@ -30,7 +30,7 @@ import type {
   EnvironmentShellState,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { draftModelPickMatchesThread, modelSelectionsEqual } from "@t3tools/shared/model";
+import { draftModelPickMatchesThread } from "@t3tools/shared/model";
 
 import { writeFileAtomically } from "../lib/atomic-file";
 import { createComposerContextHistory, referencedComposerContext } from "../lib/composerContext";
@@ -1551,23 +1551,6 @@ export function releaseComposerDraftModelSelection(
     const existing = current[draftKey];
     // A newer pick, even of the same model, is still waiting for its own reply.
     if (existing?.modelSelection !== modelSelection) return current;
-    const { modelSelection: _modelSelection, ...draft } = existing;
-    return withComposerDraft(current, draftKey, draft);
-  });
-}
-
-/** A delivered message took its pick with it, so later messages follow the thread's model. */
-export async function releaseDeliveredComposerDraftModelSelection(
-  draftKey: string,
-  delivered: ModelSelection,
-): Promise<void> {
-  // Stored drafts replace memory when they load, which would bring the pick back.
-  await waitForComposerDraftsLoaded();
-  updateComposerDrafts((current) => {
-    const existing = current[draftKey];
-    if (!existing?.modelSelection || !modelSelectionsEqual(existing.modelSelection, delivered)) {
-      return current;
-    }
     const { modelSelection: _modelSelection, ...draft } = existing;
     return withComposerDraft(current, draftKey, draft);
   });

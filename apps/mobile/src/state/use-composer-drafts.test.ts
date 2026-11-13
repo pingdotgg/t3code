@@ -215,7 +215,6 @@ import {
   setStickyComposerModelSelection,
   stickyComposerModelSelectionAtom,
   undoComposerDraftMergeState,
-  releaseDeliveredComposerDraftModelSelection,
   updateComposerDraftSettings,
 } from "./use-composer-drafts";
 import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
@@ -551,25 +550,6 @@ describe("mobile composer drafts", () => {
     });
     expect(getComposerDraftSnapshot(key).modelSelection ?? h.model()).toEqual(h.model());
     expect(getComposerDraftSnapshot(key)).toEqual({ ...before, modelSelection: undefined });
-  });
-
-  it("releases a delivered pick once drafts load, and keeps a different pick", async () => {
-    const key = "environment-1:thread-1";
-    const delivered = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" };
-    setComposerDraftText(key, "next message");
-    updateComposerDraftSettings(key, { modelSelection: { ...delivered } });
-    await flushComposerDrafts();
-    appAtomRegistry.set(composerDraftsAtom, {});
-    resetComposerDraftsLoadState();
-
-    await releaseDeliveredComposerDraftModelSelection(key, delivered);
-    expect(getComposerDraftSnapshot(key)).toMatchObject({ text: "next message" });
-    expect(getComposerDraftSnapshot(key).modelSelection).toBeUndefined();
-
-    const newer = { ...delivered, model: "gpt-5.4" };
-    updateComposerDraftSettings(key, { modelSelection: newer });
-    await releaseDeliveredComposerDraftModelSelection(key, delivered);
-    expect(getComposerDraftSnapshot(key).modelSelection).toEqual(newer);
   });
 
   it("retains an unavailable provider pick through differing durable model updates", () => {

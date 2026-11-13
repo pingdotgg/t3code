@@ -37,6 +37,9 @@ const state = vi.hoisted(() => ({
   projection: null as OrchestrationV2ThreadProjection | null,
   pendingRequests: { approvals: [], userInputs: [] } as PendingThreadRequests,
   enqueue: vi.fn(async () => undefined),
+  queueWorkflow: null as {
+    readonly queuedRuns: ReadonlyArray<{ readonly run: { readonly modelSelection: unknown } }>;
+  } | null,
   freshPending: false,
   compactModel: null as string | null,
   compactDueAt: "",
@@ -127,7 +130,7 @@ vi.mock("./threads", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
     environmentThreadDetails: {
-      queueWorkflowAtom: () => Atom.make(null),
+      queueWorkflowAtom: () => Atom.make(state.queueWorkflow),
       checkpointSummariesAtom: () => Atom.make([]),
       sequenceAtom: () => Atom.make(0),
       pendingRequestsAtom: () => Atom.make(state.pendingRequests),
@@ -208,6 +211,7 @@ beforeEach(() => {
     runtimeMode: undefined,
   };
   state.freshPending = false;
+  state.queueWorkflow = null;
   state.compactModel = null;
   state.compactDueAt = "";
   state.thread.latestRun = null;
@@ -460,6 +464,14 @@ describe("mobile task permissions", () => {
     // No pick in the draft: the cached thread model is not sent as one.
     expect(state.enqueue).toHaveBeenLastCalledWith(
       expect.not.objectContaining({ modelSelection: expect.anything() }),
+    );
+    // A run queued on another model would take an unnamed message with it.
+    state.queueWorkflow = {
+      queuedRuns: [{ run: { modelSelection: { instanceId: "claude", model: "claude-opus-5-5" } } }],
+    };
+    await useThreadComposerState(NO_SIDE_CHATS).onSendMessage();
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ modelSelection: state.thread.modelSelection }),
     );
   });
 

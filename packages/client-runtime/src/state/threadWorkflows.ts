@@ -1,10 +1,12 @@
 import {
   type ChatAttachment,
   isCompactionCommandMessage,
+  type ModelSelection,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
+import { draftModelPickMatchesThread } from "@t3tools/shared/model";
 
 import type { ThreadStructure } from "./models.ts";
 
@@ -134,6 +136,17 @@ export function getUserQueuedThreadRuns(
   return projection.runs.filter(
     (run) => run.status === "queued" && !automaticCompletionMessageIds.has(run.userMessageId),
   );
+}
+
+/**
+ * Whether a run queued ahead is on another model than the composer shows. The server runs a
+ * message that names no model on the queue's model, so such a send has to name the shown one.
+ */
+export function queuedRunOnAnotherModel(
+  queuedRuns: ReadonlyArray<Pick<Run, "modelSelection">>,
+  shown: ModelSelection,
+): boolean {
+  return queuedRuns.some((run) => !draftModelPickMatchesThread(run.modelSelection, shown));
 }
 
 export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQueueWorkflowState {

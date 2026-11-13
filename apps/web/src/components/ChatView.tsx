@@ -2926,6 +2926,7 @@ export default function ChatView(props: ChatViewProps) {
     activeMessageCount,
     isServerThread,
     isLocalDraftThread,
+    queuedRuns: serverProjection ? getUserQueuedThreadRuns(serverProjection) : EMPTY_RUNS,
     isGitRepo,
     phase,
     runtimeMode,

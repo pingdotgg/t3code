@@ -1,9 +1,4 @@
-import type {
-  EnvironmentId,
-  ModelSelection,
-  ProviderInstanceId,
-  ThreadContextRecord,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ThreadContextRecord } from "@t3tools/contracts";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
 
 /** Attached threads the prompt still links to; replacing linked text leaves stale records. */
@@ -14,29 +9,6 @@ export function referencedThreadContexts(draft: {
   if (draft.threadContexts.length === 0) return [];
   const referenced = new Set(collectInlineContextIds(draft.prompt));
   return draft.threadContexts.filter((record) => referenced.has(record.contextId));
-}
-
-/**
- * The model a started thread's draft holds. A send names a model only when one is `held`;
- * otherwise the server uses the thread's own, which this client's copy may trail. `active` is
- * the pick to release once the server accepted the message that carried it.
- */
-export function draftModelPick(
-  draft:
-    | {
-        readonly activeProvider: ProviderInstanceId | null;
-        readonly modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
-      }
-    | null
-    | undefined,
-): { readonly held: boolean; readonly active: ModelSelection | null } {
-  if (!draft) return { held: false, active: null };
-  return {
-    held: Object.keys(draft.modelSelectionByProvider).length > 0,
-    active: draft.activeProvider
-      ? (draft.modelSelectionByProvider[draft.activeProvider] ?? null)
-      : null,
-  };
 }
 
 /** Why a send waits for the user to pick a machine when no machine was chosen automatically. */
