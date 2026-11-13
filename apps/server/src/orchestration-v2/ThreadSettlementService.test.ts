@@ -1728,6 +1728,61 @@ describe("ThreadSettlementServiceV2 worker", () => {
       }),
   );
 
+  it.effect("rereads a branch without a pull request less often the longer its thread idles", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const recent = makeThread("recent-branch", {
+        branch: "recent-feature",
+        latestUserMessageAt: DateTime.makeUnsafe(Date.parse(NOW) - 30 * 60 * 1_000),
+      });
+      const old = makeThread("old-branch", {
+        branch: "old-feature",
+        latestUserMessageAt: DateTime.makeUnsafe(Date.parse(NOW) - 2 * DAY_MS),
+      });
+      const fixture = yield* makeHarness({ snapshot: makeSnapshot([recent, old]) });
+      const branches = Ref.get(fixture.branchCalls).pipe(
+        Effect.map((calls) => calls.map((call) => call.branch).sort()),
+      );
+
+      yield* Effect.gen(function* () {
+        const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+        yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+        for (let minute = 1; minute <= 4; minute += 1) {
+          yield* TestClock.adjust("1 minute");
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+        }
+        assert.deepStrictEqual(yield* branches, ["old-feature", "recent-feature"]);
+
+        yield* TestClock.adjust("1 minute");
+        yield* Queue.take(fixture.snapshotReads);
+        yield* reactor.drain;
+        assert.deepStrictEqual(yield* branches, [
+          "old-feature",
+          "recent-feature",
+          "recent-feature",
+        ]);
+
+        // Work ending in the thread reads its branch at once.
+        yield* fixture.publishEvent({
+          type: "run.background-work-cancelled",
+          id: EventId.make("event:old-branch:run-ended"),
+          threadId: old.id,
+          occurredAt: DateTime.makeUnsafe(NOW),
+          payload: { runId: RunId.make("run:old-branch"), restartCancelledBackgroundWork: [] },
+        });
+        yield* Queue.take(fixture.snapshotReads);
+        yield* reactor.drain;
+        assert.deepStrictEqual(yield* branches, [
+          "old-feature",
+          "old-feature",
+          "recent-feature",
+          "recent-feature",
+        ]);
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
   it.effect("a merged branch PR that cannot settle its thread rereads no git state", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(NOW));

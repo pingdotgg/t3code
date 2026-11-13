@@ -46,6 +46,8 @@ export interface SettlementPullRequest {
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
+const BRANCH_LOOKUP_RECHECK_MIN_MS = 5 * 60 * 1_000;
+const BRANCH_LOOKUP_RECHECK_IDLE_DIVISOR = 12;
 
 function toMillis(value: DateTime.Utc | null | undefined): number | null {
   return value == null ? null : DateTime.toEpochMillis(value);
@@ -58,6 +60,25 @@ function latestMillis(values: ReadonlyArray<number | null>): number | null {
     if (latest === null || value > latest) latest = value;
   }
   return latest;
+}
+
+function threadActivityAtMs(thread: ProjectionStore.ProjectionSettlementCandidate): number {
+  return (
+    latestMillis([
+      toMillis(thread.latestUserMessageAt),
+      toMillis(thread.latestRunRequestedAt),
+      toMillis(thread.latestRunStartedAt),
+      toMillis(thread.latestRunCompletedAt),
+    ]) ?? DateTime.toEpochMillis(thread.createdAt)
+  );
+}
+
+/** A thread idle for a day is reread every two hours; one idle twelve days or more, daily. */
+function branchLookupRecheckDelayMs(idleMs: number): number {
+  return Math.min(
+    Math.max(idleMs / BRANCH_LOOKUP_RECHECK_IDLE_DIVISOR, BRANCH_LOOKUP_RECHECK_MIN_MS),
+    DAY_MS,
+  );
 }
 
 function pullRequestMatchesProject(
@@ -228,13 +249,7 @@ export function resolveAutoSettlementAt(input: {
           };
   }
   if (!isAutoSettlementCandidate(thread, input.nowMs)) return null;
-  const activityAtMs =
-    latestMillis([
-      toMillis(thread.latestUserMessageAt),
-      toMillis(thread.latestRunRequestedAt),
-      toMillis(thread.latestRunStartedAt),
-      toMillis(thread.latestRunCompletedAt),
-    ]) ?? DateTime.toEpochMillis(thread.createdAt);
+  const activityAtMs = threadActivityAtMs(thread);
   if (pullRequest !== null && pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) {
     return DateTime.makeUnsafe(activityAtMs);
   }
@@ -318,6 +333,9 @@ export const make = Effect.gen(function* () {
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   // Repeated thread.settled retains settledAt; run the action only once per settlement.
   const settleActionRunAt = new Map<ThreadId, number>();
+  // When each branch lookup last found no pull request. Scheduled sweeps wait on it instead of
+  // GitManager's caches, which expire in minutes and evict past a few thousand branches.
+  const noPullRequestReadAtMs = new Map<string, number>();
 
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
@@ -545,12 +563,29 @@ export const make = Effect.gen(function* () {
         return yield* Effect.die(new Error("thread project not found"));
       }
       const refresh = group.filter((member) => shellClosedThreads.delete(member.id)).length > 0;
+      const key = lookupKey(thread);
+      const readAtMs = noPullRequestReadAtMs.get(key);
+      // A merge, a shell close and a thread's own events read at once; only scheduled sweeps wait.
+      if (
+        readAtMs !== undefined &&
+        mergedPullRequest === null &&
+        threadId === undefined &&
+        !refresh
+      ) {
+        const activityAtMs = group.reduce(
+          (latest, member) => Math.max(latest, threadActivityAtMs(member)),
+          Number.NEGATIVE_INFINITY,
+        );
+        if (nowMs - readAtMs < branchLookupRecheckDelayMs(nowMs - activityAtMs)) return undefined;
+      }
       // Remembered git state is enough to rule a thread out; only an answer
       // that would settle it is confirmed against fresh git state.
       const remembered = yield* git.branchPullRequest(
         { cwd, branch: thread.branch },
         { refresh, confirmTerminal: false },
       );
+      if (remembered === null) noPullRequestReadAtMs.set(key, nowMs);
+      else noPullRequestReadAtMs.delete(key);
       if (refresh || remembered === null || remembered.state === "open") return remembered;
       if (!(yield* wouldSettle(group, remembered))) return undefined;
       return yield* git.branchPullRequest({ cwd, branch: thread.branch }, { freshGitState: true });
@@ -577,6 +612,11 @@ export const make = Effect.gen(function* () {
         ),
       { concurrency: 8, discard: true },
     );
+    if (threadId === undefined) {
+      for (const key of noPullRequestReadAtMs.keys()) {
+        if (!groups.has(key)) noPullRequestReadAtMs.delete(key);
+      }
+    }
   });
 
   const runSweep = (
