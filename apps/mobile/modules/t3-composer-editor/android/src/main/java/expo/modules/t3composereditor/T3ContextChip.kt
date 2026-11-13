@@ -9,6 +9,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.text.TextPaint
 import android.text.TextUtils
+import com.facebook.react.common.assets.ReactFontManager
 import kotlin.math.ceil
 import kotlin.math.min
 
@@ -29,16 +30,14 @@ class T3ContextChip(
 
   private val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
     textSize = fontSize
-    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+    typeface = chipTypeface()
     color = this@T3ContextChip.color
   }
   private val em = fontSize
 
-  // The size reads as metadata beside the name, so it draws a step down from the label the
-  // way the web chip does.
   private val detailPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
     textSize = fontSize * 0.84f
-    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+    typeface = chipTypeface()
     color = this@T3ContextChip.color
   }
   private val detailText = if (content.detail.isEmpty()) "" else " ${content.detail}"
@@ -88,6 +87,18 @@ class T3ContextChip(
   }
 
   companion object {
+    private const val CHIP_FONT_FAMILY = "DMSans-Medium"
+
+    // Matches the iOS chips; builds without the bundled font keep the platform medium.
+    private fun chipTypeface(): Typeface {
+      val fonts = ReactFontManager.getInstance()
+      return if (CHIP_FONT_FAMILY in fonts.customFontFamilies) {
+        fonts.getTypeface(CHIP_FONT_FAMILY, Typeface.NORMAL, null)
+      } else {
+        Typeface.create("sans-serif-medium", Typeface.NORMAL)
+      }
+    }
+
     fun color(
       value: String,
       fallback: Int

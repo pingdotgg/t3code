@@ -110,6 +110,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 12%);
       --color-adaptive-emerald-600-400: oklch(59.6% 0.145 163.225);
       --color-adaptive-emerald-700-300: oklch(50.8% 0.118 165.612);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(66.7% 0.295 322.15 / 50%);
+      --color-adaptive-fuchsia-600-300: oklch(59.1% 0.293 322.896);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 12%);
       --color-adaptive-indigo-600-300: oklch(51.1% 0.262 276.966);
       --color-adaptive-indigo-700-300: oklch(45.7% 0.24 277.023);
@@ -271,6 +273,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 16%);
       --color-adaptive-emerald-600-400: oklch(76.5% 0.177 163.223);
       --color-adaptive-emerald-700-300: oklch(84.5% 0.143 164.978);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(83.3% 0.145 321.434 / 40%);
+      --color-adaptive-fuchsia-600-300: oklch(83.3% 0.145 321.434);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 16%);
       --color-adaptive-indigo-600-300: oklch(78.5% 0.115 274.713);
       --color-adaptive-indigo-700-300: oklch(78.5% 0.115 274.713);
@@ -432,6 +436,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 12%);
       --color-adaptive-emerald-600-400: oklch(59.6% 0.145 163.225);
       --color-adaptive-emerald-700-300: oklch(50.8% 0.118 165.612);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(66.7% 0.295 322.15 / 50%);
+      --color-adaptive-fuchsia-600-300: oklch(59.1% 0.293 322.896);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 12%);
       --color-adaptive-indigo-600-300: oklch(51.1% 0.262 276.966);
       --color-adaptive-indigo-700-300: oklch(45.7% 0.24 277.023);
@@ -593,6 +599,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 16%);
       --color-adaptive-emerald-600-400: oklch(76.5% 0.177 163.223);
       --color-adaptive-emerald-700-300: oklch(84.5% 0.143 164.978);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(83.3% 0.145 321.434 / 40%);
+      --color-adaptive-fuchsia-600-300: oklch(83.3% 0.145 321.434);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 16%);
       --color-adaptive-indigo-600-300: oklch(78.5% 0.115 274.713);
       --color-adaptive-indigo-700-300: oklch(78.5% 0.115 274.713);
@@ -754,6 +762,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 12%);
       --color-adaptive-emerald-600-400: oklch(59.6% 0.145 163.225);
       --color-adaptive-emerald-700-300: oklch(50.8% 0.118 165.612);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(66.7% 0.295 322.15 / 50%);
+      --color-adaptive-fuchsia-600-300: oklch(59.1% 0.293 322.896);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 12%);
       --color-adaptive-indigo-600-300: oklch(51.1% 0.262 276.966);
       --color-adaptive-indigo-700-300: oklch(45.7% 0.24 277.023);
@@ -915,6 +925,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 16%);
       --color-adaptive-emerald-600-400: oklch(76.5% 0.177 163.223);
       --color-adaptive-emerald-700-300: oklch(84.5% 0.143 164.978);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(83.3% 0.145 321.434 / 40%);
+      --color-adaptive-fuchsia-600-300: oklch(83.3% 0.145 321.434);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 16%);
       --color-adaptive-indigo-600-300: oklch(78.5% 0.115 274.713);
       --color-adaptive-indigo-700-300: oklch(78.5% 0.115 274.713);
@@ -1076,6 +1088,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 12%);
       --color-adaptive-emerald-600-400: oklch(59.6% 0.145 163.225);
       --color-adaptive-emerald-700-300: oklch(50.8% 0.118 165.612);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(66.7% 0.295 322.15 / 50%);
+      --color-adaptive-fuchsia-600-300: oklch(59.1% 0.293 322.896);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 12%);
       --color-adaptive-indigo-600-300: oklch(51.1% 0.262 276.966);
       --color-adaptive-indigo-700-300: oklch(45.7% 0.24 277.023);
@@ -1237,6 +1251,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 16%);
       --color-adaptive-emerald-600-400: oklch(76.5% 0.177 163.223);
       --color-adaptive-emerald-700-300: oklch(84.5% 0.143 164.978);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(83.3% 0.145 321.434 / 40%);
+      --color-adaptive-fuchsia-600-300: oklch(83.3% 0.145 321.434);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 16%);
       --color-adaptive-indigo-600-300: oklch(78.5% 0.115 274.713);
       --color-adaptive-indigo-700-300: oklch(78.5% 0.115 274.713);
@@ -1398,6 +1414,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 12%);
       --color-adaptive-emerald-600-400: oklch(59.6% 0.145 163.225);
       --color-adaptive-emerald-700-300: oklch(50.8% 0.118 165.612);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(66.7% 0.295 322.15 / 50%);
+      --color-adaptive-fuchsia-600-300: oklch(59.1% 0.293 322.896);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 12%);
       --color-adaptive-indigo-600-300: oklch(51.1% 0.262 276.966);
       --color-adaptive-indigo-700-300: oklch(45.7% 0.24 277.023);
@@ -1559,6 +1577,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 16%);
       --color-adaptive-emerald-600-400: oklch(76.5% 0.177 163.223);
       --color-adaptive-emerald-700-300: oklch(84.5% 0.143 164.978);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(83.3% 0.145 321.434 / 40%);
+      --color-adaptive-fuchsia-600-300: oklch(83.3% 0.145 321.434);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 16%);
       --color-adaptive-indigo-600-300: oklch(78.5% 0.115 274.713);
       --color-adaptive-indigo-700-300: oklch(78.5% 0.115 274.713);
@@ -1720,6 +1740,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 12%);
       --color-adaptive-emerald-600-400: oklch(59.6% 0.145 163.225);
       --color-adaptive-emerald-700-300: oklch(50.8% 0.118 165.612);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(66.7% 0.295 322.15 / 50%);
+      --color-adaptive-fuchsia-600-300: oklch(59.1% 0.293 322.896);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 12%);
       --color-adaptive-indigo-600-300: oklch(51.1% 0.262 276.966);
       --color-adaptive-indigo-700-300: oklch(45.7% 0.24 277.023);
@@ -1881,6 +1903,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 16%);
       --color-adaptive-emerald-600-400: oklch(76.5% 0.177 163.223);
       --color-adaptive-emerald-700-300: oklch(84.5% 0.143 164.978);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(83.3% 0.145 321.434 / 40%);
+      --color-adaptive-fuchsia-600-300: oklch(83.3% 0.145 321.434);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 16%);
       --color-adaptive-indigo-600-300: oklch(78.5% 0.115 274.713);
       --color-adaptive-indigo-700-300: oklch(78.5% 0.115 274.713);

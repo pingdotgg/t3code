@@ -77,7 +77,6 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
       return {
         id: `project-clone:${projectId}`,
         variant: "info",
-        priority: "activity",
         icon: <DownloadIcon />,
         title: `Cloning ${name}`,
         description: projectCloneProgressSummary(activeProjectClone),

@@ -2,7 +2,7 @@ import { ClientSettingsSchema, type ClientSettings } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -162,49 +162,43 @@ const writeClientSettings = Effect.fnUntraced(function* (input: {
         }),
     ),
   );
-  yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
-    Effect.mapError(
-      (cause) =>
-        new DesktopClientSettingsWriteError({
-          operation: "write-temporary-file",
-          path: tempPath,
-          cause,
-        }),
-    ),
-  );
-  yield* input.fileSystem.rename(tempPath, targetPath).pipe(
-    Effect.mapError(
-      (cause) =>
-        new DesktopClientSettingsWriteError({
-          operation: "replace-settings-file",
-          path: input.settingsPath,
-          cause,
-        }),
-    ),
-  );
+  yield* Effect.gen(function* () {
+    yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DesktopClientSettingsWriteError({
+            operation: "write-temporary-file",
+            path: tempPath,
+            cause,
+          }),
+      ),
+    );
+    yield* input.fileSystem.rename(tempPath, targetPath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DesktopClientSettingsWriteError({
+            operation: "replace-settings-file",
+            path: input.settingsPath,
+            cause,
+          }),
+      ),
+    );
+  }).pipe(Effect.ensuring(input.fileSystem.remove(tempPath, { force: true }).pipe(Effect.ignore)));
 });
 
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
 
   return DesktopClientSettings.of({
     get: readClientSettings(fileSystem, environment.clientSettingsPath).pipe(
       Effect.withSpan("desktop.clientSettings.get"),
     ),
-    set: (settings) =>
-      crypto.randomUUIDv4().pipe(
+    set: Effect.fn("desktop.clientSettings.set")(function (settings) {
+      return random.uuidV4().pipe(
         Effect.map((uuid) => uuid.replace(/-/g, "")),
-        Effect.mapError(
-          (cause) =>
-            new DesktopClientSettingsWriteError({
-              operation: "create-temporary-file-name",
-              path: environment.clientSettingsPath,
-              cause,
-            }),
-        ),
         Effect.flatMap((suffix) =>
           writeClientSettings({
             fileSystem,
@@ -214,8 +208,8 @@ export const make = Effect.gen(function* () {
             suffix,
           }),
         ),
-        Effect.withSpan("desktop.clientSettings.set"),
-      ),
+      );
+    }),
   });
 });
 
@@ -228,7 +222,9 @@ export const layerTest = (initialSettings: Option.Option<ClientSettings> = Optio
       const settingsRef = yield* Ref.make(initialSettings);
       return DesktopClientSettings.of({
         get: Ref.get(settingsRef),
-        set: (settings) => Ref.set(settingsRef, Option.some(settings)),
+        set: Effect.fn("DesktopClientSettings.set")(function (settings) {
+          return Ref.set(settingsRef, Option.some(settings));
+        }),
       });
     }),
   );

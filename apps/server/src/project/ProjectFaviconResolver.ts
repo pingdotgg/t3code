@@ -1,4 +1,5 @@
 import * as Cache from "effect/Cache";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -71,9 +72,7 @@ const ICON_SOURCE_FILES = [
   "src/index.html",
 ] as const;
 
-// The tag pattern is anchored on `<link`, so it only starts at real candidates. Object metadata
-// is matched by scanning brace-free runs instead of by one combined pattern: an unanchored
-// pattern restarts at every offset and rescans forward, which is quadratic on large sources.
+// Anchor HTML at <link and scan brace-free metadata runs to avoid quadratic regex rescans.
 const LINK_ICON_HTML_RE =
   /<link\b(?=[^>]*\brel=["'](?:icon|shortcut icon)["'])(?=[^>]*\bhref=["']([^"'?]+))[^>]*>/i;
 const ICON_REL_RE = /\brel\s*:\s*["'](?:icon|shortcut icon)["']/i;
@@ -127,7 +126,7 @@ function extractIconHref(source: string): string | null {
   return null;
 }
 
-const optionOnNotFound = <A, R>(
+export const optionOnNotFound = <A, R>(
   effect: Effect.Effect<A, PlatformError.PlatformError, R>,
 ): Effect.Effect<Option.Option<A>, PlatformError.PlatformError, R> =>
   effect.pipe(
@@ -145,7 +144,8 @@ export const make = Effect.gen(function* () {
   const projectFileLoader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
 
   const resolveIconHref = (href: string): ReadonlyArray<string> => {
-    const clean = href.replace(/^\//, "");
+    // Browsers strip surrounding whitespace from URL attributes; file paths keep theirs.
+    const clean = href.trim().replace(/^\//, "");
     return [path.join("public", clean), clean];
   };
 
@@ -235,11 +235,8 @@ export const make = Effect.gen(function* () {
     return yield* findExistingFile(projectCwd, resolveIconHref(href), "workspace");
   });
 
-  // Starts every probe at once and returns the first hit in list order. A miss
-  // costs one round of filesystem latency instead of one per probe, which
-  // matters when the disk is slow. Fibers are joined in order, so a hit returns
-  // without waiting for lower-ranked probes (the scope interrupts them), and a
-  // failure surfaces only when no earlier probe found a file.
+  // Probe concurrently but join in list order so lower-ranked probes cannot delay a hit.
+  // A failure surfaces only if no earlier probe found a file; scope exit interrupts remaining probes.
   const firstInOrder = Effect.fn("ProjectFaviconResolver.firstInOrder")(function* <A>(
     items: ReadonlyArray<A>,
     probe: (item: A) => Effect.Effect<string | null, ProjectFaviconResolutionError>,
@@ -309,7 +306,10 @@ export const make = Effect.gen(function* () {
       timeToLive: Exit.match({
         onSuccess: (value: string | null) =>
           value === null ? FAVICON_NEGATIVE_CACHE_TTL : FAVICON_POSITIVE_CACHE_TTL,
-        onFailure: () => Duration.zero,
+        onFailure: (cause) =>
+          Option.exists(Cause.findErrorOption(cause), isMissingWorkspaceRoot)
+            ? FAVICON_NEGATIVE_CACHE_TTL
+            : Duration.zero,
       }),
     },
   );

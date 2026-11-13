@@ -1,28 +1,22 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ChevronDownIcon } from "lucide-react";
-import * as Duration from "effect/Duration";
+import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { useState, type ReactNode } from "react";
 import type {
-  BackgroundActivitySettings,
   SourceControlDiscoveryResult,
   SourceControlProviderAuth,
   SourceControlProviderDiscoveryItem,
   VcsDriverKind,
   VcsDiscoveryItem,
 } from "@t3tools/contracts";
-import {
-  getBackgroundActivityBaseProfile,
-  getBackgroundActivityPresetSettings,
-  resolveServerBackgroundActivitySettings,
-} from "@t3tools/shared/backgroundActivitySettings";
-
-import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
 import { sourceControlEnvironment } from "../../state/sourceControl";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
@@ -35,25 +29,17 @@ import {
   EmptyTitle,
 } from "../ui/empty";
 import { Skeleton } from "../ui/skeleton";
-import {
-  NumberField,
-  NumberFieldDecrement,
-  NumberFieldGroup,
-  NumberFieldIncrement,
-  NumberFieldInput,
-} from "../ui/number-field";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 import { GitIcon, JujutsuIcon, type Icon } from "../Icons";
 import { SourceControlHostSettings } from "./SourceControlHostSettings";
-import { GitHubAccountSettings } from "./GitHubAccountSettings";
-import { GitHubTokenSettings } from "./GitHubTokenSettings";
+import { SourceControlAccountSettings } from "./SourceControlAccountSettings";
+import { SourceControlAppSignInSettings } from "./SourceControlAppSignInSettings";
+import { SourceControlTokenSettings } from "./SourceControlTokenSettings";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import {
-  PolicyTooltip,
-  SettingResetButton,
   SettingsPageContainer,
   SettingsSearchTarget,
   SettingsSection,
@@ -61,6 +47,7 @@ import {
 } from "./settingsLayout";
 import { searchableSetting, sourceControlHostSettingsSearchId } from "./settingsSearch";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { isSourceControlProviderOffered } from "@t3tools/client-runtime/operations/projects";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { sourceControlIcon } from "~/sourceControlPresentation";
 
@@ -75,47 +62,6 @@ const VCS_ICONS: Partial<Record<VcsDriverKind, Icon>> = {
 };
 
 const SOURCE_CONTROL_SKELETON_ROWS = ["primary", "secondary"] as const;
-const GIT_FETCH_INTERVAL_STEP_SECONDS = 5;
-type BackgroundActivityOverridePatch = Partial<{
-  [K in keyof BackgroundActivitySettings["overrides"]]:
-    | BackgroundActivitySettings["overrides"][K]
-    | undefined;
-}>;
-
-function durationToSeconds(duration: Duration.Duration): number {
-  return Math.round(Duration.toMillis(duration) / 1_000);
-}
-
-function normalizeFetchIntervalSeconds(value: number | null): number {
-  if (value === null || !Number.isFinite(value)) {
-    return 0;
-  }
-  return Math.max(0, Math.round(value));
-}
-
-function backgroundActivityOverrideSettings(
-  current: BackgroundActivitySettings,
-  overrides: BackgroundActivityOverridePatch,
-) {
-  const nextOverrides: BackgroundActivityOverridePatch = {
-    ...current.overrides,
-    ...overrides,
-  };
-  for (const [key, value] of Object.entries(nextOverrides)) {
-    if (value === undefined) {
-      delete nextOverrides[key as keyof typeof nextOverrides];
-    }
-  }
-  return {
-    backgroundActivity: {
-      schemaVersion: 1 as const,
-      profile: "custom" as const,
-      baseProfile: getBackgroundActivityBaseProfile(current),
-      overrides: nextOverrides as BackgroundActivitySettings["overrides"],
-    },
-  };
-}
-
 function optionLabel(value: Option.Option<string>): string | null {
   return Option.getOrNull(value);
 }
@@ -132,13 +78,13 @@ function isVcsNotReady(item: VcsDiscoveryItem | SourceControlProviderDiscoveryIt
 
 function authPresentation(auth: SourceControlProviderAuth): {
   readonly label: string;
-  readonly badge: "warning" | null;
+  readonly badge: "secondary" | null;
 } {
   if (auth.status === "authenticated") {
     return { label: "Authenticated", badge: null };
   }
   if (auth.status === "unauthenticated") {
-    return { label: "Not authenticated", badge: "warning" };
+    return { label: "Not authenticated", badge: "secondary" };
   }
   return { label: "Status unknown", badge: null };
 }
@@ -156,8 +102,12 @@ function RedactedAccount(props: { readonly account: string | null }) {
 
 function itemStatusDot(item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem): string {
   if (isVcsNotReady(item)) return "bg-muted-foreground/35";
+  if (isProviderDiscoveryItem(item)) {
+    return item.status === "available" && item.auth.status === "authenticated"
+      ? "bg-success"
+      : "bg-muted-foreground/35";
+  }
   if (item.status !== "available") return "bg-warning";
-  if (isProviderDiscoveryItem(item) && item.auth.status !== "authenticated") return "bg-warning";
   return "bg-success";
 }
 
@@ -261,27 +211,27 @@ function itemSummary({
 
 function DiscoveryItemRow({
   item,
+  offered,
   children,
 }: {
   readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
+  /** A provider's switch chooses whether the project pickers offer it; a VCS switch only reports. */
+  readonly offered?: {
+    readonly checked: boolean;
+    readonly disabled: boolean;
+    readonly onChange: (checked: boolean) => void;
+  };
   readonly children?: ReactNode;
 }) {
   const version = optionLabel(item.version);
-  const enabled = isProviderDiscoveryItem(item)
-    ? item.status === "available" && item.auth.status === "authenticated"
-    : item.status === "available" && item.implemented;
   const auth = isProviderDiscoveryItem(item) ? item.auth : null;
   const authStatus = auth ? authPresentation(auth) : null;
   const authAccount = auth ? optionLabel(auth.account) : null;
   const [isExpanded, setIsExpanded] = useState(false);
   const hasDetails = children !== undefined;
   const searchTargetId = useSettingsSearchTargetId();
-  // A search jump to a setting inside this row opens it when the target arrives.
   const [seenSearchTargetId, setSeenSearchTargetId] = useState<string | null>(null);
-  const targetsThisRow =
-    (item.kind === "git" && searchTargetId === searchableSetting("git-fetch-interval").id) ||
-    searchTargetId === sourceControlHostSettingsSearchId(item.kind) ||
-    (item.kind === "github" && searchTargetId === searchableSetting("github-accounts").id);
+  const targetsThisRow = searchTargetId === sourceControlHostSettingsSearchId(item.kind);
   if (targetsThisRow && !isExpanded && seenSearchTargetId !== searchTargetId) {
     setIsExpanded(true);
   }
@@ -330,8 +280,26 @@ function DiscoveryItemRow({
                 />
               </Button>
             ) : null}
-            {!isVcsNotReady(item) ? (
-              <Switch checked={enabled} disabled aria-label={`${item.label} availability`} />
+            {offered ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Switch
+                      checked={offered.checked}
+                      disabled={offered.disabled}
+                      onCheckedChange={offered.onChange}
+                      aria-label={`Offer ${item.label} when adding or publishing a project`}
+                    />
+                  }
+                />
+                <TooltipPopup side="top">Offer when adding or publishing a project</TooltipPopup>
+              </Tooltip>
+            ) : !isVcsNotReady(item) ? (
+              <Switch
+                checked={item.status === "available"}
+                disabled
+                aria-label={`${item.label} availability`}
+              />
             ) : null}
           </div>
         </div>
@@ -345,86 +313,6 @@ function DiscoveryItemRow({
         </Collapsible>
       ) : null}
     </div>
-  );
-}
-
-function GitFetchIntervalSettings() {
-  const settings = useScopedSettings();
-  const updateSettings = useUpdateScopedSettings();
-  const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
-  const automaticGitFetchIntervalSeconds = durationToSeconds(
-    resolvedBackgroundActivity.automaticGitFetchInterval,
-  );
-  const defaultAutomaticGitFetchIntervalSeconds = durationToSeconds(
-    getBackgroundActivityPresetSettings(
-      getBackgroundActivityBaseProfile(settings.backgroundActivity),
-    ).automaticGitFetchInterval,
-  );
-  const canResetFetchInterval =
-    automaticGitFetchIntervalSeconds !== defaultAutomaticGitFetchIntervalSeconds;
-  const setting = searchableSetting("git-fetch-interval");
-
-  return (
-    <SettingsSearchTarget id={setting.id} className="grid gap-3">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 space-y-1">
-          <div className="flex min-w-0 items-center gap-1">
-            <span className="text-xs font-medium text-foreground">{setting.title}</span>
-            <PolicyTooltip>
-              This interval is configured for Git only. The shared Background activity policy still
-              decides whether Git refreshes may run when the timer fires. Custom intervals appear as
-              Advanced in General settings.
-            </PolicyTooltip>
-            <span
-              className={cn(
-                "inline-flex size-5 shrink-0 items-center justify-center transition-opacity",
-                canResetFetchInterval ? "opacity-100" : "pointer-events-none opacity-0",
-              )}
-              aria-hidden={!canResetFetchInterval}
-            >
-              {canResetFetchInterval ? (
-                <SettingResetButton
-                  label="fetch interval"
-                  onClick={() =>
-                    updateSettings(
-                      backgroundActivityOverrideSettings(settings.backgroundActivity, {
-                        automaticGitFetchInterval: undefined,
-                      }),
-                    )
-                  }
-                />
-              ) : null}
-            </span>
-          </div>
-          <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-            Refresh remote branches in the background. Set to 0 to avoid automatic Git prompts.
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <NumberField
-            value={automaticGitFetchIntervalSeconds}
-            min={0}
-            step={GIT_FETCH_INTERVAL_STEP_SECONDS}
-            size="sm"
-            className="w-32"
-            onValueChange={(value) =>
-              updateSettings(
-                backgroundActivityOverrideSettings(settings.backgroundActivity, {
-                  automaticGitFetchInterval: Duration.seconds(normalizeFetchIntervalSeconds(value)),
-                }),
-              )
-            }
-          >
-            <NumberFieldGroup>
-              <NumberFieldDecrement aria-label="Decrease fetch interval" />
-              <NumberFieldInput aria-label="Automatic Git fetch interval in seconds" />
-              <NumberFieldIncrement aria-label="Increase fetch interval" />
-            </NumberFieldGroup>
-          </NumberField>
-          <span className="text-xs text-muted-foreground">seconds</span>
-        </div>
-      </div>
-    </SettingsSearchTarget>
   );
 }
 
@@ -526,13 +414,62 @@ export function SourceControlSettingsPanel() {
   const handleScan = () => {
     discovery.refresh();
   };
-  const hostSettingsPanel = (kind: string) => {
-    const definition = sourceControlClients.find(kind);
+  const offeredProviders = environment?.serverConfig?.settings.offeredSourceControlProviders;
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "save source control providers",
+  });
+  const canUpdateSettings = useAtomValue(
+    serverEnvironment.updateSettings.permissionAtom(environmentId),
+  );
+  const hostSettingsPanel = (item: SourceControlProviderDiscoveryItem) => {
+    const definition = sourceControlClients.find(item.kind);
     if (!definition?.settings || environmentId === null) return undefined;
+    const { credentials } = definition;
+    if (credentials) {
+      return (
+        <SettingsSearchTarget id={sourceControlHostSettingsSearchId(item.kind)}>
+          <div className="grid gap-6">
+            {credentials.appSignIn && item.appSignIn === true ? (
+              <SourceControlAppSignInSettings
+                key={`sign-in-${environmentId}`}
+                environmentId={environmentId}
+                definition={definition}
+                appSignIn={credentials.appSignIn}
+                account={Option.getOrNull(item.auth.account)}
+                onChanged={handleScan}
+              />
+            ) : null}
+            {credentials.appSignIn && item.appSignIn === true ? (
+              <div className="flex items-center gap-3 text-2xs text-muted-foreground">
+                <span aria-hidden className="h-px flex-1 bg-border" />
+                Or use your own credentials
+                <span aria-hidden className="h-px flex-1 bg-border" />
+              </div>
+            ) : null}
+            <SourceControlTokenSettings
+              key={`token-${environmentId}`}
+              environmentId={environmentId}
+              definition={definition}
+              credentials={credentials}
+              onSaved={handleScan}
+            />
+            {item.status === "available" ? (
+              <SourceControlAccountSettings
+                key={environmentId}
+                environmentId={environmentId}
+                definition={definition}
+                credentials={credentials}
+                auth={item.auth}
+                onSaved={handleScan}
+              />
+            ) : null}
+          </div>
+        </SettingsSearchTarget>
+      );
+    }
     return (
-      <SettingsSearchTarget id={sourceControlHostSettingsSearchId(kind)}>
+      <SettingsSearchTarget id={sourceControlHostSettingsSearchId(item.kind)}>
         <SourceControlHostSettings
-          // Drafts belong to one environment; switching must not carry them over.
           key={environmentId}
           environmentId={environmentId}
           definition={{ ...definition, settings: definition.settings }}
@@ -575,7 +512,7 @@ export function SourceControlSettingsPanel() {
             title={`Version Control${environmentSuffix}`}
             headerAction={scanButton}
           />
-          <SourceControlSectionSkeleton title="Source Control Providers" />
+          <SourceControlSectionSkeleton title="Source control providers" />
         </>
       ) : hasDiscoveryItems ? (
         <>
@@ -586,9 +523,7 @@ export function SourceControlSettingsPanel() {
               headerAction={scanButton}
             >
               {result.versionControlSystems.map((item) => (
-                <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
-                  {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
-                </DiscoveryItemRow>
+                <DiscoveryItemRow key={`vcs:${item.kind}`} item={item} />
               ))}
             </SettingsSection>
           ) : null}
@@ -598,35 +533,28 @@ export function SourceControlSettingsPanel() {
               id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
               title={
                 hasVersionControlSystems
-                  ? "Source Control Providers"
-                  : `Source Control Providers${environmentSuffix}`
+                  ? "Source control providers"
+                  : `Source control providers${environmentSuffix}`
               }
               headerAction={hasVersionControlSystems ? null : scanButton}
             >
               {result.sourceControlProviders.map((item) => (
-                <DiscoveryItemRow key={`provider:${item.kind}`} item={item}>
-                  {item.kind === "github" ? (
-                    <SettingsSearchTarget id={searchableSetting("github-accounts").id}>
-                      <div className="grid gap-6">
-                        {}
-                        <GitHubTokenSettings
-                          key={`token-${environmentId}`}
-                          environmentId={environmentId}
-                          onSaved={handleScan}
-                        />
-                        {item.status === "available" ? (
-                          <GitHubAccountSettings
-                            key={environmentId}
-                            environmentId={environmentId}
-                            auth={item.auth}
-                            onSaved={handleScan}
-                          />
-                        ) : null}
-                      </div>
-                    </SettingsSearchTarget>
-                  ) : (
-                    hostSettingsPanel(item.kind)
-                  )}
+                <DiscoveryItemRow
+                  key={`provider:${item.kind}`}
+                  item={item}
+                  offered={{
+                    checked: isSourceControlProviderOffered(offeredProviders, item.kind),
+                    disabled: !canUpdateSettings,
+                    onChange: (checked) =>
+                      void updateSettings({
+                        environmentId,
+                        input: {
+                          patch: { offeredSourceControlProviders: { [item.kind]: checked } },
+                        },
+                      }),
+                  }}
+                >
+                  {hostSettingsPanel(item)}
                 </DiscoveryItemRow>
               ))}
             </SettingsSection>
