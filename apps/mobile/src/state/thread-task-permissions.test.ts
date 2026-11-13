@@ -346,15 +346,23 @@ describe("mobile task permissions", () => {
       expect.not.objectContaining({ compactBeforeSend: true }),
     );
     state.draft = { ...state.draft, modelSelection: undefined };
-    composer.compactBeforeSend?.keepFullHistory();
+    composer.compactBeforeSend?.toggleKeepFullHistory();
     const kept = useThreadComposerState(NO_SIDE_CHATS);
-    expect(kept.compactBeforeSend).toBeNull();
-    await kept.onSendMessage();
+    expect(kept.compactBeforeSend?.keepFullHistory).toBe(true);
+    kept.compactBeforeSend?.toggleKeepFullHistory();
+    const compactAgain = useThreadComposerState(NO_SIDE_CHATS);
+    expect(compactAgain.compactBeforeSend?.keepFullHistory).toBe(false);
+    await compactAgain.onSendMessage();
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ compactBeforeSend: true }),
+    );
+    compactAgain.compactBeforeSend?.toggleKeepFullHistory();
+    await useThreadComposerState(NO_SIDE_CHATS).onSendMessage();
     expect(state.enqueue).toHaveBeenLastCalledWith(
       expect.not.objectContaining({ compactBeforeSend: true }),
     );
     // Keeping covers one send, as on web.
-    expect(useThreadComposerState(NO_SIDE_CHATS).compactBeforeSend?.tokens).toBe(248_000);
+    expect(useThreadComposerState(NO_SIDE_CHATS).compactBeforeSend?.keepFullHistory).toBe(false);
     state.freshPending = true;
     await composer.onSendMessage();
     expect(state.enqueue).toHaveBeenLastCalledWith(

@@ -44,6 +44,30 @@ describe("preview guest input", () => {
     expect(guest.sendCommand).not.toHaveBeenCalledWith("Input.insertText", expect.anything());
   });
 
+  it("stops the guest navigation without stopping its embedder", async () => {
+    let guestLoading = true;
+    let hostLoading = true;
+    const guest = {
+      stop: () => {
+        guestLoading = false;
+      },
+    };
+    const debuggee = {
+      sendCommand: async () => {
+        hostLoading = false;
+        return {};
+      },
+    };
+    await sendPageCommand(
+      guest as unknown as Electron.WebContents,
+      debuggee as unknown as Electron.Debugger,
+      "Page.stopLoading",
+      {},
+    );
+    expect(guestLoading).toBe(false);
+    expect(hostLoading).toBe(true);
+  });
+
   it.each([
     {
       sessionId: undefined,
