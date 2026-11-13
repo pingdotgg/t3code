@@ -1312,12 +1312,17 @@ it.effect("fetches the origin base from the remote it already resolved", () => {
   }).pipe(Effect.provide(harness.layer));
 });
 
-const checkoutExistingHarness = (localBranches: ReadonlyArray<VcsRef>) =>
+const checkoutExistingHarness = (
+  localBranches: ReadonlyArray<VcsRef>,
+  remoteBranches: ReadonlyArray<VcsRef> = [],
+) =>
   makeHarness({
     git: {
-      listRefs: ({ query }) =>
+      listRefs: ({ query, refKind }) =>
         Effect.succeed({
-          refs: localBranches.filter((ref) => ref.name === query),
+          refs: (refKind === "remote" ? remoteBranches : localBranches).filter(
+            (ref) => ref.name === query,
+          ),
           isRepo: true,
           hasPrimaryRemote: true,
           nextCursor: null,
@@ -1339,6 +1344,15 @@ const localBranch = (name: string, worktreePath: string | null = null): VcsRef =
   current: false,
   isDefault: false,
   worktreePath,
+});
+
+const originBranch = (name: string): VcsRef => ({
+  name: `origin/${name}`,
+  isRemote: true,
+  remoteName: "origin",
+  current: false,
+  isDefault: false,
+  worktreePath: null,
 });
 
 const launchCheckoutExisting = (baseRef: string, key: string) =>
@@ -1365,12 +1379,14 @@ it.effect.each([
     name: "creates a local tracking branch for a remote-only branch",
     baseRef: "origin/feature/login",
     localBranches: [],
+    remoteBranches: [originBranch("feature/login")],
     expected: { refName: "origin/feature/login", newRefName: "feature/login" },
   },
   {
     name: "prefers the local branch over its remote-tracking ref",
     baseRef: "origin/feature/login",
     localBranches: [localBranch("feature/login")],
+    remoteBranches: [originBranch("feature/login")],
     expected: { refName: "feature/login" },
   },
   {
@@ -1379,8 +1395,14 @@ it.effect.each([
     localBranches: [localBranch("t3/1234abcd")],
     expected: { refName: "t3/1234abcd" },
   },
-])("$name in a new worktree", ({ name, baseRef, localBranches, expected }) => {
-  const harness = checkoutExistingHarness(localBranches);
+  {
+    name: "keeps a branch folder that is not a remote",
+    baseRef: "feature/login",
+    localBranches: [localBranch("login", "/repo-worktrees/login")],
+    expected: { refName: "feature/login", newRefName: "feature/login" },
+  },
+])("$name in a new worktree", ({ name, baseRef, localBranches, remoteBranches, expected }) => {
+  const harness = checkoutExistingHarness(localBranches, remoteBranches);
   return Effect.gen(function* () {
     const launched = yield* launchCheckoutExisting(baseRef, name);
     const settled = yield* preparationSettled(launched.threadId);
@@ -1410,6 +1432,67 @@ it.effect.each(["feature/login", "t3/1234abcd"])(
       assert.equal(harness.generateBranchName.mock.calls.length, 0);
     }).pipe(Effect.provide(harness.layer));
   },
+);
+
+it.effect("replays a joined launch after its branch moves to the project folder", () => {
+  let worktreePath = "/repo-worktrees/existing-login";
+  const harness = makeHarness({
+    git: {
+      listRefs: ({ query }) =>
+        Effect.succeed({
+          refs: [localBranch("feature/login", worktreePath)].filter((ref) => ref.name === query),
+          isRepo: true,
+          hasPrimaryRemote: true,
+          nextCursor: null,
+          totalCount: 1,
+        }),
+    },
+  });
+  return Effect.gen(function* () {
+    const launched = yield* launchCheckoutExisting("feature/login", "replay-join");
+    yield* preparationSettled(launched.threadId);
+    worktreePath = project.workspaceRoot;
+    const retry = yield* launchCheckoutExisting("feature/login", "replay-join");
+    assert.isTrue(retry.resumed);
+    assert.equal(retry.projection.thread.worktreePath, "/repo-worktrees/existing-login");
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("refuses to join a worktree another launch is still creating", () =>
+  Effect.gen(function* () {
+    const claimed = yield* Deferred.make<void>();
+    let checkedOutAt: string | null = null;
+    const harness = makeHarness({
+      git: {
+        listRefs: ({ query }) =>
+          Effect.succeed({
+            refs: [localBranch("feature/login", checkedOutAt)].filter((ref) => ref.name === query),
+            isRepo: true,
+            hasPrimaryRemote: true,
+            nextCursor: null,
+            totalCount: 1,
+          }),
+      },
+      createWorktree: (_input, options) =>
+        (options?.progress?.onWorktreeClaimed?.("/repo-worktrees/feature") ?? Effect.void).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              checkedOutAt = "/repo-worktrees/feature";
+            }),
+          ),
+          Effect.andThen(Deferred.succeed(claimed, undefined)),
+          Effect.andThen(Effect.never),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      yield* launchCheckoutExisting("feature/login", "provisional-first");
+      yield* Deferred.await(claimed);
+      const error = yield* launchCheckoutExisting("feature/login", "provisional-second").pipe(
+        Effect.flip,
+      );
+      assert.include(String(error.cause), "still being set up");
+    }).pipe(Effect.provide(harness.layer));
+  }),
 );
 
 it.effect("refuses to open the project folder's branch in a separate worktree", () => {
