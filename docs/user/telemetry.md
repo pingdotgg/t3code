@@ -28,9 +28,10 @@ removes file paths (when a report mentions one, the rest of that line goes with 
 name, machine name, project title, branch, and git remote, and anything that looks like a key,
 token, email address, or URL with a password. This is best effort and can miss private text, such
 as very short names, so turn agent feedback on knowingly. Reports from agents also name the
-provider, and the model when it is from the provider's public model list. What is sent carries no
-prompts, thread IDs, or project IDs. The text is written by the agent, which is told not to quote
-your messages or code.
+provider, and the model when it is from the provider's public model list. T3 Code attaches no
+prompts, thread IDs, or project IDs to what is sent. The text is written by the agent, which is
+told not to quote your messages or code, but it can still contain something you wrote if the agent
+quotes it.
 
 Reports are saved on your machine first. When product usage data is turned off, they stay there
 and are not sent. `t3 feedback list` shows recent reports and the thread each came from.
