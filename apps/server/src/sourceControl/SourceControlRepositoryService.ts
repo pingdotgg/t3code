@@ -1,3 +1,5 @@
+import * as Clock from "effect/Clock";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -83,6 +85,11 @@ const CLONE_ENV = {
   // English progress without overriding LC_CTYPE, which a global post-checkout hook inherits.
   LANGUAGE: "C",
 } satisfies NodeJS.ProcessEnv;
+// What `git lfs install` writes. Other setups chose behavior that `git lfs pull` would not honor.
+const STOCK_LFS_FILTER = "git-lfs filter-process";
+const LFS_PROGRESS_INTERVAL_MS = 1_000;
+const isStockLfs = (filter: string | null, toleratesErrors: string | null) =>
+  filter === STOCK_LFS_FILTER && toleratesErrors === null;
 
 function mapRepositoryError(operation: string, provider: SourceControlProviderKind) {
   return Effect.mapError((cause: unknown) =>
@@ -328,43 +335,37 @@ export const make = Effect.gen(function* () {
     } satisfies SourceControlPreparedClone;
   });
 
-  const runClone = Effect.fn("SourceControlRepositoryService.runClone")(function* (
+  const runCloneCommand = Effect.fn("SourceControlRepositoryService.runCloneCommand")(function* (
     input: SourceControlCloneRepositoryInput,
-    destinationPath: string,
-    cloneUrl: string,
+    command: Pick<GitVcsDriver.ExecuteGitInput, "operation" | "cwd" | "args" | "env">,
     options?: SourceControlCloneOptions,
   ) {
     const onProgress = options?.onProgress;
-    // Git mixes progress and diagnostics on stderr; retain non-progress tail lines for failure details.
-    const stderrTail: Array<string> = [];
-    const onStderrLine = (line: string) => {
+    // Git mixes progress and diagnostics on stderr, and git-lfs redraws on stdout; retain non-progress tail lines for failure details.
+    const outputTail: Array<string> = [];
+    const onLine = (line: string) => {
       const parsed = parseGitCloneProgressLine(line);
       if (parsed) return onProgress ? onProgress(parsed) : Effect.void;
       return Effect.sync(() => {
         const trimmed = line.trim();
         if (trimmed.length === 0 || trimmed.startsWith("Cloning into")) return;
         // Git echoes the remote in some failures; the tail becomes user-facing text.
-        stderrTail.push(redactUrlCredentials(trimmed));
-        if (stderrTail.length > 4) stderrTail.shift();
+        outputTail.push(redactUrlCredentials(trimmed));
+        if (outputTail.length > 4) outputTail.shift();
       });
     };
-    // Git misreads @ in a pathless URL's query as userinfo and echoes its suffix as the host.
-    const normalizedCloneUrl = cloneUrl.replace(/^([a-z][a-z0-9+.-]*:\/\/[^/?#]+)\?/i, "$1/?");
     const provider = input.provider ?? SourceControlProviderKind.make("unknown");
     const timeoutMs = options?.timeoutMs === undefined ? CLONE_TIMEOUT_MS : options.timeoutMs;
     const clone = git
       .execute({
-        operation: "SourceControlRepositoryService.cloneRepository",
-        cwd: path.dirname(destinationPath),
-        args: ["clone", "--progress", "--", normalizedCloneUrl, path.basename(destinationPath)],
+        ...command,
         // The deadline is applied below so a timeout is reported as one, not as git's last line.
         timeoutMs: null,
         // Buffered output is unused and progress can be huge; cap it while retaining line callbacks.
         maxOutputBytes: 256 * 1024,
         appendTruncationMarker: true,
         keepLineCallbacksAfterTruncation: true,
-        env: CLONE_ENV,
-        progress: { onStderrLine },
+        progress: { onStdoutLine: onLine, onStderrLine: onLine },
       })
       .pipe(
         Effect.mapError(
@@ -373,8 +374,8 @@ export const make = Effect.gen(function* () {
               operation: "cloneRepository",
               provider,
               detail:
-                stderrTail.length > 0
-                  ? stderrTail.join(" ")
+                outputTail.length > 0
+                  ? outputTail.join(" ")
                   : "The repository could not be cloned.",
               cause,
             }),
@@ -397,16 +398,144 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const runClone = Effect.fn("SourceControlRepositoryService.runClone")(function* (
+    input: SourceControlCloneRepositoryInput,
+    destinationPath: string,
+    cloneUrl: string,
+    deferLfs: boolean,
+    options?: SourceControlCloneOptions,
+  ) {
+    // Git misreads @ in a pathless URL's query as userinfo and echoes its suffix as the host.
+    const normalizedCloneUrl = cloneUrl.replace(/^([a-z][a-z0-9+.-]*:\/\/[^/?#]+)\?/i, "$1/?");
+    yield* runCloneCommand(
+      input,
+      {
+        operation: "SourceControlRepositoryService.cloneRepository",
+        cwd: path.dirname(destinationPath),
+        args: ["clone", "--progress", "--", normalizedCloneUrl, path.basename(destinationPath)],
+        env: deferLfs ? { ...CLONE_ENV, GIT_LFS_SKIP_SMUDGE: "1" } : CLONE_ENV,
+      },
+      options,
+    );
+  });
+
+  // The LFS filter stays silent until each whole file lands, so a healthy download looks stalled.
+  // `git lfs pull` reports bytes as they arrive, which keeps stall detection honest.
+  const canDeferLfs = Effect.fn("SourceControlRepositoryService.canDeferLfs")(
+    function* (destinationPath: string) {
+      const lfsSkipEnv = yield* Config.String("GIT_LFS_SKIP_SMUDGE").pipe(
+        Config.orElse(() => Config.String("GIT_LFS_SKIP_DOWNLOAD_ERRORS")),
+        Config.withDefault(""),
+      );
+      const templateEnv = yield* Config.String("GIT_TEMPLATE_DIR").pipe(Config.withDefault(""));
+      if (lfsSkipEnv || templateEnv) return false;
+      // The checkout's own git dir does not exist yet, so an enclosing repository's config is not read.
+      const readUserConfig = (key: string) =>
+        git.readConfigValue(path.dirname(destinationPath), key, {
+          gitDir: path.join(destinationPath, ".git"),
+        });
+      if (
+        !isStockLfs(
+          yield* readUserConfig("filter.lfs.process"),
+          yield* readUserConfig("lfs.skipdownloaderrors"),
+        )
+      ) {
+        return false;
+      }
+      // Clone-time hooks would see pointer files, so only a clone that can run none defers.
+      return (
+        (yield* readUserConfig("core.hooksPath")) === null &&
+        (yield* readUserConfig("init.templateDir")) === null
+      );
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
+  const pullLfsObjects = Effect.fn("SourceControlRepositoryService.pullLfsObjects")(function* (
+    input: SourceControlCloneRepositoryInput,
+    destinationPath: string,
+    options?: SourceControlCloneOptions,
+  ) {
+    const lfsFiles = yield* git
+      .execute({
+        operation: "SourceControlRepositoryService.listLfsFiles",
+        cwd: destinationPath,
+        args: ["ls-files", "--", ":(attr:filter=lfs)"],
+        maxOutputBytes: 1024,
+        appendTruncationMarker: true,
+      })
+      .pipe(
+        mapRepositoryError(
+          "cloneRepository",
+          input.provider ?? SourceControlProviderKind.make("unknown"),
+        ),
+      );
+    if (lfsFiles.stdout.trim().length === 0) return;
+    // git-lfs also reads this from the repository's committed `.lfsconfig`.
+    const committedTolerance = yield* git.execute({
+      operation: "SourceControlRepositoryService.readLfsConfig",
+      cwd: destinationPath,
+      args: ["config", "--file", ".lfsconfig", "--get", "lfs.skipdownloaderrors"],
+      allowNonZeroExit: true,
+    });
+    // Config that only applies inside the checkout (an includeIf, say) is visible only now.
+    const deferrable = isStockLfs(
+      yield* git.readConfigValue(destinationPath, "filter.lfs.process"),
+      (yield* git.readConfigValue(destinationPath, "lfs.skipdownloaderrors")) ??
+        (committedTolerance.stdout.trim() || null),
+    );
+    if (!deferrable) {
+      // Redo the checkout through git's own filters, exactly as a plain clone would have.
+      const restore = (args: ReadonlyArray<string>) =>
+        runCloneCommand(
+          input,
+          {
+            operation: "SourceControlRepositoryService.restoreLfsCheckout",
+            cwd: destinationPath,
+            args,
+            env: CLONE_ENV,
+          },
+          options,
+        );
+      yield* restore(["read-tree", "--empty"]);
+      yield* restore(["reset", "--hard", "--quiet"]);
+      return;
+    }
+    const onProgress = options?.onProgress;
+    let lastReportedAt = Number.NEGATIVE_INFINITY;
+    yield* runCloneCommand(
+      input,
+      {
+        operation: "SourceControlRepositoryService.pullLfsObjects",
+        cwd: destinationPath,
+        args: ["lfs", "pull"],
+        env: { ...CLONE_ENV, GIT_LFS_FORCE_PROGRESS: "1" },
+      },
+      {
+        ...options,
+        // git-lfs redraws about five times a second; hold the websocket to git's own pace.
+        onProgress: (line) =>
+          Effect.flatMap(Clock.currentTimeMillis, (now) => {
+            if (now - lastReportedAt < LFS_PROGRESS_INTERVAL_MS) return Effect.void;
+            lastReportedAt = now;
+            return onProgress ? onProgress(line) : Effect.void;
+          }),
+      },
+    );
+  });
+
   const cloneRepository = Effect.fn("SourceControlRepositoryService.cloneRepository")(function* (
     input: SourceControlCloneRepositoryInput,
     options?: SourceControlCloneOptions,
   ) {
     const prepared = yield* prepareClone(input);
     const httpsUrl = httpsFallbackUrl(input, prepared);
+    const deferLfs = yield* canDeferLfs(prepared.destinationPath);
     const remoteUrl = yield* runClone(
       input,
       prepared.destinationPath,
       prepared.cloneUrl,
+      deferLfs,
       options,
     ).pipe(
       Effect.as(prepared.remoteUrl),
@@ -414,7 +543,7 @@ export const make = Effect.gen(function* () {
       Effect.catch((sshError) =>
         httpsUrl === null || !isSshRejection(sshError)
           ? Effect.fail(sshError)
-          : runClone(input, prepared.destinationPath, httpsUrl, options).pipe(
+          : runClone(input, prepared.destinationPath, httpsUrl, deferLfs, options).pipe(
               Effect.as(redactRemoteUrl(httpsUrl)),
               Effect.mapError(
                 (httpsError) =>
@@ -428,6 +557,7 @@ export const make = Effect.gen(function* () {
             ),
       ),
     );
+    if (deferLfs) yield* pullLfsObjects(input, prepared.destinationPath, options);
 
     return {
       cwd: prepared.destinationPath,

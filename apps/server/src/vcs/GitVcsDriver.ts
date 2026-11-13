@@ -361,9 +361,11 @@ export class GitVcsDriver extends Context.Service<
     readonly getReviewDiffFileContents: (
       input: ReviewDiffFileContentsInput,
     ) => Effect.Effect<ReviewDiffFileContentsResult, GitCommandError>;
+    /** With `gitDir`, reads that repository's config instead of the one enclosing `cwd`. */
     readonly readConfigValue: (
       cwd: string,
       key: string,
+      options?: { readonly gitDir?: string },
     ) => Effect.Effect<string | null, GitCommandError>;
     /**
      * The branch, named as on the host, that T3 recorded `branch` was cut from. Null when none

@@ -4075,8 +4075,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return { oldContents, newContents };
   });
 
-  const readConfigValue: GitVcsDriver.GitVcsDriver["Service"]["readConfigValue"] = (cwd, key) =>
-    runGitStdout("GitVcsDriver.readConfigValue", cwd, ["config", "--get", key], true).pipe(
+  const readConfigValue: GitVcsDriver.GitVcsDriver["Service"]["readConfigValue"] = (
+    cwd,
+    key,
+    options,
+  ) =>
+    runGitStdout(
+      "GitVcsDriver.readConfigValue",
+      cwd,
+      [...(options?.gitDir ? ["--git-dir", options.gitDir] : []), "config", "--get", key],
+      true,
+    ).pipe(
       Effect.map((stdout) => stdout.trim()),
       Effect.map((trimmed) => (trimmed.length > 0 ? trimmed : null)),
     );
