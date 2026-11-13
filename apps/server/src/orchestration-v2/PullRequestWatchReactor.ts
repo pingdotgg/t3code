@@ -903,8 +903,14 @@ export const make = Effect.gen(function* () {
             agentEnds.delete(event.threadId);
           }
         });
+        // Some providers report a command that exited nonzero as completed.
+        const succeeded =
+          item.status === "completed" &&
+          (item.exitCode === undefined
+            ? item.outputIndicatesFailure !== true
+            : item.exitCode === 0);
         return Effect.andThen(
-          item.status === "completed" ? Effect.void : done,
+          succeeded ? Effect.void : done,
           FiberMap.run(
             agentReads,
             item.id,

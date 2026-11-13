@@ -4038,23 +4038,30 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
   it.effect.each([
     // The agent's merge of #19 needs no wake, but its command did not close #20.
-    { status: "completed", wakes: ["#20: closed, stopped watching"] },
+    { name: "completed", status: "completed", wakes: ["#20: closed, stopped watching"] },
     // A merge command that failed ended nothing itself.
     {
+      name: "failed",
       status: "failed",
       wakes: ["#19: merged, stopped watching", "#20: closed, stopped watching"],
     },
+    {
+      name: "exit-1",
+      status: "completed",
+      exitCode: 1,
+      wakes: ["#19: merged, stopped watching", "#20: closed, stopped watching"],
+    },
   ] as const)(
-    "ends a watch without a wake when the thread's own agent merged it ($status)",
-    ({ status: ended, wakes: expected }) =>
+    "ends a watch without a wake when the thread's own agent merged it ($name)",
+    ({ name: key, status: ended, wakes: expected, ...result }) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const threadId = ThreadId.make(`runtime-pull-request-watch-own-merge-${ended}`);
-        const projectId = ProjectId.make(`pr-watch-own-merge-${ended}-project`);
+        const threadId = ThreadId.make(`runtime-pull-request-watch-own-merge-${key}`);
+        const projectId = ProjectId.make(`pr-watch-own-merge-${key}-project`);
         yield* seedProject({
           projectId,
           title: "Watch own merge",
-          workspaceRoot: `/workspace/watch-own-merge-${ended}`,
+          workspaceRoot: `/workspace/watch-own-merge-${key}`,
           defaultModelSelection: null,
           createdAt: "2026-10-01T00:00:00.000Z",
         });
@@ -4062,7 +4069,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           type: "thread.create",
           createdBy: "user",
           creationSource: "web",
-          commandId: CommandId.make(`pr-watch-own-merge-${ended}-create`),
+          commandId: CommandId.make(`pr-watch-own-merge-${key}-create`),
           threadId,
           projectId,
           title: "Watch own merge",
@@ -4075,7 +4082,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         for (const number of [19, 20]) {
           yield* orchestrator.dispatch({
             type: "thread.pull-request.watch",
-            commandId: CommandId.make(`pr-watch-own-merge-${ended}-start-${number}`),
+            commandId: CommandId.make(`pr-watch-own-merge-${key}-start-${number}`),
             threadId,
             host: "github.com",
             repository: "pingdotgg/t3code",
@@ -4168,6 +4175,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
               updatedAt: at,
               type: "command_execution",
               input: "gh pr merge 19 --squash",
+              ...(status === "running" ? {} : result),
             },
           }));
         const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));

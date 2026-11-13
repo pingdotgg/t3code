@@ -26,9 +26,11 @@ export const isChangeRequestCloseCommand = (command: string) =>
     (definition) => definition.changeRequestCloseCommand?.test(command) === true,
   );
 
-// Quotes included, since Codex runs `/bin/zsh -lc "gh pr merge 19"`.
-const NAMED_CHANGE_REQUEST =
-  /(?:^|[\s=])["']?#?(\d+)["']?(?=\s|$)|\/(?:pulls?|merge_requests)\/(\d+)/gu;
+// A quoted or bare shell word. An unclosed quote, as Codex's `/bin/zsh -lc "gh pr merge 19"`
+// leaves after the match, runs to the end.
+const SHELL_WORD = /"((?:\\[\s\S]|[^"\\])*)"?|'([^']*)'?|((?:\\[\s\S]|[^\s"'\\])+)/gu;
+// A whole word that names one, so a number inside `--subject "Release 20"` does not.
+const NAMED_CHANGE_REQUEST = /^(?:--?[\w-]+=)?#?(\d+)$|^\S*\/(?:pulls?|merge_requests)\/(\d+)\/?$/u;
 
 /**
  * The change request numbers a merge or close command names, or "any" when one names none, as a
@@ -41,9 +43,13 @@ export function changeRequestsClosedBy(command: string): ReadonlySet<number> | "
     for (const match of command.matchAll(new RegExp(close.source, `${close.flags}g`))) {
       // From the match's start, since Azure's match runs through `--id` to `--status`.
       const args = command.slice(match.index).split(/[;&|\n]/u, 1)[0] ?? "";
-      const numbers = [...args.matchAll(NAMED_CHANGE_REQUEST)].map(([, bare, url]) =>
-        Number(bare ?? url),
-      );
+      const numbers: Array<number> = [];
+      for (const [, double, single, bare] of args.matchAll(SHELL_WORD)) {
+        // A comment ends the command.
+        if (bare !== undefined && /^#(?!\d+$)/u.test(bare)) break;
+        const [, number, url] = NAMED_CHANGE_REQUEST.exec(double ?? single ?? bare ?? "") ?? [];
+        if (number !== undefined || url !== undefined) numbers.push(Number(number ?? url));
+      }
       if (numbers.length === 0) return "any";
       for (const number of numbers) named.add(number);
     }
