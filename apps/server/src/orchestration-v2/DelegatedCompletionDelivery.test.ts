@@ -2680,6 +2680,9 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           const run = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
             (row) => row.userMessageId === wakeMessageId,
           )!;
+          // Behind the original task's own turn, the wake continues that task instead of starting one.
+          if (timing === "while running") assert.equal(run.delegatedTaskId, child.taskId);
+          else assert.notEqual(run.delegatedTaskId, child.taskId);
           assert.isDefined(run.delegatedTaskId);
           if (timing === "while running") {
             assert.equal(run.status, "queued");

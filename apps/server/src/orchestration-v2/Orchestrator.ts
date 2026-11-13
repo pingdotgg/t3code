@@ -6371,10 +6371,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.deletedAt !== null ||
         (yield* stopReachedRun(command, command.threadId, source.id))
       ) {
-        yield* emit(
-          events,
-          command,
-        )({
+        const emitEvent = emit(events, command);
+        yield* emitEvent({
           type: "thread.metadata-updated",
           threadId: command.threadId,
           occurredAt: yield* DateTime.now,
@@ -9249,12 +9247,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.childThreadId === child.id &&
         task.id === (child.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : undefined),
     );
-    // PR watch wakes can queue before the original task publishes its result.
-    if (
-      original === undefined ||
-      (original.result === null && command.notification?.source.kind !== "monitor")
-    )
-      return;
+    if (original === undefined) return;
+    if (original.result === null) {
+      // PR watch wakes can arrive before the original task publishes its result.
+      if (command.notification?.source.kind !== "monitor") return;
+      const { runs } = yield* projectionStore.getThreadRecords(child.id, ["runs"]);
+      // Behind the original task's own turn, the wake continues that task, so cancelling it stops both.
+      if (
+        runs.some(
+          (row) =>
+            row.id !== run.id &&
+            (isLiveRun(row) || row.status === "waiting") &&
+            row.delegatedTaskId === undefined,
+        )
+      ) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "run.updated",
+          threadId: child.id,
+          runId: run.id,
+          occurredAt: message.createdAt,
+          payload: { ...run, delegatedTaskId: original.id },
+        });
+        return;
+      }
+    }
     const owner = followUpOwnerRun(parent.runs);
     if (owner === null || owner.rootNodeId === null) return;
     const now = message.createdAt;
