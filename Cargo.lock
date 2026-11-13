@@ -191,6 +191,7 @@ name = "conn-provider-claude"
 version = "0.1.0"
 dependencies = [
  "conn-contract",
+ "conn-mcp",
  "conn-provider",
  "conn-provider-support",
  "serde",

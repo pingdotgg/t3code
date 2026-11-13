@@ -860,3 +860,141 @@ async fn live_rollback_to_a_turn() {
     assert!(to_json(&thread_of(&seen))["nativeConversationHeadRef"].is_null());
     session.close().await;
 }
+
+/// A subagent that runs Bash under Full access. Prints every approval Claude forwards, to see
+/// whether a subagent's tool call reaches `canUseTool` under bypass (answered with accept).
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "runs the real claude CLI"]
+async fn live_subagent_runs_bash() {
+    let scratch = Scratch::new("subagent");
+    let (session, _helper, mut events) = concrete(provider().config().clone());
+    let thread = new_thread(&session, "full-access", &scratch.cwd()).await;
+    session
+        .start_turn(turn(
+            1,
+            &thread,
+            "Use the Agent tool once, in the foreground (run_in_background false), to start a general-purpose subagent. Tell it to run the Bash command `echo subagent-ok` and report the output. Wait for its result, then reply with that output only.",
+            "full-access",
+            &scratch.cwd(),
+        ))
+        .await
+        .unwrap();
+    let mut seen = Vec::new();
+    loop {
+        let batch = until(&mut events, |e| {
+            is_terminal(e)
+                || (e["type"] == "runtime_request.updated"
+                    && e["runtimeRequest"]["status"] == "pending")
+        })
+        .await;
+        let last = batch.last().unwrap().clone();
+        seen.extend(batch);
+        if is_terminal(&last) {
+            break;
+        }
+        eprintln!(
+            "approval forwarded under full access: {}",
+            last["runtimeRequest"]
+        );
+        session
+            .respond_to_runtime_request(RuntimeRequestResponse {
+                request_id: last["runtimeRequest"]["id"].as_str().unwrap().into(),
+                decision: Some(from_json(json!("accept")).unwrap()),
+                feedback: None,
+                answers: None,
+            })
+            .await
+            .unwrap();
+    }
+    assert_eq!(seen.last().unwrap()["status"], "completed");
+    assert!(
+        seen.iter().any(|e| e["type"] == "subagent.updated"),
+        "a subagent ran"
+    );
+    let bash_rows: Vec<&Value> = seen
+        .iter()
+        .filter(|e| {
+            e["type"] == "turn_item.updated" && e["turnItem"]["type"] == "command_execution"
+        })
+        .collect();
+    eprintln!(
+        "command rows: {}",
+        bash_rows
+            .iter()
+            .map(|e| format!("{} {}", e["turnItem"]["status"], e["turnItem"]["threadId"]))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let text = assistant_text(&seen).to_lowercase();
+    eprintln!("subagent answer: {text}");
+    assert!(text.contains("subagent-ok"));
+    session.close().await;
+}
+
+/// An image attachment, read from the attachments directory as T3 stores it.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "runs the real claude CLI"]
+async fn live_image_turn() {
+    let scratch = Scratch::new("image");
+    let attachments = scratch.0.join("attachments");
+    std::fs::create_dir_all(&attachments).unwrap();
+    let png = crate::testdata::cli("e15_image")
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find_map(|r| {
+            r["msg"]["message"]["content"]
+                .as_array()?
+                .iter()
+                .find(|b| b["type"] == "image")
+                .and_then(|b| b["source"]["data"].as_str().map(str::to_string))
+        })
+        .unwrap();
+    let bytes = base64_decode(&png);
+    std::fs::write(attachments.join("attach-1.png"), &bytes).unwrap();
+    let config = ClaudeConfig {
+        attachments_dir: Some(attachments),
+        ..provider().config().clone()
+    };
+    let (session, _helper, mut events) = concrete(config);
+    let thread = new_thread(&session, "full-access", &scratch.cwd()).await;
+    let mut input = turn(
+        1,
+        &thread,
+        "What colour is this image? One word.",
+        "full-access",
+        &scratch.cwd(),
+    );
+    input.message.attachments = vec![
+        from_json(json!({"type": "image", "id": "attach-1", "name": "red.png",
+            "mimeType": "image/png", "sizeBytes": bytes.len()}))
+        .unwrap(),
+    ];
+    let seen = run_turn(&session, &mut events, input).await;
+    let text = assistant_text(&seen).to_lowercase();
+    eprintln!("image answer: {text}");
+    assert!(text.contains("red"));
+    session.close().await;
+}
+
+fn base64_decode(text: &str) -> Vec<u8> {
+    let value = |c: u8| match c {
+        b'A'..=b'Z' => c - b'A',
+        b'a'..=b'z' => c - b'a' + 26,
+        b'0'..=b'9' => c - b'0' + 52,
+        b'+' => 62,
+        _ => 63,
+    };
+    let clean: Vec<u8> = text
+        .bytes()
+        .filter(|c| *c != b'=' && !c.is_ascii_whitespace())
+        .collect();
+    let mut out = Vec::new();
+    for chunk in clean.chunks(4) {
+        let v: Vec<u32> = chunk.iter().map(|c| u32::from(value(*c))).collect();
+        let n = v.iter().fold(0u32, |acc, x| (acc << 6) | x) << (6 * (4 - v.len() as u32));
+        for i in 0..v.len().saturating_sub(1) {
+            out.push((n >> (16 - 8 * i)) as u8);
+        }
+    }
+    out
+}
