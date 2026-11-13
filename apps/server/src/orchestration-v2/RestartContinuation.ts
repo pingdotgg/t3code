@@ -334,8 +334,12 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         attachments: [],
         modelSelection: source.modelSelection,
         dispatchMode: { type: "start_immediately" },
-        // A person's repeated /compact stays theirs, so it does not read as automatic.
-        createdBy: recompact ? sourceMessage.createdBy : "agent",
+        // Agent + server with no idleCompaction reads as an automatic idle compaction.
+        createdBy: !recompact
+          ? "agent"
+          : sourceMessage.idleCompaction === undefined
+            ? "user"
+            : sourceMessage.createdBy,
         creationSource: "server",
         restartContinuationOfRunId: input.sourceRunId,
       })

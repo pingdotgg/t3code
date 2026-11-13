@@ -1079,14 +1079,25 @@ it.effect("does not continue a run the user asked to stop before the restart", (
 
 it.effect("compacts again after a cut /compact turn, and does not continue a cut /logout", () =>
   Effect.gen(function* () {
-    for (const [text, expected] of [
-      [" /Compact ", ["/compact"]],
-      [" /LOGOUT ", []],
+    for (const [text, idleCompaction, expected] of [
+      [" /Compact ", undefined, ["user:/compact"]],
+      ["/compact", "beforeCacheExpires", ["agent:/compact"]],
+      [" /LOGOUT ", undefined, []],
     ] as const) {
-      const texts = yield* continuationTexts({
+      const sent = yield* continuationDispatches({
         ...cutMidTurn(),
-        messages: [{ id: MessageId.make("message:user"), role: "user", text, attachments: [] }],
+        messages: [
+          {
+            id: MessageId.make("message:user"),
+            role: "user",
+            createdBy: "agent",
+            text,
+            attachments: [],
+            idleCompaction,
+          },
+        ],
       } as unknown as OrchestrationV2ThreadProjection);
+      const texts = sent.map((command) => `${command.createdBy}:${command.text}`);
       assert.deepEqual(texts, [...expected], text);
     }
     const texts = yield* continuationTexts({
