@@ -1,3 +1,5 @@
+import * as NodeChildProcess from "node:child_process";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Cause from "effect/Cause";
@@ -642,6 +644,41 @@ it.effect("checkpoint recovery preserves interruption and removes the private in
     assert.isDefined(privateIndex);
     assert.isFalse(yield* fs.exists(privateIndex!));
     assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("interrupted checkpoint staging leaves no batch object directory behind", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-batch-interrupt-" });
+    const fifos = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-batch-fifo-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    const entered = path.join(fifos, "entered");
+    NodeChildProcess.execFileSync("mkfifo", [entered]);
+    // A clean filter that blocks stands in for a large file Git is still hashing when killed.
+    yield* git([
+      "config",
+      "filter.block.clean",
+      `exec 2>/dev/null; printf x > '${entered}'; sleep 60; cat`,
+    ]);
+    yield* fs.writeFileString(path.join(cwd, ".gitattributes"), "z-slow.bin filter=block\n");
+    yield* fs.writeFileString(path.join(cwd, "a-new.txt"), "written before the slow file\n");
+    yield* fs.writeFileString(path.join(cwd, "z-slow.bin"), "slow\n");
+    const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(HostProcess.Platform, "darwin"),
+    );
+    const fiber = yield* captureDriver.checkpoints
+      .captureCheckpoint({ cwd, checkpointRef })
+      .pipe(Effect.forkScoped);
+    yield* fs.readFileString(entered);
+    yield* Fiber.interrupt(fiber);
+    const objects = yield* fs.readDirectory(path.join(cwd, ".git", "objects"));
+    assert.deepEqual(
+      objects.filter((entry) => entry.startsWith("tmp_objdir")),
+      [],
+    );
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
