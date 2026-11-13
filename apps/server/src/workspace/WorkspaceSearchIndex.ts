@@ -14,11 +14,12 @@ import type {
 } from "@ff-labs/fff-node";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as LayerMap from "effect/LayerMap";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -51,6 +52,10 @@ const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
 const SYMLINK_SCAN_CONCURRENCY = 16;
 // A scan no watcher can invalidate is reused this long, so typing does not rescan every folder.
 const UNWATCHED_SYMLINK_SCAN_TTL_MS = 2_000;
+// A rescan that outlasts this leaves the read on the previous scan.
+const SYMLINK_RESCAN_WAIT = "5 millis";
+// Each page is a synchronous native call; small pages let searches run between them.
+const SYMLINK_DIRECTORY_PAGE_SIZE = 1_000;
 
 export class WorkspaceSearchIndexCreateFailed extends Schema.TaggedError<WorkspaceSearchIndexCreateFailed>()(
   "WorkspaceSearchIndexCreateFailed",
@@ -610,10 +615,10 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     function* () {
       const directories: string[] = [];
       // fff's pageIndex is an offset into the results, not a page number.
-      for (let pageIndex = 0; ; pageIndex += WORKSPACE_INDEX_PAGE_SIZE) {
+      for (let pageIndex = 0; ; pageIndex += SYMLINK_DIRECTORY_PAGE_SIZE) {
         const result = yield* Effect.sync(() => {
           try {
-            return finder.directorySearch("", { pageIndex, pageSize: WORKSPACE_INDEX_PAGE_SIZE });
+            return finder.directorySearch("", { pageIndex, pageSize: SYMLINK_DIRECTORY_PAGE_SIZE });
           } catch {
             return undefined;
           }
@@ -623,7 +628,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           const directory = trimDirectorySeparator(toPosixPath(item.relativePath, hostIsWindows));
           if (directory) directories.push(directory);
         }
-        if (result.value.items.length < WORKSPACE_INDEX_PAGE_SIZE) return directories;
+        if (result.value.items.length < SYMLINK_DIRECTORY_PAGE_SIZE) return directories;
         yield* Effect.yieldNow;
       }
     },
@@ -727,19 +732,17 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     };
   });
 
-  // Concurrent callers share one scan, and it stops once all of them are interrupted. The
-  // watcher reports link changes too, so a batch that could move a link or an ignore rule drops
-  // the scan; a scan still in flight then only answers the callers already waiting on it.
-  let symlinkScan:
-    | {
-        readonly scan: Effect.Effect<Effect.Success<ReturnType<typeof scanSymlinkEntries>>>;
-        readonly watched: boolean;
-        expiresAt?: number;
-      }
-    | undefined;
+  // One scan runs at a time and outlives the reads that started it. Only the first read waits for
+  // it in full: after that a change or expiry marks the result stale, and reads wait briefly for
+  // the rescan before answering from the last finished one, so file churn cannot stall search.
+  type SymlinkScan = Effect.Success<ReturnType<typeof scanSymlinkEntries>>;
+  let lastSymlinkScan: SymlinkScan | undefined;
+  let lastSymlinkScanExpiresAt: number | undefined;
+  let pendingSymlinkScan: Deferred.Deferred<SymlinkScan> | undefined;
+  let symlinkScanStale = false;
   let knownLinkPaths: ReadonlySet<string> = new Set();
   const invalidateSymlinkScan = () => {
-    symlinkScan = undefined;
+    symlinkScanStale = true;
   };
   const isKnownLink = (absolutePath: string) =>
     [cwd, root].some((base) =>
@@ -769,25 +772,53 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     }
     return unwatch !== undefined;
   };
+  const indexScope = yield* Effect.scope;
+  const startSymlinkScan = Effect.fn("WorkspaceSearchIndex.startSymlinkScan")(function* () {
+    symlinkScanStale = false;
+    // Subscribing before the scan starts means no change during it goes unseen.
+    const watched = ensureWatching();
+    const done = yield* Deferred.make<SymlinkScan>();
+    pendingSymlinkScan = done;
+    yield* scanSymlinkEntries().pipe(
+      Effect.tap((result) =>
+        Effect.gen(function* () {
+          lastSymlinkScan = result;
+          knownLinkPaths = result.linkPaths;
+          // Without a watcher, or before fff has seen every folder, the result is kept only briefly.
+          lastSymlinkScanExpiresAt =
+            watched && result.indexComplete
+              ? undefined
+              : (yield* Clock.currentTimeMillis) + UNWATCHED_SYMLINK_SCAN_TTL_MS;
+        }),
+      ),
+      Effect.onExit((exit) =>
+        Effect.sync(() => {
+          pendingSymlinkScan = undefined;
+        }).pipe(Effect.andThen(Deferred.done(done, exit))),
+      ),
+      Effect.forkIn(indexScope),
+    );
+    return done;
+  });
   const listSymlinkEntries = Effect.fn("WorkspaceSearchIndex.listSymlinkEntries")(function* () {
     if (
-      symlinkScan?.expiresAt !== undefined &&
-      (yield* Clock.currentTimeMillis) >= symlinkScan.expiresAt
+      lastSymlinkScanExpiresAt !== undefined &&
+      (yield* Clock.currentTimeMillis) >= lastSymlinkScanExpiresAt
     ) {
-      invalidateSymlinkScan();
+      symlinkScanStale = true;
     }
-    // Subscribing before the scan starts means no change during it goes unseen.
-    const current = symlinkScan ?? {
-      watched: ensureWatching(),
-      scan: yield* Effect.cachedWithTTL(scanSymlinkEntries(), Duration.infinity),
-    };
-    symlinkScan = current;
-    const result = yield* current.scan;
-    if (symlinkScan === current) knownLinkPaths = result.linkPaths;
-    // Without a watcher, or before fff has seen every folder, the result is kept only briefly.
-    if ((!current.watched || !result.indexComplete) && current.expiresAt === undefined) {
-      current.expiresAt = (yield* Clock.currentTimeMillis) + UNWATCHED_SYMLINK_SCAN_TTL_MS;
+    const pending =
+      pendingSymlinkScan ??
+      (lastSymlinkScan === undefined || symlinkScanStale ? yield* startSymlinkScan() : undefined);
+    let result = lastSymlinkScan;
+    if (pending && result === undefined) {
+      result = yield* Deferred.await(pending);
+    } else if (pending) {
+      const fresh = yield* Deferred.await(pending).pipe(Effect.timeoutOption(SYMLINK_RESCAN_WAIT));
+      if (Option.isSome(fresh)) result = fresh.value;
     }
+    if (result === undefined)
+      return yield* Effect.die("The symlink scan finished without a result.");
     return {
       // Git's ignore rules hide a link the same way searchVisible hides the files it indexes.
       entries: result.entries.filter(

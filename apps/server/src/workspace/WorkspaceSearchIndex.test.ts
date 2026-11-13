@@ -9,7 +9,9 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -329,6 +331,44 @@ it.effect("reads symlinks again after the watcher reports a change", () =>
   ).pipe(Effect.provide(testLayer)),
 );
 
+it.effect("answers from the last symlink scan while a slow rescan runs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      if ((yield* HostProcess.Platform) === "win32") return;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-symlink-stale-" });
+      yield* fileSystem.writeFileString(path.join(cwd, "a.ts"), "");
+      yield* fileSystem.symlink("a.ts", path.join(cwd, "old-link.ts"));
+      const { notifyWatchers } = fakeSymlinkFinder([]);
+      // Holding git's ignore check open keeps the rescan from finishing.
+      const gate = yield* Deferred.make<void>();
+      let holdIgnoreChecks = false;
+      const vcsProcess = yield* VcsProcess.VcsProcess;
+      const searchIndex = yield* WorkspaceSearchIndex.make(cwd).pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          ...vcsProcess,
+          run: (input) =>
+            holdIgnoreChecks && input.operation === "WorkspaceSearchIndex.listGitIgnored"
+              ? Deferred.await(gate).pipe(Effect.andThen(vcsProcess.run(input)))
+              : vcsProcess.run(input),
+        }),
+      );
+      expect(yield* listedPaths(searchIndex)).toEqual(["old-link.ts"]);
+
+      holdIgnoreChecks = true;
+      yield* fileSystem.symlink("a.ts", path.join(cwd, "new-link.ts"));
+      notifyWatchers([{ kind: "created", path: path.join(cwd, "new-link.ts") }]);
+      const duringRescan = yield* Effect.forkChild(listedPaths(searchIndex));
+      yield* TestClock.adjust("1 second");
+      expect(yield* Fiber.join(duringRescan)).toEqual(["old-link.ts"]);
+
+      yield* Deferred.succeed(gate, undefined);
+      expect(yield* listedPaths(searchIndex)).toEqual(["new-link.ts", "old-link.ts"]);
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
 it.effect("keeps symlinks once the watcher subscribes after starting late", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -410,14 +450,14 @@ it.effect("finds symlinks in folders past the first page of the index", () =>
       yield* fileSystem.writeFileString(path.join(cwd, "late/a.ts"), "");
       yield* fileSystem.symlink("a.ts", path.join(cwd, "late/link.ts"));
       // Folders fff lists but that are gone by the time they are read are skipped.
-      const firstPage = Array.from({ length: 25_002 }, (_, index) => `missing-${index}`);
+      const firstPage = Array.from({ length: 1_000 }, (_, index) => `missing-${index}`);
       const { directorySearch } = fakeSymlinkFinder([...firstPage, "late"]);
 
       const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
 
       expect(yield* listedPaths(searchIndex)).toEqual(["late", "late/link.ts"]);
       expect(directorySearch.mock.calls.map(([, options]) => options?.pageIndex)).toEqual([
-        0, 25_002,
+        0, 1_000,
       ]);
     }),
   ).pipe(Effect.provide(testLayer)),
