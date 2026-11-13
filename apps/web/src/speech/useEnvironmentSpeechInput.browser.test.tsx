@@ -249,6 +249,7 @@ function Probe(props: {
   readonly projectId?: string;
   readonly projectName?: string;
   readonly cleanup?: boolean;
+  readonly holdConfirmedSend?: boolean;
   readonly showWizard?: boolean;
 }) {
   const value = useEnvironmentSpeechInput({
@@ -256,6 +257,7 @@ function Probe(props: {
     projectId: props.projectId as ProjectId | undefined,
     projectName: props.projectName,
     cleanup: props.cleanup,
+    holdConfirmedSend: props.holdConfirmedSend,
     ownerKey: props.ownerKey ?? "draft",
     readDraft: () => ({
       text: mocks.draft,
@@ -278,6 +280,14 @@ function Probe(props: {
       onStartRecording={value.setup.startRecording}
     />
   ) : null;
+}
+
+function pendingTranscript() {
+  let resolve!: (text: string) => void;
+  const promise = new Promise<string>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 function expectNoAudioSent() {
@@ -366,7 +376,7 @@ it.each([
 
 it("delivers a confirmed send once with its transcript when the owner changes during transcription", async () => {
   setup({ destination: "env-a" });
-  const transcript = Promise.withResolvers<string>();
+  const transcript = pendingTranscript();
   mocks.transcripts = [transcript.promise];
   const submit = vi.fn();
   await using screen = await render(<Probe ownerKey="thread-a" />);
@@ -379,6 +389,49 @@ it("delivers a confirmed send once with its transcript when the owner changes du
   await act(async () => {});
   expect(submit).toHaveBeenCalledExactlyOnceWith("dictated in A");
 });
+
+it.each(["cancel", "voice off"] as const)(
+  "drops a confirmed send on %s after its owner is shown again, before the transcript lands",
+  async (action) => {
+    setup({ destination: "env-a" });
+    const transcript = pendingTranscript();
+    mocks.transcripts = [transcript.promise];
+    const submit = vi.fn();
+    await using screen = await render(<Probe ownerKey="thread-a" />);
+    await act(() => mocks.voice.start());
+    await act(() => mocks.voice.submitAfterDictation(submit));
+    await screen.rerender(<Probe ownerKey="thread-b" />);
+    expect(mocks.voice.state.phase).toBe("idle");
+    await screen.rerender(<Probe ownerKey="thread-a" />);
+    expect(mocks.voice.state.phase).toBe("transcribing");
+    await act(async () => (action === "cancel" ? mocks.voice.cancel() : setDestination(null)));
+    expect(mocks.voice.state.phase).toBe("idle");
+    await act(async () => transcript.resolve("dictated in A"));
+    expect(submit).not.toHaveBeenCalled();
+    expect(mocks.committed).not.toHaveBeenCalled();
+  },
+);
+
+it.each([true, false])(
+  "keeps a confirmed send across an unmount only when the editor holds it (%s)",
+  async (holdConfirmedSend) => {
+    setup({ destination: "env-a" });
+    const transcript = pendingTranscript();
+    mocks.transcripts = [transcript.promise];
+    const submit = vi.fn();
+    const probe = <Probe ownerKey="thread-a" holdConfirmedSend={holdConfirmedSend} />;
+    {
+      await using _first = await render(probe);
+      await act(() => mocks.voice.start());
+      await act(() => mocks.voice.submitAfterDictation(submit));
+    }
+    await using _second = await render(probe);
+    await act(async () => transcript.resolve("dictated in A"));
+    await act(async () => {});
+    expect(submit).toHaveBeenCalledTimes(holdConfirmedSend ? 1 : 0);
+    expect(mocks.committed).toHaveBeenCalledTimes(holdConfirmedSend ? 1 : 0);
+  },
+);
 
 it("retries a failed transcription on the same chosen environment", async () => {
   setup({ destination: "env-a" });

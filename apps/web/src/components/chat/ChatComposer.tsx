@@ -495,6 +495,18 @@ export interface ChatComposerProps {
 const NO_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const NO_PROVIDER_SLASH_COMMANDS: ServerProvider["slashCommands"] = [];
 
+// The submit handler of the composer showing each dictation owner, so a send confirmed during
+// dictation reaches its own thread after the composer was reused or remounted for another.
+const shownComposerSubmits = new Map<
+  string,
+  {
+    readonly current: (
+      dispatchMode?: ComposerDispatchMode,
+      submissionIntent?: ComposerSubmissionIntent,
+    ) => void;
+  }
+>();
+
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const {
     composerDraftTarget,
@@ -1805,12 +1817,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerApprovalState ||
     activePendingIsResponding ||
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
+  const dictationOwnerKey = questionAttachmentTarget ?? composerDraftTargetKey;
   const speechInput = useEnvironmentSpeechInput({
     environmentId,
     projectId: activeProjectId,
     projectName,
-    ownerKey: questionAttachmentTarget ?? composerDraftTargetKey,
+    ownerKey: dictationOwnerKey,
     disabled: dictationDisabled,
+    holdConfirmedSend: true,
     readDraft: () => {
       const snapshot = readComposerSnapshot();
       return {
@@ -2115,7 +2129,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ) => {
     if (voiceInputActive) {
       event?.preventDefault();
-      submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
+      submitAfterDictation(() =>
+        shownComposerSubmits.get(dictationOwnerKey)?.current(dispatchMode, submissionIntent),
+      );
       return false;
     }
     if (submissionBlocked || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
@@ -2182,7 +2198,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed submission handler to the asynchronous dictation completion
   useLayoutEffect(() => {
     submitComposerRef.current = (mode, intent) => submitComposerStable(undefined, mode, intent);
-  }, [submitComposerStable]);
+    shownComposerSubmits.set(dictationOwnerKey, submitComposerRef);
+    return () => {
+      if (shownComposerSubmits.get(dictationOwnerKey) === submitComposerRef)
+        shownComposerSubmits.delete(dictationOwnerKey);
+    };
+  }, [submitComposerStable, dictationOwnerKey]);
   useDictationSubmissionShortcut({
     enabled: voiceInputActive && !speechInput.preparing,
     formRef: composerFormRef,

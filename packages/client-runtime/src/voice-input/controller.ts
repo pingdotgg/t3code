@@ -52,6 +52,12 @@ export type VoiceDraftSnapshot = {
   readonly selection: { readonly start: number; readonly end: number };
 };
 
+export type HeldVoiceTranscript = {
+  readonly draft: VoiceDraftSnapshot;
+  readonly transcript: string;
+  readonly locale: string;
+};
+
 export type VoiceRecorderStatus = {
   readonly isFinished: boolean;
   readonly hasError: boolean;
@@ -89,6 +95,11 @@ export type VoiceInputControllerDependencies = {
       ) => Promise<string> | null)
     | undefined;
   readonly onPostProcessingError?: (error: unknown) => void;
+  /**
+   * Offered a transcript whose draft is no longer the current one. Returning true takes it,
+   * to commit once that draft is shown again; otherwise the recording fails as stale.
+   */
+  readonly holdTranscript?: ((held: HeldVoiceTranscript) => boolean) | undefined;
   readonly readDraft: () => VoiceDraftSnapshot | null;
   readonly commitDraft: (
     text: string,
@@ -590,9 +601,22 @@ export class VoiceInputController {
         if (!this.isCurrent(operationToken)) return;
       }
 
+      const currentDraft = this.dependencies.readDraft();
+      if (
+        currentDraft?.ownerKey !== capturedDraft.ownerKey &&
+        transcript.trim().length > 0 &&
+        this.dependencies.holdTranscript?.({
+          draft: capturedDraft,
+          transcript,
+          locale: transcription.locale,
+        })
+      ) {
+        this.setState(IDLE_STATE);
+        return;
+      }
       const result = resolveTranscriptCommit(
         capturedDraft,
-        this.dependencies.readDraft(),
+        currentDraft,
         transcript,
         transcription.locale,
       );
