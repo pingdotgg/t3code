@@ -421,6 +421,11 @@ function SidebarUpdateControl() {
       rows={everything.rows}
       restarts={everything.restarts}
       checking={providerCheck === "dialog"}
+      releaseNotes={
+        state && shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state) ? (
+          <SidebarUpdateReleaseNotes shell={window.desktopBridge} state={state} tooltip={tooltip} />
+        ) : null
+      }
       onConfirm={() => void runEverything()}
     />
   );

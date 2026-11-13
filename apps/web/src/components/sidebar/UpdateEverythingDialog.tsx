@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { ChevronRightIcon } from "lucide-react";
-import { Fragment, type RefObject, useRef } from "react";
+import { Fragment, type ReactNode, type RefObject, useRef } from "react";
 
 import { environmentThreadShells } from "~/state/threads";
 import {
@@ -51,6 +51,8 @@ interface UpdateEverythingDialogProps {
   readonly title?: string;
   readonly confirmLabel?: string;
   readonly notes?: ReadonlyArray<string>;
+  /** This app's release notes; the modal hides the sidebar popover that otherwise shows them. */
+  readonly releaseNotes?: ReactNode;
   /** Shown in place of running-thread counts; disables the confirm button. */
   readonly disabledReason?: string | null;
   /** The confirmed work is starting; it cannot be cancelled from here. */
@@ -102,6 +104,7 @@ function UpdateEverythingDialogContent({
   title,
   confirmLabel = "Update",
   notes = [],
+  releaseNotes = null,
   disabledReason = null,
   busy = false,
   checking = false,
@@ -156,6 +159,7 @@ function UpdateEverythingDialogContent({
               {note}
             </p>
           ))}
+          {releaseNotes}
           {/* Machine names truncate first. Provider lists wrap between names, never inside one. */}
           <div className="grid grid-cols-[minmax(4rem,max-content)_max-content_minmax(min-content,1fr)_max-content] gap-x-4 text-sm">
             <div className="col-span-full grid grid-cols-subgrid border-b pb-1.5 text-muted-foreground text-xs">
