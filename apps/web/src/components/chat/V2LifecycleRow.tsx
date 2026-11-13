@@ -591,7 +591,7 @@ function SubagentTimelineLink(props: {
       ) : null}
       <span
         className={cn(
-          "shrink-0 font-mono text-3xs text-dim-foreground tabular-nums",
+          "shrink-0 text-caption text-dim-foreground tabular-nums",
           !props.event && "max-sm:hidden",
         )}
       >
