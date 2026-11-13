@@ -131,6 +131,7 @@ import {
   type ProviderThreadId,
   type RunId,
   type ThreadId,
+  type ThreadMcpServer,
   resolveIdleCompaction,
   isDelegatedAppThread,
 } from "@t3tools/contracts";
@@ -899,6 +900,19 @@ const CLAUDE_MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
 
 function claudeSupportsMcpApps(capabilities: ReadonlySet<string>): boolean {
   return CLAUDE_MCP_APP_CAPABILITIES.every((capability) => capabilities.has(capability));
+}
+
+export function claudeThreadMcpServer(status: ClaudeMcpServerStatus): ThreadMcpServer {
+  const url =
+    status.config !== undefined && "url" in status.config && typeof status.config.url === "string"
+      ? URL.parse(status.config.url)
+      : null;
+  return {
+    name: status.name,
+    status: status.status,
+    toolCount: status.tools?.length ?? 0,
+    ...(url === null || url.origin === "null" ? {} : { origin: url.origin }),
+  };
 }
 
 // Claude Code routes `mcp__a__b__tool` to server `a` even when `a__b` is connected, so either prefix is ambiguous.
@@ -13651,6 +13665,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }),
           steerTurn,
           mcpApps: {
+            listServers: Effect.fn("ClaudeAdapterV2.listMcpServers")(function* ({
+              providerThread,
+            }) {
+              const liveQuery = yield* Ref.get(queryContext);
+              if (
+                liveQuery === null ||
+                liveQuery.stopping ||
+                liveQuery.nativeThreadId !== providerThread.nativeThreadRef?.nativeId
+              ) {
+                return yield* new ProviderAdapter.ProviderAdapterSessionStoppedError({
+                  driver: CLAUDE_PROVIDER,
+                });
+              }
+              const statuses = yield* liveQuery.query.mcpServerStatus.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: CLAUDE_PROVIDER,
+                      detail: "Failed to list Claude MCP servers.",
+                      cause,
+                    }),
+                ),
+              );
+              return statuses.map(claudeThreadMcpServer);
+            }),
             listTools: Effect.fn("ClaudeAdapterV2.listMcpTools")(function* ({
               providerThread,
               server,

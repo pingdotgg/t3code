@@ -9,6 +9,8 @@ import {
   type McpAppUpdateModelContextInput,
   type OrchestrationV2AppThread,
   type ThreadId,
+  type ThreadMcpServers,
+  type ThreadMcpServersInput,
   type TurnItemId,
 } from "@t3tools/contracts";
 import { mcpAppToolCallableByApp, type McpAppReference } from "@t3tools/shared/mcpApp";
@@ -42,6 +44,8 @@ export class McpAppRequests extends Context.Service<
     readonly updateModelContext: (
       input: McpAppUpdateModelContextInput,
     ) => Effect.Effect<void, McpAppRequestError>;
+    /** Empty instead of failing: the list is informational and the session may be gone. */
+    readonly listServers: (input: ThreadMcpServersInput) => Effect.Effect<ThreadMcpServers>;
   }
 >()("t3/mcpApps/McpAppRequests") {}
 
@@ -219,7 +223,36 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError((cause) => fail(input.threadId, "request-failed", cause)));
   });
 
-  return McpAppRequests.of({ callTool, toolInfo, readResource, updateModelContext });
+  const listServers = Effect.fn("McpAppRequests.listServers")(
+    function* (input: ThreadMcpServersInput) {
+      const projection = yield* threadManagement.getThreadRecords(input.threadId, [
+        "providerThreads",
+      ]);
+      const providerThread =
+        projection.providerThreads.find(
+          (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+        ) ?? projection.providerThreads.at(-1);
+      if (providerThread?.providerSessionId == null) return { servers: [] };
+      const runtime = Option.getOrUndefined(
+        yield* providerSessions.get(providerThread.providerSessionId),
+      );
+      if (runtime?.mcpApps === undefined) return { servers: [] };
+      return { servers: yield* runtime.mcpApps.listServers({ providerThread }) };
+    },
+    Effect.catch((cause) =>
+      Effect.logDebug("MCP server list unavailable", cause).pipe(
+        Effect.as({ servers: [] } satisfies ThreadMcpServers),
+      ),
+    ),
+  );
+
+  return McpAppRequests.of({
+    callTool,
+    toolInfo,
+    readResource,
+    updateModelContext,
+    listServers,
+  });
 });
 
 export const layer = Layer.effect(McpAppRequests, make);

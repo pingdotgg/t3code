@@ -21,6 +21,12 @@ export function createMcpAppEnvironmentAtoms<R, E>(
       label: "environment-data:mcp-apps:tool-info",
       tag: WS_METHODS.mcpAppsToolInfo,
     }),
+    /** Servers the thread's live provider session can reach; empty without one. */
+    listServers: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:mcp-apps:list-servers",
+      tag: WS_METHODS.mcpAppsListServers,
+      staleTimeMs: 30_000,
+    }),
     readResource: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:mcp-apps:read-resource",
       tag: WS_METHODS.mcpAppsReadResource,

@@ -2526,6 +2526,7 @@ export const layerWsRpc = (
         [WS_METHODS.mcpAppsToolInfo]: (input) => mcpAppRequests.toolInfo(input),
         [WS_METHODS.mcpAppsUpdateModelContext]: (input) => mcpAppRequests.updateModelContext(input),
         [WS_METHODS.mcpAppsReadResource]: (input) => mcpAppRequests.readResource(input),
+        [WS_METHODS.mcpAppsListServers]: (input) => mcpAppRequests.listServers(input),
         [WS_METHODS.providerUploadFeedback]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(

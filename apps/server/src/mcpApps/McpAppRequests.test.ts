@@ -136,6 +136,7 @@ const reason = <A, R>(effect: Effect.Effect<A, McpAppRequestError, R>) =>
 describe("McpAppRequests", () => {
   const calls: Array<{ server: string; tool: string }> = [];
   const mcpApps: ProviderAdapter.ProviderAdapterV2McpApps = {
+    listServers: () => Effect.succeed([{ name: "weather", status: "connected", toolCount: 2 }]),
     listTools: () =>
       Effect.succeed([
         { name: "refresh", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
@@ -284,5 +285,34 @@ describe("McpAppRequests", () => {
       });
       assert.isTrue(storedContext.has(`${deepForkId(70)}/${itemId}`));
     }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), live: false }))),
+  );
+
+  it.effect("lists the live session's MCP servers, and none when it is gone or fails", () =>
+    Effect.gen(function* () {
+      const listServers = (layer: ReturnType<typeof makeLayer>) =>
+        Effect.gen(function* () {
+          const requests = yield* McpAppRequests.McpAppRequests;
+          return yield* requests.listServers({ threadId });
+        }).pipe(Effect.provide(layer));
+      assert.deepEqual(yield* listServers(makeLayer({ item: null, mcpApps })), {
+        servers: [{ name: "weather", status: "connected", toolCount: 2 }],
+      });
+      assert.deepEqual(yield* listServers(makeLayer({ item: null, mcpApps, live: false })), {
+        servers: [],
+      });
+      assert.deepEqual(yield* listServers(makeLayer({ item: null })), { servers: [] });
+      const stopped = {
+        ...mcpApps,
+        listServers: () =>
+          Effect.fail(
+            new ProviderAdapter.ProviderAdapterSessionStoppedError({
+              driver: ProviderDriverKind.make("codex"),
+            }),
+          ),
+      };
+      assert.deepEqual(yield* listServers(makeLayer({ item: null, mcpApps: stopped })), {
+        servers: [],
+      });
+    }),
   );
 });

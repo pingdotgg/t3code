@@ -3950,6 +3950,7 @@ export default function ChatView(props: ChatViewProps) {
                   onAddProjectScript={saveProjectScriptStable}
                   onUpdateProjectScript={updateProjectScriptStable}
                   onDeleteProjectScript={deleteProjectScriptStable}
+                  activeRunId={activeRunningTurnId}
                   usage={{
                     providerInstanceId: activeProviderInstanceId,
                     providers: providerStatuses,

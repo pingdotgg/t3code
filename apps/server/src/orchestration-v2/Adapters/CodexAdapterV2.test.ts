@@ -125,6 +125,48 @@ describe("CodexAdapterV2 context usage", () => {
   });
 });
 
+describe("CodexAdapterV2 MCP server status", () => {
+  it("prefers sign-in over connection state and falls back to the tool catalog", () => {
+    const server = (
+      fields: Partial<CodexSchema.V2ListMcpServerStatusResponse__McpServerStatus>,
+    ): CodexSchema.V2ListMcpServerStatusResponse__McpServerStatus => ({
+      name: "linear",
+      authStatus: "oAuth",
+      resources: [],
+      resourceTemplates: [],
+      tools: {},
+      ...fields,
+    });
+    const tool = { name: "search", inputSchema: { type: "object" } } as never;
+    const cases: ReadonlyArray<
+      readonly [Partial<CodexSchema.V2ListMcpServerStatusResponse__McpServerStatus>, string]
+    > = [
+      [{ authStatus: "notLoggedIn", runtimeStatus: "connected" }, "needs-auth"],
+      [{ runtimeStatus: "authenticationRequired" }, "needs-auth"],
+      [{ runtimeStatus: "connected" }, "connected"],
+      [{ runtimeStatus: "starting" }, "pending"],
+      [{ runtimeStatus: "cancelled" }, "failed"],
+      [{ runtimeStatus: "disabled" }, "disabled"],
+      [{ runtimeStatus: null, toolsError: "boom" }, "failed"],
+      [{ runtimeStatus: null, tools: { search: tool } }, "connected"],
+      [{ runtimeStatus: null }, "pending"],
+    ];
+    for (const [fields, status] of cases) {
+      assert.equal(CodexAdapterV2.codexThreadMcpServer(server(fields)).status, status);
+    }
+    assert.deepEqual(
+      CodexAdapterV2.codexThreadMcpServer(
+        server({
+          runtimeStatus: "connected",
+          httpOrigin: "https://mcp.linear.app",
+          tools: { search: tool },
+        }),
+      ),
+      { name: "linear", status: "connected", toolCount: 1, origin: "https://mcp.linear.app" },
+    );
+  });
+});
+
 describe("CodexAdapterV2 assistant message streaming", () => {
   it.effect("flushes buffered text synchronously before item and turn completion", () =>
     Effect.gen(function* () {

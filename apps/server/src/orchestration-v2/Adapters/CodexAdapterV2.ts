@@ -79,6 +79,7 @@ import type {
   ProviderTurnId,
   ProviderInstanceId,
   RuntimeMode,
+  ThreadMcpServer,
 } from "@t3tools/contracts";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexErrors from "effect-codex-app-server/errors";
@@ -223,6 +224,34 @@ export function codexProviderTurnTokenUsage(
     updatedAt,
   };
 }
+const CODEX_MCP_SERVER_STATUS_MAX_PAGES = 10;
+
+export function codexThreadMcpServer(
+  server: CodexSchema.V2ListMcpServerStatusResponse__McpServerStatus,
+): ThreadMcpServer {
+  const toolCount = Object.keys(server.tools).length;
+  const status: ThreadMcpServer["status"] =
+    server.authStatus === "notLoggedIn" || server.runtimeStatus === "authenticationRequired"
+      ? "needs-auth"
+      : server.runtimeStatus === "connected"
+        ? "connected"
+        : server.runtimeStatus === "disabled"
+          ? "disabled"
+          : server.runtimeStatus === "failed" ||
+              server.runtimeStatus === "cancelled" ||
+              (server.toolsError ?? null) !== null
+            ? "failed"
+            : server.runtimeStatus == null && toolCount > 0
+              ? "connected"
+              : "pending";
+  return {
+    name: server.name,
+    status,
+    toolCount,
+    ...(server.httpOrigin == null ? {} : { origin: server.httpOrigin }),
+  };
+}
+
 const CODEX_ASSISTANT_DELTA_FLUSH_INTERVAL_MS = 50;
 // Plan flushes store three copies; use the client's assistant-text cadence.
 const CODEX_PLAN_DELTA_FLUSH_INTERVAL_MS = 400;
@@ -7615,6 +7644,26 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             payload: cause,
           });
         const mcpApps: ProviderAdapter.ProviderAdapterV2McpApps = {
+          listServers: Effect.fn("CodexAdapterV2.listServers")(
+            function* (serversInput) {
+              const threadId = yield* getNativeThreadId(serversInput.providerThread);
+              yield* ensureInitialized;
+              const servers: Array<ThreadMcpServer> = [];
+              let cursor: string | undefined;
+              for (let page = 0; page < CODEX_MCP_SERVER_STATUS_MAX_PAGES; page++) {
+                const response = yield* client.request("mcpServerStatus/list", {
+                  threadId,
+                  detail: "toolsAndAuthOnly",
+                  ...(cursor === undefined ? {} : { cursor }),
+                });
+                servers.push(...response.data.map(codexThreadMcpServer));
+                cursor = response.nextCursor ?? undefined;
+                if (cursor === undefined) break;
+              }
+              return servers;
+            },
+            Effect.mapError(mcpAppsError("Failed to list Codex MCP servers.")),
+          ),
           listTools: Effect.fn("CodexAdapterV2.listTools")(
             function* (toolsInput) {
               const threadId = yield* getNativeThreadId(toolsInput.providerThread);

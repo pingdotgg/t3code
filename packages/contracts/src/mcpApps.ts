@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
+import { NonNegativeInt, ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
 
 // The producing tool call restricts each app to its source server.
 const McpAppTarget = {
@@ -56,6 +56,31 @@ export const McpAppUpdateModelContextInput = Schema.Struct({
   structuredContent: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
 });
 export type McpAppUpdateModelContextInput = typeof McpAppUpdateModelContextInput.Type;
+
+export const ThreadMcpServersInput = Schema.Struct({ threadId: ThreadId });
+export type ThreadMcpServersInput = typeof ThreadMcpServersInput.Type;
+
+export const ThreadMcpServerStatus = Schema.Literals([
+  "connected",
+  "pending",
+  "needs-auth",
+  "failed",
+  "disabled",
+]);
+export type ThreadMcpServerStatus = typeof ThreadMcpServerStatus.Type;
+
+export const ThreadMcpServer = Schema.Struct({
+  name: Schema.String,
+  status: ThreadMcpServerStatus,
+  toolCount: NonNegativeInt,
+  /** Origin only: configured URLs can carry tokens in their path or query. */
+  origin: Schema.optional(Schema.String),
+});
+export type ThreadMcpServer = typeof ThreadMcpServer.Type;
+
+/** Empty while the thread has no live provider session that reports MCP servers. */
+export const ThreadMcpServers = Schema.Struct({ servers: Schema.Array(ThreadMcpServer) });
+export type ThreadMcpServers = typeof ThreadMcpServers.Type;
 
 export const McpAppRequestErrorReason = Schema.Literals([
   "not-an-app",

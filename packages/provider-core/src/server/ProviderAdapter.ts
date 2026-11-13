@@ -14,6 +14,7 @@ import {
   OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderRetry,
   OrchestrationV2ProviderThread,
+  ThreadMcpServer,
   OrchestrationV2ProviderTurn,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2Subagent,
@@ -666,6 +667,9 @@ export interface ProviderAdapterV2McpCallToolResult {
 }
 
 export interface ProviderAdapterV2McpApps {
+  readonly listServers: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+  }) => Effect.Effect<ReadonlyArray<ThreadMcpServer>, ProviderAdapterV2Error>;
   readonly listTools: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly server: string;

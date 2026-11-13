@@ -896,6 +896,19 @@ describe("ClaudeAdapterV2 device instructions", () => {
   });
 });
 
+describe("ClaudeAdapterV2 MCP server status", () => {
+  it("reports only the origin of a configured server URL", () => {
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeThreadMcpServer({
+        name: "linear",
+        status: "needs-auth",
+        config: { type: "http", url: "https://user:pw@mcp.linear.app/sse/tok123?key=secret" },
+      }),
+      { name: "linear", status: "needs-auth", toolCount: 0, origin: "https://mcp.linear.app" },
+    );
+  });
+});
+
 describe("ClaudeAdapterV2 context usage", () => {
   it("dates cache expiry from the request start, not the response end", () => {
     const usage = ClaudeAdapterV2.claudeProviderTurnTokenUsage(
