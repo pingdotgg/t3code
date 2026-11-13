@@ -96,6 +96,17 @@ describe("Codex web-search citation markers", () => {
       `| a | b |\n| - | - |\n| one ${CITE} | two |`,
       "| a | b |\n| - | - |\n| one | two |",
     ],
+    ["between code spans", `\`one\`${CITE}\`two\``, "`one`\u2060`two`"],
+    [
+      "in a shortcut reference link",
+      `[docs ${CITE}]\n\n[docs ${CITE}]: https://a.dev`,
+      `[docs][docs ${CITE}]\n\n[docs ${CITE}]: https://a.dev`,
+    ],
+    [
+      "in a collapsed reference link",
+      `[docs ${CITE}][]\n\n[docs ${CITE}]: https://a.dev`,
+      `[docs][docs ${CITE}]\n\n[docs ${CITE}]: https://a.dev`,
+    ],
     ["in a quote", `> first\n> ${CITE} second ${CITE}`, "> first\n> second"],
   ])("are hidden %s, in display and in copied text alike", (_name, markdown, expected) => {
     expect(hideCodexWebCitations(markdown)).toBe(expected);

@@ -16,6 +16,7 @@ interface MarkdownNode {
   type: string;
   value?: string;
   url?: string;
+  referenceType?: string;
   position?: { start: { offset?: number }; end: { offset?: number } };
   children?: MarkdownNode[];
 }
@@ -89,6 +90,12 @@ function keepingDelimiters(
   return kept;
 }
 
+/** Removing all the text between two code spans would join their backticks into one span. */
+function keepingCodeSpans(shown: string, range: SourceRange, source: string): string {
+  const joins = shown === "" && source[range.start - 1] === "`" && source[range.end] === "`";
+  return joins ? WORD_JOINER : shown;
+}
+
 function sourceRange(node: MarkdownNode): SourceRange | undefined {
   const start = node.position?.start.offset;
   const end = node.position?.end.offset;
@@ -117,9 +124,13 @@ function hideCitations(parent: MarkdownNode, rewrite?: SourceRewrite): void {
       if (rewrite && range) {
         rewrite.edits.push({
           ...range,
-          text: parentRange
-            ? keepingDelimiters(shown, text, range, parentRange, rewrite.source, first, last)
-            : shown,
+          text: keepingCodeSpans(
+            parentRange
+              ? keepingDelimiters(shown, text, range, parentRange, rewrite.source, first, last)
+              : shown,
+            range,
+            rewrite.source,
+          ),
         });
       }
       return shown !== "";
@@ -138,6 +149,18 @@ function hideCitations(parent: MarkdownNode, rewrite?: SourceRewrite): void {
 
     const editsBefore = rewrite?.edits.length ?? 0;
     hideCitations(child, rewrite);
+    // `[label]` and `[label][]` find their definition by the label, so the original is spelled out.
+    if (
+      rewrite &&
+      range &&
+      rewrite.edits.length > editsBefore &&
+      child.type === "linkReference" &&
+      child.referenceType !== "full"
+    ) {
+      const reference = child.referenceType === "collapsed" ? 2 : 0;
+      const label = rewrite.source.slice(range.start + 1, range.end - reference - 1);
+      rewrite.edits.push({ start: range.end - reference, end: range.end, text: `[${label}]` });
+    }
     if (child.children.length > 0 || !DELIMITED.has(child.type)) return true;
     // Empty delimiters would show as literal asterisks.
     if (rewrite && range) {
