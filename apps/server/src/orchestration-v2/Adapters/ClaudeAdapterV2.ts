@@ -12686,7 +12686,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 const wakeAbsorbed =
                   (yield* Ref.get(absorbedWakes)).has(nativeThreadId) ||
                   (leavesLaterWake && latch?.end?.type !== "result");
-                yield* forgetAbsorbedWake(nativeThreadId);
+                // After this wake's own result, the absorption recorded is the later wake's.
+                if (!leavesLaterWake || latch?.end?.type !== "result")
+                  yield* forgetAbsorbedWake(nativeThreadId);
                 if (drained.length === 0) {
                   const completedAt = yield* DateTime.now;
                   yield* finalizeActiveTurn({ context, status: "completed", completedAt });
