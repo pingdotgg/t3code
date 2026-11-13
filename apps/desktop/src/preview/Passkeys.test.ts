@@ -196,6 +196,27 @@ describe("PreviewPasskeys", () => {
     }).pipe(Effect.provide(bridgeLayer)),
   );
 
+  // The native layer requires a resident key whenever requireResidentKey is truthy.
+  it.effect("lets an explicit residentKey override the legacy requireResidentKey", () =>
+    Effect.gen(function* () {
+      const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
+      const { guest, call } = makeGuest();
+      passkeys.attachGuest(guest);
+      webauthn.createCredential.mockResolvedValue({ success: false, error: "NotAllowedError" });
+
+      for (const residentKey of ["discouraged", "preferred"]) {
+        webauthn.createCredential.mockClear();
+        yield* call(PASSKEY_CREATE_CHANNEL, {
+          challenge: new Uint8Array([1]),
+          authenticatorSelection: { residentKey, requireResidentKey: true },
+        });
+        const selection = webauthn.createCredential.mock.calls[0]?.[0].authenticatorSelection;
+        assert.strictEqual(selection?.residentKey, residentKey);
+        assert.notOk(selection?.requireResidentKey, residentKey);
+      }
+    }).pipe(Effect.provide(bridgeLayer)),
+  );
+
   it.effect("answers only with a credential the site allowed", () =>
     Effect.gen(function* () {
       const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
