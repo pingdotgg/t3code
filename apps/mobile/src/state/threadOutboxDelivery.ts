@@ -82,6 +82,7 @@ import {
   removeDeliveredCloudQueuedMessage,
   undoComposerDraftMerge,
   updateComposerDraftSettings,
+  releaseDeliveredComposerDraftModelSelection,
   waitForComposerDraftsLoaded,
 } from "./use-composer-drafts";
 import {
@@ -792,7 +793,12 @@ export function createThreadOutboxDelivery(): {
     );
     if (!serverConfig) return false;
     const settings = resolveQueuedThreadSettings(queuedMessage, thread, serverConfig.providers);
-    if (isModelSelectionUnavailable(serverConfig, settings.modelSelection, thread.projectId)) {
+    // Without a pick the server chooses the model; this client's copy of the thread may be stale.
+    const pickedModel = queuedMessage.modelSelection !== undefined;
+    if (
+      pickedModel &&
+      isModelSelectionUnavailable(serverConfig, settings.modelSelection, thread.projectId)
+    ) {
       const { title, detail } = describeUnavailableModelSelection(
         serverConfig,
         settings.modelSelection,
@@ -877,7 +883,10 @@ export function createThreadOutboxDelivery(): {
       serverEnvironment.configValueAtom(queuedMessage.environmentId),
     );
     if (!currentConfig) return false;
-    if (isModelSelectionUnavailable(currentConfig, settings.modelSelection, thread.projectId)) {
+    if (
+      pickedModel &&
+      isModelSelectionUnavailable(currentConfig, settings.modelSelection, thread.projectId)
+    ) {
       const { title, detail } = describeUnavailableModelSelection(
         currentConfig,
         settings.modelSelection,
@@ -890,6 +899,7 @@ export function createThreadOutboxDelivery(): {
       settings,
       currentConfig.providers,
     );
+    const sendModel = pickedModel ? { modelSelection: sendSettings.modelSelection } : {};
     if (queuedMessage.compactBeforeSend === true) {
       if (!hasAccess()) return true;
       // Queued, since steering a running turn with a compaction is rejected.
@@ -906,7 +916,7 @@ export function createThreadOutboxDelivery(): {
             attachments: [],
             idleCompaction: "onReturn",
           },
-          modelSelection: sendSettings.modelSelection,
+          ...sendModel,
           runtimeMode: sendSettings.runtimeMode,
           interactionMode: sendSettings.interactionMode,
           createdAt: queuedMessage.createdAt,
@@ -942,7 +952,7 @@ export function createThreadOutboxDelivery(): {
           ),
           attachments: prepared.attachments,
         },
-        modelSelection: sendSettings.modelSelection,
+        ...sendModel,
         titleSeed: deriveThreadTitleSeed({
           text: queuedMessage.text,
           attachments: queuedMessage.attachments,
@@ -964,6 +974,12 @@ export function createThreadOutboxDelivery(): {
       return restoreQueuedMessage(persistedMessage, failure.message);
     }
     acknowledgedExistingThreadMessageIds.add(persistedMessage.messageId);
+    if (queuedMessage.modelSelection !== undefined) {
+      await releaseDeliveredComposerDraftModelSelection(
+        scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId),
+        queuedMessage.modelSelection,
+      );
+    }
     const delivered =
       (await completeQueuedMessageDelivery(
         persistedMessage,

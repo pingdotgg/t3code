@@ -457,6 +457,10 @@ describe("mobile task permissions", () => {
         text: "Keep my draft",
       }),
     );
+    // No pick in the draft: the cached thread model is not sent as one.
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ modelSelection: expect.anything() }),
+    );
   });
 
   it("rechecks the target environment before an approval response", async () => {

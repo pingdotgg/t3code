@@ -25,6 +25,7 @@ const state = vi.hoisted(() => ({
   interaction: vi.fn(),
   prepare: vi.fn(),
   checkout: vi.fn(),
+  releasePick: vi.fn(),
   modelUnavailable: vi.fn(() => false),
   familyMount: vi.fn(() => () => {}),
   threadShells: null as unknown as Atom.Writable<ReadonlyArray<unknown>>,
@@ -151,6 +152,7 @@ vi.mock("./use-composer-drafts", async () => {
     mergeComposerDraftContent: vi.fn(async (_key: string, input: { text: string }) => {
       state.draftText += `\n${input.text}`;
     }),
+    releaseDeliveredComposerDraftModelSelection: state.releasePick,
     replaceComposerDraftAttachments: vi.fn(),
     setFreshSessionPending: vi.fn(),
     undoComposerDraftMerge: vi.fn(),
@@ -223,6 +225,7 @@ beforeEach(() => {
     state.runtime,
     state.interaction,
     state.checkout,
+    state.releasePick,
   ]) {
     command.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   }
@@ -343,7 +346,9 @@ describe("queued task operation access", () => {
 
   it("backs off instead of redelivering at once when a delivery hits a defect", async () => {
     setOperateGrant("secondary", true);
-    const queued = message();
+    const queued = message({
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    });
     await state.manager.enqueue(queued);
     // Awaited steps catch their own failures, so a defect in the delivery's own code is what
     // rejects a delivery.
@@ -383,6 +388,35 @@ describe("queued task operation access", () => {
     expect(confirm).toHaveBeenCalledOnce();
     await delivered.promise.finally(release);
     expect(state.start).toHaveBeenCalledOnce();
+    expect(remaining()).toEqual([]);
+  });
+
+  it("names a model only for a picked message, and releases the pick once delivered", async () => {
+    setOperateGrant("secondary", true);
+    // This client's copy of the thread's model may be stale, so it is neither checked nor sent.
+    state.modelUnavailable.mockReturnValue(true);
+    await state.manager.enqueue(message({ compactBeforeSend: true, dispatchMode: "queue" }));
+    await runDrain();
+    expect(state.start).toHaveBeenCalledTimes(2);
+    for (const [call] of state.start.mock.calls) {
+      expect(call.input).not.toHaveProperty("modelSelection");
+    }
+    expect(state.releasePick).not.toHaveBeenCalled();
+    expect(remaining()).toEqual([]);
+
+    state.cleanups.splice(0).forEach((cleanup) => cleanup());
+    state.modelUnavailable.mockReturnValue(false);
+    const pick = { instanceId: ProviderInstanceId.make("claude"), model: "claude-opus-5-5" };
+    await state.manager.enqueue(
+      message({
+        messageId: MessageId.make("picked"),
+        commandId: CommandId.make("picked-command"),
+        modelSelection: pick,
+      }),
+    );
+    await runDrain();
+    expect(state.start.mock.lastCall?.[0].input.modelSelection).toEqual(pick);
+    expect(state.releasePick).toHaveBeenCalledExactlyOnceWith("secondary:thread", pick);
     expect(remaining()).toEqual([]);
   });
 

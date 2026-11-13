@@ -807,7 +807,8 @@ export function useThreadComposerState(input: {
       text,
       attachments,
       context: draft.context,
-      modelSelection,
+      // Only a pick names a model; this client's copy of the thread's model may be stale by delivery.
+      modelSelection: draft.modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
       ...(compactBeforeSend
