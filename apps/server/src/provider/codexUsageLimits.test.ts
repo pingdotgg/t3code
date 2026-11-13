@@ -292,6 +292,13 @@ describe("codexRateLimitsToUpdate", () => {
       const afterUnknown = mergeCodexRateLimits(session, unknown);
       expect(codexRateLimitsToUpdate(structuredClone(blocked), afterUnknown)).toBeUndefined();
     }
+    // A session that only knew "no credits" still reports a block it has not seen before.
+    expect(
+      codexRateLimitsToUpdate(
+        { ...windows, spendControlReached: true },
+        { ...windows, credits: { hasCredits: false, unlimited: false } },
+      ),
+    ).toEqual({ windows: [], continuesOnCredits: false });
     expect(
       codexRateLimitsToUpdate({ limitId: "codex_bengalfox", spendControlReached: true }, spendable),
     ).toBeUndefined();

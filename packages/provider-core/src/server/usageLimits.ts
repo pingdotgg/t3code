@@ -134,16 +134,17 @@ export function resolveUsageLimitsAfterProbe(input: {
   if (
     published &&
     probed &&
-    !published.unavailable &&
     !probed.unavailable &&
     Date.parse(published.checkedAt) > Date.parse(probed.checkedAt)
   ) {
+    // A block reported after this probe read the account outranks the probe's grant.
+    const revoked = published.continuesOnCredits === false && probed.continuesOnCredits === true;
+    if (published.unavailable) return revoked ? { ...probed, continuesOnCredits: false } : probed;
     return {
       ...probed,
       checkedAt: published.checkedAt,
       windows: published.windows,
-      // A block reported after this probe read the account outranks the probe's grant.
-      ...(published.continuesOnCredits === false ? { continuesOnCredits: false } : {}),
+      ...(revoked ? { continuesOnCredits: false } : {}),
     };
   }
   return probed;

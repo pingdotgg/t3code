@@ -100,12 +100,12 @@ function codexRateLimitsToWindows(
 }
 
 /** Null means Codex could not tell, so only an explicit signal counts as a block. */
-function codexCreditsBlocked(snapshot: CodexRateLimitSnapshot): boolean {
-  return (
-    snapshot.spendControlReached === true ||
-    snapshot.rateLimitReachedType?.startsWith("workspace_") === true ||
-    (snapshot.credits != null && !snapshot.credits.hasCredits && !snapshot.credits.unlimited)
-  );
+function codexCreditBlocks(snapshot: CodexRateLimitSnapshot) {
+  return [
+    snapshot.spendControlReached === true,
+    snapshot.rateLimitReachedType?.startsWith("workspace_") === true,
+    snapshot.credits != null && !snapshot.credits.hasCredits && !snapshot.credits.unlimited,
+  ] as const;
 }
 
 function codexResetCreditsToContract(
@@ -138,7 +138,7 @@ export function codexRateLimitsToLimits(input: {
   const windows = codexRateLimitsToWindows(snapshot);
   const continuesOnCredits =
     (snapshot.credits?.hasCredits === true || snapshot.credits?.unlimited === true) &&
-    !codexCreditsBlocked(snapshot);
+    !codexCreditBlocks(snapshot).some(Boolean);
   return {
     ...makeUsageLimits({
       checkedAt: input.checkedAt,
@@ -166,10 +166,10 @@ export function codexRateLimitsToUpdate(
     );
   });
   // Like windows, a block the session already reported may predate a probe that has since granted credits.
+  const previousBlocks = previous ? codexCreditBlocks(previous) : [];
   const revokesCredits =
     (!snapshot.limitId || snapshot.limitId === "codex") &&
-    codexCreditsBlocked(snapshot) &&
-    !(previous && codexCreditsBlocked(previous));
+    codexCreditBlocks(snapshot).some((blocked, index) => blocked && !previousBlocks[index]);
   if (windows.length === 0 && !revokesCredits) return undefined;
   return { windows, ...(revokesCredits ? { continuesOnCredits: false as const } : {}) };
 }

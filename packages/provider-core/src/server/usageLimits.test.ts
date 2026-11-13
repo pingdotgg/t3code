@@ -185,6 +185,19 @@ describe("resolveUsageLimitsAfterProbe", () => {
       })?.continuesOnCredits,
     ).toBe(true);
 
+    // Sparse limits from before any probe succeeded keep their block but not their windows.
+    const granted = { ...probed, continuesOnCredits: true };
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: {
+          ...live,
+          unavailable: { reason: "probeFailed" as const },
+          continuesOnCredits: false,
+        },
+        probed: granted,
+      }),
+    ).toEqual({ ...granted, continuesOnCredits: false });
+
     const sameTime = { ...probed, checkedAt: live.checkedAt };
     const newer = { ...probed, checkedAt: "2026-09-03T12:00:06.000Z" };
     expect(resolveUsageLimitsAfterProbe({ published: live, probed: sameTime })).toEqual(sameTime);
