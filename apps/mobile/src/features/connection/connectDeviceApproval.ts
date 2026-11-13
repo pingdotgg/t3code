@@ -59,6 +59,15 @@ export function createApprovalPromptQueue<P extends { readonly pairingLinkId: st
   };
   return {
     known: known as ReadonlySet<string>,
+    /** Forgets waiting prompts that match, such as a host that went away. */
+    drop(matches: (prompt: P) => boolean) {
+      for (let index = waiting.length - 1; index >= 0; index--) {
+        const prompt = waiting[index]!;
+        if (!matches(prompt)) continue;
+        waiting.splice(index, 1);
+        known.delete(prompt.pairingLinkId);
+      }
+    },
     offer(prompts: ReadonlyArray<P>) {
       for (const prompt of prompts) {
         if (known.has(prompt.pairingLinkId)) continue;

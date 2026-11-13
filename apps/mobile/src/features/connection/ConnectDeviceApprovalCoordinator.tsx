@@ -41,15 +41,21 @@ export function ConnectDeviceApprovalCoordinator() {
 type ApprovalAnswer = "done" | "failed" | "gone";
 
 interface QueuedApprovalPrompt extends ConnectDeviceApprovalPrompt {
+  readonly environmentId: EnvironmentId;
   readonly approve: () => Promise<ApprovalAnswer>;
   readonly deny: () => Promise<ApprovalAnswer>;
 }
+
+const watchedEnvironments = new Set<EnvironmentId>();
 
 // One queue for every host: a second Android alert would replace an unanswered first one.
 const approvalPrompts = createApprovalPromptQueue<QueuedApprovalPrompt>((prompt, answer) => {
   const respond = (action: () => Promise<ApprovalAnswer>, failure: string) => () =>
     void action().then((outcome) => {
-      if (outcome === "done") return answer("done");
+      // A host that went away or lost access cannot be retried; let the next prompt show.
+      if (outcome === "done" || !watchedEnvironments.has(prompt.environmentId)) {
+        return answer("done");
+      }
       if (outcome === "gone") {
         return Dialog.alert("Request no longer waiting", "It expired or was answered elsewhere.", [
           { text: "OK", onPress: () => answer("done") },
@@ -91,6 +97,7 @@ function EnvironmentApprovalWatcher(props: {
     approvalPrompts.offer(
       prompts.map((prompt) => ({
         ...prompt,
+        environmentId: props.environmentId,
         approve: () =>
           approve({
             environmentId: props.environmentId,
@@ -106,6 +113,15 @@ function EnvironmentApprovalWatcher(props: {
       })),
     );
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this host with the module-level prompt queue and drops its prompts when it goes away
+  useEffect(() => {
+    const environmentId = props.environmentId;
+    watchedEnvironments.add(environmentId);
+    return () => {
+      watchedEnvironments.delete(environmentId);
+      approvalPrompts.drop((prompt) => prompt.environmentId === environmentId);
+    };
+  }, [props.environmentId]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new request on the access stream opens a native alert
   useEffect(() => {
     if (pairingLinks !== undefined) offerPrompts(pairingLinks);
