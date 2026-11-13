@@ -128,8 +128,11 @@ export function evaluatePullRequestWatch(
       passed = false;
       passedChecks = [];
     }
-    // A watch saved before passedChecks existed takes this read's gate as what it was told.
-    if (passed && passedChecks.length === 0) passedChecks = gateNames;
+    // A legacy watch has no gate names to distinguish a rerun from a newly joined pending check.
+    if (passed && passedChecks.length === 0) {
+      passed = passedNow;
+      passedChecks = passedNow ? gateNames : [];
+    }
     // Required checks can finish between sweeps; detect new names. With no required checks, ignore advisory gate growth.
     const gateGrew = required.length > 0 && gateNames.some((name) => !passedChecks.includes(name));
     // Other checks still pending when required ones passed are owed one wake when all settle.

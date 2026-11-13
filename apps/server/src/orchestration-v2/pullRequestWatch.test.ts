@@ -97,6 +97,10 @@ describe("evaluatePullRequestWatch", () => {
       noRemarks,
     );
     assert.deepEqual(pending.changes, []);
+    assert.isTrue(pending.next.checksPending);
+    const settled = evaluatePullRequestWatch(pending.next, green, noRemarks);
+    assert.deepEqual(settled.changes, []);
+    assert.isFalse(settled.next.checksPending);
     const failed = evaluatePullRequestWatch(
       pending.next,
       detail({ checks: [{ ...check("test", "failure"), required }] }),
@@ -413,10 +417,10 @@ describe("evaluatePullRequestWatch", () => {
       detail({ checks: [{ ...bot, status: "pending" }, unknown] }),
       noRemarks,
     );
-    assert.isFalse(blocked.next.passed);
+    assert.deepEqual(blocked.changes, []);
     assert.deepEqual(
       evaluatePullRequestWatch(blocked.next, detail({ checks: [bot] }), noRemarks).changes,
-      [{ kind: "checks-passed", count: 1, required: false }],
+      [],
     );
   });
 
@@ -635,6 +639,17 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(rerun.next, grown, noRemarks).changes, [
       { kind: "checks-passed", count: 2, required: true },
     ]);
+
+    const joined = evaluatePullRequestWatch(
+      told,
+      detail({ checks: [required("test", "success"), required("lint", "pending")] }),
+      noRemarks,
+    );
+    assert.deepEqual(joined.changes, []);
+    const settled = evaluatePullRequestWatch(joined.next, grown, noRemarks);
+    assert.deepEqual(settled.changes, [{ kind: "checks-passed", count: 2, required: true }]);
+    assert.notInclude(joined.next.passedChecks, "lint");
+    assert.deepEqual(evaluatePullRequestWatch(settled.next, grown, noRemarks).changes, []);
   });
 
   it("keeps remarks for a later pass when the conversation was not read whole", () => {
