@@ -1102,6 +1102,10 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const worktreeGitDir = path.join(repo, ".git", "worktrees", "feature");
         yield* fileSystem.makeDirectory(worktreeGitDir, { recursive: true });
         yield* fileSystem.writeFileString(path.join(worktreeGitDir, "commondir"), "../..\n");
+        yield* fileSystem.writeFileString(
+          path.join(worktreeGitDir, "HEAD"),
+          "ref: refs/heads/feature\n",
+        );
         const worktree = path.join(repo, ".claude", "worktrees", "feature");
         yield* fileSystem.makeDirectory(worktree, { recursive: true });
         yield* fileSystem.writeFileString(
@@ -1134,10 +1138,16 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         expect(candidates.map(({ path, threadCount }) => ({ path, threadCount }))).toEqual([
           { path: repo, threadCount: 2 },
         ]);
-        const threads = yield* runRecentThreads({ ...input, workspaceRoot: repo });
-        expect(threads.map((thread) => thread.providerSessionId)).toEqual([
-          "at-root",
-          "in-worktree",
+        const outcomes = yield* runRecentThreadOutcomes({ ...input, workspaceRoot: repo });
+        expect(
+          outcomes.flatMap((outcome) =>
+            outcome._tag === "Importable"
+              ? [{ sessionId: outcome.thread.providerSessionId, worktree: outcome.worktree }]
+              : [],
+          ),
+        ).toEqual([
+          { sessionId: "at-root", worktree: null },
+          { sessionId: "in-worktree", worktree: { path: worktree, branch: "feature" } },
         ]);
       }),
     );
