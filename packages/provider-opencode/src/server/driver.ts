@@ -511,13 +511,14 @@ export const OpenCodeDriver: ProviderDriver<
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, pathService),
       Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(Digest.Digest, digest),
     );
     // One probe for the provider's limits, so the recovery that retries a
     // failed read retries the Console budget and the integration quotas alike.
     const checkUsageLimits = Effect.zipWith(
       checkConsoleUsageLimits,
       checkIntegrationUsageLimits,
-      (usageLimits, integration) => mergeUsageLimits(usageLimits, integration.windows),
+      (usageLimits, integration) => mergeUsageLimits(usageLimits, integration),
       { concurrent: true },
     );
     const checkProvider = Effect.all(

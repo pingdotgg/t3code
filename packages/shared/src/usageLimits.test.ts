@@ -234,7 +234,6 @@ describe("new thread model fallback", () => {
       ).toEqual(usesFallback ? fallback : defaultSelection);
     },
   );
-
 });
 
 describe("pace", () => {

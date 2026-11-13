@@ -88,6 +88,19 @@ const layer = Layer.mergeAll(
   Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, openCode2Runtime),
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
+/**
+ * Keeps the provider from reading the developer's own OpenCode store: the
+ * quota probe would send those credentials to the provider's API.
+ */
+const sandboxStore = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-opencode-driver-home-" });
+  return [
+    { name: "HOME", value: home, sensitive: false },
+    { name: "XDG_DATA_HOME", value: home, sensitive: false },
+  ];
+});
+
 const create = (
   config: Partial<OpenCodeSettings>,
   http: HttpClient.HttpClient,
@@ -96,15 +109,21 @@ const create = (
     readonly environment?: NodeJS.ProcessEnv;
   } = {},
 ) =>
-  OpenCodeDriver.create({
-    instanceId: ProviderInstanceId.make("opencode-test"),
-    displayName: undefined,
-    environment: Object.entries(options.environment ?? {}).flatMap(([name, value]) =>
-      value === undefined ? [] : [{ name, value, sensitive: false }],
-    ),
-    enabled: options.enabled ?? true,
-    config: { ...OpenCodeDriver.defaultConfig(), ...config },
-  }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+  Effect.gen(function* () {
+    const sandbox = yield* sandboxStore;
+    return yield* OpenCodeDriver.create({
+      instanceId: ProviderInstanceId.make("opencode-test"),
+      displayName: undefined,
+      environment: [
+        ...sandbox,
+        ...Object.entries(options.environment ?? {}).flatMap(([name, value]) =>
+          value === undefined ? [] : [{ name, value, sensitive: false }],
+        ),
+      ],
+      enabled: options.enabled ?? true,
+      config: { ...OpenCodeDriver.defaultConfig(), ...config },
+    }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+  });
 
 const noHttp = HttpClient.make(() => Effect.die("A local binary must not be probed over HTTP"));
 
@@ -228,7 +247,7 @@ it.live("discovers models through a home-relative OpenCode wrapper", () =>
     const instance = yield* OpenCodeDriver.create({
       instanceId: ProviderInstanceId.make("opencode-home"),
       displayName: undefined,
-      environment: [],
+      environment: yield* sandboxStore,
       enabled: true,
       config: {
         ...OpenCodeDriver.defaultConfig(),
@@ -335,13 +354,9 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
             return { stdout: "opencode v2.1.2\n", stderr: "", code: 0 };
           }),
       } as OpenCodeRuntime.OpenCodeRuntime["Service"];
-      const instance = yield* create(
-        { serverUrl: "http://127.0.0.1:4096" },
-        noHttp,
-        { enabled: false },
-      ).pipe(
-        Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime),
-      );
+      const instance = yield* create({ serverUrl: "http://127.0.0.1:4096" }, noHttp, {
+        enabled: false,
+      }).pipe(Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime));
 
       const snapshot = yield* instance.snapshot.refresh;
       assert.isFalse(snapshot.enabled);
@@ -983,6 +998,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         instanceId: ProviderInstanceId.make("opencode-usage-recovery"),
         displayName: undefined,
         environment: [
+          ...(yield* sandboxStore),
           {
             name: "OPENCODE_AUTH_CONTENT",
             sensitive: true,
@@ -1257,7 +1273,7 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
         const instance = yield* OpenCodeDriver.create({
           instanceId: ProviderInstanceId.make("opencode-update"),
           displayName: undefined,
-          environment: [],
+          environment: yield* sandboxStore,
           enabled: true,
           config: { ...OpenCodeDriver.defaultConfig(), binaryPath },
         }).pipe(Effect.provideService(HttpClient.HttpClient, noHttp));
@@ -1283,13 +1299,7 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
     () =>
       Effect.gen(function* () {
         versionOutput.current = "1.18.18\n";
-        // Sandbox HOME so the provider cannot read the developer's own OpenCode
-        // store, whose credentials would send the provider's quota probe out.
-        const fs = yield* FileSystem.FileSystem;
-        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-driver-home-" });
-        const instance = yield* create({}, noHttp, {
-          environment: { HOME: home, XDG_DATA_HOME: home },
-        });
+        const instance = yield* create({}, noHttp);
         // Let the startup status check claim the refresh permit, then wait behind it so it
         // cannot probe after the upgrade below.
         yield* Effect.yieldNow;
