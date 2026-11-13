@@ -283,7 +283,10 @@ export function withEditedAuthoredText(
  * around the user's words when it sent the message, since sending the draft decorates it again.
  */
 export function recoveredQueuedEditText(previous: SentMessage, draftText: string): string {
-  const body = withoutBootstrapPrompt(restoreAttachmentOnlyBootstrapPrompt(draftText, true));
+  // An attachment-only message opens as its bare prefix. Only that draft stands for the generated
+  // prompt; the same sentence found in the draft is text the user typed.
+  const restored = restoreAttachmentOnlyBootstrapPrompt(draftText, true);
+  const body = restored === draftText ? draftText : withoutBootstrapPrompt(restored);
   const range = editedAuthoredRange(previous, body);
   return range === undefined ? draftText : body.slice(range[0], range[1]);
 }

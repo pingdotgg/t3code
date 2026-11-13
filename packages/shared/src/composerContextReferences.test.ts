@@ -217,6 +217,14 @@ describe("authored text", () => {
     { sent: `${prefix}${placeholder}`, authored: "", draft: "Ultrathink:", text: "" },
     { sent: `${prefix}${placeholder}`, authored: "", draft: `${prefix}look`, text: "look" },
     { sent: "hello", authored: "hello", draft: `${prefix}hello`, text: `${prefix}hello` },
+    // The placeholder's own words, typed into an edit, are the user's.
+    { sent: "hello", authored: "hello", draft: placeholder, text: placeholder },
+    {
+      sent: `${prefix}think`,
+      authored: "think",
+      draft: `${prefix}${placeholder}`,
+      text: placeholder,
+    },
   ])("recovers $text from the unsaved edit $draft of $sent", (row) => {
     const previous = {
       text: row.sent,
