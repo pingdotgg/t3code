@@ -374,10 +374,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
           lockKey: "codex-native",
           env: { CODEX_HOME: sharedHome },
         });
-      }).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
-        Effect.scoped,
-      ),
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn)),
   );
 
   it.effect.skipIf(windowsHost)(
@@ -431,10 +428,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
             env: { CODEX_HOME: installHome },
           });
         }
-      }).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
-        Effect.scoped,
-      ),
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn)),
   );
 
   it.effect.skipIf(windowsHost)("derives the standalone update home from either command path", () =>
@@ -478,7 +472,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
           CODEX_HOME: fixture.home,
         });
       }
-    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn), Effect.scoped),
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn)),
   );
 
   // regression: #23937 `codex update` installs the native channel's release, which can lag npm.
@@ -556,10 +550,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
             maintenanceCapabilities: capabilities,
           }).status,
         ).not.toBe("behind_latest");
-      }).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
-        Effect.scoped,
-      ),
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn)),
   );
 
   it.effect("uses each instance's environment CODEX_HOME for continuation", () =>
@@ -577,7 +568,36 @@ it.layer(layerTest)("CodexDriver", (it) => {
         });
         expect(instance.continuationIdentity.continuationKey).toBe(`codex:home:${codexHome}`);
       }
-    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn), Effect.scoped),
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn)),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "shares state from the environment CODEX_HOME in a shadow home",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const tempDir = yield* fs
+          .makeTempDirectoryScoped({ prefix: "t3-codex-driver-" })
+          .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+        const codexHome = NodePath.join(tempDir, "custom-codex");
+        const shadowHome = NodePath.join(tempDir, "shadow");
+        yield* fs.makeDirectory(codexHome, { recursive: true });
+        yield* fs.writeFileString(NodePath.join(codexHome, "config.toml"), 'model = "custom"\n');
+        const instance = yield* CodexDriver.create({
+          instanceId: ProviderInstanceId.make("env-shadow"),
+          displayName: "env-shadow",
+          enabled: false,
+          environment: [{ name: "CODEX_HOME", value: codexHome, sensitive: false }],
+          config: { ...CodexDriver.defaultConfig(), shadowHomePath: shadowHome },
+        }).pipe(Effect.provideService(HostProcess.HomeDirectory, NodePath.join(tempDir, "user")));
+        expect(instance.continuationIdentity.continuationKey).toBe(`codex:home:${codexHome}`);
+        expect(yield* fs.readLink(NodePath.join(shadowHome, "config.toml"))).toBe(
+          NodePath.join(codexHome, "config.toml"),
+        );
+        expect(yield* fs.readLink(NodePath.join(shadowHome, "sessions"))).toBe(
+          NodePath.join(codexHome, "sessions"),
+        );
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn)),
   );
 
   for (const fixture of [
@@ -653,10 +673,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
         } else {
           expect(update).toBeNull();
         }
-      }).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
-        Effect.scoped,
-      ),
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn)),
     );
   }
 
@@ -805,7 +822,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
         } else {
           expect(capabilities.update).toBeNull();
         }
-      }).pipe(Effect.scoped),
+      }),
     { skip: windowsHost },
   );
 
@@ -856,6 +873,6 @@ it.layer(layerTest)("CodexDriver", (it) => {
       yield* TestClock.adjust("250 millis");
 
       yield* Queue.take(probes);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
