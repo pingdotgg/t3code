@@ -23,6 +23,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   restoreAttachmentOnlyBootstrapPrompt,
   stripAttachmentOnlyBootstrapPrompt,
+  withEditedAuthoredText,
 } from "@t3tools/shared/composerContextReferences";
 import { Atom } from "effect/reactivity";
 import type { RefObject } from "react";
@@ -68,6 +69,8 @@ interface EditingQueuedRun {
   readonly runId: RunId;
   readonly messageId: MessageId;
   readonly originalText: string;
+  /** The queued message as sent, which its context's authored range measures. */
+  readonly sentText: string;
   readonly existingAttachments: ReadonlyArray<ChatAttachment>;
   readonly context?: OrchestrationMessageContext | undefined;
   /** Removing a server attachment changes the message even when the draft looks untouched. */
@@ -155,25 +158,30 @@ async function submitQueuedRunEdit(input: {
           attachmentId: uploads[editing.existingAttachments.length + index]?.id ?? attachment.id,
         })),
       })?.records ?? [];
+    const text = restoreAttachmentOnlyBootstrapPrompt(editText, uploads.length > 0);
     const result = await input.editQueuedRun({
       environmentId,
       input: {
         threadId: editing.threadId,
         runId: editing.runId,
-        text: restoreAttachmentOnlyBootstrapPrompt(editText, uploads.length > 0),
+        text,
         edit: {
           messageId: editing.messageId,
           attachments: uploads,
-          context: {
-            version: 1,
-            records: [
-              ...new Map(
-                [...keptRecords, ...newRecords].map(
-                  (record) => [record.contextId, record] as const,
-                ),
-              ).values(),
-            ],
-          },
+          context: withEditedAuthoredText(
+            {
+              version: 1,
+              records: [
+                ...new Map(
+                  [...keptRecords, ...newRecords].map(
+                    (record) => [record.contextId, record] as const,
+                  ),
+                ).values(),
+              ],
+            },
+            { text: editing.sentText, context: editing.context },
+            text,
+          ),
         },
       },
     });
@@ -271,6 +279,7 @@ export function useQueuedRunEdit(input: {
         runId: request.runId,
         messageId: request.messageId,
         originalText: text,
+        sentText: request.text,
         existingAttachments: request.attachments,
         context,
       },

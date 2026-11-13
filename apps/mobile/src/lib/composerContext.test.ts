@@ -311,14 +311,15 @@ describe("host context compatibility", () => {
   it("sends an image-only prompt as the attachment-only prompt and keeps the image", () => {
     const context: OrchestrationMessageContext = { version: 1, records: [image] };
     const reference = formatComposerContextReference(image);
+    const placeholderEnd = ATTACHMENT_ONLY_BOOTSTRAP_PROMPT.length;
     expect(serializeComposerMessageForServer(reference, context)).toEqual({
       text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-      context,
+      context: { ...context, authoredRange: [placeholderEnd, placeholderEnd] },
     });
     const withProse = `${reference} what is this?`;
     expect(serializeComposerMessageForServer(withProse, context)).toEqual({
       text: withProse,
-      context,
+      context: { ...context, authoredRange: [0, withProse.length] },
     });
   });
 

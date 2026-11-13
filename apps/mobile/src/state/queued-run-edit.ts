@@ -6,7 +6,11 @@ import type {
   UploadChatAttachment,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { stripAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
+import {
+  restoreAttachmentOnlyBootstrapPrompt,
+  stripAttachmentOnlyBootstrapPrompt,
+  withEditedAuthoredText,
+} from "@t3tools/shared/composerContextReferences";
 import {
   makeQueuedRunEditStore,
   resolveQueuedEditExit,
@@ -30,6 +34,8 @@ export interface QueuedRunEdit {
   readonly runId: RunId;
   readonly messageId: MessageId;
   readonly originalText: string;
+  /** The queued message as sent, which its context's authored range measures. */
+  readonly sentText: string;
   readonly existingAttachments: ReadonlyArray<ChatAttachment>;
   readonly context?: OrchestrationMessageContext;
   /** Removing a server attachment changes the message even when the draft looks untouched. */
@@ -109,7 +115,7 @@ function exitQueuedRunEdit(threadKey: string, edit: QueuedRunEdit): void {
 /** `runs` is the thread's runs; the edit ends when its run leaves the queue. */
 export function beginQueuedRunEdit(
   threadKey: string,
-  edit: QueuedRunEdit,
+  edit: Omit<QueuedRunEdit, "sentText">,
   runs: QueuedRunsAtom,
 ): void {
   const previous = getQueuedRunEdit(threadKey);
@@ -125,7 +131,7 @@ export function beginQueuedRunEdit(
   setComposerDraftContext(draftKey, edit.context);
   queuedRunEdits.begin(
     threadKey,
-    { ...edit, originalText },
+    { ...edit, originalText, sentText: edit.originalText },
     { runs, onRunLeftQueue: exitQueuedRunEdit },
   );
 }
@@ -159,30 +165,37 @@ export const startQueuedRunEditSave = queuedRunEdits.startSave;
 /** Attachments replace wholesale; resend kept server attachments with uploads in composer order. */
 export function resolveQueuedEditPayload(input: {
   readonly edit: QueuedRunEdit;
+  readonly draftText: string;
   readonly draftContext: OrchestrationMessageContext | undefined;
   readonly draftAttachments: ReadonlyArray<{ readonly id: string }>;
   readonly uploaded: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
 }): {
+  readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
   readonly context: OrchestrationMessageContext | undefined;
 } {
   const attachments = [...input.edit.existingAttachments, ...input.uploaded];
+  const text = restoreAttachmentOnlyBootstrapPrompt(input.draftText, attachments.length > 0);
   const rebound = uploadedComposerContext(
     input.draftContext,
     input.draftAttachments,
     input.uploaded,
   );
-  if (rebound === undefined) return { attachments, context: undefined };
   const liveIds = new Set(
     attachments.flatMap((attachment) =>
       "id" in attachment && attachment.id ? [attachment.id] : [],
     ),
   );
-  const records = rebound.records.filter(
+  const records = (rebound?.records ?? []).filter(
     (record) => !("attachmentId" in record) || liveIds.has(record.attachmentId),
   );
   return {
+    text,
     attachments,
-    context: records.length > 0 ? { version: 1, records } : undefined,
+    context: withEditedAuthoredText(
+      records.length > 0 ? { version: 1, records } : undefined,
+      { text: input.edit.sentText, context: input.edit.context },
+      text,
+    ),
   };
 }

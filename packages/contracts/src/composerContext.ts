@@ -311,6 +311,11 @@ export type GuestMessageAttribution = typeof GuestMessageAttribution.Type;
 /** Structured context riding on a user message. Undecodable records are dropped, not fatal. */
 export const OrchestrationMessageContext = Schema.Struct({
   version: Schema.Literal(1),
+  /**
+   * The UTF-16 `[start, end)` range of the message `text` the user wrote; the app added the rest
+   * when it sent the message. Absent when the sender did not record it.
+   */
+  authoredRange: Schema.optional(Schema.Tuple([NonNegativeInt, NonNegativeInt])),
   guest: Schema.optional(GuestMessageAttribution),
   records: Schema.Array(Schema.Unknown)
     .check(

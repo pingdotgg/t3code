@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { serializeAssistantCitation } from "./assistantCitations.ts";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  authoredMessageText,
   collectComposerContextReferences,
   formatComposerContextHref,
   isImageReferencesOnly,
@@ -22,6 +23,8 @@ import {
   threadLinkContextReferences,
   toComposerContextId,
   toKindScopedComposerContextId,
+  withAuthoredText,
+  withEditedAuthoredText,
 } from "./composerContextReferences.ts";
 
 const ctx = (value: string) => value as ComposerContextId;
@@ -123,6 +126,91 @@ describe("attachment-only bootstrap prompts", () => {
     `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
   ])("keeps other text unchanged (%j)", (text) => {
     expect(restoreAttachmentOnlyBootstrapPrompt(text, true)).toBe(text);
+  });
+});
+
+describe("authored text", () => {
+  const image: ComposerContextRecord = {
+    version: 1,
+    contextId: ctx("ctx_i"),
+    kind: "image",
+    label: "shot.png",
+    attachmentId: "att_1",
+    name: "shot.png",
+    mimeType: "image/png",
+    sizeBytes: 10,
+  };
+
+  it("tells the same sent text apart by who wrote its prefix", () => {
+    const sent = "Ultrathink:\nKeep this prefix";
+    expect(authoredMessageText(sent, withAuthoredText(undefined, sent, sent))).toBe(sent);
+    expect(authoredMessageText(sent, withAuthoredText(undefined, sent, "Keep this prefix"))).toBe(
+      "Keep this prefix",
+    );
+    expect(authoredMessageText(sent, undefined)).toBeUndefined();
+    expect(withAuthoredText(undefined, sent, "not the tail")).toBeUndefined();
+  });
+
+  it("has no authored text when the app wrote the whole message", () => {
+    const sent = `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`;
+    expect(authoredMessageText(sent, withAuthoredText(undefined, sent, ""))).toBe("");
+  });
+
+  it("drops only the chips a record backs", () => {
+    const chip = "![shot.png](t3-context://v1/image/ctx_i)";
+    const typed = "![example](t3-context://v1/image/ctx_typed)";
+    const sent = `Compare ${chip} with ${typed}`;
+    expect(
+      authoredMessageText(sent, withAuthoredText({ version: 1, records: [image] }, sent, sent)),
+    ).toBe(`Compare with ${typed}`);
+  });
+
+  it("ignores a range that does not fit the text", () => {
+    expect(
+      authoredMessageText("short", { version: 1, records: [], authoredRange: [2, 9] }),
+    ).toBeUndefined();
+  });
+
+  const prefix = "Ultrathink:\n";
+  const placeholder = ATTACHMENT_ONLY_BOOTSTRAP_PROMPT;
+  it.each([
+    // "think" also occurs inside the generated "Ultrathink" prefix.
+    {
+      sent: `${prefix}think`,
+      authored: "think",
+      edited: `${prefix}think harder`,
+      expected: "think harder",
+    },
+    { sent: `${prefix}think`, authored: "think", edited: "think less", expected: "think less" },
+    { sent: `${prefix}think`, authored: "think", edited: `${prefix}${placeholder}`, expected: "" },
+    { sent: `${prefix}think`, authored: "think", edited: placeholder, expected: "" },
+    { sent: "hello", authored: "hello", edited: `${prefix}hello`, expected: `${prefix}hello` },
+    { sent: "hello", authored: "hello", edited: `${prefix}${placeholder}`, expected: prefix },
+    { sent: `${prefix}${placeholder}`, authored: "", edited: `${prefix}look`, expected: "look" },
+    {
+      sent: `${prefix}${placeholder}`,
+      authored: "",
+      edited: `${prefix}${placeholder}`,
+      expected: "",
+    },
+    { sent: placeholder, authored: "", edited: "describe it", expected: "describe it" },
+  ])("keeps $expected as the user's after editing $sent to $edited", (row) => {
+    const previous = {
+      text: row.sent,
+      context: withAuthoredText(undefined, row.sent, row.authored),
+    };
+    const edited = withEditedAuthoredText({ version: 1, records: [image] }, previous, row.edited);
+    expect(edited?.records).toEqual([image]);
+    expect(authoredMessageText(row.edited, edited)).toBe(row.expected);
+  });
+
+  it("leaves an edit unmarked when the message it replaces was", () => {
+    const stale = { version: 1 as const, records: [image], authoredRange: [0, 3] as const };
+    expect(withEditedAuthoredText(stale, { text: "sent" }, "edited")).toEqual({
+      version: 1,
+      records: [image],
+    });
+    expect(withEditedAuthoredText(undefined, { text: "sent" }, "edited")).toBeUndefined();
   });
 });
 

@@ -1,4 +1,8 @@
 import { ScheduledTaskId } from "@t3tools/contracts";
+import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  withAuthoredText,
+} from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -76,6 +80,30 @@ describe("recallableComposerPrompt", () => {
     const midPrompt = "Before\n\n" + block + "\n\nAfter";
     expect(recallableComposerPrompt(midPrompt)).toBe(midPrompt);
     expect(recallableComposerPrompt(midPrompt + "\n\n" + block)).toBe(midPrompt);
+  });
+
+  it("recalls typed text that only looks app-added when the send recorded what was typed", () => {
+    const block = '<review_comment filePath="src/app.ts">Keep this configurable.</review_comment>';
+    const typed = `Ultrathink:\nKeep this prefix\n\n${block}`;
+    expect(recallableComposerPrompt(typed)).toBe("Keep this prefix");
+    expect(recallableComposerPrompt(typed, withAuthoredText(undefined, typed, typed))).toBe(typed);
+    const decorated = `Ultrathink:\n${typed}`;
+    expect(
+      buildComposerPromptHistoryEntries([
+        {
+          id: "m1",
+          role: "user",
+          text: decorated,
+          context: withAuthoredText(undefined, decorated, typed),
+        },
+        {
+          id: "m2",
+          role: "user",
+          text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+          context: withAuthoredText(undefined, ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, ""),
+        },
+      ]),
+    ).toEqual([{ id: "m1", prompt: typed }]);
   });
 
   it("removes canonical references without restoring dangling chips", () => {

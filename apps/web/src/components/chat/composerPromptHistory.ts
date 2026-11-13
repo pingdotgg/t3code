@@ -1,6 +1,8 @@
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import type { OrchestrationMessageContext } from "@t3tools/contracts";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  authoredMessageText,
   collectComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
 import { PLAN_IMPLEMENTATION_PROMPT_PREFIX } from "../../proposedPlan";
@@ -12,6 +14,7 @@ const TRAILING_LEGACY_CONTEXT =
 
 type ComposerPromptHistoryMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {
   readonly id: string;
+  readonly context?: OrchestrationMessageContext | undefined;
 };
 
 interface ComposerPromptHistoryEntry {
@@ -70,7 +73,13 @@ function stripInlineTerminalLabels(prompt: string, headers: ReadonlyArray<string
   return result;
 }
 
-export function recallableComposerPrompt(messageText: string): string {
+/** Without a recorded authored part, what the app added is guessed from how the text is spelled. */
+export function recallableComposerPrompt(
+  messageText: string,
+  context?: OrchestrationMessageContext,
+): string {
+  const authored = authoredMessageText(messageText, context);
+  if (authored !== undefined) return authored.trim();
   let prompt = messageText.trim();
   if (prompt.startsWith(CLAUDE_ULTRATHINK_PREFIX)) {
     prompt = prompt.slice(CLAUDE_ULTRATHINK_PREFIX.length);
@@ -125,7 +134,7 @@ export function buildComposerPromptHistoryEntries(
     if (message.role !== "user") continue;
     // Automations and other agents send user-role messages; recall only what the user typed.
     if (resolveUserMessagePresentation(message).attribution !== null) continue;
-    const prompt = recallableComposerPrompt(message.text);
+    const prompt = recallableComposerPrompt(message.text, message.context);
     if (prompt.length === 0) continue;
     const previous = entries[entries.length - 1];
     if (previous && previous.prompt === prompt) {

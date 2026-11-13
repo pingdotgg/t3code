@@ -8,6 +8,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { withAuthoredText } from "@t3tools/shared/composerContextReferences";
 import { useNavigate } from "@tanstack/react-router";
 import { newMessageId } from "~/lib/utils";
 import { collapseExpandedComposerCursor } from "../../composer-logic";
@@ -95,7 +96,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     attachmentsPromise,
     usesAttachmentUploads,
     readFileBlockReason,
-    buildOutgoingMessageContext,
+    buildMessageRecords,
     isCurrentSend,
   }: {
     readonly threadId: ThreadId;
@@ -108,7 +109,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     readonly attachmentsPromise: ReturnType<typeof prepareTurnAttachments>;
     readonly usesAttachmentUploads: boolean;
     readonly readFileBlockReason: () => string | null;
-    readonly buildOutgoingMessageContext: (
+    readonly buildMessageRecords: (
       attachmentIds: ReadonlyArray<string>,
     ) => ReturnType<typeof buildMessageContext>;
     /** False once a newer send from this composer started. */
@@ -126,9 +127,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
       const attachments = await attachmentsPromise;
       const fileBlockReason = readFileBlockReason();
       if (fileBlockReason !== null) throw new Error(fileBlockReason);
-      const context = buildOutgoingMessageContext(
-        boundAttachmentIds(attachments, attachmentsSnapshot),
-      );
+      const records = buildMessageRecords(boundAttachmentIds(attachments, attachmentsSnapshot));
       const title = deriveThreadTitleSeed({
         text: messageText,
         attachments: attachmentsSnapshot,
@@ -169,7 +168,8 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                     attachments,
                     ...withMessageContext({
                       text: target.text,
-                      context,
+                      // The effort prefix differs per model, so each thread marks its own text.
+                      context: withAuthoredText(records, target.text, messageText),
                     }),
                   },
                   modelSelection: target.selection,

@@ -6,6 +6,7 @@ import {
   type ElementContextDetails,
   type EnvironmentId,
   type KnownComposerContextRecord,
+  type OrchestrationMessageContext,
   type ScopedThreadRef,
   type ThreadContextRecord,
 } from "@t3tools/contracts";
@@ -199,6 +200,100 @@ export function restoreAttachmentOnlyBootstrapPrompt(
   return /^Ultrathink:\s*$/i.test(trimmed)
     ? `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`
     : text;
+}
+
+function authoredRange(text: string, context: OrchestrationMessageContext | undefined) {
+  const range = context?.authoredRange;
+  return range !== undefined && range[0] <= range[1] && range[1] <= text.length ? range : undefined;
+}
+
+/**
+ * Marks `authored` as the part of `sentText` the user wrote. Send-time decoration only goes in
+ * front of the composer text, so that part is the tail; text sent any other way stays unmarked.
+ */
+export function withAuthoredText(
+  context: OrchestrationMessageContext | undefined,
+  sentText: string,
+  authored: string,
+): OrchestrationMessageContext | undefined {
+  if (!sentText.endsWith(authored)) return context;
+  return {
+    ...(context ?? { version: 1, records: [] }),
+    authoredRange: [sentText.length - authored.length, sentText.length],
+  };
+}
+
+interface SentMessage {
+  readonly text: string;
+  readonly context?: OrchestrationMessageContext | undefined;
+}
+
+function withoutBootstrapPrompt(text: string): string {
+  return isAttachmentOnlyBootstrapPrompt(text)
+    ? text.slice(0, -ATTACHMENT_ONLY_BOOTSTRAP_PROMPT.length)
+    : text;
+}
+
+/**
+ * The context of a queued message whose text was edited. What the app put around the user's
+ * words stays the app's while the edit keeps it; an edit that rewrites it makes the whole text
+ * the user's. A message whose authored part was never recorded stays unrecorded.
+ */
+export function withEditedAuthoredText(
+  context: OrchestrationMessageContext,
+  previous: SentMessage,
+  editedText: string,
+): OrchestrationMessageContext;
+export function withEditedAuthoredText(
+  context: OrchestrationMessageContext | undefined,
+  previous: SentMessage,
+  editedText: string,
+): OrchestrationMessageContext | undefined;
+export function withEditedAuthoredText(
+  context: OrchestrationMessageContext | undefined,
+  previous: SentMessage,
+  editedText: string,
+): OrchestrationMessageContext | undefined {
+  const { authoredRange: _stale, ...edited } = context ?? { version: 1, records: [] };
+  const range = authoredRange(previous.text, previous.context);
+  if (range === undefined) return context === undefined ? undefined : edited;
+  // The attachment-only prompt stands in for an empty message, so it is never decoration to keep.
+  const previousBody = withoutBootstrapPrompt(previous.text);
+  const prefix = previousBody.slice(0, range[0]);
+  const suffix = previousBody.slice(range[1]);
+  const body = withoutBootstrapPrompt(editedText);
+  const kept =
+    body.length >= prefix.length + suffix.length &&
+    body.startsWith(prefix) &&
+    body.endsWith(suffix);
+  return {
+    ...edited,
+    authoredRange: kept ? [prefix.length, body.length - suffix.length] : [0, body.length],
+  };
+}
+
+/**
+ * What the user wrote in a sent message: its authored part without the chips its records back.
+ * Undefined when the sender recorded no authored part, so origin can only be guessed.
+ */
+export function authoredMessageText(
+  text: string,
+  context: OrchestrationMessageContext | undefined,
+): string | undefined {
+  const range = authoredRange(text, context);
+  if (range === undefined) return undefined;
+  const backed = new Set<string>(context?.records.map((record) => record.contextId));
+  let authored = text.slice(range[0], range[1]);
+  const references = collectComposerContextReferences(authored);
+  for (let index = references.length - 1; index >= 0; index -= 1) {
+    const reference = references[index]!;
+    if (!backed.has(reference.contextId)) continue;
+    let { start, end } = reference;
+    if (authored[end] === " ") end += 1;
+    else if (authored[start - 1] === " ") start -= 1;
+    authored = authored.slice(0, start) + authored.slice(end);
+  }
+  return authored;
 }
 
 export function isImageReferencesOnly(text: string): boolean {

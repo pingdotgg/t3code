@@ -2270,6 +2270,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       threadId: input.threadId,
       messageId: MessageId.make("intake-second"),
       text: "Second",
+      context: { version: 1, records: [], authoredRange: [0, 6] },
       attachments: [attachment],
       dispatchMode: { type: "queue_after_active" },
       createdBy: "user",
@@ -2287,6 +2288,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       (message) => message.id === queuedRun.userMessageId,
     );
     assert.isDefined(queuedMessage);
+    assert.deepEqual(queuedMessage.context?.authoredRange, [0, 6]);
     const file: ChatAttachment = {
       type: "file",
       id: ChatAttachmentId.make(createPendingAttachmentId("pdf")),
@@ -2315,6 +2317,8 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       (message) => message.id === queuedRun.userMessageId,
     );
     assert.isDefined(editedMessage);
+    // The edit named no context, so the range of the replaced text must not survive it.
+    assert.deepEqual(editedMessage.context, { version: 1, records: [] });
     assert.equal(editedMessage.attachments.length, 2);
     assert.deepEqual(editedMessage.attachments[0], queuedMessage.attachments[0]);
     assert.notEqual(editedMessage.attachments[1]?.id, file.id);

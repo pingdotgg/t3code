@@ -57,6 +57,7 @@ function edit(attachments: ReadonlyArray<ChatAttachment>): QueuedRunEdit {
     runId: RunId.make("run-1"),
     messageId: MessageId.make("message-1"),
     originalText: "original",
+    sentText: "original",
     existingAttachments: attachments,
   };
 }
@@ -81,6 +82,7 @@ describe("resolveQueuedEditPayload", () => {
   it("resends the kept server attachments ahead of the newly uploaded ones", () => {
     const payload = resolveQueuedEditPayload({
       edit: edit([image("kept")]),
+      draftText: "original",
       draftContext: undefined,
       draftAttachments: [{ id: "draft-1" }],
       uploaded: [image("uploaded")],
@@ -92,6 +94,7 @@ describe("resolveQueuedEditPayload", () => {
   it("rebinds context records from the draft's ids to the uploaded ones", () => {
     const payload = resolveQueuedEditPayload({
       edit: edit([]),
+      draftText: "original",
       draftContext: context(["draft-1"]),
       draftAttachments: [{ id: "draft-1" }],
       uploaded: [image("uploaded")],
@@ -105,6 +108,7 @@ describe("resolveQueuedEditPayload", () => {
   it("drops the record of an attachment the user removed", () => {
     const payload = resolveQueuedEditPayload({
       edit: edit([image("kept")]),
+      draftText: "original",
       draftContext: context(["kept", "gone"]),
       draftAttachments: [],
       uploaded: [],
@@ -112,6 +116,25 @@ describe("resolveQueuedEditPayload", () => {
 
     expect(payload.attachments.map((attachment) => attachment.id)).toEqual(["kept"]);
     expect(payload.context?.records).toEqual([expect.objectContaining({ attachmentId: "kept" })]);
+  });
+});
+
+describe("resolveQueuedEditPayload authored text", () => {
+  it("keeps the effort prefix the app added out of what the user wrote", () => {
+    const payload = resolveQueuedEditPayload({
+      edit: {
+        ...edit([]),
+        sentText: "Ultrathink:\nthink",
+        context: { version: 1, records: [], authoredRange: [12, 17] },
+      },
+      draftText: "Ultrathink:\nthink harder",
+      draftContext: undefined,
+      draftAttachments: [],
+      uploaded: [],
+    });
+
+    expect(payload.text).toBe("Ultrathink:\nthink harder");
+    expect(payload.context).toEqual({ version: 1, records: [], authoredRange: [12, 24] });
   });
 });
 
@@ -133,7 +156,11 @@ describe("beginQueuedRunEdit", () => {
       expect(
         restoreAttachmentOnlyBootstrapPrompt(draft.text, original.existingAttachments.length > 0),
       ).toBe(original.originalText);
-      expect(getQueuedRunEdit(threadKey)).toEqual({ ...original, originalText: prefix.trimEnd() });
+      expect(getQueuedRunEdit(threadKey)).toEqual({
+        ...original,
+        originalText: prefix.trimEnd(),
+        sentText: original.originalText,
+      });
       appAtomRegistry.set(runs, [{ id: original.runId, status: "running" }]);
       expect(getQueuedRunEdit(threadKey)).toBeNull();
       expect(appAtomRegistry.get(threadComposerErrorsAtom)[threadKey]?.message).toBeUndefined();

@@ -26,6 +26,7 @@ import {
   isImageReferencesOnly,
   replaceComposerContextReferences,
   sanitizeComposerContextLabel,
+  withAuthoredText,
 } from "@t3tools/shared/composerContextReferences";
 import {
   collectComposerInlineTokens,
@@ -293,8 +294,8 @@ export function serializeComposerMessageForServer(
   composerText: string,
   context: OrchestrationMessageContext | undefined,
 ): { text: string; context?: OrchestrationMessageContext } {
-  const text = isImageReferencesOnly(composerText)
-    ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT
-    : composerText;
-  return { text, ...(context ? { context } : {}) };
+  const imagesOnly = isImageReferencesOnly(composerText);
+  const text = imagesOnly ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT : composerText;
+  const sent = withAuthoredText(context, text, imagesOnly ? "" : composerText);
+  return { text, ...(sent ? { context: sent } : {}) };
 }

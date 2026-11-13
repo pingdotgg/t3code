@@ -11413,6 +11413,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const emitEvent = emit(events, command);
     const editedAttachments =
       command.attachments === undefined ? {} : { attachments: command.attachments };
+    // A caller that changes the text without a context leaves the old authored range measuring
+    // text that is gone, so what the user wrote becomes unrecorded.
+    const { authoredRange: _stale, ...unmarkedContext } = queuedMessage.context ?? {
+      version: 1 as const,
+      records: [],
+    };
+    const editedContext =
+      command.context ??
+      (command.text === queuedMessage.text || queuedMessage.context === undefined
+        ? undefined
+        : unmarkedContext);
     yield* emitEvent({
       type: "message.updated",
       threadId: command.threadId,
@@ -11424,7 +11435,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...queuedMessage,
         text: command.text,
         ...editedAttachments,
-        ...(command.context ? { context: command.context } : {}),
+        ...(editedContext ? { context: editedContext } : {}),
         updatedAt: now,
       }),
     });
@@ -11440,7 +11451,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...queuedTurnItem,
           text: command.text,
           ...editedAttachments,
-          ...(command.context ? { context: command.context } : {}),
+          ...(editedContext ? { context: editedContext } : {}),
           updatedAt: now,
         }),
       });
