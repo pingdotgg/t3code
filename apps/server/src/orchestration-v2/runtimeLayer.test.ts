@@ -353,7 +353,7 @@ const layerTest = Layer.mergeAll(
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(layerCheckpointStoreTest),
   Layer.provide(layerServerConfig),
-  Layer.provide(ServerSettings.layerTest()),
+  Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(layerGitWorkflowTest),
   Layer.provide(layerProjectServiceTest),
@@ -8304,67 +8304,160 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("keeps a buffered provider wake on its own provider behind a queued pick", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make("runtime-layer-buffered-wake-behind-queued-pick");
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make(`${threadId}:create`),
-        threadId,
-        projectId: ProjectId.make(`${threadId}:project`),
-        createdBy: "user",
-        creationSource: "web",
-        title: "Buffered wake behind a pick",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: process.cwd(),
-      });
-      for (const [key, selection] of [
-        ["active", modelSelection],
-        ["picked", { ...modelSelection, instanceId: alternateInstanceId }],
-      ] as const) {
+  it.effect.each(["neither", "owner", "selected"] as const)(
+    "keeps a buffered provider wake on its own provider behind a queued pick, disabled: %s",
+    (disabled) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const threadId = ThreadId.make(
+          `runtime-layer-buffered-wake-behind-queued-pick-${disabled}`,
+        );
+        const projectId = ProjectId.make(`${threadId}:project`);
         yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make(`${threadId}:${key}`),
+          type: "thread.create",
+          commandId: CommandId.make(`${threadId}:create`),
           threadId,
-          messageId: MessageId.make(`${threadId}:${key}`),
-          text: key,
-          attachments: [],
-          modelSelection: selection,
-          dispatchMode: { type: key === "active" ? "start_immediately" : "queue_after_active" },
+          projectId,
           createdBy: "user",
           creationSource: "web",
+          title: "Buffered wake behind a pick",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
         });
-      }
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        commandId: CommandId.make(`${threadId}:wake`),
-        threadId,
-        messageId: MessageId.make(`${threadId}:wake`),
-        text: "Background activity updated",
-        attachments: [],
-        dispatchMode: { type: "queue_after_active" },
-        createdBy: "agent",
-        creationSource: "provider",
-        notification: {
-          source: { kind: "background_task" },
-          outcome: "updated",
-          summary: "Background activity updated",
-        },
-      });
-      const projection = yield* orchestrator.getThreadProjection(threadId);
-      const active = projection.runs.find(
-        (run) => run.userMessageId === MessageId.make(`${threadId}:active`),
-      );
-      const wake = projection.runs.find(
-        (run) => run.userMessageId === MessageId.make(`${threadId}:wake`),
-      );
-      assert.deepEqual(wake?.modelSelection, modelSelection);
-      assert.equal(wake?.providerThreadId, active?.providerThreadId);
-    }),
+        for (const [key, selection] of [
+          ["active", modelSelection],
+          ["picked", { ...modelSelection, instanceId: alternateInstanceId }],
+        ] as const) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${threadId}:${key}`),
+            threadId,
+            messageId: MessageId.make(`${threadId}:${key}`),
+            text: key,
+            attachments: [],
+            modelSelection: selection,
+            dispatchMode: { type: key === "active" ? "start_immediately" : "queue_after_active" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        }
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const source = before.runs.find((run) => run.userMessageId === `${threadId}:active`)!;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        if (disabled !== "neither") {
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}:source-completed`),
+                type: "run.updated",
+                threadId,
+                runId: source.id,
+                occurredAt: now,
+                payload: { ...source, status: "completed", completedAt: now },
+              },
+            ],
+          });
+          yield* orchestrator.resumeQueuedRuns;
+          const switched = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(
+            switched.runs.find((run) => run.userMessageId === `${threadId}:picked`)?.status,
+            "starting",
+          );
+          assert.equal(switched.thread.modelSelection.instanceId, alternateInstanceId);
+        }
+        yield* settings.updateSettings({
+          projectSettingsOverrides: {
+            [projectId]: {
+              providerInstances: {
+                [modelSelection.instanceId]: { enabled: disabled !== "owner" },
+                [alternateInstanceId]: { enabled: disabled !== "selected" },
+              },
+            },
+          },
+        });
+        const dispatched = yield* Effect.exit(
+          threads.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${threadId}:wake`),
+            threadId,
+            messageId: MessageId.make(`${threadId}:wake`),
+            text: "Background activity updated",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "agent",
+            creationSource: "provider",
+            ...(disabled === "neither"
+              ? {}
+              : { continuationProviderThreadId: source.providerThreadId! }),
+            notification: {
+              source: { kind: "background_task" },
+              outcome: "updated",
+              summary: "Background activity updated",
+            },
+          }),
+        );
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        if (disabled === "owner") {
+          assert.equal(dispatched._tag, "Failure");
+          if (dispatched._tag === "Failure") {
+            const reason = dispatched.cause.reasons.find((reason) => reason._tag === "Fail");
+            assert.instanceOf(
+              reason?.error,
+              ThreadManagementService.ThreadManagementProviderInstanceDisabledError,
+            );
+            assert.deepInclude(reason?.error, { projectId, instanceId: modelSelection.instanceId });
+          }
+          assert.equal(projection.runs.length, before.runs.length);
+          return;
+        }
+        assert.equal(dispatched._tag, "Success");
+        const active = projection.runs.find(
+          (run) => run.userMessageId === MessageId.make(`${threadId}:active`),
+        );
+        const wake = projection.runs.find(
+          (run) => run.userMessageId === MessageId.make(`${threadId}:wake`),
+        );
+        assert.deepEqual(wake?.modelSelection, modelSelection);
+        assert.equal(wake?.providerThreadId, active?.providerThreadId);
+        if (disabled === "neither") {
+          assert.deepEqual(projection.thread.modelSelection, modelSelection);
+          return;
+        }
+        assert.deepEqual(projection.thread.modelSelection, {
+          ...modelSelection,
+          instanceId: alternateInstanceId,
+        });
+        const picked = projection.runs.find((run) => run.userMessageId === `${threadId}:picked`)!;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:picked-completed`),
+              type: "run.updated",
+              threadId,
+              runId: picked.id,
+              occurredAt: now,
+              payload: { ...picked, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.resumeQueuedRuns;
+        const resumed = yield* orchestrator.getThreadProjection(threadId);
+        const delivered = resumed.runs.find((run) => run.id === wake?.id)!;
+        assert.equal(delivered.status, "starting");
+        assert.equal(delivered.providerThreadId, source.providerThreadId);
+        assert.equal(
+          resumed.attempts.find((attempt) => attempt.id === delivered.activeAttemptId)
+            ?.providerInstanceId,
+          modelSelection.instanceId,
+        );
+        assert.equal(resumed.thread.modelSelection.instanceId, alternateInstanceId);
+      }),
   );
 
   it.effect.each(["", "pause", "resume", "clear", "edit"])(

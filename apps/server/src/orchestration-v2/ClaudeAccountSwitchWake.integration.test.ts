@@ -165,8 +165,8 @@ const makeAccount = Effect.fn("makeAccount")(function* (input: {
   return { adapter, processes };
 });
 
-it.live.each(["sent after", "queued behind"] as const)(
-  "keeps a Claude session through an empty roster until its wake replies, for a switch %s the turn",
+it.live.each(["sent after", "queued behind", "stopped after direct handoff"] as const)(
+  "preserves Claude background-work ownership for a switch %s",
   (variant) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -200,10 +200,13 @@ it.live.each(["sent after", "queued behind"] as const)(
                 : Effect.succeed(adapter);
             },
             list: () => Effect.succeed(adapters.map((adapter) => adapter.instanceId)),
-            getMetadata: () =>
+            getMetadata: (instanceId) =>
               Effect.succeed({
                 driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-                continuationKey: "claude:shared-native-account-history",
+                continuationKey:
+                  variant === "stopped after direct handoff"
+                    ? `claude:${instanceId}`
+                    : "claude:shared-native-account-history",
                 enabled: true,
                 capabilities: ClaudeProviderCapabilitiesV2,
               }),
@@ -270,9 +273,59 @@ it.live.each(["sent after", "queued behind"] as const)(
           yield* Fiber.join(firstSettling);
           yield* worker.drain();
 
-          // The build still runs, so the switch waits behind the first account's session.
           if (!queued) yield* send(2, secondAccount);
           yield* worker.drain();
+          if (variant === "stopped after direct handoff") {
+            const secondSettling = yield* runStatus("send-2", "waiting");
+            yield* Queue.offer(second.processes[0]!, resultFrame("turn-2", "Handoff complete."));
+            yield* Fiber.join(secondSettling);
+            yield* worker.drain();
+            const beforeStop = yield* orchestrator.getThreadProjection(threadId);
+            const source = beforeStop.providerThreads.find(
+              (thread) => thread.providerInstanceId === firstAccount.instanceId,
+            )!;
+            assert.deepEqual(
+              beforeStop.runs.map((run) => run.status),
+              ["completed", "completed"],
+            );
+            assert.equal(source.pendingBackgroundTasks?.[0]?.taskId, "bash-build");
+            assert.isFalse(
+              beforeStop.turnItems.some(
+                (item) => item.type === "command_execution" && item.status === "running",
+              ),
+              "the background command is reported only by the roster",
+            );
+            assert.deepEqual(closed, []);
+            yield* orchestrator.dispatch({
+              type: "thread.stop",
+              commandId: CommandId.make("stop"),
+              threadId,
+            });
+            yield* worker.drain();
+            const stopped = yield* orchestrator.getThreadProjection(threadId);
+            assert.include(
+              closed,
+              firstAccount.instanceId,
+              "Stop must close the retained source process",
+            );
+            assert.deepEqual(
+              stopped.providerThreads.find((thread) => thread.id === source.id)
+                ?.pendingBackgroundTasks,
+              [],
+            );
+            assert.equal(
+              stopped.thread.activeProviderThreadId,
+              beforeStop.thread.activeProviderThreadId,
+            );
+            assert.deepEqual(stopped.thread.modelSelection, secondAccount);
+            assert.equal(
+              stopped.providerThreads.find(
+                (thread) => thread.id === stopped.thread.activeProviderThreadId,
+              )?.providerInstanceId,
+              secondAccount.instanceId,
+            );
+            return;
+          }
           const waiting = yield* orchestrator.getThreadProjection(threadId);
           assert.deepEqual(
             waiting.runs.map((run) => [run.providerInstanceId, run.status]),

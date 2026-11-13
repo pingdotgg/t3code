@@ -81,6 +81,7 @@ import {
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { modelSwitchSince } from "./modelSwitch.ts";
+import { resolveBufferedProviderContinuation } from "./bufferedProviderContinuation.ts";
 import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
@@ -6753,26 +6754,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
       projection = applyToProjection(projection, event);
     }
-    const continuationProviderThread =
-      command.continuationProviderThreadId === undefined
-        ? undefined
-        : projection.providerThreads.find(
-            (candidate) => candidate.id === command.continuationProviderThreadId,
-          );
-    const continuationSelection =
-      continuationProviderThread === undefined
-        ? undefined
-        : projection.runs.findLast((run) => run.providerThreadId === continuationProviderThread.id)
-            ?.modelSelection;
-    if (
-      command.continuationProviderThreadId !== undefined &&
-      (continuationProviderThread === undefined ||
-        continuationSelection === undefined ||
-        command.createdBy !== "agent" ||
-        command.creationSource !== "provider" ||
-        command.notification === undefined ||
-        command.freshContext === true)
-    ) {
+    const continuation = resolveBufferedProviderContinuation(projection, command);
+    const continuationProviderThread = continuation?.providerThread;
+    if (command.continuationProviderThreadId !== undefined && continuation === undefined) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -6780,7 +6764,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     let modelSelection =
-      continuationSelection ?? command.modelSelection ?? projection.thread.modelSelection;
+      continuation?.modelSelection ?? command.modelSelection ?? projection.thread.modelSelection;
     let dispatchMode = resolveMessageDispatchIntent(
       projection,
       command.dispatchMode,
@@ -12736,7 +12720,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         latestRun: run,
         providerThreads: projection.providerThreads,
         turnItems: projection.turnItems,
-        activeProviderThreadId: projection.thread.activeProviderThreadId,
+        activeProviderThreadId:
+          command.holdQueue === true ? null : projection.thread.activeProviderThreadId,
         runs: projection.runs,
       }).length > 0;
     // A failed start has no provider turn. Background work still belongs
@@ -12838,6 +12823,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const latest = latestTurnByProviderThread.get(turn.providerThreadId);
         if (latest === undefined || runOrdinal > latest.runOrdinal) {
           latestTurnByProviderThread.set(turn.providerThreadId, { turn, runOrdinal });
+        }
+      }
+      for (const owner of command.holdQueue === true ? projection.providerThreads : []) {
+        if (owner.id === providerThread.id || (owner.pendingBackgroundTasks?.length ?? 0) === 0) {
+          continue;
+        }
+        const turn = projection.providerTurns.findLast(
+          (candidate) => candidate.providerThreadId === owner.id,
+        );
+        if (turn === undefined) continue;
+        const runOrdinal = owner.lastRunOrdinal ?? -1;
+        const latest = latestTurnByProviderThread.get(owner.id);
+        if (latest === undefined || runOrdinal > latest.runOrdinal) {
+          latestTurnByProviderThread.set(owner.id, { turn, runOrdinal });
         }
       }
       for (const { turn } of latestTurnByProviderThread.values()) {
@@ -13345,7 +13344,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         latestRun,
         providerThreads: projection.providerThreads,
         turnItems: projection.turnItems,
-        activeProviderThreadId: projection.thread.activeProviderThreadId,
         runs: projection.runs,
       }).length > 0
         ? latestRun
