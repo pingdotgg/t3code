@@ -60,20 +60,97 @@ function makeModelRuntime(
 
 describe("Antigravity release gates", () => {
   it.each([
-    { version: "1.4.1", filter: false, native: false, ownName: false, advertisedAppend: false },
-    { version: "1.4.2", filter: true, native: false, ownName: false, advertisedAppend: false },
-    { version: "1.4.4", filter: true, native: false, ownName: false, advertisedAppend: false },
-    { version: "1.4.5", filter: true, native: true, ownName: false, advertisedAppend: false },
-    { version: "1.4.6", filter: false, native: false, ownName: false, advertisedAppend: false },
-    { version: "1.5.0", filter: false, native: false, ownName: false, advertisedAppend: false },
-    { version: "1.5.1", filter: false, native: false, ownName: true, advertisedAppend: false },
-    { version: "1.5.7", filter: false, native: false, ownName: true, advertisedAppend: true },
-    { version: "1.3.0", filter: false, native: false, ownName: false, advertisedAppend: false },
-    { version: undefined, filter: false, native: false, ownName: false, advertisedAppend: false },
-    { version: "unknown", filter: false, native: false, ownName: false, advertisedAppend: false },
+    {
+      version: "1.4.1",
+      filter: false,
+      helperFilter: false,
+      native: false,
+      ownName: false,
+      advertisedAppend: false,
+    },
+    {
+      version: "1.4.2",
+      filter: true,
+      helperFilter: true,
+      native: false,
+      ownName: false,
+      advertisedAppend: false,
+    },
+    {
+      version: "1.4.4",
+      filter: true,
+      helperFilter: true,
+      native: false,
+      ownName: false,
+      advertisedAppend: false,
+    },
+    {
+      version: "1.4.5",
+      filter: true,
+      helperFilter: true,
+      native: true,
+      ownName: false,
+      advertisedAppend: false,
+    },
+    {
+      version: "1.4.6",
+      filter: false,
+      helperFilter: true,
+      native: false,
+      ownName: false,
+      advertisedAppend: false,
+    },
+    {
+      version: "1.5.0",
+      filter: false,
+      helperFilter: true,
+      native: false,
+      ownName: false,
+      advertisedAppend: false,
+    },
+    {
+      version: "1.5.1",
+      filter: false,
+      helperFilter: true,
+      native: false,
+      ownName: true,
+      advertisedAppend: false,
+    },
+    {
+      version: "1.5.7",
+      filter: false,
+      helperFilter: true,
+      native: false,
+      ownName: true,
+      advertisedAppend: true,
+    },
+    {
+      version: "1.3.0",
+      filter: false,
+      helperFilter: false,
+      native: false,
+      ownName: false,
+      advertisedAppend: false,
+    },
+    {
+      version: undefined,
+      filter: false,
+      helperFilter: false,
+      native: false,
+      ownName: false,
+      advertisedAppend: false,
+    },
+    {
+      version: "unknown",
+      filter: false,
+      helperFilter: false,
+      native: false,
+      ownName: false,
+      advertisedAppend: false,
+    },
   ])(
-    "$version: workflow filter $filter, qualified reads $native, advertised system append $advertisedAppend, own client name $ownName",
-    ({ version, filter, native, ownName, advertisedAppend }) => {
+    "$version: workflow filter $filter (helpers $helperFilter), qualified reads $native, advertised system append $advertisedAppend, own client name $ownName",
+    ({ version, filter, helperFilter, native, ownName, advertisedAppend }) => {
       const initialize = {
         protocolVersion: 1,
         ...(advertisedAppend
@@ -81,9 +158,12 @@ describe("Antigravity release gates", () => {
           : {}),
         ...(version === undefined ? {} : { agentInfo: { name: "antigravity-acp", version } }),
       };
-      // Helpers send no append, so only the workflow filter can apply.
       expect(antigravitySessionMeta(initialize)).toEqual(
         filter ? { antigravity: { disabledTools: ["run_workflow"] } } : undefined,
+      );
+      // Helpers send no append, so only the workflow filter can apply.
+      expect(antigravitySessionMeta(initialize, undefined, true)).toEqual(
+        helperFilter ? { antigravity: { disabledTools: ["run_workflow"] } } : undefined,
       );
       const antigravity = {
         ...(filter ? { disabledTools: ["run_workflow"] } : {}),

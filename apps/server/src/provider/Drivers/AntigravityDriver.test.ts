@@ -82,16 +82,10 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       /** `data` of the agent's "Internal error" response to `session/new`. */
       readonly newSessionErrorData?: unknown;
       readonly initialMode?: string;
-      readonly agentVersion?: string;
-      readonly workflowSkill?: boolean;
-      readonly nativeCli?: boolean;
     } = {},
   ) {
     const directory = path.join(root, name);
-    const executablePath = path.join(
-      directory,
-      options.nativeCli ? "antigravity" : "agy_acp_server.par",
-    );
+    const executablePath = path.join(directory, "agy_acp_server.par");
     const harnessPath = path.join(directory, "localharness_external");
     yield* fs.makeDirectory(directory, { recursive: true });
     const authorizationUrl =
@@ -100,14 +94,6 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       executablePath,
       [
         "#!/bin/sh",
-        ...(options.agentVersion === undefined
-          ? []
-          : [
-              `export T3_ACP_AGENT_VERSION=${shellQuote(options.agentVersion)}`,
-              "export T3_ACP_SESSION_ID=00000000-0000-4000-8000-000000000169",
-              `export T3_ACP_PROMPT_RESPONSE_TEXT=${shellQuote('{"title":"Fixture title"}')}`,
-            ]),
-        ...(options.workflowSkill ? ["export T3_ACP_ANTIGRAVITY_WORKFLOW_SKILL=1"] : []),
         ...(options.loginRequired
           ? [`printf '%s\\n' ${shellQuote(ANTIGRAVITY_AUTH_STDOUT_PREFIX + authorizationUrl)}`]
           : []),
@@ -128,9 +114,9 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     yield* fs.chmod(harnessPath, 0o755);
     return {
       executablePath,
-      harnessPath: options.nativeCli ? null : harnessPath,
+      harnessPath,
       source: "managed",
-      version: options.agentVersion ?? name,
+      version: name,
       managedVersionDirectory: directory,
     } satisfies AntigravityInstallation.AntigravityExecutable;
   });
@@ -307,83 +293,6 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
 const layerTest = ProviderHostLive.layer.pipe(
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(layerDeps),
-);
-
-// quarantine: #36169 the executable fixture uses a POSIX shell script.
-it.live.skipIf(windowsHost)(
-  "text helpers suppress workflow startup writes without changing chat",
-  () =>
-    Effect.forEach(
-      [
-        { version: "1.4.1", workflowSkill: false, helperFilter: false, chatFilter: false },
-        { version: "1.4.5", workflowSkill: true, helperFilter: true, chatFilter: true },
-        { version: "1.5.8", workflowSkill: true, helperFilter: true, chatFilter: false },
-        { version: "unknown", workflowSkill: false, helperFilter: false, chatFilter: false },
-      ],
-      (testCase) =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const h = yield* makeHarness();
-            h.controls.selected = yield* h.makeExecutable(`workflow-${testCase.version}`, {
-              agentVersion: testCase.version,
-              workflowSkill: testCase.workflowSkill,
-              nativeCli: testCase.version.startsWith("1.5."),
-            });
-            yield* h.refresh();
-            const modelSelection = {
-              instanceId: h.instance.instanceId,
-              model: "gemini-test-low",
-            };
-            expect(
-              yield* h.instance.textGeneration.generateThreadTitle({
-                cwd: h.profileDirectory,
-                message: "Name this thread",
-                modelSelection,
-              }),
-            ).toEqual({ title: "Fixture title" });
-            yield* h.assertClosed;
-            const workspace = yield* h.fs.makeTempDirectoryScoped({
-              prefix: "t3-ag-workflow-chat-",
-            });
-            const threadId = ThreadId.make(`workflow-${testCase.version}`);
-            const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-              runtimeMode: "approval-required",
-              interactionMode: "default",
-              cwd: workspace,
-            });
-            const session = yield* h.instance.orchestrationAdapter.openSession({
-              threadId,
-              providerSessionId: ProviderSessionId.make(`workflow-${testCase.version}`),
-              modelSelection,
-              runtimePolicy,
-            });
-            yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
-            const requests = (yield* h.readRequests).filter(
-              (request) => request.method === "session/new",
-            );
-            expect(requests).toHaveLength(3);
-            const filters = requests.map((request) => {
-              const meta = request.params?._meta;
-              if (typeof meta !== "object" || meta === null) return undefined;
-              const antigravity = Reflect.get(meta, "antigravity");
-              return typeof antigravity === "object" && antigravity !== null
-                ? Reflect.get(antigravity, "disabledTools")
-                : undefined;
-            });
-            expect(filters).toEqual([
-              testCase.chatFilter ? ["run_workflow"] : undefined,
-              testCase.helperFilter ? ["run_workflow"] : undefined,
-              testCase.chatFilter ? ["run_workflow"] : undefined,
-            ]);
-            expect(
-              yield* h.fs.exists(
-                h.path.join(workspace, "skills", "system", "run-workflow", "SKILL.md"),
-              ),
-            ).toBe(testCase.workflowSkill && !testCase.chatFilter);
-          }),
-        ),
-      { discard: true },
-    ).pipe(Effect.provide(layerTest)),
 );
 
 it.layer(layerTest)("AntigravityDriver", (it) => {

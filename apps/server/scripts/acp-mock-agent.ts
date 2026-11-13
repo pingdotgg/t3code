@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
-import * as NodePath from "node:path";
 
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -19,7 +18,6 @@ import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
-const antigravityWorkflowSkill = process.env.T3_ACP_ANTIGRAVITY_WORKFLOW_SKILL === "1";
 // GitHub Copilot CLI advertises URL-shaped session mode ids.
 const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
@@ -108,7 +106,7 @@ const permissionOptionIds = {
   allowAlways: "allow-always",
   rejectOnce: "reject-once",
 };
-const sessionId = process.env.T3_ACP_SESSION_ID ?? "mock-session-1";
+const sessionId = "mock-session-1";
 
 let currentModeId = antigravityProfile
   ? (process.env.T3_ACP_INITIAL_MODE ?? "default")
@@ -613,24 +611,9 @@ const program = Effect.gen(function* () {
     }
   });
 
-  yield* agent.handleCreateSession((request) =>
+  yield* agent.handleCreateSession(() =>
     Effect.gen(function* () {
       yield* requireAuthentication();
-      if (antigravityProfile && antigravityWorkflowSkill) {
-        const meta = request._meta?.antigravity;
-        const disabled =
-          typeof meta === "object" && meta !== null
-            ? Reflect.get(meta, "disabledTools")
-            : undefined;
-        if (!Array.isArray(disabled) || !disabled.includes("run_workflow")) {
-          const directory = NodePath.join(request.cwd, "skills", "system", "run-workflow");
-          NodeFS.mkdirSync(directory, { recursive: true });
-          NodeFS.writeFileSync(
-            NodePath.join(directory, "SKILL.md"),
-            "Fixture runtime workflow skill",
-          );
-        }
-      }
       if (newSessionErrorData !== undefined) {
         return yield* AcpError.AcpRequestError.internalError("Internal error", newSessionErrorData);
       }
