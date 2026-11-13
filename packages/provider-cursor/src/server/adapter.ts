@@ -34,6 +34,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -966,6 +967,7 @@ interface ActiveCursorTurn {
   /** Bumps when new work starts so a pending idle finalize is ignored. */
   idleFinalizeGeneration: number;
   idleCancelResult: Deferred.Deferred<boolean> | null;
+  steersInFlight: number;
 }
 
 interface CursorLiveAgent {
@@ -2234,6 +2236,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         });
 
         const cursorTurnHasActiveWork = (context: ActiveCursorTurn) =>
+          context.steersInFlight > 0 ||
           context.tools.size > 0 ||
           Array.from(context.subagents.values()).some((subagent) =>
             isOrchestrationV2WorkActive(subagent.task.status),
@@ -2620,6 +2623,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               turnEnded: false,
               idleFinalizeGeneration: 0,
               idleCancelResult: null,
+              steersInFlight: 0,
             };
             yield* Ref.set(activeTurn, context);
             yield* emitProviderEvent({
@@ -2881,30 +2885,44 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   detail: `Cursor provider turn ${turnInput.providerTurnId} is not active.`,
                 });
               }
-              // The live run already has the runtime instructions from startTurn.
-              const text = yield* providerMessageTextWithAttachmentPaths({
-                text: yield* resolveCursorSkillText(
-                  turnInput.message.text,
-                  context.input.runtimePolicy.cwd ?? undefined,
-                ),
-                attachments: turnInput.message.attachments,
-                resolveAttachmentPath: host.resolveAttachmentPath,
-                resolveExtractedTextPath: host.resolveExtractedTextPath,
-              });
-              if (text.trim().length === 0) {
-                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                  driver: CursorAgentSdk.CURSOR_PROVIDER,
-                  detail: "Cursor steer requires non-empty text.",
+              // Hold idle finalize from the moment a steer arrives until the run acknowledges it.
+              context.steersInFlight += 1;
+              context.idleFinalizeGeneration += 1;
+              const outcome = yield* Effect.gen(function* () {
+                // The live run already has the runtime instructions from startTurn.
+                const text = yield* providerMessageTextWithAttachmentPaths({
+                  text: yield* resolveCursorSkillText(
+                    turnInput.message.text,
+                    context.input.runtimePolicy.cwd ?? undefined,
+                  ),
+                  attachments: turnInput.message.attachments,
+                  resolveAttachmentPath: host.resolveAttachmentPath,
+                  resolveExtractedTextPath: host.resolveExtractedTextPath,
                 });
-              }
-              // A run being cancelled for idleness cannot take more input.
-              const outcome =
-                context.run.steer === undefined || context.idleCancelResult !== null
+                if (text.trim().length === 0) {
+                  return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CursorAgentSdk.CURSOR_PROVIDER,
+                    detail: "Cursor steer requires non-empty text.",
+                  });
+                }
+                // A run being cancelled for idleness cannot take more input.
+                return context.run.steer === undefined || context.idleCancelResult !== null
                   ? "revert_to_followup"
                   : yield* context.run.steer(text);
+              }).pipe(
+                Effect.onExit((exit) =>
+                  Effect.suspend(() => {
+                    context.steersInFlight -= 1;
+                    if (Exit.isSuccess(exit) && exit.value === "complete_delivered") {
+                      context.turnEnded = false;
+                      context.idleFinalizeGeneration += 1;
+                      return Effect.void;
+                    }
+                    return scheduleIdleTurnFinalize(context);
+                  }),
+                ),
+              );
               if (outcome === "complete_delivered") {
-                context.turnEnded = false;
-                context.idleFinalizeGeneration += 1;
                 return;
               }
               if (context.interrupted) {

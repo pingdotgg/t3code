@@ -2479,6 +2479,7 @@ describe("CursorAdapterV2", () => {
         const steered: string[] = [];
         let cancelled = 0;
         let outcome: "complete_delivered" | "revert_to_followup" = "complete_delivered";
+        const acknowledged = yield* Deferred.make<void>();
         const finished = yield* Deferred.make<{
           readonly id: string;
           readonly requestId: string;
@@ -2529,10 +2530,10 @@ describe("CursorAdapterV2", () => {
                         ),
                       ),
                       steer: (text) =>
-                        Effect.sync(() => {
-                          steered.push(text);
-                          return outcome;
-                        }),
+                        Effect.sync(() => steered.push(text)).pipe(
+                          Effect.andThen(Deferred.await(acknowledged)),
+                          Effect.as(outcome),
+                        ),
                     }),
                   ),
               }),
@@ -2601,19 +2602,26 @@ describe("CursorAdapterV2", () => {
           nativeTurnId: "native-cursor-steer-run",
         });
         yield* runtime.startTurn(turn);
-        yield* runtime.steerTurn({
-          threadId,
-          runId: turn.runId,
-          providerThread,
-          providerTurnId,
-          message: {
-            messageId: MessageId.make("cursor-steer-follow-up"),
-            createdBy: "user",
-            creationSource: "web",
-            text: "$review Look at the tests instead.",
-            attachments: [],
-          },
-        });
+        const steering = yield* runtime
+          .steerTurn({
+            threadId,
+            runId: turn.runId,
+            providerThread,
+            providerTurnId,
+            message: {
+              messageId: MessageId.make("cursor-steer-follow-up"),
+              createdBy: "user",
+              creationSource: "web",
+              text: "$review Look at the tests instead.",
+              attachments: [],
+            },
+          })
+          .pipe(Effect.forkScoped);
+        // An acknowledgment that outlasts the idle window must not lose the run to idle cancel.
+        yield* TestClock.adjust("1 second");
+        assert.equal(cancelled, 0);
+        yield* Deferred.succeed(acknowledged, undefined);
+        yield* Fiber.join(steering);
         assert.deepEqual(steered, ["/review Look at the tests instead."]);
         // The delivered steer is new work, so the ended turn is not cancelled as idle.
         yield* TestClock.adjust("1 second");
