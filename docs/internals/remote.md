@@ -38,8 +38,10 @@ when every route stays silent, each is still tried. A route that fails to
 connect, including a blocked one such as a signed-out T3 Connect, moves on to
 the next; only an incompatible server stops the walk, because it is the same
 server on every route. A direct route that answered the check but is still
-connecting when the check's head start ends races T3 Connect instead of holding
-it back, and the first to connect wins; the other closes. While connected over a later route the
+connecting when the check's head start ends starts T3 Connect instead of holding
+it back. T3 Connect then races that route and every direct route after it, so a
+failed direct route still moves on to the next one. The first to connect wins and
+the others close. While connected over a later route the
 [supervisor](../../packages/client-runtime/src/connection/supervisor.ts)
 preflights the earlier ones and replaces the session when one would connect.
 Preflight includes authorization so a route that answers but rejects this

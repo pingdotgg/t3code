@@ -102,39 +102,61 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     return result;
   });
   const relayIndex = routes.findIndex((route) => route.target._tag === "RelayConnectionTarget");
-  let relayTried = false;
-  // A direct route still connecting when the head start ends races relay. The
-  // first to connect wins; closing the other scope also ends a late session.
-  const attemptWithRelay = Effect.fnUntraced(function* (
-    route: ConnectionRoute,
-    relay: ConnectionRoute,
-  ) {
+  const relayRoute = routes[relayIndex];
+  type Settled = {
+    readonly result: Result.Result<EnvironmentConnectionLease, ConnectionAttemptError>;
+    readonly scope: Scope.Closeable;
+  };
+  let relay:
+    | {
+        readonly fiber: Fiber.Fiber<
+          Settled,
+          Result.Result<EnvironmentConnectionLease, ConnectionAttemptError>
+        >;
+        readonly scope: Scope.Closeable;
+      }
+    | undefined;
+  // A direct route still connecting when the head start ends starts relay, which
+  // then races every direct attempt after it. The first to connect wins. A failed
+  // direct route moves on to the next one while relay keeps connecting.
+  const attemptRacingRelay = Effect.fnUntraced(function* (route: ConnectionRoute) {
     const directScope = yield* Scope.fork(attemptScope);
     const direct = yield* Effect.forkChild(attempt(route, directScope));
-    const early = yield* Fiber.join(direct).pipe(Effect.timeoutOption(ROUTE_CHECK_HEAD_START_MS));
-    if (Option.isSome(early)) return early.value;
-    relayTried = true;
-    const relayScope = yield* Scope.fork(attemptScope);
-    const settle =
-      (scope: Scope.Closeable) =>
-      (result: Result.Result<EnvironmentConnectionLease, ConnectionAttemptError>) =>
-        result._tag === "Success" || result.failure.reason === "unsupported"
-          ? Effect.succeed({ result, scope })
-          : Effect.fail(result);
-    const raced = yield* Effect.race(
-      Fiber.join(direct).pipe(Effect.flatMap(settle(directScope))),
-      attempt(relay, relayScope).pipe(Effect.flatMap(settle(relayScope))),
-    ).pipe(Effect.result);
-    yield* Fiber.interrupt(direct);
-    const winner = raced._tag === "Success" ? raced.success.scope : undefined;
-    for (const scope of [directScope, relayScope]) {
-      if (scope !== winner) yield* Scope.close(scope, Exit.void);
+    if (relay === undefined) {
+      const early = yield* Fiber.join(direct).pipe(Effect.timeoutOption(ROUTE_CHECK_HEAD_START_MS));
+      if (Option.isSome(early)) return early.value;
+      const relayScope = yield* Scope.fork(attemptScope);
+      const fiber = yield* Effect.forkChild(
+        attempt(relayRoute!, relayScope).pipe(
+          Effect.flatMap((result) =>
+            result._tag === "Success" || result.failure.reason === "unsupported"
+              ? Effect.succeed<Settled>({ result, scope: relayScope })
+              : Effect.fail(result),
+          ),
+        ),
+      );
+      relay = { fiber, scope: relayScope };
     }
-    return raced._tag === "Success" ? raced.success.result : raced.failure;
+    const racing = relay;
+    const raced = yield* Effect.race(
+      Fiber.join(direct).pipe(Effect.map((result): Settled => ({ result, scope: directScope }))),
+      // A failed relay leaves the direct attempt to finish on its own.
+      Fiber.join(racing.fiber).pipe(Effect.catch(() => Effect.never)),
+    );
+    if (raced.scope === directScope) {
+      if (raced.result._tag === "Success" || raced.result.failure.reason === "unsupported") {
+        yield* Fiber.interrupt(racing.fiber);
+        yield* Scope.close(racing.scope, Exit.void);
+      }
+    } else {
+      yield* Fiber.interrupt(direct);
+      yield* Scope.close(directScope, Exit.void);
+    }
+    return raced.result;
   });
   const silent: Array<{ readonly route: ConnectionRoute; readonly index: number }> = [];
   for (const [index, route] of routes.entries()) {
-    if (index === relayIndex && relayTried) continue;
+    if (index === relayIndex && relay !== undefined) continue;
     const check =
       checks.length === 0
         ? "unchecked"
@@ -146,14 +168,22 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
       silent.push({ route, index });
       continue;
     }
-    const relay = routes[relayIndex];
     const result =
-      check === "answered" && relay !== undefined && index < relayIndex && !relayTried
-        ? yield* attemptWithRelay(route, relay)
+      relay !== undefined ||
+      (check === "answered" && relayRoute !== undefined && index < relayIndex)
+        ? yield* attemptRacingRelay(route)
         : yield* attempt(route, yield* Scope.fork(attemptScope));
     if (result._tag === "Success") return result.success;
     // An incompatible server is the same server on every route.
     if (result.failure.reason === "unsupported") return yield* result.failure;
+  }
+  if (relay !== undefined) {
+    const settled = yield* Fiber.join(relay.fiber).pipe(Effect.option);
+    if (Option.isSome(settled)) {
+      const { result } = settled.value;
+      if (result._tag === "Success") return result.success;
+      return yield* result.failure;
+    }
   }
   const late = yield* Effect.forEach(silent, ({ index }) => Fiber.join(checks[index]!), {
     concurrency: "unbounded",
