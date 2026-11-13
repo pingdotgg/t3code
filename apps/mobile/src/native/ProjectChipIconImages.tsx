@@ -2,11 +2,12 @@ import type { ProjectIconColor } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
-import { useRef, useSyncExternalStore } from "react";
+import { Suspense, useRef, useSyncExternalStore } from "react";
 import { Platform, View } from "react-native";
 import Svg, { Rect, Text } from "react-native-svg";
 import { useResolveClassNames } from "uniwind";
 
+import { LucideProjectIcon } from "../components/LucideProjectIcon";
 import { countGlyphs, projectIconColorClassNames, type ProjectIconGlyph } from "../lib/projectIcon";
 
 const TILE_SIZE = 48;
@@ -24,14 +25,30 @@ let pendingTiles: ReadonlyArray<PendingTile> = [];
 const listeners = new Set<() => void>();
 
 export function projectGlyphKey(glyph: ProjectIconGlyph): string {
-  return JSON.stringify(
-    glyph.kind === "emoji" ? ["emoji", glyph.emoji] : ["monogram", glyph.text, glyph.color],
-  );
+  switch (glyph.kind) {
+    case "emoji":
+      return JSON.stringify(["emoji", glyph.emoji]);
+    case "monogram":
+      return JSON.stringify(["monogram", glyph.text, glyph.color]);
+    case "lucide":
+      return JSON.stringify(["lucide", glyph.name, glyph.color]);
+  }
 }
 
 function decodeGlyphKey(key: string): ProjectIconGlyph {
-  const [kind, text, color] = JSON.parse(key) as [string, string, ProjectIconColor];
-  return kind === "emoji" ? { kind: "emoji", emoji: text } : { kind: "monogram", text, color };
+  const [kind, text, color] = JSON.parse(key) as [
+    ProjectIconGlyph["kind"],
+    string,
+    ProjectIconColor,
+  ];
+  switch (kind) {
+    case "emoji":
+      return { kind, emoji: text };
+    case "monogram":
+      return { kind, text, color };
+    case "lucide":
+      return { kind, name: text, color };
+  }
 }
 
 function rasterize(key: string): Promise<string> {
@@ -110,25 +127,37 @@ function GlyphCapture(props: { readonly tile: PendingTile }) {
     started.current = true;
     requestAnimationFrame(() => captureTile(svg, props.tile));
   };
+  const { glyph } = props.tile;
   return (
     <View
       pointerEvents="none"
       style={{ position: "absolute", left: -TILE_SIZE * 4, top: 0, opacity: 0 }}
     >
-      <Svg ref={capture} width={TILE_SIZE} height={TILE_SIZE}>
-        {props.tile.glyph.kind === "emoji" ? (
-          <Text
-            x={TILE_SIZE / 2}
-            y={TILE_SIZE * 0.8}
-            textAnchor="middle"
-            fontSize={TILE_SIZE * 0.8}
-          >
-            {props.tile.glyph.emoji}
-          </Text>
-        ) : (
-          <MonogramTile text={props.tile.glyph.text} color={props.tile.glyph.color} />
-        )}
-      </Svg>
+      {glyph.kind === "lucide" ? (
+        <Suspense fallback={null}>
+          <LucideProjectIcon
+            onSvg={capture}
+            name={glyph.name}
+            color={glyph.color}
+            size={TILE_SIZE}
+          />
+        </Suspense>
+      ) : (
+        <Svg ref={capture} width={TILE_SIZE} height={TILE_SIZE}>
+          {glyph.kind === "emoji" ? (
+            <Text
+              x={TILE_SIZE / 2}
+              y={TILE_SIZE * 0.8}
+              textAnchor="middle"
+              fontSize={TILE_SIZE * 0.8}
+            >
+              {glyph.emoji}
+            </Text>
+          ) : (
+            <MonogramTile text={glyph.text} color={glyph.color} />
+          )}
+        </Svg>
+      )}
     </View>
   );
 }
