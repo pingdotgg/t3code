@@ -8,12 +8,9 @@ export const ptBR: Messages = {
       "T3 Code: o painel de controle open source para agentes de programação, com Claude Code, Codex, Cursor, OpenCode, Grok e Antigravity.",
     homeLabel: "Página inicial do T3 Code",
     download: "Baixar",
+    features: "Recursos",
     starsLabel: "Dê uma estrela ao T3 Code no GitHub, {stars} estrelas",
-    githubStars: "{stars} estrelas no GitHub",
     language: "Idioma",
-    mitLicensed: "Licença MIT",
-    iosApp: "App para iOS",
-    androidApp: "App para Android",
     terms: "Termos",
     privacy: "Privacidade",
     security: "Segurança",
@@ -21,61 +18,89 @@ export const ptBR: Messages = {
   home: {
     title: "T3 Code | O painel de controle open source para agentes de programação",
     description: "T3 Code. O painel de controle open source para agentes de programação.",
-    heroTitle: ["O painel de controle", "open source para", "agentes de código."],
-    heroSub:
-      "Orquestre Claude Code, Codex, Antigravity, OpenCode, Cursor e Grok em um só lugar. Use a sua própria assinatura. Faça um fork do projeto inteiro.",
+    headline: "O melhor app de agentes de todos os tempos.",
+    subline:
+      "Todos os agentes de programação em um app tranquilo, com as assinaturas que você já paga.",
+    installLabel: "Instalar",
+    channelLabel: "Canal de versões",
+    stable: "estável",
+    nightly: "nightly",
+    terminal: "Terminal",
     downloadForMac: "Baixar para macOS",
     downloadForWindows: "Baixar para Windows",
     downloadForLinux: "Baixar para Linux",
-    sourceLink: "Roube nosso código (legalmente)",
-    alsoOnPhone: "Também no seu celular:",
-    screenshotAlt:
-      "T3 Code executando subagentes do Claude, Codex, Muse e Gemini em uma mesma thread",
+    downloadAction: "baixar",
+    copyAction: "copiar",
+    copied: "copiado",
+    alsoOn: "Também no",
+    voicesLabel: "O que estão dizendo",
     endorsementsTitle: "Tolerado por mais de {users} devs",
-    endorsementsSub: "Alguns até tuitaram sobre isso.",
-    endorsementsLabel: "Depoimentos de desenvolvedores",
     readPost: "Ler o post de {handle} no X",
-    harnessTitle: "Traga sua própria assinatura",
-    harnessBody:
-      "O T3 Code não revende tokens. Conecte Claude Code, Codex, Antigravity, OpenCode, Cursor ou Grok com as credenciais que você já tem. Nós orquestramos, você mantém seu plano.",
-    googleSignIn: "Login com Google",
-    harnessPoints: [
-      "Sem revenda de chaves. Sem limite de cota.",
-      "Troque de modelo no meio da thread.",
-      "Novos agentes toda semana.",
-    ],
-    gitVisualLabel:
-      "Ilustração do fluxo de Git no T3 Code: revisar um diff, fazer commit e push das alterações e abrir um pull request.",
-    prReady: "Pronto",
-    prCommits: "3 commits",
-    viewDiff: "Ver diff",
-    openPullRequest: "Abrir pull request",
-    commitPush: "Commit e push",
-    gitTitle: "Um botão para fazer commit, push e abrir um PR.",
-    gitBody:
-      "Cada thread de agente escreve no seu próprio branch. Quando estiver bom, um botão abre o PR no GitHub com título, descrição e changelog gerados. Sem malabarismo no terminal.",
-    gitPoints: [
-      "Títulos e descrições de PR gerados automaticamente",
-      "Revisão do diff inline antes do push",
-      "PRs em rascunho, stacks de PRs e amend",
-      "Funciona com a sua autenticação atual do GitHub",
-    ],
-    openTitle: "Se não gostar de algo, faça um fork.",
-    openPoints: [
-      { lead: "Mude a interface.", rest: "Redesenhe cada tela do seu jeito." },
-      { lead: "Adicione um agente.", rest: "Integre suas próprias ferramentas, modelos e fluxos." },
+    showMore: "Mostrar mais",
+    faqLabel: "Perguntas frequentes",
+    faqs: [
       {
-        lead: "Lance sua própria versão.",
-        rest: "Hospede por conta própria ou distribua como sua.",
+        question: "Quanto custa o T3 Code?",
+        answer:
+          "Nada. O T3 Code é gratuito e open source sob a licença MIT. Você continua pagando seu provedor como já faz, e o T3 Connect é gratuito para até 3 máquinas.",
+      },
+      {
+        question: "Posso usar minha assinatura do Claude Code ou do ChatGPT?",
+        answer:
+          "Sim. O T3 Code roda Claude Code, Codex, Cursor, Grok Build, OpenCode, Antigravity, Pi e Muse Code nos planos que você já paga.",
+      },
+      {
+        question: "Vou ser banido por usar minha assinatura?",
+        answer:
+          "Não. O T3 Code segue os termos do Claude Code, do Codex e do Google Antigravity, e as integrações com Grok Build e Cursor foram feitas junto com as equipes deles.",
+      },
+      {
+        question: "O T3 Code é um harness?",
+        answer:
+          "Não. Harnesses como Claude Code e Codex transformam um modelo em um agente. O T3 Code é o app onde você roda esses harnesses, então dá para trocar entre eles sem mudar seu jeito de trabalhar.",
+      },
+      {
+        question: "Meu código passa pelos servidores da T3?",
+        answer:
+          "Não. Seu código e seus prompts vão da sua máquina direto para o seu provedor. O T3 Code envia eventos básicos de uso, nunca prompts nem conteúdo de arquivos, e você pode desativar isso.",
+      },
+      {
+        question: "Posso usar pelo celular ou por outro computador?",
+        answer:
+          "Sim. Seus agentes rodam na máquina que tem o T3 Code. Conecte-se pelo app de iOS ou Android ou por app.t3.codes, via T3 Connect, Tailscale ou sua rede local.",
+      },
+      {
+        question: "Funciona no Windows, Mac e Linux?",
+        answer: "Sim, nos três, como app de desktop ou pelo comando t3.",
       },
     ],
-    stars: "{stars} estrelas",
-    forkOnGithub: "Fazer fork no GitHub",
-    browseSource: "Ver o código",
-    ctaTitle: "Seus agentes merecem mais do que um terminal.",
-    ctaSub:
-      "O T3 Code é gratuito, open source e rápido. Instale, conecte a assinatura que você já tem e deixe seus agentes trabalharem.",
-    otherPlatforms: "Outras plataformas",
+  },
+  features: {
+    title: "Recursos | T3 Code",
+    description:
+      "Tudo o que o T3 Code faz: controle remoto, todos os agentes em uma thread, suas próprias assinaturas e um código com licença MIT.",
+    items: {
+      anywhere: {
+        title: "Controle sua máquina de qualquer lugar",
+        body: "Seus agentes continuam rodando em casa. Comande tudo pelo navegador ou pelo celular.",
+      },
+      machines: {
+        title: "Controle suas outras máquinas",
+        body: "Vincule um Mac mini, uma máquina Linux ou um VPS e rode agentes em todos a partir de um só app.",
+      },
+      agents: {
+        title: "Todos os agentes, uma thread",
+        body: "Troque de agente quando quiser.",
+      },
+      subscriptions: {
+        title: "Traga sua própria assinatura",
+        body: "Entre com os planos que você já paga.",
+      },
+      open: {
+        title: "Aberto até o núcleo",
+        body: "Cada linha está no GitHub. Faça um fork.",
+      },
+    },
   },
   download: {
     title: "Baixe o T3 Code para macOS, Windows e Linux | T3 Code",
@@ -91,8 +116,6 @@ export const ptBR: Messages = {
     armNote: "Usa ARM? Baixe o {deb} ou o {appimage} para arm64.",
     mobile: "Mobile",
     iphoneIpad: "iPhone e iPad",
-    terminal: "Terminal",
-    tryOnce: "Ou experimente uma vez sem instalar:",
     allBuilds: "Todas as versões estão na {link}",
     releasesPage: "página de releases do GitHub",
     builtAgo: "Compilado {age}",

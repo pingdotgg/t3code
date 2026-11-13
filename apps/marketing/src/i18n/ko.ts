@@ -8,12 +8,9 @@ export const ko: Messages = {
       "T3 Code: 코딩 에이전트를 위한 오픈 소스 컨트롤 플레인. Claude Code, Codex, Cursor, OpenCode, Grok, Antigravity 지원.",
     homeLabel: "T3 Code 홈",
     download: "다운로드",
+    features: "기능",
     starsLabel: "GitHub에서 T3 Code에 스타 주기, 현재 스타 {stars}",
-    githubStars: "GitHub 스타 {stars}",
     language: "언어",
-    mitLicensed: "MIT 라이선스",
-    iosApp: "iOS 앱",
-    androidApp: "Android 앱",
     terms: "이용약관",
     privacy: "개인정보처리방침",
     security: "보안",
@@ -21,57 +18,88 @@ export const ko: Messages = {
   home: {
     title: "T3 Code | 코딩 에이전트를 위한 오픈 소스 컨트롤 플레인",
     description: "T3 Code. 코딩 에이전트를 위한 오픈 소스 컨트롤 플레인.",
-    heroTitle: ["코딩 에이전트용", "오픈 소스", "컨트롤 플레인."],
-    heroSub:
-      "Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok을 한 화면에서 오케스트레이션하세요. 구독은 쓰던 그대로. 통째로 포크하세요.",
+    headline: "역대 최고의 에이전트 앱.",
+    subline: "모든 코딩 에이전트를 차분한 앱 하나에서, 이미 결제 중인 구독 그대로.",
+    installLabel: "설치",
+    channelLabel: "릴리스 채널",
+    stable: "안정판",
+    nightly: "nightly",
+    terminal: "터미널",
     downloadForMac: "macOS용 다운로드",
     downloadForWindows: "Windows용 다운로드",
     downloadForLinux: "Linux용 다운로드",
-    sourceLink: "코드 훔쳐 가기(합법적으로)",
-    alsoOnPhone: "휴대폰에서도:",
-    screenshotAlt: "하나의 스레드에서 Claude, Codex, Muse, Gemini 서브에이전트를 실행 중인 T3 Code",
+    downloadAction: "다운로드",
+    copyAction: "복사",
+    copied: "복사됨",
+    alsoOn: "다른 플랫폼",
+    voicesLabel: "사용자들의 말",
     endorsementsTitle: "{users}명이 넘는 개발자가 참고 쓰는 중",
-    endorsementsSub: "몇몇은 트윗까지 했습니다.",
-    endorsementsLabel: "개발자 추천",
     readPost: "X에서 {handle}님의 게시물 읽기",
-    harnessTitle: "쓰던 구독 그대로",
-    harnessBody:
-      "T3 Code는 토큰을 되팔지 않습니다. 이미 쓰고 있는 계정으로 Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok을 연결하세요. 오케스트레이션은 저희가, 요금제는 그대로.",
-    googleSignIn: "Google 로그인",
-    harnessPoints: [
-      "키 재판매 없음. 사용량 한도 없음.",
-      "스레드 도중 모델 전환.",
-      "매주 새 에이전트 추가.",
+    showMore: "더 보기",
+    faqLabel: "자주 묻는 질문",
+    faqs: [
+      {
+        question: "T3 Code는 얼마인가요?",
+        answer:
+          "무료입니다. T3 Code는 MIT 라이선스의 오픈 소스입니다. 제공업체에는 지금처럼 그대로 결제하면 되고, T3 Connect는 기기 3대까지 무료입니다.",
+      },
+      {
+        question: "Claude Code나 ChatGPT 구독을 쓸 수 있나요?",
+        answer:
+          "네. T3 Code는 이미 결제 중인 요금제로 Claude Code, Codex, Cursor, Grok Build, OpenCode, Antigravity, Pi, Muse Code를 실행합니다.",
+      },
+      {
+        question: "구독을 쓰면 계정이 정지되나요?",
+        answer:
+          "아니요. T3 Code는 Claude Code, Codex, Google Antigravity의 약관을 준수하며, Grok Build와 Cursor 연동은 해당 팀과 함께 만들었습니다.",
+      },
+      {
+        question: "T3 Code는 하네스인가요?",
+        answer:
+          "아니요. Claude Code나 Codex 같은 하네스는 모델을 에이전트로 만들어 줍니다. T3 Code는 그 하네스를 실행하는 앱이라, 작업 방식을 바꾸지 않고 서로 전환할 수 있습니다.",
+      },
+      {
+        question: "제 코드가 T3 서버로 전송되나요?",
+        answer:
+          "아니요. 코드와 프롬프트는 내 기기에서 제공업체로 바로 전송됩니다. T3 Code는 기본적인 사용 이벤트만 보내고, 프롬프트나 파일 내용은 절대 보내지 않으며, 이 전송도 끌 수 있습니다.",
+      },
+      {
+        question: "휴대폰이나 다른 컴퓨터에서 쓸 수 있나요?",
+        answer:
+          "네. 에이전트는 T3 Code가 설치된 기기에서 실행됩니다. iOS·Android 앱이나 app.t3.codes에서 T3 Connect, Tailscale 또는 로컬 네트워크로 연결하세요.",
+      },
+      {
+        question: "Windows, Mac, Linux에서 되나요?",
+        answer: "네, 세 가지 모두 지원합니다. 데스크톱 앱이나 t3 명령으로 쓸 수 있습니다.",
+      },
     ],
-    gitVisualLabel:
-      "T3 Code Git 워크플로 그림: diff를 검토하고, 변경 사항을 커밋 및 푸시하고, 풀 리퀘스트를 엽니다.",
-    prReady: "준비됨",
-    prCommits: "커밋 3개",
-    viewDiff: "diff 보기",
-    openPullRequest: "풀 리퀘스트 열기",
-    commitPush: "커밋 & 푸시",
-    gitTitle: "버튼 하나로 커밋, 푸시, PR까지.",
-    gitBody:
-      "에이전트 스레드마다 별도 브랜치에서 작업합니다. 결과가 마음에 들면 버튼 하나로 GitHub에 PR이 열리고, 제목과 본문, 변경 로그까지 자동으로 생성됩니다. 터미널에서 씨름할 필요가 없습니다.",
-    gitPoints: [
-      "PR 제목과 본문 자동 생성",
-      "푸시 전에 인라인 diff 리뷰",
-      "드래프트 PR, 스택 PR, PR 수정",
-      "기존 GitHub 인증 그대로 사용",
-    ],
-    openTitle: "마음에 안 들면 포크하세요.",
-    openPoints: [
-      { lead: "UI를 바꾸세요.", rest: "모든 화면을 취향대로 꾸밀 수 있습니다." },
-      { lead: "에이전트를 추가하세요.", rest: "나만의 도구, 모델, 워크플로를 연결하세요." },
-      { lead: "나만의 빌드를 만드세요.", rest: "직접 호스팅하거나 내 이름으로 배포하세요." },
-    ],
-    stars: "스타 {stars}",
-    forkOnGithub: "GitHub에서 포크",
-    browseSource: "소스 보기",
-    ctaTitle: "에이전트를 터미널에만 두기엔 아깝습니다.",
-    ctaSub:
-      "T3 Code는 무료이고, 오픈 소스이며, 빠릅니다. 설치하고, 이미 구독 중인 서비스를 연결한 뒤, 에이전트에게 일을 맡기세요.",
-    otherPlatforms: "다른 플랫폼",
+  },
+  features: {
+    title: "기능 | T3 Code",
+    description:
+      "T3 Code가 하는 모든 일: 원격 제어, 스레드 하나에 모든 에이전트, 쓰던 구독 그대로, 그리고 MIT 라이선스 코드베이스.",
+    items: {
+      anywhere: {
+        title: "어디서든 내 기기를 조작",
+        body: "에이전트는 집에서 계속 실행됩니다. 브라우저나 휴대폰으로 지시하세요.",
+      },
+      machines: {
+        title: "다른 기기도 제어",
+        body: "Mac mini, Linux 머신, VPS를 연결하고 앱 하나에서 모두 에이전트를 돌리세요.",
+      },
+      agents: {
+        title: "모든 에이전트, 스레드 하나",
+        body: "원할 때 언제든 에이전트를 바꾸세요.",
+      },
+      subscriptions: {
+        title: "쓰던 구독 그대로",
+        body: "이미 결제 중인 요금제로 로그인하세요.",
+      },
+      open: {
+        title: "속까지 오픈",
+        body: "모든 코드가 GitHub에 있습니다. 포크하세요.",
+      },
+    },
   },
   download: {
     title: "macOS, Windows, Linux용 T3 Code 다운로드 | T3 Code",
@@ -87,8 +115,6 @@ export const ko: Messages = {
     armNote: "ARM을 쓰시나요? arm64 {deb} 또는 {appimage}를 다운로드하세요.",
     mobile: "모바일",
     iphoneIpad: "iPhone & iPad",
-    terminal: "터미널",
-    tryOnce: "설치 없이 한 번 실행해 보려면:",
     allBuilds: "모든 빌드는 {link}에 있습니다",
     releasesPage: "GitHub 릴리스 페이지",
     builtAgo: "{age} 빌드됨",

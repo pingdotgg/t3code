@@ -8,12 +8,9 @@ export const en = {
       "T3 Code: the open-source control plane for coding agents, with Claude Code, Codex, Cursor, OpenCode, Grok and Antigravity.",
     homeLabel: "T3 Code home",
     download: "Download",
+    features: "Features",
     starsLabel: "Star T3 Code on GitHub, {stars} stars",
-    githubStars: "{stars} GitHub stars",
     language: "Language",
-    mitLicensed: "MIT licensed",
-    iosApp: "iOS app",
-    androidApp: "Android app",
     terms: "Terms",
     privacy: "Privacy",
     security: "Security",
@@ -21,57 +18,88 @@ export const en = {
   home: {
     title: "T3 Code | The open-source control plane for coding agents",
     description: "T3 Code. The open-source control plane for coding agents.",
-    heroTitle: ["The open-source", "control plane", "for coding agents."],
-    heroSub:
-      "Orchestrate Claude Code, Codex, Antigravity, OpenCode, Cursor, and Grok from one surface. Bring your own subscription. Fork the whole thing.",
+    headline: "The best agent app ever.",
+    subline: "Every coding agent in one calm app, on the subscriptions you already pay for.",
+    installLabel: "Install",
+    channelLabel: "Release channel",
+    stable: "stable",
+    nightly: "nightly",
+    terminal: "Terminal",
     downloadForMac: "Download for macOS",
     downloadForWindows: "Download for Windows",
     downloadForLinux: "Download for Linux",
-    sourceLink: "Steal our code (legally)",
-    alsoOnPhone: "Also on your phone:",
-    screenshotAlt: "T3 Code running Claude, Codex, Muse, and Gemini subagents in one thread",
-    endorsementsTitle: "Tolerated by over {users} devs",
-    endorsementsSub: "Some of them even tweeted about it.",
-    endorsementsLabel: "Developer endorsements",
+    downloadAction: "download",
+    copyAction: "copy",
+    copied: "copied",
+    alsoOn: "Also on",
+    voicesLabel: "What people say",
+    endorsementsTitle: "Tolerated by over {users} devs.",
     readPost: "Read {handle}'s post on X",
-    harnessTitle: "Bring your own sub",
-    harnessBody:
-      "T3 Code doesn't resell tokens. Plug in Claude Code, Codex, Antigravity, OpenCode, Cursor, or Grok with the credentials you already have. We orchestrate them, you keep your plan.",
-    googleSignIn: "Google sign-in",
-    harnessPoints: [
-      "No keys resold. No quota caps.",
-      "Switch models mid-thread.",
-      "More harnesses shipping weekly.",
+    showMore: "Show more",
+    faqLabel: "FAQs",
+    faqs: [
+      {
+        question: "How much does T3 Code cost?",
+        answer:
+          "Nothing. T3 Code is free and open source under the MIT license. You keep paying your provider like you already do, and T3 Connect is free for up to 3 machines.",
+      },
+      {
+        question: "Can I use my Claude Code or ChatGPT subscription?",
+        answer:
+          "Yes. T3 Code runs Claude Code, Codex, Cursor, Grok Build, OpenCode, Antigravity, Pi and Muse Code on the plans you already pay for.",
+      },
+      {
+        question: "Will I get banned for using my subscription?",
+        answer:
+          "No. T3 Code stays within the terms of Claude Code, Codex and Google Antigravity, and the Grok Build and Cursor integrations were built with their teams.",
+      },
+      {
+        question: "Is T3 Code a harness?",
+        answer:
+          "No. Harnesses like Claude Code and Codex turn a model into an agent. T3 Code is the app you run them in, so you can switch between them without changing how you work.",
+      },
+      {
+        question: "Does my code go to T3 servers?",
+        answer:
+          "No. Your code and prompts go from your machine straight to your provider. T3 Code sends basic usage events, never prompts or file contents, and you can turn those off.",
+      },
+      {
+        question: "Can I use it from my phone or another computer?",
+        answer:
+          "Yes. Your agents run on the machine with T3 Code. Connect to it from the iOS or Android app or app.t3.codes, through T3 Connect, Tailscale or your local network.",
+      },
+      {
+        question: "Does it work on Windows, Mac and Linux?",
+        answer: "Yes, all three, as a desktop app or the t3 command.",
+      },
     ],
-    gitVisualLabel:
-      "Illustration of the T3 Code Git workflow: review a diff, commit and push changes, and open a pull request.",
-    prReady: "Ready",
-    prCommits: "3 commits",
-    viewDiff: "View diff",
-    openPullRequest: "Open pull request",
-    commitPush: "Commit & push",
-    gitTitle: "One button to commit, push, and make a PR.",
-    gitBody:
-      "Every agent thread writes to its own branch. When it's good, one button opens the PR on GitHub with a generated title, body and changelog. No terminal dance required.",
-    gitPoints: [
-      "Auto-generated PR titles & bodies",
-      "Inline diff review before you push",
-      "Draft PRs, stack PRs, amend PRs",
-      "Works with your existing GitHub auth",
-    ],
-    openTitle: "If you don't like something, fork it.",
-    openPoints: [
-      { lead: "Change the UI.", rest: "Restyle every surface to match your taste." },
-      { lead: "Add an agent.", rest: "Wire in your own tools, models, and flows." },
-      { lead: "Ship your own build.", rest: "Self-host it or distribute it as your own." },
-    ],
-    stars: "{stars} stars",
-    forkOnGithub: "Fork on GitHub",
-    browseSource: "Browse source",
-    ctaTitle: "Your agents deserve better than a terminal.",
-    ctaSub:
-      "T3 Code is free, open source and fast. Install it, plug in the harness you already pay for, and let your agents get to work.",
-    otherPlatforms: "Other platforms",
+  },
+  features: {
+    title: "Features | T3 Code",
+    description:
+      "Everything T3 Code does: remote control, every agent in one thread, your own subscriptions, and an MIT-licensed codebase.",
+    items: {
+      anywhere: {
+        title: "Drive your machine from anywhere",
+        body: "Your agents keep running at home. Steer them from a browser or your phone.",
+      },
+      machines: {
+        title: "Control your other machines",
+        body: "Link a Mac mini, a Linux box or a VPS and run agents on all of them from one app.",
+      },
+      agents: {
+        title: "Every agent, one thread",
+        body: "Pick a different agent whenever you want.",
+      },
+      subscriptions: {
+        title: "Bring your own subscription",
+        body: "Sign in with the plans you already pay for.",
+      },
+      open: {
+        title: "Open to the core",
+        body: "Every line is on GitHub. Fork it.",
+      },
+    },
   },
   download: {
     title: "Download T3 Code for macOS, Windows, and Linux | T3 Code",
@@ -87,8 +115,6 @@ export const en = {
     armNote: "On ARM? Download the arm64 {deb} or {appimage}.",
     mobile: "Mobile",
     iphoneIpad: "iPhone & iPad",
-    terminal: "Terminal",
-    tryOnce: "Or try it once without installing:",
     allBuilds: "All builds are on the {link}",
     releasesPage: "GitHub releases page",
     builtAgo: "Built {age}",

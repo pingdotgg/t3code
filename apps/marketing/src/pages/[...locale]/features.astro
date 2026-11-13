@@ -1,0 +1,33 @@
+---
+import FeatureCards from "../../components/FeatureCards.astro";
+import Layout from "../../layouts/Layout.astro";
+import { messagesFor } from "../../i18n";
+import { localeStaticPaths } from "../../i18n/locales";
+
+export const getStaticPaths = localeStaticPaths;
+
+const { locale } = Astro.props;
+const messages = messagesFor(locale);
+const t = messages.features;
+---
+
+<Layout title={t.title} description={t.description} locale={locale} localizedPath="/features">
+  <div class="shell features">
+    <h1 class="sr-only">{messages.layout.features}</h1>
+    <FeatureCards locale={locale} />
+  </div>
+</Layout>
+
+<style>
+  .features {
+    padding-top: 56px;
+    padding-bottom: 152px;
+  }
+
+  @media (max-width: 640px) {
+    .features {
+      padding-top: 40px;
+      padding-bottom: 104px;
+    }
+  }
+</style>

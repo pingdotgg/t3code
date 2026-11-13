@@ -1,0 +1,73 @@
+---
+import { GITHUB_REPOSITORY_URL, MARKETING_STATS } from "../lib/site";
+import { messagesFor } from "../i18n";
+import { fillTemplate, type Locale, localizedHref } from "../i18n/locales";
+
+interface Props {
+  locale: Locale;
+  current?: "features" | "download";
+}
+
+const { locale, current } = Astro.props;
+const l = messagesFor(locale).layout;
+const lower = (value: string) => value.toLocaleLowerCase(locale);
+---
+
+<header class="head">
+  <a class="head-brand" href={localizedHref(locale, "/")} aria-label={l.homeLabel}>T3 Code.</a>
+  <nav class="head-links">
+    <a href={localizedHref(locale, "/features")} aria-current={current === "features" ? "page" : undefined}>{lower(l.features)}</a>
+    <a href={localizedHref(locale, "/download")} aria-current={current === "download" ? "page" : undefined}>{lower(l.download)}</a>
+    <a href={GITHUB_REPOSITORY_URL} target="_blank" rel="noopener noreferrer" aria-label={fillTemplate(l.starsLabel, { stars: MARKETING_STATS.githubStars })}>
+      github <span class="head-stars">★ {MARKETING_STATS.githubStars}</span>
+    </a>
+    <a href="https://discord.gg/jn4EGJjrvv" target="_blank" rel="noopener noreferrer">discord</a>
+  </nav>
+</header>
+
+<style>
+  .head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 16px;
+    padding-top: 112px;
+    font-size: 15px;
+  }
+
+  .head-brand {
+    color: var(--fg);
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+
+  .head-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+  }
+
+  .head-links a {
+    color: var(--fg-dim);
+    transition: color 0.18s ease;
+  }
+
+  .head-links a:hover {
+    color: var(--fg);
+  }
+
+  .head-stars {
+    font-size: 13px;
+    color: var(--fg-faint);
+  }
+
+  .head-links a[aria-current="page"] {
+    color: var(--fg);
+  }
+
+  @media (max-width: 640px) {
+    .head {
+      padding-top: 64px;
+    }
+  }
+</style>

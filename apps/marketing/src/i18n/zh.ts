@@ -8,12 +8,9 @@ export const zh: Messages = {
       "T3 Code：面向编程智能体的开源控制中心，支持 Claude Code、Codex、Cursor、OpenCode、Grok 和 Antigravity。",
     homeLabel: "T3 Code 首页",
     download: "下载",
+    features: "功能",
     starsLabel: "在 GitHub 上为 T3 Code 加星标，已有 {stars} 个星标",
-    githubStars: "{stars} GitHub 星标",
     language: "语言",
-    mitLicensed: "MIT 许可",
-    iosApp: "iOS 应用",
-    androidApp: "Android 应用",
     terms: "条款",
     privacy: "隐私",
     security: "安全",
@@ -21,55 +18,88 @@ export const zh: Messages = {
   home: {
     title: "T3 Code | 面向编程智能体的开源控制中心",
     description: "T3 Code：面向编程智能体的开源控制中心。",
-    heroTitle: ["开源的", "编程智能体", "控制中心。"],
-    heroSub:
-      "在同一个界面里调度 Claude Code、Codex、Antigravity、OpenCode、Cursor 和 Grok。用你自己的订阅。整个项目都可以 fork。",
+    headline: "史上最好的智能体应用。",
+    subline: "所有编程智能体，尽在一个清爽的应用里，用你已经在付费的订阅。",
+    installLabel: "安装",
+    channelLabel: "发布通道",
+    stable: "稳定版",
+    nightly: "nightly 版",
+    terminal: "终端",
     downloadForMac: "下载 macOS 版",
     downloadForWindows: "下载 Windows 版",
     downloadForLinux: "下载 Linux 版",
-    sourceLink: "来偷我们的代码（合法的）",
-    alsoOnPhone: "手机上也能用：",
-    screenshotAlt: "T3 Code 在同一个线程中运行 Claude、Codex、Muse 和 Gemini 子智能体",
+    downloadAction: "下载",
+    copyAction: "复制",
+    copied: "已复制",
+    alsoOn: "也支持",
+    voicesLabel: "大家怎么说",
     endorsementsTitle: "超过 {users} 名开发者表示还能忍",
-    endorsementsSub: "有些人甚至发推夸了它。",
-    endorsementsLabel: "开发者评价",
     readPost: "在 X 上阅读 {handle} 的帖子",
-    harnessTitle: "自带订阅",
-    harnessBody:
-      "T3 Code 不转售 token。用你现有的凭据接入 Claude Code、Codex、Antigravity、OpenCode、Cursor 或 Grok。我们负责调度，你的套餐还是你的。",
-    googleSignIn: "Google 登录",
-    harnessPoints: [
-      "不转售密钥，不设额度上限。",
-      "线程进行中也能切换模型。",
-      "每周都有新的智能体接入。",
+    showMore: "显示更多",
+    faqLabel: "常见问题",
+    faqs: [
+      {
+        question: "T3 Code 多少钱？",
+        answer:
+          "不要钱。T3 Code 免费，并以 MIT 许可证开源。你照常向模型提供商付费，T3 Connect 最多可免费连接 3 台机器。",
+      },
+      {
+        question: "可以用我的 Claude Code 或 ChatGPT 订阅吗？",
+        answer:
+          "可以。T3 Code 用你已经在付费的套餐运行 Claude Code、Codex、Cursor、Grok Build、OpenCode、Antigravity、Pi 和 Muse Code。",
+      },
+      {
+        question: "用自己的订阅会被封号吗？",
+        answer:
+          "不会。T3 Code 符合 Claude Code、Codex 和 Google Antigravity 的服务条款，Grok Build 和 Cursor 的集成是与对方团队合作完成的。",
+      },
+      {
+        question: "T3 Code 是一个 harness 吗？",
+        answer:
+          "不是。Claude Code、Codex 这样的 harness 把模型变成智能体。T3 Code 是运行它们的应用，你可以在它们之间切换，而不用改变工作方式。",
+      },
+      {
+        question: "我的代码会经过 T3 的服务器吗？",
+        answer:
+          "不会。你的代码和提示词从你的机器直接发送给模型提供商。T3 Code 只发送基本的使用事件，从不包含提示词或文件内容，而且可以关闭。",
+      },
+      {
+        question: "可以在手机或另一台电脑上使用吗？",
+        answer:
+          "可以。智能体运行在装有 T3 Code 的机器上。你可以通过 T3 Connect、Tailscale 或本地网络，从 iOS、Android 应用或 app.t3.codes 连接过去。",
+      },
+      {
+        question: "支持 Windows、Mac 和 Linux 吗？",
+        answer: "三个都支持，可以用桌面应用，也可以用 t3 命令。",
+      },
     ],
-    gitVisualLabel: "T3 Code Git 工作流示意图：审查 diff、提交并推送更改、创建 PR。",
-    prReady: "就绪",
-    prCommits: "3 个提交",
-    viewDiff: "查看 diff",
-    openPullRequest: "创建 PR",
-    commitPush: "提交并推送",
-    gitTitle: "一键提交、推送并创建 PR。",
-    gitBody:
-      "每个智能体线程都写入自己的分支。满意之后，一键在 GitHub 上创建 PR，标题、描述和更新日志都会自动生成。不用在终端里来回折腾。",
-    gitPoints: [
-      "自动生成 PR 标题和描述",
-      "推送前就地审查 diff",
-      "草稿 PR、堆叠 PR、修改 PR",
-      "沿用你现有的 GitHub 授权",
-    ],
-    openTitle: "哪里不喜欢，就 fork 它。",
-    openPoints: [
-      { lead: "改 UI。", rest: "按你的喜好重新设计每个界面。" },
-      { lead: "加智能体。", rest: "接入你自己的工具、模型和工作流。" },
-      { lead: "发布你自己的版本。", rest: "自行托管，或以你自己的名义分发。" },
-    ],
-    stars: "{stars} 星标",
-    forkOnGithub: "在 GitHub 上 fork",
-    browseSource: "浏览源码",
-    ctaTitle: "终端配不上你的智能体。",
-    ctaSub: "T3 Code 免费、开源、速度快。安装它，接入你已经订阅的智能体，然后让它们开工。",
-    otherPlatforms: "其他平台",
+  },
+  features: {
+    title: "功能 | T3 Code",
+    description:
+      "T3 Code 的全部功能：远程控制、所有智能体同处一个线程、自带订阅，以及 MIT 许可的代码库。",
+    items: {
+      anywhere: {
+        title: "随时随地操控你的机器",
+        body: "智能体在家里持续运行，你用浏览器或手机指挥它们。",
+      },
+      machines: {
+        title: "控制你的其他机器",
+        body: "连接 Mac mini、Linux 主机或 VPS，在一个应用里让它们都跑起智能体。",
+      },
+      agents: {
+        title: "所有智能体，一个线程",
+        body: "想换智能体，随时换。",
+      },
+      subscriptions: {
+        title: "自带订阅",
+        body: "用你已经在付费的套餐登录。",
+      },
+      open: {
+        title: "彻底开源",
+        body: "每一行都在 GitHub 上。尽管 fork。",
+      },
+    },
   },
   download: {
     title: "下载 T3 Code：macOS、Windows 和 Linux 版 | T3 Code",
@@ -85,8 +115,6 @@ export const zh: Messages = {
     armNote: "ARM 架构？下载 arm64 版 {deb} 或 {appimage}。",
     mobile: "移动端",
     iphoneIpad: "iPhone 和 iPad",
-    terminal: "终端",
-    tryOnce: "或者无需安装，直接试用一次：",
     allBuilds: "所有版本都在 {link}上",
     releasesPage: "GitHub 发布页面",
     builtAgo: "{age}构建",

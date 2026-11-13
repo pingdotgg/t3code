@@ -18,7 +18,7 @@ export type Locale = (typeof LOCALES)[number]["code"];
 export const DEFAULT_LOCALE: Locale = "en";
 
 /** Pages that exist in every locale. Legal pages, the 404, and /95 stay English-only. */
-export const LOCALIZED_PATHS = ["/", "/download"] as const;
+export const LOCALIZED_PATHS = ["/", "/features", "/download"] as const;
 
 export type LocalizedPath = (typeof LOCALIZED_PATHS)[number];
 

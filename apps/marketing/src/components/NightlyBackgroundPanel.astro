@@ -1,0 +1,102 @@
+---
+import { NIGHTLY_BACKGROUNDS, NIGHTLY_BACKGROUND_STORAGE_KEY } from "../lib/nightlyBackgrounds";
+---
+
+<aside class="lab" aria-label="Nightly background designs" data-lab data-key={NIGHTLY_BACKGROUND_STORAGE_KEY}>
+  <span class="lab-title">nightly bg</span>
+  <div class="lab-list" role="group" aria-label="Background">
+    {NIGHTLY_BACKGROUNDS.map((background) => (
+      <button type="button" aria-pressed="false" data-lab-background={background.id}>{background.label}</button>
+    ))}
+  </div>
+  <div class="lab-channel" role="group" aria-label="Channel">
+    <button type="button" aria-pressed="true" data-lab-channel="stable">stable</button>
+    <button type="button" aria-pressed="false" data-lab-channel="nightly">nightly</button>
+  </div>
+</aside>
+
+<script>
+  import { onSiteChannel, setSiteChannel, siteChannel } from "../lib/channel";
+
+  const lab = document.querySelector<HTMLElement>("[data-lab]");
+  if (lab) {
+    const root = document.documentElement;
+    const backgrounds = [...lab.querySelectorAll<HTMLButtonElement>("[data-lab-background]")];
+    const channels = [...lab.querySelectorAll<HTMLButtonElement>("[data-lab-channel]")];
+    const sync = () => {
+      const current = root.dataset.nightlyBg ?? backgrounds[0]?.dataset.labBackground;
+      for (const button of backgrounds) button.setAttribute("aria-pressed", String(button.dataset.labBackground === current));
+      for (const button of channels) button.setAttribute("aria-pressed", String(button.dataset.labChannel === siteChannel()));
+    };
+    for (const button of backgrounds) {
+      button.addEventListener("click", () => {
+        const id = button.dataset.labBackground ?? "";
+        root.dataset.nightlyBg = id;
+        try {
+          localStorage.setItem(lab.dataset.key ?? "", id);
+        } catch {}
+        setSiteChannel("nightly");
+      });
+    }
+    for (const button of channels) {
+      button.addEventListener("click", () => setSiteChannel(button.dataset.labChannel === "nightly" ? "nightly" : "stable"));
+    }
+    onSiteChannel(sync);
+    sync();
+  }
+</script>
+
+<style>
+  .lab {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border-strong);
+    background: #0d0d0d;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .lab-title {
+    color: oklch(0.72 0.13 264);
+  }
+
+  .lab-list {
+    display: flex;
+    flex: 1;
+    gap: 6px;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .lab-channel {
+    display: flex;
+    flex-shrink: 0;
+    gap: 2px;
+  }
+
+  .lab button {
+    flex-shrink: 0;
+    padding: 3px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    color: var(--fg-muted);
+    font: inherit;
+  }
+
+  .lab button:hover {
+    color: var(--fg);
+  }
+
+  .lab button[aria-pressed="true"] {
+    border-color: oklch(0.571 0.21 264 / 0.8);
+    background: oklch(0.571 0.21 264 / 0.2);
+    color: var(--fg);
+  }
+</style>

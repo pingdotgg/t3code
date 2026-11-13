@@ -1,0 +1,1391 @@
+---
+import { GITHUB_REPOSITORY_URL, MARKETING_STATS } from "../lib/site";
+import { messagesFor } from "../i18n";
+import type { Locale } from "../i18n/locales";
+
+interface Props {
+  locale: Locale;
+}
+
+const { locale } = Astro.props;
+const f = messagesFor(locale).features.items;
+
+const icon = {
+  claude: "/harnesses/claude-ai-icon.svg",
+  codex: "/harnesses/openai_dark.svg",
+  cursor: "/harnesses/cursor_light.svg",
+  grok: "/harnesses/grok-dark.svg",
+  opencode: "/harnesses/opencode-dark.svg",
+  antigravity: "/harnesses/antigravity.svg",
+  kiro: "/harnesses/kiro.svg",
+  pi: "/harnesses/pi.svg",
+  muse: "/harnesses/muse.svg",
+  fx: "/harnesses/fx.svg",
+  acp: "/harnesses/acp.svg",
+};
+
+const phoneReplies = [
+  { say: "Also add tests", reply: "Added 6 tests. All passing." },
+  { say: "Now add docs", reply: "Docs are in the README." },
+  { say: "Open a PR", reply: "Opened the pull request." },
+];
+
+const machines = [
+  { name: "MacBook Pro", paths: ["M3.5 3.5h9a.5.5 0 0 1 .5.5v6.5H3V4a.5.5 0 0 1 .5-.5z", "M1.5 12.5h13"] },
+  { name: "Mac mini", paths: ["M2 3h12v8H2z", "M6 13.5h4M8 11v2.5"] },
+  { name: "Linux VPS", paths: ["M2.5 3h11v4h-11z", "M2.5 9h11v4h-11z", "M5 5h.01M5 11h.01"] },
+];
+
+const subagents = [
+  { name: "Dashboard share button", icon: icon.claude, time: "25s" },
+  { name: "Share link API", icon: icon.codex, time: "23s" },
+  { name: "Share link tests", icon: icon.muse, time: "21s" },
+  { name: "Share link docs", icon: icon.antigravity, time: "19s" },
+];
+
+const limits = [
+  { label: "5-hour", used: 94 },
+  { label: "Weekly", used: 91 },
+  { label: "Context", used: 8 },
+];
+
+const models = [
+  { agent: "Claude", label: "Opus 5.5", effort: "High", icon: icon.claude },
+  { agent: "Codex", label: "Codex", effort: "", icon: icon.codex },
+  { agent: "Cursor", label: "Cursor", effort: "", icon: icon.cursor },
+  { agent: "Grok Build", label: "Grok Build", effort: "", icon: icon.grok },
+  { agent: "OpenCode", label: "OpenCode", effort: "", icon: icon.opencode },
+  { agent: "Antigravity", label: "Antigravity", effort: "", icon: icon.antigravity },
+];
+
+const providers = [
+  { name: "Codex", icon: icon.codex, account: "ChatGPT", on: true },
+  { name: "Claude", icon: icon.claude, account: "Claude", on: false },
+  { name: "Cursor", icon: icon.cursor, account: "Cursor", on: true },
+  { name: "Grok Build", icon: icon.grok, account: "Grok", on: false },
+  { name: "OpenCode", icon: icon.opencode, account: "OpenCode", on: false },
+  { name: "Antigravity", icon: icon.antigravity, account: "Antigravity", on: false },
+  { name: "Kiro", icon: icon.kiro, account: "Kiro", on: false },
+  { name: "Pi", icon: icon.pi, account: "Pi", on: false },
+  { name: "Muse Code", icon: icon.muse, account: "Muse", on: false },
+  { name: "fx", icon: icon.fx, account: "fx", on: false },
+  { name: "ACP Registry", icon: icon.acp, account: "ACP", on: false },
+];
+const selectedProvider = providers[1];
+
+const repoFiles = [
+  { name: "apps", dir: true, note: "server, web, desktop, mobile" },
+  { name: "packages", dir: true, note: "contracts, shared, providers" },
+  { name: "docs", dir: true, note: "how it all works" },
+  { name: "LICENSE", dir: false, note: "MIT" },
+  { name: "README.md", dir: false, note: "start here" },
+];
+---
+
+<ul class="features-list">
+  <li class="feature">
+    <div class="demo demo-anywhere" data-anywhere>
+      <div class="win">
+        <div class="win-side">
+          <p class="lights" aria-hidden="true"><i></i><i></i><i></i></p>
+          <p class="side-brand">T3 Code</p>
+          <p class="side-row side-row--on"><span>Add share links</span><em>postplan</em></p>
+          <p class="side-row"><span>Dark mode polish</span><em>postplan</em></p>
+          <p class="side-row"><span>Screenshot cropping</span><em>t3code</em></p>
+        </div>
+        <div class="win-main">
+          <p class="win-head"><span class="dim">postplan /</span> Add share links</p>
+          <div class="msgs" data-msgs>
+            <p class="msg-user">Add share links to drafts</p>
+            <p class="msg-agent">Done. Drafts now have a share link.</p>
+          </div>
+          <div class="composer composer--static">
+            <p class="composer-placeholder">Ask anything</p>
+            <p class="composer-row">
+              <span class="model-chip"><img src={icon.claude} alt="" width="13" height="13" />Opus 5.5 <span class="dim">High</span></span>
+              <span class="send" aria-hidden="true">↑</span>
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="phone">
+        <div class="phone-screen">
+          <p class="phone-status" aria-hidden="true">
+            <span>9:41</span>
+            <i class="island"></i>
+            <svg viewBox="0 0 30 12" width="30" height="12">
+              <path d="M1 10.5v-2M4.5 10.5v-4M8 10.5v-6M11.5 10.5v-8" />
+              <rect x="16.5" y="2.5" width="10" height="7" rx="2" />
+              <rect class="battery-level" x="18" y="4" width="7" height="4" rx="1" />
+              <path d="M28.5 5v2" />
+            </svg>
+          </p>
+          <p class="phone-head"><span aria-hidden="true">‹</span>Add share links</p>
+          <div class="msgs" data-msgs>
+            <p class="msg-user">Add share links to drafts</p>
+            <p class="msg-agent">Done. Drafts now have a share link.</p>
+          </div>
+          <form class="phone-composer" data-phone-form data-replies={JSON.stringify(phoneReplies)}>
+            <input type="text" value={phoneReplies[0].say} aria-label="Message from your phone" autocomplete="off" />
+            <button type="submit" aria-label="Send">↑</button>
+          </form>
+          <i class="home-bar" aria-hidden="true"></i>
+        </div>
+      </div>
+    </div>
+    <h2>{f.anywhere.title}</h2>
+    <p class="feature-body">{f.anywhere.body}</p>
+  </li>
+
+  <li class="feature">
+    <div class="demo demo-run" data-run data-open>
+      <div class="run">
+        <div class="composer composer--static">
+          <p class="composer-placeholder">Ask anything. @ files, $ skills, / commands</p>
+          <p class="composer-row">
+            <svg class="clip" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M13 7.5 8 12.5a3 3 0 0 1-4.2-4.2l5.5-5.5a2 2 0 0 1 2.8 2.8L6.8 10.9a1 1 0 0 1-1.4-1.4L10 5" /></svg>
+            <span class="model-chip"><img src={icon.claude} alt="" width="13" height="13" />Opus 5.5 <span class="dim">High</span></span>
+            <span class="send" aria-hidden="true">↑</span>
+          </p>
+        </div>
+        <div class="run-bar">
+          <div class="run-pick">
+            <button type="button" class="run-chip" aria-haspopup="listbox" aria-expanded="true" aria-label="Run on" data-run-toggle>
+              <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">{machines[0].paths.map((d) => <path d={d} />)}</svg>
+              <span data-run-name>{machines[0].name}</span>
+            </button>
+            <ul class="run-menu" role="listbox" aria-label="Run on" data-run-menu>
+              <li class="run-menu-label" role="presentation">Run on</li>
+              {machines.map((machine, index) => (
+                <li role="presentation">
+                  <button type="button" role="option" aria-selected={index === 0 ? "true" : "false"}>
+                    <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">{machine.paths.map((d) => <path d={d} />)}</svg>
+                    <span>{machine.name}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <span class="run-access">
+            <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M8 1.5 13 3.5v4c0 3.2-2.1 5.8-5 7-2.9-1.2-5-3.8-5-7v-4z" /></svg>
+            Full access
+          </span>
+        </div>
+      </div>
+    </div>
+    <h2>{f.machines.title}</h2>
+    <p class="feature-body">{f.machines.body}</p>
+  </li>
+
+  <li class="feature">
+    <div class="demo demo-app demo-agents" data-thread>
+      <div class="app-main">
+        <div class="msgs">
+          <p class="msg-user">Add expiring share links with 4 subagents</p>
+          <p class="msg-meta">Worked for 20s</p>
+          <div class="subagents">
+            <span class="stack">
+              {subagents.map((agent) => <img src={agent.icon} alt="" width="14" height="14" />)}
+            </span>
+            <span class="subagents-text"><strong>4 subagents</strong><em>4 working</em></span>
+          </div>
+          <p class="msg-agent">Okay, opening Claude, Codex, Muse and Gemini.</p>
+          <p class="waiting"><i aria-hidden="true"></i>Waiting on 4 subagents<span class="dim">Dashboard share button, Share link API, Share link tests, Share link docs</span></p>
+        </div>
+        <div class="composer">
+          <p class="composer-placeholder">Ask anything. @ files, $ skills, / commands</p>
+          <div class="composer-row">
+            <button type="button" class="model-chip" aria-haspopup="listbox" aria-expanded="false" data-model-toggle>
+              <img src={models[0].icon} alt="" width="13" height="13" data-model-icon />
+              <span data-model-name>{models[0].label}</span>
+              <span class="dim" data-model-effort>{models[0].effort}</span>
+            </button>
+            <span class="send" aria-hidden="true">↑</span>
+          </div>
+          <ul class="model-menu" role="listbox" hidden data-model-menu>
+            {models.map((entry, index) => (
+              <li>
+                <button type="button" role="option" aria-selected={index === 0 ? "true" : "false"} data-icon={entry.icon} data-label={entry.label} data-effort={entry.effort}>
+                  <img src={entry.icon} alt="" width="13" height="13" loading="lazy" />
+                  <span>{entry.agent}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+      <div class="side-panel">
+        <div class="side-section">
+          <p class="side-line">
+            <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M4.5 5.5v5M4.5 10.5a3 3 0 0 0 3-3h1.5a2.5 2.5 0 0 0 2.5-2" /><circle cx="4.5" cy="4" r="1.5" /><circle cx="4.5" cy="12" r="1.5" /><circle cx="11.5" cy="4" r="1.5" /></svg>
+            <span>main</span>
+          </p>
+          <p class="side-line">
+            <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M4 1.5h5l3.5 3.5v9a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-12a.5.5 0 0 1 .5-.5zM8 7v4M6 9h4" /></svg>
+            <span>Changes</span>
+            <em><b class="add">+84</b> <b class="del">−3</b></em>
+          </p>
+        </div>
+        <div class="side-section">
+          <p class="panel-label">Lineage · 4 running</p>
+          <ul class="lineage">
+            {subagents.toReversed().map((agent) => (
+              <li>
+                <img src={agent.icon} alt="" width="14" height="14" loading="lazy" />
+                <span>{agent.name}</span>
+                <em>{agent.time}</em>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div class="side-section">
+          <p class="panel-label">Limits</p>
+          <ul class="limits">
+            {limits.map((limit) => (
+              <li>
+                <span>{limit.label}</span>
+                <i aria-hidden="true"><b style={`width:${limit.used}%`}></b></i>
+                <em>{limit.used}%</em>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+    <h2>{f.agents.title}</h2>
+    <p class="feature-body">{f.agents.body}</p>
+  </li>
+
+  <li class="feature">
+    <div class="demo demo-dialog" data-providers>
+      <div class="dialog-head">
+        <p class="dialog-title">Add provider</p>
+        <p class="dialog-sub">Add an account or configure a provider on MacBook Pro.</p>
+      </div>
+      <div class="tiles">
+        {providers.map((provider) => (
+          <button type="button" class="tile" aria-pressed={provider === selectedProvider ? "true" : "false"} data-provider data-account={provider.account} data-connected={provider.on ? "" : undefined}>
+            <img src={provider.icon} alt="" width="16" height="16" loading="lazy" />
+            <span>{provider.name}</span>
+            <i aria-hidden="true">✓</i>
+          </button>
+        ))}
+      </div>
+      <div class="dialog-foot">
+        <span class="dim" data-connected-count>{providers.filter((provider) => provider.on).length} connected</span>
+        <button type="button" class="dialog-action" data-provider-action>Continue with {selectedProvider.account}</button>
+      </div>
+    </div>
+    <h2>{f.subscriptions.title}</h2>
+    <p class="feature-body">{f.subscriptions.body}</p>
+  </li>
+
+  <li class="feature">
+    <a class="demo demo-repo" href={GITHUB_REPOSITORY_URL} target="_blank" rel="noopener noreferrer">
+      <span class="repo-head">
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M3 12V3.5a1 1 0 0 1 1-1h8.5v11H4.5A1.5 1.5 0 0 1 3 12zm0 0a1.5 1.5 0 0 1 1.5-1.5h8" /></svg>
+        <span class="repo-name"><span class="dim">pingdotgg /</span> t3code</span>
+        <span class="repo-pill">Public</span>
+        <span class="repo-star">★ Star <b>{MARKETING_STATS.githubStars}</b></span>
+      </span>
+      <span class="repo-files">
+        {repoFiles.map((file) => (
+          <span class="repo-file">
+            {file.dir ? (
+              <svg viewBox="0 0 16 16" width="14" height="14" class="repo-dir" aria-hidden="true"><path d="M1.5 4a1 1 0 0 1 1-1h3.2l1.5 1.5h6.3a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z" /></svg>
+            ) : (
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 1.5h5l3.5 3.5v9a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-12a.5.5 0 0 1 .5-.5z" /><path d="M9 1.5v3.5h3.5" /></svg>
+            )}
+            <span class="repo-file-name">{file.name}</span>
+            <span class="dim">{file.note}</span>
+          </span>
+        ))}
+      </span>
+      <span class="repo-foot">
+        <span><i class="lang-dot" aria-hidden="true"></i>TypeScript</span>
+        <span>MIT License</span>
+        <span>{MARKETING_STATS.users} users</span>
+      </span>
+    </a>
+    <h2>{f.open.title}</h2>
+    <p class="feature-body">{f.open.body}</p>
+  </li>
+</ul>
+
+<script>
+  const anywhere = document.querySelector<HTMLElement>("[data-anywhere]");
+  const phoneForm = anywhere?.querySelector<HTMLFormElement>("[data-phone-form]");
+  const phoneInput = phoneForm?.querySelector("input");
+  if (anywhere && phoneForm && phoneInput) {
+    const replies: { say: string; reply: string }[] = JSON.parse(phoneForm.dataset.replies ?? "[]");
+    let next = 1;
+    const say = (className: string, text: string) => {
+      for (const list of anywhere.querySelectorAll("[data-msgs]")) {
+        // Cloned so the new line keeps Astro's scoped style attribute.
+        const line = list.querySelector(className)?.cloneNode() as HTMLElement | undefined;
+        if (!line) continue;
+        line.textContent = text;
+        list.append(line);
+      }
+    };
+    phoneForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const text = phoneInput.value.trim();
+      if (!text) return;
+      say(".msg-user", text);
+      const reply = replies.find((entry) => entry.say === text)?.reply ?? "On it.";
+      window.setTimeout(() => say(".msg-agent", reply), 500);
+      phoneInput.value = replies[next]?.say ?? "";
+      next += 1;
+    });
+  }
+
+  const run = document.querySelector<HTMLElement>("[data-run]");
+  const runToggle = run?.querySelector<HTMLButtonElement>("[data-run-toggle]");
+  const runMenu = run?.querySelector<HTMLElement>("[data-run-menu]");
+  if (run && runToggle && runMenu) {
+    const setRunMenu = (open: boolean) => {
+      runMenu.hidden = !open;
+      runToggle.setAttribute("aria-expanded", String(open));
+      run.toggleAttribute("data-open", open);
+    };
+    runToggle.addEventListener("click", () => setRunMenu(Boolean(runMenu.hidden)));
+    const runOptions = runMenu.querySelectorAll<HTMLButtonElement>("[role=option]");
+    for (const option of runOptions) {
+      option.addEventListener("click", () => {
+        for (const other of runOptions) other.setAttribute("aria-selected", String(other === option));
+        const mark = option.querySelector("svg")?.cloneNode(true);
+        if (mark) runToggle.querySelector("svg")?.replaceWith(mark);
+        const name = run.querySelector("[data-run-name]");
+        if (name) name.textContent = option.textContent?.trim() ?? "";
+        setRunMenu(false);
+      });
+    }
+  }
+  const thread = document.querySelector<HTMLElement>("[data-thread]");
+  const modelToggle = thread?.querySelector<HTMLButtonElement>("[data-model-toggle]");
+  const modelMenu = thread?.querySelector<HTMLElement>("[data-model-menu]");
+  if (thread && modelToggle && modelMenu) {
+    const setMenu = (open: boolean) => {
+      modelMenu.hidden = !open;
+      modelToggle.setAttribute("aria-expanded", String(open));
+    };
+    modelToggle.addEventListener("click", () => setMenu(Boolean(modelMenu.hidden)));
+    document.addEventListener("click", (event) => {
+      if (!modelMenu.hidden && !thread.contains(event.target as Node)) setMenu(false);
+    });
+    thread.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !modelMenu.hidden) {
+        setMenu(false);
+        modelToggle.focus();
+      }
+    });
+    const options = modelMenu.querySelectorAll<HTMLButtonElement>("[role=option]");
+    for (const option of options) {
+      option.addEventListener("click", () => {
+        for (const other of options) other.setAttribute("aria-selected", String(other === option));
+        const modelIcon = thread.querySelector<HTMLImageElement>("[data-model-icon]");
+        const name = thread.querySelector("[data-model-name]");
+        const effort = thread.querySelector("[data-model-effort]");
+        if (modelIcon) modelIcon.src = option.dataset.icon ?? "";
+        if (name) name.textContent = option.dataset.label ?? "";
+        if (effort) effort.textContent = option.dataset.effort ?? "";
+        setMenu(false);
+      });
+    }
+  }
+
+  const dialog = document.querySelector<HTMLElement>("[data-providers]");
+  const action = dialog?.querySelector<HTMLButtonElement>("[data-provider-action]");
+  if (dialog && action) {
+    const tiles = [...dialog.querySelectorAll<HTMLButtonElement>("[data-provider]")];
+    const render = () => {
+      const selected = tiles.find((tile) => tile.getAttribute("aria-pressed") === "true");
+      const connected = selected?.hasAttribute("data-connected") ?? false;
+      const account = selected?.dataset.account ?? "";
+      const count = dialog.querySelector("[data-connected-count]");
+      action.textContent = connected ? `Sign out of ${account}` : `Continue with ${account}`;
+      action.toggleAttribute("data-connected", connected);
+      if (count) count.textContent = `${tiles.filter((tile) => tile.hasAttribute("data-connected")).length} connected`;
+    };
+    for (const tile of tiles) {
+      tile.addEventListener("click", () => {
+        for (const other of tiles) other.setAttribute("aria-pressed", String(other === tile));
+        render();
+      });
+    }
+    action.addEventListener("click", () => {
+      tiles.find((tile) => tile.getAttribute("aria-pressed") === "true")?.toggleAttribute("data-connected");
+      render();
+    });
+  }
+</script>
+
+<style>
+  .features-list {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 88px;
+    list-style: none;
+  }
+
+  .feature h2 {
+    margin-top: 20px;
+    color: var(--fg);
+    font-size: 20px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+  }
+
+  .feature-body {
+    margin-top: 4px;
+    color: var(--fg-muted);
+    font-size: 15px;
+    line-height: 1.55;
+  }
+
+  .dim {
+    color: var(--fg-dim);
+  }
+
+
+
+  /* Every demo is the same box, drawn after the app itself. */
+
+  .demo {
+    position: relative;
+    display: flex;
+    height: 340px;
+    overflow: hidden;
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    background: #0a0a0a;
+    color: var(--fg);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .demo button,
+  .demo input {
+    font: inherit;
+  }
+
+  .demo img {
+    flex-shrink: 0;
+  }
+
+  .demo svg {
+    flex-shrink: 0;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* Shared app pieces */
+
+  .win-side {
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    background: #070707;
+  }
+
+  .app-main,
+  .win-main {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+    padding: 12px 14px 14px;
+  }
+
+
+  .win-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+
+
+  .msgs {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 8px;
+    min-height: 0;
+    padding: 12px 0;
+    overflow: hidden;
+  }
+
+  .demo-app .msgs {
+    justify-content: flex-start;
+    padding-top: 18px;
+  }
+
+  .msg-user {
+    flex-shrink: 0;
+    align-self: flex-end;
+    max-width: 92%;
+    padding: 6px 10px;
+    border-radius: 12px;
+    background: #1c1c1c;
+  }
+
+  .msg-meta {
+    flex-shrink: 0;
+    margin-top: 6px;
+    color: var(--fg-dim);
+  }
+
+  .msg-agent {
+    flex-shrink: 0;
+    line-height: 1.5;
+  }
+
+  .composer {
+    position: relative;
+    flex-shrink: 0;
+    padding: 10px 10px 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: #111;
+  }
+
+  .composer-placeholder {
+    overflow: hidden;
+    color: var(--fg-dim);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .composer-row {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+  }
+
+  .model-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+    border-radius: 6px;
+    white-space: nowrap;
+  }
+
+  button.model-chip {
+    transition: background 0.18s ease;
+  }
+
+  button.model-chip:hover,
+  button.model-chip[aria-expanded="true"] {
+    background: rgba(255, 255, 255, 0.07);
+  }
+
+  .send {
+    display: grid;
+    flex-shrink: 0;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    background: #2a2a2a;
+    color: var(--fg-muted);
+  }
+
+  .panel-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--fg-muted);
+    font-size: 11px;
+  }
+
+  /* Anywhere: the same thread on a desktop and a phone */
+
+  .demo-anywhere {
+    align-items: center;
+    gap: 20px;
+    padding: 20px;
+    background:
+      radial-gradient(120% 90% at 85% 100%, oklch(0.571 0.21 264 / 0.22), transparent 60%),
+      #050505;
+  }
+
+  .win,
+  .phone {
+    overflow: hidden;
+    border: 1px solid var(--border-strong);
+    background: #0a0a0a;
+    box-shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.9);
+  }
+
+  .win {
+    display: flex;
+    flex: 1;
+    align-self: stretch;
+    min-width: 0;
+    border-radius: 12px;
+  }
+
+  .lights {
+    display: flex;
+    gap: 5px;
+    padding: 2px 8px 12px;
+  }
+
+  .lights i {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: #ff5f57;
+  }
+
+  .lights i:nth-child(2) {
+    background: #febc2e;
+  }
+
+  .lights i:nth-child(3) {
+    background: #28c840;
+  }
+
+  .win-side {
+    width: 132px;
+    padding: 10px 6px;
+  }
+
+  .side-brand {
+    padding: 2px 8px 10px;
+    font-weight: 600;
+  }
+
+  .side-row {
+    display: grid;
+    padding: 6px 8px;
+    border-radius: 7px;
+    white-space: nowrap;
+  }
+
+  .side-row span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .side-row em {
+    color: var(--fg-dim);
+    font-size: 11px;
+    font-style: normal;
+  }
+
+  .side-row--on {
+    background: #171717;
+  }
+
+  .phone {
+    flex-shrink: 0;
+    align-self: stretch;
+    width: 158px;
+    padding: 4px;
+    border-radius: 30px;
+    background: #1c1c1e;
+  }
+
+  .phone-screen {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    padding: 0 8px 6px;
+    overflow: hidden;
+    border-radius: 26px;
+    background: #0a0a0a;
+  }
+
+  .phone-status {
+    display: flex;
+    flex-shrink: 0;
+    justify-content: space-between;
+    align-items: center;
+    height: 26px;
+    padding: 0 6px;
+    font-size: 10px;
+    font-weight: 600;
+  }
+
+  .island {
+    width: 40px;
+    height: 12px;
+    border-radius: 999px;
+    background: #000;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07);
+  }
+
+  .phone-status .battery-level {
+    fill: currentColor;
+    stroke: none;
+  }
+
+  .phone-head {
+    display: flex;
+    flex-shrink: 0;
+    justify-content: center;
+    align-items: center;
+    padding: 4px 0 8px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 500;
+  }
+
+  .phone-head span {
+    margin-right: auto;
+    color: oklch(0.72 0.13 264);
+    font-size: 16px;
+    line-height: 1;
+  }
+
+  .phone-head::after {
+    content: "";
+    width: 6px;
+    margin-left: auto;
+  }
+
+  .home-bar {
+    flex-shrink: 0;
+    align-self: center;
+    width: 44px;
+    height: 4px;
+    margin-top: 7px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.35);
+  }
+
+  .phone-composer {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 4px 4px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    background: #111;
+  }
+
+  .phone-composer:focus-within {
+    border-color: oklch(0.571 0.21 264 / 0.8);
+  }
+
+  .phone-composer input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: none;
+    color: var(--fg);
+  }
+
+  .phone-composer button {
+    display: grid;
+    flex-shrink: 0;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 999px;
+    background: oklch(0.571 0.21 264);
+    color: #fff;
+    transition: background 0.18s ease;
+  }
+
+  .phone-composer button:hover {
+    background: oklch(0.62 0.2 264);
+  }
+
+  /* Machines: the composer's "Run on" picker */
+
+  .demo-run {
+    justify-content: center;
+    align-items: center;
+    padding: 0 24px;
+  }
+
+  .run {
+    width: 100%;
+    max-width: 520px;
+    transition: transform 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+
+  /* Lifts the composer by half the open menu's height, so both states sit in the middle. */
+  .demo-run[data-open] .run {
+    transform: translateY(-62px);
+  }
+
+  .demo-run .composer {
+    padding: 12px 10px 10px 14px;
+  }
+
+  .demo-run .composer-row {
+    margin-top: 28px;
+  }
+
+  .clip {
+    margin-right: auto;
+    color: var(--fg-dim);
+  }
+
+  .run-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 8px;
+    padding: 0 4px;
+    color: var(--fg-muted);
+  }
+
+  .run-pick {
+    position: relative;
+  }
+
+  .run-chip,
+  .run-access {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+
+  .run-chip {
+    padding: 4px 8px;
+    border-radius: 7px;
+    color: var(--fg-muted);
+    transition: background 0.18s ease, color 0.18s ease;
+  }
+
+  .run-chip:hover,
+  .run-chip[aria-expanded="true"] {
+    background: rgba(255, 255, 255, 0.07);
+    color: var(--fg);
+  }
+
+  .run-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    width: 208px;
+    padding: 4px;
+    list-style: none;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: #161616;
+    box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.8);
+  }
+
+  .run-menu-label {
+    padding: 5px 8px 4px;
+    color: var(--fg-dim);
+    font-size: 11px;
+  }
+
+  .run-menu button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: 6px;
+    color: var(--fg);
+    text-align: left;
+  }
+
+  .run-menu button:hover,
+  .run-menu button[aria-selected="true"] {
+    background: rgba(255, 255, 255, 0.07);
+  }
+  /* Agents */
+
+  .subagents {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .stack {
+    display: flex;
+  }
+
+  .stack img {
+    box-sizing: content-box;
+    width: 14px;
+    height: 14px;
+    margin-left: -6px;
+    padding: 4px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    background: #111;
+  }
+
+  .stack img:first-child {
+    margin-left: 0;
+  }
+
+  .subagents-text {
+    display: grid;
+  }
+
+  .subagents-text strong {
+    font-weight: 600;
+  }
+
+  .subagents-text em {
+    color: oklch(0.72 0.13 264);
+    font-size: 11px;
+    font-style: normal;
+  }
+
+  .waiting {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    color: var(--fg-muted);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .waiting i {
+    flex-shrink: 0;
+    width: 10px;
+    height: 10px;
+    border: 1px dashed var(--fg-dim);
+    border-radius: 999px;
+  }
+
+  .waiting span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .side-panel {
+    display: flex;
+    flex-shrink: 0;
+    flex-direction: column;
+    justify-content: space-between;
+    width: 224px;
+    margin: 12px 12px 12px 0;
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    background: #0d0d0d;
+  }
+
+  .side-section {
+    padding: 9px 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .side-section:first-child {
+    border-top: 0;
+  }
+
+  .side-line,
+  .lineage li,
+  .limits li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+  }
+
+  .side-line + .side-line {
+    margin-top: 8px;
+  }
+
+  .side-line span,
+  .lineage li span {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .side-panel ul {
+    display: grid;
+    gap: 8px;
+    margin-top: 9px;
+    list-style: none;
+  }
+
+  .side-panel em {
+    color: var(--fg-dim);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-style: normal;
+  }
+
+  .limits li span {
+    width: 48px;
+    color: var(--fg-muted);
+  }
+
+  .limits li i {
+    flex: 1;
+    height: 3px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  .limits li b {
+    display: block;
+    height: 100%;
+    border-radius: 999px;
+    background: oklch(0.72 0.13 264);
+  }
+
+  .limits li em {
+    width: 26px;
+    text-align: right;
+  }
+
+  .add {
+    color: oklch(0.76 0.14 150);
+    font-weight: 400;
+  }
+
+  .del {
+    color: oklch(0.7 0.16 25);
+    font-weight: 400;
+  }
+
+  .model-menu {
+    position: absolute;
+    right: 38px;
+    bottom: 42px;
+    width: 172px;
+    padding: 4px;
+    list-style: none;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: #161616;
+    box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.8);
+  }
+
+  .model-menu button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 5px 7px;
+    border-radius: 6px;
+    text-align: left;
+  }
+
+  .model-menu button:hover,
+  .model-menu button[aria-selected="true"] {
+    background: rgba(255, 255, 255, 0.07);
+  }
+
+  /* Subscriptions: the app's own "Add provider" dialog */
+
+  .demo-dialog {
+    flex-direction: column;
+  }
+
+  .dialog-head {
+    padding: 16px 18px 12px;
+  }
+
+  .dialog-title {
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  .dialog-sub {
+    margin-top: 2px;
+    color: var(--fg-muted);
+  }
+
+  .tiles {
+    display: grid;
+    flex: 1;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-content: start;
+    gap: 6px;
+    padding: 0 18px;
+  }
+
+  .tiles .tile {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    height: 42px;
+    padding: 0 12px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.03);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+    font-size: 13px;
+    font-weight: 500;
+    text-align: left;
+    white-space: nowrap;
+    transition: background 0.18s ease, box-shadow 0.18s ease;
+  }
+
+  .tiles .tile:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .tiles .tile[aria-pressed="true"] {
+    background: oklch(0.571 0.21 264 / 0.15);
+    box-shadow: inset 0 0 0 2px oklch(0.571 0.21 264);
+  }
+
+  .tile img {
+    width: 16px;
+    height: 16px;
+  }
+
+  .tile span {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tile i {
+    display: none;
+    flex-shrink: 0;
+    place-items: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    background: oklch(0.72 0.16 150 / 0.18);
+    color: oklch(0.8 0.14 150);
+    font-size: 10px;
+    font-style: normal;
+  }
+
+  .tile[data-connected] i {
+    display: grid;
+  }
+
+  .dialog-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 18px;
+    border-top: 1px solid var(--border);
+  }
+
+  .dialog-foot .dialog-action {
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: oklch(0.571 0.21 264);
+    color: #fff;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: background 0.18s ease;
+  }
+
+  .dialog-foot .dialog-action:hover {
+    background: oklch(0.62 0.2 264);
+  }
+
+  .dialog-foot .dialog-action[data-connected] {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--fg);
+  }
+  /* Open */
+
+  .demo-repo {
+    flex-direction: column;
+    padding: 18px 20px;
+    font-size: 13px;
+    transition: border-color 0.18s ease;
+  }
+
+  .demo-repo:hover {
+    border-color: oklch(0.571 0.21 264 / 0.7);
+  }
+
+  .repo-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--fg-muted);
+  }
+
+  .repo-name {
+    color: var(--fg);
+    font-size: 15px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .repo-pill {
+    padding: 1px 7px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    font-size: 11px;
+  }
+
+  .repo-star {
+    display: inline-flex;
+    gap: 6px;
+    margin-left: auto;
+    padding: 4px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    background: #141414;
+    color: var(--fg);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .repo-star b {
+    color: var(--fg-muted);
+    font-weight: 400;
+  }
+
+  .repo-files {
+    display: grid;
+    margin-top: 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+
+  .repo-file {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+    height: 40px;
+    padding: 0 12px;
+    border-top: 1px solid var(--border);
+    color: var(--fg-muted);
+    white-space: nowrap;
+  }
+
+  .repo-file:first-child {
+    border-top: 0;
+  }
+
+  .repo-file .repo-dir {
+    fill: oklch(0.72 0.13 264 / 0.35);
+    stroke: oklch(0.72 0.13 264);
+  }
+
+  .repo-file-name {
+    width: 110px;
+    flex-shrink: 0;
+    color: var(--fg);
+  }
+
+  .repo-file .dim {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .repo-foot {
+    display: flex;
+    gap: 18px;
+    margin-top: auto;
+    color: var(--fg-muted);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .repo-foot span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .lang-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    background: #3178c6;
+  }
+
+  @media (max-width: 640px) {
+    .features-list {
+      gap: 64px;
+    }
+
+    .demo {
+      height: 380px;
+      font-size: 11px;
+    }
+
+    .demo-anywhere {
+      gap: 10px;
+      padding: 12px;
+    }
+
+    .win-side,
+    .side-panel {
+      display: none;
+    }
+
+    .win-main {
+      padding: 10px;
+    }
+
+    .win .model-chip .dim {
+      display: none;
+    }
+
+    .phone {
+      width: 138px;
+    }
+
+    .phone-screen {
+      padding: 0 6px 6px;
+    }
+
+    .phone-composer {
+      gap: 2px;
+      padding-left: 9px;
+    }
+
+    .demo-run {
+      padding: 0 12px;
+    }
+
+    .dialog-head,
+    .dialog-foot {
+      padding: 12px;
+    }
+
+    .dialog-sub {
+      display: none;
+    }
+
+    .tiles {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      padding: 0 12px;
+    }
+
+    .tiles .tile {
+      height: 36px;
+      font-size: 12px;
+    }
+    .demo-repo {
+      padding: 14px;
+    }
+
+    .repo-pill {
+      display: none;
+    }
+
+    .repo-file-name {
+      width: 84px;
+    }
+  }
+</style>
