@@ -157,5 +157,17 @@ describe("installPasskeyBridge", () => {
     const error = await pending;
     assert.instanceOf(error, DOMException);
     assert.strictEqual((error as DOMException).name, "AbortError");
+
+    const nullController = new AbortController();
+    const pendingWithNull = credentials
+      .get({ publicKey: { challenge: new Uint8Array([1]) }, signal: nullController.signal })
+      .catch((error: unknown) => error);
+    nullController.abort(null);
+    assert.strictEqual(await pendingWithNull, null);
+
+    const alreadyAborted = await credentials
+      .create({ publicKey: creationOptions, signal: AbortSignal.abort(null) })
+      .catch((error: unknown) => error);
+    assert.strictEqual(alreadyAborted, null);
   });
 });
