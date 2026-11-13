@@ -76,10 +76,19 @@ Proven:
 
 Not proven:
 
-- **Linux.** The musl release build passes in CI. One test fails on Linux
-  (`conn-terminal`, `keeps_scrollback_across_a_restart`). The SDK host was not built or run
-  on Linux, and memory was not measured there after the spike. See "Branches" for the
-  unfinished Linux pass.
+- **Linux, in part.** A Linux pass on Beast (Ubuntu, x86_64) was stopped half way when the
+  project was parked. Proven there: all tests pass on the gnu and musl targets after two
+  fixes that are on `main` (a terminal test that assumed the macOS shell, and a clippy 1.99
+  finding); the process group kill reaches grandchildren; `--bootstrap-fd` reads a socket
+  pair as Electron passes it; the musl binary is static, 14.5 MB, and starts; the SDK host
+  builds as a Node 26.12.1 single executable (152 MB) and the provider's 42 tests pass
+  through it. One terminal test (`clears_and_reports_the_foreground_command`) failed once in
+  about 90 runs on Linux; the cause is not found. Partial memory figures on Linux (musl,
+  `smaps_rollup`, MiB): the server 1.3 `Pss_Anon` just started, 1.9 connected, 2.8 after 4
+  turns on the fake provider; the SDK host with a stub CLI 32 `Pss_Anon` (76 Rss) in a
+  session and after 10 turns, and gone after the last session closed. Not done on Linux:
+  the full memory run, the live Claude tests, the `README.md` memory table (it still holds
+  the spike's figures), and CI changes.
 - Conn desktop and mobile against this server.
 - Orbit's flow in a real container.
 - Codex on CLI 0.166 or 0.167 (the recordings are from 0.156).
@@ -132,7 +141,9 @@ remembering: an own server brings its own defects.
    (annotations, panels, scheduled tasks, peer links, test logins, credentials, secrets, guest
    share); 68 more `/mcp` tools; Codex subagents and MCP elicitation; worktree setup scripts
    the T3 way (typed into a thread terminal, with a completion marker).
-7. **Small leftovers.** Limits on terminal environment variables; string caps on
+7. **Small leftovers.** `helpers/sdk-host/.npmrc` omits optional packages, so esbuild fetches
+   its binary in an install script, outside the lockfile; limits on terminal environment
+   variables; string caps on
    `assets.createUrl`; finished `git` children stay unreaped while the server runs;
    `t3_thread_search` on the engine's search; the Linux systemd scope for provider processes;
    a cap on the blocking pool or one store thread (measure first: each store call takes its
@@ -163,8 +174,9 @@ remembering: an own server brings its own defects.
 - `main`: verified. All checks pass on macOS.
 - `parked/rust-hygiene-step-1`: one finished commit (the generator writes one reasoned `allow`
   at the top of the generated file) and one commit marked `WIP (not proven)`.
-- `parked/linux-pass`, if present: the unfinished Linux pass. Read its commit messages; a
-  commit marked `WIP (not proven)` is not checked.
+- `parked/linux-pass`: the Linux pass. Its four proven commits are merged into `main`. One
+  more commit, marked `WIP (not proven)`, adds `memory-flow.mjs`, a small client for memory
+  runs on Linux.
 - In the Conn repository there are local branches only (`rust/*`, `spike/rust-*`,
   `split/conn-server*`), with the same history under `native/conn-server`. They were never
   pushed. They change nothing under `apps/` or `packages/`.
