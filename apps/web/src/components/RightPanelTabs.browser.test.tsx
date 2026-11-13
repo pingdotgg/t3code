@@ -25,7 +25,11 @@ function trackpad() {
   };
   let scrolling = false;
   return {
-    bridge: { onTrackpadScrollBegin: subscribe(begin), onTrackpadScrollEnd: subscribe(end) },
+    bridge: {
+      getWindowZoomFactor: () => 1,
+      onTrackpadScrollBegin: subscribe(begin),
+      onTrackpadScrollEnd: subscribe(end),
+    },
     scroll(target: Element, deltas: readonly number[]) {
       let scroller: Element | null = target;
       while (
