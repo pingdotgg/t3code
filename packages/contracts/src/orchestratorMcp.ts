@@ -231,6 +231,16 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   model: Schema.NullOr(Schema.String),
   executedModel: Schema.optional(OrchestratorMcpExecutedModel),
   options: Schema.optional(Schema.Array(ProviderOptionSelection)),
+  configured: Schema.optional(
+    Schema.Struct({
+      instanceId: ProviderInstanceId,
+      model: Schema.String,
+      options: Schema.optional(Schema.Array(ProviderOptionSelection)),
+    }).annotate({
+      description:
+        "The child thread's current selection, when it differs from the run's above. Its next turn uses it.",
+    }),
+  ),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
   hasPendingQuestion: Schema.Boolean.annotate({

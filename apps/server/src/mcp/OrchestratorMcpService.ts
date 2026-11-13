@@ -66,7 +66,11 @@ import {
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
 } from "@t3tools/contracts";
-import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3tools/shared/model";
+import {
+  getProviderOptionCurrentValue,
+  modelSelectionsEqual,
+  withLegacyUltracodeEffort,
+} from "@t3tools/shared/model";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
@@ -1743,6 +1747,11 @@ const make = Effect.gen(function* () {
       model: modelSelection.model,
       executedModel: runExecutedModel(childControls, executionRun),
       options: modelSelection.options ?? [],
+      ...(executionRun?.modelSelection !== undefined &&
+      childControls.thread.modelSelection !== undefined &&
+      !modelSelectionsEqual(executionRun.modelSelection, childControls.thread.modelSelection)
+        ? { configured: childControls.thread.modelSelection }
+        : {}),
       summary: derivedResult,
       resultContextTransferId,
       latestTerminalRunId: terminalRun?.id ?? null,
