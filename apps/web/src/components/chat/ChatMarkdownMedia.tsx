@@ -37,7 +37,19 @@ export function markdownImageCopy(alt: string, src: string, title: string | unde
   const escapedAlt = alt.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
   const titleSuffix =
     title === undefined ? "" : ` "${title.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-  return `![${escapedAlt}](${src}${titleSuffix})`;
+  return `![${escapedAlt}](${markdownDestination(src)}${titleSuffix})`;
+}
+
+// Raw HTML sources keep spaces and parentheses that a bare Markdown destination cannot hold.
+function markdownDestination(src: string): string {
+  if (!/[\s<>()]/.test(src)) return src;
+  const escaped = src
+    .replaceAll("\\", "\\\\")
+    .replaceAll("<", "\\<")
+    .replaceAll(">", "\\>")
+    .replaceAll("\n", "%0A")
+    .replaceAll("\r", "%0D");
+  return `<${escaped}>`;
 }
 
 /**
