@@ -11,7 +11,7 @@ import { page as browserPage, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
-import { WorkflowsEnvironment } from "./WorkflowsPage";
+import { WorkflowRunsView } from "./WorkflowRunsView";
 
 const environmentId = EnvironmentId.make("laptop");
 const at = (minute: number) => new Date(Date.UTC(2026, 10, 1, 0, minute)).toISOString();
@@ -23,6 +23,7 @@ const run = (fields: Partial<WorkflowRun> & Pick<WorkflowRun, "runId" | "title">
   result: null,
   pauses: 0,
   retired: false,
+  resumesAt: null,
   parentRunId: null,
   parentStep: null,
   startedAt: at(0),
@@ -39,6 +40,7 @@ const step = (
   threadId: null,
   environmentId: null,
   result: null,
+  said: null,
   startedAt: at(0),
   endedAt: at(0),
   ...fields,
@@ -140,33 +142,47 @@ async function desktop() {
   return { [Symbol.asyncDispose]: () => browserPage.viewport(width, height) };
 }
 
-const page = (selectedRunId: string | null = null, onSelect = vi.fn()) => (
-  <WorkflowsEnvironment
+const page = (
+  selectedRunId: string | null = null,
+  on: { readonly select?: (runId: string | null) => void; readonly thread?: () => void } = {},
+  openThreadId: string | null = null,
+) => (
+  <WorkflowRunsView
     environmentId={environmentId}
     selectedRunId={selectedRunId}
-    onSelect={onSelect}
+    openThreadId={openThreadId}
+    onSelect={on.select ?? vi.fn()}
+    onOpenThread={on.thread ?? vi.fn()}
   />
 );
 
-describe("WorkflowsPage", () => {
+describe("WorkflowRunsView", () => {
   it("opens on the question that waits, and answers it with the reason given", async () => {
-    setup({
-      runs: [
-        run({ runId: "busy", title: "Nightly sync" }),
-        run({ runId: "ship", title: "Release 1.2", status: "waiting", detail: "approve" }),
-      ],
-      questions: [question],
-    });
+    setup(
+      {
+        runs: [
+          run({ runId: "busy", title: "Nightly sync" }),
+          run({ runId: "ship", title: "Release 1.2", status: "waiting", detail: "approve" }),
+        ],
+        questions: [question],
+      },
+      { ship: [step({ name: "approve", kind: "ask", status: "running", endedAt: null })] },
+    );
+    const thread = vi.fn();
     await using _desktop = await desktop();
-    await using screen = await render(page());
+    await using screen = await render(page(null, { thread }));
 
-    const needsYou = screen.getByRole("region", { name: "Needs you" });
-    await expect.element(needsYou.getByRole("button", { name: /Release 1\.2/ })).toBeVisible();
-    // Nothing was picked, so the run that asks is the one shown, with its question.
-    await expect.element(screen.getByText("The diff touches the installer.")).toBeVisible();
+    // The list opens on what waits on a person, and the run that asks is the one shown.
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect.element(runs.getByRole("button", { name: /Release 1\.2/ })).toBeVisible();
     await expect
-      .element(screen.getByRole("link", { name: "Talk to the agent first" }))
-      .toHaveAttribute("href", "/laptop/thread-9");
+      .element(runs.getByRole("button", { name: /Nightly sync/ }))
+      .not.toBeInTheDocument();
+    await expect.element(runs).toMatchTextContent("Asks: Ship release 1.2?");
+    await expect.element(screen.getByText("The diff touches the installer.")).toBeVisible();
+
+    await screen.getByRole("button", { name: "Ask the agent first" }).click();
+    expect(thread).toHaveBeenCalledWith({ threadId: "thread-9", environmentId: null });
 
     await screen.getByRole("button", { name: "Add a reason" }).click();
     await userEvent.fill(
@@ -198,11 +214,17 @@ describe("WorkflowsPage", () => {
     await expect.element(screen.getByRole("button", { name: "Hold", exact: true })).toBeDisabled();
   });
 
-  it("says why a run paused where it paused, and resumes it", async () => {
+  it("says why a run paused at the step that failed, and resumes it", async () => {
     setup(
       {
         runs: [
-          run({ runId: "sync", title: "Sync labels", status: "paused", detail: "apply: 503" }),
+          run({
+            runId: "sync",
+            title: "Sync labels",
+            status: "paused",
+            detail: "apply: 503",
+            pauses: 1,
+          }),
         ],
         questions: [],
       },
@@ -217,17 +239,16 @@ describe("WorkflowsPage", () => {
     await using screen = await render(page());
 
     const why = screen.getByRole("region", { name: "Why it paused" });
-    await expect.element(why).toMatchTextContent("apply: 503");
-    const happened = screen.getByRole("region", { name: "What happened" });
-    await expect.element(happened).toMatchTextContent(/apply.*3 tries.*failed/);
-    await why.getByRole("button", { name: "Resume" }).click();
+    await expect.element(why).toMatchTextContent(/Paused at apply.*3rd try.*waits for you/);
+    await expect.element(why).toMatchTextContent("503");
+    await why.getByRole("button", { name: "Resume now" }).click();
 
     await vi.waitFor(() =>
       expect(state.commands).toEqual([["workflow resume", { runId: "sync" }]]),
     );
   });
 
-  it("tells a finished run as its beats, with the bookkeeping folded away", async () => {
+  it("tells a finished run as a feed: agents speak, bookkeeping is a line", async () => {
     setup(
       {
         runs: [
@@ -245,7 +266,14 @@ describe("WorkflowsPage", () => {
         fix: [
           step({ name: "load", kind: "step" }),
           step({ name: "existing-prs", kind: "step" }),
-          step({ name: "triage", kind: "agent", endedAt: at(3), threadId: "thread-1" }),
+          step({
+            name: "triage",
+            kind: "agent",
+            endedAt: at(3),
+            threadId: "thread-1",
+            said: "Reproduced on main.",
+            result: { kind: "bug", reproduced: true },
+          }),
           step({
             name: "implement",
             kind: "agent",
@@ -254,27 +282,39 @@ describe("WorkflowsPage", () => {
             threadId: "thread-2",
             environmentId: "build-box",
           }),
+          step({
+            name: "approve",
+            kind: "ask",
+            startedAt: at(10),
+            endedAt: at(11),
+            result: { choice: "Fix it", reason: "It hits everyone on Windows" },
+          }),
         ],
       },
     );
-    await using screen = await render(page("fix"));
+    const thread = vi.fn();
+    await using screen = await render(page("fix", { thread }, "thread-1"));
 
-    await expect
-      .element(screen.getByRole("region", { name: "How it ended" }))
-      .toMatchTextContent("merged as ba6ac7");
-    const rows = screen.getByRole("region", { name: "What happened" }).getByRole("listitem");
-    await expect.element(rows.nth(0)).toMatchTextContent("2 quick steps");
-    await expect.element(rows.nth(1)).toMatchTextContent(/triage.*Agent, 3m 0s/);
-    await expect
-      .element(rows.nth(1).getByRole("link", { name: "Transcript" }))
-      .toHaveAttribute("href", "/laptop/thread-1");
+    const happened = screen.getByRole("region", { name: "What happened" });
+    await expect.element(happened).toMatchTextContent("load, existing-prs");
+    const triage = screen.getByRole("region", { name: "triage" });
+    await expect.element(triage).toMatchTextContent(/3m 0s.*Reproduced on main\..*kind.*bug/);
+    // Its thread is the one open beside the run, and the button says so.
+    const transcript = triage.getByRole("button", { name: "Transcript" });
+    await expect.element(transcript).toHaveAttribute("aria-pressed", "true");
+    await transcript.click();
+    expect(thread).toHaveBeenCalledWith({ threadId: "thread-1", environmentId: null });
     // This client is not connected to the linked environment, so there is nothing to open.
-    await expect.element(rows.nth(2)).toMatchTextContent("Thread on build-box");
-    await rows
-      .nth(0)
-      .getByRole("button", { name: /2 quick steps/ })
-      .click();
-    await expect.element(rows.nth(0)).toMatchTextContent("existing-prs");
+    await expect
+      .element(screen.getByRole("region", { name: "implement" }))
+      .toMatchTextContent("Thread on build-box");
+    await expect
+      .element(screen.getByRole("region", { name: "approve" }))
+      .toMatchTextContent("You said Fix it: It hits everyone on Windows");
+    await expect.element(happened).toMatchTextContent(/Finished.*merged as ba6ac7/);
+    await expect
+      .element(screen.getByRole("navigation", { name: "Steps so far" }))
+      .toMatchTextContent("triageimplementapprove");
     await expect
       .element(screen.getByRole("button", { name: "Cancel run" }))
       .not.toBeInTheDocument();
@@ -296,66 +336,42 @@ describe("WorkflowsPage", () => {
         ],
       },
     );
-    const onSelect = vi.fn();
-    await using screen = await render(page("rel", onSelect));
+    const select = vi.fn();
+    await using screen = await render(page("rel", { select }));
 
-    const happened = screen.getByRole("region", { name: "What happened" });
-    await expect.element(happened).toMatchTextContent("Runs Check web");
-    await happened.getByRole("button", { name: "Open run" }).click();
-    expect(onSelect).toHaveBeenCalledWith("chk");
+    const invoked = screen.getByRole("region", { name: "Check web" });
+    await invoked.getByRole("button", { name: "Open run" }).click();
+    expect(select).toHaveBeenCalledWith("chk");
   });
 
-  it("lists each workflow with what starts it, also one that has not run yet", async () => {
+  it("switches between what is under way and everything, one workflow at a time", async () => {
     setup({
       workflows: [
         { name: "release", version: 1, triggers: ["webhook tags"] },
         { name: "report", version: 1, triggers: ["daily at 09:00"] },
       ],
-      runs: [run({ runId: "rel", title: "Release 1.3" })],
+      runs: [
+        run({ runId: "rel", title: "Release 1.3" }),
+        run({ runId: "old", title: "Release 1.2", status: "completed", endedAt: at(3) }),
+      ],
       questions: [],
     });
     await using _desktop = await desktop();
     await using screen = await render(page());
 
-    const release = screen.getByRole("region", { name: "release" });
-    await expect.element(release).toMatchTextContent("Starts on webhook tags");
-    await expect.element(release.getByRole("button", { name: /Release 1\.3/ })).toBeVisible();
-    const report = screen.getByRole("region", { name: "report" });
-    await expect.element(report).toMatchTextContent("Starts on daily at 09:00");
-    await expect.element(report).toMatchTextContent("Has not run yet.");
-  });
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect.element(runs.getByRole("button", { name: /Release 1\.3/ })).toBeVisible();
+    await expect
+      .element(runs.getByRole("button", { name: /Release 1\.2/ }))
+      .not.toBeInTheDocument();
+    await screen.getByRole("button", { name: "All", exact: true }).click();
+    await expect.element(runs.getByRole("button", { name: /Release 1\.2/ })).toBeVisible();
 
-  it("shows what an agent returned and what a person answered", async () => {
-    setup(
-      {
-        runs: [run({ runId: "fix", title: "#7 Crash", status: "completed", endedAt: at(9) })],
-        questions: [],
-      },
-      {
-        fix: [
-          step({
-            name: "triage",
-            kind: "agent",
-            endedAt: at(3),
-            threadId: "thread-1",
-            result: { kind: "bug", reproduced: true },
-          }),
-          step({
-            name: "approve",
-            kind: "ask",
-            startedAt: at(3),
-            endedAt: at(4),
-            result: { choice: "Fix it", reason: "It hits everyone on Windows" },
-          }),
-        ],
-      },
-    );
-    await using screen = await render(page("fix"));
-
-    const rows = screen.getByRole("region", { name: "What happened" }).getByRole("listitem");
-    await expect.element(rows.nth(0)).toMatchTextContent(/kind: bug.*reproduced: true/);
-    await expect.element(rows.nth(1)).toMatchTextContent("Answered “Fix it” after 1m 0s");
-    await expect.element(rows.nth(1)).toMatchTextContent("Because: It hits everyone on Windows");
+    // A workflow that has not run is still there to be picked, with what starts it.
+    await screen.getByRole("combobox", { name: "Workflow" }).click();
+    await screen.getByRole("option", { name: "report" }).click();
+    await expect.element(screen.getByText("Starts on daily at 09:00")).toBeVisible();
+    await expect.element(runs).toMatchTextContent("Has not run yet.");
   });
 
   it("says how to turn workflows on when nothing has run", async () => {

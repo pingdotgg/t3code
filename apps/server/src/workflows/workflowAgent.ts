@@ -94,7 +94,7 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
       reply: "",
     };
   });
-  const done = (round: number, produced: Schema.Json) =>
+  const done = (round: number, produced: Schema.Json, said?: string) =>
     journaled(
       run,
       name,
@@ -103,7 +103,7 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
       Effect.all(
         [
           run.store.stepEnded(run.runId, name, "completed", null),
-          run.store.stepResult(run.runId, name, produced),
+          run.store.stepResult(run.runId, name, produced, said),
           run.store.runResumed(run.runId),
         ],
         { discard: true },
@@ -153,7 +153,7 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
               Effect.result,
             );
       if (Result.isSuccess(decoded)) {
-        yield* done(round, result.output ?? null);
+        yield* done(round, result.output ?? null, result.reply);
         return { value: decoded.success, thread: threadOf(turn) };
       }
       problem = `the agent did not return a result: ${decoded.failure}`;

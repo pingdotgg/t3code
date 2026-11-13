@@ -52,6 +52,7 @@ export interface StepRow {
   readonly thread_id: string | null;
   readonly environment_id: string | null;
   readonly result_json: string | null;
+  readonly said: string | null;
   readonly started_at: string;
   readonly ended_at: string | null;
 }
@@ -166,7 +167,13 @@ export class WorkflowStore extends Context.Service<
     ) => Effect.Effect<{ readonly threadId: string; readonly environmentId: string | null } | null>;
     readonly counts: Effect.Effect<WorkflowCounts>;
     /** Keep what a step produced for a person to read. A large value is kept as its start. */
-    readonly stepResult: (runId: string, name: string, value: Schema.Json) => Effect.Effect<void>;
+    readonly stepResult: (
+      runId: string,
+      name: string,
+      value: Schema.Json,
+      /** What an agent said in closing, when its result is data and not that reply. */
+      said?: string,
+    ) => Effect.Effect<void>;
     /** Say something about a step that is under way, such as when its sleep ends. */
     readonly stepDetail: (runId: string, name: string, detail: string) => Effect.Effect<void>;
     readonly mailPut: (mail: {
@@ -466,12 +473,20 @@ const make = Effect.gen(function* () {
         total: Number(rows[0]?.total ?? 0),
       })),
     ),
-    stepResult: Effect.fn("WorkflowStore.stepResult")(function* (runId, name, value) {
+    stepResult: Effect.fn("WorkflowStore.stepResult")(function* (runId, name, value, said) {
       const full = jsonText(value);
       const kept =
         full.length <= STEP_RESULT_KEPT ? full : jsonText(`${full.slice(0, STEP_RESULT_KEPT)}…`);
+      const words = said?.trim() ?? "";
+      const keptSaid =
+        words === ""
+          ? null
+          : words.length <= STEP_RESULT_KEPT
+            ? words
+            : `${words.slice(0, STEP_RESULT_KEPT)}…`;
       yield* sql`
-        UPDATE workflow_steps SET result_json = ${kept} WHERE run_id = ${runId} AND name = ${name}
+        UPDATE workflow_steps SET result_json = ${kept}, said = ${keptSaid}
+        WHERE run_id = ${runId} AND name = ${name}
       `.pipe(Effect.orDie);
     }),
     stepDetail: Effect.fn("WorkflowStore.stepDetail")(function* (runId, name, detail) {
@@ -552,7 +567,7 @@ const make = Effect.gen(function* () {
     steps: Effect.fn("WorkflowStore.steps")(function* (runId) {
       return yield* sql<StepRow>`
         SELECT name, kind, status, attempts, detail, thread_id, environment_id, result_json,
-               started_at, ended_at
+               said, started_at, ended_at
         FROM workflow_steps WHERE run_id = ${runId} ORDER BY started_at, rowid
       `.pipe(Effect.orDie);
     }),

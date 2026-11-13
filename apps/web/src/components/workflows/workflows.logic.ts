@@ -167,7 +167,7 @@ export function defaultWorkflowRunId(groups: WorkflowRunGroups): string | null {
   );
 }
 
-/** What starts a workflow, as the line under its name. */
+/** What starts a workflow, in words. */
 export function workflowTriggerLine(section: WorkflowSection): string {
   if (section.triggers === null) return "No longer registered on this server";
   if (section.invokedOnly) return "Runs as part of other workflows";
@@ -176,45 +176,112 @@ export function workflowTriggerLine(section: WorkflowSection): string {
     : `Starts on ${section.triggers.join(", ")}`;
 }
 
-/** What a run is doing right now, in a few words, for its line in the list. */
-export function workflowRunActivity(
-  run: Pick<WorkflowRun, "status" | "detail">,
-  questions: number,
-): string | null {
-  const detail = run.detail?.trim() ?? "";
-  if (questions > 0)
-    return questions === 1 ? "Asks you a question" : `Asks you ${questions} questions`;
+export type WorkflowListTab = "needs-you" | "running" | "all";
+
+/**
+ * The three lists a person switches between. Each is whole pieces of work, newest change first: a
+ * run that another invoked is reached through that one.
+ */
+export function workflowRunLists(
+  groups: WorkflowRunGroups,
+): Readonly<Record<WorkflowListTab, ReadonlyArray<WorkflowRunNode>>> {
+  const byChange = (nodes: ReadonlyArray<WorkflowRunNode>) =>
+    nodes.toSorted((left, right) => right.run.updatedAt.localeCompare(left.run.updatedAt));
+  const running = groups.workflows.flatMap((section) => section.active);
+  const finished = groups.workflows.flatMap((section) => section.finished);
+  return {
+    "needs-you": byChange(groups.needsYou),
+    running: byChange(running),
+    all: [...byChange(groups.needsYou), ...byChange(running), ...byChange(finished)],
+  };
+}
+
+/** The list to open on: what waits on a person, else what is under way, else everything. */
+export function defaultWorkflowListTab(groups: WorkflowRunGroups): WorkflowListTab {
+  if (groups.needsYou.length > 0) return "needs-you";
+  return groups.workflows.some((section) => section.active.length > 0) ? "running" : "all";
+}
+
+const CHIP_TONES = 5;
+
+/** A workflow's mark in the list: two letters and one of a few colours, the same every time. */
+export function workflowChip(name: string): { readonly letters: string; readonly tone: number } {
+  const parts = name.split(/[^\p{L}\p{N}]+/u).filter((part) => part !== "");
+  const letters =
+    parts.length > 1 ? `${parts[0]![0]}${parts[1]![0]}` : (parts[0] ?? name).slice(0, 2);
+  let hash = 0;
+  for (const char of name) hash = (hash * 31 + char.codePointAt(0)!) % 9973;
+  return { letters: letters.toUpperCase(), tone: hash % CHIP_TONES };
+}
+
+export type WorkflowRunTone = "input" | "failed" | "working" | "quiet" | "done";
+
+/** A run's state as the one word the thread list would use for it. */
+export function workflowRunState(node: WorkflowRunNode): {
+  readonly word: string;
+  readonly tone: WorkflowRunTone;
+} {
+  const { run } = node;
+  if (node.questions.length > 0) return { word: "Input", tone: "input" };
   switch (run.status) {
     case "paused":
-      return detail === "" ? "A step failed" : detail;
-    case "waiting":
-      if (detail.startsWith("agent ")) return `Agent working on ${detail.slice(6)}`;
-      if (detail.startsWith("sleep ")) return "Sleeping";
-      return detail === "" ? "Waiting" : `Waiting for ${detail}`;
+      return { word: "Paused", tone: "failed" };
     case "running":
-      return "Running";
+      return { word: "Working", tone: "working" };
+    case "waiting": {
+      const detail = run.detail ?? "";
+      if (detail.startsWith("agent ")) return { word: "Working", tone: "working" };
+      if (detail.startsWith("sleep ")) return { word: "Sleeping", tone: "quiet" };
+      // Something below it holds it up; say that, not that it idles.
+      if (node.children.some(needsPerson)) return { word: "Input", tone: "input" };
+      return { word: "Waiting", tone: "quiet" };
+    }
     case "completed":
-      return null;
+      return { word: "Done", tone: "done" };
     case "stopped":
+      return { word: "Stopped", tone: "quiet" };
     case "cancelled":
-      return detail === "" ? null : detail;
+      return { word: "Cancelled", tone: "quiet" };
   }
 }
 
-export function workflowRunStatusVariant(status: WorkflowRun["status"]) {
-  switch (status) {
-    case "running":
-      return "info";
-    case "waiting":
-      return "warning";
+const firstLine = (text: string) => text.trim().split("\n", 1)[0]!.trim();
+
+/** What a run is at right now, as the line under its title. */
+export function workflowRunNow(node: WorkflowRunNode): string {
+  const { run } = node;
+  const detail = run.detail?.trim() ?? "";
+  const asked = node.questions[0];
+  if (asked !== undefined) {
+    const more = node.questions.length - 1;
+    return `Asks: ${readWorkflowQuestion(asked).title}${more > 0 ? ` and ${more} more` : ""}`;
+  }
+  const below = flattenWorkflowRunNodes(node.children);
+  const holding = below.find(
+    (child) => child.questions.length > 0 || child.run.status === "paused",
+  );
+  switch (run.status) {
     case "paused":
-      return "error";
-    case "completed":
-      return "success";
+      return detail === "" ? "A step failed" : firstLine(detail);
+    case "running":
+      return "Running its own steps";
+    case "waiting":
+      if (holding !== undefined) return `${holding.run.title}: ${workflowRunNow(holding)}`;
+      if (detail.startsWith("agent ")) return `${detail.slice(6)} is working`;
+      if (detail.startsWith("sleep ")) return `Sleeping at ${detail.slice(6)}`;
+      if (below.some((child) => child.run.endedAt === null)) {
+        const open = below.filter((child) => child.run.endedAt === null);
+        return open.length === 1 ? `Runs ${open[0]!.run.title}` : `${open.length} runs under way`;
+      }
+      return detail === "" ? "Waiting" : `Waiting for ${detail}`;
+    case "completed": {
+      const line = workflowResultLines(run.result)[0];
+      if (line === undefined) return "Finished";
+      return firstLine(line.label === null ? line.value : `${line.label}: ${line.value}`);
+    }
     case "stopped":
-      return "outline";
     case "cancelled":
-      return "secondary";
+      return detail === "" ? "Ended early" : firstLine(detail);
   }
 }
 
@@ -243,6 +310,8 @@ export interface WorkflowBeat {
   readonly detail: string | null;
   /** What it produced: a value, an agent's data or reply, the answer to a question. */
   readonly result: WorkflowStep["result"];
+  /** What an agent said in closing, when its result is data. */
+  readonly said: string | null;
   readonly startMs: number;
   /** When it ended, or `nowMs` while it is under way. */
   readonly endMs: number;
@@ -324,6 +393,7 @@ export function buildWorkflowTimeline(input: {
       attempts: step.attempts,
       detail: step.detail,
       result: step.result,
+      said: step.said,
       startMs: stepStart,
       endMs: Math.max(stepStart, stepEnd),
       thread:
@@ -350,18 +420,6 @@ export function buildWorkflowTimeline(input: {
   };
 }
 
-/** Where a beat sits in its run, as fractions of the run's length, for its bar. */
-export function workflowBeatSpan(
-  timeline: Pick<WorkflowTimeline, "startMs" | "endMs">,
-  beat: Pick<WorkflowBeat, "startMs" | "endMs">,
-): { readonly offset: number; readonly length: number } {
-  const span = Math.max(1, timeline.endMs - timeline.startMs);
-  const offset = Math.min(1, Math.max(0, (beat.startMs - timeline.startMs) / span));
-  // A sliver stays visible: a beat that took a moment of a long run still happened.
-  const length = Math.min(1 - offset, Math.max(0.01, (beat.endMs - beat.startMs) / span));
-  return { offset, length };
-}
-
 /** What a person answered a question with, when a step's result is such an answer. */
 export function workflowAnswer(
   result: WorkflowStep["result"],
@@ -371,4 +429,158 @@ export function workflowAnswer(
   return typeof choice === "string"
     ? { choice, reason: typeof reason === "string" && reason.trim() !== "" ? reason : null }
     : null;
+}
+
+/** Steps that were under way at the same time, shown side by side. */
+export interface WorkflowTogether {
+  readonly kind: "together";
+  readonly beats: ReadonlyArray<WorkflowBeat>;
+}
+
+export type WorkflowFeedRow = WorkflowTimelineRow | WorkflowTogether;
+
+/**
+ * The timeline as it is read: beats that overlapped become one row, so two reviewers at once look
+ * like two reviewers at once and not like one after the other.
+ */
+export function buildWorkflowFeed(timeline: WorkflowTimeline): ReadonlyArray<WorkflowFeedRow> {
+  const rows: WorkflowFeedRow[] = [];
+  let together: WorkflowBeat[] = [];
+  let until = 0;
+  const flush = () => {
+    if (together.length === 1) rows.push(together[0]!);
+    else if (together.length > 1) rows.push({ kind: "together", beats: together });
+    together = [];
+  };
+  for (const row of timeline.rows) {
+    if (row.kind === "quick") {
+      flush();
+      rows.push(row);
+      continue;
+    }
+    if (together.length > 0 && row.parallel && row.startMs < until) {
+      together.push(row);
+      until = Math.max(until, row.endMs);
+      continue;
+    }
+    flush();
+    together = [row];
+    until = row.endMs;
+  }
+  flush();
+  return rows;
+}
+
+export interface WorkflowPathNode {
+  readonly key: string;
+  readonly label: string;
+  readonly status: "done" | "current" | "failed";
+}
+
+/** Where the run has been and where it is: one stop per beat, in order. Nothing is predicted. */
+export function workflowPath(
+  rows: ReadonlyArray<WorkflowFeedRow>,
+): ReadonlyArray<WorkflowPathNode> {
+  const statusOf = (beats: ReadonlyArray<WorkflowBeat>): WorkflowPathNode["status"] =>
+    beats.some((beat) => beat.status === "failed")
+      ? "failed"
+      : beats.some((beat) => beat.status === "running")
+        ? "current"
+        : "done";
+  return rows.flatMap((row): ReadonlyArray<WorkflowPathNode> => {
+    if (row.kind === "quick") return [];
+    if (row.kind !== "together") {
+      return [{ key: row.name, label: row.name, status: statusOf([row]) }];
+    }
+    return [
+      {
+        key: row.beats[0]!.name,
+        label:
+          row.beats.length === 2
+            ? `${row.beats[0]!.name} + ${row.beats[1]!.name}`
+            : `${row.beats.length} at once`,
+        status: statusOf(row.beats),
+      },
+    ];
+  });
+}
+
+const FACT_LENGTH = 48;
+const FACTS_SHOWN = 6;
+// A string this long is the agent talking, not a fact about its work.
+const PROSE_LENGTH = 80;
+
+const words = (key: string) =>
+  key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .toLowerCase();
+
+function factValue(value: unknown): string | null {
+  if (typeof value === "boolean") return value ? "yes" : "no";
+  if (typeof value === "number") return String(value);
+  if (typeof value === "string") {
+    const text = value.trim();
+    return text !== "" && text.length <= FACT_LENGTH && !text.includes("\n") ? text : null;
+  }
+  if (Array.isArray(value) && value.length > 0 && value.length <= 4) {
+    const parts = value.map(factValue);
+    const joined = parts.join(", ");
+    return parts.every((part) => part !== null) && joined.length <= FACT_LENGTH ? joined : null;
+  }
+  return null;
+}
+
+/**
+ * What an agent step has to say for itself: its words, and the short facts of its result. With no
+ * closing words kept, the longest piece of prose in the result stands in for them.
+ */
+export function workflowAgentSummary(beat: Pick<WorkflowBeat, "result" | "said">): {
+  readonly said: string | null;
+  readonly facts: ReadonlyArray<{ readonly label: string; readonly value: string }>;
+} {
+  const { result } = beat;
+  const kept = beat.said?.trim() ?? "";
+  if (typeof result === "string") {
+    return { said: kept !== "" ? kept : result.trim() === "" ? null : result.trim(), facts: [] };
+  }
+  if (result === null || typeof result !== "object" || Array.isArray(result)) {
+    return { said: kept === "" ? null : kept, facts: [] };
+  }
+  const entries = Object.entries(result);
+  const prose =
+    kept !== ""
+      ? null
+      : (entries
+          .filter(
+            (entry): entry is [string, string] =>
+              typeof entry[1] === "string" && entry[1].trim().length >= PROSE_LENGTH,
+          )
+          .toSorted((left, right) => right[1].length - left[1].length)[0] ?? null);
+  return {
+    said: kept !== "" ? kept : (prose?.[1].trim() ?? null),
+    facts: entries
+      .flatMap(([key, value]) => {
+        const text = factValue(value);
+        return text === null ? [] : [{ label: words(key), value: text }];
+      })
+      .slice(0, FACTS_SHOWN),
+  };
+}
+
+/**
+ * The start of what an agent said, cut where a paragraph ends so no markup is left half open.
+ * Null when all of it fits.
+ */
+export function workflowSaidStart(said: string, limit: number): string | null {
+  if (said.length <= limit) return null;
+  const paragraphs = said.split(/\n{2,}/);
+  let kept = paragraphs[0]!;
+  for (const paragraph of paragraphs.slice(1)) {
+    if (kept.length + paragraph.length + 2 > limit) break;
+    kept = `${kept}\n\n${paragraph}`;
+  }
+  // One paragraph that runs on is cut at a word, which can still split markup but not a word.
+  if (kept.length > limit * 2) kept = `${kept.slice(0, kept.lastIndexOf(" ", limit))}…`;
+  return kept === said ? null : kept;
 }

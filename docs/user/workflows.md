@@ -46,12 +46,13 @@ Once a server has workflow runs, a **Workflows** button appears at the bottom of
 number on it says how many runs wait on you: a question to answer, or a run paused by a failing
 step.
 
-The page lists what needs you first, then what is under way, then what finished. A run a workflow
-invoked sits under the run that invoked it. Select a run to read what happened in it: its agents,
-questions, waits and sleeps in order, with how long each took, and the quick steps between them
-folded away. From there you can answer its question, open an agent's thread to read its work or
-talk to it before you answer, resume it when it is paused, or cancel it. Answering, resuming and
-cancelling need a connection that may operate threads.
+The page lists runs under **Needs you**, **Running** and **All**, and can narrow to one workflow.
+Select a run to read it from top to bottom: each agent with what it said and returned, questions
+where they were asked, and the quick steps between them folded into a line. A run another run
+invoked is opened from that run. From a run you can answer its question, resume it when it is
+paused, or cancel it. **Transcript** on an agent opens its thread beside the run, where you can
+read its work and talk to it before you answer. Answering, resuming and cancelling need a
+connection that may operate threads.
 
 An agent's thread does not appear in the thread list. Open it from its run; the thread itself
 links back to the run.

@@ -80,7 +80,22 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       .filter(([definition]) => definition.name === name)
       .toSorted(([left], [right]) => right.version - left.version)[0];
 
-  const toRun = (row: WorkflowStore.RunRow): WorkflowStore.WorkflowRun => ({
+  /** When the sweep resumes a paused run; undefined once it has used up its tries. */
+  const resumesAt = (row: WorkflowStore.RunRow) => {
+    if (row.status !== "paused") return undefined;
+    const rest = definitionByTag.get(row.engine_tag)?.resumeAfter[Number(row.pauses) - 1];
+    return rest === undefined
+      ? undefined
+      : DateTime.addDuration(DateTime.makeUnsafe(row.updated_at), Duration.fromInputUnsafe(rest));
+  };
+  const toRun = (row: WorkflowStore.RunRow): WorkflowStore.WorkflowRun => {
+    const resumes = resumesAt(row);
+    return toRunAt(row, resumes === undefined ? null : DateTime.formatIso(resumes));
+  };
+  const toRunAt = (
+    row: WorkflowStore.RunRow,
+    resumes: string | null,
+  ): WorkflowStore.WorkflowRun => ({
     runId: row.run_id,
     workflow: row.workflow,
     version: Number(row.version),
@@ -90,6 +105,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     result: row.result_json === null ? null : WorkflowStore.jsonValue(row.result_json),
     pauses: Number(row.pauses),
     retired: row.ended_at === null && !byTag.has(row.engine_tag),
+    resumesAt: resumes,
     parentRunId: row.parent_run_id,
     parentStep: row.parent_wait,
     startedAt: row.started_at,
@@ -306,12 +322,8 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     for (const row of yield* store.runs("running")) yield* reconcile(row);
     const at = yield* DateTime.now;
     for (const row of yield* store.runs("paused")) {
-      const rest = definitionByTag.get(row.engine_tag)?.resumeAfter[Number(row.pauses) - 1];
-      if (rest === undefined) continue;
-      const since = DateTime.makeUnsafe(row.updated_at);
-      if (DateTime.isLessThan(at, DateTime.addDuration(since, Duration.fromInputUnsafe(rest)))) {
-        continue;
-      }
+      const due = resumesAt(row);
+      if (due === undefined || DateTime.isLessThan(at, due)) continue;
       yield* Effect.ignore(resume(row.run_id));
     }
   }).pipe(Effect.withSpan("Workflows.sweep"));
@@ -490,6 +502,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
           threadId: step.thread_id,
           environmentId: step.environment_id,
           result: step.result_json === null ? null : WorkflowStore.jsonValue(step.result_json),
+          said: step.said,
           startedAt: step.started_at,
           endedAt: step.ended_at,
         })),
