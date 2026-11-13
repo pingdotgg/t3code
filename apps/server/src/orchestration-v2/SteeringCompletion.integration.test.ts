@@ -2451,17 +2451,22 @@ it.effect("keeps a queued message queued when promoted into a run that Stop reac
 
 // regression: #25796 a thread's effects run in order, so a steer its provider
 // holds (Claude, while it compacts) must not keep Stop waiting behind it.
-it.effect.each(["pending", "completed"] as const)(
-  "Stop cancels steers that have not reached the provider (running steer %s)",
-  (reported) =>
+it.effect.each([
+  { reported: "pending", restarting: false },
+  { reported: "completed", restarting: false },
+  // Stop then reaches a run whose restart has not started its provider turn yet.
+  { reported: "pending", restarting: true },
+] as const)(
+  "Stop cancels steers that have not reached the provider (running steer $reported, restarting: $restarting)",
+  ({ reported, restarting }) =>
     Effect.gen(function* () {
       let report: (
         turn: ProviderAdapter.ProviderAdapterV2SteerInput,
       ) => Effect.Effect<unknown> = () => Effect.void;
       const { events, started, steered, interrupted, layer, startFirstTurn } =
         yield* nextTurnSelectionHarness(
-          `stop-undelivered-steers-${reported}`,
-          false,
+          `stop-undelivered-steers-${reported}-${restarting}`,
+          restarting,
           true,
           Effect.void,
           true,
@@ -2493,7 +2498,8 @@ it.effect.each(["pending", "completed"] as const)(
           orchestrator.getThreadProjection(threadId),
           ({ turnItems }) =>
             turnItems.flatMap((item) =>
-              item.type === "user_message" && item.inputIntent === "steer"
+              item.type === "user_message" &&
+              (item.messageId === running || item.messageId === waiting)
                 ? [[item.messageId, item.status]]
                 : [],
             ),
@@ -2526,6 +2532,20 @@ it.effect.each(["pending", "completed"] as const)(
         );
         const draining = yield* worker.drain().pipe(Effect.forkScoped);
         yield* Fiber.join(reportedSteer);
+        if (restarting) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("restart"),
+            threadId,
+            messageId: MessageId.make("message:restart"),
+            text: "restart",
+            attachments: [],
+            modelSelection: runSelection,
+            dispatchMode: { type: "restart_active", targetRunId: first.runId },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        }
         yield* orchestrator.dispatch({
           type: "run.interrupt",
           commandId: CommandId.make("stop"),

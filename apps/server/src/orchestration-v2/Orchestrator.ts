@@ -12856,6 +12856,50 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
 
     const emitEvent = emit(events, command);
+    // A thread's effects run in order, so a steer still waiting to reach the provider
+    // (Claude holds steers while it compacts) would keep this interrupt waiting behind it.
+    const cancelUndeliveredSteers = Effect.gen(function* () {
+      const undeliveredSteers = yield* effectOutbox
+        .listUnsettled({ threadId: command.threadId, effectTypes: ["provider-turn.steer"] })
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      for (const { request, status, attemptCount } of undeliveredSteers) {
+        if (request.type !== "provider-turn.steer") continue;
+        const item = yield* projectionStore
+          .getTurnItem({
+            threadId: command.threadId,
+            itemId: idAllocator.derive.userTurnItem({ messageId: request.messageId }),
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+            ),
+          );
+        // An unsettled effect is not an unread steer: a provider can confirm one before its
+        // call returns. Only a steer the provider still reports pending, or one whose effect
+        // never ran, is known not to have been read.
+        const neverSent = status === "pending" && attemptCount === 0;
+        if (
+          item?.type !== "user_message" ||
+          !(item.status === "pending" || (neverSent && item.status === "completed"))
+        ) {
+          continue;
+        }
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          ...(item.runId === null ? {} : { runId: item.runId }),
+          ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
+        });
+      }
+      return undeliveredSteers.length > 0;
+    });
     const interruptRequestItem: OrchestrationV2TurnItem = {
       id: idAllocator.derive.runSignalTurnItem({
         runId: run.id,
@@ -13074,9 +13118,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
       yield* stopRemainingWork();
+      yield* cancelUndeliveredSteers;
       yield* Ref.update(effects, (existing) => [...existing, ...otherProviderInterrupts]);
       return {
-        effectTypes: ["provider-turn.start", "provider-turn.restart"],
+        effectTypes: ["provider-turn.start", "provider-turn.restart", "provider-turn.steer"],
         reason: `Run ${run.id} was interrupted before its provider turn started.`,
       } satisfies {
         readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
@@ -13154,47 +13199,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: interruptRequestItem,
     });
     yield* stopRemainingWork();
-    // A thread's effects run in order, so a steer still waiting to reach the provider
-    // (Claude holds steers while it compacts) would keep this interrupt waiting behind it.
-    const undeliveredSteers = yield* effectOutbox
-      .listUnsettled({ threadId: command.threadId, effectTypes: ["provider-turn.steer"] })
-      .pipe(
-        Effect.mapError(
-          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-        ),
-      );
-    for (const { request, status, attemptCount } of undeliveredSteers) {
-      if (request.type !== "provider-turn.steer") continue;
-      const item = yield* projectionStore
-        .getTurnItem({
-          threadId: command.threadId,
-          itemId: idAllocator.derive.userTurnItem({ messageId: request.messageId }),
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-          ),
-        );
-      // An unsettled effect is not an unread steer: a provider can confirm one before its
-      // call returns. Only a steer the provider still reports pending, or one whose effect
-      // never ran, is known not to have been read.
-      const neverSent = status === "pending" && attemptCount === 0;
-      if (
-        item?.type !== "user_message" ||
-        !(item.status === "pending" || (neverSent && item.status === "completed"))
-      ) {
-        continue;
-      }
-      yield* emitEvent({
-        type: "turn-item.updated",
-        threadId: command.threadId,
-        ...(item.runId === null ? {} : { runId: item.runId }),
-        ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
-        providerInstanceId: run.providerInstanceId,
-        occurredAt: now,
-        payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
-      });
-    }
+    const steersCancelled = yield* cancelUndeliveredSteers;
     yield* Ref.update(effects, (existing) => [
       ...existing,
       {
@@ -13210,7 +13215,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       } satisfies PendingOrchestrationEffectV2,
       ...otherProviderInterrupts,
     ]);
-    return undeliveredSteers.length === 0
+    return !steersCancelled
       ? undefined
       : ({
           effectTypes: ["provider-turn.steer"],
