@@ -218,3 +218,51 @@ it("opens on the active provider when every favorite belongs to a disabled provi
   await screen.getByRole("button", { name: "Choose model" }).click();
   await expect.element(page.getByRole("option", { name: /Codex model/ })).toBeVisible();
 });
+
+it.each(["claudeAgent", "codex", "cursor", "grok", "opencode", "antigravity", "kiro"] as const)(
+  "shows the saved model for %s while its catalog is missing it, then its name when it arrives",
+  async (driver) => {
+    const instanceId = ProviderInstanceId.make("test-instance");
+    const entries = deriveProviderInstanceEntries([
+      {
+        instanceId,
+        driver: ProviderDriverKind.make(driver),
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+      },
+    ]);
+    const onInstanceModelChange = vi.fn();
+    const saved = "account/saved-model";
+    const other = { slug: "account/other-model", name: "Other model" };
+    const matching = { slug: saved, name: "Saved model" };
+    const picker = (models: (typeof other)[]) => (
+      <ProviderModelPicker
+        environmentId={null}
+        activeInstanceId={instanceId}
+        model={saved}
+        lockedProvider={null}
+        instanceEntries={entries}
+        modelOptionsByInstance={new Map([[instanceId, models]])}
+        onInstanceModelChange={onInstanceModelChange}
+      />
+    );
+
+    await using screen = await render(picker([other]));
+    await expect.element(screen.getByRole("button", { name: saved, exact: true })).toBeVisible();
+    expect(onInstanceModelChange).not.toHaveBeenCalled();
+    await screen.rerender(picker([other, matching]));
+    await expect
+      .element(screen.getByRole("button", { name: "Saved model", exact: true }))
+      .toBeVisible();
+    expect(onInstanceModelChange).not.toHaveBeenCalled();
+    await screen.rerender(picker([other]));
+    await expect.element(screen.getByRole("button", { name: saved, exact: true })).toBeVisible();
+  },
+);
