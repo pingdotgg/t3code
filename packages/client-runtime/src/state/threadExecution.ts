@@ -9,6 +9,7 @@ import {
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   latestProviderTurnForAttempt,
+  PROVIDER_DISPLAY_NAMES,
   type ModelSelection,
   type OrchestrationV2NotificationSource,
   type OrchestrationV2PendingBackgroundTask,
@@ -51,6 +52,8 @@ import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
 const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"]);
+// Preparing runs show their workspace setup instead.
+const PROVIDER_STARTING_RUN_STATUSES = new Set(["starting", "running"]);
 
 const EMPTY_EXTENSION_STATUSES: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]> =
   [];
@@ -104,6 +107,17 @@ function latestMatchingRun(
   );
 }
 
+function providerStartingLabel(
+  projection: ThreadStructure,
+  run: OrchestrationV2ThreadProjection["runs"][number],
+): string {
+  const driver = projection.providerSessions.findLast(
+    (session) => session.providerInstanceId === run.providerInstanceId,
+  )?.driver;
+  const name = driver === undefined ? undefined : PROVIDER_DISPLAY_NAMES[driver];
+  return name === undefined ? "Starting" : `Starting ${name}`;
+}
+
 function summarizeThreadRun(
   projection: ThreadStructure,
   run: OrchestrationV2ThreadProjection["runs"][number],
@@ -121,9 +135,15 @@ function summarizeThreadRun(
       projection.messages.findLast(
         (message) => message.runId === run.id && message.role === "assistant",
       )?.id ?? null,
-    ...(turnStatus === undefined || turnStatus === "pending" || turnStatus === "running"
-      ? {}
-      : { turnEnded: true }),
+    // A run counts as running before its provider opens; until a turn appears,
+    // the provider can still be launching for minutes.
+    ...(turnStatus === undefined
+      ? PROVIDER_STARTING_RUN_STATUSES.has(run.status)
+        ? { providerStartingLabel: providerStartingLabel(projection, run) }
+        : {}
+      : turnStatus === "pending" || turnStatus === "running"
+        ? {}
+        : { turnEnded: true }),
     ...(run.sourcePlanRef === undefined ? {} : { sourcePlanRef: run.sourcePlanRef }),
   };
 }
@@ -298,6 +318,19 @@ export function deriveResumableRunId(
     latestRootProviderFailure(run, projection.turnItems)?.class === "usage_limit"
     ? run.id
     : null;
+}
+
+/**
+ * Whether Resume can start: the run's continuation, else the held queue. The server refuses that
+ * continuation while any request is pending, so the queue must not be released in its place.
+ */
+export function canResumeThread(
+  projection: Pick<ThreadStructure, "runtimeRequests">,
+  resumableRunId: RunId | null,
+  queueHeld: boolean,
+): boolean {
+  if (resumableRunId === null) return queueHeld;
+  return !projection.runtimeRequests.some((request) => request.status === "pending");
 }
 
 export function deriveThreadRuntime(
