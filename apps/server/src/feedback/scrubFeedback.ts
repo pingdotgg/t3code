@@ -9,7 +9,19 @@ const TOKEN_PREFIX =
 const JWT = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/gu;
 const CREDENTIAL_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@]+@\S+/giu;
 const EMAIL = /[A-Za-z0-9.!#$%&'*+=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/gu;
-// Slashes are left out so ordinary paths stay readable.
+// Absolute paths with two or more segments, `~/` paths, `file://` URLs and drive paths, plus the
+// tail of a path whose known prefix was already redacted. URLs, `3/10` and `and/or` do not match.
+const PATH_SEGMENT = String.raw`[^\s/\\"'\x60<>(){},;:|]+`;
+const PATH = new RegExp(
+  [
+    String.raw`\[redacted\](?:/${PATH_SEGMENT})+/?`,
+    String.raw`(?<![\w.:/~-])(?:/${PATH_SEGMENT}){2,}/?`,
+    String.raw`(?<![\w~-])~(?:/${PATH_SEGMENT})+/?`,
+    String.raw`\bfile://(?:/${PATH_SEGMENT})+/?`,
+    String.raw`\b[A-Za-z]:[\\/](?:${PATH_SEGMENT}[\\/]?)*`,
+  ].join("|"),
+  "gu",
+);
 const LONG_RUN = /[A-Za-z0-9_+=-]{32,}/gu;
 
 const entropy = (value: string) => {
@@ -46,6 +58,7 @@ export function scrubFeedback(text: string, sensitive: ReadonlyArray<string>): s
   }
   scrubbed = scrubbed
     .replaceAll(CREDENTIAL_URL, REDACTED)
+    .replaceAll(PATH, REDACTED)
     .replaceAll(TOKEN_PREFIX, REDACTED)
     .replaceAll(JWT, REDACTED)
     .replaceAll(EMAIL, REDACTED)

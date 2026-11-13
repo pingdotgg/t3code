@@ -24,8 +24,8 @@ While it is on, agents are told to report these problems, and you can send one y
 `t3 feedback --kind bug --subject "t3 thread send" --expected "…" --actual "…"`. Each report has
 the kind of problem, the T3 tool or command it concerns, and up to 300 characters each of expected
 behavior, actual behavior, and workaround, written by the agent. Before anything is saved, T3 Code
-removes your home directory, user name, machine name, workspace paths, project title, branch, git
-remote, and anything that looks like a key, token, email address, or URL with a password. Reports
+removes file paths, your user name, machine name, project title, branch, and git remote, and anything
+that looks like a key, token, email address, or URL with a password. Reports
 from agents also name the provider, and the model when it is from the provider's public model list.
 Thread and project IDs and prompts are never sent.
 
