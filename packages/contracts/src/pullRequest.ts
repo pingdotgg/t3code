@@ -619,6 +619,14 @@ export const PullRequestReportStateInput = Schema.Struct({
 });
 export type PullRequestReportStateInput = typeof PullRequestReportStateInput.Type;
 
+/** The host's merge queue letting go of a pull request without merging it, newest first. */
+export const PullRequestMergeQueueRemoval = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  removedAt: IsoDateTime,
+  reason: Schema.NullOr(Schema.String),
+});
+export type PullRequestMergeQueueRemoval = typeof PullRequestMergeQueueRemoval.Type;
+
 export const PullRequestDetail = Schema.Struct({
   provider: SourceControlProviderKind,
   capabilities: PullRequestCapabilities,
@@ -658,6 +666,8 @@ export const PullRequestDetail = Schema.Struct({
   autoMergeEnabled: Schema.optional(Schema.Boolean),
   autoMergeMethod: Schema.optional(PullRequestMergeMethod),
   workflowApprovalsRequired: Schema.optional(NonNegativeInt),
+  /** Absent where the host has no merge queue or does not report one. */
+  mergeQueueRemoval: Schema.optional(PullRequestMergeQueueRemoval),
   maintainerCanModify: Schema.optional(Schema.Boolean),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
@@ -790,6 +800,8 @@ export const PullRequestSetFilesViewedInput = Schema.Struct({
     Schema.Struct({
       path: FilePath,
       viewed: Schema.Boolean,
+      /** The file's version in the diff the reader was shown; without it the head's is recorded. */
+      revision: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
     }),
   ).check(Schema.isMaxLength(MAX_FILES_VIEWED_PRESSES)),
 });

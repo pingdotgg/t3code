@@ -115,11 +115,18 @@ export const makeDiscovery = Effect.gen(function* () {
                     account: login.user,
                     host: ForgejoCli.parseForgejoRemote(login.url)?.host,
                   })
-                : providerAuth({
-                    status: "unauthenticated",
-                    detail:
-                      "Authenticate this server with `fj --host <server-url> auth add-token`.",
-                  }),
+                : // fj prints this for transport failures (TLS, connect, DNS), never for a rejected token.
+                  login && result.stderr.includes("error sending request for url")
+                  ? providerAuth({
+                      status: "unknown",
+                      detail: `Could not reach ${login.url} to verify the fj login.`,
+                      host: ForgejoCli.parseForgejoRemote(login.url)?.host,
+                    })
+                  : providerAuth({
+                      status: "unauthenticated",
+                      detail:
+                        "Authenticate this server with `fj --host <server-url> auth add-token`.",
+                    }),
         },
       });
       if (fj.status === "available" && (login || Result.isFailure(credentials))) {
@@ -143,7 +150,10 @@ export const makeDiscovery = Effect.gen(function* () {
         return fj;
       }
       const tea = yield* probeSourceControlProvider({ cwd, process, spec: discovery });
-      return tea.status === "available" || fj.status === "missing" ? tea : fj;
+      // Discovery keeps the install hint only for an absent executable; a slow or broken fj
+      // explains itself better than tea's install advice.
+      const fjAbsent = fj.status === "missing" && fj.installHint === discovery.installHint;
+      return tea.status === "available" || fjAbsent ? tea : fj;
     }),
     refineUnknownRemote: Effect.fn("ForgejoSourceControlProvider.refineUnknownRemote")(
       function* (input: {
