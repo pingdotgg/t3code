@@ -736,8 +736,7 @@ const ReviewPullRequestTool = Tool.make("pull_request_review", {
   .annotate(Tool.OpenWorld, true);
 
 const MergePullRequestTool = Tool.make("pull_request_merge", {
-  description:
-    "Merge only when asked to land. Refuses if the head moved from expectedHeadSha (summary.headSha).",
+  description: "Merge a PR. Refuses if the head moved from expectedHeadSha (summary.headSha).",
   parameters: Schema.Struct({
     ...ThreadPullRequestInput.fields,
     expectedHeadSha: TrimmedNonEmptyString,
