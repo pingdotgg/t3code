@@ -7,6 +7,8 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as TaskFolderStore from "./TaskFolderStore.ts";
 import * as WorkspaceFolders from "./WorkspaceFolders.ts";
 
 const projectId = ProjectId.make("project:workspace-folders");
@@ -40,6 +42,7 @@ const layerFor = (project?: {
               }),
       }),
     ),
+    Layer.provideMerge(TaskFolderStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
   );
 
 // Resolved, so a symlinked temp directory does not show up as a second spelling of each path.
@@ -168,6 +171,101 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
           layerFor({ workspaceRoot, trackedFolders: [inside, repository, missing, linked] }),
         ),
       );
+    }),
+  );
+  it.effect("gives a task folder thread its worktrees, never the checkouts they came from", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tmp = yield* makeTempDir;
+      const ctx = path.join(tmp, "x", "ctx");
+      const app = path.join(tmp, "x", "app");
+      const lib = path.join(ctx, "vendor", "lib");
+      // The worktrees directory is reached through a symlink, as on a machine that moved it.
+      const realWorktrees = path.join(tmp, "disk", "worktrees");
+      const worktrees = path.join(tmp, "worktrees");
+      const taskRoot = path.join(worktrees, "x", "feature-0123");
+      for (const directory of [
+        lib,
+        app,
+        path.join(realWorktrees, "x", "feature-0123", "ctx", "vendor", "lib"),
+        path.join(realWorktrees, "x", "feature-0123", "app"),
+        path.join(realWorktrees, "x", "single"),
+      ]) {
+        yield* fileSystem.makeDirectory(directory, { recursive: true });
+      }
+      yield* fileSystem.symlink(realWorktrees, worktrees);
+      const trackedFolders = [
+        { name: "app", path: app },
+        { name: "lib", path: lib },
+      ];
+
+      yield* Effect.gen(function* () {
+        const taskFolders = yield* TaskFolderStore.TaskFolderStore;
+        const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
+        const taskFolder = {
+          root: taskRoot,
+          projectId,
+          projectRoot: ctx,
+          anchor: path.join(tmp, "x"),
+          projectPath: path.join(taskRoot, "ctx"),
+          projectIsWorktree: true,
+          repositories: [
+            { repositoryPath: app, worktreePath: path.join(taskRoot, "app"), name: "app" },
+            {
+              repositoryPath: lib,
+              worktreePath: path.join(taskRoot, "ctx", "vendor", "lib"),
+              name: "lib",
+            },
+          ],
+        };
+        yield* taskFolders.put(taskFolder);
+        const expected = {
+          folders: [
+            {
+              name: "app",
+              path: path.join(taskRoot, "app"),
+              isGitRepository: true,
+              repositoryPath: app,
+            },
+            {
+              name: "lib",
+              path: path.join(taskRoot, "ctx", "vendor", "lib"),
+              isGitRepository: true,
+              repositoryPath: lib,
+            },
+          ],
+          // Only the sibling lies outside the thread's folder, under both of its spellings.
+          extraRoots: [
+            path.join(taskRoot, "app"),
+            path.join(realWorktrees, "x", "feature-0123", "app"),
+          ],
+        };
+        // The thread stores the path as named; a sandbox or Git may hand back the resolved one.
+        for (const worktreePath of [
+          path.join(taskRoot, "ctx"),
+          path.join(realWorktrees, "x", "feature-0123", "ctx"),
+        ]) {
+          assert.deepEqual(
+            yield* workspaceFolders.forThread({ projectId, worktreePath }),
+            expected,
+          );
+        }
+        assert.deepEqual(
+          yield* taskFolders.findContaining(
+            path.join(realWorktrees, "x", "feature-0123", "app", "src"),
+          ),
+          taskFolder,
+        );
+        // A single worktree beside it is no task folder.
+        assert.deepEqual(
+          yield* workspaceFolders.forThread({
+            projectId,
+            worktreePath: path.join(worktrees, "x", "single"),
+          }),
+          { folders: [], extraRoots: [] },
+        );
+      }).pipe(Effect.provide(layerFor({ workspaceRoot: ctx, trackedFolders })));
     }),
   );
 });

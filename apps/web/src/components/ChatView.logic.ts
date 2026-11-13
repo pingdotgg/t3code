@@ -1309,6 +1309,8 @@ export function planComposerTurn(input: {
   readonly sendEnvMode: DraftThreadEnvMode;
   readonly worktreePath: string | null;
   readonly activeThreadBranch: string | null;
+  /** False for a plain folder that tracks repositories: each starts from its own default branch. */
+  readonly projectIsGitRepo: boolean;
   readonly resumeCompactionTokens: number | null;
   readonly keepFullHistory: boolean;
   readonly phase: SessionPhase;
@@ -1335,8 +1337,14 @@ export function planComposerTurn(input: {
   return {
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
-    missingWorktreeBaseBranch: shouldCreateWorktree && !input.activeThreadBranch,
-    baseBranchForWorktree: shouldCreateWorktree ? input.activeThreadBranch : null,
+    missingWorktreeBaseBranch:
+      shouldCreateWorktree && input.projectIsGitRepo && !input.activeThreadBranch,
+    // The launch schema requires a base ref; the server ignores it for a plain project folder.
+    baseBranchForWorktree: !shouldCreateWorktree
+      ? null
+      : input.projectIsGitRepo
+        ? input.activeThreadBranch
+        : "HEAD",
     compactBeforeSend,
     turnDispatchMode:
       compactBeforeSend || (input.sendQueuesBehindSetup && dispatchMode !== "steer")

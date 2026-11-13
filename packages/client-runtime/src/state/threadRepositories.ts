@@ -1,3 +1,8 @@
+import {
+  repositoryRewindCheckpoint,
+  TASK_FOLDER_DEFAULT_REPOSITORIES_MAX,
+  type TaskFolder,
+} from "@t3tools/contracts";
 import type {
   CheckpointScopeId,
   OrchestrationV2Checkpoint,
@@ -84,6 +89,33 @@ export function repositoryCheckpointScopeIds(
   scopes: ReadonlyArray<Pick<OrchestrationV2CheckpointScope, "id" | "repositoryPath">>,
 ): ReadonlySet<CheckpointScopeId> {
   return new Set(scopes.flatMap((scope) => (isRepositoryCheckpointScope(scope) ? [scope.id] : [])));
+}
+
+/**
+ * What a rewind to `checkpoint`, the thread's own rewind target, can restore on disk: every file,
+ * only the repositories of a task folder whose project folder has no snapshot, or nothing.
+ * The server refuses a file rewind this does not offer.
+ */
+export function rewindFileRestore(input: {
+  readonly projection: Pick<OrchestrationV2ThreadProjection, "checkpoints" | "checkpointScopes">;
+  readonly checkpoint: Pick<OrchestrationV2Checkpoint, "status" | "appRunOrdinal"> | undefined;
+  readonly taskFolder: Pick<TaskFolder, "projectIsWorktree"> | null | undefined;
+}): "files" | "repositories" | null {
+  const { checkpoint, projection } = input;
+  if (checkpoint === undefined) return null;
+  if (checkpoint.status === "ready") return "files";
+  if (checkpoint.status !== "missing" || input.taskFolder?.projectIsWorktree !== false) return null;
+  const targetOrdinal = checkpoint.appRunOrdinal ?? 0;
+  return projection.checkpointScopes.some(
+    (scope) =>
+      isRepositoryCheckpointScope(scope) &&
+      repositoryRewindCheckpoint(
+        projection.checkpoints.filter((candidate) => candidate.scopeId === scope.id),
+        targetOrdinal,
+      ) !== null,
+  )
+    ? "repositories"
+    : null;
 }
 
 function pathSegments(path: string): { root: string; segments: string[] } | undefined {
@@ -356,8 +388,11 @@ export interface ThreadRepositorySection {
   readonly name: string;
   /** The folder Git commands run in. */
   readonly cwd: string;
-  /** Pinned sections can be removed; changed ones stay for as long as the thread has them. */
-  readonly origin: "pinned" | "changed";
+  /**
+   * Pinned sections can be removed; changed ones stay for as long as the thread has them. A
+   * `worktree` section is the thread's own worktree of that repository.
+   */
+  readonly origin: "pinned" | "changed" | "worktree";
 }
 
 export interface ThreadRepositorySections {
@@ -390,30 +425,62 @@ export function threadChangedRepositories(
   );
 }
 
+/** A task folder's repositories, each bound to its worktree: changed ones first, then the rest. */
+function taskFolderSections(
+  taskFolder: Pick<TaskFolder, "repositories">,
+  changed: ReadonlyArray<ThreadRepositoryScope>,
+): ThreadRepositorySection[] {
+  const byPath = new Map(
+    taskFolder.repositories.map((repository) => [repository.repositoryPath, repository]),
+  );
+  const ordered = new Set<string>();
+  for (const scope of changed) {
+    if (byPath.has(scope.repositoryPath)) ordered.add(scope.repositoryPath);
+  }
+  for (const repository of taskFolder.repositories) ordered.add(repository.repositoryPath);
+  return [...ordered].map((repositoryPath) => {
+    const repository = byPath.get(repositoryPath)!;
+    return {
+      key: repositoryPath,
+      name: repository.name,
+      cwd: repository.worktreePath,
+      origin: "worktree" as const,
+    };
+  });
+}
+
 /**
  * The repository sections of a thread: pinned ones in the order they were pinned, then the ones
  * the thread changed. `threadCwd` is the thread's own folder, which has its own Git controls.
+ *
+ * A thread with a `taskFolder` lists that folder's repositories instead, changed or not, and
+ * never a pin or a changed repository outside it: those would be someone else's checkout.
  */
 export function threadRepositorySections(input: {
   readonly changed: ReadonlyArray<ThreadRepositoryScope>;
   readonly pinned: ReadonlyArray<PinnedThreadRepository>;
   readonly threadCwd: string | null;
   readonly showAll: boolean;
+  readonly taskFolder?: Pick<TaskFolder, "repositories"> | null | undefined;
 }): ThreadRepositorySections {
-  if (input.changed.length === 0 && input.pinned.length === 0) return NO_SECTIONS;
-  const seen = new Set<string>(input.threadCwd === null ? [] : [input.threadCwd]);
   const sections: ThreadRepositorySection[] = [];
-  const add = (section: ThreadRepositorySection) => {
-    if (seen.has(section.key)) return;
-    seen.add(section.key);
-    sections.push(section);
-  };
-  for (const pin of input.pinned) {
-    add({ key: pin.repositoryPath, name: pin.name, cwd: pin.repositoryPath, origin: "pinned" });
+  if (input.taskFolder != null) {
+    sections.push(...taskFolderSections(input.taskFolder, input.changed));
+  } else {
+    const seen = new Set<string>(input.threadCwd === null ? [] : [input.threadCwd]);
+    const add = (section: ThreadRepositorySection) => {
+      if (seen.has(section.key)) return;
+      seen.add(section.key);
+      sections.push(section);
+    };
+    for (const pin of input.pinned) {
+      add({ key: pin.repositoryPath, name: pin.name, cwd: pin.repositoryPath, origin: "pinned" });
+    }
+    for (const scope of input.changed) {
+      add({ key: scope.repositoryPath, name: scope.name, cwd: scope.cwd, origin: "changed" });
+    }
   }
-  for (const scope of input.changed) {
-    add({ key: scope.repositoryPath, name: scope.name, cwd: scope.cwd, origin: "changed" });
-  }
+  if (sections.length === 0) return NO_SECTIONS;
   if (input.showAll || sections.length <= THREAD_REPOSITORY_SECTIONS_VISIBLE) {
     return { visible: sections, hidden: NO_SECTIONS.hidden };
   }
@@ -455,6 +522,110 @@ export function pinnableThreadRepositories(input: {
       ? []
       : [{ repositoryPath: folder.path, name: folder.name }],
   );
+}
+
+/** The tracked Git repositories a task folder has no worktree for yet. */
+export function addableTaskFolderRepositories(input: {
+  readonly folders: ReadonlyArray<Pick<WorkspaceFolder, "path" | "name" | "state">>;
+  readonly taskFolder: Pick<TaskFolder, "projectRoot" | "repositories">;
+}): ReadonlyArray<PinnedThreadRepository> {
+  const present = new Set(
+    input.taskFolder.repositories.map((repository) => repository.repositoryPath),
+  );
+  return input.folders.flatMap((folder) =>
+    folder.state !== "git" ||
+    folder.path === input.taskFolder.projectRoot ||
+    present.has(folder.path)
+      ? []
+      : [{ repositoryPath: folder.path, name: folder.name }],
+  );
+}
+
+/** A tracked Git repository a new worktree thread can get a worktree of. */
+export interface WorktreeRepositoryChoice {
+  /** The tracked folder's path; what `workspaceStrategy.repositories[].path` takes. */
+  readonly repositoryPath: string;
+  readonly name: string;
+  /** The folder from the project folder, `/`-separated, when it sits inside it. */
+  readonly relativePath?: string;
+}
+
+/** A project's tracked Git folders, in the project's order. */
+export function worktreeRepositoryChoices(input: {
+  readonly folders: ReadonlyArray<Pick<WorkspaceFolder, "path" | "name" | "state">>;
+  readonly projectRoot: string;
+}): ReadonlyArray<WorktreeRepositoryChoice> {
+  return input.folders.flatMap((folder) => {
+    if (folder.state !== "git") return [];
+    const relativePath = relativeFolderPath(input.projectRoot, folder.path);
+    return [
+      {
+        repositoryPath: folder.path,
+        name: folder.name,
+        ...(relativePath === undefined || relativePath === "" || relativePath.startsWith("..")
+          ? {}
+          : { relativePath }),
+      },
+    ];
+  });
+}
+
+export interface WorktreeRepositorySelection {
+  /** Chosen tracked paths, in the choices' order. */
+  readonly selected: ReadonlyArray<string>;
+  /** Short text for the control that opens the checklist. */
+  readonly label: string;
+  /** Nothing is selected only because the project tracks too many to take them all by default. */
+  readonly needsChoice: boolean;
+  /**
+   * What the launch sends as `workspaceStrategy.repositories`. Undefined until the user chooses,
+   * so the server applies its own default.
+   */
+  readonly strategyRepositories: ReadonlyArray<{ readonly path: string }> | undefined;
+}
+
+/**
+ * Which repositories a new worktree thread takes. Without a choice it mirrors the server: all of
+ * them up to `TASK_FOLDER_DEFAULT_REPOSITORIES_MAX`, none above. Chosen paths the project no
+ * longer tracks are dropped once its folders are known.
+ */
+export function resolveWorktreeRepositorySelection(input: {
+  /** Null while the project's tracked folders are still loading. */
+  readonly choices: ReadonlyArray<WorktreeRepositoryChoice> | null;
+  readonly chosen: ReadonlyArray<string> | undefined;
+}): WorktreeRepositorySelection {
+  const { choices, chosen } = input;
+  if (choices === null) {
+    const selected = chosen ?? [];
+    return {
+      selected,
+      label: "Repositories",
+      needsChoice: false,
+      strategyRepositories: chosen?.map((path) => ({ path })),
+    };
+  }
+  const takesAllByDefault = choices.length <= TASK_FOLDER_DEFAULT_REPOSITORIES_MAX;
+  const wanted = chosen === undefined ? null : new Set(chosen);
+  const selected = choices.flatMap((choice) =>
+    (wanted === null ? takesAllByDefault : wanted.has(choice.repositoryPath))
+      ? [choice.repositoryPath]
+      : [],
+  );
+  const needsChoice = chosen === undefined && !takesAllByDefault;
+  return {
+    selected,
+    label: needsChoice
+      ? "Choose repositories"
+      : selected.length === 0
+        ? "No repositories"
+        : selected.length === 1
+          ? "1 repository"
+          : selected.length === choices.length
+            ? "All repositories"
+            : `${selected.length} repositories`,
+    needsChoice,
+    strategyRepositories: chosen === undefined ? undefined : selected.map((path) => ({ path })),
+  };
 }
 
 /** What a collapsed repository section shows; null until the first status arrives. */

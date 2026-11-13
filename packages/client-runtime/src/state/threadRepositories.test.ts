@@ -13,12 +13,15 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { deriveThreadCheckpointSummaries } from "./threadCheckpoints.ts";
 import {
+  addableTaskFolderRepositories,
   deriveTurnRepositoryChanges,
   pinnableThreadRepositories,
   pinThreadRepository,
   repositoryCheckpointScopeIds,
   repositoryFilePath,
   repositorySectionForPath,
+  resolveWorktreeRepositorySelection,
+  rewindFileRestore,
   THREAD_REPOSITORY_SECTIONS_VISIBLE,
   threadChangedRepositories,
   threadRepositoryScopes,
@@ -27,6 +30,7 @@ import {
   turnChanges,
   turnDiffSections,
   turnHasChanges,
+  worktreeRepositoryChoices,
 } from "./threadRepositories.ts";
 
 const now = DateTime.makeUnsafe("2026-11-10T00:00:00.000Z");
@@ -228,6 +232,192 @@ describe("threadRepositorySections", () => {
         ],
       }),
     ).toEqual([{ repositoryPath: "/work/wrapper/cli", name: "cli" }]);
+  });
+
+  it("lists a task folder's worktrees, changed first, and never a shared checkout", () => {
+    const taskFolder = {
+      projectRoot: "/work/wrapper",
+      repositories: [
+        { repositoryPath: "/work/wrapper/docs", worktreePath: "/wt/task/docs", name: "docs" },
+        { repositoryPath: "/work/wrapper/web", worktreePath: "/wt/task/web", name: "web" },
+        {
+          repositoryPath: "/work/wrapper/services/api",
+          worktreePath: "/wt/task/services/api",
+          name: "api",
+        },
+      ],
+    };
+    const sections = threadRepositorySections({
+      // `/work/shared` is changed but has no worktree in the task folder.
+      changed,
+      pinned: [{ repositoryPath: "/work/wrapper/cli", name: "cli" }],
+      threadCwd: "/wt/task",
+      showAll: false,
+      taskFolder,
+    });
+    expect(sections.visible.map((section) => [section.key, section.cwd, section.origin])).toEqual([
+      ["/work/wrapper/web", "/wt/task/web", "worktree"],
+      ["/work/wrapper/services/api", "/wt/task/services/api", "worktree"],
+      ["/work/wrapper/docs", "/wt/task/docs", "worktree"],
+    ]);
+    expect(
+      threadRepositorySections({
+        changed,
+        pinned: [],
+        threadCwd: "/wt/task",
+        showAll: false,
+        taskFolder: { repositories: [] },
+      }).visible,
+    ).toEqual([]);
+
+    expect(
+      addableTaskFolderRepositories({
+        taskFolder,
+        folders: [
+          { path: "/work/wrapper", name: "wrapper", state: "git" },
+          { path: "/work/wrapper/docs", name: "docs", state: "git" },
+          { path: "/work/wrapper/notes", name: "notes", state: "plain" },
+          { path: "/work/shared", name: "shared", state: "git" },
+        ],
+      }),
+    ).toEqual([{ repositoryPath: "/work/shared", name: "shared" }]);
+  });
+});
+
+describe("rewindFileRestore", () => {
+  const projection = { checkpointScopes: scopes, checkpoints };
+  const missingRoot = (appRunOrdinal: number | null) =>
+    ({ status: "missing", appRunOrdinal }) as const;
+  const linkedProjectFolder = { projectIsWorktree: false };
+
+  it.each([
+    {
+      why: "a ready snapshot restores every file",
+      checkpoint: { status: "ready", appRunOrdinal: 1 } as const,
+      taskFolder: null,
+      restores: "files",
+    },
+    {
+      why: "a linked project folder restores a repository's own checkpoint",
+      checkpoint: missingRoot(1),
+      taskFolder: linkedProjectFolder,
+      restores: "repositories",
+    },
+    {
+      why: "the thread start restores a repository's baseline",
+      checkpoint: missingRoot(null),
+      taskFolder: linkedProjectFolder,
+      restores: "repositories",
+    },
+    {
+      why: "no repository changed after the target",
+      checkpoint: missingRoot(3),
+      taskFolder: linkedProjectFolder,
+      restores: null,
+    },
+    {
+      why: "a worktree project folder needs its own snapshot",
+      checkpoint: missingRoot(1),
+      taskFolder: { projectIsWorktree: true },
+      restores: null,
+    },
+    {
+      why: "a thread outside a task folder has only its own snapshot",
+      checkpoint: missingRoot(1),
+      taskFolder: null,
+      restores: null,
+    },
+    {
+      why: "a stale snapshot restores nothing",
+      checkpoint: { status: "stale", appRunOrdinal: 1 } as const,
+      taskFolder: linkedProjectFolder,
+      restores: null,
+    },
+    { why: "no target", checkpoint: undefined, taskFolder: linkedProjectFolder, restores: null },
+  ])("$why", ({ checkpoint: target, taskFolder, restores }) => {
+    expect(rewindFileRestore({ projection, checkpoint: target, taskFolder })).toBe(restores);
+  });
+
+  it("ignores the thread's own scope when looking for repository snapshots", () => {
+    expect(
+      rewindFileRestore({
+        projection: {
+          checkpointScopes: [scope("scope-root", "/work/wrapper")],
+          checkpoints: [checkpoint("root-1", "scope-root", 1, { appRunOrdinal: 1 })],
+        },
+        checkpoint: missingRoot(1),
+        taskFolder: linkedProjectFolder,
+      }),
+    ).toBe(null);
+  });
+});
+
+describe("worktree repository selection", () => {
+  const folders = [
+    { path: "/work/wrapper/web", name: "web", state: "git" },
+    { path: "/work/wrapper/services/api", name: "api", state: "git" },
+    { path: "/work/wrapper/notes", name: "notes", state: "plain" },
+    { path: "/work/shared", name: "shared", state: "git" },
+  ] as const;
+  const choices = worktreeRepositoryChoices({ folders, projectRoot: "/work/wrapper" });
+
+  it("offers tracked Git folders with their place inside the project folder", () => {
+    expect(choices).toEqual([
+      { repositoryPath: "/work/wrapper/web", name: "web", relativePath: "web" },
+      { repositoryPath: "/work/wrapper/services/api", name: "api", relativePath: "services/api" },
+      { repositoryPath: "/work/shared", name: "shared" },
+    ]);
+  });
+
+  it("takes every repository by default and sends nothing until the user chooses", () => {
+    expect(resolveWorktreeRepositorySelection({ choices, chosen: undefined })).toEqual({
+      selected: ["/work/wrapper/web", "/work/wrapper/services/api", "/work/shared"],
+      label: "All repositories",
+      needsChoice: false,
+      strategyRepositories: undefined,
+    });
+  });
+
+  it("sends the chosen repositories the project still tracks, and an empty choice as none", () => {
+    expect(
+      resolveWorktreeRepositorySelection({
+        choices,
+        chosen: ["/work/shared", "/work/untracked", "/work/wrapper/web"],
+      }),
+    ).toMatchObject({
+      label: "2 repositories",
+      strategyRepositories: [{ path: "/work/wrapper/web" }, { path: "/work/shared" }],
+    });
+    expect(resolveWorktreeRepositorySelection({ choices, chosen: [] })).toMatchObject({
+      label: "No repositories",
+      needsChoice: false,
+      strategyRepositories: [],
+    });
+  });
+
+  it("takes none by default above the server's limit and asks for a choice", () => {
+    const many = Array.from({ length: 9 }, (_, index) => ({
+      repositoryPath: `/work/wrapper/repo-${index}`,
+      name: `repo-${index}`,
+    }));
+    expect(resolveWorktreeRepositorySelection({ choices: many, chosen: undefined })).toEqual({
+      selected: [],
+      label: "Choose repositories",
+      needsChoice: true,
+      strategyRepositories: undefined,
+    });
+    expect(
+      resolveWorktreeRepositorySelection({ choices: many.slice(0, 8), chosen: undefined }).selected,
+    ).toHaveLength(8);
+  });
+
+  it("sends a stored choice as it is while the tracked folders are still loading", () => {
+    expect(
+      resolveWorktreeRepositorySelection({ choices: null, chosen: ["/work/shared"] }),
+    ).toMatchObject({ needsChoice: false, strategyRepositories: [{ path: "/work/shared" }] });
+    expect(
+      resolveWorktreeRepositorySelection({ choices: null, chosen: undefined }).strategyRepositories,
+    ).toBeUndefined();
   });
 });
 

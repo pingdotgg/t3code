@@ -20,7 +20,7 @@ import {
   hasTrailingPathSeparator,
   isFilesystemBrowseQuery,
 } from "./projects.ts";
-import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
 const BROWSE_IDLE_TTL_MS = 5_000;
 
@@ -166,6 +166,16 @@ export function createFilesystemEnvironmentAtoms<R, E>(
       label: "environment-data:workspace:list-folders",
       tag: WS_METHODS.workspaceListFolders,
       staleTimeMs: 0,
+    }),
+    /** The task folder a thread's `worktreePath` belongs to, with each repository's worktree. */
+    taskFolder: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:workspace:task-folder",
+      tag: WS_METHODS.workspaceTaskFolder,
+      staleTimeMs: 0,
+    }),
+    addTaskFolderRepository: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:workspace:add-task-folder-repository",
+      tag: WS_METHODS.workspaceAddTaskFolderRepository,
     }),
   };
 }

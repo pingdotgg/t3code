@@ -168,6 +168,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.filesystemBrowse]: "workspace",
   [WS_METHODS.workspaceListFolders]: "workspace",
   [WS_METHODS.workspaceScanFolders]: "workspace",
+  [WS_METHODS.workspaceTaskFolder]: "workspace",
+  [WS_METHODS.workspaceAddTaskFolderRepository]: "workspace",
   [WS_METHODS.filesystemGetMetadata]: "workspace",
   [WS_METHODS.agentSessionsScan]: "workspace",
   [WS_METHODS.agentSessionsImport]: "workspace",

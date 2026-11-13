@@ -2,6 +2,7 @@ import {
   PROJECT_TRACKED_FOLDERS_MAX,
   type ProjectId,
   type ProjectTrackedFolder,
+  type TaskFolder,
   type WorkspaceFolder,
   WorkspaceFoldersError,
   type WorkspaceListFoldersInput,
@@ -22,12 +23,15 @@ import * as Schema from "effect/Schema";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
+import * as TaskFolderStore from "./TaskFolderStore.ts";
 
 /** A tracked folder a thread works in, besides its own cwd. */
 export interface ThreadFolder {
   readonly name: string;
   readonly path: string;
   readonly isGitRepository: boolean;
+  /** The tracked folder `path` is a worktree of. Absent when `path` is the tracked folder. */
+  readonly repositoryPath?: string;
 }
 
 export interface ThreadWorkspace {
@@ -42,8 +46,8 @@ export class WorkspaceFolders extends Context.Service<
   WorkspaceFolders,
   {
     /**
-     * The tracked folders a thread reaches. A thread in its own worktree reaches none: the
-     * project's checkouts are shared, and the worktree is what isolates the thread.
+     * The tracked folders a thread reaches. A thread in a task folder reaches that folder's
+     * worktrees; one in a single worktree reaches none, since the project's checkouts are shared.
      */
     readonly forThread: (input: {
       readonly projectId: ProjectId;
@@ -215,6 +219,7 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const projects = yield* ProjectStore.ProjectStoreV2;
+  const taskFolders = yield* TaskFolderStore.TaskFolderStore;
 
   const { realPath, classify } = yield* folderProbes;
 
@@ -238,10 +243,42 @@ const make = Effect.gen(function* () {
   const classifyAll = (folders: ReadonlyArray<ProjectTrackedFolder>) =>
     Effect.forEach(folders, classify, { concurrency: DETECTION_CONCURRENCY });
 
+  // A task folder's worktrees stand in for the tracked folders: the thread is told about, granted
+  // and checkpoints only those, never the checkouts they were made from.
+  const forTaskFolder = Effect.fnUntraced(function* (worktreePath: string, taskFolder: TaskFolder) {
+    const cwd = yield* realPath(worktreePath);
+    const folders = taskFolder.repositories.map((repository) => ({
+      name: repository.name,
+      path: repository.worktreePath,
+      isGitRepository: true,
+      repositoryPath: repository.repositoryPath,
+    }));
+    const outside = yield* Effect.forEach(
+      folders,
+      (folder) =>
+        realPath(folder.path).pipe(
+          Effect.map((real) => (isWithinRoot(path, real, cwd) ? [] : [folder.path, real])),
+        ),
+      { concurrency: DETECTION_CONCURRENCY },
+    );
+    return { folders, extraRoots: [...new Set(outside.flat())] };
+  });
+
   const forThread: WorkspaceFolders["Service"]["forThread"] = Effect.fn(
     "WorkspaceFolders.forThread",
   )(function* (input) {
-    if (input.worktreePath !== null) return EMPTY_WORKSPACE;
+    if (input.worktreePath !== null) {
+      const taskFolder = yield* taskFolders
+        .findContaining(input.worktreePath)
+        .pipe(
+          Effect.mapError(
+            (cause) => new WorkspaceFoldersError({ operation: "list", detail: cause.detail }),
+          ),
+        );
+      return taskFolder === null
+        ? EMPTY_WORKSPACE
+        : yield* forTaskFolder(input.worktreePath, taskFolder);
+    }
     const project = yield* readProject(input.projectId);
     if (project.trackedFolders.length === 0) return EMPTY_WORKSPACE;
     const folders = (yield* classifyAll(project.trackedFolders)).flatMap((folder) =>

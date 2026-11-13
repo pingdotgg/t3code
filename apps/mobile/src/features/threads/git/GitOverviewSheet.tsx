@@ -28,6 +28,7 @@ import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { SheetPane } from "../../../components/ui/SheetPane";
 import { InspectorSheetContext } from "../../layout/workspace-inspector-sheet";
 import { AppText as Text } from "../../../components/ui/AppText";
+import { filesystemEnvironment } from "../../../state/filesystem";
 import { useEnvironmentQuery } from "../../../state/query";
 import {
   gitRepositoryRouteParams,
@@ -123,26 +124,40 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   // A plain folder that tracks repositories has no branch of its own; its turns still have diffs.
   const projectRepositoryCount = selectedThreadProject?.trackedFolders?.length ?? 0;
   const trackedRepositoryCount = isRepo || repository !== undefined ? 0 : projectRepositoryCount;
-  // A thread in its own worktree reaches no tracked repository.
+  // A worktree thread reaches tracked repositories only through its own task folder.
+  const taskFolderQuery = useEnvironmentQuery(
+    selectedThread !== null && selectedThreadWorktreePath !== null && projectRepositoryCount > 0
+      ? filesystemEnvironment.taskFolder({
+          environmentId: selectedThread.environmentId,
+          input: { worktreePath: selectedThreadWorktreePath },
+        })
+      : null,
+  );
+  const taskFolder = taskFolderQuery.data?.taskFolder ?? null;
   const listsRepositories =
     repository === undefined &&
     selectedThreadProject !== null &&
     projectRepositoryCount > 0 &&
-    selectedThreadWorktreePath === null;
+    (selectedThreadWorktreePath === null || taskFolder !== null);
   const currentBranchLabel =
     repository !== undefined
       ? repository.name
       : trackedRepositoryCount > 0
-        ? (selectedThreadProject?.title ?? "Repositories")
+        ? // A task folder's plain project folder has no branch; its repositories are on the thread's.
+          ((taskFolder === null ? null : selectedThread?.branch) ??
+          selectedThreadProject?.title ??
+          "Repositories")
         : (gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD");
   const currentStatusSummary =
     repository !== undefined
       ? gitStatus.data?.isRepo
         ? `${gitStatus.data.refName ?? "Detached HEAD"} · ${statusSummary(gitStatus.data)}`
         : statusSummary(gitStatus.data)
-      : trackedRepositoryCount > 0
-        ? `${trackedRepositoryCount} tracked ${trackedRepositoryCount === 1 ? "repository" : "repositories"}`
-        : statusSummary(gitStatus.data);
+      : taskFolder !== null && trackedRepositoryCount > 0
+        ? `${taskFolder.repositories.length} repository ${taskFolder.repositories.length === 1 ? "worktree" : "worktrees"}`
+        : trackedRepositoryCount > 0
+          ? `${trackedRepositoryCount} tracked ${trackedRepositoryCount === 1 ? "repository" : "repositories"}`
+          : statusSummary(gitStatus.data);
   const currentWorktreePath = repository === undefined ? selectedThreadWorktreePath : null;
   const gitOperationLabel = gitState.gitOperationLabel;
   const busy = gitOperationLabel !== null;
@@ -394,6 +409,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           threadRef={threadRef}
           projectId={selectedThreadProject.id}
           threadCwd={selectedThreadCwd}
+          taskFolder={taskFolder}
+          onTaskFolderChange={taskFolderQuery.refresh}
           explainsEmpty={!isRepo}
           onOpen={openRepository}
         />
