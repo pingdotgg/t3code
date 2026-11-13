@@ -546,6 +546,57 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       }),
     );
 
+    it.effect("leaves out fetched commits newer than the checkpoint, keeping local ones", () =>
+      Effect.gen(function* () {
+        const root = yield* makeTmpDir();
+        const upstream = NodePath.join(root, "upstream");
+        const primary = NodePath.join(root, "primary");
+        const cwd = NodePath.join(root, "turn");
+        yield* (yield* FileSystem.FileSystem).makeDirectory(upstream);
+        yield* initRepoWithCommit(upstream);
+        yield* git(root, ["clone", upstream, primary]);
+        yield* git(primary, ["config", "user.email", "test@test.com"]);
+        yield* git(primary, ["config", "user.name", "Test"]);
+        yield* git(primary, ["worktree", "add", cwd, "-b", "turn"]);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("checkpoint-authored-paths-fetched");
+        const refs = {
+          cwd,
+          fromCheckpointRef: checkpointRefForThreadTurn(threadId, 0),
+          toCheckpointRef: checkpointRefForThreadTurn(threadId, 1),
+        };
+        yield* checkpointStore.captureCheckpoint({ cwd, checkpointRef: refs.fromCheckpointRef });
+
+        const commitFile = (repo: string, file: string) =>
+          Effect.gen(function* () {
+            yield* writeTextFile(NodePath.join(repo, file), `${file}\n`);
+            yield* git(repo, ["add", "."]);
+            yield* git(repo, ["commit", "-m", file]);
+          });
+
+        yield* git(upstream, ["checkout", "-b", "release"]);
+        yield* commitFile(upstream, "first.txt");
+        yield* git(cwd, ["fetch", "origin"]);
+        yield* commitFile(upstream, "second.txt");
+        // The primary worktree's HEAD reflog is the only record that this commit was made here.
+        yield* git(primary, ["checkout", "--detach"]);
+        yield* commitFile(primary, "own.txt");
+        yield* git(primary, ["push", "origin", "HEAD:refs/heads/pushed"]);
+        yield* git(upstream, ["merge", "pushed", "--no-edit"]);
+
+        yield* git(cwd, ["fetch", "origin"]);
+        yield* git(cwd, ["merge", "--ff-only", "origin/release"]);
+        yield* commitFile(cwd, "local.txt");
+        // Pushing imported commits to another branch must not make them look local.
+        yield* git(cwd, ["push", "origin", "HEAD:refs/heads/mirror"]);
+        yield* checkpointStore.captureCheckpoint({ cwd, checkpointRef: refs.toCheckpointRef });
+
+        expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(
+          new Set(["local.txt", "own.txt"]),
+        );
+      }),
+    );
+
     it.effect("keeps paths from signed commits under log.showSignature", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
