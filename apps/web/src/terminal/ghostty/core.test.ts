@@ -406,6 +406,41 @@ describe("GhosttyTerminalCore snapshots", () => {
     reference.resetAndWrite("hello");
     expect(core.snapshot()).toEqual(reference.snapshot());
   });
+
+  // regression: #36006 Clear dropped the modes the still-running program negotiated
+  it("keeps the live program's screen and input modes when history is cleared", async () => {
+    const replies: string[] = [];
+    const core = await createCore((data) => replies.push(data));
+    const modes = () => {
+      replies.length = 0;
+      core.write("\x1b[?u");
+      return {
+        alternateScreen: core.isAlternateScreen(),
+        applicationCursorKeys: core.isApplicationCursorKeys(),
+        mouseTracking: core.isMouseTracking(),
+        kittyFlags: replies.join(""),
+      };
+    };
+    let state = createSession("\x1b[?1049h\x1b[>7u\x1b[?1;1000;1006h");
+    const initial = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
+    writeTerminalOutputUpdate(core, initial);
+    const negotiated = modes();
+    expect(negotiated).toEqual({
+      alternateScreen: true,
+      applicationCursorKeys: true,
+      mouseTracking: true,
+      kittyFlags: "\x1b[?7u",
+    });
+
+    state = applyTerminalAttachStreamEvent(state, {
+      type: "cleared",
+      threadId: "terminal-stream-test",
+      terminalId: "term-1",
+    });
+    writeTerminalOutputUpdate(core, readTerminalOutputUpdate(state.output, initial.cursor));
+
+    expect(modes()).toEqual(negotiated);
+  });
 });
 
 describe("GhosttyTerminalCore scrollback", () => {
