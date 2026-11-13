@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   type ClaudeSettings,
   type ModelCapabilities,
@@ -484,7 +485,9 @@ const probeClaudeCapabilities = (
       catch: (cause) => new ClaudeCapabilitiesProbeSdkError({ operation: "initialize", cause }),
     });
   }).pipe(
-    Effect.timeout(CAPABILITIES_PROBE_TIMEOUT_MS),
+    Effect.timeout(
+      resolveProviderProbeTimeoutMs("claude", CAPABILITIES_PROBE_TIMEOUT_MS, environment),
+    ),
     Effect.flatMap(({ q, init, graceMs }) =>
       Effect.gen(function* () {
         // Usage has its own deadline so a slow optional request cannot discard initialization.
@@ -651,7 +654,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     ["--version"],
     providerProbeEnvironment(resolvedEnvironment),
     cwd,
-  ).pipe(Effect.timeoutOption(CLAUDE_VERSION_CHECK_TIMEOUT_MS), Effect.result);
+  ).pipe(
+    Effect.timeoutOption(
+      resolveProviderProbeTimeoutMs("claude", CLAUDE_VERSION_CHECK_TIMEOUT_MS, resolvedEnvironment),
+    ),
+    Effect.result,
+  );
 
   if (Result.isFailure(versionProbe)) {
     const error = versionProbe.failure;
@@ -756,7 +764,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         auth: { status: "unknown" },
         message: probeFailure
           ? Cause.isTimeoutError(probeFailure)
-            ? `Timed out after ${CAPABILITIES_PROBE_TIMEOUT_MS / 1_000}s while checking Claude account status.`
+            ? `Timed out after ${resolveProviderProbeTimeoutMs("claude", CAPABILITIES_PROBE_TIMEOUT_MS, resolvedEnvironment) / 1_000}s while checking Claude account status.`
             : "Claude Agent CLI failed while checking account status."
           : "Could not verify Claude authentication status from initialization result.",
       },

@@ -33,6 +33,10 @@ export function exhaustedUsageWindow(
   const exhausted = windows.filter(
     (window) =>
       (window.usedPercent ?? 0) >= 100 &&
+      (model === undefined || window.modelIds === undefined || window.modelIds.includes(model)) &&
+      (model === undefined ||
+        window.providerIds === undefined ||
+        window.providerIds.includes(model.split("/")[0] ?? "")) &&
       (!window.resetsAt ||
         !Number.isFinite(Date.parse(window.resetsAt)) ||
         Date.parse(window.resetsAt) > now),
@@ -540,6 +544,25 @@ function accountSortName(account: LimitAccount): string {
   return (account.displayName ?? account.email ?? account.key).toLowerCase();
 }
 
+const CODEX_PLAN_CAPACITY: Record<string, number> = {
+  "ChatGPT Plus Subscription": 1,
+  "ChatGPT Pro 100 Subscription": 5,
+  "ChatGPT Pro 200 Subscription": 20,
+};
+// Claude's published plan multipliers describe the session allowance only.
+const CLAUDE_SESSION_CAPACITY: Record<string, number> = { Pro: 1, Max: 5, Ultra: 20 };
+
+function planCapacity(account: LimitAccount, kind: ServerProviderUsageWindow["kind"]) {
+  if (!account.plan) return undefined;
+  if (account.driver === "codex" && (kind === "session" || kind === "weekly")) {
+    return CODEX_PLAN_CAPACITY[account.plan];
+  }
+  if (account.driver === "claudeAgent" && kind === "session") {
+    return CLAUDE_SESSION_CAPACITY[account.plan];
+  }
+  return undefined;
+}
+
 // Codex ids name slots, so pool by kind; other drivers' ids identify distinct allowances.
 function poolKey(driver: ServerProvider["driver"], window: ServerProviderUsageWindow): string {
   return driver === "codex" ? window.kind : `${window.kind}:${window.id}`;
@@ -608,15 +631,28 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     const memberByAccount = new Map(members.map((member) => [member.account.key, member]));
     const first = members[0]!.window;
     const id = members[0]!.account.driver === "codex" ? key : first.id;
-    const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
+    // One unknown plan makes the pool incomparable by plan, so every member then counts once.
+    const capacities = members.map((m) => planCapacity(m.account, first.kind));
+    const weights = capacities.every((capacity) => capacity !== undefined)
+      ? capacities
+      : members.map(() => 1);
+    const weightOf = new Map(members.map((m, index) => [m, weights[index]!]));
+    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+    const usedPercent =
+      members.reduce((sum, m) => sum + m.window.usedPercent * weightOf.get(m)!, 0) / totalWeight;
     // Judge pace only for windows with reset clocks; others add spend without elapsed time.
     const timed = members.flatMap((m) => {
       const share = elapsedShare(m.window, now);
-      return share === null ? [] : [{ used: m.window.usedPercent, elapsed: share }];
+      return share === null
+        ? []
+        : [{ used: m.window.usedPercent, elapsed: share, weight: weightOf.get(m)! }];
     });
-    const timedUsed = timed.reduce((sum, t) => sum + t.used, 0) / timed.length;
+    const timedWeight = timed.reduce((sum, t) => sum + t.weight, 0);
+    const timedUsed = timed.reduce((sum, t) => sum + t.used * t.weight, 0) / timedWeight;
     const meanElapsed =
-      timed.length > 0 ? timed.reduce((sum, t) => sum + t.elapsed, 0) / timed.length : null;
+      timed.length > 0
+        ? timed.reduce((sum, t) => sum + t.elapsed * t.weight, 0) / timedWeight
+        : null;
     const resets = members
       .flatMap((member) => {
         const at = resetMillis(member.window);
@@ -626,7 +662,9 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
               {
                 member,
                 at,
-                restoresPercent: Math.round(member.refillPercent / members.length),
+                restoresPercent: Math.round(
+                  (member.refillPercent * weightOf.get(member)!) / totalWeight,
+                ),
               },
             ];
       })

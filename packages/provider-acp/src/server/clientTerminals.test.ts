@@ -22,7 +22,7 @@ const withTerminals = <A, E>(use: (terminals: AcpClientTerminals) => Effect.Effe
       defaultCwd: process.cwd(),
     });
     return yield* use(terminals).pipe(Effect.ensuring(terminals.disposeAll));
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+  }).pipe(Effect.provide(NodeServices.layer));
 
 describe("AcpClientTerminals", () => {
   it.live("runs a command, buffers output, and reports the exit status", () =>
@@ -94,7 +94,7 @@ describe("AcpClientTerminals", () => {
       expect(terminals.readOutputSnapshot("session", terminal.terminalId)?.output).toBe(
         output.output,
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.live("resolves terminal environment from the requesting ACP session", () =>
@@ -120,7 +120,7 @@ describe("AcpClientTerminals", () => {
         const output = yield* terminals.output({ sessionId, terminalId: created.terminalId });
         expect(output.output).toBe(expected);
       }
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("runs Devin shell source with arguments, pipes, and session fallback variables", () =>
@@ -139,7 +139,7 @@ describe("AcpClientTerminals", () => {
       const output = yield* terminals.output({ sessionId: "devin", ...terminal });
       expect(exit.exitCode).toBe(0);
       expect(output.output.trim()).toBe("MAILBOX-PROBE");
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live.each([
@@ -237,7 +237,7 @@ describe("AcpClientTerminals", () => {
       const output = yield* terminals.output(request);
       expect(output.output).toBe("done\n");
       expect(output.exitStatus).toEqual({ exitCode: 0, signal: null });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each([
@@ -298,7 +298,7 @@ describe("AcpClientTerminals", () => {
         expect(yield* child.isRunning).toBe(false);
         yield* Fiber.join(killing);
         expect(yield* Fiber.join(waiting)).toEqual({ exitCode: 137, signal: null });
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.live("force-kills commands that ignore SIGTERM and resolves wait_for_exit", () =>
@@ -352,7 +352,7 @@ describe("AcpClientTerminals", () => {
         expect(exit).toEqual({ exitCode: null, signal: "SIGKILL" });
       }
       expect(yield* child.isRunning).toBe(false);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("reserves terminal capacity across concurrent creates", () =>
