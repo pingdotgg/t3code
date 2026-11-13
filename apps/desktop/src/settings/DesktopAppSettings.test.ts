@@ -240,6 +240,28 @@ describe("DesktopSettings", () => {
     ),
   );
 
+  it.effect("keeps Local environment off when another value in the file is unreadable", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.desktopSettingsPath,
+          `{ "localEnvironmentEnabled": false, "serverExposureMode": "tailnet" }\n`,
+        );
+
+        assert.isFalse((yield* settings.load).localEnvironmentEnabled);
+        yield* settings.setMainWindowBounds({ x: 10, y: 20, width: 800, height: 600 }, false);
+        assert.include(
+          yield* fileSystem.readFileString(environment.desktopSettingsPath),
+          `"localEnvironmentEnabled":false`,
+        );
+      }),
+    ),
+  );
+
   it.effect("rejects window bounds that do not satisfy the domain schema", () =>
     withSettings(
       Effect.gen(function* () {
