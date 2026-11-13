@@ -156,3 +156,47 @@ it("does not treat chunk disposal as a pause", async () => {
   await run;
   expect(controller.getSnapshot().status).toBe("idle");
 });
+
+it("keeps a new pause while resume activates playback", async () => {
+  const playing = deferred<void>();
+  const resuming = deferred<void>();
+  const activated = deferred<void>();
+  const finished = deferred<void>();
+  const play = vi.fn(async () => {
+    if (play.mock.calls.length === 1) return;
+    else {
+      resuming.resolve();
+      await activated.promise;
+    }
+  });
+  const controller = createReadAloudController(async () => ({
+    play,
+    pause: () => {},
+    stop: () => finished.resolve(),
+    finished: finished.promise,
+  }));
+  const unsubscribe = controller.subscribe(() => {
+    if (controller.getSnapshot().status === "playing") playing.resolve();
+  });
+  const run = controller.start("resume", "reply", {
+    ...DEFAULT_READ_ALOUD_SETTINGS,
+    provider: "system",
+  });
+  await playing.promise;
+  controller.pause();
+  const resume = controller.resume();
+  await resuming.promise;
+  try {
+    expect(controller.getSnapshot().status).toBe("loading");
+    controller.pause();
+    activated.resolve();
+    await resume;
+    expect(controller.getSnapshot().status).toBe("paused");
+  } finally {
+    activated.resolve();
+    controller.stop();
+    await resume;
+    await run;
+    unsubscribe();
+  }
+});

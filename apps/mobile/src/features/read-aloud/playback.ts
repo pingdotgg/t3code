@@ -13,6 +13,12 @@ import { environmentSession } from "../../state/session";
 import { createAudioPlaybackSession, disposeAudioPlayer } from "../../lib/audioSession";
 import { runSpeech } from "../voice-input/voiceDestination";
 
+function pauseInBackground(settings: ReadAloudSettings) {
+  const shouldPause = !settings.backgroundPlayback && AppState.currentState !== "active";
+  if (shouldPause) readAloudController.pause();
+  return shouldPause;
+}
+
 function watchForeground(settings: ReadAloudSettings) {
   const subscription = AppState.addEventListener("change", (state) => {
     if (!settings.backgroundPlayback && state !== "active") readAloudController.pause();
@@ -32,6 +38,7 @@ function systemPlayback(text: string, settings: ReadAloudSettings): SpeechPlayba
   let generation = 0;
   const player = {
     play() {
+      if (pauseInBackground(settings)) return;
       if (started && Platform.OS === "ios") {
         void Speech.resume().catch(fail);
         return;
@@ -74,10 +81,7 @@ function systemPlayback(text: string, settings: ReadAloudSettings): SpeechPlayba
   );
   return {
     play: async () => {
-      if (!settings.backgroundPlayback && AppState.currentState !== "active") {
-        readAloudController.pause();
-        return;
-      }
+      if (pauseInBackground(settings)) return;
       await session.play();
       if (!session.requested) throw new Error("Finish recording before reading aloud.");
     },
@@ -139,7 +143,12 @@ export const readAloudController = createReadAloudController(async (text, settin
   }
   const stopWatching = watchForeground(settings);
   const session = createAudioPlaybackSession(
-    player,
+    {
+      play() {
+        if (!pauseInBackground(settings)) player.play();
+      },
+      pause: (deactivateSession) => player.pause(deactivateSession),
+    },
     false,
     (requested) => {
       if (!requested) {
@@ -170,10 +179,7 @@ export const readAloudController = createReadAloudController(async (text, settin
   });
   return {
     play: async () => {
-      if (!settings.backgroundPlayback && AppState.currentState !== "active") {
-        readAloudController.pause();
-        return;
-      }
+      if (pauseInBackground(settings)) return;
       if (settings.backgroundPlayback)
         player.setActiveForLockScreen(true, { title: "T3 Code", artist: "Read aloud" });
       await session.play();

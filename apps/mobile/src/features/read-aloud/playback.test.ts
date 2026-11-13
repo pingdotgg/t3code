@@ -1,13 +1,18 @@
 import { DEFAULT_READ_ALOUD_SETTINGS, EnvironmentId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import * as Speech from "expo-speech";
-import { Platform } from "react-native";
-import { createAudioPlayer, type AudioStatus } from "expo-audio";
+import { AppState, Platform } from "react-native";
+import { createAudioPlayer, setAudioModeAsync, type AudioStatus } from "expo-audio";
 import { acquireAudioSession, releaseAudioSession } from "../../lib/audioSession";
 import { readAloudController } from "./playback";
 
 vi.mock("react-native", () => ({
-  AppState: { currentState: "active", addEventListener: () => ({ remove() {} }) },
+  AppState: {
+    get currentState() {
+      return "active";
+    },
+    addEventListener: () => ({ remove() {} }),
+  },
   Platform: {
     get OS() {
       return "ios";
@@ -163,3 +168,51 @@ it("cancels Android default speech while the native engine initializes", async (
   await run;
   expect(Speech.speak).not.toHaveBeenCalled();
 });
+
+it.each(["system", "xai"] as const)(
+  "keeps %s silent when backgrounded during activation",
+  async (provider) => {
+    using state = vi.spyOn(AppState, "currentState", "get").mockReturnValue("active");
+    const activating = Promise.withResolvers<void>();
+    const activated = Promise.withResolvers<void>();
+    vi.mocked(setAudioModeAsync).mockImplementationOnce(async () => {
+      activating.resolve();
+      await activated.promise;
+    });
+    const play = vi.fn();
+    vi.mocked(Speech.speak).mockClear();
+    const player = {
+      play,
+      pause: vi.fn(),
+      release: vi.fn(),
+      addListener: vi.fn(),
+      setActiveForLockScreen: vi.fn(),
+    };
+    vi.mocked(createAudioPlayer).mockReturnValue(
+      player as unknown as ReturnType<typeof createAudioPlayer>,
+    );
+    const paused = Promise.withResolvers<void>();
+    const unsubscribe = readAloudController.subscribe(() => {
+      if (["paused", "playing"].includes(readAloudController.getSnapshot().status))
+        paused.resolve();
+    });
+    const run = readAloudController.start("activation", "reply", {
+      ...DEFAULT_READ_ALOUD_SETTINGS,
+      provider,
+      environmentId: EnvironmentId.make("host"),
+      backgroundPlayback: false,
+    });
+    try {
+      await activating.promise;
+      state.mockReturnValue("background");
+      activated.resolve();
+      await paused.promise;
+      expect(play).not.toHaveBeenCalled();
+      expect(Speech.speak).not.toHaveBeenCalled();
+    } finally {
+      readAloudController.stop();
+      await run;
+      unsubscribe();
+    }
+  },
+);

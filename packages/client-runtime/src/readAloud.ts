@@ -91,6 +91,7 @@ export function createReadAloudController(
       const id = state.id;
       try {
         starting = true;
+        publish({ ...state, status: "loading" });
         await playback.play();
         if (active === owner) {
           starting = false;

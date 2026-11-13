@@ -10,6 +10,7 @@ import {
   AuthSettingsWriteScope,
   type AuthEnvironmentScope,
   CloudSpeechError,
+  SpeechSynthesisError,
   DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
   SPEECH_MAX_OPTIONS_BYTES,
   DEFAULT_SERVER_SETTINGS,
@@ -70,7 +71,9 @@ effectIt.effect.each([false, true])(
   "guards speech generation and model discovery with operate scope (%s)",
   (allowed) =>
     Effect.gen(function* () {
-      const synthesize = vi.fn(() => Effect.succeed(Uint8Array.of(73, 68, 51, 1)));
+      const synthesize = vi.fn<CloudSpeech.CloudSpeech["Service"]["synthesize"]>(() =>
+        Effect.succeed(Uint8Array.of(73, 68, 51, 1)),
+      );
       const synthesisModels = vi.fn(() => Effect.succeed({ models: [] }));
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
@@ -119,6 +122,21 @@ effectIt.effect.each([false, true])(
         expect(synthesize).toHaveBeenCalledWith("xai", payload);
         expect((yield* call("a".repeat(4097))).status).toBe(400);
         expect(synthesize).toHaveBeenCalledTimes(1);
+        synthesize.mockReturnValueOnce(
+          Effect.fail(
+            new SpeechSynthesisError({
+              provider: "xai",
+              reason: "unavailable",
+              cause: new Error("private provider diagnostic"),
+            }),
+          ),
+        );
+        const failure = yield* call(payload.text);
+        expect(failure.status).toBe(422);
+        const body = yield* Effect.promise(() => failure.json());
+        expect(body).toMatchObject({ provider: "xai", reason: "unavailable" });
+        expect(body).not.toHaveProperty("cause");
+        expect(JSON.stringify(body)).not.toContain("private provider diagnostic");
       } else {
         expect(synthesize).not.toHaveBeenCalled();
         expect(synthesisModels).not.toHaveBeenCalled();

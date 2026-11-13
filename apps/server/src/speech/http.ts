@@ -1,3 +1,4 @@
+import { SpeechSynthesisError } from "@t3tools/contracts";
 import { decodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import {
   AuthFilesystemReadScope,
@@ -85,6 +86,10 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
           yield* guard(args.endpoint.name);
           return yield* cloud.synthesisModels(args.params.provider).pipe(
             Effect.catchTags({
+              SpeechSynthesisError: (error) =>
+                Effect.fail(
+                  new SpeechSynthesisError({ provider: error.provider, reason: error.reason }),
+                ),
               ServerSettingsError: (error) => failEnvironmentInternal("internal_error", error),
             }),
           );
@@ -96,6 +101,10 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
           yield* guard(args.endpoint.name);
           return yield* cloud.synthesize(args.params.provider, args.payload).pipe(
             Effect.catchTags({
+              SpeechSynthesisError: (error) =>
+                Effect.fail(
+                  new SpeechSynthesisError({ provider: error.provider, reason: error.reason }),
+                ),
               ServerSettingsError: (error) => failEnvironmentInternal("internal_error", error),
             }),
           );

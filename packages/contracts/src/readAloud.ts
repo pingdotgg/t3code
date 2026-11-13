@@ -59,6 +59,7 @@ export class SpeechSynthesisError extends Schema.TaggedError<SpeechSynthesisErro
   "SpeechSynthesisError",
   {
     provider: SpeechSynthesisProvider,
+    cause: Schema.optionalKey(Schema.Defect()),
     reason: Schema.Literals([
       "missing-key",
       "key-changed",
