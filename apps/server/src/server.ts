@@ -27,6 +27,10 @@ import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
+import * as Scheduler from "./scheduling/Scheduler.ts";
+import * as RunWebhookService from "./runWebhooks/RunWebhookService.ts";
+import * as RunWebhookTransport from "./runWebhooks/RunWebhookTransport.ts";
+import * as AuthSessions from "./persistence/AuthSessions.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as KeepAwake from "./background/KeepAwake.ts";
@@ -820,6 +824,7 @@ const layerMakeRoutes = Layer.mergeAll(
     Ws.layer,
     speechStreamRouteLayer,
   ),
+  RunWebhookService.layerWorker.pipe(Layer.provide(Scheduler.layer)),
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
@@ -831,6 +836,17 @@ const layerMakeRoutes = Layer.mergeAll(
 ).pipe(
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
+  ),
+  Layer.provide(
+    RunWebhookService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          RunWebhookTransport.layer,
+          RunWebhookTransport.layerEndpoints,
+          AuthSessions.layer,
+        ),
+      ),
+    ),
   ),
   // delegate_task to a linked environment, from /mcp and the follower above.
   Layer.provide(RemoteDelegation.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),

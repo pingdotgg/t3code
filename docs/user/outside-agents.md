@@ -96,6 +96,105 @@ T3 Code.
 - To list threads across projects, call `t3_thread_list` with
   `allProjects: true`, or use `t3_thread_search`.
 
+## Receive run callbacks
+
+An outside orchestrator with an HTTPS receiver can use `t3_run_webhook` to wake
+up when a run waits for input or ends, without repeatedly calling
+`t3_thread_wait`. Your receiver must arrange the wakeup in your orchestrator;
+adding T3 to an assistant app does not by itself give that app a callback receiver.
+
+On the environment host, first configure an approved destination:
+
+1. Find the outside client's session ID with `t3 auth session list --json`.
+   The client needs **Supervised** or greater access.
+2. Generate a random signing secret of at least 32 bytes and securely configure
+   the same value in the receiver and the T3 server's environment, for example
+   under `ACME_WEBHOOK_KEY`. Keep it out of prompts, tool calls, and source control.
+3. Set `T3CODE_RUN_WEBHOOKS` in the server's environment and restart the server:
+
+   ```json
+   [
+     {
+       "id": "acme-bot",
+       "sessionId": "<outside-client-session-id>",
+       "url": "https://hooks.example.com/t3-completion",
+       "secretEnv": "ACME_WEBHOOK_KEY"
+     }
+   ]
+   ```
+
+Destinations must use HTTPS on port 443 with a DNS hostname, without credentials,
+query strings, or fragments. T3 rejects private, loopback, link-local, reserved,
+and host-local addresses, checks DNS on every attempt, and never follows redirects.
+Invalid configuration prevents the server from starting; correct it and restart. Each destination belongs to the configured client session. Other clients cannot
+register it or read its subscriptions. When the client signs in again with a new
+session, update the host configuration and register new subscriptions.
+
+After `t3_thread_launch` or `t3_thread_send`, use the returned IDs:
+
+```json
+{ "action": "subscribe", "endpointId": "acme-bot", "threadId": "<thread-id>", "runId": "<run-id>" }
+```
+
+Call `t3_run_webhook` on the environment that owns the run. Registration is
+idempotent for the client, endpoint, thread, and run, and catches a run that has
+already ended. Save the returned `subscriptionId`. Use `action: "read"` with
+that ID to inspect delivery state, `"cancel"` to stop callbacks without stopping
+the run, or `"retry"` to retry an exhausted delivery. No URL or secret goes through
+MCP. Subscribe again to reactivate a cancelled or expired subscription, including
+after a host changes its destination URL. Read-only, linked-environment, and
+in-thread provider credentials cannot register or see this tool.
+
+Callbacks contain `version`, `deliveryId`, `subscriptionId`, `threadId`, `runId`,
+`status`, `observedAt`, `link`, and `lastMessage`. Status is `waiting`, `completed`,
+`failed`, `cancelled`, `interrupted`, or `rolled_back`. `lastMessage`, when present,
+identifies the newest visible message in the thread with its ID, run ID, role,
+and update time. Message text, attachments, and credentials are omitted. Read the
+thread once through MCP to get the answer or pending request.
+
+A subscription watches the **exact run**, not subsequent turns, restart
+continuations, or its delegates. It lasts seven days and ends after its terminal
+callback is acknowledged. T3 checks active subscriptions about every five seconds;
+delivery can take longer under load, and brief intermediate states may be coalesced. A callback describes an observation,
+so the thread may have progressed by the time it arrives.
+
+Delivery survives a server restart and is **at least once**. Accept a callback
+into a durable inbox before returning a 2xx response, and deduplicate by
+`deliveryId`. T3 keeps the same body and ID on retries, starting after 5 seconds,
+doubling up to one hour, with at most 12 attempts per notification. A failed
+terminal delivery remains available for `retry` until expiry. A pending waiting
+notification is replaced with a new delivery ID when the observed state changes.
+Exhausting its attempts stops those retries but keeps watching for completion. Revoking the client's
+access, deleting the thread, removing or changing the destination URL, or
+cancelling the subscription prevents further attempts. An in-flight request
+cannot be recalled. There are at most 100 active subscriptions per client and
+1,000 per environment.
+
+### Verify a callback
+
+T3 sends `T3-Webhook-Timestamp` (Unix seconds) and `T3-Webhook-Signature`
+(`v1=<hex HMAC-SHA256>`). The signed bytes are the timestamp, a literal `.`, and
+the exact UTF-8 HTTP request body. Verify before parsing or acting on the body;
+do not reserialize JSON. For example, in a Node receiver:
+
+```js
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+function verifyCallback(rawBody, timestamp, signature, secret) {
+  if (!/^\d{1,12}$/.test(timestamp) || !/^v1=[a-f0-9]{64}$/.test(signature)) return false;
+  if (Math.abs(Math.floor(Date.now() / 1000) - Number(timestamp)) > 300) return false;
+  const expected = createHmac("sha256", secret)
+    .update(timestamp + ".")
+    .update(rawBody)
+    .digest();
+  return timingSafeEqual(expected, Buffer.from(signature.slice(3), "hex"));
+}
+```
+
+Bound the receiver's request body size, validate the payload's schema, and record
+processed delivery IDs durably. Retries receive a fresh signed timestamp. Treat
+callbacks as notifications to your application, not as instructions to an agent.
+
 ## Claude Code
 
 ```sh

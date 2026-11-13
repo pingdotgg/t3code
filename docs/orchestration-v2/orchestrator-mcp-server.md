@@ -386,6 +386,15 @@ provider does not offer is refused, and an inherited or default one steps down
 to the broadest mode it offers. Launch has no retry key, so inspect existing threads after a failed or lost response before
 launching again. `create_threads` remains the batch option for a shared checkout.
 
+### `t3_run_webhook`
+
+Outside MCP clients can subscribe to the exact run returned by launch or send;
+this does not implement `untilDelegatedWorkSettled` or follow restart continuations.
+Registration after completion also works. Delivery is at least once, so receivers
+must deduplicate by delivery ID. Changing a host-configured URL invalidates existing
+subscriptions; the client must explicitly subscribe again to use the new destination.
+See [callback setup and signature verification](../user/outside-agents.md#receive-run-callbacks).
+
 ### `t3_thread_list`
 
 Lists durable thread shells in one project, newest first: `projectId` when

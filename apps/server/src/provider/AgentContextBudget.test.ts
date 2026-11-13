@@ -3,9 +3,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { McpProviderSessions } from "@t3tools/provider-core/server/McpProviderSessions";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { McpServer } from "effect/ai";
+import { McpSchema, McpServer } from "effect/ai";
 
 import { AssetSigner } from "../assets/AssetSigner.ts";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
@@ -36,6 +37,7 @@ import { ProjectService } from "../project/ProjectService.ts";
 import { ProjectSetupScriptRunner } from "../project/ProjectSetupScriptRunner.ts";
 import { PullRequestReviewGuideService } from "../pullRequest/PullRequestReviewGuideService.ts";
 import { PullRequestService } from "../pullRequest/PullRequestService.ts";
+import { RunWebhookService } from "../runWebhooks/RunWebhookService.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import { SecretRequests } from "../secrets/SecretRequests.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -49,6 +51,7 @@ import budget from "./agentContextBudget.json" with { type: "json" };
 
 // Registration only stores tool definitions, so the handlers' services are never called.
 const toolHandlerServices = Layer.mergeAll(
+  Layer.mock(RunWebhookService)({}),
   Layer.mock(AssetSigner)({}),
   Layer.mock(DeviceService)({}),
   Layer.mock(DocumentText)({}),
@@ -137,11 +140,24 @@ it.effect("agent context matches the committed budget", () =>
       // The model sees these fields. outputSchema and annotations are protocol metadata.
       mcpToolListJsonBytes: utf8Bytes(
         JSON.stringify(
-          mcp.tools.map(({ tool }) => ({
-            name: tool.name,
-            description: tool.description,
-            inputSchema: tool.inputSchema,
-          })),
+          // No outside client: exclude tools that cannot appear in an in-thread agent's list.
+          mcp.tools
+            .filter(
+              ({ annotations }) =>
+                Context.getOrUndefined(
+                  annotations,
+                  McpSchema.EnabledWhen,
+                )?.({
+                  protocolVersion: "2025-06-18",
+                  capabilities: {},
+                  clientInfo: { name: "context-budget", version: "1" },
+                }) ?? true,
+            )
+            .map(({ tool }) => ({
+              name: tool.name,
+              description: tool.description,
+              inputSchema: tool.inputSchema,
+            })),
         ),
       ),
     };
