@@ -211,6 +211,52 @@ export function evaluatePullRequestWatch(
   };
 }
 
+/** Check failures a watch saw while its thread was busy, on the head they failed on. */
+export interface HeldFailures {
+  readonly headSha: string | null;
+  readonly failed: ReadonlyArray<PullRequestCheck>;
+}
+
+const failedIn = (report: PullRequestWatchReport) =>
+  report.changes.flatMap((change) => (change.kind === "checks-failed" ? change.failed : []));
+
+const without = (
+  checks: ReadonlyArray<PullRequestCheck>,
+  others: ReadonlyArray<PullRequestCheck>,
+) => checks.filter((check) => !others.some((other) => other.name === check.name));
+
+/** Adds a busy pass's failures to those held. A new head drops the old head's failures. */
+export function holdFailures(
+  held: HeldFailures | undefined,
+  report: PullRequestWatchReport,
+): HeldFailures {
+  const failed = failedIn(report);
+  const kept = held?.headSha === report.next.headSha ? without(held.failed, failed) : [];
+  return { headSha: report.next.headSha, failed: [...kept, ...failed] };
+}
+
+/**
+ * A check can fail and pass again while the thread is busy. Its failure still reaches the
+ * thread with the next wake, unless the head moved on since.
+ */
+export function withHeldFailures(
+  report: PullRequestWatchReport,
+  held: HeldFailures | undefined,
+): PullRequestWatchReport {
+  if (held === undefined || held.headSha !== report.next.headSha) return report;
+  const failed = failedIn(report);
+  const recovered = without(held.failed, failed);
+  if (recovered.length === 0) return report;
+  const change = { kind: "checks-failed" as const, failed: [...failed, ...recovered] };
+  return {
+    ...report,
+    changes:
+      failed.length === 0
+        ? [change, ...report.changes]
+        : report.changes.map((existing) => (existing.kind === "checks-failed" ? change : existing)),
+  };
+}
+
 function snippet(body: string): string {
   const text = body
     .replaceAll(/<!--[\s\S]*?-->/g, " ")

@@ -4084,8 +4084,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ["#12: checks failed"],
       );
 
-      // The wake's run is still going, so news waits for it.
-      failing = ["lint", "test"];
+      // The wake's run is still going, so news waits for it, even a failure that passes again.
+      failing = ["lint", "test", "build"];
       comments = [
         {
           id: "remark-1",
@@ -4100,6 +4100,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       ];
       yield* TestClock.adjust("10 minutes");
       yield* reactor.sweep;
+      failing = ["lint", "test"];
       yield* TestClock.adjust("10 minutes");
       yield* reactor.sweep;
       assert.lengthOf(yield* wakes, 1);
@@ -4114,6 +4115,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       );
       const text = told[1]?.text ?? "";
       assert.include(text, "- Checks failed on ad70160:\n  - test");
+      assert.include(text, "  - build");
       assert.include(text, "Please also cover the empty list.");
       assert.include(
         text,

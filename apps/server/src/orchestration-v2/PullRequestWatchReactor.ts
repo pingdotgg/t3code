@@ -39,9 +39,12 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import {
   evaluatePullRequestWatch,
+  type HeldFailures,
+  holdFailures,
   PULL_REQUEST_WATCH_NO_CHECKS_MS,
   pullRequestWatchMessage,
   type PullRequestWatchReport,
+  withHeldFailures,
 } from "./pullRequestWatch.ts";
 
 /** Checks take minutes; faster sweeps waste the account's shared host quota. */
@@ -262,9 +265,10 @@ export const make = Effect.gen(function* () {
   const readFailures = new Map<string, number>();
   /**
    * Watches with news held while their thread was busy. Their state is not recorded, so the
-   * first read after the thread goes idle tells everything since in one wake.
+   * first read after the thread goes idle tells everything since in one wake, with the
+   * failures it saw on the way.
    */
-  const deferred = new Set<string>();
+  const deferred = new Map<string, HeldFailures>();
   /** The last sweep's groups, whose pull requests get host change feeds. */
   let currentGroups: ReadonlyArray<WatchGroup> = [];
   // A pass reads watches and records new ones, so passes must not overlap.
@@ -576,10 +580,14 @@ export const make = Effect.gen(function* () {
       );
     let remarks = Option.isSome(activity) ? yield* remarksOf(activity.value) : null;
     const reportsOf = () =>
-      group.targets.map((target) => evaluatePullRequestWatch(target.watch, detail, remarks, now));
+      group.targets.map((target) =>
+        withHeldFailures(
+          evaluatePullRequestWatch(target.watch, detail, remarks, now),
+          deferred.get(watchKey(target)),
+        ),
+      );
     let reports = reportsOf();
     // A wake lists the open review threads, so a pass that skipped them reads them before waking.
-    let activityFresh = plan.activity;
     const wakes = (report: PullRequestWatchReport, index: number) =>
       report.changes.length > 0 && !group.targets[index]!.thread.busy;
     if (Option.isNone(activity) && reports.some(wakes)) {
@@ -593,7 +601,6 @@ export const make = Effect.gen(function* () {
         ),
       );
       if (Option.isSome(activity)) {
-        activityFresh = true;
         remarks = yield* remarksOf(activity.value);
         reports = reportsOf();
       }
@@ -610,14 +617,16 @@ export const make = Effect.gen(function* () {
     };
     lastReads.set(group.key, {
       at:
-        activityFresh || last === undefined
+        Option.isSome(activity) || last === undefined
           ? (threadTails.get(group.key)?.fetchedAt ?? now)
           : last.at,
       fingerprint: group.fingerprint,
       inFlight:
         detail.mergeability === "unknown" ||
         detail.checks.some((check) => check.status === "pending"),
-      remarksComplete: activityFresh ? remarks !== null : (last?.remarksComplete ?? false),
+      remarksComplete: Option.isSome(activity)
+        ? remarks !== null
+        : (last?.remarksComplete ?? false),
       watches: new Set(group.targets.map(watchKey)),
       status: fingerprint?.status ?? null,
       remarks: fingerprint?.remarks ?? null,
@@ -625,7 +634,7 @@ export const make = Effect.gen(function* () {
     yield* eachTarget(group, (target) => {
       const report = reports[group.targets.indexOf(target)]!;
       if (report.changes.length > 0 && target.thread.busy) {
-        deferred.add(watchKey(target));
+        deferred.set(watchKey(target), holdFailures(deferred.get(watchKey(target)), report));
         return Effect.void;
       }
       deferred.delete(watchKey(target));
@@ -699,7 +708,7 @@ export const make = Effect.gen(function* () {
         for (const key of cache.keys()) if (!byPullRequest.has(key)) cache.delete(key);
       }
       const watched = new Set(targets.map(watchKey));
-      for (const key of deferred) if (!watched.has(key)) deferred.delete(key);
+      for (const key of deferred.keys()) if (!watched.has(key)) deferred.delete(key);
     }
     yield* Effect.forEach(
       ending,

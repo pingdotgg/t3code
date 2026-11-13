@@ -8,7 +8,9 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
   evaluatePullRequestWatch as evaluate,
+  holdFailures,
   pullRequestWatchMessage,
+  withHeldFailures,
 } from "./pullRequestWatch.ts";
 
 // These cases read the head once or at one moment, so the no-checks notice never comes due.
@@ -490,6 +492,45 @@ describe("evaluatePullRequestWatch", () => {
     });
     assert.isTrue(text.isWellFormed());
     assert.include(text, `"${"x".repeat(196)}..."`);
+  });
+
+  it("keeps a failure seen while the thread was busy until the head moves", () => {
+    const busy = evaluatePullRequestWatch(
+      watch(),
+      detail({ checks: [check("lint", "failure"), check("test", "failure")] }),
+      noRemarks,
+    );
+    const held = holdFailures(holdFailures(undefined, busy), busy);
+    assert.deepEqual(
+      held.failed.map((failed) => failed.name),
+      ["lint", "test"],
+    );
+
+    const idle = evaluatePullRequestWatch(
+      watch(),
+      detail({ checks: [check("lint", "success"), check("test", "failure")] }),
+      noRemarks,
+    );
+    assert.deepEqual(withHeldFailures(idle, held).changes, [
+      { kind: "checks-failed", failed: [check("test", "failure"), check("lint", "failure")] },
+    ]);
+    const passed = evaluatePullRequestWatch(
+      watch(),
+      detail({ checks: [check("lint", "success")] }),
+      noRemarks,
+    );
+    assert.deepEqual(withHeldFailures(passed, held).changes[0], {
+      kind: "checks-failed",
+      failed: [check("lint", "failure"), check("test", "failure")],
+    });
+
+    const pushed = evaluatePullRequestWatch(
+      watch(),
+      detail({ headSha: "bbbbbbbbbb", checks: [check("lint", "success")] }),
+      noRemarks,
+    );
+    assert.deepEqual(withHeldFailures(pushed, held), pushed);
+    assert.deepEqual(holdFailures(held, pushed).failed, []);
   });
 
   it("tells the pull request's state with each wake", () => {
