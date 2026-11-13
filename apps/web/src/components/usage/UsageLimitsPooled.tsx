@@ -362,7 +362,7 @@ function SegmentTriggers({
             type="button"
             style={{ gridColumn: index, gridRow: 1, ...paceMark?.gappedTrack }}
             aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
-            className="relative h-5 min-w-0 cursor-pointer rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border @2xl/pool:h-8"
+            className="relative h-5 min-w-0 cursor-pointer rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border @min-[11rem]/pool:h-8"
           />
         }
       >
@@ -395,11 +395,11 @@ function SegmentTriggers({
         ) : null}
         <span
           aria-hidden
-          className="absolute inset-0 flex items-center justify-center overflow-hidden rounded-md text-3xs leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
+          className="absolute inset-0 flex items-center justify-center overflow-hidden rounded-md text-3xs leading-none font-semibold text-foreground/80 tabular-nums @min-[11rem]/pool:hidden"
         >
           {index}
         </span>
-        <div className="relative hidden h-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md px-2 text-xs @2xl/pool:flex">
+        <div className="relative hidden h-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md px-2 text-xs @min-[11rem]/pool:flex">
           {showAccountName ? (
             <AccountName
               account={account}
@@ -459,7 +459,7 @@ function LegendRow({
       payload={payload}
       style={{ gridColumn: "1 / -1", gridRow: index + 1 }}
       render={<Button variant="ghost" size="compact" />}
-      className="min-w-0 @2xl/pool:hidden"
+      className="min-w-0 @min-[11rem]/pool:hidden"
     >
       <span className="relative inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-3xs leading-none font-semibold text-foreground/80 tabular-nums">
         <span
@@ -504,11 +504,17 @@ function PoolBar({
   readonly now: number;
 }) {
   const restores = new Map(pool.resets.map((reset) => [reset.member.account.key, reset]));
+  // The container is one account's share of the bar, so its query asks whether a segment has
+  // room for its label. The floor keeps the 42rem bar breakpoint for up to three accounts.
+  const share = Math.max(pool.columns.length, 42 / 11);
   return (
-    <div className="@container/pool min-w-0">
+    <div className="@container/pool min-w-0" style={{ width: `${100 / share}%` }}>
       <div
         className="grid gap-x-1 gap-y-1"
-        style={{ gridTemplateColumns: `repeat(${pool.columns.length}, minmax(0, 1fr))` }}
+        style={{
+          width: `${100 * share}%`,
+          gridTemplateColumns: `repeat(${pool.columns.length}, minmax(0, 1fr))`,
+        }}
       >
         {pool.columns.map((member, position) =>
           member.window ? (

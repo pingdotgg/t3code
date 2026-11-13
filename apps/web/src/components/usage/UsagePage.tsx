@@ -509,7 +509,7 @@ export function UsagePage() {
         </header>
 
         <ScrollArea className="min-h-0 flex-1">
-          <WorkspacePageContainer width="wide">
+          <WorkspacePageContainer width={showingLimits ? "full" : "wide"}>
             {selectedEnvironments.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {environments.length === 0
