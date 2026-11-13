@@ -1955,11 +1955,11 @@ describe("AcpRegistryAdapterV2", () => {
         "Kimi must keep post-settle wake traffic for a continuation run",
       );
       yield* session.runtime.startTurn(session.turnInput(1));
-      const settled = yield* session.throughMarker("turn settled");
-      assert.isFalse(
-        settled.some((event) => event.type === "turn.terminal"),
-        "the deferred finalize must hold the settled turn open for Kimi's self-resume",
-      );
+      // Kimi registers no background tasks, so the v1 response completes the run
+      // directly, but the marker frame races the prompt callback's terminal. Sync on
+      // the terminal itself before waking the detached task's follow-up turn.
+      const settledTerminal = yield* session.terminal;
+      assert.equal(settledTerminal.status, "completed");
       assert.lengthOf(session.offers, 0, "the settled turn must not invent a continuation");
 
       gate.release("wake");
