@@ -232,7 +232,8 @@ export default function DiffPanel({
     wordWrap: settings.wordWrap,
   }));
   const diffLayout = settings.diffLayout;
-  const [wordWrap, setWordWrap] = useState(settings.wordWrap);
+  const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
+  const wordWrap = wordWrapOverride ?? settings.wordWrap;
   const diffIgnoreWhitespace =
     useDiffPanelSessionStore((state) => state.ignoreWhitespace) ?? settings.diffIgnoreWhitespace;
   const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
@@ -1218,7 +1219,7 @@ export default function DiffPanel({
                 size="sm"
                 pressed={wordWrap}
                 onPressedChange={(pressed) => {
-                  setWordWrap(Boolean(pressed));
+                  setWordWrapOverride(Boolean(pressed));
                 }}
               />
             }
