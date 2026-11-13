@@ -32,7 +32,7 @@ const PATH_START = [
 ].join("|");
 // Where a path ends is unknowable (names hold spaces and `. `), so the rest of its line goes too.
 const PATH = new RegExp(String.raw`(?:${PATH_START})[^\n]*`, "gu");
-// Runs last, so it counts an earlier redaction as part of the run it sits in.
+// Runs last: a long run that already holds a redaction goes whole, whatever is left of it.
 const LONG_RUN = /(?:[A-Za-z0-9_+=-]|\[redacted\])+/gu;
 
 const entropy = (value: string) => {
@@ -88,7 +88,7 @@ export function scrubFeedback(text: string, sensitive: ReadonlyArray<string>): s
     .replaceAll(QUOTED_PATH, (quoted) => `${quoted[0]}${REDACTED}${quoted[0]}`)
     .replaceAll(PATH, REDACTED)
     .replaceAll(LONG_RUN, (run) =>
-      run.length >= 32 && looksRandom(run.replaceAll(REDACTED, "")) ? REDACTED : run,
+      run.length >= 32 && (run.includes(REDACTED) || looksRandom(run)) ? REDACTED : run,
     );
   return Array.from(scrubbed).slice(0, FEEDBACK_TEXT_MAX_CHARS).join("");
 }
