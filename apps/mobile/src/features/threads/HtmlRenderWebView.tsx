@@ -9,13 +9,14 @@ import {
   type HtmlRenderReference,
   type HtmlRenderTheme,
 } from "@t3tools/shared/htmlRender";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   Platform,
   Pressable,
   View,
   type ColorValue,
   type GestureResponderEvent,
+  type ViewInstance,
 } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
@@ -61,13 +62,21 @@ function postTheme(view: WebView<object> | null, theme: HtmlRenderTheme) {
 
 const OVERFLOW_MESSAGE_TYPE = "t3-html-render-overflow";
 
-const OVERFLOW_SCRIPT = `(function(){var last;function report(){var d=document.documentElement,b=document.body;var x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,y=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1,o=x+","+y;if(o===last)return;last=o;window.ReactNativeWebView.postMessage(JSON.stringify({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},x:x,y:y}));}report();if(window.ResizeObserver){var r=new ResizeObserver(report);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",report);})();true;`;
+const FIELD_FOCUS_MESSAGE_TYPE = "t3-html-render-field-focus";
+
+// Also reports the document's height, measured as the desktop bootstrap does, so a nested page's
+// frame can fit it: a page that scrolls inside the thread hides its end and fights the thread's
+// scrolling. A focused text field reports where it is, so the thread can lift it above the
+// keyboard: the page can't, since the keyboard doesn't resize it.
+const OVERFLOW_SCRIPT = `(function(){var last;function post(m){window.ReactNativeWebView.postMessage(JSON.stringify(m));}function report(){var d=document.documentElement,b=document.body;var x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,y=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1,h=Math.ceil(d.scrollHeight>d.clientHeight?d.scrollHeight:d.getBoundingClientRect().height),o=x+","+y+","+h;if(o===last)return;last=o;post({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},x:x,y:y,h:h});}report();if(window.ResizeObserver){var r=new ResizeObserver(report);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",report);window.addEventListener("load",report);document.addEventListener("focusin",function(e){var t=e.target;if(!t||!(t.isContentEditable||t.tagName==="TEXTAREA"||t.tagName==="INPUT"&&/^(text|search|email|url|tel|number|password)$/.test(t.type)))return;var f=t.getBoundingClientRect();post({type:${JSON.stringify(FIELD_FOCUS_MESSAGE_TYPE)},top:f.top,bottom:f.bottom});},true);})();true;`;
 
 type Overflow = { readonly x: boolean; readonly y: boolean };
 
 const NO_OVERFLOW: Overflow = { x: false, y: false };
 
-function readOverflowMessage(data: string): Overflow | null {
+type OverflowReport = Overflow & { readonly height: number | undefined };
+
+function readOverflowMessage(data: string): OverflowReport | null {
   try {
     const message: unknown = JSON.parse(data);
     return typeof message === "object" &&
@@ -78,20 +87,90 @@ function readOverflowMessage(data: string): Overflow | null {
       typeof message.x === "boolean" &&
       "y" in message &&
       typeof message.y === "boolean"
-      ? { x: message.x, y: message.y }
+      ? {
+          x: message.x,
+          y: message.y,
+          height:
+            "h" in message &&
+            typeof message.h === "number" &&
+            Number.isFinite(message.h) &&
+            message.h > 0
+              ? message.h
+              : undefined,
+        }
       : null;
   } catch {
     return null;
   }
 }
 
+function readFieldFocusMessage(
+  data: string,
+): { readonly top: number; readonly bottom: number } | null {
+  try {
+    const message: unknown = JSON.parse(data);
+    return typeof message === "object" &&
+      message !== null &&
+      "type" in message &&
+      message.type === FIELD_FOCUS_MESSAGE_TYPE &&
+      "top" in message &&
+      typeof message.top === "number" &&
+      Number.isFinite(message.top) &&
+      "bottom" in message &&
+      typeof message.bottom === "number" &&
+      Number.isFinite(message.bottom)
+      ? { top: message.top, bottom: message.bottom }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Where a focused field in a nested page is, in window coordinates, measured when called. */
+export type HtmlRenderFieldMeasure = () => Promise<{
+  readonly top: number;
+  readonly bottom: number;
+}>;
+
 const withoutFragment = (url: string) => url.split("#", 1)[0];
+
+// Live page heights by attachment and frame width. The feed sizes rows before they mount, and a
+// row that mounts again (scrolled back into view) must not shrink to the server's guess and regrow.
+// The feed gives these rows fixed sizes, which it never re-measures, so it re-renders on a change.
+const liveHeights = new Map<string, number>();
+const liveHeightListeners = new Set<() => void>();
+let liveHeightsVersion = 0;
+const liveHeightKey = (attachmentId: string, width: number) =>
+  `${attachmentId}:${Math.round(width)}`;
+
+export function htmlRenderLiveHeight(attachmentId: string, width: number): number | undefined {
+  return liveHeights.get(liveHeightKey(attachmentId, width));
+}
+
+export function subscribeHtmlRenderLiveHeights(listener: () => void): () => void {
+  liveHeightListeners.add(listener);
+  return () => {
+    liveHeightListeners.delete(listener);
+  };
+}
+
+export const htmlRenderLiveHeightsVersion = () => liveHeightsVersion;
+
+function setHtmlRenderLiveHeight(attachmentId: string, width: number, height: number) {
+  const key = liveHeightKey(attachmentId, width);
+  if (liveHeights.get(key) === height) return;
+  liveHeights.set(key, height);
+  liveHeightsVersion += 1;
+  for (const listener of liveHeightListeners) listener();
+}
 
 export function HtmlRenderWebView(props: {
   readonly uri: string;
   readonly title: string;
   readonly nested: boolean;
   readonly onLoadError?: () => void;
+  readonly onContentHeight?: (height: number) => void;
+  readonly onFieldFocus?: (measure: HtmlRenderFieldMeasure) => void;
   /** Custom build: picks a ballot's `t3Compose(text)` hands to the message box after a tap. */
   readonly onBallotPicks?: (text: string) => void;
 }) {
@@ -115,6 +194,7 @@ export function HtmlRenderWebView(props: {
   const [loaded, setLoaded] = useState(false);
   const [overflow, setOverflow] = useState(NO_OVERFLOW);
   const webView = useRef<WebView<object>>(null);
+  const frame = useRef<ViewInstance>(null);
   const crashes = useRef(0);
   const shownTheme = useRef<HtmlRenderTheme | null>(null);
   const source = { uri: props.uri + htmlRenderThemeFragment(initialTheme) };
@@ -138,6 +218,7 @@ export function HtmlRenderWebView(props: {
   const scrollable = !props.nested || overflow.x || overflow.y;
   return (
     <View
+      ref={frame}
       // Raw touches reach this wrapper even when the web view handles them. A page may only fill
       // the message box just after a tap (a touch that barely moved), not on load, on its own
       // timer or during a scroll.
@@ -196,7 +277,24 @@ export function HtmlRenderWebView(props: {
               onMessage: (event: WebViewMessageEvent) => {
                 const next = props.nested ? readOverflowMessage(event.nativeEvent.data) : null;
                 if (next !== null) {
-                  setOverflow(next);
+                  setOverflow((current) =>
+                    current.x === next.x && current.y === next.y
+                      ? current
+                      : { x: next.x, y: next.y },
+                  );
+                  if (next.height !== undefined) props.onContentHeight?.(next.height);
+                  return;
+                }
+                const field = props.nested ? readFieldFocusMessage(event.nativeEvent.data) : null;
+                if (field !== null) {
+                  props.onFieldFocus?.(
+                    () =>
+                      new Promise((resolve) => {
+                        frame.current?.measureInWindow((_x, y) =>
+                          resolve({ top: y + field.top, bottom: y + field.bottom }),
+                        );
+                      }),
+                  );
                   return;
                 }
                 const request = isBallot
@@ -222,10 +320,22 @@ export function ThreadHtmlRender(props: {
   readonly render: HtmlRenderReference;
   readonly frameWidth: number;
   readonly iconColor: ColorValue;
+  /** Called with the old frame height just before a live page height resizes the frame. */
+  readonly onResize?: (previousHeight: number) => void;
+  readonly onFieldFocus?: (measure: HtmlRenderFieldMeasure) => void;
 }) {
   const navigation = useNavigation();
   const { attachmentId, title } = props.render;
-  const height = htmlRenderFrameHeight(props.render, props.frameWidth);
+  const liveHeight = useSyncExternalStore(subscribeHtmlRenderLiveHeights, () =>
+    htmlRenderLiveHeight(attachmentId, props.frameWidth),
+  );
+  const height = htmlRenderFrameHeight(props.render, props.frameWidth, liveHeight);
+  const handleContentHeight = (next: number) => {
+    if (htmlRenderFrameHeight(props.render, props.frameWidth, next) !== height) {
+      props.onResize?.(htmlRenderRowHeight(height));
+    }
+    setHtmlRenderLiveHeight(attachmentId, props.frameWidth, next);
+  };
   const fileName = htmlRenderFileName(title);
   const resource = {
     _tag: "attachment" as const,
@@ -265,6 +375,8 @@ export function ThreadHtmlRender(props: {
             title={title}
             nested
             onLoadError={handleLoadError}
+            onContentHeight={handleContentHeight}
+            {...(props.onFieldFocus ? { onFieldFocus: props.onFieldFocus } : {})}
             onBallotPicks={(text) =>
               requestBallotPicks({
                 threadKey: scopedThreadKey(props.environmentId, props.threadId),
