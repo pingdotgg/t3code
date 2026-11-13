@@ -88,7 +88,25 @@ function inferHomeFromCwd(cwd: string): string | undefined {
   return undefined;
 }
 
+function decodeFileUrlPath(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
 export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
+  const fileUrl = /^file:/i.test(rawPath) ? parseFileUrlHref(rawPath) : null;
+  if (fileUrl) {
+    return formatFilePathPosition(
+      splitFilePathPosition(
+        stripSlashPrefixedWindowsDrive(decodeFileUrlPath(fileUrl.path)),
+        fileUrl.hash,
+      ),
+    );
+  }
+
   const position = splitFilePathPosition(rawPath);
   const { path } = position;
 
