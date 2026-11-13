@@ -24,6 +24,14 @@ describe("resolvePullRequestDetailChecks", () => {
     expect(resolvePullRequestDetailChecks(original, { state: "closed", checks }, false)).toBe(
       original,
     );
+    const blocked = { ...original, mergeBlocked: true };
+    expect(
+      resolvePullRequestDetailChecks(blocked, { state: "open", checks }, true)?.mergeBlocked,
+    ).toBeUndefined();
+    expect(
+      resolvePullRequestDetailChecks(blocked, { state: "open", checks: [...original.checks] }, true)
+        ?.mergeBlocked,
+    ).toBe(true);
     expect(resolvePullRequestDetailChecks(original, null, true)).toBe(original);
     expect(resolvePullRequestDetailChecks(null, { state: "closed", checks }, true)).toBeNull();
   });

@@ -10,14 +10,25 @@ export function resolvePullRequestDetailChecks(
     detail.observedAt !== undefined && checks.observedAt !== undefined
       ? checks.observedAt >= detail.observedAt
       : checksAreNewer;
-  return newer
-    ? {
-        ...detail,
-        state: detail.state === "merged" ? "merged" : checks.state,
-        checks: checks.checks,
-      }
-    : detail;
+  if (!newer) return detail;
+  const { mergeBlocked, ...rest } = detail;
+  return {
+    ...rest,
+    state: detail.state === "merged" ? "merged" : checks.state,
+    checks: checks.checks,
+    // The host's merge block often waits on checks; once they move, it is no longer known.
+    ...(mergeBlocked !== undefined &&
+    checkStatusKey(checks.checks) === checkStatusKey(detail.checks)
+      ? { mergeBlocked }
+      : {}),
+  };
 }
+
+const checkStatusKey = (checks: ReadonlyArray<PullRequestCheck>) =>
+  checks
+    .map((check) => `${check.name}\0${check.status}`)
+    .sort()
+    .join("\n");
 
 /** Checks still running are worth a tighter poll than a settled head. */
 export function pullRequestChecksRefreshIntervalMs(
