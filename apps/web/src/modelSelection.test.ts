@@ -409,6 +409,11 @@ describe("instance-scoped model selection", () => {
       availableModel: "auto-smart",
       missingModel: "claude-opus-5-5",
     },
+    {
+      driverName: "acp_registry",
+      availableModel: "claude-opus-5-5",
+      missingModel: "claude-opus-5-5[context=300k,effort=medium,fast=false]",
+    },
   ])("$driverName catalog gaps", ({ driverName, availableModel, missingModel }) => {
     it("preserves a selected model when a catalog refresh no longer contains it", () => {
       const providers = [
