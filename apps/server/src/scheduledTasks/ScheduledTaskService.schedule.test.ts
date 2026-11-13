@@ -11,6 +11,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -327,6 +328,193 @@ it.effect("keeps one queued occurrence of a recurring task while its bound threa
       yield* TestClock.adjust("61 seconds");
       yield* Effect.flatten(Ref.get(runDueWork));
       expect(yield* queuedOccurrencesOf(once.id)).toBe(2);
+    }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a schedule whose thread is archived after saving stops firing", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-07-01T09:00:00.000Z"));
+    const sends = yield* Ref.make(0);
+    const runDueWork = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      ManagedPolicy.layerTest(),
+      Layer.mock(Scheduler.Scheduler)({
+        register: (name, work) =>
+          name !== "scheduled-tasks"
+            ? Effect.void
+            : Effect.context<Effect.Services<typeof work>>().pipe(
+                Effect.flatMap((context) =>
+                  Ref.set(runDueWork, work.pipe(Effect.provideContext(context), Effect.ignore)),
+                ),
+              ),
+      }),
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        isScratchProject: () => Effect.succeed(false),
+      }),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        sendToThread: (input) =>
+          Ref.update(sends, (n) => n + 1).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ThreadManagementService.ThreadManagementThreadArchivedError({
+                  threadId: input.threadId,
+                }),
+              ),
+            ),
+          ),
+        getThreadRecords: () => Effect.succeed({ runs: [], messages: [] } as never),
+        // Saving sees a live thread; it is archived before the first run.
+        getThreadShell: () =>
+          Effect.succeed({
+            projectId: "project-archived-thread",
+            deletedAt: null,
+            archivedAt: null,
+          } as never),
+      }),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      yield* service.upsert(
+        yield* decodeUpsertInput({
+          id: "scheduled-task:archived-thread",
+          title: "Check progress",
+          prompt: "Check progress",
+          enabled: true,
+          schedule: { type: "interval", everyMs: 60_000 },
+          projectId: "project-archived-thread",
+          threadId: "thread:archived",
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        }),
+      );
+
+      for (let interval = 0; interval < 5; interval++) {
+        yield* TestClock.adjust("61 seconds");
+        yield* Effect.flatten(Ref.get(runDueWork));
+      }
+
+      expect(yield* Ref.get(sends)).toBe(1);
+      const [listed] = (yield* service.list()).tasks;
+      expect(listed?.enabled).toBe(false);
+      expect(listed?.nextRunAt).toBeNull();
+    }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("pauses after five failed dispatches in a row, counted per destination", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-07-01T09:00:00.000Z"));
+    const sends = yield* Ref.make<ReadonlyArray<string>>([]);
+    const fifthSendStarted = yield* Deferred.make<void>();
+    const releaseFifthSend = yield* Deferred.make<void>();
+    const runDueWork = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      ManagedPolicy.layerTest(),
+      Layer.mock(Scheduler.Scheduler)({
+        register: (name, work) =>
+          name !== "scheduled-tasks"
+            ? Effect.void
+            : Effect.context<Effect.Services<typeof work>>().pipe(
+                Effect.flatMap((context) =>
+                  Ref.set(runDueWork, work.pipe(Effect.provideContext(context), Effect.ignore)),
+                ),
+              ),
+      }),
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        isScratchProject: () => Effect.succeed(false),
+      }),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        sendToThread: (input) =>
+          Ref.updateAndGet(sends, (sent) => [...sent, input.threadId]).pipe(
+            Effect.flatMap((sent) =>
+              sent.length === 5
+                ? Deferred.succeed(fifthSendStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseFifthSend)),
+                  )
+                : Effect.void,
+            ),
+            Effect.andThen(
+              Effect.fail(
+                new ThreadManagementService.ThreadManagementProjectionLoadError({
+                  projectId: input.projectId,
+                  threadId: input.threadId,
+                  cause: "offline",
+                }),
+              ),
+            ),
+          ),
+        getThreadRecords: () => Effect.succeed({ runs: [], messages: [] } as never),
+        getThreadShell: () =>
+          Effect.succeed({
+            projectId: "project-retry-limit",
+            deletedAt: null,
+            archivedAt: null,
+          } as never),
+      }),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const input = {
+        id: "scheduled-task:retry-limit",
+        title: "Check progress",
+        prompt: "Check progress",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: "project-retry-limit",
+        threadId: "thread:a",
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      };
+      yield* service.upsert(yield* decodeUpsertInput(input));
+      const runInterval = TestClock.adjust("61 seconds").pipe(
+        Effect.andThen(Effect.flatten(Ref.get(runDueWork))),
+      );
+      const runIntervals = (count: number) =>
+        Effect.forEach(Array.from({ length: count }), () => runInterval, { discard: true });
+
+      yield* runIntervals(4);
+      expect((yield* service.list()).tasks[0]?.enabled).toBe(true);
+
+      // The fifth failure belongs to thread A, which the task has left by the time it lands.
+      const fifth = yield* Effect.forkChild(runInterval);
+      yield* Deferred.await(fifthSendStarted);
+      yield* service.upsert(yield* decodeUpsertInput({ ...input, threadId: "thread:b" }));
+      yield* Deferred.succeed(releaseFifthSend, undefined);
+      yield* Fiber.join(fifth);
+      const [moved] = (yield* service.list()).tasks;
+      expect(moved).toMatchObject({ threadId: "thread:b", enabled: true });
+      expect(moved?.nextRunAt).not.toBeNull();
+
+      yield* runIntervals(7);
+      expect(yield* Ref.get(sends)).toEqual([
+        ...Array.from({ length: 5 }, () => "thread:a"),
+        ...Array.from({ length: 5 }, () => "thread:b"),
+      ]);
+      const [paused] = (yield* service.list()).tasks;
+      expect(paused).toMatchObject({
+        enabled: false,
+        nextRunAt: null,
+        lastRunError:
+          "Paused after 5 failed runs in a row. Last error: Unable to load thread thread:b in project project-retry-limit.",
+      });
+
+      // Turning it back on grants a fresh allowance rather than pausing on the next failure.
+      yield* service.setEnabled({ id: paused!.id, enabled: true });
+      yield* runInterval;
+      expect((yield* service.list()).tasks[0]?.enabled).toBe(true);
     }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

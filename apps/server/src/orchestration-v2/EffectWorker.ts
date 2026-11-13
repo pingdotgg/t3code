@@ -549,6 +549,17 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
+          case "scheduled-tasks.pause":
+            return resourceCleanup.pauseScheduledTasks(effect.threadId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
           // Archive and delete queue this one per-thread teardown, so it also releases the
           // thread's device claims; the devices stay booted for other threads.
           case "terminal.cleanup":
