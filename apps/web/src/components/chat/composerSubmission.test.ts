@@ -51,6 +51,8 @@ describe("submitComposerDraft", () => {
     expect(validationMessage).toBe(
       "Prompt is 1 character over the 120,000-character limit. Shorten or split it before sending.",
     );
+    // The excess alone reads like the prompt's length, so the message also names the real length.
+    expect(validationMessage).toContain("120,001");
     expect(preventDefault).toHaveBeenCalledOnce();
 
     draft = "Corrected prompt";
