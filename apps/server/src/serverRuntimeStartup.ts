@@ -270,12 +270,24 @@ const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
 
   if (serverConfig.autoBootstrapProjectFromCwd) {
     const threadModelSelection = getAutoBootstrapThreadModelSelection();
-    const { project } = yield* projects.bootstrap({
-      commandId: CommandId.make(yield* randomUUID),
-      projectId: ProjectId.make(yield* randomUUID),
-      title: path.basename(serverConfig.cwd) || "project",
-      workspaceRoot: serverConfig.cwd,
-    });
+    const bootstrapped = yield* projects
+      .bootstrap({
+        commandId: CommandId.make(yield* randomUUID),
+        projectId: ProjectId.make(yield* randomUUID),
+        title: path.basename(serverConfig.cwd) || "project",
+        workspaceRoot: serverConfig.cwd,
+      })
+      .pipe(
+        // A folder the project rules refuse must not stop the server from starting there.
+        Effect.catchTags({
+          ProjectInvalidError: (error) =>
+            Effect.logWarning("Skipped bootstrap project", { detail: error.detail }).pipe(
+              Effect.as(undefined),
+            ),
+        }),
+      );
+    if (bootstrapped === undefined) return {} satisfies AutoBootstrapWelcomeTargets;
+    const { project } = bootstrapped;
     const existingThread = (yield* threads.listActiveShellIndex()).find(
       (thread) => thread.projectId === project.id && isListedThreadLineage(thread.lineage),
     );

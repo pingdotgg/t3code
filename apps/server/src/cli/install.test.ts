@@ -162,7 +162,7 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
         ),
       ).pipe(Effect.flip);
       assert.include(unrunnable.message, "has % or non-ASCII characters");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("asks npx users without a t3 command once per minor release and installs on yes", () =>
@@ -267,7 +267,7 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       assert.isTrue(yield* Fiber.join(unanswered));
       assert.isTrue(yield* fs.exists(declined));
       assert.isFalse(yield* fs.exists(link));
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("reads the terminal's foreground group from /proc and ps", () =>
