@@ -270,7 +270,11 @@ const createManager = (
 ): Effect.Effect<
   ManagerFixture,
   PlatformError.PlatformError,
-  FileSystem.FileSystem | Path.Path | Scope.Scope | ProcessRunner.ProcessRunner
+  | FileSystem.FileSystem
+  | Path.Path
+  | Scope.Scope
+  | ProcessRunner.ProcessRunner
+  | ChildProcessSpawner.ChildProcessSpawner
 > =>
   Effect.flatMap(Effect.service(FileSystem.FileSystem), (fs) =>
     Effect.gen(function* () {
