@@ -6,6 +6,7 @@ import {
   CommandId,
   EventId,
   MessageId,
+  type ModelSelection,
   NodeId,
   type OrchestrationV2Run,
   ProjectId,
@@ -468,6 +469,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
             options.itemId === undefined &&
             matching.length > 0 &&
             visible.some((entry) => entry.position > matching.at(-1)!.position),
+          hasEarlier: false,
         };
       }),
     interruptThread: (input) =>
@@ -744,7 +746,10 @@ const parentScope: McpInvocationContext.McpInvocationScope = {
 };
 
 /** The laptop's parent thread, mid-turn when its agent delegates. */
-const seedParent = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
+const seedParent = (
+  laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>,
+  parentModelSelection: ModelSelection = modelSelection,
+) =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;
     const providerThreadId = ProviderThreadId.make("provider-thread:laptop-parent");
@@ -756,7 +761,7 @@ const seedParent = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
       threadId: parentThreadId,
       projectId: ProjectId.make("project:laptop"),
       title: "Laptop parent",
-      modelSelection,
+      modelSelection: parentModelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
@@ -830,7 +835,7 @@ const seedParent = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
             threadId: parentThreadId,
             ordinal: 1,
             providerInstanceId: instanceId,
-            modelSelection,
+            modelSelection: parentModelSelection,
             providerThreadId,
             userMessageId: MessageId.make("message:seed-user:laptop-parent"),
             rootNodeId: parentRootNode,
@@ -1191,16 +1196,24 @@ it.effect("a task named only by environment inherits the parent's model, within 
       const a = yield* makeLaptop(database, offers);
       // The parent runs with full access; the link allows less.
       yield* linkTo(a.links, b, "auto-accept-edits");
-      yield* seedParent(a);
+      // An explicit Standard must survive, or a Daybreak default there would replace it.
+      const parentModelSelection = {
+        ...modelSelection,
+        options: [
+          { id: "reasoningEffort", value: "high" },
+          { id: "cyberAccessProgram", value: "standard" },
+        ],
+      };
+      yield* seedParent(a, parentModelSelection);
 
       const result = yield* a.call("delegate_task", {
         task: "Run the suite on the box.",
         target: { environmentId: box.environmentId },
       });
       expect(result.isError, JSON.stringify(result.content)).toBe(false);
-      // The parent's model, and the link's modes rather than the parent's.
+      // The parent's model and options, and the link's modes rather than the parent's.
       expect(yield* Ref.get(thread.launchedWith)).toEqual({
-        modelSelection,
+        modelSelection: parentModelSelection,
         runtimeMode: "auto-accept-edits",
         interactionMode: "default",
       });

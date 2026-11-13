@@ -20,7 +20,8 @@ export type PullRequestWatchChange =
   | { readonly kind: "checks-awaiting-approval"; readonly checks: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "no-checks"; readonly minutes: number }
-  | { readonly kind: "conflicting" };
+  | { readonly kind: "conflicting" }
+  | { readonly kind: "merge-queue-removed"; readonly reason: string | null };
 
 export interface PullRequestWatchReport {
   readonly changes: ReadonlyArray<PullRequestWatchChange>;
@@ -39,15 +40,22 @@ export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
   detail: Pick<
     PullRequestDetail,
-    "capabilities" | "headSha" | "checks" | "mergeability" | "viewer" | "author"
+    | "capabilities"
+    | "headSha"
+    | "checks"
+    | "mergeability"
+    | "viewer"
+    | "author"
+    | "mergeQueueRemoval"
   >,
   remarks: ReadonlyArray<PullRequestComment> | null,
   now: number,
 ): PullRequestWatchReport {
   const changes: Array<PullRequestWatchChange> = [];
-  // Azure DevOps omits the head when its iteration read fails; that is not a push.
+  // A read without a head says nothing about pushes, so it keeps the last known one.
   const headSha = detail.headSha ?? watch.headSha;
-  const headMoved = headSha !== watch.headSha;
+  const headMoved = watch.headSha !== null && headSha !== watch.headSha;
+  const checksBaseline = watch.awaitingBaseline !== undefined && !headMoved;
 
   // Hosts can return no checks on read failure; preserve prior state.
   let failedChecks = headMoved ? [] : watch.failedChecks;
@@ -56,16 +64,23 @@ export function evaluatePullRequestWatch(
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
   let awaitingApproval = headMoved ? [] : (watch.awaitingApproval ?? []);
   let approvalAnnounced = headMoved ? false : (watch.approvalAnnounced ?? false);
+  // A watch with no answer (saved before the field, or since a push) waits only while the clock
+  // below runs.
+  let checksPending = headMoved ? false : (watch.checksPending ?? watch.checksAwaitedSince != null);
   // An unavailable approval read cannot establish success or that no checks exist.
   const unread = detail.checks.some((check) => check.placeholder === true);
   const checks = detail.checks.filter((check) => check.placeholder !== true);
   const failed = checks.filter(isFailedCheck);
   const awaiting = checks.filter((check) => check.status === "action-required");
   if (checks.length > 0) {
+    // A run awaiting approval waits on a person, like a review, so only running checks count.
+    checksPending = checks.some((check) => check.status === "pending");
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
-    if (newlyFailed.length > 0) changes.push({ kind: "checks-failed", failed: newlyFailed });
+    if (!checksBaseline && newlyFailed.length > 0) {
+      changes.push({ kind: "checks-failed", failed: newlyFailed });
+    }
     if (!approvalAnnounced && awaiting.length > 0) {
-      changes.push({ kind: "checks-awaiting-approval", checks: awaiting });
+      if (!checksBaseline) changes.push({ kind: "checks-awaiting-approval", checks: awaiting });
       approvalAnnounced = true;
     }
     failedChecks = failed.map((check) => check.name);
@@ -125,7 +140,9 @@ export function evaluatePullRequestWatch(
       checks.every((check) => check.status !== "pending");
     owedChecks = owed;
     if (passedNow && (!passed || gateGrew)) {
-      changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
+      if (!checksBaseline) {
+        changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
+      }
       owedChecks =
         required.length > 0
           ? checks
@@ -140,21 +157,23 @@ export function evaluatePullRequestWatch(
     passedChecks = passedNow ? gateNames : [];
   }
 
-  // Only a head never read with checks waits for them: an empty read after checks were seen is
-  // the failed read above. A watch saved before this field may have seen pending checks on its
-  // head, so its clock starts only at the next push. Where a host's empty list can mean the
-  // repository runs no checks at all, nothing waits.
-  let checksAwaitedSince = watch.checksAwaitedSince;
-  if (detail.capabilities.checksAlwaysReport === true) {
-    const awaitedBefore = headMoved
+  // Only a head never read with checks waits for them; a legacy watch's clock starts at its next
+  // push. CI can register late on any host, so every host waits, but running out of time is news
+  // only where a host always reports checks: elsewhere an empty list can mean there are none.
+  const awaitedBefore =
+    headMoved || watch.awaitingBaseline === "all"
       ? DateTime.formatIso(DateTime.makeUnsafe(now))
       : (watch.checksAwaitedSince ?? null);
-    checksAwaitedSince = checks.length > 0 ? null : awaitedBefore;
-    const awaitedMs = checksAwaitedSince === null ? 0 : now - Date.parse(checksAwaitedSince);
-    if (!unread && awaitedMs >= PULL_REQUEST_WATCH_NO_CHECKS_MS) {
+  let checksAwaitedSince = checks.length > 0 ? null : awaitedBefore;
+  const awaitedMs = checksAwaitedSince === null ? 0 : now - Date.parse(checksAwaitedSince);
+  if (!unread && awaitedMs >= PULL_REQUEST_WATCH_NO_CHECKS_MS) {
+    if (detail.capabilities.checksAlwaysReport === true) {
       changes.push({ kind: "no-checks", minutes: Math.round(awaitedMs / 60_000) });
-      checksAwaitedSince = null;
     }
+    checksAwaitedSince = null;
+    checksPending = false;
+  } else if (checksAwaitedSince !== null) {
+    checksPending = true;
   }
 
   const own = (detail.viewer ?? detail.author?.login)?.toLowerCase();
@@ -179,12 +198,29 @@ export function evaluatePullRequestWatch(
 
   // Like a failed check, a conflict a push did not resolve is news for the new head.
   const toldConflict = !headMoved && watch.conflicting;
-  if (detail.mergeability === "conflicting" && !toldConflict) {
+  if (watch.awaitingBaseline !== "all" && detail.mergeability === "conflicting" && !toldConflict) {
     changes.push({ kind: "conflicting" });
   }
   // "unknown" is a host still computing after a push; only a clean answer clears a conflict.
   const conflicting =
     detail.mergeability === "unknown" ? toldConflict : detail.mergeability === "conflicting";
+
+  // The queue's checks run on a commit of its own, so its head can stay green after the queue
+  // drops it. After the first read, IDs avoid comparing the server clock with the host clock.
+  // The initial read uses whole seconds to exclude historical removals.
+  const removal = detail.mergeQueueRemoval;
+  if (
+    removal !== undefined &&
+    // Merging also records a removal, up to a second before the pull request reads as merged.
+    removal.reason !== "merged" &&
+    removal.id !== watch.mergeQueueRemovalId &&
+    (watch.mergeQueueRemovalId !== undefined ||
+      Date.parse(removal.removedAt) >= Math.floor(Date.parse(watch.startedAt) / 1000) * 1000)
+  ) {
+    changes.push({ kind: "merge-queue-removed", reason: removal.reason });
+  }
+  // Null records an empty baseline; historical IDs are saved without waking the watch.
+  const mergeQueueRemovalId = removal?.id ?? watch.mergeQueueRemovalId ?? null;
 
   const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
   const progress = headMoved || (changes.length > 0 && !commentsOnly);
@@ -203,8 +239,15 @@ export function evaluatePullRequestWatch(
       remarksThrough,
       remarkIds,
       conflicting,
+      mergeQueueRemovalId,
       wakes,
+      // Only a read that cannot be trusted to show the checks leaves the baseline to the next one.
+      ...(checksBaseline &&
+        (unread || (detail.headSha === undefined && checks.length === 0)) && {
+          awaitingBaseline: "checks" as const,
+        }),
       checksAwaitedSince,
+      checksPending,
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };
@@ -267,6 +310,10 @@ function changeLines(
       ];
     case "conflicting":
       return [`- The branch now conflicts with ${context.baseBranch}.`];
+    case "merge-queue-removed":
+      return [
+        `- It was removed from the merge queue without merging${change.reason === null ? "" : `: ${change.reason}`}.`,
+      ];
   }
 }
 
@@ -277,6 +324,7 @@ const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   remarks: "new comments",
   "no-checks": "no checks reported",
   conflicting: "merge conflict",
+  "merge-queue-removed": "removed from merge queue",
 };
 
 const WATCHING_CLOSING =
@@ -337,7 +385,10 @@ export function pullRequestWatchMessage(input: {
       : WATCHING_CLOSING,
   ].join("\n");
   const failed = changes.some(
-    (change) => change.kind === "checks-failed" || change.kind === "conflicting",
+    (change) =>
+      change.kind === "checks-failed" ||
+      change.kind === "conflicting" ||
+      change.kind === "merge-queue-removed",
   );
   const summary = changes.map((change) => SUMMARY[change.kind]);
   if (exhausted) summary.push("stopped watching");
