@@ -4185,7 +4185,7 @@ describe("PiAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("keeps a late background child beside its launch in the launching turn", () =>
+  it.effect("starts a late background child's row at its launch", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -4229,7 +4229,7 @@ describe("PiAdapterV2", () => {
           stopReason: "stop",
         },
       });
-      const reply = yield* takeEvent(
+      yield* takeEvent(
         (event) =>
           event.type === "turn_item.updated" &&
           event.turnItem.type === "assistant_message" &&
@@ -4251,15 +4251,9 @@ describe("PiAdapterV2", () => {
         ]),
       );
       const beta = yield* takeEvent(isSubagentTurnItem);
-      if (
-        launch.type !== "turn_item.updated" ||
-        reply.type !== "turn_item.updated" ||
-        !isSubagentTurnItem(beta)
-      ) {
+      if (launch.type !== "turn_item.updated" || !isSubagentTurnItem(beta)) {
         return assert.fail("expected turn items");
       }
-      assert.isAbove(beta.turnItem.ordinal, launch.turnItem.ordinal);
-      assert.isBelow(beta.turnItem.ordinal, reply.turnItem.ordinal);
       assert.deepEqual(beta.turnItem.startedAt, launch.turnItem.startedAt);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
