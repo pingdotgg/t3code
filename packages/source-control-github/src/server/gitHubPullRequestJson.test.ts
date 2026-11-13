@@ -1777,10 +1777,12 @@ describe("pull request watch fingerprints", () => {
       readonly reviews: number;
       readonly removals: number;
       readonly timelineItems: number;
+      readonly reviewDecision?: string;
     }) => ({
       state: "OPEN",
       mergeable: "MERGEABLE",
       headRefOid: "abc123",
+      reviewDecision: input.reviewDecision ?? "APPROVED",
       comments: { totalCount: 1, nodes: [{ lastEditedAt: input.commentEditedAt }] },
       reviews: { totalCount: input.reviews, nodes: [] },
       reviewThreads: { totalCount: 0 },
@@ -1831,5 +1833,9 @@ describe("pull request watch fingerprints", () => {
     // GitHub's totalCount counts every timeline item, whatever itemTypes asks for.
     const queued = fingerprint({ ...base, timelineItems: 4 });
     expect(queued.status).toBe(before.status);
+    // A dismissed approval adds no review.
+    const dismissed = fingerprint({ ...base, reviewDecision: "REVIEW_REQUIRED" });
+    expect(dismissed.status).not.toBe(before.status);
+    expect(dismissed.remarks).toBe(before.remarks);
   });
 });
