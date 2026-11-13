@@ -1488,7 +1488,8 @@ it.effect.each(["complete", "stop-before-decline", "stop-after-decline", "queued
         );
         assert.deepEqual(
           effects.map((effect) => [effect.request.type, effect.status]),
-          [["provider-turn.steer", "succeeded"]],
+          // Stop cancels a steer its provider has not answered.
+          [["provider-turn.steer", timing === "stop-before-decline" ? "cancelled" : "succeeded"]],
         );
         assert.equal(started.length, 1);
         if (timing === "stop-before-decline") {
@@ -2444,6 +2445,68 @@ it.effect("keeps a queued message queued when promoted into a run that Stop reac
       const queued = projection.runs.find((run) => run.id === queuedRun.id);
       assert.equal(queued?.status, "queued");
       assert.isTrue(queued?.queueHeld);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+// regression: #25796 a thread's effects run in order, so a steer its provider
+// holds (Claude, while it compacts) must not keep Stop waiting behind it.
+it.effect("Stop cancels steers that have not reached the provider", () =>
+  Effect.gen(function* () {
+    const holding = yield* Deferred.make<void>();
+    const { started, steered, interrupted, layer, startFirstTurn } =
+      yield* nextTurnSelectionHarness(
+        "stop-undelivered-steers",
+        false,
+        true,
+        Effect.void,
+        true,
+        undefined,
+        () => Deferred.succeed(holding, undefined).pipe(Effect.andThen(Effect.never)),
+      );
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const threadId = yield* startFirstTurn;
+      const first = started[0]!;
+      for (const id of ["held", "waiting"]) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(id),
+          threadId,
+          messageId: MessageId.make(`message:${id}`),
+          text: id,
+          attachments: [],
+          modelSelection: runSelection,
+          dispatchMode: { type: "steer_active", targetRunId: first.runId },
+          createdBy: "user",
+          creationSource: "web",
+        });
+      }
+      const draining = yield* worker.drain().pipe(Effect.forkScoped);
+      yield* Deferred.await(holding);
+      yield* orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make("stop"),
+        threadId,
+        runId: first.runId,
+      });
+      yield* Fiber.join(draining);
+
+      assert.deepEqual(steered, ["held"]);
+      assert.lengthOf(interrupted, 1);
+      const { turnItems } = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        turnItems.flatMap((item) =>
+          item.type === "user_message" && item.inputIntent === "steer"
+            ? [[item.messageId, item.status]]
+            : [],
+        ),
+        [
+          [MessageId.make("message:held"), "cancelled"],
+          [MessageId.make("message:waiting"), "cancelled"],
+        ],
+      );
     }).pipe(Effect.provide(layer));
   }),
 );
