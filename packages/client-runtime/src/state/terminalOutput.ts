@@ -12,6 +12,8 @@ export interface TerminalOutputState {
   readonly retainedBytes: number;
   readonly resetVersion: number;
   readonly nextOffset: number;
+  /** Chunks before this offset are replayed to emulators but are no longer displayed text. */
+  readonly textStartOffset: number;
 }
 
 export interface TerminalOutputCursor {
@@ -54,6 +56,7 @@ export const EMPTY_TERMINAL_OUTPUT_STATE = Object.freeze<TerminalOutputState>({
   retainedBytes: 0,
   resetVersion: 0,
   nextOffset: 0,
+  textStartOffset: 0,
 });
 
 interface Utf8Chunk {
@@ -175,6 +178,7 @@ function appendOutput(
       retainedBytes: 0,
       resetVersion: current.resetVersion + 1,
       nextOffset: current.nextOffset + data.length,
+      textStartOffset: current.textStartOffset,
     };
   }
   const appended = splitOutputChunks(
@@ -221,6 +225,7 @@ function appendOutput(
     retainedBytes,
     resetVersion: current.resetVersion,
     nextOffset: appended.nextOffset,
+    textStartOffset: current.textStartOffset,
   };
 }
 
@@ -241,11 +246,37 @@ function resetOutput(
     retainedBytes: reset.byteLength,
     resetVersion: current.resetVersion + 1,
     nextOffset: reset.nextOffset,
+    textStartOffset: 0,
   };
 }
 
-export function terminalOutputText(output: TerminalOutputState): string {
+// Erases the screen and scrollback only. A full emulator reset would drop the
+// screen and input modes the still-running program negotiated.
+const CLEAR_TERMINAL_TEXT = "\u001b[H\u001b[2J\u001b[3J";
+
+/** Earlier output stays retained so a replay from the start restores those modes. */
+function clearOutput(current: TerminalOutputState, maxBufferBytes: number): TerminalOutputState {
+  // The erase rides over the budget: trimming here would evict the output that set those modes.
+  const cleared = appendOutput(
+    current,
+    CLEAR_TERMINAL_TEXT,
+    maxBufferBytes <= 0
+      ? maxBufferBytes
+      : Math.max(maxBufferBytes, current.retainedBytes + CLEAR_TERMINAL_TEXT.length),
+  );
+  return { ...cleared, textStartOffset: cleared.nextOffset };
+}
+
+/** Everything retained, for an emulator that is fed the whole history. */
+export function terminalOutputReplay(output: TerminalOutputState): string {
   return output.chunks.map((chunk) => chunk.data).join("");
+}
+
+/** The output as plain text, for surfaces that do not interpret escape sequences. */
+export function terminalOutputText(output: TerminalOutputState): string {
+  return output.chunks
+    .map((chunk) => chunk.data.slice(Math.max(0, output.textStartOffset - chunk.startOffset)))
+    .join("");
 }
 
 export function readTerminalOutputUpdate(
@@ -263,7 +294,7 @@ export function readTerminalOutputUpdate(
     cursor.resetVersion !== output.resetVersion ||
     cursor.offset < (firstChunk?.startOffset ?? output.nextOffset)
   ) {
-    return { type: "reset", data: terminalOutputText(output), cursor: nextCursor };
+    return { type: "reset", data: terminalOutputReplay(output), cursor: nextCursor };
   }
 
   // Appends and compaction preserve offset order, so unread chunks form a suffix.
@@ -286,4 +317,4 @@ export function readTerminalOutputUpdate(
   };
 }
 
-export { appendOutput, resetOutput };
+export { appendOutput, clearOutput, resetOutput };
