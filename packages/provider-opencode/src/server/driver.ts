@@ -479,63 +479,59 @@ export const OpenCodeDriver: ProviderDriver<
       Effect.provideService(Digest.Digest, digest),
     );
     let unsupportedUsageVersion: string | undefined;
-    const noEndpoints = new Map<string, string>();
-    // One server call reads the Console limits and the endpoint of every
-    // provider, so the server is contacted once and the quota probe knows
-    // whose key it may send.
-    const checkOpenCodeLimits = Effect.gen(function* () {
-      if (!effectiveConfig.enabled)
-        return { limits: yield* legacyUsageLimits, endpoints: noEndpoints };
+    const checkConsoleUsageLimits = Effect.gen(function* () {
+      if (!effectiveConfig.enabled) return yield* legacyUsageLimits;
       const runtime = yield* runtimeProbe.get;
       if (runtime.generation === "v1" || runtime.version === unsupportedUsageVersion)
-        return { limits: yield* legacyUsageLimits, endpoints: noEndpoints };
-      const read = yield* openCode2Server.withConnection((connection) =>
-        Effect.zipWith(
-          connection.usageLimits(host.paths.cwd),
-          readProviderEndpoints(connection, host.paths.cwd),
-          (limits, endpoints) => ({ limits, endpoints }),
-        ),
+        return yield* legacyUsageLimits;
+      const limits = yield* openCode2Server.withConnection((connection) =>
+        connection.usageLimits(host.paths.cwd),
       );
-      if (read.limits === undefined) unsupportedUsageVersion = runtime.version;
-      return {
-        limits: read.limits ?? (yield* legacyUsageLimits),
-        endpoints: read.endpoints,
-      };
+      if (limits === undefined) unsupportedUsageVersion = runtime.version;
+      return limits ?? (yield* legacyUsageLimits);
     }).pipe(
       Effect.timeout("10 seconds"),
       Effect.catch(() =>
         Effect.map(DateTime.now, (now) => ({
-          limits: {
-            checkedAt: DateTime.formatIso(now),
-            windows: [],
-            unavailable: {
-              reason: "probeFailed" as const,
-              message: "OpenCode could not read workspace usage.",
-            },
+          checkedAt: DateTime.formatIso(now),
+          windows: [],
+          unavailable: {
+            reason: "probeFailed" as const,
+            message: "OpenCode could not read workspace usage.",
           },
-          endpoints: noEndpoints,
         })),
       ),
     );
+    // A custom provider meters its own plan, so its quota has to be read from
+    // that provider rather than from the OpenCode Console budget. The endpoint
+    // OpenCode resolves for a provider says whose key a credential is, so it
+    // is read only for a provider that has a credential to check.
+    const checkIntegrationUsageLimits = readOpenCodeIntegrationUsageLimits({
+      enabled: effectiveConfig.enabled,
+      serverUrl: effectiveConfig.serverUrl,
+      environment: processEnv,
+      resolveEndpoint: (integrationId) =>
+        openCode2Server
+          .withConnection((connection) =>
+            readProviderEndpoints(connection, host.paths.cwd).pipe(
+              Effect.map((endpoints) => endpoints.get(integrationId)),
+            ),
+          )
+          .pipe(Effect.catchCause(() => Effect.undefined)),
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, pathService),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(Digest.Digest, digest),
+    );
     // One probe for the provider's limits, so the recovery that retries a
     // failed read retries the Console budget and the integration quotas alike.
-    const checkUsageLimits = Effect.gen(function* () {
-      const { limits, endpoints } = yield* checkOpenCodeLimits;
-      // A custom provider meters its own plan, so its quota has to be read
-      // from that provider rather than from the OpenCode Console budget.
-      const integration = yield* readOpenCodeIntegrationUsageLimits({
-        enabled: effectiveConfig.enabled,
-        serverUrl: effectiveConfig.serverUrl,
-        environment: processEnv,
-        endpoints,
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, pathService),
-        Effect.provideService(HttpClient.HttpClient, httpClient),
-        Effect.provideService(Digest.Digest, digest),
-      );
-      return mergeUsageLimits(limits, integration);
-    });
+    const checkUsageLimits = Effect.zipWith(
+      checkConsoleUsageLimits,
+      checkIntegrationUsageLimits,
+      (usageLimits, integration) => mergeUsageLimits(usageLimits, integration),
+      { concurrent: true },
+    );
     const checkProvider = Effect.all(
       {
         // A configured loopback server reports its running version. Probe the local

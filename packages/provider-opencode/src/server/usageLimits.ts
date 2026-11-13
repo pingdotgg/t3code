@@ -293,11 +293,12 @@ export interface OpenCodeUsageLimitsInput {
   readonly serverUrl: string;
   readonly environment: NodeJS.ProcessEnv;
   /**
-   * The endpoint OpenCode resolves for each provider, by provider or
-   * integration id. A provider without one is not probed: the key's owner
-   * would be unknown.
+   * The endpoint OpenCode resolves for a provider. A provider without one is
+   * not probed: the key's owner would be unknown.
    */
-  readonly endpoints?: ReadonlyMap<string, string> | undefined;
+  readonly resolveEndpoint?:
+    | ((integrationId: string) => Effect.Effect<string | undefined>)
+    | undefined;
 }
 
 export interface OpenCodeIntegrationUsageLimits {
@@ -327,20 +328,22 @@ export const readOpenCodeIntegrationUsageLimits = Effect.fn("readOpenCodeIntegra
       const { databasePath } = yield* openCodeStorePaths(env);
       const storedCredentials = yield* readStoredCredentials(databasePath);
       // Only a credential that MiniMax itself issued may reach MiniMax's API.
-      const candidates = Object.entries(INTEGRATION_QUOTA_ENDPOINTS).filter(([integrationId]) => {
+      const candidates: Array<readonly [string, StoredCredential]> = [];
+      for (const integrationId of Object.keys(INTEGRATION_QUOTA_ENDPOINTS)) {
         const credential = storedCredentials.get(integrationId);
-        if (
-          credential === undefined ||
-          !credential.key.startsWith(MINI_MAX_PLAN_KEY_PREFIX) ||
-          !servesMiniMax(credential.server)
-        )
-          return false;
+        if (credential === undefined) continue;
+        if (!credential.key.startsWith(MINI_MAX_PLAN_KEY_PREFIX)) continue;
+        if (!servesMiniMax(credential.server)) continue;
         // The provider must resolve to MiniMax's own endpoint, and the
         // credential must not point somewhere else.
-        const endpoint = input.endpoints?.get(integrationId);
-        if (endpoint === undefined || !isMiniMaxEndpoint(endpoint)) return false;
-        return credential.baseURL === undefined || isMiniMaxEndpoint(credential.baseURL);
-      });
+        const endpoint =
+          input.resolveEndpoint === undefined
+            ? undefined
+            : yield* input.resolveEndpoint(integrationId);
+        if (endpoint === undefined || !isMiniMaxEndpoint(endpoint)) continue;
+        if (credential.baseURL !== undefined && !isMiniMaxEndpoint(credential.baseURL)) continue;
+        candidates.push([integrationId, credential]);
+      }
       if (candidates.length === 0) return empty;
 
       const digest = yield* Digest.Digest;
@@ -349,10 +352,7 @@ export const readOpenCodeIntegrationUsageLimits = Effect.fn("readOpenCodeIntegra
           Digest.sha256,
           new TextEncoder().encode(
             candidates
-              .map(
-                ([integrationId]) =>
-                  `${integrationId}\0${storedCredentials.get(integrationId)!.key}`,
-              )
+              .map(([integrationId, credential]) => `${integrationId}\0${credential.key}`)
               .sort()
               .join("\0"),
           ),
@@ -361,9 +361,9 @@ export const readOpenCodeIntegrationUsageLimits = Effect.fn("readOpenCodeIntegra
 
       const client = yield* HttpClient.HttpClient;
       const windows: ServerProviderUsageWindow[] = [];
-      for (const [integrationId, quota] of candidates) {
-        const credential = storedCredentials.get(integrationId);
-        if (credential === undefined) continue;
+      for (const [integrationId, credential] of candidates) {
+        const quota = INTEGRATION_QUOTA_ENDPOINTS[integrationId];
+        if (quota === undefined) continue;
         const response = yield* client
           .execute(
             HttpClientRequest.get(quota.endpoint).pipe(
