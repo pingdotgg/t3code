@@ -11,17 +11,44 @@ const SECTION_TITLE_PATTERN = /^ {0,3}(?:#{1,6}(?:[ \t]|$)|\*\*(?:[^*]|\*(?!\*))
 // Unindented ATX headings end preceding paragraphs and lists without blank lines; bold lines do not.
 const TOP_LEVEL_HEADING_PATTERN = /^#{1,6}(?:[ \t]|$)/;
 
-/** Emit terminated lines only, except partial list-start lookahead for tight lists. Hold section titles until content follows. */
-export function splitBufferedAssistantText(text: string): { ready: string; rest: string } {
-  let openFence: { marker: string; indent: number } | null = null;
-  let boundary = -1;
-  let lineStart = 0;
-  let titleAwaitingContent = false;
+// Matches LIST_ITEM_START_PATTERN on the trimmed partial line without copying it.
+const PARTIAL_LIST_ITEM_START_PATTERN = /[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t][ \t\r]*[^ \t\r]/y;
+
+interface AssistantTextScan {
+  readonly text: string;
+  // Start of the partial line; every line before it has been scanned.
+  readonly lineStart: number;
+  readonly openFence: { readonly marker: string; readonly indent: number } | null;
+  readonly boundary: number;
+  readonly titleAwaitingContent: boolean;
+}
+
+const EMPTY_SCAN: AssistantTextScan = {
+  text: "",
+  lineStart: 0,
+  openFence: null,
+  boundary: -1,
+  titleAwaitingContent: false,
+};
+
+function trimLineEnd(text: string, start: number, end: number): string {
+  while (end > start) {
+    const char = text.charCodeAt(end - 1);
+    if (char !== 32 && char !== 9 && char !== 13) break;
+    end--;
+  }
+  return text.slice(start, end);
+}
+
+/** Scans the terminated lines of `text`, resuming after `previous` when `text` extends it. */
+function advanceScan(previous: AssistantTextScan, text: string): AssistantTextScan {
+  const resumed = text.startsWith(previous.text);
+  let { openFence, boundary, lineStart, titleAwaitingContent } = resumed ? previous : EMPTY_SCAN;
+  let searchFrom = resumed ? previous.text.length : 0;
   for (;;) {
-    const newline = text.indexOf("\n", lineStart);
-    const line = text
-      .slice(lineStart, newline === -1 ? text.length : newline)
-      .replace(/[ \t\r]+$/, "");
+    const newline = text.indexOf("\n", searchFrom);
+    if (newline === -1) break;
+    const line = trimLineEnd(text, lineStart, newline);
     if (
       openFence === null &&
       lineStart > 0 &&
@@ -29,9 +56,6 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
       LIST_ITEM_START_PATTERN.test(line)
     ) {
       boundary = lineStart;
-    }
-    if (newline === -1) {
-      break;
     }
     const fenceMatch = MARKDOWN_FENCE_PATTERN.exec(line);
     if (fenceMatch) {
@@ -61,7 +85,23 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
       titleAwaitingContent = SECTION_TITLE_PATTERN.test(line);
     }
     lineStart = newline + 1;
+    searchFrom = lineStart;
   }
+  return { text, lineStart, openFence, boundary, titleAwaitingContent };
+}
+
+// The partial line may still change, so its list item start is checked here, not kept in the scan.
+function readyBoundary(scan: AssistantTextScan): number {
+  if (scan.openFence === null && scan.lineStart > 0 && !scan.titleAwaitingContent) {
+    PARTIAL_LIST_ITEM_START_PATTERN.lastIndex = scan.lineStart;
+    if (PARTIAL_LIST_ITEM_START_PATTERN.test(scan.text)) return scan.lineStart;
+  }
+  return scan.boundary;
+}
+
+/** Emit terminated lines only, except partial list-start lookahead for tight lists. Hold section titles until content follows. */
+export function splitBufferedAssistantText(text: string): { ready: string; rest: string } {
+  const boundary = readyBoundary(advanceScan(EMPTY_SCAN, text));
   if (boundary === -1) {
     return { ready: "", rest: text };
   }
@@ -84,6 +124,7 @@ interface StreamTrack {
   // Latest snapshot whose text has not all been delivered yet.
   readonly held: ProviderAdapter.ProviderAdapterV2Event | null;
   readonly dueAt: number;
+  readonly scan: AssistantTextScan;
 }
 
 function streamedMessage(event: ProviderAdapter.ProviderAdapterV2Event): StreamedMessage | null {
@@ -148,25 +189,29 @@ export function makeAssistantStreamingFilter(
       if (mode === "turn") return null;
       const previous = tracks.get(key);
       const delivered = previous?.text ?? "";
-      const hold = () => {
+      const hold = (scan = previous?.scan ?? EMPTY_SCAN) => {
         track(key, {
           text: delivered,
           at: previous?.at ?? Number.NEGATIVE_INFINITY,
           held: message.text !== delivered ? event : null,
           dueAt: now + idleFlushMs,
+          scan,
         });
         return null;
       };
       if (previous && now - previous.at < 400) return hold();
-      const { ready } = splitBufferedAssistantText(message.text);
+      const scan = advanceScan(previous?.scan ?? EMPTY_SCAN, message.text);
+      const boundary = readyBoundary(scan);
+      const ready = boundary === -1 ? "" : message.text.slice(0, boundary);
       // An idle delivery may already show more than the next boundary; never shrink it. A
       // provider rewrite or truncation is not a prefix and replaces it.
-      if (delivered.startsWith(ready)) return hold();
+      if (delivered.startsWith(ready)) return hold(scan);
       track(key, {
         text: ready,
         at: now,
         held: ready !== message.text ? event : null,
         dueAt: now + idleFlushMs,
+        scan,
       });
       return withText(event, ready);
     },
@@ -188,6 +233,7 @@ export function makeAssistantStreamingFilter(
           at: now,
           held: null,
           dueAt: now,
+          scan: current.scan,
         });
       }
       return due;

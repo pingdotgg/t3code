@@ -20,6 +20,8 @@ import {
   type MarkdownLinkOccurrence,
   type MarkdownStyle,
 } from "react-native-enriched-markdown";
+import { codeFenceRenderer } from "./codeBlockMarkdown";
+import { HighlightedCodeBlock } from "./HighlightedCodeBlock";
 import { MermaidCodeBlock } from "./MermaidCodeBlock";
 import type { SelectableMarkdownTextProps } from "./SelectableMarkdownText.types";
 
@@ -29,6 +31,7 @@ import { useEnrichedLinkVariants } from "./useEnrichedLinkVariants";
 import { useRetryingImageSource } from "./useRetryingImageSource";
 import * as Dialog from "../components/ui/Dialog";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
+import type { HighlightScheme } from "../lib/highlights";
 import {
   ENRICHED_INLINE_FILE_LINK_REGEX,
   enrichedTextLinkRegex,
@@ -166,19 +169,25 @@ function enrichedStyle(
   };
 }
 
-/** Diagram and math fences, as web draws them. A fence streams as native code until it closes. */
+/**
+ * Diagram and math fences, as web draws them, and code enriched-markdown cannot colour.
+ * Diagrams and math stay native until the library reports them complete; fallback code keeps one block throughout.
+ */
 function codeBlockElement(
   block: MarkdownCodeBlock,
   textStyle: SelectableMarkdownTextProps["textStyle"],
   markdownStyle: MarkdownStyle,
   mathRenderingEnabled: boolean,
+  scheme: HighlightScheme,
 ): ReactElement | undefined {
-  if (!block.isComplete) return undefined;
-  if (block.language === "mermaid") {
-    return <MermaidCodeBlock code={block.code} textStyle={textStyle} />;
+  const renderer = codeFenceRenderer(block.language, mathRenderingEnabled);
+  if (renderer.kind === "mermaid") {
+    return block.isComplete ? (
+      <MermaidCodeBlock code={block.code} textStyle={textStyle} />
+    ) : undefined;
   }
-  if (block.language === "math" && mathRenderingEnabled) {
-    return (
+  if (renderer.kind === "math") {
+    return block.isComplete ? (
       <EnrichedMarkdownText
         // A blank line would end the paragraph, and so the math, early.
         markdown={`$$\n${block.code.replace(/\n\s*\n/g, "\n").trim()}\n$$`}
@@ -189,6 +198,19 @@ function codeBlockElement(
         selectable
         selectionColor={textStyle.selectionColor}
         selectionHandleColor={textStyle.selectionHandleColor}
+      />
+    ) : undefined;
+  }
+  if (renderer.kind === "highlight" && markdownStyle.codeBlock) {
+    return (
+      <HighlightedCodeBlock
+        code={block.code}
+        fence={block.language}
+        language={renderer.language}
+        complete={block.isComplete}
+        scheme={scheme}
+        textStyle={textStyle}
+        codeStyle={markdownStyle.codeBlock}
       />
     );
   }
@@ -347,7 +369,13 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         }
       : undefined,
     code: (block: MarkdownCodeBlock) =>
-      codeBlockElement(block, props.textStyle, baseMarkdownStyle, mathRenderingEnabled),
+      codeBlockElement(
+        block,
+        props.textStyle,
+        baseMarkdownStyle,
+        mathRenderingEnabled,
+        themeAppearance,
+      ),
   };
   const resolveNativeImageSource = useRetryingImageSource(resolveImageSource);
   const renderMarkdown = (openAndroidMenu?: () => void) => {
