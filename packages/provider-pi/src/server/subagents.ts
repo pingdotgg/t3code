@@ -555,6 +555,21 @@ export function makePiSubagentLifecycle<Owner>() {
           return undefined;
       }
     },
+    /** Forgets the matching owners' live runs, so their later frames cannot revive stopped rows. */
+    stopRuns: (matches: (owner: Owner) => boolean) => {
+      const stopped = [...background.values()].filter(
+        (run) => matches(run.owner) && isPending(run),
+      );
+      for (const run of stopped) background.delete(run.asyncId);
+      return {
+        asyncIds: stopped.map((run) => run.asyncId),
+        members: stopped.flatMap((run) =>
+          [...run.members.values()]
+            .filter((member) => !isPiSubagentSettled(member.status))
+            .map((member) => ({ ...member, status: "interrupted" as const })),
+        ),
+      };
+    },
     /** Settles every running child once the session can no longer observe it. */
     close: (): ReadonlyArray<PiSubagentMember<Owner>> => {
       const running = [

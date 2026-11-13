@@ -4184,6 +4184,73 @@ describe("PiAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("stops a settled turn's background subagents through pi-subagents on Stop", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_async",
+        toolName: "subagent",
+        isError: false,
+        result: { content: [], details: { mode: "workflow", asyncId: "wf-1", results: [] } },
+      });
+      yield* fake.emit(
+        asyncStatusWidget(1, [
+          {
+            id: "wf-1",
+            kind: "workflow",
+            state: "running",
+            children: [{ id: "a", kind: "step", state: "running", agent: "scout" }],
+          },
+        ]),
+      );
+      const running = yield* takeEvent(
+        (event) => isSubagentTurnItem(event) && event.turnItem.status === "running",
+      );
+      if (!isSubagentTurnItem(running)) return;
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: running.turnItem.providerTurnId!,
+        requestRuntimeRestart: true,
+      });
+      const stop = yield* fake.takeRequest("prompt");
+      assert.equal(stop["message"], "/t3-stop-subagents wf-1");
+      const stopped = yield* takeEvent(isSubagentTurnItem);
+      assert.deepInclude(isSubagentTurnItem(stopped) ? stopped.turnItem : {}, {
+        id: running.turnItem.id,
+        status: "interrupted",
+      });
+      const released = yield* takeEvent((event) => event.type === "background_work.updated");
+      assert.deepInclude(released, { pending: false });
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+
+      // A completion pi-subagents reports after Stop must not revive the stopped row.
+      const late = yield* subagentRowsBefore(fake, takeEvent, "late", [
+        asyncStatusWidget(2, [
+          {
+            id: "wf-1",
+            kind: "workflow",
+            state: "complete",
+            children: [{ id: "a", kind: "step", state: "complete", agent: "scout" }],
+          },
+        ]),
+      ]);
+      assert.deepEqual(late, []);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("stops showing background subagents as running when the Pi process exits", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

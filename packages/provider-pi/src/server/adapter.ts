@@ -74,7 +74,11 @@ import {
   materializePiT3McpExtension,
   resolvePiLaunchArgs,
 } from "./mcpInjection.ts";
-import { PI_FILE_CHANGE_TOOLS, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import {
+  PI_FILE_CHANGE_TOOLS,
+  PI_T3_SERVICE_TIER_COMMAND,
+  PI_T3_STOP_SUBAGENTS_COMMAND,
+} from "./mcpExtensionSource.ts";
 import { PI_STANDARD_SERVICE_TIER } from "./modelCapabilities.ts";
 import {
   isPiSubagentSettled,
@@ -3132,6 +3136,24 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           function* (interruptInput) {
             const turn = threadState?.activeTurn ?? null;
             if (turn === null && interruptInput.requestRuntimeRestart === true) {
+              const stopped = subagents.stopRuns(
+                (owner) => owner.providerTurn.id === interruptInput.providerTurnId,
+              );
+              if (stopped.asyncIds.length > 0) {
+                yield* request(
+                  {
+                    type: "prompt",
+                    message: `/${PI_T3_STOP_SUBAGENTS_COMMAND} ${stopped.asyncIds.join(" ")}`,
+                  },
+                  2_000,
+                ).pipe(Effect.ignore);
+                yield* sessionEventPermit.withPermits(1)(
+                  Effect.andThen(
+                    emitSubagentMembers(stopped.members),
+                    emitSubagentBackgroundWork(),
+                  ),
+                );
+              }
               if (pendingWake !== null)
                 yield* sessionEventPermit.withPermits(1)(stopPendingWake(pendingWake));
               return;
