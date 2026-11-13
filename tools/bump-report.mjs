@@ -116,7 +116,14 @@ if (checksFile && NodeFS.existsSync(checksFile)) {
   const by = (kind) => rows.filter((r) => r.startsWith(`${kind} `)).map((r) => r.slice(kind.length + 1));
   failedChecks = by("FAIL");
   line();
-  line(failedChecks.length === 0 ? "## Checks: green" : `## Checks: RED (${failedChecks.length} failed)`);
+  const notRun = by("skip").some((name) => name.startsWith("tools/check.sh"));
+  line(
+    failedChecks.length > 0
+      ? `## Checks: RED (${failedChecks.length} failed)`
+      : notRun
+        ? "## Checks: generators ok; tools/check.sh NOT RUN"
+        : "## Checks: green",
+  );
   list("failed", failedChecks);
   line(`  passed ${by("ok").length}${by("skip").length ? `, skipped: ${by("skip").join(", ")}` : ""}`);
 }
@@ -360,8 +367,13 @@ if (!monorepo) {
 
 // ---- Coverage ----------------------------------------------------------------------------
 
-/** Method tags our Rust sources register (`.unary("tag"` / `.stream("tag"`), tests excluded. */
-function registeredTags() {
+/**
+ * Method tags the method table registers: every contract tag written as a string literal in
+ * crates/conn-server/src/methods (tests and `table.get(..)` lookups left out). Registrations
+ * put the tag on its own line or pass it through helpers, so this reads literals, not calls.
+ * The binary's coverage line cross-checks the count.
+ */
+function registeredTags(tags) {
   const found = new Set();
   const walk = (dir) => {
     for (const entry of NodeFS.readdirSync(dir, { withFileTypes: true })) {
@@ -369,15 +381,14 @@ function registeredTags() {
       if (entry.isDirectory()) {
         if (entry.name !== "tests") walk(path);
       } else if (entry.name.endsWith(".rs") && entry.name !== "tests.rs") {
-        const text = NodeFS.readFileSync(path, "utf8").split(/\n#\[cfg\(test\)\]/)[0];
-        for (const m of text.matchAll(/\.(?:unary|stream)\(\s*"([A-Za-z0-9_.]+)"/g)) found.add(m[1]);
+        const text = NodeFS.readFileSync(path, "utf8")
+          .split(/\n#\[cfg\(test\)\]/)[0]
+          .replace(/\.get\(\s*"[^"]*"\s*\)/g, "");
+        for (const m of text.matchAll(/"([A-Za-z][A-Za-z0-9_.-]*)"/g)) if (tags.has(m[1])) found.add(m[1]);
       }
     }
   };
-  for (const crate of NodeFS.readdirSync(NodePath.join(repoRoot, "crates"))) {
-    const src = NodePath.join(repoRoot, "crates", crate, "src");
-    if (NodeFS.existsSync(src)) walk(src);
-  }
+  walk(NodePath.join(repoRoot, "crates/conn-server/src/methods"));
   return found;
 }
 
@@ -415,8 +426,8 @@ async function coverageLine(binary) {
 }
 
 line();
-const registered = registeredTags();
 const all = newMethods?.methods ?? [];
+const registered = registeredTags(new Set(all.map((m) => m.tag)));
 const missing = all.filter((m) => !registered.has(m.tag));
 const servedCount = all.length - missing.length;
 const binaryLine = await coverageLine(option("--binary"));
@@ -429,14 +440,18 @@ const unservedNew = addedMethods.filter((t) => !registered.has(t));
 list("new in this bump and not served", unservedNew);
 const areas = new Map();
 for (const m of missing) {
-  const area = m.tag.split(".")[0];
-  areas.set(area, [...(areas.get(area) ?? []), m.tag.slice(area.length + 1) + (m.stream ? "*" : "")]);
+  const dot = m.tag.indexOf(".");
+  const area = dot === -1 ? "(no area)" : m.tag.slice(0, dot);
+  const name = dot === -1 ? m.tag : m.tag.slice(dot + 1);
+  areas.set(area, [...(areas.get(area) ?? []), name + (m.stream ? "*" : "")]);
 }
 line(`  not served, by area (${missing.length}; * = stream):`);
 for (const [area, tags] of [...areas].sort(([a], [b]) => (a < b ? -1 : 1))) {
   line(`    ${area} (${tags.length}): ${tags.join(", ")}`);
 }
-const stale = [...registered].filter((t) => !all.some((m) => m.tag === t));
-if (stale.length) line(`  registered but no longer in the contract (the server panics at start): ${stale.join(", ")}`);
+const servedRemoved = registeredTags(new Set(removedMethods));
+if (servedRemoved.size) {
+  line(`  served but removed from the contract (the server panics at start): ${[...servedRemoved].join(", ")}`);
+}
 
 console.log(out.join("\n"));

@@ -117,6 +117,19 @@ mcp_digests() {
 }
 step "mcp tool list" mcp_digests
 step "gen-keybindings" node crates/conn-server/tools/gen-keybindings.mjs
+# The keybinding files are formatted by hand; gen-keybindings --check compares values. Keep
+# the committed layout when the value did not change, so an empty bump leaves no diff.
+keep_layout() {
+  local rel
+  for rel in crates/conn-server/keybindings.defaults.json crates/conn-server/keybindings.resolved.json; do
+    [ -f "$scratch/before/$rel" ] || continue
+    if node -e 'const fs = require("fs"); const [a, b] = process.argv.slice(1).map((f) => JSON.stringify(JSON.parse(fs.readFileSync(f, "utf8")))); process.exit(a === b ? 0 : 1)' \
+      "$scratch/before/$rel" "$rel"; then
+      cp "$scratch/before/$rel" "$rel"
+    fi
+  done
+}
+step "keybinding layout" keep_layout
 
 # 3. Reference events from the TypeScript adapters. This is the one place to call the
 # provider crates' capture tools. Both replay recorded CLI transcripts (no model call), and
@@ -159,5 +172,9 @@ fi
 if grep -q '^FAIL ' "$scratch/all-checks"; then
   printf '\nbump-conn: RED. The tree keeps the bumped state; fix it, then run tools/check.sh. Nothing was committed.\n'
   exit 1
+fi
+if ! $checks; then
+  printf '\nbump-conn: generators ok, checks not run (--no-checks). Run tools/check.sh before you commit.\n'
+  exit 0
 fi
 printf '\nbump-conn: green. Review the diff (git diff --stat), then commit. Nothing was committed.\n'
