@@ -175,7 +175,7 @@ describe("Cursor skills", () => {
       }),
     ));
 
-  it("finds sibling skills when one skill ships more files than the scan budget", async () =>
+  it("does not scan skill package contents when finding sibling skills", async () =>
     await runNode(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -213,8 +213,21 @@ describe("Cursor skills", () => {
             enabled: true,
           },
         ];
-        expect(yield* discoverCursorSkills(workspace, { HOME: userHome })).toEqual(expected);
-        expect(yield* probeCursorSkills(workspace, { HOME: userHome })).toEqual(expected);
+        const directoriesRead: string[] = [];
+        const trackedFileSystem = {
+          ...fileSystem,
+          readDirectory: (directory: string) => {
+            directoriesRead.push(directory);
+            return fileSystem.readDirectory(directory);
+          },
+        };
+        expect(
+          yield* probeCursorSkills(workspace, { HOME: userHome }).pipe(
+            Effect.provideService(FileSystem.FileSystem, trackedFileSystem),
+          ),
+        ).toEqual(expected);
+        expect(directoriesRead).not.toContain(path.join(root, "a-large"));
+        expect(directoriesRead).not.toContain(artifacts);
       }),
     ));
 

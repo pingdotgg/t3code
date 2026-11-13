@@ -187,6 +187,8 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
           ...(frontmatter.userInvocable === false ? { userInvocable: false } : {}),
         });
       }
+      // A skill's supporting files are package contents, not more discovery roots.
+      return;
     }
 
     if (!insideRoot) {
