@@ -278,7 +278,7 @@ it.live.each([
 
       if (!queued) yield* send(2, secondAccount);
       yield* worker.drain();
-      const deliverWake = (afterDispatch: Effect.Effect<unknown> = Effect.void) =>
+      const deliverWake = <E, R>(afterDispatch: Effect.Effect<unknown, E, R>) =>
         Effect.gen(function* () {
           yield* Queue.offer(firstProcess, bashNotification);
           yield* Queue.offer(firstProcess, assistantFrame("wake-assistant", WAKE_REPLY));
@@ -319,7 +319,7 @@ it.live.each([
         // A reply that arrives during the second account's turn queues, then starts on its owner.
         if (variant === "hand-off sent after") {
           yield* finishSecond;
-          yield* deliverWake();
+          yield* deliverWake(Effect.void);
         } else {
           yield* deliverWake(finishSecond);
         }
@@ -372,7 +372,7 @@ it.live.each([
 
       // The notification and wake reply arrive on the still-open process.
       const switched = yield* runStatus("send-2", "running");
-      yield* deliverWake();
+      yield* deliverWake(Effect.void);
       yield* Fiber.join(switched);
       yield* worker.drain();
 
