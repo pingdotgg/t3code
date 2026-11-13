@@ -245,7 +245,12 @@ const CompatDisableProviderRpc = Rpc.make(AGENT_METHODS.providers_disable, {
 
 const CompatPromptRpc = Rpc.make(AGENT_METHODS.session_prompt, {
   payload: Schema.Union([AcpSchema.PromptRequest, AcpSchemaV1.PromptRequest]),
-  success: Schema.Union([AcpSchemaV1.PromptResponse, AcpSchema.PromptResponse]),
+  success: Schema.Union([
+    AcpSchemaV1.PromptResponse,
+    // fx sends empty usage on cancellation; retain its stop reason when usage is invalid.
+    Schema.Struct({ stopReason: AcpSchemaV1.StopReason }),
+    AcpSchema.PromptResponse,
+  ]),
   error: AcpSchema.Error,
 });
 

@@ -32,6 +32,7 @@ import * as ServerConfig from "../../apps/server/src/config.ts";
 const { values } = NodeUtil.parseArgs({
   options: {
     model: { type: "string" },
+    case: { type: "string", multiple: true },
     out: { type: "string" },
     baseline: { type: "string" },
     initial: { type: "boolean", default: false },
@@ -39,6 +40,11 @@ const { values } = NodeUtil.parseArgs({
 });
 if (!values.model || !values.out)
   throw new Error("Use --model <configured-model> --out <directory>.");
+for (const id of values.case ?? []) {
+  if (!threadTitleEvaluationCases.some((fixture) => fixture.id === id)) {
+    throw new Error(`Unknown case id: ${id}.`);
+  }
+}
 const model = values.model;
 const outputDirectory = values.out;
 const Results = Schema.fromJsonString(
@@ -70,6 +76,7 @@ await Effect.runPromise(
     const review = [];
     const answerKey = [];
     for (const fixture of threadTitleEvaluationCases) {
+      if (values.case?.length && !values.case.includes(fixture.id)) continue;
       const previous = baseline.find((entry) => entry.id === fixture.id);
       if (values.baseline && !previous) throw new Error(`Baseline is missing ${fixture.id}.`);
       const firstMessage: ThreadTitleMessage | undefined = fixture.messages.find(
