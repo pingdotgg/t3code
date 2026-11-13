@@ -66,6 +66,14 @@ const nativePackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
     isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
   },
 });
+const bunOutdatedTable = (row: string) => [
+  "|-------------------------------------------------------|",
+  "| Package               | Current | Update | Latest   |",
+  "|-----------------------|---------|--------|----------|",
+  row,
+  "|-------------------------------------------------------|",
+  "Note: The * indicates that version isn't true latest due to minimum release age",
+];
 const miseToolUpdate = makePackageManagedProviderMaintenanceResolver({
   provider: driver("packageTool"),
   npmPackageName: "@example/package-tool",
@@ -419,6 +427,57 @@ it.layer(
         );
       }),
     { skip: !symlinksSupported || windowsHost },
+  );
+
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
+    "keeps configured npm registries' latest versions apart for one install",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-npm-registry-isolation");
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true })),
+        );
+        const npmBinDir = NodePath.join(tempDir, "npm-bin");
+        writeExecutable(NodePath.join(npmBinDir, "npm"));
+        const binaryPath = linkIntoPackage(tempDir, "package-tool", [
+          "lib",
+          "node_modules",
+          "@example",
+          "package-tool",
+        ]);
+        let probes = 0;
+        const latest = (registry: string, version: string) =>
+          resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+            binaryPath,
+            env: { PATH: npmBinDir, NPM_CONFIG_REGISTRY: registry },
+          }).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              stdoutSpawner(() => {
+                probes++;
+                return JSON.stringify(version);
+              }),
+            ),
+            Effect.tap((capabilities) =>
+              Effect.sync(() => {
+                expect(capabilities.latestVersionCacheKey ?? "").not.toContain("private-token");
+              }),
+            ),
+            Effect.flatMap(resolveLatestProviderVersion),
+          );
+        const first = "https://user:private-token@first.example.test";
+        const second = "https://second.example.test";
+        expect(yield* latest(first, "1.1.0")).toBe("1.1.0");
+        expect(yield* latest(second, "2.0.0")).toBe("2.0.0");
+        expect(yield* latest(first, "1.2.0")).toBe("1.1.0");
+        expect(probes).toBe(2);
+      }).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("configured registries must not use public npm")),
+        ),
+      ),
   );
 
   it("pins the advertised stable version in a pnpm-global update command", () => {
@@ -952,6 +1011,70 @@ it.layer(
     }),
   );
 
+  // `vp env off` makes each shim run the next matching executable on PATH instead.
+  it.effect.each([
+    {
+      name: "a system_first shim (VP_HOME layout) to a later install",
+      vpHome: ".vite-plus",
+      setVpHome: true,
+      configs: { ".vite-plus": "system_first" },
+      vitePlus: false,
+    },
+    {
+      name: "a system_first shim (XDG layout) to a later install",
+      vpHome: ".local/share/vite-plus",
+      setVpHome: false,
+      configs: { ".config/vite-plus": "system_first" },
+      vitePlus: false,
+    },
+    {
+      name: "a managed VP_HOME shim despite a system_first XDG config",
+      vpHome: ".local/share/vite-plus",
+      setVpHome: true,
+      configs: { ".local/share/vite-plus": "managed", ".config/vite-plus": "system_first" },
+      vitePlus: true,
+    },
+  ] as const)("updates through vp only for the install the shim runs: $name", (fixture) =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("vite-plus-system-first");
+      const vpHome = NodePath.join(tempDir, fixture.vpHome);
+      for (const [dir, shimMode] of Object.entries(fixture.configs)) {
+        NodeFS.mkdirSync(NodePath.join(tempDir, dir), { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(tempDir, dir, "config.json"),
+          JSON.stringify({ shimMode }),
+        );
+      }
+      const shim = NodePath.join(vpHome, "bin", "package-tool");
+      writeExecutable(shim);
+      const otherInstall = linkIntoPackage(NodePath.join(tempDir, "npm"), "package-tool", [
+        "lib",
+        "node_modules",
+        "@example",
+        "package-tool",
+      ]);
+
+      const capabilities = yield* packageToolUpdate
+        .resolve({
+          binaryPath: "package-tool",
+          resolvedCommandPath: shim,
+          realCommandPath: NodePath.join(vpHome, "current", "bin", "vp"),
+          env: {
+            ...(fixture.setVpHome ? { VP_HOME: vpHome } : {}),
+            PATH: [NodePath.dirname(shim), NodePath.dirname(otherInstall)].join(":"),
+          },
+          platform: "linux",
+        })
+        .pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+          Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        );
+
+      expect(capabilities.update?.lockKey === "vite-plus-global").toBe(fixture.vitePlus);
+    }),
+  );
+
   it.effect("keeps a project folder named vite-plus manual-only", () =>
     Effect.gen(function* () {
       const capabilities = yield* resolveInstall({
@@ -962,6 +1085,63 @@ it.layer(
       });
 
       expect(capabilities.update).toBeNull();
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "a home-manager link in the native location",
+      definition: claudeUpdate,
+      resolved: "/home/me/.local/bin/claude",
+      real: "/nix/store/0c2kbzqz3m0m4hcx2g7hq1n5wfs9a6xd-claude-code-with-bun/bin/claude",
+    },
+    {
+      name: "another provider's profile link",
+      definition: otherProviderUpdate,
+      resolved: "/etc/profiles/per-user/me/bin/native-package-tool",
+      real: "/nix/store/0c2kbzqz3m0m4hcx2g7hq1n5wfs9a6xd-native-package-tool-1.0.0/bin/native-package-tool",
+    },
+  ] as const)("keeps a Nix store install manual-only through $name", (fixture) =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall({ ...fixture, platform: "linux" });
+
+      expect(capabilities.update).toBeNull();
+    }),
+  );
+
+  it.effect.skipIf(windowsHost)("upgrades a mise tool through a shim of a Nix-installed mise", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-nix-mise-shim");
+      const mise = miseFixture(tempDir, { misePresent: false });
+      const nixMise = "/nix/store/0c2kbzqz3m0m4hcx2g7hq1n5wfs9a6xd-mise-2026.1.0/bin/mise";
+      const spawned: Array<ReadonlyArray<string>> = [];
+
+      const capabilities = yield* resolvePackageManagedProviderMaintenance(
+        {
+          provider: driver("packageTool"),
+          npmPackageName: "@example/package-tool",
+          mise: { tool: "package-tool" },
+          nativeUpdate: null,
+        },
+        {
+          binaryPath: "package-tool",
+          resolvedCommandPath: NodePath.join(tempDir, "mise", "shims", "package-tool"),
+          realCommandPath: nixMise,
+          env: { PATH: "" },
+          platform: "linux",
+        },
+      ).pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          miseSpawner({ which: mise.binaryPath, installed: mise.installed() }, spawned),
+        ),
+      );
+
+      expect(capabilities.update).toMatchObject({
+        executable: nixMise,
+        args: ["upgrade", "package-tool"],
+      });
     }),
   );
 
@@ -1157,6 +1337,75 @@ it.layer(
         expect(npmProbes).toBe(fixture.exitCode === 2 && fixture.npmOutput !== undefined ? 1 : 0);
       }),
     { skip: !symlinksSupported || windowsHost },
+  );
+
+  it.effect.each([
+    {
+      case: "the eligible release under minimumReleaseAge",
+      row: "| @example/package-tool | 1.0.0   | 1.0.0  | 1.1.0 *  |",
+      expected: "1.1.0",
+    },
+    {
+      case: "no update when the installed version is the eligible release",
+      row: "| @example/package-tool | 1.0.0   | 1.0.0 * | 1.0.0 * |",
+      expected: "1.0.0",
+    },
+    {
+      // bun prints only its banner both when nothing is outdated and when the registry fails.
+      case: "the npm fallback when bun reports no row",
+      row: null,
+      expected: "1.2.0",
+    },
+  ])(
+    "advertises $case for bun-global installs",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-bun-latest");
+        const bunBinDir = NodePath.join(tempDir, ".bun", "bin");
+        writeExecutable(NodePath.join(bunBinDir, "bun"));
+        writeExecutable(NodePath.join(bunBinDir, "package-tool"));
+        const outdated = [
+          "bun outdated v1.3.3 (274e01c7)",
+          ...(fixture.row === null ? [] : bunOutdatedTable(fixture.row)),
+          "",
+        ].join("\n");
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          { binaryPath: "package-tool", env: { PATH: bunBinDir } },
+        ).pipe(
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(HostProcess.Environment, { PATH: "" }),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            stdoutSpawner((_command, args) =>
+              args[0] === "outdated"
+                ? outdated
+                : `${tempDir} node_modules (1)\n└── @example/package-tool@1.0.0\n`,
+            ),
+          ),
+        );
+
+        const provider = yield* enrichProviderSnapshotWithVersionAdvisory(
+          installedPackageToolProvider,
+          capabilities,
+        ).pipe(
+          Effect.provideServiceEffect(
+            ProviderLatestVersions.ProviderLatestVersions,
+            ProviderLatestVersions.make([["@example/package-tool", "1.2.0"]]),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("the npm version is already cached")),
+          ),
+        );
+        expect(provider.versionAdvisory).toMatchObject({
+          status: fixture.expected === "1.0.0" ? "current" : "behind_latest",
+          currentVersion: "1.0.0",
+          latestVersion: fixture.expected,
+        });
+      }),
+    { skip: windowsHost },
   );
 
   it.effect.skipIf(windowsHost)(
