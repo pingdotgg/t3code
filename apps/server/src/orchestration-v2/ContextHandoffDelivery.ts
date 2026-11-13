@@ -49,6 +49,9 @@ function goalOwnershipNotice(
       return (
         run?.providerThreadId === providerThreadId &&
         run.ordinal >= since &&
+        // A command its provider refused, such as an objective that is too long, changed nothing.
+        run.status !== "failed" &&
+        run.status !== "cancelled" &&
         (command?.type === "set" || command?.type === "clear")
       );
     });
@@ -64,7 +67,9 @@ function goalOwnershipNotice(
       owner.goal == null ||
       owner.ownerNodeId !== null ||
       owner.id === target.id ||
-      displaced.has(owner.id)
+      // A row not yet rewritten still names the displaced session; the replacement's goal is its own.
+      displaced.get(owner.id)?.displacedGoal?.nativeThreadId ===
+        (owner.nativeThreadRef?.nativeId ?? null)
         ? []
         : [
             {

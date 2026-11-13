@@ -749,10 +749,11 @@ describe("handoff delivery", () => {
           asOf: "2026-09-16T00:00:00.000Z",
         },
       };
-      const run = (id: string, ordinal: number) =>
+      const run = (id: string, ordinal: number, status = "completed") =>
         ({
           id: RunId.make(id),
           ordinal,
+          status,
           providerThreadId: other.id,
         }) as GoalOwnershipSources["runs"][number];
       const goalMessage = (text: string) =>
@@ -788,7 +789,26 @@ describe("handoff delivery", () => {
           }),
           "ZEBRA",
         );
+        // The provider refused the command, so the displaced goal was never decided.
+        assert.include(
+          yield* context({
+            providerThreads: replaced.providerThreads,
+            runs: [run("run:recovery", 2), run("run:later", 3, "failed")],
+            contextHandoffs: [recovery],
+            messages: [goalMessage(text)],
+          }),
+          displacedOwner,
+        );
       }
+      // A goal the replacement session started on its own is named beside the displaced one.
+      const both = yield* context({
+        ...replaced,
+        providerThreads: [{ ...other, goal: { ...goal, objective: "Ship YAK" } }],
+        contextHandoffs: [recovery],
+      });
+      assert.include(both, displacedOwner);
+      assert.include(both, "native-session=native:target; status=active;");
+      assert.include(both, "objective: Ship YAK");
     }),
   );
 
