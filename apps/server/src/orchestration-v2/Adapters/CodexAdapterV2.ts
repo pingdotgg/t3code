@@ -8167,6 +8167,132 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }
               });
 
+              const containedTerminalKeys = new Set<string>();
+              const attemptedTerminalKeys = new Set<string>();
+              const collectTrackedTerminals = Effect.fn("CodexAdapterV2.collectTrackedTerminals")(
+                function* (targets: typeof interruptTargets) {
+                  const trackedTerminals = new Map<
+                    string,
+                    { readonly nativeThreadId: string; readonly processId: string }
+                  >();
+                  const runningItems = yield* Ref.get(runningCommandItemsByTurn);
+                  for (const target of targets) {
+                    const nativeThreadId = yield* getNativeThreadId(target.context.providerThread);
+                    const items = runningItems.get(target.context.nativeTurnId);
+                    for (const item of items?.values() ?? []) {
+                      if (item.processId !== undefined) {
+                        trackedTerminals.set(`${nativeThreadId}:${item.processId}`, {
+                          nativeThreadId,
+                          processId: item.processId,
+                        });
+                      }
+                    }
+                  }
+                  return trackedTerminals;
+                },
+              );
+              const terminateTrackedTerminals = Effect.fn(
+                "CodexAdapterV2.terminateTrackedTerminals",
+              )(function* (targets: typeof interruptTargets) {
+                const trackedTerminals = yield* collectTrackedTerminals(targets);
+                const pendingTerminals = Array.from(trackedTerminals.entries())
+                  .filter(([key]) => !containedTerminalKeys.has(key))
+                  .sort(
+                    ([leftKey], [rightKey]) =>
+                      Number(attemptedTerminalKeys.has(leftKey)) -
+                      Number(attemptedTerminalKeys.has(rightKey)),
+                  );
+                return yield* Effect.forEach(
+                  pendingTerminals,
+                  ([key, { nativeThreadId, processId }]) =>
+                    Effect.gen(function* () {
+                      attemptedTerminalKeys.add(key);
+                      yield* terminateBackgroundTerminal(nativeThreadId, processId);
+                      containedTerminalKeys.add(key);
+                    }).pipe(
+                      Effect.as({ success: true as const }),
+                      Effect.catch((error) => Effect.succeed({ success: false as const, error })),
+                    ),
+                );
+              });
+              const settleInterruptedLineage = Effect.gen(function* () {
+                yield* interruptLateDescendants;
+                yield* finalizeRemainingInterruptLineage;
+
+                const terminationResults = yield* terminateTrackedTerminals(interruptTargets);
+                const failedTermination = terminationResults.find((result) => !result.success);
+                if (failedTermination !== undefined && !failedTermination.success) {
+                  return yield* failedTermination.error;
+                }
+                yield* turnTerminalizationPermit.withPermits(1)(
+                  Effect.gen(function* () {
+                    const completedAt = yield* DateTime.now;
+                    for (const target of interruptTargets) {
+                      const context = target.context;
+                      if ((yield* Ref.get(settledTurns)).get(context.nativeTurnId) !== context)
+                        continue;
+                      yield* terminalizeRunningCommandItems(
+                        context,
+                        context.nativeTurnId,
+                        "interrupted",
+                        completedAt,
+                      );
+                      yield* terminalizeRunningDynamicTools(
+                        context,
+                        context.nativeTurnId,
+                        "interrupted",
+                        completedAt,
+                        true,
+                      );
+                      yield* terminalizeMcpAppCaptures(context, context.nativeTurnId);
+                      yield* Ref.update(runningCommandItemsByTurn, (current) => {
+                        const updated = new Map(current);
+                        updated.delete(context.nativeTurnId);
+                        return updated;
+                      });
+                      yield* clearImageWork(context);
+                      yield* releaseSettledTurnIfIdle(context.nativeTurnId);
+                    }
+                  }),
+                );
+              });
+              // Codex may still be working, so a root stays open and marked interrupting.
+              // Whatever ends it later (Codex, Force stop) settles the rest of this Stop.
+              const deferToActiveRoots = Effect.gen(function* () {
+                const registered = yield* Ref.get(activeTurns);
+                const roots = interruptTargets.filter(
+                  ({ context }) =>
+                    lineageRoots.includes(context) &&
+                    registered.get(context.nativeTurnId) === context,
+                );
+                if (roots.length === 0) return false;
+                for (const { context } of roots) {
+                  yield* Effect.logWarning("orchestration-v2.codex-interrupt-timeout", {
+                    providerSessionId: input.providerSessionId,
+                    providerThreadId: context.providerThread.id,
+                    providerTurnId: context.providerTurnId,
+                    nativeTurnId: context.nativeTurnId,
+                  });
+                }
+                yield* Effect.forEach(roots, (target) => Deferred.await(target.completion), {
+                  concurrency: "unbounded",
+                  discard: true,
+                }).pipe(
+                  Effect.andThen(settleInterruptedLineage),
+                  Effect.catchCause((cause) =>
+                    Cause.hasInterruptsOnly(cause)
+                      ? Effect.void
+                      : Effect.logWarning("orchestration-v2.codex-late-stop-settle-failed", {
+                          providerSessionId: input.providerSessionId,
+                          cause,
+                        }),
+                  ),
+                  Effect.ensuring(cleanupInterruptState),
+                  Effect.forkIn(scope),
+                );
+                return true;
+              });
+
               const unconfirmed = yield* Effect.gen(function* () {
                 for (const target of interruptTargets) {
                   const context = target.context;
@@ -8198,57 +8324,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     turnId: context.nativeTurnId,
                   });
                 }
-                const containedTerminalKeys = new Set<string>();
-                const attemptedTerminalKeys = new Set<string>();
-                const collectTrackedTerminals = Effect.fn("CodexAdapterV2.collectTrackedTerminals")(
-                  function* (targets: typeof interruptTargets) {
-                    const trackedTerminals = new Map<
-                      string,
-                      { readonly nativeThreadId: string; readonly processId: string }
-                    >();
-                    const runningItems = yield* Ref.get(runningCommandItemsByTurn);
-                    for (const target of targets) {
-                      const nativeThreadId = yield* getNativeThreadId(
-                        target.context.providerThread,
-                      );
-                      const items = runningItems.get(target.context.nativeTurnId);
-                      for (const item of items?.values() ?? []) {
-                        if (item.processId !== undefined) {
-                          trackedTerminals.set(`${nativeThreadId}:${item.processId}`, {
-                            nativeThreadId,
-                            processId: item.processId,
-                          });
-                        }
-                      }
-                    }
-                    return trackedTerminals;
-                  },
-                );
-                const terminateTrackedTerminals = Effect.fn(
-                  "CodexAdapterV2.terminateTrackedTerminals",
-                )(function* (targets: typeof interruptTargets) {
-                  const trackedTerminals = yield* collectTrackedTerminals(targets);
-                  const pendingTerminals = Array.from(trackedTerminals.entries())
-                    .filter(([key]) => !containedTerminalKeys.has(key))
-                    .sort(
-                      ([leftKey], [rightKey]) =>
-                        Number(attemptedTerminalKeys.has(leftKey)) -
-                        Number(attemptedTerminalKeys.has(rightKey)),
-                    );
-                  return yield* Effect.forEach(
-                    pendingTerminals,
-                    ([key, { nativeThreadId, processId }]) =>
-                      Effect.gen(function* () {
-                        attemptedTerminalKeys.add(key);
-                        yield* terminateBackgroundTerminal(nativeThreadId, processId);
-                        containedTerminalKeys.add(key);
-                      }).pipe(
-                        Effect.as({ success: true as const }),
-                        Effect.catch((error) => Effect.succeed({ success: false as const, error })),
-                      ),
-                  );
-                });
-
                 const [, completed] = yield* Effect.all(
                   [
                     terminateTrackedTerminals(interruptTargets),
@@ -8260,92 +8335,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ],
                   { concurrency: "unbounded" },
                 );
-                const settleInterruptedLineage = Effect.gen(function* () {
-                  yield* interruptLateDescendants;
-                  yield* finalizeRemainingInterruptLineage;
-
-                  const terminationResults = yield* terminateTrackedTerminals(interruptTargets);
-                  const failedTermination = terminationResults.find((result) => !result.success);
-                  if (failedTermination !== undefined && !failedTermination.success) {
-                    return yield* failedTermination.error;
-                  }
-                  yield* turnTerminalizationPermit.withPermits(1)(
-                    Effect.gen(function* () {
-                      const completedAt = yield* DateTime.now;
-                      for (const target of interruptTargets) {
-                        const context = target.context;
-                        if ((yield* Ref.get(settledTurns)).get(context.nativeTurnId) !== context)
-                          continue;
-                        yield* terminalizeRunningCommandItems(
-                          context,
-                          context.nativeTurnId,
-                          "interrupted",
-                          completedAt,
-                        );
-                        yield* terminalizeRunningDynamicTools(
-                          context,
-                          context.nativeTurnId,
-                          "interrupted",
-                          completedAt,
-                          true,
-                        );
-                        yield* terminalizeMcpAppCaptures(context, context.nativeTurnId);
-                        yield* Ref.update(runningCommandItemsByTurn, (current) => {
-                          const updated = new Map(current);
-                          updated.delete(context.nativeTurnId);
-                          return updated;
-                        });
-                        yield* clearImageWork(context);
-                        yield* releaseSettledTurnIfIdle(context.nativeTurnId);
-                      }
-                    }),
-                  );
-                });
-                const registered = yield* Ref.get(activeTurns);
-                const unconfirmedRoots = Option.isSome(completed)
-                  ? []
-                  : interruptTargets.filter(
-                      ({ context }) =>
-                        lineageRoots.includes(context) &&
-                        registered.get(context.nativeTurnId) === context,
-                    );
-                if (unconfirmedRoots.length === 0) {
+                if (Option.isSome(completed) || !(yield* deferToActiveRoots)) {
                   yield* settleInterruptedLineage;
                   return false;
                 }
-                for (const { context } of unconfirmedRoots) {
-                  yield* Effect.logWarning("orchestration-v2.codex-interrupt-timeout", {
-                    providerSessionId: input.providerSessionId,
-                    providerThreadId: context.providerThread.id,
-                    providerTurnId: context.providerTurnId,
-                    nativeTurnId: context.nativeTurnId,
-                  });
-                }
-                // Codex may still be working, so the turn stays open and marked interrupting.
-                // Whatever ends it later (Codex, Force stop) settles the rest of this Stop.
-                yield* Effect.forEach(
-                  unconfirmedRoots,
-                  (target) => Deferred.await(target.completion),
-                  { concurrency: "unbounded", discard: true },
-                ).pipe(
-                  Effect.andThen(settleInterruptedLineage),
-                  Effect.catchCause((cause) =>
-                    Cause.hasInterruptsOnly(cause)
-                      ? Effect.void
-                      : Effect.logWarning("orchestration-v2.codex-late-stop-settle-failed", {
-                          providerSessionId: input.providerSessionId,
-                          cause,
-                        }),
-                  ),
-                  Effect.ensuring(cleanupInterruptState),
-                  Effect.forkIn(scope),
-                );
                 return true;
               }).pipe(
-                Effect.onError(() => finalizeRemainingInterruptLineage),
-                Effect.onExit((exit) =>
-                  Exit.isSuccess(exit) && exit.value ? Effect.void : cleanupInterruptState,
-                ),
+                Effect.onExit((exit) => {
+                  if (Exit.isSuccess(exit)) return exit.value ? Effect.void : cleanupInterruptState;
+                  const abandon = finalizeRemainingInterruptLineage.pipe(
+                    Effect.ensuring(cleanupInterruptState),
+                  );
+                  // A caller's deadline cutting this short confirms nothing about the turn either.
+                  return Cause.hasInterruptsOnly(exit.cause)
+                    ? Effect.flatMap(deferToActiveRoots, (deferred) =>
+                        deferred ? Effect.void : abandon,
+                      )
+                    : abandon;
+                }),
               );
               if (unconfirmed) {
                 return yield* new ProviderAdapter.ProviderAdapterInterruptTimeoutError({
