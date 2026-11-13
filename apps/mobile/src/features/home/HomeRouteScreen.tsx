@@ -239,6 +239,7 @@ export function HomeRouteScreen() {
           selectedEnvironmentId={selectedEnvironmentId}
           selectedProjectKey={selectedProjectKey}
           threads={threads}
+          visible={visible}
         />
         <ThreadUndoNotice visible={visible} />
       </>

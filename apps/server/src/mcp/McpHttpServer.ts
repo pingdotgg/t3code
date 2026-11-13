@@ -1005,21 +1005,16 @@ const withToolAnalytics =
     const scheduledRunOf = (threadId: string, runId: RunId | null) =>
       Option.isNone(threads) || runId === null
         ? Effect.succeed(false)
-        : threads.value
-            .getThreadRecords(ThreadId.make(threadId), ["runs", "messages"], {
+        : Effect.gen(function* () {
+            const id = ThreadId.make(threadId);
+            const { runs } = yield* threads.value.getThreadRecords(id, ["runs"], {
               runIds: [runId],
-              messageRoles: ["user"],
-            })
-            .pipe(
-              Effect.map((records) => {
-                const run = records.runs.find((candidate) => candidate.id === runId);
-                return records.messages.some(
-                  (message) =>
-                    message.id === run?.userMessageId && message.scheduledTaskId !== undefined,
-                );
-              }),
-              Effect.orElseSucceed(() => false),
-            );
+            });
+            const run = runs.find((candidate) => candidate.id === runId);
+            if (run === undefined) return false;
+            const messages = yield* threads.value.getMessagesById(id, [run.userMessageId]);
+            return messages.get(run.userMessageId)?.scheduledTaskId !== undefined;
+          }).pipe(Effect.orElseSucceed(() => false));
     const record =
       /* Request instrumentation already owns the span; keep this helper in that context. */
       Effect.fnUntraced(

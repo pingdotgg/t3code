@@ -317,7 +317,7 @@ const projectedEntriesCache = new WeakMap<
   OrchestrationV2ProjectedTurnItem,
   {
     readonly attemptId: RunAttemptId | null;
-    readonly entry: RawThreadFeedEntry;
+    readonly entries: ReadonlyArray<RawThreadFeedEntry>;
   }
 >();
 const localMessageEntriesCache = new WeakMap<
@@ -1103,21 +1103,17 @@ function feedEntryFoldRunId(entry: ThreadFeedEntry, runlessKey: RunId | null): R
     : null;
 }
 
-function answersBeforeSteers(feed: ReadonlyArray<ThreadFeedEntry>): ReadonlySet<MessageId> {
+function finalAnswerIds(feed: ReadonlyArray<ThreadFeedEntry>): ReadonlySet<MessageId> {
   const ids = new Set<MessageId>();
-  let previous: ThreadFeedEntry | undefined;
   for (const entry of feed) {
     if (
       entry.type === "message" &&
-      isSteerMessage(entry.message) &&
-      previous?.type === "message" &&
-      previous.message.role === "assistant" &&
-      previous.message.projectedItem?.item.type === "assistant_message" &&
-      previous.message.projectedItem.item.phase === "final_answer"
+      entry.message.role === "assistant" &&
+      entry.message.projectedItem?.item.type === "assistant_message" &&
+      entry.message.projectedItem.item.phase === "final_answer"
     ) {
-      ids.add(previous.message.id);
+      ids.add(entry.message.id);
     }
-    previous = entry;
   }
   return ids;
 }
@@ -1129,7 +1125,7 @@ function deriveThreadFeedRunFolds(
   feedFailedRunIds: ReadonlySet<RunId>,
 ): ReadonlyMap<string, ThreadFeedRunFold> {
   const terminalAssistantMessageIdByRun = new Map<RunId, string>();
-  const retainedAnswerIds = answersBeforeSteers(feed);
+  const retainedAnswerIds = finalAnswerIds(feed);
   const interruptedRunIds = new Set<RunId>();
   const failedRunIds = new Set(feedFailedRunIds);
   const promptIndexByRunId = new Map<RunId, number>();
@@ -1523,7 +1519,7 @@ function zenAnswerMessageIds(
 ): ReadonlySet<MessageId> {
   const replies: Array<{ readonly message: ThreadFeedMessage; readonly index: number }> = [];
   const lastReplyByResponse = new Map<string, MessageId>();
-  const steerAnswers = new Set(answersBeforeSteers(feed));
+  const keptAnswers = new Set(finalAnswerIds(feed));
   let userMessages = 0;
   let awaitingReply = false;
   let candidate: MessageId | null = null;
@@ -1538,7 +1534,7 @@ function zenAnswerMessageIds(
     }
     const reply =
       entry.type === "message" && entry.message.role === "assistant" ? entry.message : null;
-    if (candidate !== null && reply !== null) steerAnswers.add(candidate);
+    if (candidate !== null && reply !== null) keptAnswers.add(candidate);
     candidate = null;
     if (answering && startsResponse(entry)) answeringFrom = index + 1;
     if (entry.type === "message" && entry.message.role === "user") {
@@ -1558,7 +1554,7 @@ function zenAnswerMessageIds(
     replies
       .filter(
         ({ message, index }) =>
-          steerAnswers.has(message.id) ||
+          keptAnswers.has(message.id) ||
           (terminal.has(message.id) &&
             index < answeringFrom &&
             (answeringRunId === null || message.runId !== answeringRunId)),
@@ -2409,8 +2405,10 @@ export function buildThreadFeed(
     const attemptId = resolveAttemptId(item);
     const cached = projectedEntriesCache.get(row);
     if (cached?.attemptId === attemptId) {
-      entries.push(cached.entry);
-      entryRows.push(index);
+      for (const entry of cached.entries) {
+        entries.push(entry);
+        entryRows.push(index);
+      }
       continue;
     }
     const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
@@ -2426,24 +2424,7 @@ export function buildThreadFeed(
         runId: item.runId,
         render,
       };
-      projectedEntriesCache.set(row, { attemptId, entry });
-      entries.push(entry);
-      entryRows.push(index);
-      continue;
-    }
-    const app = item.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
-    if (app) {
-      const entry: RawThreadFeedEntry = {
-        type: "mcp-app",
-        id: `mcp-app:${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
-        createdAt,
-        runId: item.runId,
-        sourceThreadId: row.sourceThreadId,
-        itemId: row.sourceItemId,
-        revision: turnItemDetailRevision(item),
-        app,
-      };
-      projectedEntriesCache.set(row, { attemptId, entry });
+      projectedEntriesCache.set(row, { attemptId, entries: [entry] });
       entries.push(entry);
       entryRows.push(index);
       continue;
@@ -2480,22 +2461,34 @@ export function buildThreadFeed(
           projectedItem: row,
         },
       };
-      projectedEntriesCache.set(row, { attemptId, entry });
+      projectedEntriesCache.set(row, { attemptId, entries: [entry] });
       entries.push(entry);
       entryRows.push(index);
       continue;
     }
     const activity = toFeedActivity(row, attemptId);
-    const entry: RawThreadFeedEntry = {
-      type: "activity",
-      id: activity.id,
-      createdAt,
-      runId: item.runId,
-      activity,
-    };
-    projectedEntriesCache.set(row, { attemptId, entry });
-    entries.push(entry);
-    entryRows.push(index);
+    const rowEntries: RawThreadFeedEntry[] = [
+      { type: "activity", id: activity.id, createdAt, runId: item.runId, activity },
+    ];
+    // The card follows its tool activity: a feed restart resumes after a row's last entry.
+    const app = item.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
+    if (app) {
+      rowEntries.push({
+        type: "mcp-app",
+        id: `mcp-app:${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
+        createdAt,
+        runId: item.runId,
+        sourceThreadId: row.sourceThreadId,
+        itemId: row.sourceItemId,
+        revision: turnItemDetailRevision(item),
+        app,
+      });
+    }
+    projectedEntriesCache.set(row, { attemptId, entries: rowEntries });
+    for (const entry of rowEntries) {
+      entries.push(entry);
+      entryRows.push(index);
+    }
   }
   const retainedMessageIds = new Set([
     ...foldedAnswerRunIdByMessageId.keys(),
