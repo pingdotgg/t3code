@@ -40,6 +40,8 @@ interface Property {
   readonly type: Scalar;
   /** For list properties, the type of the leading count. */
   readonly countType: Scalar | null;
+  /** Fewest binary bytes one value takes: the scalar, or a list's count. */
+  readonly bytes: number;
 }
 
 interface Element {
@@ -84,6 +86,7 @@ function parseHeader(bytes: Uint8Array): Header | null {
         name: words[list ? 4 : 2] ?? "",
         type: type.type,
         countType: countType?.type ?? null,
+        bytes: (countType ?? type).bytes,
       });
     }
   }
@@ -135,22 +138,20 @@ export async function parsePly(
 ): Promise<Mesh | null> {
   const header = parseHeader(bytes);
   if (!header) return null;
-  // Each item takes at least its fixed-size properties (an ASCII value and its separator take two
-  // bytes), so a larger count means a damaged header; reject it before allocating for it.
-  const minItemBytes = (element: Element) =>
-    Math.max(
-      1,
-      element.properties.reduce(
-        (sum, property) =>
-          sum +
-          (header.format === "ascii" ? 2 : SCALARS[property.countType ?? property.type]!.bytes),
-        0,
-      ),
-    );
-  const bodyBytes = bytes.length - header.bodyOffset + 1;
-  if (header.elements.some((element) => element.count * minItemBytes(element) > bodyBytes)) {
-    return null;
-  }
+  // Every item takes at least a byte, so a larger count means a damaged header.
+  if (header.elements.some((element) => element.count > bytes.length)) return null;
+  // Every ASCII value takes a digit and a separator, so counts must fit the body before allocating.
+  const smallestBody = header.elements.reduce(
+    (sum, element) =>
+      sum +
+      element.count *
+        element.properties.reduce(
+          (size, property) => size + (header.format === "ascii" ? 2 : property.bytes),
+          0,
+        ),
+    header.format === "ascii" ? -1 : 0,
+  );
+  if (smallestBody > bytes.length - header.bodyOffset) return null;
   const faces = header.elements.find((element) => element.name === "face");
   if (!faces || faces.count === 0 || faces.count > limits.maxTriangles) return null;
   const readerFor = valueReaders(bytes, header);

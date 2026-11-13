@@ -201,6 +201,7 @@ export async function parseGltf(
     if (!bufferView || !buffer || !componentBytes || !components) return null;
     if (bufferView.extensions && Object.keys(bufferView.extensions).length > 0) return null;
     const stride = bufferView.byteStride ?? componentBytes * components;
+    if (stride < componentBytes * components) return null;
     const start = (bufferView.byteOffset ?? 0) + (accessor.byteOffset ?? 0);
     const end = start + (accessor.count - 1) * stride + componentBytes * components;
     if (accessor.count <= 0 || end > buffer.length) return null;
@@ -250,6 +251,8 @@ export async function parseGltf(
   const totalTriangles = draws.reduce((sum, draw) => sum + draw.triangles, 0);
   if (totalTriangles === 0 || totalTriangles > limits.maxTriangles) return null;
   const totalPoints = draws.reduce((sum, draw) => sum + draw.positions.count, 0);
+  // Repeated placements of a large, barely indexed mesh can ask for far more points than triangles.
+  if (totalPoints > limits.maxTriangles * 3) return null;
   const points = new Float32Array(totalPoints * 3);
   const indices = new Uint32Array(totalTriangles * 3);
   const budget = workBudget(signal, ITEMS_PER_SLICE);
@@ -274,7 +277,7 @@ export async function parseGltf(
       : (index: number) => index;
     const count = positions.count;
     const add = (a: number, b: number, c: number) => {
-      if (a >= count || b >= count || c >= count) return;
+      if (a < 0 || b < 0 || c < 0 || a >= count || b >= count || c >= count) return;
       indices[written] = pointBase + a;
       indices[written + 1] = pointBase + b;
       indices[written + 2] = pointBase + c;

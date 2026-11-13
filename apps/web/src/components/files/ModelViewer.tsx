@@ -254,7 +254,11 @@ function mountModelCanvas(
     const trackpad =
       event.deltaMode === 0 && (event.deltaX !== 0 || !Number.isInteger(event.deltaY));
     if (event.ctrlKey || !trackpad) {
-      set(zoom(camera, Math.exp(event.deltaY * (event.ctrlKey ? 0.01 : 0.0015)), bounds));
+      // Some browsers report wheel notches in lines or pages instead of pixels.
+      const deltaY =
+        event.deltaY *
+        (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? canvas.clientHeight : 1);
+      set(zoom(camera, Math.exp(deltaY * (event.ctrlKey ? 0.01 : 0.0015)), bounds));
     } else if (event.shiftKey) {
       set(pan(camera, -event.deltaX, -event.deltaY, canvas.clientHeight));
     } else {

@@ -17,11 +17,17 @@ function reportToApp(reason: string) {
   window.ReactNativeWebView?.postMessage(JSON.stringify({ type: "unavailable", reason }));
 }
 
+/** Tells the mobile app this server has the viewer page, so it stops waiting for one. */
+function reportReadyToApp() {
+  window.ReactNativeWebView?.postMessage(JSON.stringify({ type: "ready" }));
+}
+
 /** Reads the page's fragment once, applying the app's appearance before the first paint. */
 function initialParams() {
   // Gestures belong to the viewer; the page itself must never scroll or bounce.
   document.documentElement.style.overflow = "hidden";
   document.body.style.overflow = "hidden";
+  reportReadyToApp();
   const params = readModelViewerPageParams(window.location);
   if (!params) reportToApp(INVALID_LINK);
   else if (params.appearance) {

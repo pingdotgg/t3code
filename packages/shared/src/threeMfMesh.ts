@@ -309,12 +309,13 @@ export async function parseThreeMf(
     // Resolve every placement first, so the result is allocated once at its final size.
     const placements: Placement[] = [];
     let placedTriangles = 0;
+    let placedPoints = 0;
     let visits = 0;
     const place = async (item: Reference, partPath: string, outer: Transform, depth: number) => {
-      if (depth > MAX_COMPONENT_DEPTH) return;
-      // Fan-out, not depth, is what a few kilobytes of shared components can blow up.
+      // Chains of empty objects add no triangles but can still multiply into endless visits.
       if ((visits += 1) > MAX_PLACEMENT_VISITS) throw new TooLarge();
       if (budget.spend()) await budget.pause();
+      if (depth > MAX_COMPONENT_DEPTH) return;
       const path = item.path ?? partPath;
       const object = (await loadPart(path))?.objects.get(item.objectId);
       if (!object) return;
@@ -322,7 +323,9 @@ export async function parseThreeMf(
       if (object.indices.length > 0) {
         placements.push({ object, transform });
         placedTriangles += object.indices.length / 3;
+        placedPoints += object.points.length / 3;
         if (placedTriangles > limits.maxTriangles) throw new TooLarge();
+        if (placedPoints > limits.maxTriangles * 3) throw new TooLarge();
       }
       for (const component of object.components) {
         await place(component, path, transform, depth + 1);

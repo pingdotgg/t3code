@@ -223,11 +223,11 @@ export function AttachmentFilePreview(props: {
   const offersModelViewer =
     modelFormat !== null && (isMeshFormat(modelFormat) || (!props.file && resource !== null));
   const showsModelViewer = offersModelViewer && !modelImageChosen && modelViewerProblem === null;
-  // Servers without 3D previews refuse the URL; local drafts have no server to ask.
+  // Servers without 3D previews fail the image; local drafts have no server to ask.
   const modelPreviewUnavailable =
     modelCopy !== null &&
     !showsModelViewer &&
-    (props.file != null || error !== null || (url !== null && missingModelPreviewUrl === url));
+    (props.file != null || (url !== null && missingModelPreviewUrl === url));
   const loadModelBytes = async (signal: AbortSignal) => {
     if (props.file) {
       if (props.file.size > MODEL_VIEWER_MAX_BYTES) {
@@ -348,9 +348,8 @@ export function AttachmentFilePreview(props: {
       <NoFilePreview
         name={props.name}
         detail={
-          props.file
-            ? (modelViewerProblem ?? "A preview appears after the message is sent.")
-            : modelCopy?.unavailable
+          modelViewerProblem ??
+          (props.file ? "A preview appears after the message is sent." : modelCopy?.unavailable)
         }
       />
     ) : failure ? (

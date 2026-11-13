@@ -22,7 +22,10 @@ import * as ServerConfig from "../config.ts";
 import { exportBlendWithBlender } from "./blenderRender.ts";
 import { modelPreviewPng } from "./modelPreview.ts";
 
+/** How long one render may run; a file that takes longer is cached as having no preview. */
 const PREVIEW_TIMEOUT = "10 seconds";
+/** How long a request may wait for a free slot and its render together; not cached. */
+const PREVIEW_REQUEST_TIMEOUT = "20 seconds";
 const PREVIEW_CONCURRENCY = 2;
 /**
  * Memory, in MiB, that previews in progress may use together. Each preview reserves an estimate
@@ -278,18 +281,26 @@ export const makeWith = Effect.fn("ModelPreviews.make")(function* (options: Mode
       ),
     );
 
+  // A render that runs out of time succeeds with `null`, so the cache keeps it for this revision
+  // and one slow file does not take a slot again on every request. Waiting for a slot is not the
+  // file's fault, so that timeout fails and is retried on the next request.
+  const render = (key: CacheKey) =>
+    previewUncached(key).pipe(
+      Effect.timeoutOrElse({ duration: PREVIEW_TIMEOUT, orElse: () => Effect.succeed(null) }),
+    );
   const preview = (key: CacheKey) =>
     semaphore
-      .withPermits(1)(memory.withPermits(estimatedMemoryMib(key))(previewUncached(key)))
+      .withPermits(1)(memory.withPermits(estimatedMemoryMib(key))(render(key)))
       .pipe(
-        Effect.timeout(PREVIEW_TIMEOUT),
+        Effect.timeout(PREVIEW_REQUEST_TIMEOUT),
         Effect.filterOrElse(
           (png) => png !== null || key.format !== "blend",
           () => renderWithBlender(key),
         ),
       );
 
-  // Concurrent requests for one revision share a lookup; files without a preview cache `null`.
+  // Concurrent requests for one revision share a lookup; files without a preview, including ones
+  // that took too long to render, cache `null`.
   const cache = yield* Cache.makeWith(
     (encodedKey: string) => preview(JSON.parse(encodedKey) as CacheKey),
     {
