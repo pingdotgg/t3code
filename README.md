@@ -35,8 +35,8 @@ At start it takes the home's ownership lock (exit 78 when another server holds i
 address, the environment id, the method coverage and a `pairingUrl`, and writes
 `server-runtime.json`. SIGTERM or SIGINT stops it cleanly.
 Turns run the `claude` CLI from `PATH` with the user's own Claude settings, as `apps/server`
-does. A turn that was running when the server stopped ends as failed on the next start, with
-a message to send it again.
+does. Stop the server with SIGTERM. A turn that was running when the server stopped continues on
+the next start in the same provider thread (at most 3 restarts in a row within 5 minutes).
 
 ## Pair a client
 
@@ -320,7 +320,8 @@ to the socket.
 
 ## Status
 
-**Coverage:** 26 of 235 methods (12 of 32 streams), from the method table at startup.
+**Coverage:** 33 of 235 methods (12 of 32 streams), from the method table at startup. The
+engine's `dispatchCommand` coverage and design notes are in `crates/conn-engine/README.md`.
 
 | Area          | Methods                                                                                                                                                        |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -378,9 +379,8 @@ What a real Conn session hits that this server does not do:
   discovered local servers, archived and older-settled shell reads, terminals, provider
   sign-in and install flows, and every other method not listed above.
 - **No checkpoints:** turns are not captured as git refs, so no diff or restore.
-- **One project set at start:** clients cannot add projects.
-- **Busy thread:** a message sent while a turn runs is refused, not queued or steered.
-- **No title generation:** `generateTitle` is ignored; the title is the first message.
+- **No title model wired:** the engine takes a `TitleGenerator`; until one is configured,
+  `generateTitle` keeps the client's seed title.
 - **No `/mcp`:** agents cannot reach T3 tools.
 - **Claude only:** no Codex or other providers. Gaps in the Claude provider are listed in
   `crates/conn-provider-claude/README.md` (subagents, attachments, todo lists, retries).

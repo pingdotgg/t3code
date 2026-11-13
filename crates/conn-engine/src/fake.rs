@@ -3,6 +3,9 @@
 //! - `ask`: the turn asks for a command approval, then answers once approved.
 //! - `fail`: the turn fails.
 //! - anything else: streams `echo: <text>` in three chunks and completes.
+//!
+//! A steer into a running turn answers `steered: <text>` and completes the turn, unless the
+//! provider was built with [`FakeProvider::without_steering`].
 
 use std::sync::{
     Arc, Mutex,
@@ -15,7 +18,7 @@ use conn_contract::{
 use conn_provider::{
     BoxFuture, EnsureThreadInput, InterruptInput, OpenSessionInput, OpenedSession, Provider,
     ProviderError, ProviderEvent, ProviderResult, ResumeThreadInput, RuntimeRequestResponse,
-    Session, ThreadDisposition, TurnInput, TurnStatus, TurnTerminal,
+    Session, SteerInput, ThreadDisposition, TurnInput, TurnStatus, TurnTerminal,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -26,6 +29,7 @@ pub struct FakeProvider {
     id: ProviderInstanceId,
     /// Sessions opened so far.
     pub sessions: Arc<AtomicUsize>,
+    steering: bool,
 }
 
 impl FakeProvider {
@@ -33,7 +37,14 @@ impl FakeProvider {
         Self {
             id: instance_id.into(),
             sessions: Arc::new(AtomicUsize::new(0)),
+            steering: true,
         }
+    }
+
+    /// A provider whose sessions decline every steer, as one without live steering does.
+    pub fn without_steering(mut self) -> Self {
+        self.steering = false;
+        self
     }
 }
 
@@ -50,6 +61,7 @@ struct FakeSession {
     driver: String,
     events: mpsc::Sender<ProviderEvent>,
     turn: Arc<Mutex<Option<Turn>>>,
+    steering: bool,
 }
 
 impl Provider for FakeProvider {
@@ -75,6 +87,7 @@ impl Provider for FakeProvider {
                     driver: self.driver().to_owned(),
                     events: tx,
                     turn: Arc::new(Mutex::new(None)),
+                    steering: self.steering,
                 }),
                 events: rx,
             })
@@ -213,6 +226,32 @@ impl Session for FakeSession {
             }
             *self.turn.lock().unwrap() = Some(turn);
             tokio::spawn(async move { emit(&tx, started).await });
+            Ok(())
+        })
+    }
+
+    fn steer_turn(&self, input: SteerInput) -> BoxFuture<'_, ProviderResult<()>> {
+        Box::pin(async move {
+            if !self.steering {
+                return Err(ProviderError::Unsupported {
+                    operation: "steer_turn",
+                });
+            }
+            let events = {
+                let turn = self.turn.lock().unwrap();
+                let turn = turn.as_ref().ok_or(ProviderError::SessionStopped)?;
+                let mut events = assistant(
+                    turn,
+                    &format!("{}:steer:{}", turn.run_id, input.message.message_id),
+                    &format!("steered: {}", input.message.text),
+                    false,
+                )
+                .to_vec();
+                events.push(provider_turn(turn, "completed"));
+                events.push(terminal(turn, TurnStatus::Completed, None));
+                events
+            };
+            emit(&self.events, events).await;
             Ok(())
         })
     }

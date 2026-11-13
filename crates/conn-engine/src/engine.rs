@@ -16,12 +16,12 @@ use conn_provider::Provider;
 use serde_json::{Value, json};
 use tokio::sync::watch;
 
-use crate::commands::{self, CommandError, Effect, failure, finish_run};
+use crate::commands::{self, CommandError, Effect};
 use crate::runner::LiveThread;
 use crate::store::{Store, StoreResult, Tx};
 use crate::{BoxFuture, Engine, EngineError, Subscription, streams};
 
-/// A folder the engine offers as a project. Clients cannot create projects yet.
+/// A folder the engine offers as a project at start. Clients add more at runtime.
 #[derive(Clone, Debug)]
 pub struct ProjectConfig {
     pub title: String,
@@ -31,19 +31,33 @@ pub struct ProjectConfig {
 pub struct EngineConfig {
     /// The SQLite file. Created when missing.
     pub database: PathBuf,
+    /// Where managed folders live: `scratch/` (No project) and `projects/` (`projects.createNew`).
+    /// Defaults to the database's folder.
+    pub home: Option<PathBuf>,
     pub projects: Vec<ProjectConfig>,
     pub providers: Vec<Arc<dyn Provider>>,
     /// How long streamed assistant text may wait before it is written. Default 100 ms.
     pub stream_flush: Duration,
+    /// A provider session with no turn for this long is closed, ending its process (a
+    /// `claude` child holds about 140 MiB). Default 10 minutes; `None` keeps sessions open.
+    pub idle_session: Option<Duration>,
+    /// Generates thread titles. Without one, a new thread keeps the title the client sent.
+    pub title_generator: Option<Arc<dyn crate::TitleGenerator>>,
+    /// Sees every turn start and end (checkpoints). None by default.
+    pub turn_observer: Option<Arc<dyn crate::TurnObserver>>,
 }
 
 impl EngineConfig {
     pub fn new(database: impl Into<PathBuf>) -> Self {
         Self {
             database: database.into(),
+            home: None,
             projects: vec![],
             providers: vec![],
             stream_flush: Duration::from_millis(100),
+            idle_session: Some(Duration::from_secs(600)),
+            title_generator: None,
+            turn_observer: None,
         }
     }
 }
@@ -60,10 +74,13 @@ pub(crate) struct Inner {
     /// Threads with an open provider session. The only per-thread state kept in memory.
     pub(crate) live: Mutex<HashMap<String, Arc<LiveThread>>>,
     pub(crate) stream_flush: Duration,
+    pub(crate) home: PathBuf,
+    pub(crate) titles: Option<Arc<dyn crate::TitleGenerator>>,
+    pub(crate) observer: Option<Arc<dyn crate::TurnObserver>>,
 }
 
 /// Stable project id for a folder, so a fresh database gives clients the same ids.
-fn project_id(workspace_root: &str) -> String {
+pub(crate) fn project_id(workspace_root: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in workspace_root.as_bytes() {
         hash ^= u64::from(*byte);
@@ -73,10 +90,18 @@ fn project_id(workspace_root: &str) -> String {
 }
 
 impl SqliteEngine {
-    /// Opens the store, adds the configured projects, and ends every run a previous process
-    /// left live: no provider survives a restart, so those runs fail with a clear reason.
+    /// Opens the store, adds the configured projects, and recovers every run a previous process
+    /// left active (see `restart.rs`): a turn the provider had continues in a new run.
     pub fn open(config: EngineConfig) -> Result<Self, String> {
+        let home = config.home.clone().unwrap_or_else(|| {
+            config
+                .database
+                .parent()
+                .map(PathBuf::from)
+                .unwrap_or_default()
+        });
         let mut store = Store::open(&config.database)?;
+        store.generates_titles = config.title_generator.is_some();
         let unfinished = store.unfinished_runs()?;
         let mut tx = store.tx()?;
         for project in &config.projects {
@@ -86,42 +111,48 @@ impl SqliteEngine {
                 &project.workspace_root,
             )?;
         }
-        for (thread_id, run) in unfinished {
-            let run_id = run["id"].as_str().unwrap_or_default();
-            finish_run(
-                &mut tx,
-                &thread_id,
-                run_id,
-                "failed",
-                Some(failure(
-                    "transport_error",
-                    "The Conn server restarted while this turn was running. Send the message again to continue.",
-                    Some("server_restart"),
-                )),
-            )?;
-            for mut session in tx.entities(&thread_id, "providerSessions")? {
-                if session["status"] != "stopped" {
-                    session["status"] = json!("stopped");
-                    session["updatedAt"] = json!(tx.now());
-                    tx.append(crate::store::Draft::new(
-                        &thread_id,
-                        "provider-session.updated",
-                        session,
-                    ))?;
-                }
-            }
+        let mut effects = vec![];
+        for (thread_id, run) in unfinished
+            .iter()
+            .filter(|(_, run)| commands::is_active(run))
+        {
+            effects.extend(crate::restart::recover(&mut tx, thread_id, run)?);
         }
         tx.commit(None)?;
         let high = store.high_water();
-        Ok(Self {
+        let engine = Self {
             inner: Arc::new(Inner {
                 store: Arc::new(Mutex::new(store)),
                 notify: watch::Sender::new(high),
                 providers: config.providers,
                 live: Mutex::new(HashMap::new()),
                 stream_flush: config.stream_flush,
+                home,
+                titles: config.title_generator.clone(),
+                observer: config.turn_observer.clone(),
             }),
-        })
+        };
+        // Continuations and the reaper start on the caller's runtime; `open` never blocks.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            effects
+                .into_iter()
+                .for_each(|e| engine.inner.spawn_effect(e));
+            if let Some(idle) = config.idle_session {
+                let inner = Arc::downgrade(&engine.inner);
+                tokio::spawn(async move {
+                    let every = (idle / 2).max(Duration::from_millis(10));
+                    loop {
+                        tokio::time::sleep(every).await;
+                        // The engine is gone: stop.
+                        let Some(inner) = inner.upgrade() else { return };
+                        inner.reap_idle(idle).await;
+                    }
+                });
+            }
+        } else if !effects.is_empty() {
+            eprintln!("conn-engine: no runtime, so restarted turns do not continue");
+        }
+        Ok(engine)
     }
 
     /// The project id the engine gives a configured folder.
@@ -188,9 +219,9 @@ impl Inner {
             ));
         };
         let Some(handler) = commands::handler(&command_type) else {
-            return Err(DispatchError::Rejected(format!(
-                "conn-server does not support `{command_type}` commands yet."
-            )));
+            return Err(DispatchError::Rejected(
+                commands::refusal(&command_type).to_owned(),
+            ));
         };
         let outcome = self
             .db(move |store| {
@@ -220,18 +251,32 @@ impl Inner {
             self.notify.send_replace(seq);
         }
         for effect in effects {
-            let inner = self.clone();
-            tokio::spawn(async move { inner.run_effect(effect).await });
+            self.spawn_effect(effect);
         }
         Ok((seq, replayed))
+    }
+
+    pub(crate) fn spawn_effect(self: &Arc<Self>, effect: Effect) {
+        let inner = self.clone();
+        tokio::spawn(async move { inner.run_effect(effect).await });
     }
 
     async fn run_effect(self: Arc<Self>, effect: Effect) {
         match effect {
             Effect::StartTurn { thread_id, run_id } => self.start_turn(thread_id, run_id).await,
+            Effect::Steer {
+                thread_id,
+                run_id,
+                message_id,
+            } => self.steer(thread_id, run_id, message_id).await,
             Effect::Interrupt { thread_id, run_id } => self.interrupt(thread_id, run_id).await,
             Effect::Respond { thread_id, request } => self.respond(thread_id, request).await,
             Effect::CloseSession { thread_id } => self.close_session(&thread_id).await,
+            Effect::GenerateTitle {
+                thread_id,
+                request_id,
+                regenerate,
+            } => self.generate_title(thread_id, request_id, regenerate).await,
         }
     }
 
@@ -249,7 +294,7 @@ impl Inner {
             other => {
                 return Err((
                     format!(
-                        "conn-server cannot prepare a `{}` workspace yet.",
+                        "Conn Server cannot prepare a `{}` workspace yet.",
                         other.unwrap_or("unknown")
                     ),
                     false,
@@ -308,6 +353,9 @@ impl Inner {
             });
             if message["context"].is_object() {
                 command["context"] = message["context"].clone();
+            }
+            if input["generateTitle"] == true {
+                command["titleSeed"] = input["title"].clone();
             }
             let (seq, replayed) = self.dispatch_value(command).await.map_err(to_err)?;
             sequence = Some(seq);
@@ -440,6 +488,30 @@ impl Engine for SqliteEngine {
         })
     }
 
+    fn methods(&self) -> &'static [&'static str] {
+        crate::calls::METHODS
+    }
+
+    fn call(&self, method: &str, input: Value) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
+        Box::pin(crate::calls::call(
+            self.inner.clone(),
+            method.to_owned(),
+            input,
+        ))
+    }
+
+    fn open_stream(
+        &self,
+        method: &str,
+        input: Value,
+    ) -> BoxFuture<'_, Result<Subscription<Value, Value>, EngineError<Value>>> {
+        Box::pin(crate::calls::open_stream(
+            self.inner.clone(),
+            method.to_owned(),
+            input,
+        ))
+    }
+
     fn shell_snapshot(&self) -> BoxFuture<'_, Result<Value, EngineError<GetShellSnapshotError>>> {
         Box::pin(async move {
             self.inner
@@ -464,6 +536,13 @@ impl Engine for SqliteEngine {
                 .await
                 .map_err(EngineError::Internal)
         })
+    }
+}
+
+#[cfg(test)]
+impl Inner {
+    pub(crate) fn live_count(&self) -> usize {
+        self.live.lock().map_or(0, |live| live.len())
     }
 }
 

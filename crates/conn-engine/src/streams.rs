@@ -5,7 +5,7 @@
 //! from the store, so a slow client never makes the engine buffer items, and a snapshot and the
 //! updates after it can never overlap or leave a gap: both are read by sequence.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use conn_contract::{
     GetShellSnapshotError, GetThreadProjectionError, ShellStreamItem, ThreadStreamItem, from_json,
@@ -62,17 +62,24 @@ pub(crate) async fn subscribe_shell(
     let after = input["afterSequence"].as_u64();
     let fallback = input["httpSnapshotFallback"] == true;
     let marker = input["requestCompletionMarker"] == true;
+    let omit_idle = input["omitIdleSubagents"] == true;
+    let omit_older = input["omitOlderSettled"] == true;
     // Subscribe before reading, so a commit between the read and the first wait still wakes us.
     let mut wake = inner.notify.subscribe();
     let (first, mut cursor) = inner
         .db(move |store| -> Result<(Vec<Value>, u64), String> {
             let high = store.high_water();
-            Ok(match after {
-                // Every shell change is kept, so any cursor this store issued can resume.
-                Some(after) if after <= high => (store.shell_changes_after(after)?, high),
-                Some(_) if fallback => (vec![json!({"kind": "snapshot-required"})], high),
-                _ => (
-                    vec![json!({"kind": "snapshot", "snapshot": store.shell_snapshot()?})],
+            let resumed = match after.filter(|after| *after <= high) {
+                Some(after) => store.shell_changes_since(after)?,
+                None => None,
+            };
+            Ok(match resumed {
+                Some(items) => (items, high),
+                None if after.is_some() && fallback => {
+                    (vec![json!({"kind": "snapshot-required"})], high)
+                }
+                None => (
+                    vec![json!({"kind": "snapshot", "snapshot": store.shell_snapshot_trimmed(omit_idle, omit_older)?})],
                     high,
                 ),
             })
@@ -97,7 +104,15 @@ pub(crate) async fn subscribe_shell(
             }
             let after = cursor;
             let items = match inner
-                .db(move |store| store.shell_changes_after(after))
+                .db(move |store| -> Result<Vec<Value>, String> {
+                    // A reader that fell behind retention starts over from a snapshot.
+                    Ok(match store.shell_changes_since(after)? {
+                        Some(items) => items,
+                        None => {
+                            vec![json!({"kind": "snapshot", "snapshot": store.shell_snapshot_trimmed(omit_idle, omit_older)?})]
+                        }
+                    })
+                })
                 .await
             {
                 Ok(items) => items,
@@ -107,7 +122,10 @@ pub(crate) async fn subscribe_shell(
                 }
             };
             for item in items {
-                cursor = cursor.max(item["sequence"].as_u64().unwrap_or(cursor));
+                let sequence = item["sequence"]
+                    .as_u64()
+                    .or(item["snapshot"]["snapshotSequence"].as_u64());
+                cursor = cursor.max(sequence.unwrap_or(cursor));
                 if !send(&tx, item, shell_error).await {
                     return;
                 }
@@ -127,6 +145,8 @@ pub(crate) async fn subscribe_thread(
     let thread_id = input["threadId"].as_str().unwrap_or_default().to_owned();
     let after = input["afterSequence"].as_u64();
     let marker = input["requestCompletionMarker"] == true;
+    let dedupe = input["acceptDedupedBodies"] == true;
+    let omit_local = input["acceptCompactTurnItems"] == true;
     let mut wake = inner.notify.subscribe();
     let id = thread_id.clone();
     let first = inner
@@ -142,11 +162,11 @@ pub(crate) async fn subscribe_thread(
                     return Ok(Some((items, high)));
                 }
             }
-            let projection = store.thread_projection(&id)?.unwrap_or(Value::Null);
+            let projection = store
+                .thread_projection_with(&id, omit_local)?
+                .unwrap_or(Value::Null);
             Ok(Some((
-                vec![
-                    json!({"kind": "snapshot", "snapshotSequence": high, "projection": projection}),
-                ],
+                vec![snapshot_item(projection, high, dedupe, omit_local)],
                 high,
             )))
         })
@@ -201,6 +221,89 @@ pub(crate) async fn subscribe_thread(
         }
     });
     Ok(rx)
+}
+
+/// The thread snapshot item, compacted for clients that opted in: a turn item's text that its
+/// message carries is blanked and marked (`acceptDedupedBodies`), and `turnItems` leaves out
+/// the items `visibleTurnItems` already holds (`acceptCompactTurnItems`). Clients undo both
+/// with `boundedSnapshotProjection` on every snapshot. Either roughly halves a long thread's
+/// snapshot, as each item otherwise travels twice and each message three times.
+fn snapshot_item(mut projection: Value, high: u64, dedupe: bool, omit_local: bool) -> Value {
+    if dedupe {
+        let index = |collection: &str| -> HashMap<String, usize> {
+            projection[collection]
+                .as_array()
+                .map(|rows| {
+                    rows.iter()
+                        .enumerate()
+                        .filter_map(|(i, r)| r["id"].as_str().map(|id| (id.to_owned(), i)))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let (messages, subagents) = (index("messages"), index("subagents"));
+        let text_of = |id: &Value| {
+            let at = *messages.get(id.as_str()?)?;
+            Some(projection["messages"][at]["text"].clone())
+        };
+        let subagent_of = |id: &Value| {
+            let row = &projection["subagents"][*subagents.get(id.as_str()?)?];
+            Some((row["prompt"].clone(), row["result"].clone()))
+        };
+        let mut changes: Vec<(usize, Value)> = vec![];
+        if let Some(rows) = projection["visibleTurnItems"].as_array() {
+            for (index, row) in rows.iter().enumerate() {
+                let mut item = row["item"].clone();
+                let mut changed = false;
+                match item["type"].as_str() {
+                    Some("user_message" | "assistant_message")
+                        if item["text"] != ""
+                            && text_of(&item["messageId"]).as_ref() == Some(&item["text"]) =>
+                    {
+                        item["text"] = json!("");
+                        item["textOmitted"] = json!(true);
+                        changed = true;
+                    }
+                    Some("subagent") => {
+                        if let Some((prompt, result)) = subagent_of(&item["subagentId"]) {
+                            if item["prompt"] != "" && item["prompt"] == prompt {
+                                item["prompt"] = json!("");
+                                item["promptOmitted"] = json!(true);
+                                changed = true;
+                            }
+                            if !item["result"].is_null() && item["result"] == result {
+                                item["result"] = Value::Null;
+                                item["resultOmitted"] = json!(true);
+                                changed = true;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                if changed {
+                    changes.push((index, item));
+                }
+            }
+        }
+        let items = index("turnItems");
+        for (row, item) in changes {
+            if let Some(at) = item["id"].as_str().and_then(|id| items.get(id)) {
+                projection["turnItems"][*at] = item.clone();
+            }
+            projection["visibleTurnItems"][row]["item"] = item;
+        }
+    }
+    let mut snapshot = json!({"kind": "snapshot", "snapshotSequence": high});
+    // Every turn item of this engine is a local visible row, so `turnItems` was built empty.
+    if omit_local
+        && projection["visibleTurnItems"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty())
+    {
+        snapshot["turnItemsOmitLocalVisible"] = json!(true);
+    }
+    snapshot["projection"] = projection;
+    snapshot
 }
 
 fn event_item((sequence, event): (u64, Value)) -> Value {

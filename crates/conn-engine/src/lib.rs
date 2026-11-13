@@ -18,19 +18,82 @@
 
 use std::{future::Future, pin::Pin};
 
+mod calls;
 mod commands;
 mod engine;
 #[cfg(test)]
 mod engine_tests;
 #[cfg(any(test, feature = "fake-provider"))]
 pub mod fake;
+mod families;
+mod output;
+mod projects;
+mod reads;
+mod restart;
 mod runner;
 mod shell;
 mod store;
 mod streams;
 mod time;
+mod titles;
 
 pub use engine::{EngineConfig, ProjectConfig, SqliteEngine};
+
+/// What a [`TitleGenerator`] titles: the first message of a new thread, or a whole thread whose
+/// title the user asked to regenerate.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TitleRequest {
+    pub thread_id: String,
+    /// The folder the thread works in, for a generator that reads linked files.
+    pub cwd: Option<String>,
+    /// The project's title, which a good thread title does not repeat.
+    pub project_title: Option<String>,
+    pub kind: TitleKind,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TitleKind {
+    /// The first user message, at most 8,000 characters.
+    Initial { message: String },
+    /// The current title and the thread's user and assistant texts, newest last, at most
+    /// 8,000 characters in all.
+    Regenerate {
+        previous_title: String,
+        transcript: Vec<(String, String)>,
+    },
+}
+
+/// Where a turn starts or ends, for a [`TurnObserver`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct TurnPoint {
+    pub thread_id: String,
+    pub run_id: String,
+    /// 1 for the thread's first run; checkpoint `n` is the workspace after run `n`.
+    pub run_ordinal: u64,
+    pub root_node_id: String,
+    /// The folder the turn works in: the thread's worktree, else its project root.
+    pub cwd: Option<String>,
+}
+
+/// Watches turns start and end; the hook for per-turn git checkpoints (`getTurnDiff`,
+/// `getFullThreadDiff`, restore).
+///
+/// [`TurnObserver::turn_started`] runs after the run is `running` and before the provider
+/// gets the message, and the turn waits for it: a baseline taken there holds no change of this
+/// turn. [`TurnObserver::turn_ended`] runs after the run's final status is committed, once per
+/// run that started (`completed`, `interrupted`, `failed` or `cancelled`), off the turn's path.
+/// A failing observer must log and return; it cannot fail the turn. Wire one with
+/// [`EngineConfig::turn_observer`].
+pub trait TurnObserver: Send + Sync {
+    fn turn_started(&self, point: TurnPoint) -> BoxFuture<'_, ()>;
+    fn turn_ended(&self, point: TurnPoint, status: String) -> BoxFuture<'_, ()>;
+}
+
+/// Asks a small model for a thread title (`generateTitle`, `regenerateTitle`). The engine
+/// keeps the seed title when this fails. Wire one with [`EngineConfig::title_generator`].
+pub trait TitleGenerator: Send + Sync {
+    fn generate(&self, request: TitleRequest) -> BoxFuture<'_, Result<String, String>>;
+}
 
 use conn_contract::{
     Command, DispatchCommandError, DispatchCommandResult, GetShellSnapshotError,
@@ -110,6 +173,42 @@ pub trait Engine: Send + Sync {
     /// `GET /api/orchestration/shell`: `OrchestrationV2ShellSnapshot`.
     fn shell_snapshot(&self) -> BoxFuture<'_, Result<Value, EngineError<GetShellSnapshotError>>> {
         unsupported("the shell snapshot")
+    }
+
+    /// The unary and stream RPC methods [`Engine::call`] and [`Engine::open_stream`] serve, by
+    /// tag. The server registers each one; the rest answer "not supported".
+    fn methods(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// A unary method from [`Engine::methods`] (`projects.mutate`, `orchestration.searchThreads`,
+    /// ...). Input and output are the contract's JSON for that tag; `Rejected` holds the
+    /// method's typed error.
+    fn call(
+        &self,
+        method: &str,
+        _input: Value,
+    ) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
+        let method = method.to_owned();
+        Box::pin(async move {
+            Err(EngineError::Internal(format!(
+                "this engine does not support {method}"
+            )))
+        })
+    }
+
+    /// A stream method from [`Engine::methods`], with the same JSON rules as [`Engine::call`].
+    fn open_stream(
+        &self,
+        method: &str,
+        _input: Value,
+    ) -> BoxFuture<'_, Result<Subscription<Value, Value>, EngineError<Value>>> {
+        let method = method.to_owned();
+        Box::pin(async move {
+            Err(EngineError::Internal(format!(
+                "this engine does not support {method}"
+            )))
+        })
     }
 
     /// `GET /api/orchestration/threads/:threadId`: `OrchestrationV2ThreadDetailSnapshot`, or

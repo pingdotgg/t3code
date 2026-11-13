@@ -121,7 +121,7 @@ async function startRustServer(previous) {
   return { root, project, port, token, child, origin: `http://127.0.0.1:${port}`, rust: true };
 }
 
-async function startServer() {
+async function startServer(projectName = "project") {
   if (!NodeFS.existsSync(NodePath.join(repo, "apps/web/dist/index.html"))) {
     log("building apps/web (no dist yet)");
     NodeChildProcess.execFileSync("vp", ["build"], {
@@ -132,7 +132,7 @@ async function startServer() {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-rec-"));
   const base = NodePath.join(root, "base");
   NodeFS.mkdirSync(base);
-  const project = scratchProject(root);
+  const project = scratchProject(root, projectName);
 
   const port = await freePort();
   // env -i: the service launcher IPC channel of an outer T3 must not leak in.
@@ -351,7 +351,11 @@ try {
   for (const name of selected) {
     const page = await context.newPage();
     const cap = capture(page, server);
-    const shots = NodePath.join(server.root, "shots", name);
+    // CONN_RECORDER_SHOTS keeps screenshots after the run; else they go with the temp folder.
+    const shots = NodePath.join(
+      process.env.CONN_RECORDER_SHOTS ?? NodePath.join(server.root, "shots"),
+      name,
+    );
     NodeFS.mkdirSync(shots, { recursive: true });
     let step = 0;
     const ctx = {
@@ -365,8 +369,8 @@ try {
         log(name, "shot", file);
       },
       cap,
-      startServer: async () => {
-        const extra = await startServer();
+      startServer: async (projectName) => {
+        const extra = await startServer(projectName);
         extraServers.push(extra);
         return extra;
       },

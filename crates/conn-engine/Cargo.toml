@@ -23,8 +23,15 @@ fake-provider = []
 name = "export_turn"
 required-features = ["fake-provider"]
 
+[[example]]
+name = "memory_load"
+required-features = ["fake-provider"]
+
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros"] }
+tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
+# examples/memory_load.rs: live heap bytes (the workspace forbids the unsafe a counting
+# allocator needs). Dev only; not in the server binary.
+stats_alloc = "0.1"
 
 [lints]
 workspace = true
