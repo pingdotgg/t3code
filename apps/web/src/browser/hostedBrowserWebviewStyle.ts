@@ -54,11 +54,11 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
 
   if (renderingActive) {
     // Electron clips oversized native surfaces; fit the whole guest without changing its DOM viewport.
-    const scale = Math.min(
-      1,
-      windowSize.width / hiddenSize.width,
-      windowSize.height / hiddenSize.height,
-    );
+    // A minimized window can report a zero viewport; scale(0) would stop the guest compositing.
+    const scale =
+      windowSize.width > 0 && windowSize.height > 0
+        ? Math.min(1, windowSize.width / hiddenSize.width, windowSize.height / hiddenSize.height)
+        : 1;
     return {
       left: 0,
       top: 0,
