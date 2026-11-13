@@ -3030,21 +3030,24 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         (candidate) => candidate.child?.sessionId === childId,
       );
       const output = subagentOutput(payload.text);
-      // The report names only the child, so its text tells which run wrote it. With no such run,
-      // reports are taken in order: one that arrives late must not settle a newer run.
-      const written = Math.max(
-        ...open.flatMap((candidate) =>
-          candidate.run !== undefined && candidate.answer === output ? [candidate.run] : [],
-        ),
+      const started = open
+        .flatMap((candidate) =>
+          candidate.run === undefined ? [] : [{ call: candidate, run: candidate.run }],
+        )
+        .sort((a, b) => a.run - b.run);
+      // The report names only the child, and reports arrive in order. So it belongs to the oldest
+      // open run, unless that run ended with a different text: then its own report is lost.
+      const next = started.find(
+        (candidate) => candidate.call.answer === undefined || candidate.call.answer === output,
       );
-      const call = open.find((candidate) => candidate.run === written) ?? open[0];
+      const written = next?.call.answer === output ? next.run : undefined;
+      const call = written === undefined ? open[0] : next?.call;
       const calls =
         call?.run === undefined
           ? open.slice(0, 1)
           : open.filter((candidate) => candidate.run === call.run);
-      // Runs are serial, so open calls of an earlier run have ended and their report is lost.
-      const lost = open.filter(
-        (candidate) => candidate.run !== undefined && candidate.run < written,
+      const lost = started.flatMap((candidate) =>
+        written !== undefined && candidate.run < written ? [candidate.call] : [],
       );
       const outcome = reportOutcome(stringField(payload.metadata, "state"));
       state.reports.set(inboxId, {

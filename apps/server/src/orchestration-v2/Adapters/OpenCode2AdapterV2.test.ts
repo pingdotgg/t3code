@@ -1876,10 +1876,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  const childSaid = (text: string) =>
+  const childSaid = (text: string, run = 1) =>
     event("session.text.ended", {
       sessionID: CHILD,
-      assistantMessageID: `msg_child_${text}`,
+      assistantMessageID: `msg_child_${run}`,
       ordinal: 0,
       text,
     });
@@ -1894,7 +1894,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         event("session.execution.succeeded", { sessionID: CHILD }),
         ...callAgain({ background: true }, { id: "call-later", writesRules: false }),
         event("session.execution.started", { sessionID: CHILD }),
-        childSaid("SECOND_OK"),
+        childSaid("SECOND_OK", 2),
         event("session.execution.succeeded", { sessionID: CHILD }),
         event("session.execution.succeeded", { sessionID: SESSION }),
         childReport("msg_report_2", "SECOND_OK", "Again"),
@@ -1920,6 +1920,31 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       expected: {
         "call-background": { status: "completed", result: "FIRST_OK" },
         "call-again": { status: "completed", result: "SECOND_OK" },
+      },
+    },
+    {
+      name: "two runs with the same answer report late",
+      replay: [
+        ...launchedAndRunning,
+        childSaid("DONE"),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        ...callAgain({ background: true }),
+        event("session.execution.started", { sessionID: CHILD }),
+        childSaid("DONE", 2),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport("msg_report_1", "DONE"),
+        ...callAgain({ background: true }, { id: "call-later", writesRules: false }),
+        event("session.execution.started", { sessionID: CHILD }),
+        childReport("msg_report_2", "DONE", "Again"),
+        childSaid("THIRD_OK", 3),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        childReport("msg_report_3", "THIRD_OK", "Again"),
+      ],
+      expected: {
+        "call-background": { status: "completed", result: "DONE" },
+        "call-again": { status: "completed", result: "DONE" },
+        "call-later": { status: "completed", result: "THIRD_OK" },
       },
     },
     {
