@@ -30,6 +30,7 @@ import * as CursorAccountReader from "./CursorAccountReader.ts";
 import { readStoredCursorApiKey } from "./credentialStore.ts";
 
 const CURSOR_ACCOUNT_READ_ERROR = "Cursor account usage could not be read.";
+const CURSOR_ACCOUNT_STALE_ERROR = "Cursor has not reported your recent usage history.";
 
 const decodeCacheFile = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>),
@@ -147,7 +148,16 @@ const make = Effect.gen(function* () {
       retentionStartMs,
     );
     caches.set(credentialKey, merged.cache);
-    failures.delete(credentialKey);
+    const { usageSinceMs } = result;
+    // Cursor's usage-events RPC can stop returning recent events while the cycle shows usage.
+    if (
+      usageSinceMs !== undefined &&
+      !merged.cache.records.some((record) => record.timestampMs >= usageSinceMs)
+    ) {
+      failures.set(credentialKey, { atMs: nowMs, error: CURSOR_ACCOUNT_STALE_ERROR });
+    } else {
+      failures.delete(credentialKey);
+    }
     if (merged.changed) cacheDirty = true;
     yield* schedulePersist;
   }, refreshLock.withPermit);

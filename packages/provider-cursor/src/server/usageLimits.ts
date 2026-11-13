@@ -15,7 +15,7 @@ import {
 } from "@t3tools/provider-core/server/usageLimits";
 import { DEFAULT_CURSOR_API_ENDPOINT, exchangeCursorApiKey } from "./apiKey.ts";
 
-const CursorUsageResponse = Schema.Struct({
+export const CursorUsageResponse = Schema.Struct({
   billingCycleStart: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
   billingCycleEnd: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
   planUsage: Schema.optional(

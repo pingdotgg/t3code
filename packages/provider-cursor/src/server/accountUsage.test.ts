@@ -20,7 +20,10 @@ interface DashboardRequest {
   readonly headers: Headers;
 }
 
-const dashboard = (answer: (request: DashboardRequest) => Response | Promise<Response>) =>
+const dashboard = (
+  answer: (request: DashboardRequest) => Response | Promise<Response>,
+  periodUsage: unknown = {},
+) =>
   HttpClient.make((request, url, signal, fiber) =>
     Effect.tryPromise({
       try: async () => {
@@ -35,6 +38,9 @@ const dashboard = (answer: (request: DashboardRequest) => Response | Promise<Res
             request,
             Response.json({ accessToken: request.headers.authorization.slice(7) }),
           );
+        }
+        if (url.pathname.endsWith("/GetCurrentPeriodUsage")) {
+          return HttpClientResponse.fromWeb(request, Response.json(periodUsage));
         }
         const response = await answer({
           url: url.toString(),
@@ -56,9 +62,10 @@ const readAccountUsage = (
   sinceMs: number,
   endDate: number,
   answer: (request: DashboardRequest) => Response | Promise<Response>,
+  periodUsage?: unknown,
 ) =>
   readCursorAccountUsage(credentialSource, sinceMs, endDate).pipe(
-    Effect.provideService(HttpClient.HttpClient, dashboard(answer)),
+    Effect.provideService(HttpClient.HttpClient, dashboard(answer, periodUsage)),
   );
 
 describe("Cursor account history", () => {
@@ -157,6 +164,27 @@ describe("Cursor account history", () => {
         assert.isNull(result.error);
         assert.deepStrictEqual(result.records, []);
         assert.isFalse(result.missing);
+        assert.isUndefined(result.usageSinceMs);
+      }
+      // The current billing cycle tells whether an empty history hides recent usage.
+      for (const [periodUsage, usageSinceMs] of [
+        [
+          { billingCycleStart: "1780000000000", planUsage: { totalPercentUsed: 2.9 } },
+          1780000000000,
+        ],
+        [{ billingCycleStart: "1780000000000", planUsage: { totalPercentUsed: 0 } }, undefined],
+        [{ billingCycleStart: "1780000000000" }, undefined],
+        [{ error: "upstream error" }, undefined],
+      ] as const) {
+        const result = yield* readAccountUsage(
+          credential,
+          0,
+          1781000000000,
+          async () => Response.json({}),
+          periodUsage,
+        );
+        assert.isNull(result.error);
+        assert.strictEqual(result.usageSinceMs, usageSinceMs);
       }
       for (const body of [
         { error: "upstream error" },
