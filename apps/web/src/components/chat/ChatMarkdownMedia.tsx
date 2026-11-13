@@ -52,6 +52,10 @@ function markdownDestination(src: string): string {
   return `<${escaped}>`;
 }
 
+function parseImageDimension(value: string | number | undefined): number {
+  return Number(typeof value === "string" ? value.trim().replace(/px$/i, "") : value);
+}
+
 /**
  * `maxHeightRem` folds a height cap into the width bound: `max-height` alone
  * would not feed back through `aspect-ratio` once `width` is definite, so a
@@ -62,8 +66,8 @@ export function authoredImageSizeStyle(
   height: string | number | undefined,
   maxHeightRem = 30,
 ): CSSProperties | undefined {
-  const parsedWidth = Number(width);
-  const parsedHeight = Number(height);
+  const parsedWidth = parseImageDimension(width);
+  const parsedHeight = parseImageDimension(height);
   const hasWidth = Number.isFinite(parsedWidth) && parsedWidth > 0;
   const hasHeight = Number.isFinite(parsedHeight) && parsedHeight > 0;
   if (hasWidth && hasHeight) {
