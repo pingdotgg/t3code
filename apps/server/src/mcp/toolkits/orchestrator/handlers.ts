@@ -75,7 +75,10 @@ const handlers = {
           Effect.mapError(
             (cause) =>
               new OrchestratorMcpFailure({
-                code: cause.reason === "unsupported" ? "invalid_request" : "orchestration_error",
+                code:
+                  cause.reason === "unsupported" || cause.reason === "unmatched"
+                    ? "invalid_request"
+                    : "orchestration_error",
                 message: cause.message,
               }),
           ),
