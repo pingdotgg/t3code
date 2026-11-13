@@ -34,6 +34,7 @@ import {
   selectMessageImageResources,
   createMessageAttachmentPreviewProjector,
   providerErrorPresentation,
+  revertFileDiffTarget,
   type TimelineEntry,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
@@ -1994,4 +1995,48 @@ it("renders automatic completion as a work entry instead of a user bubble", () =
       ],
     })[0]?.kind,
   ).toBe("message");
+});
+
+describe("revertFileDiffTarget", () => {
+  type Run = Parameters<typeof revertFileDiffTarget>[0][number];
+  type Checkpoint = Parameters<typeof revertFileDiffTarget>[1][number];
+  const run = (ordinal: number, status: Run["status"] = "completed"): Run => ({
+    id: RunId.make(`run-${ordinal}`),
+    ordinal,
+    status,
+  });
+  const checkpoint = (ordinal: number, overrides: Partial<Checkpoint> = {}): Checkpoint => ({
+    runId: RunId.make(`run-${ordinal}`),
+    appRunOrdinal: ordinal,
+    status: "ready",
+    files: [],
+    ...overrides,
+  });
+  const file = { path: "a.ts", kind: "modified", additions: 1, deletions: 0 };
+
+  it("names the latest completed run when no later summary lists files", () => {
+    expect(
+      revertFileDiffTarget(
+        [run(1), run(2, "interrupted"), run(3), run(4, "rolled_back"), run(5, "queued")],
+        [checkpoint(1, { files: [file] }), checkpoint(3), checkpoint(4, { files: [file] })],
+        1,
+      ),
+    ).toBe(3);
+  });
+
+  it("is null when files changed or the latest run's work is in no checkpoint", () => {
+    expect(
+      revertFileDiffTarget([run(1), run(2)], [checkpoint(1, { files: [file] })], 0),
+    ).toBeNull();
+    expect(
+      revertFileDiffTarget(
+        [run(1)],
+        [checkpoint(1, { filesTotal: { count: 3, additions: 1, deletions: 1 } })],
+        0,
+      ),
+    ).toBeNull();
+    expect(revertFileDiffTarget([run(1), run(2, "interrupted")], [checkpoint(1)], 0)).toBeNull();
+    expect(revertFileDiffTarget([run(1)], [checkpoint(1, { status: "error" })], 0)).toBeNull();
+    expect(revertFileDiffTarget([], [], 0)).toBeNull();
+  });
 });

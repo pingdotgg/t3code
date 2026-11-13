@@ -3,6 +3,7 @@ import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/mod
 import {
   type AssetResource,
   type OrchestrationV2Checkpoint,
+  type OrchestrationV2Run,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
@@ -1098,6 +1099,38 @@ export function findRevertCheckpoint(
         ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
         : checkpoint.appRunOrdinal === turnCount),
   );
+}
+
+/**
+ * The turn count to diff `turnCount` against to learn whether the agent changed files since, or
+ * null when it did or may have. Summaries can be empty for real changes, hence the diff; a
+ * checkpoint snapshots the whole workspace, so the latest one covers every run before it.
+ */
+export function revertFileDiffTarget(
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal" | "status">>,
+  checkpoints: ReadonlyArray<
+    Pick<OrchestrationV2Checkpoint, "runId" | "appRunOrdinal" | "status" | "files" | "filesTotal">
+  >,
+  turnCount: number,
+): number | null {
+  const laterRuns = runs.filter(
+    (run) => run.ordinal > turnCount && run.status !== "rolled_back" && run.status !== "queued",
+  );
+  const latestRun = laterRuns.reduce<(typeof laterRuns)[number] | undefined>(
+    (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
+    undefined,
+  );
+  // Work of a run that stopped or failed to capture is in no checkpoint.
+  if (latestRun?.status !== "completed") return null;
+  const laterRunIds = new Set(laterRuns.map((run) => run.id));
+  let latestTurnCount: number | null = null;
+  for (const checkpoint of checkpoints) {
+    if (checkpoint.runId === null || !laterRunIds.has(checkpoint.runId)) continue;
+    if (checkpoint.status !== "ready") continue;
+    if (checkpoint.files.length > 0 || (checkpoint.filesTotal?.count ?? 0) > 0) return null;
+    if (checkpoint.runId === latestRun.id) latestTurnCount = checkpoint.appRunOrdinal;
+  }
+  return latestTurnCount;
 }
 
 export function derivePhase(runtime: ThreadStructureRuntime | null): SessionPhase {

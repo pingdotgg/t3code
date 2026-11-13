@@ -18,7 +18,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { readLocalApi } from "../../localApi";
-import { findRevertCheckpoint } from "../../session-logic";
+import { findRevertCheckpoint, revertFileDiffTarget } from "../../session-logic";
 import { type ChatMessage } from "../../types";
 import { newThreadId } from "~/lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -27,6 +27,7 @@ import { threadEnvironment } from "../../state/threads";
 import { waitForThreadShell } from "../../state/entities";
 import { openRevertConfirm } from "./ChatOverlayHosts";
 import { assetEnvironment } from "../../state/assets";
+import { orchestrationEnvironment } from "../../state/orchestration";
 import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -83,6 +84,11 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     refresh: true,
   });
 
+  // Refreshed: a turn count names a different checkpoint once its run is rewound and resent.
+  const loadTurnDiff = useAtomQueryRunner(orchestrationEnvironment.turnDiff, {
+    reportFailure: false,
+    refresh: true,
+  });
   const revertThreadCheckpoint = useOrchestrationCommand(threadEnvironment.revertCheckpoint, {
     reportFailure: false,
   });
@@ -125,7 +131,30 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       return;
     }
     if (restoreFiles === undefined) {
-      openRevertConfirm(routeThreadKey, { turnCount, messageId });
+      // The server refuses file restore outside a worktree, so that case needs no diff.
+      const diffTarget =
+        activeThread.worktreePath === null
+          ? null
+          : revertFileDiffTarget(
+              serverProjection?.runs ?? [],
+              serverProjection?.checkpoints ?? [],
+              turnCount,
+            );
+      let filesChanged = true;
+      if (diffTarget !== null) {
+        const result = await loadTurnDiff({
+          environmentId,
+          input: {
+            threadId: activeThread.id,
+            fromTurnCount: turnCount,
+            toTurnCount: diffTarget,
+            ignoreWhitespace: false,
+          },
+        });
+        if (currentRouteThreadKeyRef.current !== routeThreadKey) return;
+        filesChanged = result._tag !== "Success" || result.value.diff !== "";
+      }
+      openRevertConfirm(routeThreadKey, { turnCount, messageId, filesChanged });
       return;
     }
 

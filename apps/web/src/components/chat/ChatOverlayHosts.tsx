@@ -185,6 +185,8 @@ export function BranchRestoreConfirmHost(props: {
 interface PendingRevert {
   readonly turnCount: number;
   readonly messageId: MessageId;
+  /** False only when the agent is known to have changed no files since the message. */
+  readonly filesChanged: boolean;
 }
 
 const revertConfirmAtom = makeThreadOverlayAtom<PendingRevert>("revert-confirm");
@@ -196,12 +198,15 @@ export function openRevertConfirm(threadKey: string, pending: PendingRevert): vo
 export function RevertConfirmHost(props: {
   readonly threadKey: string;
   readonly checkpoints: OrchestrationV2ThreadProjection["checkpoints"] | undefined;
+  // The server refuses file restore outside a thread's own worktree.
+  readonly isWorktree: boolean;
   readonly onConfirm: (turnCount: number, messageId: MessageId, restoreFiles: boolean) => void;
 }) {
   const pending = useThreadOverlay(revertConfirmAtom, props.threadKey);
   const canRestoreFiles =
     pending !== null &&
     findRevertCheckpoint(props.checkpoints ?? [], pending.turnCount)?.status === "ready";
+  const offersFileRestore = props.isWorktree && pending?.filesChanged !== false;
   const confirm = (restoreFiles: boolean) => {
     if (pending === null || (restoreFiles && !canRestoreFiles)) return;
     closeThreadOverlay(revertConfirmAtom);
@@ -219,18 +224,24 @@ export function RevertConfirmHost(props: {
           <AlertDialogTitle>Edit from here?</AlertDialogTitle>
           <AlertDialogDescription>
             Rewind chat to before this message. Your prompt and attachments return to the composer.
-            “Revert files too” also undoes your own edits.
+            {!props.isWorktree
+              ? " Files stay as they are because this thread shares the project directory."
+              : offersFileRestore
+                ? " “Revert files too” also undoes your own edits."
+                : null}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-          <Button
-            variant="destructive-outline"
-            disabled={!canRestoreFiles}
-            onClick={() => confirm(true)}
-          >
-            Revert files too
-          </Button>
+          {offersFileRestore ? (
+            <Button
+              variant="destructive-outline"
+              disabled={!canRestoreFiles}
+              onClick={() => confirm(true)}
+            >
+              Revert files too
+            </Button>
+          ) : null}
           <Button onClick={() => confirm(false)}>Revert and keep changes</Button>
         </AlertDialogFooter>
       </AlertDialogPopup>
