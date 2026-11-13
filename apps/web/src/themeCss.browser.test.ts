@@ -11,6 +11,7 @@ it("applies theme CSS and drops every rule that would load a remote file", () =>
 
   applyThemeCss(`
     @import url(https://example.com/sheet.css);
+    @namespace svg url(http://www.w3.org/2000/svg);
     @property --registered { syntax: "<url>"; inherits: false; initial-value: url(https://example.com/d); }
     @counter-style leak { system: cyclic; symbols: url(https://example.com/f); }
     @keyframes leak { to { background-image: url(https://example.com/g); } }

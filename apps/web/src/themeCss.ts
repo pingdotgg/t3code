@@ -38,7 +38,12 @@ function stripFetches(parent: RuleParent): void {
     } else if (rule instanceof CSSPropertyRule) {
       // A registered property's initial value is used wherever var() reads it.
       if (themeCssValueFetches(rule.initialValue ?? "")) parent.deleteRule(index);
-    } else if (!hasStyle && !(rule instanceof CSSLayerStatementRule)) {
+    } else if (
+      !hasStyle &&
+      !(rule instanceof CSSLayerStatementRule) &&
+      // Names a namespace without loading it. CSSOM refuses to delete one while style rules remain.
+      !(rule instanceof CSSNamespaceRule)
+    ) {
       parent.deleteRule(index);
     }
   }
