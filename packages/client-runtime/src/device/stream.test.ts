@@ -486,7 +486,12 @@ describe("shared device stream readiness and recovery", () => {
   });
 
   it("stops retrying a Simlock lease that ended and keeps its reason", async () => {
-    const { client, events, fetch, sockets, videoBodies } = recoveryFixture("ios", false, false, true);
+    const { client, events, fetch, sockets, videoBodies } = recoveryFixture(
+      "ios",
+      false,
+      false,
+      true,
+    );
     client.start();
     await vi.advanceTimersByTimeAsync(0);
     const reason = [...new TextEncoder().encode('{"reason":"expired"}')];
