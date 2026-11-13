@@ -628,7 +628,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     "preserves the custom install bin directory in the installed service on %s",
     (platform) =>
       Effect.gen(function* () {
-        const installBinDir = '/custom/T3 & <100%>/"quoted"\\bin';
+        const installBinDir = '/custom/T3\t& <100%>/"quoted"\\bin';
         const { service, makeService, fs } = yield* makeHarness(
           platform,
           "",
@@ -640,8 +640,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         const unit = yield* fs.readFileString(plan.unitPath);
         expect(unit).toContain(
           platform === "linux"
-            ? 'Environment=T3CODE_INSTALL_BIN_DIR="/custom/T3 & <100%%>/\\"quoted\\"\\\\bin"'
-            : '<key>T3CODE_INSTALL_BIN_DIR</key>\n    <string>/custom/T3 &amp; &lt;100%&gt;/"quoted"\\bin</string>',
+            ? 'Environment=T3CODE_INSTALL_BIN_DIR="/custom/T3\t& <100%%>/\\"quoted\\"\\\\bin"'
+            : '<key>T3CODE_INSTALL_BIN_DIR</key>\n    <string>/custom/T3\t&amp; &lt;100%&gt;/"quoted"\\bin</string>',
         );
         expect((yield* service.status).current).toBe(true);
 

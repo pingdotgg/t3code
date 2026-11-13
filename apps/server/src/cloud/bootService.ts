@@ -90,12 +90,10 @@ export interface BootServicePlan {
   readonly handedOff?: boolean;
 }
 
-// systemd refuses an executable with a quote or backslash even when quoted, and a unit
-// file has no way to carry a raw control character such as a newline.
+// systemd refuses an executable with a quote, backslash or control character even when
+// quoted. The executable lives under the T3 home, so this also catches a home with a newline.
 const systemdUnsafeValue = (plan: BootServicePlan) =>
-  [plan.baseDir, plan.logPath, plan.installBinDir ?? "", ...plan.program].some((value) =>
-    /[\x00-\x1f\x7f]/.test(value),
-  ) || /["'\\]/.test(plan.program[0] ?? "");
+  /[\x00-\x1f\x7f"'\\]/.test(plan.program[0] ?? "");
 
 /** Service units cannot rely on the user's shell or PATH. */
 export function renderBootServiceUnit(plan: BootServicePlan): string {
