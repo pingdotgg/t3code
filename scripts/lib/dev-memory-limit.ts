@@ -77,9 +77,9 @@ const readProcessTreeBytes = Effect.fn("DevRunner.readProcessTreeBytes")(functio
 });
 
 /**
- * Samples this process and its descendants every 30 seconds. Once they hold
- * more than `limitBytes` of RAM plus swap, it logs why and sends SIGTERM to
- * this process group. Linux only; elsewhere it never completes.
+ * Samples this process and its descendants every 30 seconds and fails once
+ * they hold more than `limitBytes` of RAM plus swap. Linux only; elsewhere it
+ * never completes.
  */
 export const enforceDevMemoryLimit = Effect.fn("DevRunner.enforceDevMemoryLimit")(function* (
   limitBytes: number,
@@ -89,11 +89,7 @@ export const enforceDevMemoryLimit = Effect.fn("DevRunner.enforceDevMemoryLimit"
     yield* Effect.sleep("30 seconds");
     const usedBytes = yield* readProcessTreeBytes(process.pid);
     if (usedBytes > limitBytes) {
-      const error = new DevRunnerMemoryLimitError({ usedBytes, limitBytes });
-      yield* Effect.logError(error.message);
-      // vp does not pass SIGTERM to its tasks, so stopping only the child would orphan Vite and the server.
-      process.kill(0, "SIGTERM");
-      return yield* error;
+      return yield* new DevRunnerMemoryLimitError({ usedBytes, limitBytes });
     }
   }
 });

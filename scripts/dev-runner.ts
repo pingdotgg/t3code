@@ -887,10 +887,9 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     env,
     extendEnv: false,
     shell: spawnCommand.shell,
-    // Keep Vite+ in the same process group so terminal signals (Ctrl+C)
-    // reach it directly. Effect defaults to detached: true on non-Windows,
-    // which would put the runner in a new group and require manual forwarding.
-    detached: false,
+    // Its own process group: teardown signals the whole group, because vp
+    // does not pass SIGTERM on to Vite and the server.
+    detached: true,
     forceKillAfter: "1500 millis",
   }).pipe(
     Effect.mapError(
@@ -925,6 +924,8 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     });
   }
 });
+
+const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
 const devRunnerCli = Command.make("dev-runner", {
   mode: Argument.Literals("mode", DEV_RUNNER_MODES).pipe(
@@ -992,11 +993,16 @@ const devRunnerCli = Command.make("dev-runner", {
     Flag.withDefault(false),
   ),
   memoryLimitGb: Flag.Int("memory-limit-gb").pipe(
-    Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+    Flag.withSchema(NonNegativeInt),
     Flag.withDescription(
       "Stop the dev server when it and its child processes use more than this many GiB of RAM plus swap (equivalent to T3CODE_DEV_MEMORY_LIMIT_GB). Defaults to half of RAM, at most 16. 0 turns it off. Linux only.",
     ),
-    Flag.withFallbackConfig(optionalIntegerConfig("T3CODE_DEV_MEMORY_LIMIT_GB")),
+    Flag.withFallbackConfig(
+      Config.schema(NonNegativeInt, "T3CODE_DEV_MEMORY_LIMIT_GB").pipe(
+        Config.option,
+        Config.map(Option.getOrUndefined),
+      ),
+    ),
   ),
   runArgs: Argument.String("run-arg").pipe(
     Argument.withDescription("Additional Vite+ run args (pass after `--`)."),
