@@ -6496,7 +6496,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
      */
     const readTimelineWindow = Effect.fn("ProjectionStore.readTimelineWindow")(function* (
       threadId: ThreadId,
-      runs: ProjectionRecords<"runs">["runs"],
       includePersistentOutput: boolean,
       where: Statement.Fragment,
       limit: Statement.Fragment = sql``,
@@ -6513,9 +6512,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         status: OrchestrationV2TurnItem["status"];
         ordinal: number;
         persistent_output: number;
+        run_status: string | null;
         attempt_id: string | null;
         attempt_status: string | null;
       }>`SELECT item.turn_item_id, item.run_id, item.node_id, item.parent_item_id, item.type, item.status, item.ordinal,
+          (SELECT status FROM orchestration_v2_projection_runs
+            WHERE run_id = item.run_id AND thread_id = ${threadId}) AS run_status,
           ${includePersistentOutput ? sql`attempt.attempt_id` : sql`NULL`} AS attempt_id,
           ${includePersistentOutput ? sql`attempt.status` : sql`NULL`} AS attempt_status,
           ${
@@ -6537,7 +6539,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         }
         WHERE item.thread_id = ${threadId} ${where}
         ORDER BY item.ordinal ASC, item.turn_item_id ASC ${limit}`;
-      const runStatuses = new Map(runs.map((run) => [String(run.id), run.status]));
       return rows.map((row): TimelineIndexItem => ({
         id: TurnItemId.make(row.turn_item_id),
         threadId,
@@ -6547,7 +6548,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         type: row.type,
         status: row.status,
         ordinal: row.ordinal,
-        runStatus: row.run_id === null ? undefined : runStatuses.get(row.run_id),
+        runStatus: row.run_status ?? undefined,
         attemptId: row.attempt_id,
         attemptStatus: row.attempt_status,
         persistentOutput: row.persistent_output === 1,
@@ -6589,9 +6590,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           AND NOT (json_extract(payload_json, '$.forkedFrom.type') IS 'run'
             AND json_extract(payload_json, '$.lineage.sideChat') IS NOT 1)`;
       if (ownRowsOnly.length === 0) return null;
-      const records = yield* getThreadRecords(threadId, ["runs", "attempts"]);
-      if (inheritedRunFork(records.thread) !== null) return null;
-      const superseded = records.attempts.filter((attempt) => attempt.status === "superseded");
+      const { thread } = yield* getThreadRecords(threadId, []);
+      if (inheritedRunFork(thread) !== null) return null;
+      // Only these runs and attempts can hide rows, so a long thread's other runs and attempts
+      // are not read. A superseded attempt hides only a stop result of its run.
+      const [runs, superseded] = yield* Effect.all([
+        sql<{ run_id: string; status: OrchestrationV2Run["status"] }>`
+          SELECT run_id, status FROM orchestration_v2_projection_runs
+          WHERE thread_id = ${threadId} AND status IN ('rolled_back', 'queued', 'cancelled')`,
+        sql<{ run_id: string; root_node_id: string }>`
+          SELECT attempt.run_id, attempt.root_node_id
+          FROM (
+            SELECT DISTINCT run_id FROM orchestration_v2_projection_turn_items
+            WHERE thread_id = ${threadId} AND type = 'run_interrupt_result' AND run_id IS NOT NULL
+          ) AS interrupted
+          CROSS JOIN orchestration_v2_projection_run_attempts AS attempt
+            ON attempt.run_id = interrupted.run_id
+          WHERE attempt.status = 'superseded'`,
+      ]);
       const stopRequests =
         superseded.length === 0
           ? []
@@ -6599,8 +6615,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               SELECT DISTINCT run_id FROM orchestration_v2_projection_turn_items
               WHERE thread_id = ${threadId} AND type = 'run_interrupt_request'`;
       const isVisible = createOrchestrationV2TurnItemVisibility({
-        runs: records.runs,
-        attempts: records.attempts,
+        runs: runs.map((run) => ({ id: RunId.make(run.run_id), status: run.status })),
+        attempts: superseded.map((attempt) => ({
+          runId: RunId.make(attempt.run_id),
+          rootNodeId: NodeId.make(attempt.root_node_id),
+          status: "superseded" as const,
+        })),
         items: stopRequests.map((row) => ({
           type: "run_interrupt_request" as const,
           runId: row.run_id === null ? null : RunId.make(row.run_id),
@@ -6612,10 +6632,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       // are found without reading the thread.
       const stoppedRuns = new Set(stopRequests.map((row) => row.run_id));
       const runsWithStatus = (...statuses: ReadonlyArray<OrchestrationV2Run["status"]>) =>
-        records.runs.flatMap((run) => (statuses.includes(run.status) ? [String(run.id)] : []));
+        runs.flatMap((run) => (statuses.includes(run.status) ? [run.run_id] : []));
       const rolledBack = runsWithStatus("rolled_back");
       const heldInput = runsWithStatus("queued", "cancelled");
-      const steered = [...new Set(superseded.map((attempt) => String(attempt.runId)))].filter(
+      const steered = [...new Set(superseded.map((attempt) => attempt.run_id))].filter(
         (runId) => !stoppedRuns.has(runId) && !rolledBack.includes(runId),
       );
       type HiddenCandidate = {
@@ -6679,12 +6699,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         return (rows[0]?.count ?? 0) - hiddenBefore.length;
       });
       return {
-        records,
+        records: { thread },
         isVisible,
         hidden,
         visibleBefore,
         read: (where: Statement.Fragment, limit?: Statement.Fragment) =>
-          readTimelineWindow(threadId, records.runs, includePersistentOutput, where, limit),
+          readTimelineWindow(threadId, includePersistentOutput, where, limit),
       };
     });
     type LocalTimeline = NonNullable<Effect.Success<ReturnType<typeof openLocalTimeline>>>;
