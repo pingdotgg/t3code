@@ -15520,15 +15520,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return providerThreadsWithBackgroundWork.delete(event.payload.id);
   };
   yield* Stream.merge(
-    eventSink.stream({
-      afterSequence: terminalEventsAfterSequence,
-      eventType: "provider-thread.updated",
-    }),
-    eventSink.stream({ afterSequence: terminalEventsAfterSequence, eventType: "subagent.updated" }),
+    Stream.merge(
+      eventSink.stream({
+        afterSequence: terminalEventsAfterSequence,
+        eventType: "provider-thread.updated",
+      }),
+      eventSink.stream({
+        afterSequence: terminalEventsAfterSequence,
+        eventType: "subagent.updated",
+      }),
+    ),
+    // A Codex tool that outlives its turn settles with a node update alone.
+    eventSink
+      .stream({ afterSequence: terminalEventsAfterSequence, eventType: "node.updated" })
+      .pipe(Stream.filter(({ event }) => queuesWaitingOnBackgroundWork.has(event.threadId))),
   ).pipe(
     // The probe decides whether the work ended; these events are only when to ask again.
     Stream.tap(({ event }) =>
-      queuesWaitingOnBackgroundWork.has(event.threadId)
+      queuesWaitingOnBackgroundWork.has(event.threadId) &&
+      (event.type !== "node.updated" ||
+        (event.payload.kind === "tool_call" && !isOrchestrationV2WorkActive(event.payload.status)))
         ? threadDispatch.withLock(event.threadId, startNextQueuedRun(event.threadId)).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("Failed to start a queue that waited on background work", {
