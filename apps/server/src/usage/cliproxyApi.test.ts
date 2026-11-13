@@ -56,7 +56,6 @@ function fixture(
       email?: string;
       disabled?: boolean;
       project_id?: string;
-      recent_requests?: ReadonlyArray<{ time: string; success: number; failed: number }>;
       id_token?: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
     }>;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
@@ -251,25 +250,6 @@ describe("CLIProxyAPI built-in management API", () => {
       const result = yield* api.readAccounts(config);
       expect(result.map((account) => account.models)).toEqual([["gpt-5.6-sol"], undefined, []]);
       expect(result[1]?.usageLimits.windows).toHaveLength(1);
-    }),
-  );
-
-  it.effect("dates each account's last served request from the hub's request buckets", () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(Date.parse("2026-10-30T12:05:00Z"));
-      const bucket = (success: number, failed = 0) => ({ time: "", success, failed });
-      const test = fixture({
-        accounts: [
-          { ...accounts[0]!, recent_requests: [bucket(2), bucket(3), bucket(0, 4)] },
-          { ...accounts[1]!, recent_requests: [bucket(0), bucket(0, 1)] },
-        ],
-      });
-      const api = yield* test.api;
-      const result = yield* api.readAccounts(config);
-      expect(result.map((account) => account.lastServedAt)).toEqual([
-        "2026-10-30T11:50:00.000Z",
-        undefined,
-      ]);
     }),
   );
 

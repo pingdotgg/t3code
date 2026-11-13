@@ -3,7 +3,6 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderUsageLimits,
-  type UsageLimitSourceAccount,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 import {
@@ -61,15 +60,7 @@ function hubPool(
   now: number,
 ): ThreadDetailsLimits | null {
   const routes = hubRoutes(sources, driver, model);
-  const accounts = sources.flatMap((source) => source.accounts.filter(routes));
-  // The hub names no account per turn; the latest one it served stands in for the thread's.
-  const lastServed = accounts
-    .flatMap((account) => (account.lastServedAt ? [account.lastServedAt] : []))
-    .toSorted()
-    .at(-1);
-  const shown = (account: UsageLimitSourceAccount) =>
-    routes(account) && (lastServed === undefined || account.lastServedAt === lastServed);
-  const routed = sources.map((source) => ({ ...source, accounts: source.accounts.filter(shown) }));
+  const routed = sources.map((source) => ({ ...source, accounts: source.accounts.filter(routes) }));
   const readable = routed
     .flatMap((source) => source.accounts)
     .filter((account) => limitsNotice(account.usageLimits) === null);
