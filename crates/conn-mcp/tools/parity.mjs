@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Same calls on the T3 server and the Conn Server (`examples/replay_server`), on throwaway
-// state; compares outcome, failure code and result shape. One Haiku turn on the T3 server,
-// unless `--no-model`: that skips the thread launch and every step on its thread.
-// Usage: parity.mjs [--no-model] <conn-server-binary>. Needs `vp i` in `CONN_MONOREPO`.
+// state; compares outcome, failure code and result shape. By default no model is called:
+// the thread launch and every step on its thread are skipped. `--model` runs them too, with
+// one Haiku turn on the T3 server. `--no-model` is accepted and is the default.
+// Usage: parity.mjs [--model] <conn-server-binary>. Needs `vp i` in `CONN_MONOREPO`.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
@@ -13,10 +14,10 @@ import { McpSession, oauthMcpToken, pairBearer } from "./mcp-client.mjs";
 import { monorepo } from "../../../tools/monorepo.mjs";
 
 const argv = process.argv.slice(2);
-const noModel = argv.includes("--no-model");
+const noModel = !argv.includes("--model");
 const rustBinary = argv.find((a) => !a.startsWith("--"));
 if (rustBinary === undefined) {
-  console.error("usage: parity.mjs [--no-model] <conn-server-binary>");
+  console.error("usage: parity.mjs [--model] <conn-server-binary>");
   process.exit(2);
 }
 monorepo();
@@ -271,7 +272,7 @@ const onLaunchedThread = (tool, input) =>
   tool === "t3_thread_launch" ||
   input({ threadId: "<t>" }).threadId === "<t>";
 const run = noModel ? steps.filter(([tool, input]) => !onLaunchedThread(tool, input)) : steps;
-if (noModel) console.log(`--no-model: skipped ${steps.length - run.length} steps on a launched thread`);
+if (noModel) console.log(`no model: skipped ${steps.length - run.length} steps on a launched thread`);
 for (const [tool, input, after] of run) {
   const results = await Promise.all(
     sessions.map(async (session, i) => {

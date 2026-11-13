@@ -3,7 +3,7 @@
 # Usage: CONN_MONOREPO=/path/to/conn tools/check.sh
 # Without CONN_MONOREPO it runs the Rust-only checks and lists what it skipped.
 # No check calls a model: the server checks use `examples/replay_server` (the engine's fake
-# provider), and `parity.mjs` runs with `--no-model`. Every server gets a temp state folder.
+# provider), and `parity.mjs` calls none by default. Every server gets a temp state folder.
 set -u
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -52,7 +52,7 @@ monorepo_checks=(
   "effect-client (ack window)"
   "client-check"
   "replay"
-  "parity --no-model"
+  "parity"
 )
 
 if [ -z "${CONN_MONOREPO:-}" ]; then
@@ -68,8 +68,8 @@ else
     node crates/conn-server/tools/effect-client.mjs "$release/examples/effect_fixture" --fixture
   run "client-check" client_check
   run "replay" node crates/conn-server/tools/replay.mjs "$release/examples/replay_server"
-  run "parity --no-model" \
-    node crates/conn-mcp/tools/parity.mjs --no-model "$release/examples/replay_server"
+  run "parity" \
+    node crates/conn-mcp/tools/parity.mjs "$release/examples/replay_server"
 fi
 # orbit-flow needs no monorepo.
 run "orbit-flow (fake provider)" \

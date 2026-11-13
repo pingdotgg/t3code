@@ -80,7 +80,7 @@ line when the variable is missing. Without it, `tools/check.sh` runs the Rust ch
 | Ack window          | same, with `target/release/examples/effect_fixture --fixture`                                                                   | Ack window and `Interrupt`                                                                           |
 | Client reducers     | `cargo run -p conn-engine --features fake-provider --example export_turn -- x.json`, then `crates/conn-engine/tools/client-check.mjs x.json` | Shell and thread streams rebuild the right state in the client's reducers                            |
 | Replay              | `node crates/conn-server/tools/replay.mjs target/release/examples/replay_server`                                                | Every call in the `remote` and `turn` recordings gets a decodable answer or the not-supported defect |
-| MCP parity          | `node crates/conn-mcp/tools/parity.mjs --no-model target/release/examples/replay_server`                                        | `/mcp` answers as the T3 server's does, on the same calls                                            |
+| MCP parity          | `node crates/conn-mcp/tools/parity.mjs target/release/examples/replay_server`                                                   | `/mcp` answers as the T3 server's does, on the same calls                                            |
 | Orbit flow          | `node crates/conn-server/tools/orbit-flow.mjs target/release/examples/replay_server`                                            | Orbit's container flow: start, project add, session issue, launch over `/mcp`, revoke, clean stop   |
 
 `replay_server` is `conn-server` with the engine's scripted fake provider, so these checks call
@@ -91,7 +91,7 @@ Checks that call a model are not in `tools/check.sh`:
 
 - `cargo test -p conn-provider-claude live_ -- --ignored --test-threads=1` (real CLI, Haiku),
   and the same for `conn-provider-codex`.
-- `parity.mjs` without `--no-model`: one Haiku turn on the T3 server.
+- `parity.mjs --model`: one Haiku turn on the T3 server.
 - `orbit-flow.mjs target/release/conn-server`: one Haiku turn.
 - The recorder with `--rust target/release/conn-server`.
 
