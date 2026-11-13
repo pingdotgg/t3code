@@ -71,6 +71,7 @@ export interface SettingsSearchItem {
   readonly managedTunnelOnly?: boolean;
   readonly peerLinksOnly?: boolean;
   readonly fastWorktreeCheckoutOnly?: boolean;
+  readonly agentFeedbackOnly?: boolean;
   readonly textGeneratorsOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
@@ -87,6 +88,7 @@ export interface SettingsSearchAvailability {
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
   readonly hasFastWorktreeCheckoutEnvironment?: boolean;
+  readonly hasAgentFeedbackEnvironment?: boolean;
   /** An environment without a provider allow-list, which hides text generators. */
   readonly hasTextGeneratorsEnvironment?: boolean;
   readonly hasPrimaryEnvironment?: boolean;
@@ -937,6 +939,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Agent feedback",
     to: "/settings/maintenance",
     scope: "environment-defaults",
+    agentFeedbackOnly: true,
     searchTerms: ["report bug problem t3 team send feedback agents tools"],
   },
   {
@@ -1551,6 +1554,7 @@ export function filterAvailableSettingsSearchItems(
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
       (!item.fastWorktreeCheckoutOnly ||
         availability.hasFastWorktreeCheckoutEnvironment === true) &&
+      (!item.agentFeedbackOnly || availability.hasAgentFeedbackEnvironment === true) &&
       (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true),
   );
 }
