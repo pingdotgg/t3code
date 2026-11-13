@@ -1442,7 +1442,7 @@ interface ActiveAcpTurn {
     string,
     {
       readonly id: OrchestrationV2PlanArtifact["id"];
-      readonly startedAt: DateTime.Utc;
+      startedAt: DateTime.Utc;
       latest: OrchestrationV2PlanArtifact | null;
     }
   >;
@@ -1992,6 +1992,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           new Map<string, OrchestrationV2ProviderThread>(),
         );
         const nativeBuildConfigurationBySessionId = new Map<string, AcpNativeBuildConfiguration>();
+        // An ACP planId names one plan for the whole session, not one turn.
+        const plansBySessionId = new Map<string, ActiveAcpTurn["plans"]>();
         const initialSessionActivationFailure = yield* Ref.make<{
           readonly sessionId: string;
           readonly error: EffectAcpErrors.AcpError;
@@ -4506,7 +4508,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           let plan: OrchestrationV2PlanArtifact;
           if (update.kind === "removed") {
             if (planState.latest === null) return;
-            plan = { ...planState.latest, status: "superseded" };
+            plan = { ...planState.latest, ...base, status: "superseded" };
           } else if (update.kind === "items") {
             // A cancelled entry is not outstanding work, and plan steps have no
             // cancelled status, so drop it rather than show it as pending.
@@ -4549,6 +4551,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               kind: "proposed_plan",
               markdown,
             };
+          }
+          if (planState.latest !== null && planState.latest.runId !== plan.runId) {
+            planState.startedAt = now;
           }
           planState.latest = plan;
           context.plans.set(update.nativePlanId, planState);
@@ -8377,7 +8382,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               awaitingBackgroundHydration: new Set(),
               pendingInjectedReport: new Set(),
               earlyInjectedReportObserved: false,
-              plans: new Map(),
+              plans: plansBySessionId.get(requestedSessionId) ?? new Map(),
               interrupted: false,
               finalized: false,
               finalizedStatus: null,
@@ -8408,6 +8413,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 }
               }
             }
+            plansBySessionId.set(requestedSessionId, context.plans);
             yield* Ref.set(activeTurn, context);
             yield* Ref.set(stoppedRunQuarantine, false);
             const runningTurn = providerTurnPayload(context, "running", null);
