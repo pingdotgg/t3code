@@ -2451,64 +2451,98 @@ it.effect("keeps a queued message queued when promoted into a run that Stop reac
 
 // regression: #25796 a thread's effects run in order, so a steer its provider
 // holds (Claude, while it compacts) must not keep Stop waiting behind it.
-it.effect("Stop cancels steers that have not reached the provider", () =>
-  Effect.gen(function* () {
-    const holding = yield* Deferred.make<void>();
-    const { started, steered, interrupted, layer, startFirstTurn } =
-      yield* nextTurnSelectionHarness(
-        "stop-undelivered-steers",
-        false,
-        true,
-        Effect.void,
-        true,
-        undefined,
-        () => Deferred.succeed(holding, undefined).pipe(Effect.andThen(Effect.never)),
-      );
-    yield* Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      const threadId = yield* startFirstTurn;
-      const first = started[0]!;
-      for (const id of ["held", "waiting"]) {
+it.effect.each(["pending", "completed"] as const)(
+  "Stop cancels steers that have not reached the provider (running steer %s)",
+  (reported) =>
+    Effect.gen(function* () {
+      let report: (
+        turn: ProviderAdapter.ProviderAdapterV2SteerInput,
+      ) => Effect.Effect<unknown> = () => Effect.void;
+      const { events, started, steered, interrupted, layer, startFirstTurn } =
+        yield* nextTurnSelectionHarness(
+          `stop-undelivered-steers-${reported}`,
+          false,
+          true,
+          Effect.void,
+          true,
+          undefined,
+          (turn) => Effect.suspend(() => report(turn)).pipe(Effect.andThen(Effect.never)),
+        );
+      // The provider reports on the steer while its call is still unanswered.
+      report = (turn) =>
+        Effect.forEach(
+          reported === "pending" ? (["pending"] as const) : (["pending", "completed"] as const),
+          (status) =>
+            Queue.offer(events, {
+              type: "steer.updated",
+              driver,
+              threadId: turn.threadId,
+              runId: turn.runId,
+              messageId: turn.message.messageId,
+              status,
+            }),
+        );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        const first = started[0]!;
+        const running = MessageId.make("message:running");
+        const waiting = MessageId.make("message:waiting");
+        const steerStatuses = Effect.map(
+          orchestrator.getThreadProjection(threadId),
+          ({ turnItems }) =>
+            turnItems.flatMap((item) =>
+              item.type === "user_message" && item.inputIntent === "steer"
+                ? [[item.messageId, item.status]]
+                : [],
+            ),
+        );
+        for (const messageId of [running, waiting]) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(messageId),
+            threadId,
+            messageId,
+            text: messageId,
+            attachments: [],
+            modelSelection: runSelection,
+            dispatchMode: { type: "steer_active", targetRunId: first.runId },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        }
+        const reportedSteer = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "turn-item.updated" &&
+              event.payload.type === "user_message" &&
+              event.payload.messageId === running &&
+              event.payload.status === reported,
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        const draining = yield* worker.drain().pipe(Effect.forkScoped);
+        yield* Fiber.join(reportedSteer);
         yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make(id),
+          type: "run.interrupt",
+          commandId: CommandId.make("stop"),
           threadId,
-          messageId: MessageId.make(`message:${id}`),
-          text: id,
-          attachments: [],
-          modelSelection: runSelection,
-          dispatchMode: { type: "steer_active", targetRunId: first.runId },
-          createdBy: "user",
-          creationSource: "web",
+          runId: first.runId,
         });
-      }
-      const draining = yield* worker.drain().pipe(Effect.forkScoped);
-      yield* Deferred.await(holding);
-      yield* orchestrator.dispatch({
-        type: "run.interrupt",
-        commandId: CommandId.make("stop"),
-        threadId,
-        runId: first.runId,
-      });
-      yield* Fiber.join(draining);
+        yield* Fiber.join(draining);
 
-      assert.deepEqual(steered, ["held"]);
-      assert.lengthOf(interrupted, 1);
-      const { turnItems } = yield* orchestrator.getThreadProjection(threadId);
-      assert.deepEqual(
-        turnItems.flatMap((item) =>
-          item.type === "user_message" && item.inputIntent === "steer"
-            ? [[item.messageId, item.status]]
-            : [],
-        ),
-        [
-          [MessageId.make("message:held"), "cancelled"],
-          [MessageId.make("message:waiting"), "cancelled"],
-        ],
-      );
-    }).pipe(Effect.provide(layer));
-  }),
+        assert.deepEqual(steered, [running]);
+        assert.lengthOf(interrupted, 1);
+        // A steer the provider confirmed stays read; one whose effect never ran is cancelled.
+        assert.deepEqual(yield* steerStatuses, [
+          [running, reported === "pending" ? "cancelled" : "completed"],
+          [waiting, "cancelled"],
+        ]);
+      }).pipe(Effect.provide(layer));
+    }),
 );
 
 // regression: #32891 a restart that Stop already reached is lost

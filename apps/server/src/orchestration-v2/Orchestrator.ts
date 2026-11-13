@@ -13163,7 +13163,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
         ),
       );
-    for (const { request } of undeliveredSteers) {
+    for (const { request, status, attemptCount } of undeliveredSteers) {
       if (request.type !== "provider-turn.steer") continue;
       const item = yield* projectionStore
         .getTurnItem({
@@ -13175,9 +13175,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
           ),
         );
+      // An unsettled effect is not an unread steer: a provider can confirm one before its
+      // call returns. Only a steer the provider still reports pending, or one whose effect
+      // never ran, is known not to have been read.
+      const neverSent = status === "pending" && attemptCount === 0;
       if (
         item?.type !== "user_message" ||
-        (item.status !== "pending" && item.status !== "completed")
+        !(item.status === "pending" || (neverSent && item.status === "completed"))
       ) {
         continue;
       }
