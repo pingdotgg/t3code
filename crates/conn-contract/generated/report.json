@@ -1,0 +1,2196 @@
+{
+  "roots": 997,
+  "namedSchemas": 1788,
+  "references": 1456,
+  "rustItems": 1738,
+  "literalTypes": 501,
+  "methods": 235,
+  "methodsFullyTyped": 235,
+  "opaqueFallbacks": 0,
+  "lax": 13,
+  "dedupedItems": 825,
+  "passThroughLinksDropped": 9,
+  "opaque": [],
+  "laxDetails": [
+    {
+      "path": "PeerLinkRequestAnswerInput.answer<link>.urls",
+      "why": "array needs at least 1 item(s); not enforced"
+    },
+    {
+      "path": "ResolvedKeybindingsConfig[].command",
+      "why": "literals plus template literal decoded as any string"
+    },
+    {
+      "path": "ServerSettings.projectSettingsOverrides{}",
+      "why": "struct with index signature uses serde flatten"
+    },
+    {
+      "path": "ManagedPolicySummaryLimits.clients",
+      "why": "array needs at least 1 item(s); not enforced"
+    },
+    {
+      "path": "ManagedPolicySummaryLimits.providers.allowedDrivers",
+      "why": "array needs at least 1 item(s); not enforced"
+    },
+    {
+      "path": "EnvironmentTheme.colors",
+      "why": "record key constraint not enforced"
+    },
+    {
+      "path": "EnvironmentTheme.variants.light",
+      "why": "record key constraint not enforced"
+    },
+    {
+      "path": "EnvironmentTheme.variants.dark",
+      "why": "record key constraint not enforced"
+    },
+    {
+      "path": "ServerRemoveKeybindingInput.command",
+      "why": "literals plus template literal decoded as any string"
+    },
+    {
+      "path": "ServerSettingsPatch.projectSettingsOverrides{}",
+      "why": "struct with index signature uses serde flatten"
+    },
+    {
+      "path": "ServerUpsertKeybindingInput.command",
+      "why": "literals plus template literal decoded as any string"
+    },
+    {
+      "path": "TerminalAttachInput.env",
+      "why": "record key constraint not enforced"
+    },
+    {
+      "path": "TerminalOpenInput.env",
+      "why": "record key constraint not enforced"
+    }
+  ],
+  "fixtures": {
+    "roots": 995,
+    "samples": 3045,
+    "sampleFailures": 2,
+    "encodeForbidden": 6,
+    "failed": [
+      "ChatAttachment#0: SampleError",
+      "rpc::server::check_otlp_endpoint::Payload#0: SampleError"
+    ],
+    "keys": 996
+  },
+  "methodTypes": [
+    {
+      "tag": "agentSessions.import",
+      "stream": false,
+      "origin": "official",
+      "payload": "AgentSessionImportInput",
+      "success": "AgentSessionImportResult",
+      "error": "AgentSessionsImportError",
+      "typed": true
+    },
+    {
+      "tag": "agentSessions.scan",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "success": "AgentSessionScanResult",
+      "error": "AgentSessionsScanError",
+      "typed": true
+    },
+    {
+      "tag": "annotations.create",
+      "stream": false,
+      "origin": "fork",
+      "payload": "AnnotationCreateInput",
+      "success": "AnnotationCreateResult",
+      "error": "AnnotationsCreateError",
+      "typed": true
+    },
+    {
+      "tag": "annotations.remove",
+      "stream": false,
+      "origin": "fork",
+      "payload": "AnnotationRemoveInput",
+      "success": "AnnotationRemoveResult",
+      "error": "AnnotationsRemoveError",
+      "typed": true
+    },
+    {
+      "tag": "annotations.subscribe",
+      "stream": true,
+      "origin": "fork",
+      "payload": "AnnotationProjectInput",
+      "item": "AnnotationList",
+      "error": "AnnotationsRemoveError",
+      "typed": true
+    },
+    {
+      "tag": "assets.createUrl",
+      "stream": false,
+      "origin": "official",
+      "payload": "AssetCreateUrlInput",
+      "success": "AssetCreateUrlResult",
+      "error": "AssetsCreateUrlError",
+      "typed": true
+    },
+    {
+      "tag": "assets.persistChatAttachments",
+      "stream": false,
+      "origin": "official",
+      "payload": "PersistChatAttachmentsInput",
+      "success": "PersistChatAttachmentsResult",
+      "error": "AssetsPersistChatAttachmentsError",
+      "typed": true
+    },
+    {
+      "tag": "attachments.createUploadUrl",
+      "stream": false,
+      "origin": "official",
+      "payload": "AttachmentCreateUploadUrlInput",
+      "success": "AttachmentCreateUploadUrlResult",
+      "error": "AttachmentsCreateUploadUrlError",
+      "typed": true
+    },
+    {
+      "tag": "attachments.delete",
+      "stream": false,
+      "origin": "official",
+      "payload": "AttachmentDeleteInput",
+      "success": "()",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "cloud.getRelayClientStatus",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "success": "RelayClientStatusSchema",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "cloud.installRelayClient",
+      "stream": true,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "item": "RelayClientInstallProgressEventSchema",
+      "error": "CloudInstallRelayClientError",
+      "typed": true
+    },
+    {
+      "tag": "credentials.fillForSite",
+      "stream": false,
+      "origin": "fork",
+      "payload": "FillSiteCredentialInput",
+      "success": "FillSiteCredentialResult",
+      "error": "CredentialsFillForSiteError",
+      "typed": true
+    },
+    {
+      "tag": "credentials.listForSite",
+      "stream": false,
+      "origin": "fork",
+      "payload": "ListSiteCredentialsInput",
+      "success": "ListSiteCredentialsResult",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "device.action",
+      "stream": false,
+      "origin": "official",
+      "payload": "DeviceActionInput",
+      "success": "DeviceDetail",
+      "error": "DeviceListError",
+      "typed": true
+    },
+    {
+      "tag": "device.close",
+      "stream": false,
+      "origin": "official",
+      "payload": "DeviceCloseInput",
+      "success": "()",
+      "error": "DeviceListError",
+      "typed": true
+    },
+    {
+      "tag": "device.configure",
+      "stream": false,
+      "origin": "official",
+      "payload": "DeviceConfigureInput",
+      "success": "DeviceServiceState",
+      "error": "DeviceListError",
+      "typed": true
+    },
+    {
+      "tag": "device.detail",
+      "stream": false,
+      "origin": "official",
+      "payload": "DeviceDetailInput",
+      "success": "DeviceDetail",
+      "error": "DeviceListError",
+      "typed": true
+    },
+    {
+      "tag": "device.easAccount",
+      "stream": false,
+      "origin": "official",
+      "payload": "DeviceEasAccountInput",
+      "success": "DeviceEasAccount",
+      "error": "DeviceEasAccountError",
+      "typed": true
+    },
+    {
+      "tag": "device.list",
+      "stream": false,
+      "origin": "official",
+      "payload": "DeviceListInput",
+      "success": "DeviceServiceState",
+      "error": "DeviceListError",
+      "typed": true
+    },
+    {
+      "tag": "device.open",
+      "stream": false,
+      "origin": "official",
+      "payload": "DeviceOpenInput",
+      "success": "DeviceSession",
+      "error": "DeviceListError",
+      "typed": true
+    },
+    {
+      "tag": "device.shutdown",
+      "stream": false,
+      "origin": "official",
+      "payload": "DeviceShutdownInput",
+      "success": "()",
+      "error": "DeviceListError",
+      "typed": true
+    },
+    {
+      "tag": "device.simlockIdentity",
+      "stream": false,
+      "origin": "official",
+      "payload": "DeviceSimlockIdentityInput",
+      "success": "DeviceSimlockIdentity",
+      "error": "DeviceSimlockIdentityError",
+      "typed": true
+    },
+    {
+      "tag": "device.testHost",
+      "stream": false,
+      "origin": "official",
+      "payload": "SshDeviceHostConfig",
+      "success": "DeviceHostSummary",
+      "error": "DeviceListError",
+      "typed": true
+    },
+    {
+      "tag": "filesystem.browse",
+      "stream": false,
+      "origin": "official",
+      "payload": "FilesystemBrowseInput",
+      "success": "FilesystemBrowseResult",
+      "error": "FilesystemBrowseError",
+      "typed": true
+    },
+    {
+      "tag": "filesystem.getMetadata",
+      "stream": false,
+      "origin": "official",
+      "payload": "FilesystemGetMetadataInput",
+      "success": "FilesystemGetMetadataResult",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "git.preparePullRequestThread",
+      "stream": false,
+      "origin": "official",
+      "payload": "GitPreparePullRequestThreadInput",
+      "success": "GitPreparePullRequestThreadResult",
+      "error": "VcsRefreshBranchError",
+      "typed": true
+    },
+    {
+      "tag": "git.resolvePullRequest",
+      "stream": false,
+      "origin": "official",
+      "payload": "GitPullRequestRefInput",
+      "success": "GitResolvePullRequestResult",
+      "error": "VcsRefreshBranchError",
+      "typed": true
+    },
+    {
+      "tag": "git.runStackedAction",
+      "stream": true,
+      "origin": "official",
+      "payload": "GitRunStackedActionInput",
+      "item": "GitActionProgressEvent",
+      "error": "VcsRefreshBranchError",
+      "typed": true
+    },
+    {
+      "tag": "guestShare.create",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2GetThreadFamilyInput",
+      "success": "GuestShareCreateResult",
+      "error": "GuestShareCreateError",
+      "typed": true
+    },
+    {
+      "tag": "mcpApps.callTool",
+      "stream": false,
+      "origin": "official",
+      "payload": "McpAppCallToolInput",
+      "success": "McpAppCallToolResult",
+      "error": "McpAppsCallToolError",
+      "typed": true
+    },
+    {
+      "tag": "mcpApps.readResource",
+      "stream": false,
+      "origin": "official",
+      "payload": "McpAppReadResourceInput",
+      "success": "McpAppReadResourceResult",
+      "error": "McpAppsCallToolError",
+      "typed": true
+    },
+    {
+      "tag": "mcpApps.toolInfo",
+      "stream": false,
+      "origin": "official",
+      "payload": "McpAppToolInfoInput",
+      "success": "McpAppToolInfo",
+      "error": "McpAppsCallToolError",
+      "typed": true
+    },
+    {
+      "tag": "mcpApps.updateModelContext",
+      "stream": false,
+      "origin": "official",
+      "payload": "McpAppUpdateModelContextInput",
+      "success": "()",
+      "error": "McpAppsCallToolError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.dispatchCommand",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2Command",
+      "success": "OrchestrationV2DispatchCommandResult",
+      "error": "OrchestrationDispatchCommandError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.forceStopThread",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2ForceStopThreadInput",
+      "success": "OrchestrationV2ForceStopThreadResult",
+      "error": "OrchestrationForceStopThreadError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.getArchivedShellSnapshot",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "success": "OrchestrationV2ArchivedShellSnapshot",
+      "error": "OrchestrationSubscribeShellError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.getFullThreadDiff",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationGetFullThreadDiffInput",
+      "success": "ThreadTurnDiff",
+      "error": "OrchestrationGetFullThreadDiffError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.getNativeChildWork",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2GetThreadFamilyInput",
+      "success": "OrchestrationV2GetNativeChildWorkResult",
+      "error": "OrchestrationGetNativeChildWorkError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.getOlderSettledThreads",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2GetOlderSettledThreadsInput",
+      "success": "OrchestrationV2OlderSettledThreadsPage",
+      "error": "OrchestrationSubscribeShellError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.getThreadFamily",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2GetThreadFamilyInput",
+      "success": "OrchestrationV2ThreadFamily",
+      "error": "OrchestrationSubscribeShellError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.getThreadLinkMetadata",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2WorktreeThreadIds",
+      "success": "Map<String, OrchestrationV2ThreadLinkMetadata>",
+      "error": "OrchestrationSubscribeShellError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.getThreadProjection",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2GetThreadFamilyInput",
+      "success": "OrchestrationV2ThreadProjection",
+      "error": "OrchestrationGetTurnItemError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.getThreadTitles",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2WorktreeThreadIds",
+      "success": "OrchestrationV2ThreadTitles",
+      "error": "OrchestrationSubscribeShellError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.getTurnDiff",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationGetTurnDiffInput",
+      "success": "ThreadTurnDiff",
+      "error": "OrchestrationGetTurnDiffError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.getTurnItem",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2GetTurnItemInput",
+      "success": "OrchestrationV2GetTurnItemResult",
+      "error": "OrchestrationGetTurnItemError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.getWorkflowScript",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2GetWorkflowScriptInput",
+      "success": "OrchestrationV2GetWorkflowScriptResult",
+      "error": "OrchestrationGetWorkflowScriptError2",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.getWorktreeThreadIds",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2GetWorktreeThreadIdsInput",
+      "success": "OrchestrationV2WorktreeThreadIds",
+      "error": "OrchestrationSubscribeShellError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.launchThread",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2ThreadLaunchInput",
+      "success": "OrchestrationV2ThreadLaunchResult",
+      "error": "OrchestrationLaunchThreadError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.searchThread",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2SearchThreadInput",
+      "success": "OrchestrationV2SearchThreadResult",
+      "error": "OrchestrationSearchThreadError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.searchThreadStream",
+      "stream": true,
+      "origin": "official",
+      "payload": "OrchestrationV2SearchThreadInput",
+      "item": "OrchestrationV2SearchThreadResult",
+      "error": "OrchestrationSearchThreadError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.searchThreads",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2SearchThreadsInput",
+      "success": "OrchestrationV2SearchThreadsResult",
+      "error": "OrchestrationSearchThreadsError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.stopWorkflow",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2StopWorkflowInput",
+      "success": "()",
+      "error": "OrchestrationStopWorkflowError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.subscribeCommandOutput",
+      "stream": true,
+      "origin": "official",
+      "payload": "OrchestrationV2SubscribeCommandOutputInput",
+      "item": "OrchestrationV2CommandOutputFrame",
+      "error": "OrchestrationSubscribeCommandOutputError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.subscribePromptSuggestion",
+      "stream": true,
+      "origin": "official",
+      "payload": "OrchestrationV2GetThreadFamilyInput",
+      "item": "Option<OrchestrationV2PromptSuggestion>",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.subscribeShell",
+      "stream": true,
+      "origin": "official",
+      "payload": "OrchestrationV2SubscribeShellInput",
+      "item": "OrchestrationV2ShellStreamItem",
+      "error": "OrchestrationSubscribeShellError",
+      "typed": true
+    },
+    {
+      "tag": "orchestration.subscribeThread",
+      "stream": true,
+      "origin": "official",
+      "payload": "OrchestrationV2SubscribeThreadInput",
+      "item": "OrchestrationV2ThreadStreamItem",
+      "error": "OrchestrationGetTurnItemError",
+      "typed": true
+    },
+    {
+      "tag": "panels.requests",
+      "stream": true,
+      "origin": "fork",
+      "payload": "AgentPanelSubscribeInput",
+      "item": "AgentPanelRequest",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "panels.respond",
+      "stream": false,
+      "origin": "fork",
+      "payload": "AgentPanelResponse",
+      "success": "()",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "peerLinks.answerRequest",
+      "stream": false,
+      "origin": "official",
+      "payload": "PeerLinkRequestAnswerInput",
+      "success": "()",
+      "error": "PeerLinksAnswerRequestError",
+      "typed": true
+    },
+    {
+      "tag": "peerLinks.link",
+      "stream": false,
+      "origin": "official",
+      "payload": "PeerLinkCreateInput",
+      "success": "PeerLink",
+      "error": "PeerLinksLinkError",
+      "typed": true
+    },
+    {
+      "tag": "peerLinks.list",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "success": "PeerLinksListSuccess",
+      "error": "PeerLinksLinkError",
+      "typed": true
+    },
+    {
+      "tag": "peerLinks.unlink",
+      "stream": false,
+      "origin": "official",
+      "payload": "PeerLinkRemoveInput",
+      "success": "PeerLinkRemoveResult",
+      "error": "PeerLinksLinkError",
+      "typed": true
+    },
+    {
+      "tag": "preview.adjust",
+      "stream": false,
+      "origin": "official",
+      "payload": "PreviewAdjustInput",
+      "success": "PreviewSessionSnapshot",
+      "error": "PreviewOpenError",
+      "typed": true
+    },
+    {
+      "tag": "preview.clearProfile",
+      "stream": false,
+      "origin": "official",
+      "payload": "PreviewClearProfileInput",
+      "success": "()",
+      "error": "PreviewClearProfileError",
+      "typed": true
+    },
+    {
+      "tag": "preview.close",
+      "stream": false,
+      "origin": "official",
+      "payload": "PreviewCloseInput",
+      "success": "()",
+      "error": "PreviewOpenError",
+      "typed": true
+    },
+    {
+      "tag": "preview.desktopRegister",
+      "stream": false,
+      "origin": "official",
+      "payload": "DesktopTabBinding",
+      "success": "DesktopTabConnection",
+      "error": "PreviewDesktopRegisterError",
+      "typed": true
+    },
+    {
+      "tag": "preview.desktopRequests",
+      "stream": true,
+      "origin": "official",
+      "payload": "DesktopTabConnection",
+      "item": "PreviewAutomationStreamEvent",
+      "error": "PreviewDesktopRegisterError",
+      "typed": true
+    },
+    {
+      "tag": "preview.desktopRespond",
+      "stream": false,
+      "origin": "official",
+      "payload": "PreviewAutomationResponse",
+      "success": "()",
+      "error": "PreviewDesktopRespondError",
+      "typed": true
+    },
+    {
+      "tag": "preview.list",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2GetThreadFamilyInput",
+      "success": "PreviewListResult",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "preview.open",
+      "stream": false,
+      "origin": "official",
+      "payload": "PreviewOpenInput",
+      "success": "PreviewSessionSnapshot",
+      "error": "PreviewOpenError",
+      "typed": true
+    },
+    {
+      "tag": "preview.reportProfiles",
+      "stream": false,
+      "origin": "official",
+      "payload": "PreviewReportProfilesInput",
+      "success": "()",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "preview.reportStatus",
+      "stream": false,
+      "origin": "official",
+      "payload": "PreviewReportStatusInput",
+      "success": "()",
+      "error": "PreviewOpenError",
+      "typed": true
+    },
+    {
+      "tag": "preview.resize",
+      "stream": false,
+      "origin": "official",
+      "payload": "PreviewResizeInput",
+      "success": "PreviewSessionSnapshot",
+      "error": "PreviewOpenError",
+      "typed": true
+    },
+    {
+      "tag": "preview.stopLocalServer",
+      "stream": false,
+      "origin": "official",
+      "payload": "PreviewStopLocalServerInput",
+      "success": "()",
+      "error": "PreviewStopLocalServerError",
+      "typed": true
+    },
+    {
+      "tag": "projectClone.cancel",
+      "stream": false,
+      "origin": "official",
+      "payload": "AnnotationProjectInput",
+      "success": "ProjectCloneActionResult",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "projectClone.retry",
+      "stream": false,
+      "origin": "official",
+      "payload": "AnnotationProjectInput",
+      "success": "ProjectCloneActionResult",
+      "error": "ProjectCloneRetryError",
+      "typed": true
+    },
+    {
+      "tag": "projectClone.start",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProjectCloneStartInput",
+      "success": "ProjectCloneStartResult",
+      "error": "ProjectCloneStartError",
+      "typed": true
+    },
+    {
+      "tag": "projects.createFromThread",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2GetThreadFamilyInput",
+      "success": "AnnotationProjectInput",
+      "error": "ProjectsCreateNewError",
+      "typed": true
+    },
+    {
+      "tag": "projects.createNew",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProjectCreateNewInput",
+      "success": "ProjectCreateNewResult",
+      "error": "ProjectsCreateNewError",
+      "typed": true
+    },
+    {
+      "tag": "projects.ensureScratch",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "success": "AnnotationProjectInput",
+      "error": "ProjectsCreateNewError",
+      "typed": true
+    },
+    {
+      "tag": "projects.listEntries",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProjectListEntriesInput",
+      "success": "ProjectListEntriesResult",
+      "error": "ProjectsListEntriesError",
+      "typed": true
+    },
+    {
+      "tag": "projects.listIgnoredFiles",
+      "stream": false,
+      "origin": "official",
+      "payload": "VcsPullInput",
+      "success": "ProjectListIgnoredFilesResult",
+      "error": "ProjectsListEntriesError",
+      "typed": true
+    },
+    {
+      "tag": "projects.mutate",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProjectMutation",
+      "success": "Project",
+      "error": "ProjectsMutateError",
+      "typed": true
+    },
+    {
+      "tag": "projects.readFile",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProjectReadFileInput",
+      "success": "ProjectReadFileResult",
+      "error": "ProjectsReadFileError",
+      "typed": true
+    },
+    {
+      "tag": "projects.searchContents",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProjectSearchContentsInput",
+      "success": "ProjectSearchContentsResult",
+      "error": "ProjectsSearchContentsError",
+      "typed": true
+    },
+    {
+      "tag": "projects.searchEntries",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProjectSearchEntriesInput",
+      "success": "ProjectListEntriesResult",
+      "error": "ProjectsSearchEntriesError",
+      "typed": true
+    },
+    {
+      "tag": "projects.writeFile",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProjectWriteFileInput",
+      "success": "ProjectWriteFileResult",
+      "error": "ProjectsWriteFileError",
+      "typed": true
+    },
+    {
+      "tag": "provider.auth.cancel",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProviderAuthCancelInput",
+      "success": "ProviderAuthState",
+      "error": "ProviderAuthCancelError",
+      "typed": true
+    },
+    {
+      "tag": "provider.auth.complete",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProviderAuthCompleteInput",
+      "success": "ProviderAuthState",
+      "error": "ProviderAuthCancelError",
+      "typed": true
+    },
+    {
+      "tag": "provider.auth.logout",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProviderSetupInput",
+      "success": "ProviderAuthState",
+      "error": "ProviderAuthCancelError",
+      "typed": true
+    },
+    {
+      "tag": "provider.auth.removeMethod",
+      "stream": false,
+      "origin": "official",
+      "payload": "ChatGptReconnectProfileInput",
+      "success": "ProviderAuthState",
+      "error": "ProviderAuthCancelError",
+      "typed": true
+    },
+    {
+      "tag": "provider.auth.respond",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProviderAuthRespondInput",
+      "success": "ProviderAuthState",
+      "error": "ProviderAuthCancelError",
+      "typed": true
+    },
+    {
+      "tag": "provider.auth.start",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProviderAuthStartInput",
+      "success": "ProviderAuthState",
+      "error": "ProviderAuthCancelError",
+      "typed": true
+    },
+    {
+      "tag": "provider.auth.subscribe",
+      "stream": true,
+      "origin": "official",
+      "payload": "ProviderSetupInput",
+      "item": "ProviderAuthState",
+      "error": "ProviderAuthCancelError",
+      "typed": true
+    },
+    {
+      "tag": "provider.chatgpt.handoff.subscribe",
+      "stream": true,
+      "origin": "official",
+      "payload": "ChatGptHandoffInput",
+      "item": "ChatGptHandoffState",
+      "error": "ProviderAuthCancelError",
+      "typed": true
+    },
+    {
+      "tag": "provider.chatgpt.import-profile",
+      "stream": false,
+      "origin": "official",
+      "payload": "ChatGptImportProfileInput",
+      "success": "ProviderAuthState",
+      "error": "ProviderAuthCancelError",
+      "typed": true
+    },
+    {
+      "tag": "provider.chatgpt.reconnect-profile",
+      "stream": false,
+      "origin": "official",
+      "payload": "ChatGptReconnectProfileInput",
+      "success": "Option<ChatGptReconnectProfile>",
+      "error": "ProviderAuthCancelError",
+      "typed": true
+    },
+    {
+      "tag": "provider.consumeResetCredit",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProviderConsumeResetCreditInput",
+      "success": "ProviderConsumeResetCreditResult",
+      "error": "ProviderConsumeResetCreditError",
+      "typed": true
+    },
+    {
+      "tag": "provider.install.cancel",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProviderInstallCancelInput",
+      "success": "ProviderInstallState",
+      "error": "ProviderAuthCancelError",
+      "typed": true
+    },
+    {
+      "tag": "provider.install.remove",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProviderSetupInput",
+      "success": "ProviderInstallState",
+      "error": "ProviderAuthCancelError",
+      "typed": true
+    },
+    {
+      "tag": "provider.install.start",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProviderSetupInput",
+      "success": "ProviderInstallState",
+      "error": "ProviderAuthCancelError",
+      "typed": true
+    },
+    {
+      "tag": "provider.install.subscribe",
+      "stream": true,
+      "origin": "official",
+      "payload": "ProviderSetupInput",
+      "item": "ProviderInstallState",
+      "error": "ProviderAuthCancelError",
+      "typed": true
+    },
+    {
+      "tag": "provider.uploadFeedback",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProviderUploadFeedbackInput",
+      "success": "ProviderUploadFeedbackResult",
+      "error": "ProviderUploadFeedbackError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.activity",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestRef",
+      "success": "PullRequestActivity",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.changeBreakdown",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestRef",
+      "success": "Option<PullRequestsChangeBreakdownSuccess>",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.checks",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestRef",
+      "success": "Option<PullRequestChecks>",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.comment",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestCommentInput",
+      "success": "()",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.detail",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestRef",
+      "success": "PullRequestDetail",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.diffFileContents",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestDiffFileContentsInput",
+      "success": "ReviewDiffFileContentsResult",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.filesViewed",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestRef",
+      "success": "PullRequestFilesViewedResult",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.filterOptions",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestFilterOptionsInput",
+      "success": "PullRequestFilterOptions",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.generateReviewGuide",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestRef",
+      "success": "PullRequestReviewGuideResult",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.invalidate",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestInvalidateInput",
+      "success": "()",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.labelCandidates",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestRef",
+      "success": "PullRequestLabelCandidateList",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.linkedThreads",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestRef",
+      "success": "PullRequestLinkedThreadsResult",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.list",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestListInput",
+      "success": "PullRequestListResult",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.listStats",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestListStatsInput",
+      "success": "PullRequestListStatsResult",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.preview",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestRef",
+      "success": "PullRequestPreview",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.replyToThread",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestThreadReplyInput",
+      "success": "()",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.reportState",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestReportStateInput",
+      "success": "()",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.requestReviewers",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestReviewerRequestInput",
+      "success": "()",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.reviewGuide",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestRef",
+      "success": "PullRequestReviewGuideResult",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.reviewerCandidates",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestReviewerCandidatesInput",
+      "success": "PullRequestReviewerCandidateList",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.routing",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestRef",
+      "success": "PullRequestRoutingResult",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.routingIdentity",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestRoutingIdentityInput",
+      "success": "PullRequestRoutingIdentityResult",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.runAction",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestActionInput",
+      "success": "Option<PullRequestSummary>",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.setFilesViewed",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestSetFilesViewedInput",
+      "success": "()",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.setLabels",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestLabelChangeInput",
+      "success": "()",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.setReaction",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestReactionInput",
+      "success": "()",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.setThreadResolution",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestThreadResolutionInput",
+      "success": "()",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.stack",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestRef",
+      "success": "Option<PullRequestStack>",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.submitReview",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestSubmitReviewInput",
+      "success": "()",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.subscribeRefreshes",
+      "stream": true,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "item": "i64",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.summary",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestRef",
+      "success": "PullRequestSummary",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.threadComments",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestThreadCommentsInput",
+      "success": "PullRequestThreadCommentsResult",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.update",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestUpdateInput",
+      "success": "()",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.updateComment",
+      "stream": false,
+      "origin": "official",
+      "payload": "PullRequestCommentUpdateInput",
+      "success": "()",
+      "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "review.getBranchCommits",
+      "stream": false,
+      "origin": "official",
+      "payload": "ReviewBranchCommitsInput",
+      "success": "ReviewBranchCommitsResult",
+      "error": "ReviewGetDiffPreviewError",
+      "typed": true
+    },
+    {
+      "tag": "review.getDiffFileContents",
+      "stream": false,
+      "origin": "official",
+      "payload": "ReviewDiffFileContentsInput",
+      "success": "ReviewDiffFileContentsResult",
+      "error": "ReviewGetDiffPreviewError",
+      "typed": true
+    },
+    {
+      "tag": "review.getDiffPreview",
+      "stream": false,
+      "origin": "official",
+      "payload": "ReviewDiffPreviewInput",
+      "success": "ReviewDiffPreviewResult",
+      "error": "ReviewGetDiffPreviewError",
+      "typed": true
+    },
+    {
+      "tag": "scheduledTasks.delete",
+      "stream": false,
+      "origin": "official",
+      "payload": "AuthRevokePairingLinkInput",
+      "success": "AuthRevokePairingLinkInput",
+      "error": "ScheduledTasksDeleteError",
+      "typed": true
+    },
+    {
+      "tag": "scheduledTasks.getWebhookDelivery",
+      "stream": false,
+      "origin": "official",
+      "payload": "ScheduledTaskGetWebhookDeliveryInput",
+      "success": "ScheduledTaskGetWebhookDeliveryResult",
+      "error": "ScheduledTasksDeleteError",
+      "typed": true
+    },
+    {
+      "tag": "scheduledTasks.listWebhookDeliveries",
+      "stream": false,
+      "origin": "official",
+      "payload": "ScheduledTaskListWebhookDeliveriesInput",
+      "success": "ScheduledTaskListWebhookDeliveriesResult",
+      "error": "ScheduledTasksDeleteError",
+      "typed": true
+    },
+    {
+      "tag": "scheduledTasks.rotateWebhookToken",
+      "stream": false,
+      "origin": "official",
+      "payload": "AuthRevokePairingLinkInput",
+      "success": "ScheduledTaskRunNowResult",
+      "error": "ScheduledTasksDeleteError",
+      "typed": true
+    },
+    {
+      "tag": "scheduledTasks.runNow",
+      "stream": false,
+      "origin": "official",
+      "payload": "AuthRevokePairingLinkInput",
+      "success": "ScheduledTaskRunNowResult",
+      "error": "ScheduledTasksDeleteError",
+      "typed": true
+    },
+    {
+      "tag": "scheduledTasks.setEnabled",
+      "stream": false,
+      "origin": "official",
+      "payload": "ScheduledTaskSetEnabledInput",
+      "success": "ScheduledTaskRunNowResult",
+      "error": "ScheduledTasksDeleteError",
+      "typed": true
+    },
+    {
+      "tag": "scheduledTasks.subscribe",
+      "stream": true,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "item": "ScheduledTaskListResult",
+      "error": "ScheduledTasksDeleteError",
+      "typed": true
+    },
+    {
+      "tag": "scheduledTasks.upsert",
+      "stream": false,
+      "origin": "official",
+      "payload": "ScheduledTaskUpsertInput",
+      "success": "ScheduledTaskRunNowResult",
+      "error": "ScheduledTasksDeleteError",
+      "typed": true
+    },
+    {
+      "tag": "secrets.answerRequest",
+      "stream": false,
+      "origin": "official",
+      "payload": "SecretRequestAnswerInput",
+      "success": "()",
+      "error": "SecretsAnswerRequestError",
+      "typed": true
+    },
+    {
+      "tag": "server.acceptAcpRegistryUrlAuth",
+      "stream": false,
+      "origin": "official",
+      "payload": "AcpRegistryAcceptUrlAuthInput",
+      "success": "AcpRegistryAcceptUrlAuthResult",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "server.checkOtlpEndpoint",
+      "stream": false,
+      "origin": "official",
+      "payload": "OtlpEndpointCheckInput",
+      "success": "OtlpEndpointCheckResult",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "server.checkSecretSource",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerCheckSecretSourcePayload",
+      "success": "SecretSourceCheckResult",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "server.commitDesktopUpdate",
+      "stream": false,
+      "origin": "official",
+      "payload": "DesktopUpdateCommitInput",
+      "success": "ServerSelfUpdateResult",
+      "error": "ServerUpdateServerError",
+      "typed": true
+    },
+    {
+      "tag": "server.deleteAcpRegistrySession",
+      "stream": false,
+      "origin": "official",
+      "payload": "AcpRegistryDeleteSessionInput",
+      "success": "AcpRegistryDeleteSessionResult",
+      "error": "ServerLogoutAcpRegistryError",
+      "typed": true
+    },
+    {
+      "tag": "server.disableAcpRegistryProvider",
+      "stream": false,
+      "origin": "official",
+      "payload": "AcpRegistryDisableProviderInput",
+      "success": "AcpRegistryDisableProviderResult",
+      "error": "ServerLogoutAcpRegistryError",
+      "typed": true
+    },
+    {
+      "tag": "server.discoverSourceControl",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "success": "SourceControlDiscoveryResult",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "server.getConfig",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "success": "ServerConfig",
+      "error": "ServerGetConfigError",
+      "typed": true
+    },
+    {
+      "tag": "server.getDatabaseStorage",
+      "stream": true,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "item": "Option<DatabaseStorageStatus>",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "server.getHostResources",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "success": "HostResourcesSnapshot",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "server.getNpmRelease",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerNpmReleaseInput",
+      "success": "Option<ServerNpmRelease>",
+      "error": "ServerGetNpmReleaseError",
+      "typed": true
+    },
+    {
+      "tag": "server.getProcessDiagnostics",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "success": "ServerProcessDiagnosticsResult",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "server.getProcessResourceHistory",
+      "stream": false,
+      "origin": "official",
+      "payload": "ResourceTelemetryHistoryInput",
+      "success": "ServerProcessResourceHistoryResult",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "server.getResourceTelemetryHistory",
+      "stream": false,
+      "origin": "official",
+      "payload": "ResourceTelemetryHistoryInput",
+      "success": "ResourceTelemetryHistory",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "server.getStorageCleanupReport",
+      "stream": true,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "item": "Option<StorageCleanupReport>",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "server.getTraceDiagnostics",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "success": "ServerTraceDiagnosticsResult",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "server.getUsageSummary",
+      "stream": false,
+      "origin": "official",
+      "payload": "UsageSummaryInput",
+      "success": "UsageSummary",
+      "error": "ServerGetUsageSummaryError",
+      "typed": true
+    },
+    {
+      "tag": "server.importAcpRegistrySession",
+      "stream": false,
+      "origin": "official",
+      "payload": "AcpRegistryImportSessionInput",
+      "success": "AcpRegistryImportSessionResult",
+      "error": "ServerLogoutAcpRegistryError",
+      "typed": true
+    },
+    {
+      "tag": "server.listAcpRegistryProviders",
+      "stream": false,
+      "origin": "official",
+      "payload": "AcpRegistryListProvidersInput",
+      "success": "AcpRegistryListProvidersResult",
+      "error": "ServerLogoutAcpRegistryError",
+      "typed": true
+    },
+    {
+      "tag": "server.listAcpRegistrySessions",
+      "stream": false,
+      "origin": "official",
+      "payload": "AcpRegistryListSessionsInput",
+      "success": "AcpRegistryListSessionsResult",
+      "error": "ServerLogoutAcpRegistryError",
+      "typed": true
+    },
+    {
+      "tag": "server.listTextGeneratorModels",
+      "stream": false,
+      "origin": "official",
+      "payload": "ListTextGeneratorModelsInput",
+      "success": "ListTextGeneratorModelsResult",
+      "error": "ServerListTextGeneratorModelsError",
+      "typed": true
+    },
+    {
+      "tag": "server.logoutAcpRegistry",
+      "stream": false,
+      "origin": "official",
+      "payload": "ProviderSetupInput",
+      "success": "AcpRegistryLogoutResult",
+      "error": "ServerLogoutAcpRegistryError",
+      "typed": true
+    },
+    {
+      "tag": "server.prepareAcpRegistryAgent",
+      "stream": false,
+      "origin": "official",
+      "payload": "AcpRegistryPrepareInput",
+      "success": "AcpRegistryPrepareResult",
+      "error": "ServerLogoutAcpRegistryError",
+      "typed": true
+    },
+    {
+      "tag": "server.prepareTriage",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerPrepareTriageInput",
+      "success": "ServerPrepareTriageResult",
+      "error": "ServerPrepareTriageError",
+      "typed": true
+    },
+    {
+      "tag": "server.probe",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "success": "ServerProbePayload",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "server.reclaimDatabaseSpace",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "success": "()",
+      "error": "ServerReclaimDatabaseSpaceError",
+      "typed": true
+    },
+    {
+      "tag": "server.refreshProviders",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerRefreshProvidersPayload",
+      "success": "ServerProviderUpdatedPayload",
+      "error": "ServerRefreshProvidersError",
+      "typed": true
+    },
+    {
+      "tag": "server.refreshUsageRates",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "success": "UsagePricing",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "server.removeKeybinding",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerRemoveKeybindingInput",
+      "success": "ServerRemoveKeybindingResult",
+      "error": "ServerRemoveKeybindingError",
+      "typed": true
+    },
+    {
+      "tag": "server.reportClientActivity",
+      "stream": false,
+      "origin": "official",
+      "payload": "ClientActivityReportInput",
+      "success": "()",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "server.restart",
+      "stream": false,
+      "origin": "fork",
+      "payload": "ServerProbePayload",
+      "success": "ServerRestartResult",
+      "error": "ServerRestartError",
+      "typed": true
+    },
+    {
+      "tag": "server.retryResourceTelemetry",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "success": "ResourceTelemetryRetryResult",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "server.runStorageCleanup",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "success": "StorageCleanupReport",
+      "error": "ServerUpdateSettingsError",
+      "typed": true
+    },
+    {
+      "tag": "server.searchAcpRegistry",
+      "stream": false,
+      "origin": "official",
+      "payload": "AcpRegistrySearchInput",
+      "success": "AcpRegistrySearchResult",
+      "error": "ServerLogoutAcpRegistryError",
+      "typed": true
+    },
+    {
+      "tag": "server.setAcpRegistryProvider",
+      "stream": false,
+      "origin": "official",
+      "payload": "AcpRegistrySetProviderInput",
+      "success": "AcpRegistrySetProviderResult",
+      "error": "ServerLogoutAcpRegistryError",
+      "typed": true
+    },
+    {
+      "tag": "server.signalProcess",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerSignalProcessInput",
+      "success": "ServerSignalProcessResult",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "server.uninstallAcpRegistryManagedBinary",
+      "stream": false,
+      "origin": "official",
+      "payload": "AcpRegistryPrepareInput",
+      "success": "AcpRegistryManagedBinaryUninstallResult",
+      "error": "ServerLogoutAcpRegistryError",
+      "typed": true
+    },
+    {
+      "tag": "server.updateProvider",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerProviderUpdateInput",
+      "success": "ServerProviderUpdatedPayload",
+      "error": "ServerUpdateProviderError",
+      "typed": true
+    },
+    {
+      "tag": "server.updateServer",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerSelfUpdateInput",
+      "success": "ServerSelfUpdateResult",
+      "error": "ServerUpdateServerError",
+      "typed": true
+    },
+    {
+      "tag": "server.updateServerWithProgress",
+      "stream": true,
+      "origin": "official",
+      "payload": "ServerSelfUpdateInput",
+      "item": "ServerSelfUpdateProgressEvent",
+      "error": "ServerUpdateServerError",
+      "typed": true
+    },
+    {
+      "tag": "server.updateSettings",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerUpdateSettingsPayload",
+      "success": "ServerSettings",
+      "error": "ServerUpdateSettingsError",
+      "typed": true
+    },
+    {
+      "tag": "server.upsertKeybinding",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerUpsertKeybindingInput",
+      "success": "ServerRemoveKeybindingResult",
+      "error": "ServerRemoveKeybindingError",
+      "typed": true
+    },
+    {
+      "tag": "shell.openInEditor",
+      "stream": false,
+      "origin": "official",
+      "payload": "LaunchEditorInput",
+      "success": "()",
+      "error": "ShellOpenInEditorError",
+      "typed": true
+    },
+    {
+      "tag": "sourceControl.appAccess",
+      "stream": false,
+      "origin": "official",
+      "payload": "SourceControlStarredInput",
+      "success": "SourceControlAppAccess",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "sourceControl.cloneRepository",
+      "stream": false,
+      "origin": "official",
+      "payload": "SourceControlCloneRepositoryInput",
+      "success": "SourceControlCloneRepositoryResult",
+      "error": "ProjectCloneRetryError",
+      "typed": true
+    },
+    {
+      "tag": "sourceControl.lookupRepository",
+      "stream": false,
+      "origin": "official",
+      "payload": "SourceControlRepositoryLookupInput",
+      "success": "SourceControlRepositoryInfo",
+      "error": "ProjectCloneRetryError",
+      "typed": true
+    },
+    {
+      "tag": "sourceControl.publishRepository",
+      "stream": false,
+      "origin": "official",
+      "payload": "SourceControlPublishRepositoryInput",
+      "success": "SourceControlPublishRepositoryResult",
+      "error": "ProjectCloneRetryError",
+      "typed": true
+    },
+    {
+      "tag": "sourceControl.signInCancel",
+      "stream": false,
+      "origin": "official",
+      "payload": "SourceControlSignInInput",
+      "success": "()",
+      "error": "SourceControlSignInWaitError",
+      "typed": true
+    },
+    {
+      "tag": "sourceControl.signInStart",
+      "stream": false,
+      "origin": "official",
+      "payload": "SourceControlSignInInput",
+      "success": "SourceControlSignInPrompt",
+      "error": "SourceControlSignInWaitError",
+      "typed": true
+    },
+    {
+      "tag": "sourceControl.signInWait",
+      "stream": false,
+      "origin": "official",
+      "payload": "SourceControlSignInInput",
+      "success": "SourceControlSignInResult",
+      "error": "SourceControlSignInWaitError",
+      "typed": true
+    },
+    {
+      "tag": "sourceControl.star",
+      "stream": false,
+      "origin": "official",
+      "payload": "SourceControlStarredInput",
+      "success": "bool",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "sourceControl.starred",
+      "stream": false,
+      "origin": "official",
+      "payload": "SourceControlStarredInput",
+      "success": "bool",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "subscribeAuthAccess",
+      "stream": true,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "item": "AuthAccessStreamEvent",
+      "error": "SubscribeAuthAccessError",
+      "typed": true
+    },
+    {
+      "tag": "subscribeDeviceState",
+      "stream": true,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "item": "DeviceServiceState",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "subscribeDiscoveredLocalServers",
+      "stream": true,
+      "origin": "official",
+      "payload": "SubscribeDiscoveredLocalServersPayload",
+      "item": "DiscoveredLocalServerList",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "subscribePreviewEvents",
+      "stream": true,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "item": "PreviewEvent",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "subscribeProjectClones",
+      "stream": true,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "item": "ProjectCloneListEvent",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "subscribeResourceTelemetry",
+      "stream": true,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "item": "ResourceTelemetrySnapshot",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "subscribeServerConfig",
+      "stream": true,
+      "origin": "official",
+      "payload": "SubscribeServerConfigPayload",
+      "item": "ServerConfigStreamEvent",
+      "error": "ServerGetConfigError",
+      "typed": true
+    },
+    {
+      "tag": "subscribeServerLifecycle",
+      "stream": true,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "item": "ServerLifecycleStreamEvent",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "subscribeTerminalMetadata",
+      "stream": true,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "item": "TerminalMetadataStreamEvent",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "subscribeVcsBranch",
+      "stream": true,
+      "origin": "official",
+      "payload": "VcsPullInput",
+      "item": "VcsBranchStatus",
+      "error": "VcsRefreshBranchError",
+      "typed": true
+    },
+    {
+      "tag": "subscribeVcsStatus",
+      "stream": true,
+      "origin": "official",
+      "payload": "VcsStatusSubscriptionInput",
+      "item": "VcsStatusStreamEvent",
+      "error": "VcsRefreshBranchError",
+      "typed": true
+    },
+    {
+      "tag": "subscribeWorktreeSetup",
+      "stream": true,
+      "origin": "official",
+      "payload": "OrchestrationV2GetThreadFamilyInput",
+      "item": "Option<WorktreeSetupSnapshot>",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    },
+    {
+      "tag": "terminal.attach",
+      "stream": true,
+      "origin": "official",
+      "payload": "TerminalAttachInput",
+      "item": "TerminalAttachStreamEvent",
+      "error": "TerminalOpenError",
+      "typed": true
+    },
+    {
+      "tag": "terminal.clear",
+      "stream": false,
+      "origin": "official",
+      "payload": "TerminalClearInput",
+      "success": "()",
+      "error": "TerminalOpenError",
+      "typed": true
+    },
+    {
+      "tag": "terminal.close",
+      "stream": false,
+      "origin": "official",
+      "payload": "TerminalCloseInput",
+      "success": "()",
+      "error": "TerminalOpenError",
+      "typed": true
+    },
+    {
+      "tag": "terminal.observe",
+      "stream": true,
+      "origin": "official",
+      "payload": "TerminalClearInput",
+      "item": "TerminalAttachStreamEvent",
+      "error": "TerminalOpenError",
+      "typed": true
+    },
+    {
+      "tag": "terminal.open",
+      "stream": false,
+      "origin": "official",
+      "payload": "TerminalOpenInput",
+      "success": "TerminalSessionSnapshot",
+      "error": "TerminalOpenError",
+      "typed": true
+    },
+    {
+      "tag": "terminal.resize",
+      "stream": false,
+      "origin": "official",
+      "payload": "TerminalResizeInput",
+      "success": "()",
+      "error": "TerminalOpenError",
+      "typed": true
+    },
+    {
+      "tag": "terminal.write",
+      "stream": false,
+      "origin": "official",
+      "payload": "TerminalWriteInput",
+      "success": "()",
+      "error": "TerminalOpenError",
+      "typed": true
+    },
+    {
+      "tag": "testLogins.list",
+      "stream": false,
+      "origin": "fork",
+      "payload": "ServerProbePayload",
+      "success": "TestLoginList",
+      "error": "TestLoginsListError",
+      "typed": true
+    },
+    {
+      "tag": "testLogins.remove",
+      "stream": false,
+      "origin": "fork",
+      "payload": "AuthRevokePairingLinkInput",
+      "success": "()",
+      "error": "TestLoginsListError",
+      "typed": true
+    },
+    {
+      "tag": "testLogins.reveal",
+      "stream": false,
+      "origin": "fork",
+      "payload": "AuthRevokePairingLinkInput",
+      "success": "TestLoginSecrets",
+      "error": "TestLoginsListError",
+      "typed": true
+    },
+    {
+      "tag": "testLogins.save",
+      "stream": false,
+      "origin": "fork",
+      "payload": "SaveTestLoginInput",
+      "success": "TestLoginSummary",
+      "error": "TestLoginsListError",
+      "typed": true
+    },
+    {
+      "tag": "testLogins.update",
+      "stream": false,
+      "origin": "fork",
+      "payload": "UpdateTestLoginInput",
+      "success": "TestLoginSummary",
+      "error": "TestLoginsListError",
+      "typed": true
+    },
+    {
+      "tag": "vcs.createRef",
+      "stream": false,
+      "origin": "official",
+      "payload": "VcsCreateRefInput",
+      "success": "VcsCreateRefResult",
+      "error": "VcsPullError",
+      "typed": true
+    },
+    {
+      "tag": "vcs.createWorktree",
+      "stream": false,
+      "origin": "official",
+      "payload": "VcsCreateWorktreePayload",
+      "success": "VcsCreateWorktreeResult",
+      "error": "VcsPullError",
+      "typed": true
+    },
+    {
+      "tag": "vcs.init",
+      "stream": false,
+      "origin": "official",
+      "payload": "VcsInitInput",
+      "success": "()",
+      "error": "VcsInitError",
+      "typed": true
+    },
+    {
+      "tag": "vcs.listRefs",
+      "stream": false,
+      "origin": "official",
+      "payload": "VcsListRefsInput",
+      "success": "VcsListRefsResult",
+      "error": "VcsPullError",
+      "typed": true
+    },
+    {
+      "tag": "vcs.pull",
+      "stream": false,
+      "origin": "official",
+      "payload": "VcsPullInput",
+      "success": "VcsPullResult",
+      "error": "VcsPullError",
+      "typed": true
+    },
+    {
+      "tag": "vcs.refreshBranch",
+      "stream": false,
+      "origin": "official",
+      "payload": "VcsPullInput",
+      "success": "()",
+      "error": "VcsRefreshBranchError",
+      "typed": true
+    },
+    {
+      "tag": "vcs.refreshStatus",
+      "stream": false,
+      "origin": "official",
+      "payload": "VcsRefreshStatusPayload",
+      "success": "VcsStatusResult",
+      "error": "VcsRefreshBranchError",
+      "typed": true
+    },
+    {
+      "tag": "vcs.removeWorktree",
+      "stream": false,
+      "origin": "official",
+      "payload": "VcsRemoveWorktreeInput",
+      "success": "()",
+      "error": "VcsPullError",
+      "typed": true
+    },
+    {
+      "tag": "vcs.switchRef",
+      "stream": false,
+      "origin": "official",
+      "payload": "VcsSwitchRefInput",
+      "success": "VcsSwitchRefResult",
+      "error": "VcsPullError",
+      "typed": true
+    },
+    {
+      "tag": "worktreeSetup.cancel",
+      "stream": false,
+      "origin": "official",
+      "payload": "OrchestrationV2GetThreadFamilyInput",
+      "success": "WorktreeSetupCancelResult",
+      "error": "EnvironmentAuthorizationError",
+      "typed": true
+    }
+  ]
+}
