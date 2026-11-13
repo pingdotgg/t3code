@@ -29,6 +29,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { threadNotFound } from "../../threadAccess.ts";
 import {
+  type ListThreadPullRequestsInput,
   type ListThreadPullRequestsResult,
   PullRequestLinkFailedError,
   PullRequestUnlinkFailedError,
@@ -72,18 +73,32 @@ function entryOf(
   };
 }
 
+const DEFAULT_PULL_REQUEST_LIST_LIMIT = 50;
+
 export function listThreadPullRequests(
   thread: Pick<OrchestrationV2ThreadShell, "pullRequests">,
+  input: Pick<ListThreadPullRequestsInput, "states" | "cursor" | "limit"> = {},
 ): ListThreadPullRequestsResult {
   const chains = resolveThreadPullRequestChains(thread.pullRequests ?? []);
+  const states = input.states === undefined ? undefined : new Set(input.states);
+  const matching = visibleThreadPullRequests(thread.pullRequests ?? []).filter(
+    (link) =>
+      states === undefined ||
+      (link.snapshot?.state !== undefined && states.has(link.snapshot.state)),
+  );
+  const cursor = input.cursor ?? 0;
+  const page = matching.slice(cursor, cursor + (input.limit ?? DEFAULT_PULL_REQUEST_LIST_LIMIT));
+  const pageKeys = new Set(page.map(threadPullRequestKeyOf));
   return {
-    pullRequests: visibleThreadPullRequests(thread.pullRequests ?? []).map((link) =>
-      entryOf(link, chains),
-    ),
-    chains: chains.map((chain) => ({
-      kind: chain.kind,
-      numbers: chain.layers.map((layer) => layer.number),
-    })),
+    pullRequests: page.map((link) => entryOf(link, chains)),
+    chains: chains
+      .filter((chain) => chain.layers.some((layer) => pageKeys.has(threadPullRequestKeyOf(layer))))
+      .map((chain) => ({
+        kind: chain.kind,
+        numbers: chain.layers.map((layer) => layer.number),
+      })),
+    nextCursor: cursor + page.length < matching.length ? cursor + page.length : null,
+    total: matching.length,
   };
 }
 
@@ -407,7 +422,7 @@ const make = Effect.gen(function* () {
     ),
     list_thread_pull_requests: McpToolAccess.reads((input) =>
       requireThread(PullRequestListFailedError, input.threadId).pipe(
-        Effect.map(listThreadPullRequests),
+        Effect.map((thread) => listThreadPullRequests(thread, input)),
       ),
     ),
     watch_pull_request: writesThread((input) => setWatching(input, true)),

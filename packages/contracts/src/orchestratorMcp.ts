@@ -387,9 +387,10 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
-  /** Linked pull requests not yet merged or closed; list_thread_pull_requests has all of them. */
+  /** Up to 5 open linked pull requests, watched first; list_thread_pull_requests pages all of them. */
   pullRequests: Schema.optional(Schema.Array(OrchestratorMcpThreadPullRequest)),
   pullRequestCount: Schema.optional(NonNegativeInt),
+  openPullRequestCount: Schema.optional(NonNegativeInt),
   settled: Schema.Boolean,
   settledAt: Schema.NullOr(IsoDateTime),
   snoozed: Schema.Boolean,
@@ -419,7 +420,7 @@ export type OrchestratorMcpThreadListResult = typeof OrchestratorMcpThreadListRe
 // Codex hides `minimum` and `maximum` from the model, so a value above the maximum clamps on
 // decode instead of failing the call; pagination returns the rest. Values below 1 still fail:
 // 0 asks for nothing, and answering it with one item would be a different request.
-const clampedPositiveInt = (maximum: number) =>
+export const clampedPositiveInt = (maximum: number) =>
   PositiveInt.pipe(
     Schema.decodeTo(
       PositiveInt.check(Schema.isLessThanOrEqualTo(maximum)),
@@ -461,9 +462,10 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
-  /** Open linked pull requests, on the first page only; list_thread_pull_requests has all of them. */
+  /** Up to 5 open linked pull requests, watched first, on the first page only; list_thread_pull_requests pages all of them. */
   pullRequests: Schema.optional(Schema.Array(OrchestratorMcpThreadPullRequest)),
   pullRequestCount: Schema.optional(NonNegativeInt),
+  openPullRequestCount: Schema.optional(NonNegativeInt),
   titleRegeneration: Schema.NullOr(ThreadTitleRegeneration),
   lastTitleRegeneration: Schema.optional(Schema.NullOr(LastThreadTitleRegeneration)),
   branch: Schema.NullOr(Schema.String),
