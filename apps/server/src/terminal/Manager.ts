@@ -1265,16 +1265,25 @@ function sanitizeTerminalHistoryChunk(
 
       if (nextCodePoint === 0x5b) {
         let cursor = index + 2;
+        // Ghostty executes C0 controls inside a CSI and ignores DEL; neither joins the parameters.
+        let body = "";
+        let executedControls = "";
         while (cursor < input.length) {
-          const cancelled = isControlSequenceCancel(input.charCodeAt(cursor));
-          if (cancelled || isCsiFinalByte(input.charCodeAt(cursor))) {
-            const sequence = input.slice(index, cursor + 1);
-            const body = input.slice(index + 2, cursor);
+          const cursorCodePoint = input.charCodeAt(cursor);
+          const cancelled = isControlSequenceCancel(cursorCodePoint);
+          if (cancelled || isCsiFinalByte(cursorCodePoint)) {
             if (cancelled || !shouldStripCsiSequence(body, input[cursor] ?? "")) {
-              append(sequence);
+              append(input.slice(index, cursor + 1));
+            } else {
+              append(executedControls);
             }
             index = cursor + 1;
             break;
+          }
+          if (cursorCodePoint < 0x20 && cursorCodePoint !== 0x1b) {
+            executedControls += input[cursor];
+          } else if (cursorCodePoint !== 0x7f) {
+            body += input[cursor];
           }
           cursor += 1;
         }
