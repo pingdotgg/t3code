@@ -279,6 +279,40 @@ describe("environment grouping", () => {
     });
   });
 
+  it("starts a grouped repository in its root checkout when the preferred project is outside the group", () => {
+    const rooted = { ...repositoryIdentity, rootPath: "/tmp/shared-repo" };
+    const oldTool = makeProject({
+      id: ProjectId.make("old-tool"),
+      title: "old-tool",
+      workspaceRoot: "/tmp/shared-repo/_archive/old-tool",
+      repositoryIdentity: rooted,
+    });
+    const root = makeProject({
+      id: ProjectId.make("root"),
+      title: "shared-repo",
+      workspaceRoot: "/tmp/shared-repo",
+      repositoryIdentity: rooted,
+    });
+    const elsewhere = makeProject({
+      id: ProjectId.make("elsewhere"),
+      title: "elsewhere",
+      workspaceRoot: "/tmp/elsewhere",
+    });
+    const groups = buildSidebarProjectSnapshots({
+      projects: [oldTool, root, elsewhere],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    const [entry] = buildSidebarProjectPickerEntries({
+      groups: groups.filter((group) => group.projectKey === rooted.canonicalKey),
+      preferredProjectRef: { environmentId: primaryEnvironmentId, projectId: elsewhere.id },
+    });
+
+    expect(entry?.targetProject.id).toBe(root.id);
+  });
+
   it("puts the preferred project before pinned projects", () => {
     const project = (title: string, pinnedAt: string | null = null) =>
       makeProject({

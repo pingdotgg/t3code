@@ -226,6 +226,10 @@ export function buildSidebarProjectPickerEntries(input: {
             project.id === preferredProjectRef.projectId,
         ) ??
         group.memberProjects.find(
+          (project) =>
+            project.environmentId === preferredProjectRef.environmentId && project.id === group.id,
+        ) ??
+        group.memberProjects.find(
           (project) => project.environmentId === preferredProjectRef.environmentId,
         ))
       : null;
