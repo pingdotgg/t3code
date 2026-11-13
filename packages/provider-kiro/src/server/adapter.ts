@@ -93,25 +93,37 @@ const KiroProviderCapabilitiesV2 = {
 const KiroCompactResult = Schema.Struct({ success: Schema.Boolean });
 const decodeKiroCompactResult = Schema.decodeUnknownOption(KiroCompactResult);
 
-/** Kiro answers a `/compact` prompt as chat, so T3 compacts with Kiro's own request. */
-const compactKiroSession = (
-  runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
-  sessionId: string,
-) =>
-  runtime.request(KIRO_COMPACT_METHOD, { sessionId }).pipe(
-    Effect.flatMap((result) =>
-      Option.exists(decodeKiroCompactResult(result), (decoded) => decoded.success)
-        ? Effect.void
-        : Effect.fail(
-            new EffectAcpErrors.AcpRequestError({
-              code: -32603,
-              errorMessage: "Kiro could not compact the conversation.",
-              method: KIRO_COMPACT_METHOD,
-              data: result,
-            }),
-          ),
+const decodeKiroExtensionMethods = Schema.decodeUnknownOption(
+  Schema.Struct({ kiro: Schema.Struct({ extensionMethods: Schema.Array(Schema.String) }) }),
+);
+
+/**
+ * Kiro answers a `/compact` prompt as chat, so T3 compacts with Kiro's own request,
+ * on deployments whose `initialize` result lists it among Kiro's extension methods.
+ */
+const kiroCompactSession = {
+  supported: (
+    initializeResult: AcpSessionRuntime.AcpSessionRuntimeStartResult["initializeResult"],
+  ) =>
+    Option.exists(decodeKiroExtensionMethods(initializeResult.agentCapabilities?._meta), (meta) =>
+      meta.kiro.extensionMethods.includes(KIRO_COMPACT_METHOD),
     ),
-  );
+  compact: (runtime: AcpSessionRuntime.AcpSessionRuntime["Service"], sessionId: string) =>
+    runtime.request(KIRO_COMPACT_METHOD, { sessionId }).pipe(
+      Effect.flatMap((result) =>
+        Option.exists(decodeKiroCompactResult(result), (decoded) => decoded.success)
+          ? Effect.void
+          : Effect.fail(
+              new EffectAcpErrors.AcpRequestError({
+                code: -32603,
+                errorMessage: "Kiro could not compact the conversation.",
+                method: KIRO_COMPACT_METHOD,
+                data: result,
+              }),
+            ),
+      ),
+    ),
+};
 
 const KiroSteerResult = Schema.Struct({ queued: Schema.Literal(true), messageId: Schema.String });
 const decodeKiroSteerResult = Schema.decodeUnknownOption(KiroSteerResult);
@@ -568,7 +580,7 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
     cancelAfterPromptStarts: { isStart: isKiroPromptActivity, bound: KIRO_CANCEL_HOLD_BOUND },
     permissionDisposition: kiroPermissionDisposition,
     approvalOptions: kiroApprovalOptions,
-    compactSession: compactKiroSession,
+    compactSession: kiroCompactSession,
     steering: kiroSteering,
     forkFromTurn: kiroForkFromTurn,
     // Kiro V3 advertises `promptCapabilities.image`; the shared adapter reads it.
