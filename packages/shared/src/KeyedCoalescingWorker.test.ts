@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import { makeKeyedCoalescingWorker } from "./KeyedCoalescingWorker.ts";
 
 describe("makeKeyedCoalescingWorker", () => {
-  it.live("lets a queued key drain before a continuously updated key finishes", () =>
+  it.effect("lets a queued key drain before a continuously updated key finishes", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const processed: string[] = [];
@@ -40,7 +40,7 @@ describe("makeKeyedCoalescingWorker", () => {
     ),
   );
 
-  it.live("merges updates while waiting behind another key and drains the merged batch", () =>
+  it.effect("merges updates while waiting behind another key and drains the merged batch", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const processed: string[] = [];
@@ -98,7 +98,7 @@ describe("makeKeyedCoalescingWorker", () => {
     ),
   );
 
-  it.live("waits for latest work enqueued during active processing before draining the key", () =>
+  it.effect("waits for latest work enqueued during active processing before draining the key", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const processed: string[] = [];
@@ -149,7 +149,7 @@ describe("makeKeyedCoalescingWorker", () => {
     ),
   );
 
-  it.live("requeues pending work for a key after a processor failure and keeps draining", () =>
+  it.effect("requeues pending work for a key after a processor failure and keeps draining", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const processed: string[] = [];

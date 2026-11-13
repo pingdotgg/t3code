@@ -346,7 +346,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
-  it.live("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
+  it.effect("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
     Effect.gen(function* () {
       const staleId = ProviderInstanceId.make("codex_stale");
       const configMap: ProviderInstanceConfigMap = {
@@ -370,7 +370,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.live("lists a blocked driver's instances as unavailable without running them", () =>
+  it.effect("lists a blocked driver's instances as unavailable without running them", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("codex");
       const reason = "Example Corp's policy does not allow the Codex provider.";
@@ -862,7 +862,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     );
   }
 
-  it.live(
+  it.effect(
     "shadows instances whose driver is not registered in this build without failing boot",
     () =>
       Effect.gen(function* () {

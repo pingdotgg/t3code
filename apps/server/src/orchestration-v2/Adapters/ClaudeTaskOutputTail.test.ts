@@ -101,7 +101,7 @@ describe("tailClaudeTaskOutput", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("reads what was written last when the tool result stops it", () =>
+  it.effect("reads what was written last when the tool result stops it", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
