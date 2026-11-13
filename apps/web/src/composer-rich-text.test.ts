@@ -51,6 +51,42 @@ describe("composer rich text markdown", () => {
     ]);
   });
 
+  // regression: #25180 underscores in URLs and paths were read as emphasis
+  it("keeps underscores inside URLs, paths, and filenames literal", () => {
+    for (const text of [
+      "Read https://example.com/_handle_/status/1 and open src/__test__.tsx",
+      "https://example.com/~_user_/a",
+      "_build_/file.ts",
+      "edit __init__.py, then",
+      "see __init__.py:42",
+      "open src/_a.ts_ and example.com/_handle_.",
+      "/" + "_".repeat(50_000) + "a",
+    ]) {
+      expect(parseInlineMarkdown(text)).toEqual([{ text, marks: [] }]);
+    }
+    for (const [text, styled, mark, rest] of [
+      ["_see src/a_b.ts_ now", "see src/a_b.ts", "italic", " now"],
+      ["_read/write access_ now", "read/write access", "italic", " now"],
+      ["__read/write access__ now", "read/write access", "bold", " now"],
+      ["_see src/_a.ts_(optional)", "see src/_a.ts", "italic", "(optional)"],
+      ["__see src/__a.ts__(optional)", "see src/__a.ts", "bold", "(optional)"],
+      ["_see src/_a.ts_.", "see src/_a.ts", "italic", "."],
+      ["_notes.md_ here", "notes.md", "italic", " here"],
+      ["_e.g._ this", "e.g.", "italic", " this"],
+    ] as const) {
+      expect(parseInlineMarkdown(text)).toEqual([
+        { text: styled, marks: [mark] },
+        { text: rest, marks: [] },
+      ]);
+    }
+    expect(parseInlineMarkdown("_build_/file.ts and _x_, __init__.py and __y__")).toEqual([
+      { text: "_build_/file.ts and ", marks: [] },
+      { text: "x", marks: ["italic"] },
+      { text: ", __init__.py and ", marks: [] },
+      { text: "y", marks: ["bold"] },
+    ]);
+  });
+
   it("keeps code span contents literal", () => {
     expect(parseInlineMarkdown("`**not bold**`")).toEqual([
       { text: "**not bold**", marks: ["code"] },
