@@ -6,8 +6,15 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 
+import { rendersServerTabNatively } from "~/browser/previewRuntime";
 import { useClosedViewStore } from "~/closedViewStore";
-import { beginPreviewSessionClose, cancelPreviewSessionClose } from "~/previewStateStore";
+import {
+  beginPreviewSessionClose,
+  cancelPreviewSessionClose,
+  finishPreviewSessionClose,
+} from "~/previewStateStore";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
 interface ClosePreviewSessionInput<E> {
   readonly closePreview: (input: {
@@ -22,14 +29,28 @@ interface ClosePreviewSessionInput<E> {
 export async function closePreviewSession<E>(
   input: ClosePreviewSessionInput<E>,
 ): Promise<AtomCommandResult<void, E>> {
-  beginPreviewSessionClose(input.threadRef, input.tabId);
+  // Unmounting a webview destroys its page, so one this window renders stays mounted until the
+  // server has unloaded it.
+  if (
+    !rendersServerTabNatively(
+      input.threadRef.environmentId,
+      appAtomRegistry.get(primaryEnvironmentIdAtom),
+      input.snapshot,
+    )
+  ) {
+    beginPreviewSessionClose(input.threadRef, input.tabId);
+  }
   const result = await input.closePreview({
     environmentId: input.threadRef.environmentId,
     input: { threadId: input.threadRef.threadId, tabId: input.tabId },
   });
   if (result._tag === "Failure") {
     cancelPreviewSessionClose(input.threadRef, input.snapshot, input.tabId);
-  } else if (input.snapshot) {
+    return result;
+  }
+  // A close of a missing session publishes no event, so a missed one would keep the tab forever.
+  finishPreviewSessionClose(input.threadRef, input.tabId);
+  if (input.snapshot) {
     useClosedViewStore.getState().remember({
       kind: "browser",
       threadRef: input.threadRef,

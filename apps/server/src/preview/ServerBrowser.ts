@@ -39,6 +39,8 @@ import {
   type PreviewAutomationUploadInput,
   type PreviewAutomationWaitForInput,
   PreviewClearProfileError,
+  type PreviewCloseInput,
+  type PreviewError,
   type PreviewEvent,
   type PreviewNavStatus,
   type PreviewSessionSnapshot,
@@ -290,6 +292,8 @@ export class ServerBrowser extends Context.Service<
     }) => Effect.Effect<Option.Option<{ readonly path: string; readonly fileName: string }>>;
 
     readonly clearProfile: (profileId: string) => Effect.Effect<void, PreviewClearProfileError>;
+    /** Closes preview sessions after the desktop pages among them unload. */
+    readonly close: (input: PreviewCloseInput) => Effect.Effect<void, PreviewError>;
 
     readonly profileReporter: Effect.Effect<ProfileReporter, never, Scope.Scope>;
   }
@@ -378,6 +382,7 @@ interface ServerTab {
   loading: boolean;
   loadError: PreviewAutomationLoadError | undefined;
   closing: boolean;
+  unload: Promise<void> | null;
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
   pendingInitialRequestUrl: string | null;
@@ -832,6 +837,16 @@ const make = Effect.gen(function* () {
     clearTimeout(timeout);
   };
 
+  // A pending dialog would block the unload from running at all.
+  const unloadDesktopTab = (tab: ServerTab) => {
+    void tab.control.close().catch(constVoid);
+    if (tab.unload === null && tab.desktop && tab.dialog === null) {
+      tab.closing = true;
+      tab.unload = unloadDesktopPage(tab.page);
+    }
+    return tab.unload ?? Promise.resolve();
+  };
+
   const dropTab = (tab: ServerTab, closeSession: boolean) => {
     const key = tabKey(tab.threadId, tab.tabId);
     if (tabs.get(key) !== tab) return;
@@ -1010,6 +1025,7 @@ const make = Effect.gen(function* () {
       loading: false,
       loadError: undefined,
       closing: false,
+      unload: null,
       recording: null,
       recordingStart: null,
       initialNavigation: null,
@@ -1590,20 +1606,32 @@ const make = Effect.gen(function* () {
   const isVisible = (tab: ServerTab) =>
     tab.viewers.size > 0 || (tab.desktop !== null && desktopChannel.isShown(tab));
 
+  const reclaimingTabs = new Set<ServerTab>();
   const idleAgentTabs = () => {
     const cutoff = Date.now() - AGENT_TAB_IDLE_MS;
     return [...tabs.values()].filter(
-      (tab) => tab.control.agentId !== null && !isVisible(tab) && tab.usedAt < cutoff,
+      (tab) =>
+        tab.control.agentId !== null &&
+        !reclaimingTabs.has(tab) &&
+        !isVisible(tab) &&
+        tab.usedAt < cutoff,
     );
   };
 
   // The desktop app renders every server tab, so idle desktop agent tabs would otherwise
   // hold the server's budget forever. Hidden ones give up their slots, longest idle first,
   // only when an agent needs one and has room for it.
-  const freeIdleAgentSlot = (agentSessionId: string) => {
-    if (!serverAtTabLimit() || agentAtTabLimit(agentSessionId)) return;
+  const freeIdleAgentSlot = async () => {
     const longestIdle = idleAgentTabs().sort((left, right) => left.usedAt - right.usedAt)[0];
-    if (longestIdle) dropTab(longestIdle, true);
+    if (!longestIdle) return false;
+    reclaimingTabs.add(longestIdle);
+    try {
+      await unloadDesktopTab(longestIdle);
+      dropTab(longestIdle, true);
+    } finally {
+      reclaimingTabs.delete(longestIdle);
+    }
+    return true;
   };
 
   // A Playwright launch must settle before its capacity can be released.
@@ -1614,12 +1642,27 @@ const make = Effect.gen(function* () {
     let key: string = NodeCrypto.randomUUID();
     const reservation = { agentId: input.automationOwner ?? null };
     return yield* Effect.acquireUseRelease(
-      Effect.try({
-        try: () => {
-          if (input.automationOwner !== undefined) {
-            if (options.reclaimIdleSlot) freeIdleAgentSlot(input.automationOwner);
-            assertTabCapacity(input.automationOwner);
+      Effect.tryPromise({
+        try: async () => {
+          const agentId = input.automationOwner;
+          const reclaim =
+            agentId !== undefined &&
+            options.reclaimIdleSlot === true &&
+            serverAtTabLimit() &&
+            !agentAtTabLimit(agentId);
+          if (agentId !== undefined && !reclaim) assertTabCapacity(agentId);
+          // Reserved before any tab closes for it, so a concurrent open sees the agent's budget
+          // taken; the server holds one extra reservation until the reclaimed tab leaves.
+          pendingTabs.set(key, reservation);
+          if (!reclaim) return;
+          let freed = false;
+          try {
+            freed = await freeIdleAgentSlot();
+          } finally {
+            if (!freed) pendingTabs.delete(key);
           }
+          if (freed) return;
+          assertTabCapacity(agentId);
           pendingTabs.set(key, reservation);
         },
         catch: ServerBrowserPage.toOperationError,
@@ -2490,11 +2533,7 @@ const make = Effect.gen(function* () {
           message: "A human controls this tab.",
           reason: "humanControl",
         });
-      void tab.control.close().catch(constVoid);
-      if (tab.desktop && tab.dialog === null) {
-        tab.closing = true;
-        await unloadDesktopPage(tab.page);
-      }
+      await unloadDesktopTab(tab);
       await runPromise(manager.close({ threadId: tab.threadId, tabId: tab.tabId }));
       dropTab(tab, false);
       return {};
@@ -3259,9 +3298,47 @@ const make = Effect.gen(function* () {
       catch: (cause) => new PreviewClearProfileError({ profileId, cause }),
     });
 
+  // A page still attaching registers before its unload. One that outlasts the grace period
+  // is aborted here: its closed event waits behind the setup it would abort.
+  const awaitAttaching = async (keys: ReadonlyArray<string>) => {
+    const attaching = (key: string) => (tabs.has(key) ? undefined : pendingTabs.get(key)?.promise);
+    const settled = keys.flatMap((key) => {
+      const opening = attaching(key);
+      return opening ? [opening.catch(constVoid)] : [];
+    });
+    if (settled.length === 0) return;
+    const grace = Promise.withResolvers<void>();
+    const timeout = setTimeout(grace.resolve, PAGE_CLOSE_GRACE_MS);
+    await Promise.race([Promise.all(settled), grace.promise]);
+    clearTimeout(timeout);
+    for (const key of keys) if (attaching(key)) closedPendingTabs.add(key);
+  };
+
+  // Uninterruptible: stopping after the unload starts would leave a closing tab open.
+  const close = Effect.fn("ServerBrowser.close")(function* (input: PreviewCloseInput) {
+    // Targets are fixed before the wait, so a tab opened during the unload survives the close.
+    const tabIds =
+      input.tabId === undefined
+        ? (yield* manager.list({ threadId: input.threadId })).sessions.map(({ tabId }) => tabId)
+        : [input.tabId];
+    const keys = new Set(tabIds.map((tabId) => tabKey(input.threadId, tabId)));
+    yield* Effect.promise(async () => {
+      await awaitAttaching([...pendingTabs.keys()].filter((key) => keys.has(key)));
+      const closing = [...keys].flatMap((key) => {
+        const tab = tabs.get(key);
+        return tab?.desktop ? [tab] : [];
+      });
+      await Promise.all(closing.map(unloadDesktopTab));
+    });
+    yield* Effect.forEach(tabIds, (tabId) => manager.close({ threadId: input.threadId, tabId }), {
+      discard: true,
+    });
+  }, Effect.uninterruptible);
+
   return ServerBrowser.of({
     attachViewer,
     clearProfile,
+    close,
     profileReporter,
     openDownload,
     answerFileChooser,

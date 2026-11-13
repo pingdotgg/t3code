@@ -89,6 +89,7 @@ it.effect.each([
     });
     const browser = ServerBrowser.ServerBrowser.of({
       clearProfile: () => Effect.void,
+      close: () => Effect.void,
       profileReporter: Effect.succeed(() => Effect.void),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: () => Effect.succeed(false),
@@ -164,6 +165,7 @@ it.effect("sends replies ahead of stale frames and only the newest frame after a
     });
     const browser = ServerBrowser.ServerBrowser.of({
       clearProfile: () => Effect.void,
+      close: () => Effect.void,
       profileReporter: Effect.succeed(() => Effect.void),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: () => Effect.succeed(false),
@@ -235,6 +237,7 @@ it.effect.each([
     let attachments = 0;
     const browser = ServerBrowser.ServerBrowser.of({
       clearProfile: () => Effect.void,
+      close: () => Effect.void,
       profileReporter: Effect.succeed(() => Effect.void),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: () => Effect.succeed(false),
@@ -276,6 +279,7 @@ it.effect("serves a tab's download only to an authorized session", () =>
     const requests: Array<unknown> = [];
     const browser = ServerBrowser.ServerBrowser.of({
       clearProfile: () => Effect.void,
+      close: () => Effect.void,
       profileReporter: Effect.succeed(() => Effect.void),
       openDownload: (input) =>
         Effect.sync(() => {
@@ -324,6 +328,7 @@ it.effect("passes uploaded files to the page's open picker and needs operate sco
     const answers: Array<{ chooserId: string; files: Array<{ name: string; text: string }> }> = [];
     const browser = ServerBrowser.ServerBrowser.of({
       clearProfile: () => Effect.void,
+      close: () => Effect.void,
       profileReporter: Effect.succeed(() => Effect.void),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: (input) =>
@@ -393,6 +398,7 @@ it.effect.each([
   Effect.gen(function* () {
     const browser = ServerBrowser.ServerBrowser.of({
       clearProfile: () => Effect.void,
+      close: () => Effect.void,
       profileReporter: Effect.succeed(() => Effect.void),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: () => Effect.succeed(false),
