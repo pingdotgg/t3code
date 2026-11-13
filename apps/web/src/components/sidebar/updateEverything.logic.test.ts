@@ -335,10 +335,15 @@ describe("runUpdateEverything", () => {
   it("stages servers while providers install and updates each once its own stage settles", async () => {
     const calls: string[] = [];
     const [slow, fast] = [EnvironmentId.make("slow"), EnvironmentId.make("fast")];
+    let finishProviders = () => {};
     let failSlowStage = () => {};
-    await runUpdateEverything({
-      updateProviders: async () => {
+    const providers = new Promise<void>((resolve) => (finishProviders = resolve));
+    const run = runUpdateEverything({
+      updateProviders: () => {
         calls.push("providers");
+        return providers.then(() => {
+          calls.push("providers done");
+        });
       },
       stageServers: () => {
         calls.push("stage");
@@ -347,17 +352,28 @@ describe("runUpdateEverything", () => {
           [fast, Promise.resolve()],
         ]);
       },
-      updateServers: (staged) =>
-        Promise.all(
+      updateServers: (staged) => {
+        calls.push("servers");
+        return Promise.all(
           [slow, fast].map(async (id) => {
             await staged.get(id);
             calls.push(`server ${id}`);
             if (id === fast) failSlowStage();
           }),
-        ),
+        );
+      },
     });
+    finishProviders();
+    await run;
 
-    expect(calls).toEqual(["stage", "providers", "server fast", "server slow"]);
+    expect(calls).toEqual([
+      "stage",
+      "providers",
+      "providers done",
+      "servers",
+      "server fast",
+      "server slow",
+    ]);
   });
 });
 
