@@ -3628,6 +3628,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             event.type === "turn.terminal",
         );
       return {
+        adapter,
         attachmentsDir,
         runtime,
         providerThread,
@@ -3671,11 +3672,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       title: string,
       ordinal: number,
       nativeThreadHasTurns?: boolean,
+      runtimeOverride?: TitleSyncHarness["runtime"],
+      providerThreadOverride?: OrchestrationV2ProviderThread,
     ) {
-      yield* harness.runtime.startTurn(
+      const runtime = runtimeOverride ?? harness.runtime;
+      const providerThread = providerThreadOverride ?? harness.providerThread;
+      yield* runtime.startTurn(
         makeClaudeTestTurnInput({
           threadId: harness.threadId,
-          providerThread: harness.providerThread,
+          providerThread,
           now: yield* DateTime.now,
           attemptId: RunAttemptId.make(`attempt-title-sync-${ordinal}`),
           providerTurnOrdinal: ordinal,
@@ -3823,6 +3828,72 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+    );
+
+    it.effect(
+      "preserves the last-applied title across provider-session recreation so a native /rename survives",
+      () =>
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true });
+          // Turn 1 applies "First title" at spawn.
+          yield* startTurn(harness, "First title", 1);
+          assert.deepEqual(harness.renameCalls, []);
+          yield* finishTurn(harness, 1);
+
+          const lastEvent = harness.events.findLast(
+            (
+              e,
+            ): e is Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { type: "provider_thread.updated" }
+            > => e.type === "provider_thread.updated",
+          );
+          assert.equal(lastEvent?.providerThread.nativeMetadata?.title, "First title");
+          const threadAfterTurn1 = lastEvent!.providerThread;
+
+          // Recreate provider session runtime (e.g. server restart or session reconnect).
+          const runtime2 = yield* harness.adapter.openSession({
+            threadId: harness.threadId,
+            providerSessionId: ProviderSessionId.make("provider-session-claude-wake-2"),
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+          });
+          yield* runtime2.events.pipe(
+            Stream.runForEach((event) =>
+              Effect.gen(function* () {
+                harness.events.push(event);
+                if (event.type === "turn.terminal") {
+                  yield* Queue.offer(harness.terminalReceipts, event);
+                }
+              }),
+            ),
+            Effect.forkScoped,
+          );
+          const resumedThread = yield* runtime2.resumeThread({
+            providerThread: threadAfterTurn1,
+          });
+          assert.equal(resumedThread.nativeMetadata?.title, "First title");
+
+          // Resumed turn on recreated runtime with unchanged title "First title" must not send renameSession,
+          // preserving any native /rename that happened in the native CLI.
+          yield* startTurn(harness, "First title", 2, true, runtime2, resumedThread);
+          assert.deepEqual(harness.renameCalls, []);
+          yield* finishTurn(harness, 2);
+
+          // If the thread title is subsequently changed to "Second title", it renames.
+          yield* startTurn(harness, "Second title", 3, true, runtime2, resumedThread);
+          assert.deepEqual(harness.renameCalls, ["Second title"]);
+          yield* finishTurn(harness, 3);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
     );
   });
 

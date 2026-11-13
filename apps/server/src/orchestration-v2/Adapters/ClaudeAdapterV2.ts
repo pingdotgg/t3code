@@ -2423,6 +2423,12 @@ function resultTextFromSdkMessage(
   };
 }
 
+function normalizeClaudeSessionTitle(title: string | null | undefined): string | null {
+  if (title === null || title === undefined) return null;
+  const trimmed = title.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 function makeProviderThread(input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly providerInstanceId: ProviderInstanceId;
@@ -5920,25 +5926,39 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) => {
           if (event.type === "provider_thread.updated") {
-            const budget = pdfBudgets.get(event.providerThread.nativeThreadRef?.nativeId ?? "");
-            if (budget !== undefined) {
+            const nativeThreadId = event.providerThread.nativeThreadRef?.nativeId ?? "";
+            const budget = pdfBudgets.get(nativeThreadId);
+            const appliedTitle = appliedSessionTitles.get(nativeThreadId);
+            const hasAppliedTitle = appliedSessionTitles.has(nativeThreadId);
+            if (
+              budget !== undefined ||
+              hasAppliedTitle ||
+              event.providerThread.nativeMetadata?.title !== undefined
+            ) {
               event = {
                 ...event,
                 providerThread: {
                   ...event.providerThread,
                   nativeMetadata: {
                     ...event.providerThread.nativeMetadata,
-                    claudeAttachmentBudget: {
-                      bytesUsed: budget.committed.bytes,
-                      pagesUsed: budget.committed.pages,
-                    },
+                    ...(budget !== undefined
+                      ? {
+                          claudeAttachmentBudget: {
+                            bytesUsed: budget.committed.bytes,
+                            pagesUsed: budget.committed.pages,
+                          },
+                        }
+                      : {}),
+                    ...(hasAppliedTitle
+                      ? { title: normalizeClaudeSessionTitle(appliedTitle) }
+                      : event.providerThread.nativeMetadata?.title !== undefined
+                        ? { title: null }
+                        : {}),
                   },
                 },
               };
             }
-            const nativeSessionId = clearedNativeSessions.get(
-              event.providerThread.nativeThreadRef?.nativeId ?? "",
-            );
+            const nativeSessionId = clearedNativeSessions.get(nativeThreadId);
             if (nativeSessionId !== undefined) {
               event = {
                 ...event,
@@ -6073,8 +6093,36 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (nativeThreadId === undefined || nativeThreadId === null) {
               return;
             }
+            const budget = pdfBudgets.get(nativeThreadId);
+            const appliedTitle = appliedSessionTitles.get(nativeThreadId);
+            const hasAppliedTitle = appliedSessionTitles.has(nativeThreadId);
+            const enriched: OrchestrationV2ProviderThread = {
+              ...providerThread,
+              ...(budget !== undefined ||
+              hasAppliedTitle ||
+              providerThread.nativeMetadata?.title !== undefined
+                ? {
+                    nativeMetadata: {
+                      ...providerThread.nativeMetadata,
+                      ...(budget !== undefined
+                        ? {
+                            claudeAttachmentBudget: {
+                              bytesUsed: budget.committed.bytes,
+                              pagesUsed: budget.committed.pages,
+                            },
+                          }
+                        : {}),
+                      ...(hasAppliedTitle
+                        ? { title: normalizeClaudeSessionTitle(appliedTitle) }
+                        : providerThread.nativeMetadata?.title !== undefined
+                          ? { title: null }
+                          : {}),
+                    },
+                  }
+                : {}),
+            };
             yield* Ref.update(lastProviderThreadByNativeThread, (current) =>
-              new Map(current).set(nativeThreadId, providerThread),
+              new Map(current).set(nativeThreadId, enriched),
             );
           });
 
@@ -12433,6 +12481,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const used = turnInput.providerThread.nativeMetadata?.claudeAttachmentBudget;
               pdfBudgets.set(nativeThreadId, makeClaudeAttachmentBudget(used));
             }
+            if (!appliedSessionTitles.has(nativeThreadId)) {
+              const recordedTitle = turnInput.providerThread.nativeMetadata?.title;
+              if (recordedTitle !== undefined && recordedTitle !== null) {
+                appliedSessionTitles.set(nativeThreadId, recordedTitle);
+              }
+            }
             const pdfReservation = yield* reserveClaudePdfBudget(
               pdfBudgets.get(nativeThreadId)!,
               persistAttachmentBudget(nativeThreadId),
@@ -12464,13 +12518,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               yield* querySession.query.renameSession(turnInput.appThread.title).pipe(
                 Effect.timeout("10 seconds"),
                 Effect.tap(() =>
-                  Effect.sync(() =>
-                    appliedSessionTitles.set(nativeThreadId, turnInput.appThread.title),
-                  ),
+                  Effect.gen(function* () {
+                    appliedSessionTitles.set(nativeThreadId, turnInput.appThread.title);
+                    const remembered = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
+                      nativeThreadId,
+                    );
+                    if (remembered !== undefined) {
+                      yield* rememberProviderThread(remembered);
+                    }
+                  }),
                 ),
                 Effect.tapError(() =>
-                  Effect.sync(() => {
+                  Effect.gen(function* () {
                     appliedSessionTitles.delete(nativeThreadId);
+                    const remembered = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
+                      nativeThreadId,
+                    );
+                    if (remembered !== undefined) {
+                      yield* rememberProviderThread(remembered);
+                    }
                   }),
                 ),
                 Effect.ignore,
@@ -13207,14 +13273,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             function* (threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput) {
               const createdAt = yield* DateTime.now;
               const nativeThreadId = yield* queryRunner.allocateSessionId;
-              return makeProviderThread({
+              if (threadInput.title !== undefined) {
+                appliedSessionTitles.set(nativeThreadId, threadInput.title);
+              }
+              const providerThread = makeProviderThread({
                 idAllocator,
                 providerInstanceId: adapterOptions.instanceId,
                 appThreadId: threadInput.threadId,
                 providerSessionId: input.providerSessionId,
                 nativeThreadId,
+                ...(threadInput.title !== undefined
+                  ? { nativeMetadata: { title: normalizeClaudeSessionTitle(threadInput.title) } }
+                  : {}),
                 now: createdAt,
               });
+              yield* rememberProviderThread(providerThread);
+              return providerThread;
             },
             (effect, threadInput) =>
               effect.pipe(
@@ -13231,6 +13305,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           resumeThread: Effect.fn("ClaudeAdapterV2.resumeThread")(
             function* (threadInput: { readonly providerThread: OrchestrationV2ProviderThread }) {
               const nativeThreadId = threadInput.providerThread.nativeThreadRef?.nativeId;
+              if (nativeThreadId !== undefined && nativeThreadId !== null) {
+                const recordedTitle = threadInput.providerThread.nativeMetadata?.title;
+                if (recordedTitle !== undefined && recordedTitle !== null) {
+                  appliedSessionTitles.set(nativeThreadId, recordedTitle);
+                }
+              }
               if (
                 nativeThreadId !== undefined &&
                 nativeThreadId !== null &&
@@ -13256,12 +13336,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }
               }
               const updatedAt = yield* DateTime.now;
-              return {
+              const appliedTitle =
+                nativeThreadId !== undefined && nativeThreadId !== null
+                  ? appliedSessionTitles.get(nativeThreadId)
+                  : undefined;
+              const providerThread: OrchestrationV2ProviderThread = {
                 ...threadInput.providerThread,
                 providerSessionId: input.providerSessionId,
                 status: "idle" as const,
+                ...(appliedTitle !== undefined
+                  ? {
+                      nativeMetadata: {
+                        ...threadInput.providerThread.nativeMetadata,
+                        title: normalizeClaudeSessionTitle(appliedTitle),
+                      },
+                    }
+                  : {}),
                 updatedAt,
               };
+              yield* rememberProviderThread(providerThread);
+              return providerThread;
             },
             (effect, threadInput) =>
               effect.pipe(
