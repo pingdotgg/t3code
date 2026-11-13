@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   type ModelCapabilities,
   type SelectProviderOptionDescriptor,
@@ -516,10 +517,11 @@ const settleOpenCode2Catalog = <E>(
     );
   });
 
-const OPENCODE_2_CATALOG_SETTLE_TIMEOUT = "5 seconds";
+const OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS = 5_000;
 
 export const makeOpenCode2ModelLoader = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
+  environment?: NodeJS.ProcessEnv,
 ) =>
   Effect.sync(() => {
     let lastLoaded: ReadonlyArray<OpenCode2Model> = [];
@@ -536,7 +538,13 @@ export const makeOpenCode2ModelLoader = <E>(
       return tracked.pipe(
         Effect.flatMap((first) =>
           settleOpenCode2Catalog(tracked, first).pipe(
-            Effect.timeoutOption(OPENCODE_2_CATALOG_SETTLE_TIMEOUT),
+            Effect.timeoutOption(
+              resolveProviderProbeTimeoutMs(
+                "opencode",
+                OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS,
+                environment,
+              ),
+            ),
           ),
         ),
         Effect.catch((error) =>
@@ -555,9 +563,12 @@ export const makeOpenCode2ModelLoader = <E>(
 /** None when the reads fail or never agree, so a partial catalog never passes for a settled one. */
 export const readSettledOpenCode2Catalog = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
+  environment?: NodeJS.ProcessEnv,
 ) =>
   settleOpenCode2Catalog(list).pipe(
-    Effect.timeoutOption(OPENCODE_2_CATALOG_SETTLE_TIMEOUT),
+    Effect.timeoutOption(
+      resolveProviderProbeTimeoutMs("opencode", OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS, environment),
+    ),
     Effect.orElseSucceed(() => Option.none<ReadonlyArray<OpenCode2Model>>()),
   );
 
@@ -593,12 +604,15 @@ export const loadOpenCode2Workspace = Effect.fn("OpencodeProviderStatus.loadOpen
     scanned: Effect.Effect<void>,
     loaded: Effect.Effect<boolean>,
     settled: Effect.Effect<void> = Effect.void,
+    environment?: NodeJS.ProcessEnv,
   ) {
     const wasLoaded = yield* loaded;
     yield* settled;
     const first = yield* read;
     if (wasLoaded && first.commands.length > 0) return first;
-    yield* scanned.pipe(Effect.timeoutOption("10 seconds"));
+    yield* scanned.pipe(
+      Effect.timeoutOption(resolveProviderProbeTimeoutMs("opencode", 10_000, environment)),
+    );
     return yield* read;
   },
 );
@@ -755,6 +769,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     ReadonlyArray<OpenCode2Model>,
     OpenCodeRuntime.OpenCodeRuntimeError
   >,
+  environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -871,6 +886,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           ...(settingsSecretLiteral(openCodeSettings.serverPassword)
             ? { serverPassword: settingsSecretLiteral(openCodeSettings.serverPassword) }
             : {}),
+          ...(environment !== undefined ? { environment } : {}),
         })
         .pipe(Effect.flatMap(loadInventory), Effect.scoped)
     : serverOwner.withServer(loadInventory);

@@ -801,37 +801,35 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
   );
 
   it.effect("reports the upgraded CLI without restarting a borrowed OpenCode server", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const settings = makeOpenCodeSettings();
-        const owner = yield* OpenCodeServerOwner.make({
-          binaryPath: settings.binaryPath,
-          directory: process.cwd(),
-        });
-        yield* owner.withServer(() =>
-          Effect.gen(function* () {
-            runtimeMock.state.versionStdout = "opencode 1.14.20\n";
-            const snapshot = yield* checkOpenCodeProviderStatus(
-              settings,
-              process.cwd(),
-              probeOpenCodeRuntime(settings).pipe(
-                Effect.provideService(
-                  HttpClient.HttpClient,
-                  replayOpenCodeServer(OPENCODE_1_RESPONSES, settings.serverPassword),
-                ),
-                Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble),
+    Effect.gen(function* () {
+      const settings = makeOpenCodeSettings();
+      const owner = yield* OpenCodeServerOwner.make({
+        binaryPath: settings.binaryPath,
+        directory: process.cwd(),
+      });
+      yield* owner.withServer(() =>
+        Effect.gen(function* () {
+          runtimeMock.state.versionStdout = "opencode 1.14.20\n";
+          const snapshot = yield* checkOpenCodeProviderStatus(
+            settings,
+            process.cwd(),
+            probeOpenCodeRuntime(settings).pipe(
+              Effect.provideService(
+                HttpClient.HttpClient,
+                replayOpenCodeServer(OPENCODE_1_RESPONSES, settings.serverPassword),
               ),
-              Effect.succeed([]),
-            ).pipe(Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, owner));
+              Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble),
+            ),
+            Effect.succeed([]),
+          ).pipe(Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, owner));
 
-            NodeAssert.equal(snapshot.version, "1.14.19");
-            NodeAssert.equal(snapshot.installedVersion, "1.14.20");
-            NodeAssert.equal(runtimeMock.state.startCalls, 1);
-            NodeAssert.equal(runtimeMock.state.closeCalls, 0);
-          }),
-        );
-      }),
-    ),
+          NodeAssert.equal(snapshot.version, "1.14.19");
+          NodeAssert.equal(snapshot.installedVersion, "1.14.20");
+          NodeAssert.equal(runtimeMock.state.startCalls, 1);
+          NodeAssert.equal(runtimeMock.state.closeCalls, 0);
+        }),
+      );
+    }),
   );
 
   it.effect("lists a local OpenCode 2 binary's models in Full access only, never via 1.x", () =>
