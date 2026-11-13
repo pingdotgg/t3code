@@ -2490,6 +2490,7 @@ const workflowRun: WorkflowRun = {
   result: null,
   pauses: 1,
   retired: false,
+  resumesAt: null,
   parentRunId: null,
   parentStep: null,
   startedAt: "2026-11-01T00:00:00.000Z",
@@ -2505,6 +2506,7 @@ const workflowStep: WorkflowStep = {
   threadId: null,
   environmentId: null,
   result: null,
+  said: null,
   startedAt: "2026-11-01T00:00:10.000Z",
   endedAt: "2026-11-01T00:01:00.000Z",
 };

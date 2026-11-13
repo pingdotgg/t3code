@@ -25,6 +25,7 @@ import Migration0095 from "../persistence/Migrations/095_WorkflowRunInput.ts";
 import Migration0096 from "../persistence/Migrations/096_WorkflowStore.ts";
 import Migration0097 from "../persistence/Migrations/097_WorkflowRunParent.ts";
 import Migration0098 from "../persistence/Migrations/098_WorkflowStepResult.ts";
+import Migration0099 from "../persistence/Migrations/099_WorkflowStepSaid.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import { agent, ask } from "./workflowAgent.ts";
 import * as Workflows from "./Workflows.ts";
@@ -363,6 +364,7 @@ const harness = Effect.gen(function* () {
         Migration0096,
         Migration0097,
         Migration0098,
+        Migration0099,
       ],
       {
         discard: true,
@@ -418,6 +420,8 @@ it.effect(
           const paused = yield* workflows.waitFor(runId, status("paused"));
           assert.include(paused.detail ?? "", "the dependency is down");
           assert.equal(paused.pauses, 1);
+          // It says when it tries again by itself, which is after it paused.
+          assert.isTrue(paused.resumesAt !== null && paused.resumesAt > paused.updatedAt);
 
           yield* workflows.resume(runId);
           const pausedAgain = yield* workflows.waitFor(runId, (run) => run.pauses === 2);
@@ -595,9 +599,18 @@ it.effect(
           yield* agents.end(runId, "write/0", { reply: "done" });
           const correction = yield* agents.started(runId, "write/0/correct/0");
           assert.equal(correction.thread, "thread-1");
-          yield* agents.end(runId, "write/0/correct/0", { output: { branch: "fix/1" } });
+          yield* agents.end(runId, "write/0/correct/0", {
+            output: { branch: "fix/1" },
+            reply: "Pushed fix/1.",
+          });
 
           yield* workflows.waitFor(runId, (run) => run.detail === "merge");
+          // A person reads what the agent said beside the data it returned.
+          const written = (yield* workflows.get(runId)).steps.find((step) => step.name === "write");
+          assert.deepStrictEqual(
+            [written?.result, written?.said],
+            [{ branch: "fix/1" }, "Pushed fix/1."],
+          );
           const [question] = yield* workflows.questions;
           // The agent whose work raised the question is one click from it.
           assert.deepStrictEqual(question?.thread, { threadId: "thread-1", environmentId: null });

@@ -18,6 +18,7 @@ import Migration0095 from "../../apps/server/src/persistence/Migrations/095_Work
 import Migration0096 from "../../apps/server/src/persistence/Migrations/096_WorkflowStore.ts";
 import Migration0097 from "../../apps/server/src/persistence/Migrations/097_WorkflowRunParent.ts";
 import Migration0098 from "../../apps/server/src/persistence/Migrations/098_WorkflowStepResult.ts";
+import Migration0099 from "../../apps/server/src/persistence/Migrations/099_WorkflowStepSaid.ts";
 import type { WorkflowDefinition } from "../../apps/server/src/workflows/workflow.ts";
 import {
   type AgentResult,
@@ -83,6 +84,7 @@ const world = Effect.fn("gradeWorkflow.world")(function* (
         Migration0096,
         Migration0097,
         Migration0098,
+        Migration0099,
       ],
       {
         discard: true,

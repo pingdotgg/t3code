@@ -23,6 +23,8 @@ export const WorkflowRun = Schema.Struct({
   pauses: Schema.Number,
   /** Its version is no longer registered, so it cannot go on until that version is back. */
   retired: Schema.Boolean,
+  /** When a paused run is resumed without anyone asking; null when it waits for a person. */
+  resumesAt: Schema.NullOr(Schema.String),
   /** The run that invoked this one and waits for it; null for a run started by itself. */
   parentRunId: Schema.NullOr(Schema.String),
   /** The step of that run this one was invoked as. */
@@ -46,6 +48,8 @@ export const WorkflowStep = Schema.Struct({
   environmentId: Schema.NullOr(Schema.String),
   /** What it produced: a step's value, an agent's data or reply, the answer to a question. */
   result: Schema.NullOr(Schema.Json),
+  /** What an agent said in closing, when its result is data and not that reply. */
+  said: Schema.NullOr(Schema.String),
   startedAt: Schema.String,
   endedAt: Schema.NullOr(Schema.String),
 });
