@@ -19,6 +19,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -4152,6 +4153,138 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       assert.equal(task?.status, "interrupted");
       assert.equal(task?.result, "Child task ended with status interrupted.");
       assert.equal(task?.completionDelivery?.state, "claimed");
+    }),
+  );
+
+  // regression: #34401 a parent's Stop killed a child's background build but its task read completed
+  it.effect("reports a child its parent's Stop reached as interrupted", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const stoppedAt = DateTime.add(now, { seconds: 10 });
+      const threadId = ThreadId.make("thread:stop-background-parent");
+      const projectId = ProjectId.make("project:stop-background-parent");
+      const runId = RunId.make("run:stop-background-parent");
+      const rootNodeId = NodeId.make("node:stop-background-parent-root");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId,
+        runId,
+        rootNodeId,
+        taskId: NodeId.make("node:stop-background-parent-settled"),
+        deliveryState: "delivered",
+        now,
+      });
+      // Background launches report their command finished at once; only the roster tracks the work.
+      const seedStoppedChild = (name: string, parentStopped: boolean, reachedTurn: boolean) =>
+        Effect.gen(function* () {
+          const child = yield* seedRestartCancelledChild({
+            parentThreadId: threadId,
+            projectId,
+            parentRunId: runId,
+            rootNodeId,
+            name,
+            completionWake: "always",
+            continuationPending: false,
+            runStatus: "completed",
+            now,
+          });
+          const item = {
+            threadId: child.childThreadId,
+            runId: child.childRunId,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+          };
+          const scope = {
+            type: "turn-item.updated" as const,
+            threadId: child.childThreadId,
+            runId: child.childRunId,
+            providerInstanceId: modelSelection.instanceId,
+          };
+          yield* eventSink.write({
+            commandId: CommandId.make(`command:${name}:stop`),
+            events: [
+              {
+                ...scope,
+                id: EventId.make(`event:${name}:command`),
+                occurredAt: now,
+                payload: {
+                  ...item,
+                  id: TurnItemId.make(`turn-item:${name}:command`),
+                  type: "command_execution",
+                  ordinal: 1,
+                  status: "completed",
+                  title: "Run build",
+                  input: "./build.sh",
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                },
+              },
+              {
+                ...scope,
+                id: EventId.make(`event:${name}:interrupt-request`),
+                occurredAt: stoppedAt,
+                payload: {
+                  ...item,
+                  id: TurnItemId.make(`turn-item:${name}:interrupt-request`),
+                  // Stop interrupting background work names its provider turn; an idle run's marker does not.
+                  providerTurnId: reachedTurn ? ProviderTurnId.make(`provider-turn:${name}`) : null,
+                  type: "run_interrupt_request",
+                  ordinal: 2,
+                  status: "completed",
+                  title: "Interrupt requested",
+                  startedAt: stoppedAt,
+                  completedAt: stoppedAt,
+                  updatedAt: stoppedAt,
+                  message: "Stopped by user",
+                },
+              },
+            ],
+          });
+          if (parentStopped) {
+            const task = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+              (row) => row.id === child.taskId,
+            )!;
+            yield* eventSink.write({
+              commandId: CommandId.make(`command:${name}:parent-stop`),
+              events: [
+                {
+                  id: EventId.make(`event:${name}:disposed`),
+                  type: "subagent.updated",
+                  threadId,
+                  runId,
+                  nodeId: task.id,
+                  driver,
+                  providerInstanceId: modelSelection.instanceId,
+                  occurredAt: stoppedAt,
+                  payload: {
+                    ...task,
+                    completionDelivery: { state: "disposed", observedByRunId: null },
+                    updatedAt: stoppedAt,
+                  },
+                },
+              ],
+            });
+          }
+          return child;
+        });
+      const cut = yield* seedStoppedChild("stop-background-cut", true, true);
+      const idle = yield* seedStoppedChild("stop-background-idle", true, false);
+      const finished = yield* seedStoppedChild("stop-background-finished", false, true);
+
+      yield* orchestrator.recoverDelegatedTasks;
+
+      const settled = yield* orchestrator.getThreadProjection(threadId);
+      const statusOf = (taskId: NodeId) =>
+        settled.subagents.find((row) => row.id === taskId)?.status;
+      assert.equal(statusOf(cut.taskId), "interrupted");
+      assert.equal(statusOf(idle.taskId), "completed");
+      assert.equal(statusOf(finished.taskId), "completed");
     }),
   );
 

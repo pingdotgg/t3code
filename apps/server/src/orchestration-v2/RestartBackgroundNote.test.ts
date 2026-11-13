@@ -1,10 +1,12 @@
 import { assert, it } from "@effect/vitest";
 import {
   MessageId,
+  NodeId,
   ProviderThreadId,
   RunAttemptId,
   RunId,
   type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
@@ -14,7 +16,9 @@ import {
   isAwaitedWork,
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
+  pendingStoppedDelegatedTasks,
   restartContinuationNote,
+  stoppedDelegatedTasksNote,
   mergeRestartCancelledBackgroundWork,
 } from "./RestartBackgroundNote.ts";
 
@@ -253,4 +257,50 @@ it("counts a prompted mid-turn or chained continuation as delivering the note", 
     }),
     [],
   );
+});
+
+// regression: #34401 Stop interrupted a parent's delegated tasks without telling its agent
+it("tells the next completed turn about delegated tasks its Stop interrupted, once", () => {
+  const at = (minute: number) => DateTime.makeUnsafe(`2026-10-03T10:0${minute}:00.000Z`);
+  const spawning = run(1, claudeThread, {
+    requestedAt: at(0),
+    delegatedCompletion: { disposition: "stopped", nextGeneration: 1, delivery: null },
+  });
+  const task = (id: string, extra: Partial<OrchestrationV2Subagent> = {}) =>
+    ({
+      id: NodeId.make(id),
+      runId: spawning.id,
+      origin: "app_owned",
+      prompt: `Run ${id}.`,
+      title: null,
+      status: "interrupted",
+      completionDelivery: { state: "disposed", observedByRunId: null },
+      completedAt: at(1),
+      ...extra,
+    }) as OrchestrationV2Subagent;
+  const stopped = task("stopped", { title: "Build A" });
+  const subagents = [
+    stopped,
+    task("cancelled", { cancelledRunId: RunId.make("run:child") }),
+    task("finished", { status: "completed" }),
+    task("delivered", { completionDelivery: { state: "delivered", observedByRunId: null } }),
+  ];
+  const pending = (runs: ReadonlyArray<OrchestrationV2Run>, providerThreadId = claudeThread) =>
+    pendingStoppedDelegatedTasks({
+      providerThreadId,
+      runs,
+      providerTurns: runs.map(turnFor),
+      attempts: runs.map((source) => ({ id: source.activeAttemptId!, runId: source.id })),
+      subagents,
+      compactionMessageIds: new Set(),
+    });
+
+  assert.deepEqual(pending([spawning]), [stopped]);
+  // A /clear turn starts a fresh provider thread that never saw the stopped tasks.
+  assert.deepEqual(pending([spawning], codexThread), []);
+  assert.equal(stoppedDelegatedTasksNote([stopped]).split("\n")[1], "- Build A (task stopped)");
+  // Requested while the task was still settling, so its turn start could not see it.
+  const racing = run(2, claudeThread, { requestedAt: at(0), startedAt: at(2) });
+  assert.deepEqual(pending([spawning, racing]), [stopped]);
+  assert.deepEqual(pending([spawning, racing, run(3, claudeThread, { requestedAt: at(2) })]), []);
 });
