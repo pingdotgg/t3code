@@ -4764,15 +4764,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             };
           }),
         );
+        // Holding item/completed in its handler means the earlier delta was already handled
+        // and its flush timer started, so one clock step shows the streaming update.
+        let completedCount = 0;
         const harness = yield* makeCodexReplayHarness(
           transcript,
           undefined,
           undefined,
           undefined,
-          (entry) => {
-            const gate = streamed
-              ? gates.find((gate) => entry.label === `item/completed/${gate.id}`)
-              : undefined;
+          undefined,
+          undefined,
+          undefined,
+          (method) => {
+            const gate =
+              streamed && method === "item/completed" ? gates[completedCount++] : undefined;
             return gate === undefined
               ? Effect.void
               : Deferred.succeed(gate.ready, undefined).pipe(
