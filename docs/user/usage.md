@@ -168,6 +168,11 @@ or endpoint configurations do not report subscription limits.
 Muse Code reports its session and weekly windows and its tier once the Muse CLI has run in a thread.
 Until then it shows no limits. Readings are not kept across a server restart.
 
+GLM Agent (1.16 or newer) reports its Coding Plan limits using the same sign-in the agent itself
+uses, so there is nothing extra to configure: sign in with `glm-acp-agent --setup`, or set
+`Z_AI_API_KEY` in the instance's **Environment variables**. BigModel accounts follow
+`ACP_GLM_BASE_URL`.
+
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
