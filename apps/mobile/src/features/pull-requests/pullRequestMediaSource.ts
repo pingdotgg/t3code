@@ -1,6 +1,13 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { pullRequestMediaResource } from "@t3tools/client-runtime/pull-request-markdown";
+import {
+  resolveChangeRequestMediaUrl,
+  pullRequestMediaResource,
+} from "@t3tools/client-runtime/pull-request-markdown";
 import type { FilePreviewItem } from "../../components/ui/FilePreviewModal.types";
+
+import { normalizeNativeMarkdownUrl } from "../../lib/markdownLinks";
+import { markdownImageSources } from "../../lib/markdownImageSources";
+import { videoMimeType } from "@t3tools/shared/video";
 
 export interface PullRequestMediaLocation {
   readonly environmentId: EnvironmentId;
@@ -26,4 +33,23 @@ export function pullRequestImageSource(
   location: PullRequestMediaLocation | null,
 ): FilePreviewItem {
   return { kind: "image", ...pullRequestMediaSource(url, location) };
+}
+
+export function pullRequestImageGallery(
+  markdown: string,
+  location: PullRequestMediaLocation | null,
+  changeRequestUrl: string | null,
+): FilePreviewItem[] {
+  return markdownImageSources(markdown)
+    .map((href) =>
+      normalizeNativeMarkdownUrl(
+        changeRequestUrl ? resolveChangeRequestMediaUrl(href, changeRequestUrl) : href,
+      ),
+    )
+    .filter(
+      (uri) =>
+        /^https?:\/\//i.test(uri) &&
+        videoMimeType({ name: uri.split(/[?#]/)[0] ?? uri, mimeType: "" }) === null,
+    )
+    .map((uri) => pullRequestImageSource(uri, location));
 }
