@@ -539,6 +539,18 @@ const make = Effect.gen(function* () {
     config.baseDir,
   ]);
   const agentScope = yield* AgentScope;
+  // Chrome reads the NSS database at launch; ask again only while certutil is missing.
+  let localCertificatesTrusted = false;
+  const trustLocalCertificates = Effect.gen(function* () {
+    if (localCertificatesTrusted) return;
+    localCertificatesTrusted = yield* PreviewBrowserHost.trustLocalCertificates;
+  }).pipe(
+    Effect.provideContext(
+      yield* Effect.context<
+        FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+      >(),
+    ),
+  );
   const launchersDir = NodePath.join(config.stateDir, "server-browser", "launchers");
 
   const tabs = new Map<string, ServerTab>();
@@ -556,7 +568,8 @@ const make = Effect.gen(function* () {
   const contexts = new ServerBrowserContexts({
     profilesDir: NodePath.join(config.stateDir, "server-browser", "profiles"),
     idleBrowserMs: 5 * 60_000,
-    executable: () => runPromise(previewBrowser.executable),
+    executable: () =>
+      runPromise(trustLocalCertificates.pipe(Effect.andThen(previewBrowser.executable))),
     // An agent scope keeps Chrome out of the server's memory protection and OOM score.
     launcher: async (executable) => {
       const launch = await runPromise(

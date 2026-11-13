@@ -1,6 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
@@ -127,6 +131,77 @@ describe("diagnoseLaunchFailure", () => {
         version: "Google Chrome for Testing 154.0.8037.92\n",
       });
       expect(error).toBeUndefined();
+    }),
+  );
+});
+
+describe("trustLocalCertificates", () => {
+  const LOCAL_CA = "/usr/local/share/ca-certificates";
+  const trust = (input: {
+    readonly existing: ReadonlyArray<string>;
+    readonly certutil?: boolean;
+    readonly xdgDataHome?: string;
+  }) => {
+    const { spawner, commands } = hostReporting({ ldd: "", version: "" });
+    const missing = (method: string) =>
+      PlatformError.systemError({ _tag: "NotFound", module: "FileSystem", method });
+    return PreviewBrowserHost.trustLocalCertificates.pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        input.certutil === false
+          ? ChildProcessSpawner.make(() => Effect.fail(missing("spawn")))
+          : spawner,
+      ),
+      Effect.provide(
+        Layer.merge(
+          Path.layer,
+          FileSystem.layerNoop({
+            readDirectory: (directory) =>
+              directory === LOCAL_CA
+                ? Effect.succeed(["corp.crt", "README", "team/extra.crt"])
+                : Effect.fail(missing("readDirectory")),
+            exists: (path) => Effect.succeed(input.existing.includes(path)),
+            makeDirectory: () => Effect.void,
+            readFile: (path) => Effect.succeed(new TextEncoder().encode(path)),
+          }),
+        ),
+      ),
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.HomeDirectory, "/home/me"),
+      Effect.provideService(
+        HostProcess.Environment,
+        input.xdgDataHome === undefined ? {} : { XDG_DATA_HOME: input.xdgDataHome },
+      ),
+      Effect.map((trusted) => ({ trusted, commands })),
+    );
+  };
+  const imports = (database: string) => [
+    expect.stringMatching(
+      new RegExp(
+        `^certutil -d sql:${database} -A -t C,, -n T3 Code system CA [0-9a-f]{16} -i ${LOCAL_CA}/corp\\.crt$`,
+      ),
+    ),
+    expect.stringMatching(
+      new RegExp(
+        `^certutil -d sql:${database} -A -t C,, -n T3 Code system CA [0-9a-f]{16} -i ${LOCAL_CA}/team/extra\\.crt$`,
+      ),
+    ),
+  ];
+
+  it.effect("imports each local root into the database Chrome opens", () =>
+    Effect.gen(function* () {
+      const legacy = yield* trust({ existing: ["/home/me/.pki/nssdb"], xdgDataHome: "/data" });
+      expect(legacy).toEqual({ trusted: true, commands: imports("/home/me/.pki/nssdb") });
+      const xdg = yield* trust({ existing: [], xdgDataHome: "/data" });
+      expect(xdg.commands).toEqual(imports("/data/pki/nssdb"));
+      const fallback = yield* trust({ existing: [] });
+      expect(fallback.commands).toEqual(imports("/home/me/.local/share/pki/nssdb"));
+    }),
+  );
+
+  it.effect("reports roots left untrusted when certutil is missing", () =>
+    Effect.gen(function* () {
+      expect((yield* trust({ existing: [], certutil: false })).trusted).toBe(false);
     }),
   );
 });

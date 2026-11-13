@@ -1,9 +1,13 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Digest is a service; a nickname needs only a plain hash.
+import * as NodeCrypto from "node:crypto";
 
 export const SETUP_SUBCOMMAND = "browser setup";
 
@@ -136,3 +140,93 @@ export const sandboxBlocked = Effect.gen(function* () {
   if (!restricted) return false;
   return !(yield* fs.exists(APPARMOR_PROFILE_PATH).pipe(Effect.orElseSucceed(() => false)));
 }).pipe(Effect.withSpan("PreviewBrowserHost.sandboxBlocked"));
+
+/**
+ * Where an administrator adds roots to the system store: Debian and Alpine, RHEL, Arch, SUSE.
+ * The first holds one certificate per `.crt` file; p11-kit reads every file in the others.
+ */
+const LOCAL_CA_DIRECTORIES = [
+  { directory: "/usr/local/share/ca-certificates", extension: ".crt" },
+  { directory: "/etc/pki/ca-trust/source/anchors" },
+  { directory: "/etc/ca-certificates/trust-source/anchors" },
+  { directory: "/etc/pki/trust/anchors" },
+];
+
+export const CERTUTIL_PACKAGE = "libnss3-tools";
+
+/** Chrome on Linux trusts its own roots and the user's NSS database, never the system store. */
+export const localCertificates = Effect.gen(function* () {
+  if ((yield* HostProcess.Platform) !== "linux") return [];
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const found = yield* Effect.forEach(LOCAL_CA_DIRECTORIES, ({ directory, extension }) =>
+    fs.readDirectory(directory, { recursive: true }).pipe(
+      Effect.map((names) =>
+        names
+          .filter((name) => extension === undefined || name.endsWith(extension))
+          .map((name) => path.join(directory, name)),
+      ),
+      Effect.orElseSucceed(() => []),
+    ),
+  );
+  return found.flat();
+}).pipe(Effect.withSpan("PreviewBrowserHost.localCertificates"));
+
+const runCertutil = Effect.fn("PreviewBrowserHost.runCertutil")(function* (
+  args: ReadonlyArray<string>,
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  return yield* spawner
+    .exitCode(
+      ChildProcess.make("certutil", args, { stdin: "ignore", stdout: "ignore", stderr: "ignore" }),
+    )
+    .pipe(Effect.timeout("5 seconds"), Effect.option);
+});
+
+export const certutilAvailable = runCertutil(["-H"]).pipe(
+  Effect.map(Option.isSome),
+  Effect.withSpan("PreviewBrowserHost.certutilAvailable"),
+);
+
+/**
+ * Imports the system store's local roots into the NSS database Chrome reads. False means certutil
+ * could not run, so the roots stay untrusted until it is installed.
+ */
+export const trustLocalCertificates = Effect.gen(function* () {
+  const certificates = yield* localCertificates;
+  if (certificates.length === 0) return true;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const home = yield* HostProcess.HomeDirectory;
+  const env = yield* HostProcess.Environment;
+  // Chrome opens ~/.pki/nssdb when it exists and the XDG data directory's database otherwise.
+  const legacy = path.join(home, ".pki", "nssdb");
+  const database = (yield* fs.exists(legacy).pipe(Effect.orElseSucceed(() => false)))
+    ? legacy
+    : path.join(env.XDG_DATA_HOME || path.join(home, ".local", "share"), "pki", "nssdb");
+  yield* fs.makeDirectory(database, { recursive: true, mode: 0o700 }).pipe(Effect.ignore);
+  for (const certificate of certificates) {
+    const bytes = yield* fs.readFile(certificate).pipe(Effect.option);
+    if (Option.isNone(bytes)) continue;
+    // NSS refuses a nickname another certificate holds, so a replaced file needs a new one.
+    const digest = NodeCrypto.createHash("sha256").update(bytes.value).digest("hex");
+    const imported = yield* runCertutil([
+      "-d",
+      `sql:${database}`,
+      "-A",
+      "-t",
+      "C,,",
+      "-n",
+      `T3 Code system CA ${digest.slice(0, 16)}`,
+      "-i",
+      certificate,
+    ]);
+    if (Option.isNone(imported)) return false;
+  }
+  return true;
+}).pipe(Effect.withSpan("PreviewBrowserHost.trustLocalCertificates"));
+
+export const UNTRUSTED_CERTIFICATE = "ERR_CERT_AUTHORITY_INVALID";
+
+export const untrustedCertificateNote = (setupCommand: string) =>
+  `This host's own CA certificates are not trusted by T3's browser, so HTTPS resources they sign fail to load. Run \`${setupCommand}\` on the host to install certutil, then try again.`;

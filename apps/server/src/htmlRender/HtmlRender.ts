@@ -384,12 +384,20 @@ const make = Effect.gen(function* () {
     config.baseDir,
   ]);
 
+  // Chrome reads the NSS database at launch; ask again only while certutil is missing.
+  let localCertificatesTrusted = false;
+  const trustLocalCertificates = Effect.gen(function* () {
+    if (localCertificatesTrusted) return;
+    localCertificatesTrusted = yield* PreviewBrowserHost.trustLocalCertificates;
+  }).pipe(Effect.provideContext(services));
+
   const launching = <A>(
     executable: string,
     run: (noSandbox: boolean) => Effect.Effect<A, HeadlessChrome.HtmlRenderBrowserError>,
   ) =>
     browsers.withPermits(1)(
-      run(noSandbox).pipe(
+      trustLocalCertificates.pipe(
+        Effect.andThen(run(noSandbox)),
         Effect.catchTags({
           HtmlRenderBrowserError: (error) =>
             error.output === undefined
@@ -589,8 +597,24 @@ const make = Effect.gen(function* () {
         appearance,
       }).pipe(Effect.provideContext(services)),
     );
+    const untrusted =
+      !localCertificatesTrusted &&
+      screenshot.consoleMessages.some((message) =>
+        message.text.includes(PreviewBrowserHost.UNTRUSTED_CERTIFICATE),
+      );
     return {
       ...screenshot,
+      ...(untrusted
+        ? {
+            consoleMessages: [
+              ...screenshot.consoleMessages,
+              {
+                level: "warning" as const,
+                text: PreviewBrowserHost.untrustedCertificateNote(setupCommand),
+              },
+            ],
+          }
+        : {}),
       width,
       ...(inlined.missing.length === 0 ? {} : { missingImages: inlined.missing }),
     } satisfies HtmlPreview;

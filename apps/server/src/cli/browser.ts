@@ -105,7 +105,7 @@ const FONT_PACKAGES = ["fontconfig", "fonts-liberation"];
 
 const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe(
   Command.withDescription(
-    "Set up this Linux host for T3's browser: allow Chrome's sandbox and install its libraries and fonts.",
+    "Set up this Linux host for T3's browser: allow Chrome's sandbox and install its libraries, fonts and certutil.",
   ),
   Command.withHandler(({ baseDir }) =>
     Effect.gen(function* () {
@@ -133,9 +133,13 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
         ? yield* PreviewBrowserHost.missingLibraries(browser.value)
         : [];
       const needsFonts = !(yield* fontAvailable);
+      // The server imports this host's own CA certificates for the browser, and needs certutil to.
+      const needsCertutil =
+        (yield* PreviewBrowserHost.localCertificates).length > 0 &&
+        !(yield* PreviewBrowserHost.certutilAvailable);
       const hasApt = yield* fs.exists("/usr/bin/apt-get").pipe(Effect.orElseSucceed(() => false));
 
-      if (!needsProfile && missing.length === 0 && !needsFonts) {
+      if (!needsProfile && missing.length === 0 && !needsFonts && !needsCertutil) {
         return yield* Console.log(
           rootWarning ??
             (Option.isSome(browser)
@@ -156,6 +160,11 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
         if (needsFonts) {
           yield* Console.log(
             "T3's browser needs fontconfig and system fonts; setup installs them.",
+          );
+        }
+        if (needsCertutil) {
+          yield* Console.log(
+            "T3's browser needs certutil to trust this host's own CA certificates; setup installs it.",
           );
         }
         return yield* Console.log(`\nThis needs root. Run:\n\n  ${setupCommand}\n`);
@@ -183,7 +192,7 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
         yield* Console.log("Allowed Chrome's sandbox for T3's browser.");
       }
 
-      if ((missing.length > 0 || needsFonts) && !hasApt) {
+      if ((missing.length > 0 || needsFonts || needsCertutil) && !hasApt) {
         if (missing.length > 0) {
           yield* Console.log(
             `T3's browser is missing ${missing.join(", ")}. Install them with your package manager, then run this again.`,
@@ -194,9 +203,14 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
             "T3's browser needs fontconfig and system fonts. Install them with your package manager, then run this again.",
           );
         }
+        if (needsCertutil) {
+          yield* Console.log(
+            "T3's browser needs certutil (NSS tools) to trust this host's own CA certificates. Install it with your package manager, then run this again.",
+          );
+        }
         return;
       }
-      if (missing.length > 0 || needsFonts) {
+      if (missing.length > 0 || needsFonts || needsCertutil) {
         yield* runStep("refresh the package lists", "apt-get", ["update"]);
       }
 
@@ -227,6 +241,18 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
         }
         yield* Console.log(
           "Installed the browser's fonts. Restart the T3 server if browser tabs were already open.",
+        );
+      }
+
+      if (needsCertutil) {
+        yield* runStep("install certutil", "apt-get", [
+          "install",
+          "-y",
+          "--no-install-recommends",
+          PreviewBrowserHost.CERTUTIL_PACKAGE,
+        ]);
+        yield* Console.log(
+          "Installed certutil, so T3's browser trusts this host's own CA certificates. Restart the T3 server if browser tabs were already open.",
         );
       }
 
