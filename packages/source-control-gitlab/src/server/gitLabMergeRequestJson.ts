@@ -911,6 +911,13 @@ export function decodeRevertTargetJson(
   });
 }
 
+// GitLab records an approval only as a system note. Other system notes (labels, assignments,
+// pushes) stay out: they are not remarks, and each would wake an agent watching the MR.
+const APPROVAL_NOTE_REVIEW_STATES: ReadonlyMap<string, string> = new Map([
+  ["approved this merge request", "APPROVED"],
+  ["unapproved this merge request", "DISMISSED"],
+]);
+
 export function decodeNotesJson(
   raw: string,
 ): Result.Result<
@@ -926,7 +933,21 @@ export function decodeNotesJson(
     const note = decodeNoteEntry(entry);
     if (Exit.isFailure(note)) continue;
     const value = note.value;
-    if (value.system === true) continue;
+    if (value.system === true) {
+      const reviewState = APPROVAL_NOTE_REVIEW_STATES.get(value.body?.trim() ?? "");
+      if (reviewState === undefined) continue;
+      comments.push({
+        id: String(value.id),
+        kind: "review",
+        author: toActor(value.author),
+        body: "",
+        createdAt: value.created_at,
+        url: null,
+        path: null,
+        reviewState,
+      });
+      continue;
+    }
     const body = value.body ?? "";
     if (body.trim().length === 0) continue;
     const isDiffNote = value.type?.trim() === "DiffNote";
