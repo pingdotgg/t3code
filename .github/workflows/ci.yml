@@ -18,9 +18,10 @@ on:
   push:
     branches:
       - main
-  schedule:
-    # After the Conn nightly sync (about 03:30-04:00 UTC).
-    - cron: "30 5 * * *"
+  # The project is parked (docs/status.md), so the nightly run is off. To turn it on again:
+  # schedule:
+  #   # After the Conn nightly sync (about 03:30-04:00 UTC).
+  #   - cron: "30 5 * * *"
   workflow_dispatch:
 
 permissions:

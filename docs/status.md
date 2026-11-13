@@ -1,0 +1,183 @@
+# Status: parked on 2026-11-13
+
+The Conn Server is parked. Nick decided on 2026-11-13 to stay with the T3 server (the server in
+the Conn repository, `nckrtl/conn`) for now. Work may continue later. This file says where the
+work stands, why it stopped, and how to start again.
+
+Nothing in the Conn repository depends on this repository. No container, desktop or mobile
+client uses the Conn Server.
+
+## Why it is parked
+
+The goal was memory. Each Orbit Instance container runs its own T3 server, and that server
+holds about 300 MiB of private memory, also when idle.
+
+Measured on Beast on 2026-11-13, with 54 containers and none active:
+
+| | Per container (median) | All 54 |
+| --- | --- | --- |
+| Whole container (`Pss`) | 349 MiB | 23.5 GiB |
+| T3 server | 300 MiB | 16.0 GiB |
+| Everything else | 47 MiB | 7.5 GiB |
+
+The Conn Server removes almost all of the T3 server's share: it idles at about 3 to 5 MiB. But
+the same memory can be saved without a second server: stop the T3 server (or the whole
+container) when it is idle, and start it on connect. A stock T3 server was ready 1.8 seconds
+after its start on Beast, with a fresh state.
+
+| | Conn Server | Stop the idle T3 server, start it on connect |
+| --- | --- | --- |
+| Memory saved on idle containers | about 16 GiB | about 16 GiB; up to 23.5 GiB if the container sleeps |
+| Wake delay | none | about 2 s for the server |
+| Parity with upstream | re-implement every upstream server change, forever | none: it is the T3 server |
+| Speed of agents and tools | the same: the time is in the model and the CLI | the same |
+
+Upstream changed the server and its contracts 2,145 times in the 30 days before the pin
+(53 RPC methods added, 13 removed). The engine and the provider adapters are about three
+quarters of that change, and those parts cannot be generated. That upkeep is the real cost of
+this server, and it is the reason for the stop.
+
+The Conn Server still wins on two points: no wake delay, and about 250 MiB less while a thread
+is active. If those start to matter, or if Conn needs server features that collide with the
+nightly upstream merge, this work is the starting point.
+
+Not measured: a T3 server's start time with many stored threads; the `claude` process and its
+MCP helpers inside a container (on a Mac: 145 MiB with minimal settings, 294 MiB with a user's
+settings; about 140 MiB for the `claude` program alone).
+
+## What exists
+
+`main` is in a working state. `tools/check.sh` passes 21 checks with `CONN_MONOREPO` set.
+
+| Part | State |
+| --- | --- |
+| RPC methods | 81 of 235 served; 79 have a run that the real client's decoders accept |
+| Engine commands | 41 of 56 |
+| HTTP routes | 13 of 55 |
+| `/mcp` tools | 16 of 84 |
+| Providers | Claude and Codex, of the 10 the T3 server has without Pi |
+
+Proven:
+
+- **Claude** runs through Anthropic's official Claude Agent SDK in the SDK host
+  (`helpers/sdk-host`). In 10 scenarios the `claude` CLI gets the same argv, environment and
+  stdin as from the T3 server. 15 of the T3 server's 39 Claude transcripts pass. 11 live tests
+  pass on Claude Haiku on macOS.
+- **Codex** runs on `codex app-server`, as in the T3 server. 35 scenarios show no difference,
+  20 of them the T3 server's own recordings. **No live Codex turn has run.**
+- Orbit's container flow (start, add a project on the running server, a Swamp session, a
+  thread through `/mcp`, wait, read, revoke, SIGTERM with no child left) passes on the fake
+  provider and once with a live Haiku turn, on macOS.
+- The real web client paired, ran turns, approvals, stop and a restart against an early
+  version (the spike). The recorder scenarios have not run against the current `main` with a
+  live model.
+- Memory on macOS arm64: the server about 3 to 5 MB private; the SDK host about 45 MB while a
+  Claude session is open, and no Node process when none is open.
+
+Not proven:
+
+- **Linux.** The musl release build passes in CI. One test fails on Linux
+  (`conn-terminal`, `keeps_scrollback_across_a_restart`). The SDK host was not built or run
+  on Linux, and memory was not measured there after the spike. See "Branches" for the
+  unfinished Linux pass.
+- Conn desktop and mobile against this server.
+- Orbit's flow in a real container.
+- Codex on CLI 0.166 or 0.167 (the recordings are from 0.156).
+
+## Reviews
+
+On 2026-11-13 six reviews ran (Gemini 4 Carbon), and a second agent (Claude Opus 5.5) checked
+every finding with tests. All confirmed "fix now" findings are fixed on `main`, each with a
+test: a search that could stop the server; the wrong provider after a model switch; `/mcp`
+write tools without a caller check; settings secrets sent to clients; a scope hole on
+`POST /api/projects/mutate`; a pairing code lost on a failed write; worktree files refused.
+Each of these was our own difference from the T3 server, not a T3 behaviour. That is worth
+remembering: an own server brings its own defects.
+
+## What is left, in the planned order
+
+1. **Rust hygiene, step 1.** The lint set of BeautifulRust (`lints/beautiful-rust/`), stage 1:
+   `unwrap_used`, `panic_in_result_fn`, `allow_attributes`, `allow_attributes_without_reason`,
+   `dbg_macro`, `todo`, `wildcard_imports`, `string_add`, `missing_assert_message`,
+   `redundant_clone`, `rc_buffer`, `missing_debug_implementations`, `unreachable_pub`,
+   `rust_2018_idioms`, plus `large_futures`. Measured with clippy 0.1.95: 533 warnings, most
+   fixed by `cargo clippy --fix`, 162 by hand. Stage 2: the `bool` parameter lints (56 hits at
+   BeautifulRust's limit of zero), `clone_on_ref_ptr` (110), the print lints with a `tracing`
+   switch, `clippy::all` and `clippy::pedantic`. Stage 3: the cast lints (about 295 places).
+   The `[lib]` lints stay off. Also in step 1: typed construction at the 7 places that build a
+   contract error with `from_json(json!(..)).expect(..)`; `thiserror` on eight boundary error
+   types; a `conn-support` crate for the time, hex, HMAC and base64 helpers that exist 2 to 6
+   times; the `uuid` crate; the store's sequence counter that is not restored when a commit
+   fails; a `Drop` on `CodexSession`; an unchecked offset in `reads.rs`; a pinned toolchain.
+2. **Provider interface.** A sandbox and approval policy (closes Claude's read-only sandbox and
+   `dontAsk`, and 3 failing transcripts); MCP servers at session open; a host handle for
+   agents that ask the server for files and terminals; `background_work.updated`; a
+   selection-transition hook; `stop_task` and `background_tasks`. Move the Rust side of the
+   SDK host (`helper.rs`) into `conn-provider-support` before a second SDK driver.
+3. **Other providers.** One ACP provider for Grok, Kiro, fx, Antigravity and the ACP registry.
+   The T3 server offers ACP protocol version 2 with version 1 as fallback and uses a
+   hand-written client. The official Rust crate (`agent-client-protocol` 5.2.0) runs on a
+   current-thread runtime but defaults to version 1 and adds about 525 KiB: use its schema
+   crate for types and our own JSON-RPC, and start with a trial that replays one of the T3
+   server's Grok transcripts. Cursor, OpenCode and Muse go in the SDK host as driver modules.
+4. **Replay of the T3 server's `testkit` fixtures** (172 transcripts) through our providers and
+   engine, Codex first. Upstream's own assertions ran by hand on a projection from our engine
+   and passed. It needs an event export without pruning and a clock seam in the engine.
+5. **Engine.** Bounded thread snapshots and the `/history`, `/bounded` and `/transcript`
+   routes (a full snapshot of a long thread peaks at about 13 bytes per byte of JSON);
+   checkpoints and diffs per turn; rollback, fork and merge-back; a model change during a
+   turn; a workspace strategy for delegated tasks; search details (no NFC normalization, the
+   old snippet rule).
+6. **Features.** `pullRequests.*` (34), `sourceControl.*` and `git.*`; the Conn-only methods
+   (annotations, panels, scheduled tasks, peer links, test logins, credentials, secrets, guest
+   share); 68 more `/mcp` tools; Codex subagents and MCP elicitation; worktree setup scripts
+   the T3 way (typed into a thread terminal, with a completion marker).
+7. **Small leftovers.** Limits on terminal environment variables; string caps on
+   `assets.createUrl`; finished `git` children stay unreaped while the server runs;
+   `t3_thread_search` on the engine's search; the Linux systemd scope for provider processes;
+   a cap on the blocking pool or one store thread (measure first: each store call takes its
+   own blocking thread).
+8. **Proofs.** The recorder with the real web client and a live model; live Codex; the Linux
+   pass; Orbit in a scratch container on Beast; desktop and mobile in a VM.
+9. **Upkeep.** Hook the provider capture tools into `tools/bump-conn.sh --capture`; wire the
+   bump into the nightly sync (its script is outside the Conn repository; `FORK.md` there says
+   the Grok bot runs it); add the Claude conformance check and the T3 replay to
+   `tools/check.sh` with a list of expected failures.
+
+## Decisions that were open
+
+- `/mcp` accepts any session with `orchestration:read`, because Orbit's Swamp planned to call
+  it that way. The T3 server accepts only an MCP OAuth client there. It is the one deliberate
+  difference in access rules.
+- Which Claude settings a container loads, and how long an idle `claude` process stays open.
+- What must be true before this server becomes a default, and whether a container that
+  switches keeps its T3 sessions and threads.
+- BeautifulRust is the Rust standard. A checker advised to leave the cast lints off and to
+  allow one `bool` parameter. Neither was adopted.
+- `vcs.removeWorktree` and `vcs.init` accept any path, as the T3 server does. No limit added.
+- We keep our own `/mcp` transport: `rmcp` measured 0.94 MB more binary and about 0.12 MB per
+  open session.
+
+## Branches
+
+- `main`: verified. All checks pass on macOS.
+- `parked/rust-hygiene-step-1`: one finished commit (the generator writes one reasoned `allow`
+  at the top of the generated file) and one commit marked `WIP (not proven)`.
+- `parked/linux-pass`, if present: the unfinished Linux pass. Read its commit messages; a
+  commit marked `WIP (not proven)` is not checked.
+- In the Conn repository there are local branches only (`rust/*`, `spike/rust-*`,
+  `split/conn-server*`), with the same history under `native/conn-server`. They were never
+  pushed. They change nothing under `apps/` or `packages/`.
+
+## To start again
+
+1. Read `AGENTS.md` and `README.md`.
+2. `eval "$(tools/conn-checkout --source <conn git dir or URL>)"` gives a Conn checkout at
+   `conn.pin` as `CONN_MONOREPO`.
+3. `(cd helpers/sdk-host && npm ci)`, then `tools/check.sh`. It must pass before any change.
+4. Move the pin with `tools/bump-conn.sh <commit>` and read its report (`docs/upkeep.md`).
+   Expect a large report: the pin is from 2026-11-13.
+5. Before more features, redo the comparison in "Why it is parked" with current numbers.
+
+CI: the nightly schedule is switched off while the project is parked. The job with the Conn
+checkout needs the repository secret `CONN_READ_TOKEN` (read access to `nckrtl/conn`).

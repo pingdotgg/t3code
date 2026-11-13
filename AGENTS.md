@@ -1,5 +1,8 @@
 # conn-server
 
+**Parked on 2026-11-13.** Read `docs/status.md` first: it says what is proven, what is left,
+and what to check before work starts again. Do not start feature work without Nick's word.
+
 The **Conn Server**: a Rust server for Conn clients. It serves the same client contract as the
 **T3 server** (`apps/server` in the Conn monorepo, TypeScript on Effect) with a far smaller
 memory footprint: about 4.5 MiB idle against about 300 MiB. The T3 server stays as upstream

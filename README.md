@@ -1,5 +1,9 @@
 # conn-server
 
+> **Parked on 2026-11-13.** Conn stays on the T3 server for now. Nothing uses this server.
+> [`docs/status.md`](docs/status.md) says where the work stands, why it stopped, and how to
+> start again.
+
 The Conn Server: our own Rust server for Conn clients. It serves the same client contract as
 the T3 server (`apps/server` in the Conn monorepo, TypeScript on Effect) with a far smaller
 memory footprint. We reproduce behaviour at three boundaries (the client contract, `/mcp`, the
