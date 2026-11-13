@@ -36,7 +36,7 @@ import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
-import { verifyRequestDpopProof } from "./dpop.ts";
+import { checkRequestDpopProof } from "./dpop.ts";
 import { requestUrl } from "../requestUrl.ts";
 
 const CREDENTIAL_RESPONSE_HEADERS = {
@@ -364,8 +364,9 @@ export const layer = HttpApiBuilder.group(
             if (requestedScopes === null || requestedScopes?.length === 0) {
               return yield* failEnvironmentInvalidRequest("invalid_scope");
             }
-            const proofKeyThumbprint = args.headers.dpop
-              ? yield* verifyRequestDpopProof({ request }).pipe(
+            // Anyone can send a proof here, so it is recorded only once the subject token checks out.
+            const proof = args.headers.dpop
+              ? yield* checkRequestDpopProof({ request }).pipe(
                   Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
                     appendDpopChallengeHeader.pipe(
                       Effect.andThen(
@@ -395,7 +396,19 @@ export const layer = HttpApiBuilder.group(
                   ...(args.payload.client_os ? { os: args.payload.client_os } : {}),
                 },
               }),
-              proofKeyThumbprint ? { proofKeyThumbprint } : undefined,
+              proof
+                ? {
+                    proofKeyThumbprint: proof.thumbprint,
+                    consumeProof: proof.consume.pipe(
+                      Effect.tapError((error) =>
+                        EnvironmentAuth.isServerAuthCredentialError(error)
+                          ? appendDpopChallengeHeader
+                          : Effect.void,
+                      ),
+                      Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+                    ),
+                  }
+                : undefined,
             );
           },
           traceRelayRequest,
