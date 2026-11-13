@@ -1273,6 +1273,29 @@ it.effect("restores a checkpoint before the first commit without staging its fil
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("restores edits to skip-worktree files whose checkpoint content matches HEAD", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-skip-worktree-restore-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    const skippedPath = path.join(cwd, "skipped.txt");
+    yield* fileSystem.writeFileString(skippedPath, "original\n");
+    yield* git(["add", "skipped.txt"]);
+    yield* git(["commit", "-m", "add skipped file"]);
+    yield* git(["update-index", "--skip-worktree", "skipped.txt"]);
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    yield* fileSystem.writeFileString(skippedPath, "later\n");
+
+    assert.isTrue(
+      yield* driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false }),
+    );
+
+    assert.strictEqual(yield* fileSystem.readFileString(skippedPath), "original\n");
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 // The real VCS process, spawning `command` wherever the driver runs git.
 const vcsProcessSpawning = (command: string) =>
   Layer.effect(
