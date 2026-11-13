@@ -30,6 +30,12 @@ const isRepoRootTestRun = process.cwd() === import.meta.dirname;
 
 const RESTRICTED_IMPORT_PATHS = [
   {
+    name: "react-native",
+    importNames: ["FlatList"],
+    message:
+      "Use LegendList from @legendapp/list/react-native, with renderScrollComponent={NativeScrollView} in a screen. Pass whatever renderItem reads through extraData: rows only re-render when their item or extraData changes.",
+  },
+  {
     name: "@t3tools/client-runtime",
     message:
       "Import from an explicit @t3tools/client-runtime/* subpath. The package has no root export.",
@@ -44,6 +50,12 @@ const RESTRICTED_IMPORT_PATHS = [
     importNames: ["ScrollViewMarker"],
     message:
       "Use NativeScrollViewMarker or NativeScrollView (src/native/NativeScrollViewMarker.tsx): they carry the header's scroll-edge blur under the Duo's vertical bar.",
+  },
+  {
+    name: "react-native",
+    importNames: ["RefreshControl"],
+    message:
+      "Use RefreshControl from src/components/ui/RefreshControl: Android bottom sheets own the pull at the top, so it steps aside there.",
   },
 ];
 
