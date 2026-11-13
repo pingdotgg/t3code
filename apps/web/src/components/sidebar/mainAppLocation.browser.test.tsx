@@ -86,7 +86,13 @@ describe("main app return location", () => {
     await userEvent.click(screen.getByRole("button", { name: "Close modal" }));
     await vi.waitFor(() => expect(router.state.location.pathname).toBe(otherThreadPath));
 
+    router.history.forward();
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe(otherThreadPath));
     router.history.back();
     await vi.waitFor(() => expect(router.state.location.pathname).toBe(THREAD_PATH));
+    router.history.forward();
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe(otherThreadPath));
+    router.history.forward();
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe(otherThreadPath));
   });
 });

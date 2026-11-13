@@ -57,10 +57,16 @@ export function useCloseAppModal() {
   const navigate = useNavigate();
   const router = useRouter();
   return () => {
-    // Step back over the modal's entries so a closed modal is not a stop in history.
-    const steps =
-      router.state.location.state.__TSR_index - (appModalReturnHistoryIndex ?? Infinity);
-    if (steps > 0) return router.history.go(-steps);
-    return navigate({ href: appModalReturnHref ?? mainAppHref ?? "/" });
+    const href = appModalReturnHref ?? mainAppHref ?? "/";
+    const returnIndex = appModalReturnHistoryIndex ?? 0;
+    const steps = router.state.location.state.__TSR_index - returnIndex;
+    if (returnIndex === 0 || steps <= 0) return navigate({ href });
+    // Go back to the entry before the return page and push it again: only a push drops the
+    // modal's entries from forward history, and reusing the old entry avoids a duplicate stop.
+    const unsubscribe = router.history.subscribe(() => {
+      unsubscribe();
+      void navigate({ href });
+    });
+    router.history.go(-(steps + 1));
   };
 }
