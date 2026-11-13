@@ -3,14 +3,18 @@ import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
 
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
+import { ThreadToolkit } from "./toolkits/thread/tools.ts";
 
-it("drops JSON noise, merges tagged unions, and keeps null where it is required", () => {
+it("drops JSON noise, merges tagged unions, and keeps null where it is required or described", () => {
   const Every = Schema.Struct({ ms: Schema.Int });
   const tool = Tool.make("example", {
     parameters: Schema.Struct({
       threadId: Schema.optional(Schema.NullOr(Schema.String)),
       beforeRunId: Schema.NullOr(Schema.String),
       limit: Schema.optional(Schema.Int),
+      after: Schema.optional(
+        Schema.Union([Schema.String, Schema.Null.annotate({ description: "Last." })]),
+      ),
       every: Schema.Union([Every, Schema.fromJsonString(Every)]),
       target: Schema.optional(
         Schema.NullOr(
@@ -29,6 +33,7 @@ it("drops JSON noise, merges tagged unions, and keeps null where it is required"
       threadId: { type: "string" },
       beforeRunId: { anyOf: [{ type: "string" }, { type: "null" }] },
       limit: { type: "integer" },
+      after: { anyOf: [{ type: "string" }, { type: "null", description: "Last." }] },
       every: { type: "object", properties: { ms: { type: "integer" } }, required: ["ms"] },
       target: {
         type: "object",
@@ -41,5 +46,11 @@ it("drops JSON noise, merges tagged unions, and keeps null where it is required"
       },
     },
     required: ["beforeRunId", "every"],
+  });
+});
+
+it("advertises null for t3_queue's beforeRunId, which moves a message to the end", () => {
+  expect(advertisedJsonSchema(ThreadToolkit.tools.t3_queue)).toMatchObject({
+    properties: { beforeRunId: { anyOf: [{ type: "string" }, { type: "null" }] } },
   });
 });
