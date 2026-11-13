@@ -36,6 +36,8 @@ pub struct AppState {
     pub descriptor: Arc<Value>,
     /// Backs the orchestration snapshot routes; without it they answer 404.
     pub engine: Option<Arc<dyn Engine>>,
+    /// The services the method table was built from, for the routes in `routes/`.
+    pub deps: crate::methods::Deps,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -53,6 +55,7 @@ pub fn router(state: AppState) -> Router {
             get(thread_snapshot),
         )
         .route("/ws", get(ws))
+        .merge(crate::routes::router())
         .layer(middleware::from_fn(cors))
         .with_state(state)
 }
@@ -453,6 +456,7 @@ mod tests {
             auth: auth.clone(),
             descriptor: Arc::new(crate::environment::descriptor("env-test", "Test")),
             engine,
+            deps: Default::default(),
         };
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

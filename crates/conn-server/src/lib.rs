@@ -4,6 +4,7 @@ pub mod auth;
 pub mod environment;
 pub mod http;
 pub mod methods;
+pub mod routes;
 pub mod serve;
 pub mod session;
 pub mod table;

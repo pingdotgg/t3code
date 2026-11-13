@@ -9,9 +9,12 @@ use conn_provider::Provider;
 
 use crate::table::MethodTable;
 
+mod files;
 mod orchestration;
 pub mod provider;
 pub mod server;
+mod terminal;
+mod vcs;
 
 /// Services handlers may use. `None` until the owning track wires it in `main.rs`.
 #[derive(Clone, Default)]
@@ -26,4 +29,7 @@ pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     server::register(table, deps);
     orchestration::register(table, deps);
     provider::register(table, deps);
+    vcs::register(table, deps);
+    files::register(table, deps);
+    terminal::register(table, deps);
 }

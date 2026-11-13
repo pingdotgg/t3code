@@ -111,6 +111,7 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
         auth: auth.clone(),
         descriptor: Arc::new(environment.descriptor.clone()),
         engine: Some(engine),
+        deps,
     };
 
     let listener = tokio::net::TcpListener::bind(listen).await.expect("bind");

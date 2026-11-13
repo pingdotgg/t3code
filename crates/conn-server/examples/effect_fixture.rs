@@ -56,6 +56,7 @@ fn main() {
         auth: auth.clone(),
         descriptor: Arc::new(environment.descriptor.clone()),
         engine: None,
+        deps: Default::default(),
     };
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
