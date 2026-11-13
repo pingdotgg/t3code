@@ -10,7 +10,11 @@ it.each<[string, string | null]>([
   ["Half of $2$, **not** x$1$.", "Half of \\(2\\)\\, \\*\\*not\\*\\* x\\(1\\)\\."],
   [
     "1. [x](http://y) <b>&amp;</b> `$1$` \\$5 is $n_1$",
-    "1\\. \\[x\\]\\(http\\:\\/\\/y\\) \\<b\\>\\&amp\\;\\<\\/b\\> \\`\\$1\\$\\` \\\\\\$5 is \\(n_1\\)",
+    "1\\. &#91;x&#93;&#40;http\\:\\/\\/y&#41; \\<b\\>\\&amp\\;\\<\\/b\\> \\`\\$1\\$\\` \\\\\\$5 is \\(n_1\\)",
+  ],
+  [
+    "(recommended) \\(x\\) [A] $1$",
+    "&#40;recommended&#41; \\\\&#40;x\\\\&#41; &#91;A&#93; \\(1\\)",
   ],
   ["  $a$\n\n - b $$x$$", "&#32;&#32;\\(a\\)\n\n&#32;\\- b \\(x\\)"],
 ])("typesets a label's formulas and escapes its other text: %j", (text, expected) => {

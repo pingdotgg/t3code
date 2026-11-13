@@ -7,7 +7,11 @@ import { markdownMathRanges } from "@t3tools/shared/markdownMath";
 export function formulaMarkdown(text: string): string | null {
   const formulas = markdownMathRanges(text).filter(({ source }) => source.startsWith("$"));
   if (formulas.length === 0) return null;
-  const literal = (value: string) => value.replace(/[!-/:-@[-`{-~]/g, "\\$&");
+  // Parentheses and brackets as entities: escaped, `\(` and `\[` would open math of their own.
+  const literal = (value: string) =>
+    value.replace(/[!-/:-@[-`{-~]/g, (char) =>
+      "()[]".includes(char) ? `&#${char.charCodeAt(0)};` : `\\${char}`,
+    );
   let markdown = "";
   let offset = 0;
   for (const formula of formulas) {
