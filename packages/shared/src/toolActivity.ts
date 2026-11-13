@@ -194,7 +194,10 @@ function extractPrimaryPath(data: Record<string, unknown> | undefined): string |
   return collectToolFilePaths(data)[0];
 }
 
-/** Preserve the first nonempty rawInput; later ACP updates often resend an empty object. */
+/**
+ * A null field clears it (ACP v2) and a nonempty rawInput replaces the previous one.
+ * An empty rawInput keeps the previous one; later ACP updates often resend an empty object.
+ */
 export function mergeToolActivityData(
   previous: unknown,
   next: unknown,
@@ -204,15 +207,18 @@ export function mergeToolActivityData(
   if (!nextRecord) {
     return previousRecord;
   }
-  if (!previousRecord) {
-    return nextRecord;
+  const merged = { ...previousRecord, ...nextRecord };
+  for (const [key, value] of Object.entries(merged)) {
+    if (value === null) {
+      delete merged[key];
+    }
+  }
+  if (!previousRecord || nextRecord.rawInput === null) {
+    return merged;
   }
   const previousInput = asRecord(previousRecord.rawInput);
   const nextInput = asRecord(nextRecord.rawInput);
-  const rawInput = recordHasKeys(nextInput)
-    ? { ...previousInput, ...nextInput }
-    : (previousInput ?? nextInput);
-  const merged = { ...previousRecord, ...nextRecord };
+  const rawInput = recordHasKeys(nextInput) ? nextInput : (previousInput ?? nextInput);
   if (recordHasKeys(rawInput)) {
     merged.rawInput = rawInput;
   } else {
