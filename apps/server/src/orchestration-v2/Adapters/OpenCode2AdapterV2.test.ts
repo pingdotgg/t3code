@@ -17,6 +17,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  type RuntimeRequestId,
   ThreadId,
   type ModelSelection,
   type OrchestrationV2AppThread,
@@ -33,6 +34,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Exit from "effect/Exit";
@@ -328,12 +330,14 @@ const resumed = (
     readonly goal?: OrchestrationV2ProviderThread["goal"];
     readonly external?: boolean;
     readonly supervised?: boolean;
+    readonly processExit?: Effect.Effect<void>;
+    readonly beforeResponse?: (path: string) => Effect.Effect<void>;
+    readonly borrowers?: { current: number };
     readonly replayGate?: ProviderReplayGate;
     readonly attachmentsDir?: string;
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
     readonly onPrompt?: (input: unknown) => void;
-    readonly borrowers?: { current: number };
   },
 ) =>
   Effect.gen(function* () {
@@ -372,6 +376,10 @@ const resumed = (
         ...(options?.fileSystem === undefined ? {} : { fileSystem: options.fileSystem }),
         ...(options?.onPrompt === undefined ? {} : { onPrompt: options.onPrompt }),
         ...(options?.external === undefined ? {} : { external: options.external }),
+        ...(options?.processExit === undefined ? {} : { processExit: options.processExit }),
+        ...(options?.beforeResponse === undefined
+          ? {}
+          : { beforeResponse: options.beforeResponse }),
         ...(options?.replayGate === undefined ? {} : { replayGate: options.replayGate }),
         ...(options?.attachmentsDir === undefined
           ? {}
@@ -491,6 +499,21 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           model: "openrouter/deepseek/deepseek-v4-flash",
           options: [{ id: "variant", value: "high" }],
         }),
+      );
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("never sends a saved variant the catalog model does not list", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(
+        turnInput(thread, { ...bigPickle, options: [{ id: "variant", value: "medium" }] }),
       );
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
     }).pipe(Effect.scoped),
@@ -1638,7 +1661,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     (recoveredChild) =>
       Effect.gen(function* () {
         const ids = yield* IdAllocator.IdAllocatorV2.pipe(Effect.provide(IdAllocator.layer));
-        const childThreadId = ids.derive.threadFromProviderThread({
+        const childThreadId = ids.derive.subagentThread({
           driver: OPENCODE_PROVIDER,
           nativeThreadId: CHILD,
           providerInstanceId: instanceId,
@@ -2202,7 +2225,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         .interruptTurn({ providerThread: thread, providerTurnId: yield* providerTurnId })
         .pipe(Effect.forkScoped);
       yield* TestClock.adjust("11 seconds");
-      yield* Fiber.join(interrupt);
+      yield* Fiber.join(interrupt).pipe(Effect.flip);
     });
   const terminals = (runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime, count: number) =>
     runtime.events.pipe(
@@ -2217,23 +2240,57 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       Effect.forkScoped,
     );
 
+  // regression: #30193 an unanswered Stop showed the turn interrupted while its tool kept running
+  it.effect("reports a Stop OpenCode never answers as an interrupt timeout", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(stopTimedOut);
+      yield* runtime.startTurn(turnInput(thread));
+      const interrupt = yield* runtime
+        .interruptTurn({ providerThread: thread, providerTurnId: yield* providerTurnId })
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* TestClock.adjust("11 seconds");
+      const exit = yield* Fiber.join(interrupt);
+      assert.propertyVal(
+        Exit.isFailure(exit) ? Cause.squash(exit.cause) : { _tag: "interrupt succeeded" },
+        "_tag",
+        "ProviderAdapterInterruptTimeoutError",
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.effect("never lets a timed-out Stop's late end finish the next turn", () =>
     Effect.gen(function* () {
-      const { runtime, thread } = yield* resumed([
-        ...stopTimedOut,
-        out("session.active"),
-        reply("session.active", { data: {} }),
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        promptAccepted,
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        event("session.execution.started", { sessionID: SESSION }),
-        event("session.execution.failed", {
-          sessionID: SESSION,
-          error: { type: "provider", message: "second turn failed" },
-        }),
-      ]);
-      const ended = yield* terminals(runtime, 2);
+      const gate = makeProviderReplayGate(["late-end"]);
+      const { runtime, thread } = yield* resumed(
+        [
+          ...stopTimedOut,
+          event("session.execution.succeeded", { sessionID: SESSION }, "late-end"),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.execution.failed", {
+            sessionID: SESSION,
+            error: { type: "provider", message: "second turn failed" },
+          }),
+        ],
+        { replayGate: gate },
+      );
+      const lateEnd = yield* Deferred.make<void>();
+      const ended = yield* runtime.events.pipe(
+        Stream.filter(
+          (
+            event,
+          ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+            event.type === "turn.terminal",
+        ),
+        Stream.tap(() => Deferred.succeed(lateEnd, undefined)),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
       yield* stopFirstTurn(runtime, thread);
+      gate.release("late-end");
+      yield* Deferred.await(lateEnd);
       yield* runtime.startTurn(secondTurn(thread));
       const [first, second] = yield* Fiber.join(ended);
       assert.equal(first?.status, "interrupted");
@@ -2305,8 +2362,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ...backgroundLaunch(CHILD),
           out("session.interrupt", { sessionID: SESSION }),
           reply("session.interrupt", "<hang>"),
-          out("session.active"),
-          replyData("session.active", { [SESSION]: { type: "running" } }),
           out("session.interrupt", { sessionID: SESSION }),
           reply("session.interrupt", { interrupted: true }),
           event("session.usage.updated", { sessionID: SESSION }, "drop"),
@@ -2314,6 +2369,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           out("event.subscribe"),
           out("session.active"),
           replyData("session.active", { [CHILD]: { type: "running" } }),
+          out("message.list", "<any>"),
+          reply("message.list", { data: [], cursor: {} }),
           out("permission.list", { sessionID: CHILD }),
           replyData("permission.list", []),
           out("session.form.list", { sessionID: CHILD }),
@@ -2375,23 +2432,22 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       yield* runtime.startTurn(withLineage(thread));
       yield* Deferred.await(attached);
-      const interrupt = yield* runtime
-        .interruptTurn({ providerThread: thread, providerTurnId: yield* providerTurnId })
-        .pipe(Effect.forkScoped);
+      const stop = { providerThread: thread, providerTurnId: yield* providerTurnId };
+      const interrupt = yield* runtime.interruptTurn(stop).pipe(Effect.flip, Effect.forkScoped);
       yield* TestClock.adjust("11 seconds");
       yield* Fiber.join(interrupt);
-      yield* runtime.startTurn({ ...secondTurn(thread), appThread: withLineage(thread).appThread });
+      yield* runtime.interruptTurn(stop);
       gate.release("drop");
       yield* runtime.startTurn({
         ...continuationTurn(thread, yield* Deferred.await(offered)),
-        runOrdinal: 3,
-        providerTurnOrdinal: 3,
+        runOrdinal: 2,
+        providerTurnOrdinal: 2,
       });
       gate.release("reply");
       const events = [...(yield* Fiber.join(collected))];
       assert.deepEqual(
         events.flatMap((event) => (event.type === "turn.terminal" ? [event.status] : [])),
-        ["interrupted", "failed", "completed"],
+        ["interrupted", "completed"],
       );
       assert.include(
         events.flatMap((event) =>
@@ -3216,6 +3272,182 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("keeps owned work through a stalled reconciliation without releasing its server", () =>
+    Effect.gen(function* () {
+      const reading = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const borrowers = { current: 0 };
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+          promptAccepted,
+          ...reconnected({ [SESSION]: { type: "running" } }),
+          ...openRequests([]),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        {
+          borrowers,
+          beforeResponse: (path) =>
+            path.endsWith("/message")
+              ? Deferred.succeed(reading, undefined).pipe(Effect.andThen(Deferred.await(resume)))
+              : Effect.void,
+        },
+      );
+      const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      const ended = yield* runtime.events.pipe(
+        Stream.tap((event) => Effect.sync(() => collected.push(event))),
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      yield* Deferred.await(reading);
+      yield* TestClock.adjust("3 minutes");
+      assert.isFalse(collected.some((event) => event.type === "turn.terminal"));
+      assert.equal(borrowers.current, 1);
+      yield* Deferred.succeed(resume, undefined);
+      yield* Fiber.join(ended);
+      assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reconciles a session deleted after the active snapshot", () =>
+    Effect.gen(function* () {
+      const otherId = "ses_other_stalled_session";
+      const otherPrompt = "msg_other_stalled_prompt";
+      const history = (sessionID: string, id: string) => [
+        out("message.list", { sessionID, order: "desc", limit: "50" }),
+        reply("message.list", {
+          data: [{ id, time: { created: 1 }, text: "hi", type: "user" }],
+          cursor: {},
+        }),
+      ];
+      const requests = (sessionID: string) => [
+        out("permission.list", { sessionID }),
+        replyData("permission.list", []),
+        out("session.form.list", { sessionID }),
+        replyData("session.form.list", []),
+      ];
+      const { runtime, thread } = yield* resumed([
+        out("session.get", { sessionID: otherId }),
+        replyData("session.get", sessionInfo({ id: otherId })),
+        ...requests(otherId),
+        out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+        promptAccepted,
+        out("session.instructions.entry.put", {
+          sessionID: otherId,
+          key: "t3-code",
+          value: "<any>",
+        }),
+        reply("session.instructions.entry.put", null),
+        out("session.prompt", { sessionID: otherId, id: otherPrompt, text: "<any>" }),
+        replyData("session.prompt", {
+          id: otherPrompt,
+          sessionID: otherId,
+          time: { created: 1 },
+          type: "user",
+          payload: { text: "hi" },
+          delivery: "steer",
+        }),
+        { type: "runtime_exit", status: "success" },
+        out("event.subscribe"),
+        out("session.active"),
+        replyData("session.active", {
+          [SESSION]: { type: "running" },
+          [otherId]: { type: "running" },
+        }),
+        out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
+        reply("message.list", {
+          status: 404,
+          body: {
+            _tag: "SessionNotFoundError",
+            sessionID: SESSION,
+            message: "Deleted during recovery",
+          },
+        }),
+        ...history(otherId, otherPrompt),
+        ...requests(otherId),
+        event("session.execution.succeeded", { sessionID: otherId }),
+      ]);
+      const other = yield* runtime.resumeThread({
+        providerThread: {
+          ...providerThread(yield* DateTime.now),
+          id: ProviderThreadId.make("provider-thread:other"),
+          nativeThreadRef: { driver: OPENCODE_PROVIDER, nativeId: otherId, strength: "strong" },
+        },
+        threadId,
+        modelSelection: bigPickle,
+        runtimePolicy: policy(),
+      });
+      const terminals = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      yield* runtime.startTurn({
+        ...turnInput(other),
+        runId: RunId.make("run:other"),
+        attemptId: RunAttemptId.make("attempt:other"),
+      });
+      const ended = yield* Fiber.join(terminals);
+      assert.deepEqual(
+        ended.map((event) => event.status),
+        ["interrupted", "completed"],
+      );
+      assert.equal(ended[0]?.threadDisposition, "broken");
+      assert.sameMembers(
+        ended.map((event) => event.providerThreadId),
+        [thread.id, other.id],
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([503, 429])(
+    "recovers an owned server after more than five HTTP %s reconciliation replies",
+    (status) =>
+      Effect.gen(function* () {
+        const allowRecovery = yield* Deferred.make<void>();
+        const attempts = yield* Queue.unbounded<void>();
+        let attempt = 0;
+        const { runtime, thread } = yield* resumed(
+          [
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+            { type: "runtime_exit", status: "success" },
+            out("event.subscribe"),
+            ...Array.from({ length: 6 }, () => [
+              out("session.active"),
+              reply("session.active", { status, body: { message: "Recovering" } }),
+            ]).flat(),
+            ...reconnected({ [SESSION]: { type: "running" } }).slice(2),
+            ...openRequests([]),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+          ],
+          {
+            beforeResponse: (path) =>
+              path === "/api/session/active"
+                ? Effect.gen(function* () {
+                    attempt += 1;
+                    yield* Queue.offer(attempts, undefined);
+                    if (attempt === 7) yield* Deferred.await(allowRecovery);
+                  })
+                : Effect.void,
+          },
+        );
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(thread));
+        for (let retry = 0; retry < 6; retry += 1) {
+          yield* Queue.take(attempts);
+          yield* TestClock.adjust("30 seconds");
+        }
+        yield* Queue.take(attempts);
+        yield* Deferred.succeed(allowRecovery, undefined);
+        assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "keeps a $skill found on the first read when the reread after the scan comes back empty",
     () =>
@@ -3248,6 +3480,364 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         assert.equal((yield* Fiber.join(terminal))?.status, "completed");
         assert.deepInclude(prompts[0], { skills: [{ id: "greet" }] });
       }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
+    {
+      server: "an external server keeps rejecting requests",
+      external: true,
+      status: 503,
+      tries: 5,
+    },
+    { server: "an owned server rejects its credentials", external: false, status: 401, tries: 1 },
+  ])("bounds recovery when $server", ({ external, status, tries }) =>
+    Effect.gen(function* () {
+      const attempts = yield* Queue.unbounded<void>();
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          { type: "runtime_exit", status: "success" },
+          ...Array.from({ length: tries }, () => [
+            out("event.subscribe"),
+            out("session.active"),
+            reply("session.active", { status, body: { message: "Unavailable" } }),
+          ]).flat(),
+        ],
+        {
+          external,
+          beforeResponse: (path) =>
+            path === "/api/session/active"
+              ? Queue.offer(attempts, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      for (let attempt = 1; attempt < tries; attempt += 1) {
+        yield* Queue.take(attempts);
+        yield* TestClock.adjust("2 seconds");
+      }
+      yield* Queue.take(attempts);
+      assert.equal((yield* Fiber.join(terminal))?.status, "failed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["lists", "stream"] as const)(
+    "restores approvals and questions from %s after slow recovery",
+    (source) =>
+      Effect.gen(function* () {
+        const gate = makeProviderReplayGate(["late-permission"]);
+        let holdReads = false;
+        const reading = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        const requests = yield* Queue.unbounded<RuntimeRequestId>();
+        const { runtime, thread } = yield* resumed(
+          [
+            out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+            promptAccepted,
+            ...reconnected({ [SESSION]: { type: "running" } }),
+            ...openRequests(
+              source === "lists" ? [shellAsk.data] : [],
+              source === "lists" ? [colorForm] : [],
+            ),
+            ...(source === "stream"
+              ? [
+                  event("permission.asked", shellAsk.data, "late-permission"),
+                  event("form.created", { form: colorForm }),
+                ]
+              : []),
+            out("permission.reply", {
+              sessionID: SESSION,
+              requestID: shellAsk.data.id,
+              decision: "once",
+            }),
+            reply("permission.reply", null),
+            out("session.form.reply", {
+              sessionID: SESSION,
+              formID: colorForm.id,
+              answer: { q0: "Red" },
+            }),
+            reply("session.form.reply", null),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+          ],
+          {
+            supervised: true,
+            replayGate: gate,
+            beforeResponse: (path) =>
+              holdReads && path.endsWith(source === "stream" ? "/form" : "/message")
+                ? Deferred.succeed(reading, undefined).pipe(Effect.andThen(Deferred.await(resume)))
+                : Effect.void,
+          },
+        );
+        const ended = yield* Deferred.make<string>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) =>
+            Effect.gen(function* () {
+              if (
+                event.type === "runtime_request.updated" &&
+                event.runtimeRequest.status === "pending"
+              ) {
+                yield* Queue.offer(requests, event.runtimeRequest.id);
+              }
+              if (event.type === "turn.terminal") {
+                yield* Deferred.succeed(ended, event.status);
+              }
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        holdReads = true;
+        yield* runtime.startTurn(turnInput(thread, bigPickle, "approval-required"));
+        yield* Deferred.await(reading);
+        if (source === "stream") {
+          yield* Effect.promise(() => gate.waitForReached("late-permission"));
+          gate.release("late-permission");
+        }
+        yield* TestClock.adjust("2 minutes");
+        assert.equal(yield* Queue.size(requests), 0);
+        yield* Deferred.succeed(resume, undefined);
+        yield* runtime.respondToRuntimeRequest({
+          requestId: yield* Queue.take(requests),
+          decision: "accept",
+        });
+        yield* runtime.respondToRuntimeRequest({
+          requestId: yield* Queue.take(requests),
+          answers: { q0: "Red" },
+        });
+        assert.equal(yield* Deferred.await(ended), "completed");
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "recovers through a restarted server when the process exits during a history read",
+    () =>
+      Effect.gen(function* () {
+        const reading = yield* Deferred.make<void>();
+        const cancelled = yield* Deferred.make<void>();
+        let restarted = false;
+        let held = false;
+        const { runtime, thread } = yield* resumed(
+          [
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+            ...reconnected({ [SESSION]: { type: "running" } }),
+            ...reconnected({}).slice(1),
+          ],
+          {
+            // The replay lends one connection; only the first borrow's process exits.
+            processExit: Effect.suspend(() =>
+              restarted
+                ? Effect.never
+                : Effect.sleep("1 second").pipe(
+                    Effect.tap(() =>
+                      Effect.sync(() => {
+                        restarted = true;
+                      }),
+                    ),
+                  ),
+            ),
+            beforeResponse: (path) =>
+              path.endsWith("/message") && !held
+                ? Effect.sync(() => (held = true)).pipe(
+                    Effect.andThen(Deferred.succeed(reading, undefined)),
+                    Effect.andThen(Effect.never),
+                    Effect.onInterrupt(() => Deferred.succeed(cancelled, undefined)),
+                  )
+                : Effect.void,
+          },
+        );
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(thread));
+        yield* Deferred.await(reading);
+        // The exit at 1s cuts the stalled read; the retry 2s later borrows the restarted server.
+        yield* TestClock.adjust("3 seconds");
+        yield* Deferred.await(cancelled);
+        assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
+        assert.equal(runtime.providerSession.status, "ready");
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("releases a recovering session on shutdown without waiting for its HTTP read", () =>
+    Effect.gen(function* () {
+      const sessionScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+        Scope.close(scope, Exit.void),
+      );
+      const reading = yield* Deferred.make<void>();
+      const cancelled = yield* Deferred.make<void>();
+      const borrowers = { current: 0 };
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          ...reconnected({ [SESSION]: { type: "running" } }),
+        ],
+        {
+          borrowers,
+          beforeResponse: (path) =>
+            path.endsWith("/message")
+              ? Deferred.succeed(reading, undefined).pipe(
+                  Effect.andThen(Effect.never),
+                  Effect.onInterrupt(() => Deferred.succeed(cancelled, undefined)),
+                )
+              : Effect.void,
+        },
+      ).pipe(Effect.provideService(Scope.Scope, sessionScope));
+      yield* runtime.startTurn(turnInput(thread));
+      yield* Deferred.await(reading);
+      assert.equal(borrowers.current, 1);
+      yield* Scope.close(sessionScope, Exit.void);
+      yield* Deferred.await(cancelled);
+      assert.equal(borrowers.current, 0);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("honors a confirmed Stop during recovery and ignores its late backfill", () =>
+    Effect.gen(function* () {
+      const recovered = yield* Deferred.make<void>();
+      const reading = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          ...reconnected({ [SESSION]: { type: "running" } }),
+          out("session.interrupt", { sessionID: SESSION }),
+          reply("session.interrupt", { interrupted: true }),
+          ...openRequests([]),
+          event("session.execution.interrupted", { sessionID: SESSION }),
+          event("session.model.selected", {
+            sessionID: SESSION,
+            model: { providerID: "opencode", id: "recovered" },
+          }),
+        ],
+        {
+          beforeResponse: (path) =>
+            path.endsWith("/message")
+              ? Deferred.succeed(reading, undefined).pipe(Effect.andThen(Deferred.await(resume)))
+              : Effect.void,
+        },
+      );
+      const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      const stopped = yield* Deferred.make<void>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) =>
+          Effect.gen(function* () {
+            collected.push(event);
+            if (
+              event.type === "provider_thread.updated" &&
+              event.providerThread.nativeMetadata?.modelSelection?.model === "opencode/recovered"
+            ) {
+              yield* Deferred.succeed(recovered, undefined);
+            }
+            if (event.type === "turn.terminal") yield* Deferred.succeed(stopped, undefined);
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      yield* Deferred.await(reading);
+      const stopping = yield* runtime
+        .interruptTurn({
+          providerThread: thread,
+          providerTurnId: yield* providerTurnId,
+        })
+        .pipe(Effect.forkScoped);
+      yield* Fiber.join(stopping);
+      assert.equal(runtime.providerSession.status, "ready");
+      yield* Deferred.await(stopped);
+      yield* Deferred.succeed(resume, undefined);
+      yield* Deferred.await(recovered);
+      assert.deepEqual(
+        collected.filter((event) => event.type === "turn.terminal").map((event) => event.status),
+        ["interrupted"],
+      );
+      assert.isFalse(
+        collected.some(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message",
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a background child's requests when its parent stops during reconciliation", () =>
+    Effect.gen(function* () {
+      const reading = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const recovered = yield* Deferred.make<void>();
+      const permission = { ...shellAsk.data, sessionID: CHILD };
+      const form = { ...colorForm, sessionID: CHILD };
+      const { runtime, thread } = yield* resumed(
+        [
+          ...backgroundLaunch(CHILD),
+          event("permission.asked", permission),
+          event("form.created", { form }),
+          ...reconnected({ [SESSION]: { type: "running" }, [CHILD]: { type: "running" } }),
+          ...openRequests([]),
+          out("permission.list", { sessionID: CHILD }),
+          replyData("permission.list", [permission]),
+          out("session.form.list", { sessionID: CHILD }),
+          replyData("session.form.list", [form]),
+          out("session.interrupt", { sessionID: SESSION }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.model.selected", {
+            sessionID: SESSION,
+            model: { providerID: "opencode", id: "recovered" },
+          }),
+          out("permission.reply", { sessionID: CHILD, requestID: permission.id, decision: "once" }),
+          reply("permission.reply", null),
+          out("session.form.reply", { sessionID: CHILD, formID: form.id, answer: { q0: "Red" } }),
+          reply("session.form.reply", null),
+        ],
+        {
+          beforeResponse: (path) =>
+            path === `/api/session/${CHILD}/form`
+              ? Deferred.succeed(reading, undefined).pipe(Effect.andThen(Deferred.await(resume)))
+              : Effect.void,
+        },
+      );
+      const requests = new Map<
+        string,
+        { readonly id: RuntimeRequestId; readonly status: string }
+      >();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) =>
+          Effect.gen(function* () {
+            if (event.type === "runtime_request.updated") {
+              const nativeId = event.runtimeRequest.nativeRequestRef?.nativeId;
+              if (nativeId != null) requests.set(nativeId, event.runtimeRequest);
+            }
+            if (
+              event.type === "provider_thread.updated" &&
+              event.providerThread.nativeMetadata?.modelSelection?.model === "opencode/recovered"
+            ) {
+              yield* Deferred.succeed(recovered, undefined);
+            }
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      yield* Deferred.await(reading);
+      const stopping = yield* runtime
+        .interruptTurn({ providerThread: thread, providerTurnId: yield* providerTurnId })
+        .pipe(Effect.forkScoped);
+      yield* Fiber.join(stopping);
+      yield* Deferred.succeed(resume, undefined);
+      yield* Deferred.await(recovered);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+      assert.equal(requests.get(permission.id)?.status, "pending");
+      assert.equal(requests.get(form.id)?.status, "pending");
+      yield* runtime.respondToRuntimeRequest({
+        requestId: requests.get(permission.id)!.id,
+        decision: "accept",
+      });
+      yield* runtime.respondToRuntimeRequest({
+        requestId: requests.get(form.id)!.id,
+        answers: { q0: "Red" },
+      });
+    }).pipe(Effect.scoped),
   );
 
   it.effect("keeps a turn still running after a reconnect open for its next events", () =>
@@ -4117,26 +4707,37 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         promptAccepted,
         event("session.execution.succeeded", { sessionID: SESSION }),
       ];
+      const prompts: Array<unknown> = [];
       // Idle Location eviction drops OpenCode's runtime MCP servers without a reconnect.
-      const { runtime, thread } = yield* resumed([
-        add,
-        reply("mcp.add", null),
-        ...turn,
-        add,
-        reply("mcp.add", { status: 500, body: { message: "MCP unavailable" } }),
-        out("session.instructions.entry.put", {
-          sessionID: SESSION,
-          key: "t3-code",
-          value: buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
-        }),
-        reply("session.instructions.entry.put", null),
-        ...turn,
-        out("mcp.remove", { server, "location[directory]": WORK }),
-        reply("mcp.remove", null),
-      ]);
+      const { runtime, thread } = yield* resumed(
+        [
+          add,
+          reply("mcp.add", null),
+          ...turn,
+          add,
+          reply("mcp.add", { status: 500, body: { message: "MCP unavailable" } }),
+          out("session.instructions.entry.put", {
+            sessionID: SESSION,
+            key: "t3-code",
+            value: buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
+          }),
+          reply("session.instructions.entry.put", null),
+          ...turn,
+          out("mcp.remove", { server, "location[directory]": WORK }),
+          reply("mcp.remove", null),
+        ],
+        { onPrompt: (input) => prompts.push(input) },
+      );
       for (let index = 0; index < 2; index++) {
         const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
-        yield* runtime.startTurn(turnInput(thread));
+        const started = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.forkScoped);
+        // OpenCode before 2.2.6 loads a newly added server's tools after a debounce.
+        if (index === 0) {
+          yield* TestClock.adjust("249 millis");
+          assert.lengthOf(prompts, 0, "prompted before OpenCode loaded the new MCP server's tools");
+          yield* TestClock.adjust("1 millis");
+        }
+        yield* Fiber.join(started);
         assert.equal((yield* Fiber.join(terminal))?.status, "completed");
       }
     }).pipe(Effect.scoped),
@@ -4197,7 +4798,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         runtimePolicy: policy(),
       });
       const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
-      yield* runtime.startTurn({ ...turnInput(thread), threadId: child });
+      const started = yield* runtime
+        .startTurn({ ...turnInput(thread), threadId: child })
+        .pipe(Effect.forkScoped);
+      yield* TestClock.adjust("250 millis");
+      yield* Fiber.join(started);
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
       yield* runtime.unloadThread!({ providerThread: thread });
     }).pipe(Effect.scoped),
@@ -5672,6 +6277,78 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  // regression: #24549 a Stop whose interrupted event never arrives blocked the next fork
+  it.effect("forks a stopped session whose interrupted event never arrived", () =>
+    Effect.gen(function* () {
+      const FORK = "ses_f1484db83ffeLGtrRCFimo1H0e";
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+        out("session.active"),
+        reply("session.active", { data: {} }),
+        out("session.fork", { sessionID: SESSION }),
+        replyData("session.fork", sessionInfo({ id: FORK })),
+        out("session.update", { sessionID: FORK, permissions: "<any>" }),
+        reply("session.update", null),
+        out("session.active"),
+        reply("session.active", { data: {} }),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.interrupted", { sessionID: SESSION }),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.execution.failed", {
+          sessionID: SESSION,
+          error: { type: "provider", message: "second turn failed" },
+        }),
+      ]);
+      const ended = yield* terminals(runtime, 2);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+      });
+      const forked = yield* runtime.forkThread({
+        sourceProviderThread: thread,
+        targetThreadId: ThreadId.make("thread:opencode2-adapter:fork"),
+      });
+      assert.equal(forked.nativeThreadRef?.nativeId, FORK);
+      // The lost end arriving late must not finish the source's next turn.
+      yield* runtime.startTurn(secondTurn(thread));
+      const [first, second] = yield* Fiber.join(ended);
+      assert.equal(first?.status, "interrupted");
+      assert.equal(second?.failure?.message, "second turn failed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses to fork a stopped session OpenCode still runs", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+        out("session.active"),
+        reply("session.active", { data: { [SESSION]: { type: "running" } } }),
+      ]);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+      });
+      const refused = yield* runtime
+        .forkThread({
+          sourceProviderThread: thread,
+          targetThreadId: ThreadId.make("thread:opencode2-adapter:fork"),
+        })
+        .pipe(Effect.flip);
+      assert.equal(refused._tag, "ProviderAdapterProtocolError");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("moves a fork into its target thread's worktree before the first prompt", () =>
     Effect.gen(function* () {
       const FORK = "ses_f1484db83ffeLGtrRCFimo1H0e";
@@ -5701,7 +6378,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  const continued = (after: ReadonlyArray<ProviderReplayEntry>) =>
+  const continued = (after: ReadonlyArray<ProviderReplayEntry>, external?: string) =>
     Effect.gen(function* () {
       const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
       const offered = yield* Deferred.make<void>();
@@ -5709,6 +6386,15 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ...backgroundLaunch(CHILD),
         event("session.execution.succeeded", { sessionID: SESSION }),
         event("session.execution.succeeded", { sessionID: CHILD }),
+        ...(external === undefined
+          ? []
+          : [
+              event("session.inbox.enqueued", {
+                inboxID: external,
+                sessionID: SESSION,
+                item: { type: "user", payload: { text: "qwe!", files: [] }, delivery: "steer" },
+              }),
+            ]),
         event("session.inbox.enqueued", {
           inboxID: "msg_report",
           sessionID: SESSION,
@@ -5728,6 +6414,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           },
         }),
         event("session.execution.started", { sessionID: SESSION }),
+        ...(external === undefined
+          ? []
+          : [event("session.inbox.delivered", { sessionID: SESSION, inboxID: external })]),
         event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report" }),
         event("session.text.ended", {
           sessionID: SESSION,
@@ -5811,6 +6500,59 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       });
       assert.equal(forked.nativeThreadRef?.nativeId, FORK);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "reverts OpenCode at another client's prompt queued before a continuation's report",
+    () =>
+      Effect.gen(function* () {
+        const { runtime, thread, first, second } = yield* continued(
+          [
+            out("message.list", "<any>"),
+            reply("message.list", {
+              data: [
+                {
+                  id: "msg_report",
+                  time: { created: 3 },
+                  text: CONTINUED_REPORT,
+                  type: "synthetic",
+                },
+                { id: "msg_external", time: { created: 2 }, text: "qwe!", type: "user" },
+                { id: CONTINUED_PROMPT, time: { created: 1 }, text: "hi", type: "user" },
+              ],
+              cursor: {},
+            }),
+            out("session.revert.stage", {
+              sessionID: SESSION,
+              messageID: "msg_external",
+              files: false,
+            }),
+            replyData("session.revert.stage", { messageID: "msg_external", files: [] }),
+            out("session.revert.commit", { sessionID: SESSION }),
+            reply("session.revert.commit", null),
+            out("message.list", "<any>"),
+            reply("message.list", {
+              data: [{ id: CONTINUED_PROMPT, time: { created: 1 }, text: "hi", type: "user" }],
+              cursor: {},
+            }),
+          ],
+          "msg_external",
+        );
+        const snapshot = yield* runtime.rollbackThread({
+          providerThread: thread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint:first"),
+            appRunOrdinal: 1,
+            providerTurn: first,
+          },
+          providerThreadTurns: [first, second],
+        });
+        assert.deepEqual(
+          snapshot.providerTurns.map((turn) => turn.id),
+          [first.id],
+        );
+      }).pipe(Effect.scoped),
   );
 
   it.effect("keeps a subagent a stopped background reply started off the next turn", () =>
@@ -6188,6 +6930,346 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
+  );
+
+  it.effect(
+    "reverts a report's continuation at its report after a Stop dropped another client's prompt",
+    () =>
+      Effect.gen(function* () {
+        const kept = `msg_t3_turn_${SESSION}:attempt:opencode2-adapter`;
+        const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+        const reportOffered = yield* Deferred.make<void>();
+        const { runtime, thread } = yield* resumed([
+          event("session.inbox.enqueued", {
+            inboxID: "msg_stale",
+            sessionID: SESSION,
+            item: { type: "user", payload: { text: "qwe!", files: [] }, delivery: "steer" },
+          }),
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_stale" }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          event("session.model.selected", {
+            sessionID: SESSION,
+            model: { id: "buffered", providerID: "opencode" },
+          }),
+          out("session.switchModel", { sessionID: SESSION, model: "<any>" }),
+          reply("session.switchModel", null),
+          ...backgroundLaunch(CHILD),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          event("session.inbox.enqueued", {
+            inboxID: "msg_report",
+            sessionID: SESSION,
+            item: {
+              type: "synthetic",
+              payload: {
+                text: CONTINUED_REPORT,
+                description: "Sleep",
+                metadata: {
+                  source: "subagent",
+                  childID: CHILD,
+                  agent: "General",
+                  state: "completed",
+                },
+              },
+              delivery: "steer",
+            },
+          }),
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report" }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          out("message.list", "<any>"),
+          reply("message.list", {
+            data: [
+              { id: "msg_report", time: { created: 3 }, text: CONTINUED_REPORT, type: "synthetic" },
+              { id: kept, time: { created: 2 }, text: "hi", type: "user" },
+              { id: "msg_stale", time: { created: 1 }, text: "qwe!", type: "user" },
+            ],
+            cursor: {},
+          }),
+          out("session.revert.stage", {
+            sessionID: SESSION,
+            messageID: "msg_report",
+            files: false,
+          }),
+          replyData("session.revert.stage", { messageID: "msg_report", files: [] }),
+          out("session.revert.commit", { sessionID: SESSION }),
+          reply("session.revert.commit", null),
+          out("message.list", "<any>"),
+          reply("message.list", {
+            data: [
+              { id: kept, time: { created: 2 }, text: "hi", type: "user" },
+              { id: "msg_stale", time: { created: 1 }, text: "qwe!", type: "user" },
+            ],
+            cursor: {},
+          }),
+        ]).pipe(
+          Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+            offer: (request) =>
+              Effect.sync(() => void offers.push(request)).pipe(
+                Effect.andThen(() =>
+                  offers.length === 2 ? Deferred.succeed(reportOffered, undefined) : Effect.void,
+                ),
+                Effect.asVoid,
+              ),
+            take: Effect.never,
+          }),
+        );
+        const turns: Array<OrchestrationV2ProviderTurn> = [];
+        const buffered = yield* Deferred.make<void>();
+        const bothEnded = yield* Deferred.make<void>();
+        yield* runtime.events.pipe(
+          Stream.tap((event) =>
+            Effect.gen(function* () {
+              if (
+                event.type === "provider_thread.updated" &&
+                event.providerThread.nativeMetadata?.modelSelection?.model === "opencode/buffered"
+              ) {
+                yield* Deferred.succeed(buffered, undefined);
+              }
+              if (
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.status !== "running"
+              ) {
+                turns.push(event.providerTurn);
+                if (turns.length === 2) yield* Deferred.succeed(bothEnded, undefined);
+              }
+            }),
+          ),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(buffered);
+        yield* runtime.interruptTurn({
+          providerThread: thread,
+          providerTurnId: yield* providerTurnId,
+          requestRuntimeRestart: true,
+        });
+        yield* runtime.startTurn(withLineage(thread));
+        yield* Deferred.await(reportOffered);
+        yield* runtime.startTurn(continuationTurn(thread, offers[1]!));
+        yield* Deferred.await(bothEnded);
+        const [first, continuation] = turns;
+        const snapshot = yield* runtime.rollbackThread({
+          providerThread: thread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint:first"),
+            appRunOrdinal: 1,
+            providerTurn: first!,
+          },
+          providerThreadTurns: [first!, continuation!],
+        });
+        assert.deepEqual(
+          snapshot.providerTurns.map((turn) => turn.id),
+          [first!.id],
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "reverts a report's continuation at its report after a reconnect lost another client's prompt start",
+    () =>
+      Effect.gen(function* () {
+        const kept = `msg_t3_turn_${SESSION}:attempt:opencode2-adapter`;
+        const offered =
+          yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+        const { runtime, thread } = yield* resumed([
+          event("session.inbox.enqueued", {
+            inboxID: "msg_stale",
+            sessionID: SESSION,
+            item: { type: "user", payload: { text: "qwe!", files: [] }, delivery: "steer" },
+          }),
+          { type: "runtime_exit", status: "success" } as const,
+          out("event.subscribe"),
+          event("session.model.selected", {
+            sessionID: SESSION,
+            model: { id: "buffered", providerID: "opencode" },
+          }),
+          out("session.switchModel", { sessionID: SESSION, model: "<any>" }),
+          reply("session.switchModel", null),
+          ...backgroundLaunch(CHILD),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          event("session.inbox.enqueued", {
+            inboxID: "msg_report",
+            sessionID: SESSION,
+            item: {
+              type: "synthetic",
+              payload: {
+                text: CONTINUED_REPORT,
+                description: "Sleep",
+                metadata: {
+                  source: "subagent",
+                  childID: CHILD,
+                  agent: "General",
+                  state: "completed",
+                },
+              },
+              delivery: "steer",
+            },
+          }),
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report" }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          out("message.list", "<any>"),
+          reply("message.list", {
+            data: [
+              { id: "msg_report", time: { created: 3 }, text: CONTINUED_REPORT, type: "synthetic" },
+              { id: kept, time: { created: 2 }, text: "hi", type: "user" },
+              { id: "msg_stale", time: { created: 1 }, text: "qwe!", type: "user" },
+            ],
+            cursor: {},
+          }),
+          out("session.revert.stage", {
+            sessionID: SESSION,
+            messageID: "msg_report",
+            files: false,
+          }),
+          replyData("session.revert.stage", { messageID: "msg_report", files: [] }),
+          out("session.revert.commit", { sessionID: SESSION }),
+          reply("session.revert.commit", null),
+          out("message.list", "<any>"),
+          reply("message.list", {
+            data: [
+              { id: kept, time: { created: 2 }, text: "hi", type: "user" },
+              { id: "msg_stale", time: { created: 1 }, text: "qwe!", type: "user" },
+            ],
+            cursor: {},
+          }),
+        ]).pipe(
+          Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+            offer: (request) => Deferred.succeed(offered, request).pipe(Effect.asVoid),
+            take: Effect.never,
+          }),
+        );
+        const turns: Array<OrchestrationV2ProviderTurn> = [];
+        const reconnected = yield* Deferred.make<void>();
+        const bothEnded = yield* Deferred.make<void>();
+        yield* runtime.events.pipe(
+          Stream.tap((event) =>
+            Effect.gen(function* () {
+              if (
+                event.type === "provider_thread.updated" &&
+                event.providerThread.nativeMetadata?.modelSelection?.model === "opencode/buffered"
+              ) {
+                yield* Deferred.succeed(reconnected, undefined);
+              }
+              if (
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.status !== "running"
+              ) {
+                turns.push(event.providerTurn);
+                if (turns.length === 2) yield* Deferred.succeed(bothEnded, undefined);
+              }
+            }),
+          ),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(reconnected);
+        yield* runtime.startTurn(withLineage(thread));
+        yield* runtime.startTurn(continuationTurn(thread, yield* Deferred.await(offered)));
+        yield* Deferred.await(bothEnded);
+        const [first, continuation] = turns;
+        const snapshot = yield* runtime.rollbackThread({
+          providerThread: thread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint:first"),
+            appRunOrdinal: 1,
+            providerTurn: first!,
+          },
+          providerThreadTurns: [first!, continuation!],
+        });
+        assert.deepEqual(
+          snapshot.providerTurns.map((turn) => turn.id),
+          [first!.id],
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("shows a second prompt another client sent while its continuation was pending", () =>
+    Effect.gen(function* () {
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const prompt = (inboxID: string, text: string) =>
+        event("session.inbox.enqueued", {
+          inboxID,
+          sessionID: SESSION,
+          item: { type: "user", payload: { text, files: [] }, delivery: "steer" },
+        });
+      // T3's own prompt can be admitted after a failed submit ended its turn.
+      const late = `msg_t3_turn_${SESSION}:attempt:late`;
+      const { runtime, thread } = yield* resumed([
+        prompt(late, "mine"),
+        prompt("msg_external_a", "first?"),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: late }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_external_a" }),
+        prompt("msg_external_b", "second?"),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_external_b" }),
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_external_reply",
+          ordinal: 0,
+          text: "Both!",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        // Handled only after the wake above has buffered everything before it.
+        event("session.model.selected", {
+          sessionID: SESSION,
+          model: { id: "buffered", providerID: "opencode" },
+        }),
+      ]).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) => Effect.sync(() => void offers.push(request)),
+          take: Effect.never,
+        }),
+      );
+      const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      const buffered = yield* Deferred.make<void>();
+      const ended = yield* Deferred.make<void>();
+      yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          Effect.gen(function* () {
+            collected.push(event);
+            if (
+              event.type === "provider_thread.updated" &&
+              event.providerThread.nativeMetadata?.modelSelection?.model === "opencode/buffered"
+            ) {
+              yield* Deferred.succeed(buffered, undefined);
+            }
+            if (event.type === "turn.terminal") yield* Deferred.succeed(ended, undefined);
+          }),
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(buffered);
+      yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
+      yield* Deferred.await(ended);
+      assert.deepEqual(
+        collected.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          (event.turnItem.type === "user_message" || event.turnItem.type === "assistant_message")
+            ? [`${event.turnItem.type}: ${event.turnItem.text}`]
+            : [],
+        ),
+        ["user_message: first?", "user_message: second?", "assistant_message: Both!"],
+      );
+      assert.deepEqual(
+        [
+          ...new Set(
+            collected.flatMap((event) =>
+              event.type === "message.updated"
+                ? [`${event.message.role}: ${event.message.text}`]
+                : [],
+            ),
+          ),
+        ],
+        ["user: first?", "user: second?", "assistant: Both!"],
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.effect("shows a question asked while OpenCode wakes for a background reply", () =>
