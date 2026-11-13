@@ -35,7 +35,7 @@ import { cn } from "~/lib/utils";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { RelativeTime } from "~/components/RelativeTime";
 import { useClientSettings } from "~/hooks/useSettings";
-import { formatChatTimestampTooltip } from "~/timestampFormat";
+import { formatFullTimestamp } from "~/timestampFormat";
 
 import { Button } from "../ui/button";
 import { PullRequestEditButton } from "./PullRequestEditButton";
@@ -140,7 +140,7 @@ function CommentIdentity({
           </time>
         </TooltipTrigger>
         <TooltipPopup>
-          {formatChatTimestampTooltip(comment.createdAt, timestampFormat)}
+          {formatFullTimestamp(comment.createdAt, timestampFormat)}
           {comment.url ? " · Open comment on host" : ""}
         </TooltipPopup>
       </Tooltip>

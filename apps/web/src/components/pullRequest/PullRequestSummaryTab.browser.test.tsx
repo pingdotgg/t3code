@@ -265,10 +265,8 @@ it("shows a comment's exact time in the chosen 24-hour clock", async () => {
   await using screen = await render({ ...detail, comments: [comment], commentCount: 1 });
 
   await userEvent.hover(screen.container.querySelector(`time[datetime="${createdAt}"]`)!);
-  const date = new Date(createdAt);
-  const clock = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  const expected = new Date(createdAt).toLocaleString(undefined, { hour12: false });
   await vi.waitFor(() =>
-    expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(clock),
+    expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toBe(expected),
   );
-  expect(document.querySelector('[data-slot="tooltip-popup"]')!.textContent).not.toMatch(/AM|PM/i);
 });
