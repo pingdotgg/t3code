@@ -1,0 +1,18 @@
+[package]
+name = "conn-provider-codex"
+description = "The Codex provider: drives `codex app-server` over JSON-RPC on stdio."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+conn-contract.workspace = true
+conn-provider.workspace = true
+conn-provider-support = { path = "../conn-provider-support" }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt", "macros"] }
+
+[lints]
+workspace = true

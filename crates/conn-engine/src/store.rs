@@ -53,6 +53,19 @@ CREATE TABLE IF NOT EXISTS shell_changes (
   seq  INTEGER PRIMARY KEY,
   item TEXT NOT NULL
 );
+-- Final message texts for `searchThreads`. Trigram tokens make LIKE '%q%' an index lookup
+-- for queries of three or more characters. `message_keys` gives each message a stable rowid.
+CREATE VIRTUAL TABLE IF NOT EXISTS message_search USING fts5(text, tokenize = 'trigram');
+CREATE TABLE IF NOT EXISTS message_keys (
+  id         INTEGER PRIMARY KEY,
+  thread_id  TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  UNIQUE (thread_id, message_id)
+);
+CREATE TABLE IF NOT EXISTS meta (
+  key   TEXT PRIMARY KEY,
+  value INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS receipts (
   command_id   TEXT PRIMARY KEY,
   command_type TEXT NOT NULL,
@@ -111,6 +124,13 @@ fn streams_only(event_type: &str) -> bool {
 
 pub(crate) type StoreResult<T> = Result<T, String>;
 
+/// Shell changes kept for resuming streams. An older cursor gets a fresh snapshot instead.
+pub(crate) const SHELL_CHANGES_KEEP: i64 = 1024;
+/// Command receipts kept for retries. Clients retry within seconds, not thousands of commands.
+pub(crate) const RECEIPTS_KEEP: i64 = 4096;
+/// Retention runs when the sequence crosses a multiple of this, not on every commit.
+const PRUNE_EVERY: u64 = 256;
+
 fn err(e: rusqlite::Error) -> String {
     format!("store: {e}")
 }
@@ -122,6 +142,8 @@ fn parse(text: String) -> Value {
 pub(crate) struct Store {
     conn: Connection,
     next_seq: u64,
+    /// A title generator is configured, so commands may ask for titles.
+    pub(crate) generates_titles: bool,
 }
 
 impl Store {
@@ -136,6 +158,7 @@ impl Store {
         )
         .map_err(err)?;
         conn.execute_batch(SCHEMA).map_err(err)?;
+        migrate(&conn)?;
         let high: i64 = conn
             .query_row(
                 "SELECT MAX(COALESCE((SELECT MAX(seq) FROM events), 0),
@@ -148,6 +171,7 @@ impl Store {
         Ok(Self {
             conn,
             next_seq: high as u64 + 1,
+            generates_titles: false,
         })
     }
 
@@ -158,7 +182,9 @@ impl Store {
 
     pub(crate) fn tx(&mut self) -> StoreResult<Tx<'_>> {
         let start = self.next_seq;
+        let generates_titles = self.generates_titles;
         Ok(Tx {
+            generates_titles,
             tx: self.conn.transaction().map_err(err)?,
             next_seq: &mut self.next_seq,
             start,
@@ -207,6 +233,8 @@ impl Store {
             .map_err(err)?
             .filter_map(Result::ok)
             .map(parse)
+            .filter(|project| project["deletedAt"].is_null())
+            .map(|project| shell_project(&project))
             .collect();
         Ok(json!({
             "schemaVersion": 2,
@@ -215,6 +243,23 @@ impl Store {
             "archivedThreads": [],
             "projects": projects,
         }))
+    }
+
+    /// Shell changes after `after`, or `None` when retention already dropped some of them.
+    pub(crate) fn shell_changes_since(&self, after: u64) -> StoreResult<Option<Vec<Value>>> {
+        let pruned: i64 = self
+            .conn
+            .query_row(
+                "SELECT COALESCE((SELECT value FROM meta WHERE key = 'shell_pruned_through'), 0)",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(err)?;
+        // Every change above the pruned mark is kept.
+        if (after as i64) < pruned {
+            return Ok(None);
+        }
+        self.shell_changes_after(after).map(Some)
     }
 
     pub(crate) fn shell_changes_after(&self, after: u64) -> StoreResult<Vec<Value>> {
@@ -233,6 +278,17 @@ impl Store {
 
     /// `OrchestrationV2ThreadProjection`, or `None` for an unknown or deleted thread.
     pub(crate) fn thread_projection(&self, thread_id: &str) -> StoreResult<Option<Value>> {
+        self.thread_projection_with(thread_id, false)
+    }
+
+    /// The projection, built with one copy of each turn item: it lives in `visibleTurnItems`,
+    /// and `turnItems` holds the same values unless `omit_local_items` (the client restores
+    /// them from `visibleTurnItems` when the snapshot says `turnItemsOmitLocalVisible`).
+    pub(crate) fn thread_projection_with(
+        &self,
+        thread_id: &str,
+        omit_local_items: bool,
+    ) -> StoreResult<Option<Value>> {
         let row = self
             .conn
             .query_row(
@@ -254,24 +310,22 @@ impl Store {
         let mut projection = serde_json::Map::new();
         projection.insert("thread".into(), parse(thread));
         for kind in COLLECTIONS {
-            projection.insert(
-                kind.into(),
-                Value::Array(entities(&self.conn, thread_id, kind)?),
-            );
-        }
-        let mut items: Vec<&Value> = projection["turnItems"]
-            .as_array()
-            .map(|a| a.iter().collect())
-            .unwrap_or_default();
-        items.sort_by(|a, b| {
-            let key = |v: &Value| {
-                (
-                    v["ordinal"].as_u64().unwrap_or(0),
-                    v["id"].as_str().map(str::to_owned),
-                )
+            let rows = if kind == "turnItems" {
+                vec![]
+            } else {
+                entities(&self.conn, thread_id, kind)?
             };
-            key(a).cmp(&key(b))
-        });
+            projection.insert(kind.into(), Value::Array(rows));
+        }
+        // Turn items in timeline order, read once and moved into their rows.
+        let items = self.query_json(
+            "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'turnItems'
+             ORDER BY ordinal, id",
+            [thread_id],
+        )?;
+        if !omit_local_items {
+            projection.insert("turnItems".into(), Value::Array(items.clone()));
+        }
         let visible: Vec<Value> = items
             .into_iter()
             .enumerate()
@@ -280,7 +334,7 @@ impl Store {
                     "position": position,
                     "visibility": "local",
                     "sourceThreadId": thread_id,
-                    "sourceItemId": item["id"],
+                    "sourceItemId": item["id"].clone(),
                     "item": item,
                 })
             })
@@ -310,6 +364,40 @@ impl Store {
             .map_err(err)?
             .filter_map(Result::ok)
             .map(|(seq, text)| (seq, parse(text)))
+            .collect();
+        Ok(rows)
+    }
+
+    /// One JSON column per row.
+    pub(crate) fn query_json(
+        &self,
+        sql: &str,
+        args: impl rusqlite::Params,
+    ) -> StoreResult<Vec<Value>> {
+        let mut stmt = self.conn.prepare(sql).map_err(err)?;
+        let rows = stmt
+            .query_map(args, |row| row.get::<_, String>(0))
+            .map_err(err)?
+            .filter_map(Result::ok)
+            .map(parse)
+            .collect();
+        Ok(rows)
+    }
+
+    /// A text column and a JSON column per row.
+    pub(crate) fn query_rows(
+        &self,
+        sql: &str,
+        args: impl rusqlite::Params,
+    ) -> StoreResult<Vec<(String, Value)>> {
+        let mut stmt = self.conn.prepare(sql).map_err(err)?;
+        let rows = stmt
+            .query_map(args, |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(err)?
+            .filter_map(Result::ok)
+            .map(|(key, body)| (key, parse(body)))
             .collect();
         Ok(rows)
     }
@@ -354,6 +442,7 @@ pub(crate) struct Tx<'a> {
     now: String,
     /// Threads whose shell row may have changed, with the last sequence that touched them.
     touched: Vec<(String, u64)>,
+    pub(crate) generates_titles: bool,
 }
 
 impl Tx<'_> {
@@ -417,6 +506,14 @@ impl Tx<'_> {
                 "runs" => payload["ordinal"].as_i64(),
                 _ => None,
             };
+            if kind == "messages" && payload["streaming"] != true {
+                index_message(
+                    &self.tx,
+                    &thread_id,
+                    &id,
+                    payload["text"].as_str().unwrap_or(""),
+                )?;
+            }
             let first_seq = existing.map(|(first, _)| first).unwrap_or(seq as i64);
             self.tx
                 .execute(
@@ -431,7 +528,7 @@ impl Tx<'_> {
             self.tx
                 .execute(
                     "INSERT INTO threads (id, project_id, deleted, activity_at, thread) VALUES (?1, ?2, ?3, ?4, ?5)
-                     ON CONFLICT(id) DO UPDATE SET deleted = ?3, activity_at = ?4, thread = ?5",
+                     ON CONFLICT(id) DO UPDATE SET project_id = ?2, deleted = ?3, activity_at = ?4, thread = ?5",
                     params![thread_id, project_id, deleted, self.now, payload.to_string()],
                 )
                 .map_err(err)?;
@@ -546,6 +643,21 @@ impl Tx<'_> {
         Ok(rows)
     }
 
+    /// The newest run in an active status, read without loading the thread's other runs.
+    pub(crate) fn active_run(&self, thread_id: &str) -> StoreResult<Option<Value>> {
+        self.tx
+            .query_row(
+                "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'runs'
+                 AND json_extract(body, '$.status') IN ('preparing', 'starting', 'running', 'waiting')
+                 ORDER BY ordinal DESC LIMIT 1",
+                [thread_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map(|body| body.map(parse))
+            .map_err(err)
+    }
+
     pub(crate) fn count(&self, thread_id: &str, kind: &str) -> StoreResult<u64> {
         self.tx
             .query_row(
@@ -557,7 +669,15 @@ impl Tx<'_> {
             .map_err(err)
     }
 
+    /// A project that was not deleted.
     pub(crate) fn project(&self, project_id: &str) -> StoreResult<Option<Value>> {
+        Ok(self
+            .project_any(project_id)?
+            .filter(|p| p["deletedAt"].is_null()))
+    }
+
+    /// A project row, deleted or not.
+    pub(crate) fn project_any(&self, project_id: &str) -> StoreResult<Option<Value>> {
         self.tx
             .query_row(
                 "SELECT body FROM projects WHERE id = ?1",
@@ -569,48 +689,98 @@ impl Tx<'_> {
             .map_err(err)
     }
 
-    /// Adds a project for `workspace_root` unless one exists. Returns its id.
-    pub(crate) fn ensure_project(
-        &mut self,
-        id: &str,
-        title: &str,
-        workspace_root: &str,
-    ) -> StoreResult<String> {
-        let existing: Option<String> = self
-            .tx
+    /// The project row that owns `workspace_root`, deleted or not.
+    pub(crate) fn project_by_root(&self, workspace_root: &str) -> StoreResult<Option<Value>> {
+        self.tx
             .query_row(
-                "SELECT id FROM projects WHERE workspace_root = ?1",
+                "SELECT body FROM projects WHERE workspace_root = ?1",
                 [workspace_root],
-                |row| row.get(0),
+                |row| row.get::<_, String>(0),
             )
             .optional()
-            .map_err(err)?;
-        if let Some(id) = existing {
-            return Ok(id);
-        }
-        let project = json!({
-            "id": id,
-            "title": title,
-            "workspaceRoot": workspace_root,
-            "defaultModelSelection": null,
-            "scripts": [],
-            "createdAt": self.now,
-            "updatedAt": self.now,
-        });
+            .map(|body| body.map(parse))
+            .map_err(err)
+    }
+
+    /// Writes a project row and its shell change: `project.updated`, or `project.removed`
+    /// when the body has `deletedAt`. A deleted row that held the same folder gives way.
+    pub(crate) fn put_project(&mut self, project: &Value) -> StoreResult<u64> {
+        let id = project["id"].as_str().unwrap_or_default();
+        let root = project["workspaceRoot"].as_str().unwrap_or_default();
         self.tx
             .execute(
-                "INSERT INTO projects (id, workspace_root, body) VALUES (?1, ?2, ?3)",
-                params![id, workspace_root, project.to_string()],
+                "DELETE FROM projects WHERE workspace_root = ?1 AND id != ?2",
+                params![root, id],
+            )
+            .map_err(err)?;
+        self.tx
+            .execute(
+                "INSERT INTO projects (id, workspace_root, body) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(id) DO UPDATE SET workspace_root = ?2, body = ?3",
+                params![id, root, project.to_string()],
             )
             .map_err(err)?;
         let seq = self.alloc();
-        let item = json!({"kind": "project.updated", "sequence": seq, "project": project});
+        let item = if project["deletedAt"].is_null() {
+            json!({"kind": "project.updated", "sequence": seq, "project": shell_project(project)})
+        } else {
+            json!({"kind": "project.removed", "sequence": seq, "projectId": id})
+        };
         self.tx
             .execute(
                 "INSERT INTO shell_changes (seq, item) VALUES (?1, ?2)",
                 params![seq as i64, item.to_string()],
             )
             .map_err(err)?;
+        Ok(seq)
+    }
+
+    /// Thread ids of one project, archived included, newest first.
+    pub(crate) fn project_thread_ids(&self, project_id: &str) -> StoreResult<Vec<String>> {
+        let mut stmt = self
+            .tx
+            .prepare(
+                "SELECT id FROM threads WHERE project_id = ?1 AND deleted = 0 ORDER BY rowid DESC",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map([project_id], |row| row.get::<_, String>(0))
+            .map_err(err)?
+            .filter_map(Result::ok)
+            .collect();
+        Ok(rows)
+    }
+
+    /// Thread rows (not deleted) whose JSON field `field` equals `value`.
+    pub(crate) fn threads_where(&self, field: &str, value: &str) -> StoreResult<Vec<Value>> {
+        let mut stmt = self
+            .tx
+            .prepare("SELECT thread FROM threads WHERE deleted = 0 AND json_extract(thread, ?1) = ?2 ORDER BY rowid")
+            .map_err(err)?;
+        let rows = stmt
+            .query_map(params![format!("$.{field}"), value], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(err)?
+            .filter_map(Result::ok)
+            .map(parse)
+            .collect();
+        Ok(rows)
+    }
+
+    /// Adds a project for `workspace_root` unless a row (even a deleted one) has it, so a
+    /// project a client removed stays removed after a restart. Returns its id.
+    pub(crate) fn ensure_project(
+        &mut self,
+        id: &str,
+        title: &str,
+        workspace_root: &str,
+    ) -> StoreResult<String> {
+        if let Some(existing) = self.project_by_root(workspace_root)? {
+            return Ok(existing["id"].as_str().unwrap_or(id).to_owned());
+        }
+        let project = new_project(id, title, workspace_root, &self.now);
+        self.put_project(&project)?;
         Ok(id.to_owned())
     }
 
@@ -681,6 +851,9 @@ impl Tx<'_> {
                 )
                 .map_err(err)?;
         }
+        if high / PRUNE_EVERY != (self.start.saturating_sub(1)) / PRUNE_EVERY {
+            prune(&self.tx)?;
+        }
         self.tx.commit().map_err(err)?;
         Ok(high)
     }
@@ -694,6 +867,110 @@ impl Tx<'_> {
     pub(crate) fn conn(&self) -> &Connection {
         &self.tx
     }
+}
+
+/// A new `Project` row (`packages/contracts/src/project.ts`).
+pub(crate) fn new_project(id: &str, title: &str, workspace_root: &str, now: &str) -> Value {
+    json!({
+        "id": id,
+        "title": title,
+        "workspaceRoot": workspace_root,
+        "defaultModelSelection": null,
+        "scripts": [],
+        "createdAt": now,
+        "updatedAt": now,
+        "deletedAt": null,
+    })
+}
+
+/// The shell row of a project: the `Project` without `deletedAt`.
+pub(crate) fn shell_project(project: &Value) -> Value {
+    let mut row = project.clone();
+    if let Some(map) = row.as_object_mut() {
+        map.remove("deletedAt");
+    }
+    row
+}
+
+/// Schema steps beyond `CREATE ... IF NOT EXISTS`, by `PRAGMA user_version`.
+fn migrate(conn: &Connection) -> StoreResult<()> {
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(err)?;
+    if version < 1 {
+        // 1: index the messages a store written before search had.
+        let rows: Vec<(String, String, String)> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT thread_id, id, COALESCE(json_extract(body, '$.text'), '') FROM entities
+                     WHERE kind = 'messages' AND COALESCE(json_extract(body, '$.streaming'), 0) = 0",
+                )
+                .map_err(err)?;
+            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                .map_err(err)?
+                .filter_map(Result::ok)
+                .collect()
+        };
+        for (thread_id, message_id, text) in rows {
+            index_message(conn, &thread_id, &message_id, &text)?;
+        }
+        conn.execute_batch("PRAGMA user_version = 1").map_err(err)?;
+    }
+    Ok(())
+}
+
+/// Puts the final text of one message into `message_search`, replacing an older version.
+fn index_message(
+    conn: &Connection,
+    thread_id: &str,
+    message_id: &str,
+    text: &str,
+) -> StoreResult<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO message_keys (thread_id, message_id) VALUES (?1, ?2)",
+        params![thread_id, message_id],
+    )
+    .map_err(err)?;
+    let id: i64 = conn
+        .query_row(
+            "SELECT id FROM message_keys WHERE thread_id = ?1 AND message_id = ?2",
+            params![thread_id, message_id],
+            |row| row.get(0),
+        )
+        .map_err(err)?;
+    conn.execute("DELETE FROM message_search WHERE rowid = ?1", [id])
+        .map_err(err)?;
+    conn.execute(
+        "INSERT INTO message_search (rowid, text) VALUES (?1, ?2)",
+        params![id, text],
+    )
+    .map_err(err)?;
+    Ok(())
+}
+
+/// Bounds the tables that only serve resumes and retries. Events and projections stay: they
+/// are the history clients read.
+fn prune(conn: &Connection) -> StoreResult<()> {
+    conn.execute(
+        "INSERT INTO meta (key, value)
+         SELECT 'shell_pruned_through', seq FROM shell_changes ORDER BY seq DESC LIMIT 1 OFFSET ?1
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [SHELL_CHANGES_KEEP],
+    )
+    .map_err(err)?;
+    conn.execute(
+        "DELETE FROM shell_changes WHERE seq <= COALESCE(
+           (SELECT value FROM meta WHERE key = 'shell_pruned_through'), 0)",
+        [],
+    )
+    .map_err(err)?;
+    conn.execute(
+        "DELETE FROM receipts WHERE sequence < (
+           SELECT sequence FROM receipts ORDER BY sequence DESC LIMIT 1 OFFSET ?1)",
+        [RECEIPTS_KEEP],
+    )
+    .map_err(err)?;
+    Ok(())
 }
 
 /// One event before it gets its sequence, id and time.

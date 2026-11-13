@@ -1,0 +1,543 @@
+{
+  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/todo_list.ndjson through the orchestrator fixture runner at 5b571fe04a; driver dropped.",
+  "capturedOn": "2026-11-13",
+  "startTurn": [
+    {
+      "appThread": {
+        "createdBy": "user",
+        "creationSource": "web",
+        "id": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "projectId": "project:fixture:todo_list:f2604e9d-55b7-45de-a716-838867faae7e",
+        "title": "Replay fixture: todo_list",
+        "providerInstanceId": "codex",
+        "modelSelection": { "instanceId": "codex", "model": "gpt-6-luna" },
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "branch": null,
+        "worktreePath": null,
+        "pullRequests": [],
+        "activeProviderThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "lineage": {
+          "parentThreadId": null,
+          "relationshipToParent": null,
+          "rootThreadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7"
+        },
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.001Z",
+        "archivedAt": null,
+        "settledOverride": null,
+        "settledAt": null,
+        "snoozedUntil": null,
+        "snoozedAt": null,
+        "lastVisitedAt": "1970-01-01T00:00:00.000Z",
+        "deletedAt": null
+      },
+      "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "runId": "run:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+      "runOrdinal": 1,
+      "providerTurnOrdinal": 1,
+      "nativeThreadHasTurns": false,
+      "attemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+      "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+      "providerThread": {
+        "id": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "providerSessionId": "provider-session:provider-instance:codex:shared",
+        "appThreadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "codex",
+          "nativeId": "01a0d691-5ba5-77b1-bf0d-1bf7be8e9abe",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": 1,
+        "lastRunOrdinal": 1,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.001Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "contextUsage": null
+      },
+      "message": {
+        "messageId": "message:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1:a209c1b9-9d82-4ff3-ba27-8bd6853514a5",
+        "text": "Use the update_plan tool to track exactly three steps: inspect package.json, inspect tsconfig.json, report completion. Then read package.json and tsconfig.json, and answer exactly: todo list fixture complete",
+        "attachments": [],
+        "createdBy": "user",
+        "creationSource": "web"
+      },
+      "modelSelection": { "instanceId": "codex", "model": "gpt-6-luna" },
+      "runtimePolicy": {
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-MX9Suh",
+        "approvalPolicy": "never",
+        "sandboxPolicy": {
+          "type": "readOnly",
+          "access": { "type": "fullAccess" },
+          "networkAccess": false
+        }
+      }
+    }
+  ],
+  "respond": [],
+  "events": [
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0d691-5c9c-7873-a191-5a599fd58099",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0d691-5c9c-7873-a191-5a599fd58099",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-13T12:14:32.415Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:turn-plan%3A01a0d691-5c9c-7873-a191-5a599fd58099",
+        "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "todo_list",
+        "status": "running",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d691-5c9c-7873-a191-5a599fd58099",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "turn-plan:01a0d691-5c9c-7873-a191-5a599fd58099",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "plan.updated",
+      "plan": {
+        "id": "plan:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:provider:codex:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:60ae850c-0af3-4468-9967-365ecc316207",
+        "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:turn-plan%3A01a0d691-5c9c-7873-a191-5a599fd58099",
+        "kind": "todo_list",
+        "status": "active",
+        "steps": [
+          { "id": "step-1", "text": "Inspect package.json", "status": "running" },
+          { "id": "step-2", "text": "Inspect tsconfig.json", "status": "pending" },
+          { "id": "step-3", "text": "Report completion", "status": "pending" }
+        ]
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:turn-plan%3A01a0d691-5c9c-7873-a191-5a599fd58099",
+        "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:turn-plan%3A01a0d691-5c9c-7873-a191-5a599fd58099",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d691-5c9c-7873-a191-5a599fd58099",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "turn-plan:01a0d691-5c9c-7873-a191-5a599fd58099",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "running",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "todo_list",
+        "planId": "plan:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:provider:codex:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:60ae850c-0af3-4468-9967-365ecc316207",
+        "steps": [
+          { "id": "step-1", "text": "Inspect package.json", "status": "running" },
+          { "id": "step-2", "text": "Inspect tsconfig.json", "status": "pending" },
+          { "id": "step-3", "text": "Report completion", "status": "pending" }
+        ]
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:exec-251a740a-c3ff-48c5-9be0-feffdbad806c",
+        "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "tool_call",
+        "status": "running",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d691-5c9c-7873-a191-5a599fd58099",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-251a740a-c3ff-48c5-9be0-feffdbad806c",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-09-25T03:17:31.593Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:exec-251a740a-c3ff-48c5-9be0-feffdbad806c",
+        "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:exec-251a740a-c3ff-48c5-9be0-feffdbad806c",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d691-5c9c-7873-a191-5a599fd58099",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-251a740a-c3ff-48c5-9be0-feffdbad806c",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 102,
+        "status": "running",
+        "title": null,
+        "startedAt": "2026-09-25T03:17:31.593Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "command_execution",
+        "input": "/bin/bash -lc 'cat package.json && cat tsconfig.json'",
+        "completionWake": "always"
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:exec-251a740a-c3ff-48c5-9be0-feffdbad806c",
+        "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "tool_call",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d691-5c9c-7873-a191-5a599fd58099",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-251a740a-c3ff-48c5-9be0-feffdbad806c",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-09-25T03:17:31.593Z",
+        "completedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:exec-251a740a-c3ff-48c5-9be0-feffdbad806c",
+        "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:exec-251a740a-c3ff-48c5-9be0-feffdbad806c",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d691-5c9c-7873-a191-5a599fd58099",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-251a740a-c3ff-48c5-9be0-feffdbad806c",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 102,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-09-25T03:17:31.593Z",
+        "completedAt": "1970-01-01T00:00:00.002Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "command_execution",
+        "input": "/bin/bash -lc 'cat package.json && cat tsconfig.json'",
+        "output": "{\n  \"name\": \"effect-codex-app-server\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"exports\": {\n    \"./client\": {\n      \"types\": \"./src/client.ts\",\n      \"import\": \"./src/client.ts\"\n    },\n    \"./schema\": {\n      \"types\": \"./src/schema.ts\",\n      \"import\": \"./src/schema.ts\"\n    },\n    \"./rpc\": {\n      \"types\": \"./src/rpc.ts\",\n      \"import\": \"./src/rpc.ts\"\n    },\n    \"./protocol\": {\n      \"types\": \"./src/protocol.ts\",\n      \"import\": \"./src/protocol.ts\"\n    },\n    \"./replay\": {\n      \"types\": \"./src/replay.ts\",\n      \"import\": \"./src/replay.ts\"\n    },\n    \"./errors\": {\n      \"types\": \"./src/errors.ts\",\n      \"import\": \"./src/errors.ts\"\n    }\n  },\n  \"scripts\": {\n    \"typecheck\": \"tsc --noEmit\",\n    \"test\": \"vp test run\",\n    \"generate\": \"node scripts/generate.ts\",\n    \"probe\": \"node test/examples/codex-app-server-probe.ts\"\n  },\n  \"dependencies\": {\n    \"effect\": \"catalog:\"\n  },\n  \"devDependencies\": {\n    \"@effect/openapi-generator\": \"catalog:\",\n    \"@effect/platform-node\": \"catalog:\",\n    \"@effect/vitest\": \"catalog:\",\n    \"@types/node\": \"catalog:\",\n    \"vite-plus\": \"catalog:\"\n  }\n}\n{\n  \"extends\": \"../../tsconfig.base.json\",\n  \"compilerOptions\": {\n    \"types\": [\"node\"]\n  },\n  \"include\": [\"src\", \"scripts\", \"test\"]\n}\n",
+        "exitCode": 0,
+        "completionWake": "always"
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0d691-5c9c-7873-a191-5a599fd58099",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0d691-5c9c-7873-a191-5a599fd58099",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-13T12:14:32.415Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 22980,
+          "maxTokens": 258400,
+          "inputTokens": 22888,
+          "cachedInputTokens": 1792,
+          "outputTokens": 92,
+          "reasoningOutputTokens": 0,
+          "updatedAt": "1970-01-01T00:00:00.002Z"
+        }
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:turn-plan%3A01a0d691-5c9c-7873-a191-5a599fd58099",
+        "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "todo_list",
+        "status": "running",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d691-5c9c-7873-a191-5a599fd58099",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "turn-plan:01a0d691-5c9c-7873-a191-5a599fd58099",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "plan.updated",
+      "plan": {
+        "id": "plan:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:provider:codex:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:60ae850c-0af3-4468-9967-365ecc316207",
+        "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:turn-plan%3A01a0d691-5c9c-7873-a191-5a599fd58099",
+        "kind": "todo_list",
+        "status": "active",
+        "steps": [
+          { "id": "step-1", "text": "Inspect package.json", "status": "completed" },
+          { "id": "step-2", "text": "Inspect tsconfig.json", "status": "completed" },
+          { "id": "step-3", "text": "Report completion", "status": "completed" }
+        ]
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:turn-plan%3A01a0d691-5c9c-7873-a191-5a599fd58099",
+        "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:turn-plan%3A01a0d691-5c9c-7873-a191-5a599fd58099",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d691-5c9c-7873-a191-5a599fd58099",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "turn-plan:01a0d691-5c9c-7873-a191-5a599fd58099",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "running",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "todo_list",
+        "planId": "plan:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:provider:codex:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:60ae850c-0af3-4468-9967-365ecc316207",
+        "steps": [
+          { "id": "step-1", "text": "Inspect package.json", "status": "completed" },
+          { "id": "step-2", "text": "Inspect tsconfig.json", "status": "completed" },
+          { "id": "step-3", "text": "Report completion", "status": "completed" }
+        ]
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0d691-5c9c-7873-a191-5a599fd58099",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0d691-5c9c-7873-a191-5a599fd58099",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-13T12:14:32.415Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 23417,
+          "maxTokens": 258400,
+          "inputTokens": 23356,
+          "cachedInputTokens": 22272,
+          "outputTokens": 61,
+          "reasoningOutputTokens": 0,
+          "updatedAt": "1970-01-01T00:00:00.002Z"
+        }
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:msg_05ada939d0eb95f2016ab5e7d040ac87d0b3189e7502ca7c6a",
+        "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "assistant_message",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d691-5c9c-7873-a191-5a599fd58099",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "msg_05ada939d0eb95f2016ab5e7d040ac87d0b3189e7502ca7c6a",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-09-25T03:17:36.573Z",
+        "completedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "message.updated",
+      "message": {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "message:provider:codex:native-item:msg_05ada939d0eb95f2016ab5e7d040ac87d0b3189e7502ca7c6a",
+        "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:msg_05ada939d0eb95f2016ab5e7d040ac87d0b3189e7502ca7c6a",
+        "role": "assistant",
+        "text": "todo list fixture complete",
+        "attachments": [],
+        "streaming": false,
+        "createdAt": "2026-09-25T03:17:36.573Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:msg_05ada939d0eb95f2016ab5e7d040ac87d0b3189e7502ca7c6a",
+        "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:msg_05ada939d0eb95f2016ab5e7d040ac87d0b3189e7502ca7c6a",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d691-5c9c-7873-a191-5a599fd58099",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "msg_05ada939d0eb95f2016ab5e7d040ac87d0b3189e7502ca7c6a",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 103,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-09-25T03:17:36.573Z",
+        "completedAt": "1970-01-01T00:00:00.002Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "assistant_message",
+        "phase": "final_answer",
+        "messageId": "message:provider:codex:native-item:msg_05ada939d0eb95f2016ab5e7d040ac87d0b3189e7502ca7c6a",
+        "text": "todo list fixture complete",
+        "streaming": false
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0d691-5c9c-7873-a191-5a599fd58099",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0d691-5c9c-7873-a191-5a599fd58099",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-13T12:14:32.415Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 23449,
+          "maxTokens": 258400,
+          "inputTokens": 23441,
+          "cachedInputTokens": 22272,
+          "outputTokens": 8,
+          "reasoningOutputTokens": 0,
+          "updatedAt": "1970-01-01T00:00:00.002Z"
+        }
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:todo_list:project:project%3Afixture%3Atodo_list%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0d691-5c9c-7873-a191-5a599fd58099",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0d691-5c9c-7873-a191-5a599fd58099",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "completed",
+        "startedAt": "2026-11-13T12:14:32.415Z",
+        "completedAt": "2026-09-25T03:17:39.000Z",
+        "turnTokenUsage": {
+          "usageStatus": "complete",
+          "usageScope": "main_agent",
+          "inputTokens": 69685,
+          "cachedInputTokens": 46336,
+          "cacheCreationTokens": 0,
+          "outputTokens": 161,
+          "reasoningTokens": 0,
+          "hasSubagents": false,
+          "models": ["gpt-6-luna"]
+        },
+        "model": "gpt-6-luna"
+      }
+    },
+    {
+      "type": "turn.terminal",
+      "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+      "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d691-5c9c-7873-a191-5a599fd58099",
+      "runOrdinal": 1,
+      "status": "completed",
+      "failure": null,
+      "threadDisposition": "reusable"
+    }
+  ]
+}

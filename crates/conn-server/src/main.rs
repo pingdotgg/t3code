@@ -5,16 +5,35 @@ use conn_provider_claude::{ClaudeConfig, ClaudeProvider};
 use conn_server::serve::{ServeOptions, serve};
 
 fn main() {
+    // Runs and exits for every command but `serve`.
     let options = ServeOptions::from_args();
-    let providers: Vec<Arc<dyn Provider>> = vec![Arc::new(ClaudeProvider::new(
-        "claudeAgent".into(),
-        ClaudeConfig::default(),
-    ))];
+    let claude = ClaudeConfig {
+        // `conn-files` stores attachments here; the CLI may read them.
+        attachments_dir: Some(options.state_dir.join("attachments")),
+        // The engine closes idle sessions (`--session-idle-timeout`), one rule for all.
+        idle_timeout: None,
+        // T3's text after the runtime instructions when the session has `t3-code`.
+        mcp_instructions: Some(format!(
+            "{}{}",
+            conn_mcp::AGENT_INSTRUCTIONS,
+            conn_mcp::CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS
+        )),
+        ..ClaudeConfig::default()
+    };
+    let mut providers: Vec<Arc<dyn Provider>> =
+        vec![Arc::new(ClaudeProvider::new("claudeAgent".into(), claude))];
+    if let Some(codex) =
+        conn_provider_codex::CodexProvider::detect("codex".into(), Default::default())
+    {
+        providers.push(Arc::new(codex));
+    }
     // One thread: a container serves a handful of clients, and each worker thread costs
     // stack and allocator arenas.
-    tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .expect("tokio runtime")
-        .block_on(serve(options, providers));
+        .expect("tokio runtime");
+    runtime.block_on(serve(options, providers));
+    // Dropping the tasks drops provider children, which kills them (`kill_on_drop`).
+    runtime.shutdown_timeout(std::time::Duration::from_secs(2));
 }

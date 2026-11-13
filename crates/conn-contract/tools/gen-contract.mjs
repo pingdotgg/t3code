@@ -640,8 +640,9 @@ const unionOf = (members, hint, path, forcedName) => {
         usedV.add(vn);
         const ty = typeOf(m, name + vn, `${path}<${values === null ? "*" : values[0]}>`);
         variants.push(`${vn}(${ty})`);
-        if (values === null) fallback.push(`${vn}(${ty})`);
-        else for (const v of values) byValue.set(v, [...(byValue.get(v) ?? []), `${vn}(${ty})`]);
+        if (values === null || disc.optional[i]) fallback.push(`${vn}(${ty})`);
+        if (values !== null)
+          for (const v of values) byValue.set(v, [...(byValue.get(v) ?? []), `${vn}(${ty})`]);
       });
       // Group values that dispatch to the same candidate list.
       const groups = new Map();
@@ -782,6 +783,8 @@ const findDiscriminator = (ds) => {
   const found = [];
   for (const key of candidates) {
     const values = [];
+    // Members whose tag is an optional literal: they also decode a value without the tag.
+    const optional = [];
     let good = true;
     for (const d of ds) {
       const prop = d.propertySignatures.find((p) => p.name === key);
@@ -789,7 +792,8 @@ const findDiscriminator = (ds) => {
         good = false;
         break;
       }
-      const vals = prop.isOptional ? undefined : literalValues(prop.type);
+      const vals = literalValues(prop.type);
+      optional.push(Boolean(prop.isOptional && vals));
       if (vals) values.push(vals);
       else if (isStringKind(prop.type)) values.push(null);
       else {
@@ -809,10 +813,18 @@ const findDiscriminator = (ds) => {
       values.findIndex((v) => v === null) < lastLiteral
     )
       continue;
+    // At most one member may own the absent tag, or the order between them is lost.
+    const optionals = optional.filter(Boolean).length;
+    if (optionals > 1 || (optionals === 1 && catchAlls > 0)) continue;
     found.push({
       key,
       values,
-      score: dupes * 10 + catchAlls * 100 + (["type", "_tag", "kind"].includes(key) ? 0 : 1),
+      optional,
+      score:
+        dupes * 10 +
+        catchAlls * 100 +
+        optionals * 5 +
+        (["type", "_tag", "kind"].includes(key) ? 0 : 1),
     });
   }
   found.sort((a, b) => a.score - b.score || (a.key < b.key ? -1 : 1));

@@ -5,12 +5,16 @@
 //! `stream_flush` and only their newest version is written, as TS coalesces them on the wire.
 //! When the turn ends, every row gets a final version and the streaming versions leave the log.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex, MutexGuard},
+    time::Duration,
+};
 
 use conn_contract::{ProviderThread, ProviderTurnId, from_json, to_json};
 use conn_provider::{
     EnsureThreadInput, InterruptInput, OpenSessionInput, ProviderEvent, ResumeThreadInput,
-    RuntimePolicy, RuntimeRequestResponse, Session, TurnInput, TurnMessage, TurnStatus,
+    RuntimePolicy, RuntimeRequestResponse, Session, SteerInput, SteerStatus, TurnInput,
+    TurnMessage, TurnStatus,
 };
 use serde_json::{Value, json};
 use tokio::{
@@ -18,7 +22,7 @@ use tokio::{
     time::{Instant, sleep_until},
 };
 
-use crate::commands::{failure, finish_run};
+use crate::commands::{failure, finish_run, hold_queue, start_next_queued};
 use crate::engine::Inner;
 use crate::store::Draft;
 
@@ -26,6 +30,15 @@ use crate::store::Draft;
 pub(crate) struct LiveThread {
     session: Arc<dyn Session>,
     state: Mutex<LiveState>,
+    /// When the session last did anything; the idle reaper closes it after `idle_session`.
+    last_used: Mutex<Instant>,
+    /// Ends the event pump. The pump holds this thread, whose session may hold the event
+    /// sender, so a closed channel alone would never end it.
+    closed: tokio::sync::Notify,
+    /// Since when background work has kept this idle session open.
+    held_since: Mutex<Option<Instant>>,
+    /// Revokes the agent tools this session got ([`crate::EngineHost::session_closed`]).
+    tools_key: Option<String>,
 }
 
 #[derive(Default)]
@@ -42,12 +55,37 @@ struct ActiveRun {
 }
 
 impl LiveThread {
+    fn touch(&self) {
+        *lock(&self.last_used) = Instant::now();
+    }
+
+    /// Idle: no run and no provider event for `idle`, and no background work, which holds the
+    /// session at most `max_hold` past that (T3's idle pin).
+    pub(crate) fn idle_for(&self, idle: Duration, max_hold: Duration) -> bool {
+        if lock(&self.state).active.is_some() || lock(&self.last_used).elapsed() < idle {
+            return false;
+        }
+        let mut held = lock(&self.held_since);
+        if !self.session.has_pending_background_work() {
+            *held = None;
+            return true;
+        }
+        held.get_or_insert_with(Instant::now).elapsed() >= max_hold
+    }
+
     fn active(&self) -> Option<ActiveRun> {
-        self.state.lock().unwrap().active.clone()
+        lock(&self.state).active.clone()
     }
     fn take_active(&self) -> Option<ActiveRun> {
-        self.state.lock().unwrap().active.take()
+        lock(&self.state).active.take()
     }
+}
+
+/// A poisoned lock still holds consistent data here: every critical section only swaps values.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// What a turn start needs from the store.
@@ -100,22 +138,39 @@ impl Inner {
     }
 
     fn live_thread(&self, thread_id: &str) -> Option<Arc<LiveThread>> {
-        self.live.lock().unwrap().get(thread_id).cloned()
+        lock(&self.live).get(thread_id).cloned()
     }
 
     async fn end_run(
-        &self,
+        self: &Arc<Self>,
         thread_id: &str,
         run_id: &str,
         status: &'static str,
         failure: Option<Value>,
     ) {
+        let (thread, run) = (thread_id.to_owned(), run_id.to_owned());
         let (thread_id, run_id) = (thread_id.to_owned(), run_id.to_owned());
-        if let Err(e) = self
-            .write(move |tx| finish_run(tx, &thread_id, &run_id, status, failure))
-            .await
-        {
-            eprintln!("conn-engine: could not end run: {e}");
+        let held_on_failure = failure
+            .as_ref()
+            .is_some_and(|f| f["class"] != "validation_error");
+        let next = self
+            .write(move |tx| {
+                finish_run(tx, &thread_id, &run_id, status, failure)?;
+                // A failure holds the queue, so queued messages do not hit the same wall.
+                if held_on_failure {
+                    hold_queue(tx, &thread_id)?;
+                }
+                let mut effects = crate::families::on_run_end(tx, &thread_id, &run_id)?;
+                effects.extend(start_next_queued(tx, &thread_id, None)?);
+                Ok(effects)
+            })
+            .await;
+        match next {
+            Ok(effects) => effects.into_iter().for_each(|e| self.spawn_effect(e)),
+            Err(e) => eprintln!("conn-engine: could not end run: {e}"),
+        }
+        if let Some(observer) = &self.observer {
+            self.observe_end(observer.clone(), thread, run).await;
         }
     }
 
@@ -191,6 +246,13 @@ impl Inner {
                     .ok_or_else(|| {
                         format!("No provider instance `{instance}` is configured on this server.")
                     })?;
+                let tools = self.host.as_ref().and_then(|host| {
+                    host.agent_tools(crate::AgentSession {
+                        thread_id: thread_id.to_owned(),
+                        provider_instance_id: provider.instance_id().as_str().to_owned(),
+                        subagent: context.thread["lineage"]["relationshipToParent"] == "subagent",
+                    })
+                });
                 let opened = provider
                     .open_session(OpenSessionInput {
                         thread_id: thread_id.into(),
@@ -202,15 +264,25 @@ impl Inner {
                         resume_from_session: None,
                     })
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| {
+                        self.revoke_tools(tools.as_ref().map(|t| t.key.as_str()));
+                        e.to_string()
+                    })?;
+                let session: Arc<dyn Session> = Arc::from(opened.session);
+                if let Some(tools) = &tools
+                    && let Err(e) = session.set_mcp_servers(tools.servers.clone()).await
+                {
+                    eprintln!("conn-engine: the provider takes no MCP servers: {e}");
+                }
                 let live = Arc::new(LiveThread {
-                    session: Arc::from(opened.session),
+                    session,
                     state: Mutex::new(LiveState::default()),
+                    last_used: Mutex::new(Instant::now()),
+                    closed: tokio::sync::Notify::new(),
+                    held_since: Mutex::new(None),
+                    tools_key: tools.map(|t| t.key),
                 });
-                self.live
-                    .lock()
-                    .unwrap()
-                    .insert(thread_id.to_owned(), live.clone());
+                lock(&self.live).insert(thread_id.to_owned(), live.clone());
                 tokio::spawn(
                     self.clone()
                         .pump(thread_id.to_owned(), live.clone(), opened.events),
@@ -219,7 +291,8 @@ impl Inner {
             }
         };
 
-        let known = live.state.lock().unwrap().provider_thread.clone();
+        live.touch();
+        let known = lock(&live.state).provider_thread.clone();
         let provider_thread = match (known, context.provider_thread) {
             (Some(provider_thread), _) => provider_thread,
             (None, Some(stored)) => live
@@ -249,7 +322,7 @@ impl Inner {
             .unwrap_or_default()
             .to_owned();
         {
-            let mut state = live.state.lock().unwrap();
+            let mut state = lock(&live.state);
             state.provider_thread = Some(provider_thread.clone());
             state.active = Some(ActiveRun {
                 run_id: run_id.to_owned(),
@@ -334,34 +407,49 @@ impl Inner {
             live.take_active();
             return Err(StartError::Abandoned);
         }
+        if let Some(observer) = &self.observer {
+            observer
+                .turn_started(crate::TurnPoint {
+                    thread_id: thread_id.to_owned(),
+                    run_id: run_id.to_owned(),
+                    run_ordinal: context.run["ordinal"].as_u64().unwrap_or(1),
+                    root_node_id: root.clone(),
+                    cwd: context.cwd.clone(),
+                })
+                .await;
+        }
 
-        live.session
-            .start_turn(TurnInput {
-                app_thread: from_json(context.thread.clone()).map_err(|e| e.to_string())?,
-                thread_id: thread_id.into(),
-                run_id: run_id.into(),
-                run_ordinal: context.run["ordinal"].as_u64().unwrap_or(1) as u32,
-                provider_turn_ordinal: context.run["ordinal"].as_u64().unwrap_or(1) as u32,
-                attempt_id: attempt_id.as_str().into(),
-                root_node_id: root.as_str().into(),
-                provider_thread,
-                message: TurnMessage {
-                    message_id: context.run["userMessageId"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .into(),
-                    text: context.message["text"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned(),
-                    attachments: from_json(context.message["attachments"].clone())
-                        .unwrap_or_default(),
-                },
-                model_selection,
-                runtime_policy,
-            })
-            .await
-            .map_err(|e| StartError::Failed(e.to_string()))
+        // A run the provider asked for (`continuation.requested`) shows output it already holds.
+        let continuation = context.message["creationSource"] == "provider";
+        let input = TurnInput {
+            app_thread: from_json(context.thread.clone()).map_err(|e| e.to_string())?,
+            thread_id: thread_id.into(),
+            run_id: run_id.into(),
+            run_ordinal: context.run["ordinal"].as_u64().unwrap_or(1) as u32,
+            provider_turn_ordinal: context.run["ordinal"].as_u64().unwrap_or(1) as u32,
+            attempt_id: attempt_id.as_str().into(),
+            root_node_id: root.as_str().into(),
+            provider_thread,
+            message: TurnMessage {
+                message_id: context.run["userMessageId"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .into(),
+                text: context.message["text"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                attachments: from_json(context.message["attachments"].clone()).unwrap_or_default(),
+            },
+            model_selection,
+            runtime_policy,
+        };
+        let started = if continuation {
+            live.session.start_continuation_turn(input).await
+        } else {
+            live.session.start_turn(input).await
+        };
+        started.map_err(|e| StartError::Failed(e.to_string()))
     }
 
     /// Reads one session's events until it closes. Ends a run the session leaves open.
@@ -377,25 +465,34 @@ impl Inner {
             let event = match deadline {
                 Some(at) => tokio::select! {
                     event = events.recv() => event,
-                    _ = sleep_until(at) => {
+                    () = live.closed.notified() => None,
+                    () = sleep_until(at) => {
                         deadline = None;
                         self.commit(std::mem::take(&mut held).into_iter().map(|(_, d)| d).collect()).await;
                         continue;
                     }
                 },
-                None => events.recv().await,
+                None => tokio::select! {
+                    event = events.recv() => event,
+                    () = live.closed.notified() => None,
+                },
             };
             let Some(event) = event else { break };
+            live.touch();
             let active = live.active();
             let run_id = active.as_ref().map(|a| a.run_id.clone());
             match translate(&thread_id, active.as_ref(), event) {
                 Translated::Ignore => {}
                 Translated::ProviderTurn(id, draft) => {
-                    if let Some(active) = live.state.lock().unwrap().active.as_mut() {
+                    if let Some(active) = lock(&live.state).active.as_mut() {
                         active.provider_turn_id = Some(id);
                     }
+                    let running = draft.payload["status"] == "running";
                     self.commit_after(&mut held, &mut deadline, vec![draft])
                         .await;
+                    if running && let Some(run_id) = &run_id {
+                        self.deliver_deferred_steers(&thread_id, run_id).await;
+                    }
                 }
                 Translated::Event(draft) if draft.payload["streaming"] == true => {
                     let key = format!("{}:{}", draft.event_type, draft.payload["id"]);
@@ -408,6 +505,18 @@ impl Inner {
                 Translated::Event(draft) => {
                     self.commit_after(&mut held, &mut deadline, vec![draft])
                         .await;
+                }
+                Translated::CreateThread(thread) => {
+                    self.commit_after(&mut held, &mut deadline, vec![]).await;
+                    self.create_provider_thread(thread).await;
+                }
+                Translated::Steer { message_id, status } => {
+                    self.commit_after(&mut held, &mut deadline, vec![]).await;
+                    self.steer_updated(&thread_id, message_id, status).await;
+                }
+                Translated::Continuation(detail) => {
+                    self.commit_after(&mut held, &mut deadline, vec![]).await;
+                    self.request_continuation(&thread_id, detail).await;
                 }
                 Translated::Terminal(status, failure) => {
                     self.commit_after(&mut held, &mut deadline, vec![]).await;
@@ -433,12 +542,96 @@ impl Inner {
             )
             .await;
         }
-        let mut map = self.live.lock().unwrap();
+        let mut map = lock(&self.live);
         if map
             .get(&thread_id)
             .is_some_and(|current| Arc::ptr_eq(current, &live))
         {
             map.remove(&thread_id);
+        }
+    }
+
+    /// `app_thread.created`: the child thread a subagent's rows are written to. Created once;
+    /// a provider that announces it again changes nothing.
+    async fn create_provider_thread(&self, thread: Value) {
+        let Some(id) = thread["id"].as_str().map(str::to_owned) else {
+            return;
+        };
+        let result = self
+            .write(move |tx| {
+                if tx.thread(&id)?.is_none() {
+                    tx.append(Draft::new(&id, "thread.created", thread))?;
+                }
+                Ok(())
+            })
+            .await;
+        if let Err(e) = result {
+            eprintln!("conn-engine: could not create a provider thread: {e}");
+        }
+    }
+
+    /// `steer.updated`: the steered message's turn item takes the provider's status, as
+    /// `ProviderEventIngestor` does; only a pending or completed item changes.
+    async fn steer_updated(&self, thread_id: &str, message_id: String, status: &'static str) {
+        let tid = thread_id.to_owned();
+        let result = self
+            .write(move |tx| {
+                let item_id = format!("turn-item:{message_id}");
+                let Some(mut item) = tx.entity(&tid, "turnItems", &item_id)? else {
+                    return Ok(());
+                };
+                if item["type"] != "user_message"
+                    || item["status"] == status
+                    || !(item["status"] == "pending" || item["status"] == "completed")
+                {
+                    return Ok(());
+                }
+                let now = tx.now().to_owned();
+                item["status"] = json!(status);
+                item["completedAt"] = if status == "pending" {
+                    Value::Null
+                } else {
+                    json!(now)
+                };
+                item["updatedAt"] = json!(now);
+                let run = item["runId"].as_str().map(str::to_owned);
+                let node = item["nodeId"].as_str().map(str::to_owned);
+                tx.append(
+                    Draft::new(&tid, "turn-item.updated", item)
+                        .run(run.as_deref())
+                        .node(node.as_deref()),
+                )?;
+                Ok(())
+            })
+            .await;
+        if let Err(e) = result {
+            eprintln!("conn-engine: could not record a steer: {e}");
+        }
+    }
+
+    /// `continuation.requested`: a queued agent message whose run starts the provider's
+    /// continuation turn (`ProviderContinuationService`), so it runs after any active run.
+    async fn request_continuation(self: &Arc<Self>, thread_id: &str, detail: Option<String>) {
+        let message_id = format!(
+            "message:provider-continuation:{}",
+            crate::time::unique_suffix()
+        );
+        let command = json!({
+            "type": "message.dispatch",
+            "commandId": format!("provider-continuation:{message_id}"),
+            "threadId": thread_id,
+            "messageId": message_id,
+            "text": detail.unwrap_or_else(|| "Background task completed.".to_owned()),
+            "attachments": [],
+            "dispatchMode": {"type": "queue_after_active"},
+            "createdBy": "agent",
+            "creationSource": "provider",
+        });
+        if let Err(
+            crate::engine::DispatchError::Rejected(e) | crate::engine::DispatchError::Internal(e),
+        ) = self.dispatch_value(command).await
+        {
+            eprintln!("conn-engine: could not start a continuation turn: {e}");
         }
     }
 
@@ -475,7 +668,7 @@ impl Inner {
     pub(crate) async fn interrupt(self: Arc<Self>, thread_id: String, run_id: String) {
         let live = self.live_thread(&thread_id);
         let target = live.as_ref().and_then(|live| {
-            let state = live.state.lock().unwrap();
+            let state = lock(&live.state);
             let active = state.active.as_ref().filter(|a| a.run_id == run_id)?;
             Some((
                 state.provider_thread.clone()?,
@@ -503,6 +696,159 @@ impl Inner {
             self.close_session(&thread_id).await;
         }
         self.end_run(&thread_id, &run_id, "interrupted", None).await;
+    }
+
+    /// Turns the messages that waited for this run's provider turn into steers, in queue order.
+    async fn deliver_deferred_steers(self: &Arc<Self>, thread_id: &str, run_id: &str) {
+        let (tid, rid) = (thread_id.to_owned(), run_id.to_owned());
+        let waiting = self
+            .db(move |store| -> Result<Vec<String>, String> {
+                let tx = store.tx()?;
+                let runs = crate::commands::queued_runs(&tx, &tid);
+                tx.rollback();
+                Ok(runs?
+                    .into_iter()
+                    .filter(|r| r["steerWhenReadyRunId"] == rid.as_str())
+                    .filter_map(|r| r["id"].as_str().map(str::to_owned))
+                    .collect())
+            })
+            .await
+            .unwrap_or_default();
+        for queued in waiting {
+            let command = json!({
+                "type": "queued-message.promote-to-steer",
+                "commandId": format!("steer-when-ready:{queued}"),
+                "threadId": thread_id,
+                "queuedRunId": queued,
+                "targetRunId": run_id,
+            });
+            if let Err(
+                crate::engine::DispatchError::Rejected(e)
+                | crate::engine::DispatchError::Internal(e),
+            ) = self.dispatch_value(command).await
+            {
+                eprintln!("conn-engine: a waiting steer stays queued: {e}");
+            }
+        }
+    }
+
+    /// Delivers a steer to the running provider turn. When the provider declines or the turn
+    /// already ended, the message goes to the queue instead (`EffectWorker.ts` follow-up).
+    pub(crate) async fn steer(
+        self: Arc<Self>,
+        thread_id: String,
+        run_id: String,
+        message_id: String,
+    ) {
+        let (tid, mid) = (thread_id.clone(), message_id.clone());
+        let message = self
+            .db(move |store| -> Result<Option<Value>, String> {
+                let tx = store.tx()?;
+                let message = tx.entity(&tid, "messages", &mid);
+                tx.rollback();
+                message
+            })
+            .await
+            .ok()
+            .flatten();
+        let live = self.live_thread(&thread_id);
+        let target = live.as_ref().and_then(|live| {
+            let state = lock(&live.state);
+            let active = state.active.as_ref().filter(|a| a.run_id == run_id)?;
+            Some((
+                state.provider_thread.clone()?,
+                active.provider_turn_id.clone()?,
+            ))
+        });
+        let delivered = match (live, target, &message) {
+            (Some(live), Some((provider_thread, provider_turn_id)), Some(message)) => live
+                .session
+                .steer_turn(SteerInput {
+                    thread_id: thread_id.as_str().into(),
+                    run_id: run_id.as_str().into(),
+                    provider_thread,
+                    provider_turn_id,
+                    message: TurnMessage {
+                        message_id: message_id.as_str().into(),
+                        text: message["text"].as_str().unwrap_or_default().to_owned(),
+                        attachments: from_json(message["attachments"].clone()).unwrap_or_default(),
+                    },
+                    model_selection: None,
+                })
+                .await
+                .is_ok(),
+            _ => false,
+        };
+        if delivered {
+            return;
+        }
+        let Some(message) = message else { return };
+        let mut command = json!({
+            "type": "message.dispatch",
+            "commandId": format!("command:steer-follow-up:{message_id}"),
+            "threadId": thread_id,
+            "messageId": message_id,
+            "text": message["text"],
+            "attachments": message["attachments"],
+            "dispatchMode": {"type": "queue_after_active"},
+            "steerFollowUpOfRunId": run_id,
+            "createdBy": message["createdBy"],
+            "creationSource": message["creationSource"],
+        });
+        if message["context"].is_object() {
+            command["context"] = message["context"].clone();
+        }
+        if let Err(
+            crate::engine::DispatchError::Rejected(e) | crate::engine::DispatchError::Internal(e),
+        ) = self.dispatch_value(command).await
+        {
+            eprintln!("conn-engine: could not queue a declined steer: {e}");
+        }
+    }
+
+    /// `forceStopThread`: ends the provider process without waiting for it, then ends the
+    /// active run as interrupted. Used when Stop was ignored.
+    pub(crate) async fn force_stop(
+        self: &Arc<Self>,
+        input: Value,
+    ) -> Result<Value, crate::EngineError<Value>> {
+        let thread_id = input["threadId"].as_str().unwrap_or_default().to_owned();
+        let wanted = input["runId"].as_str().map(str::to_owned);
+        let tid = thread_id.clone();
+        let run = self
+            .db(move |store| -> Result<Option<Value>, String> {
+                let tx = store.tx()?;
+                let run = crate::commands::active_run(&tx, &tid);
+                tx.rollback();
+                run
+            })
+            .await
+            .map_err(crate::EngineError::Internal)?;
+        let error = |reason: Option<&str>| {
+            let mut e =
+                json!({"_tag": "OrchestrationV2ForceStopThreadError", "threadId": thread_id});
+            if let Some(reason) = reason {
+                e["reason"] = json!(reason);
+            }
+            crate::EngineError::Rejected(e)
+        };
+        let run_id = run
+            .as_ref()
+            .and_then(|r| r["id"].as_str())
+            .map(str::to_owned);
+        if let (Some(wanted), Some(active)) = (&wanted, &run_id)
+            && wanted != active
+        {
+            return Err(error(Some("superseded")));
+        }
+        if let Some(live) = self.live_thread(&thread_id) {
+            live.take_active();
+        }
+        self.close_session(&thread_id).await;
+        if let Some(run_id) = run_id {
+            self.end_run(&thread_id, &run_id, "interrupted", None).await;
+        }
+        Ok(json!({"outcome": "killed", "sharedWithThreadIds": []}))
     }
 
     pub(crate) async fn respond(self: Arc<Self>, thread_id: String, request: Value) {
@@ -542,10 +888,89 @@ impl Inner {
         }
     }
 
+    /// Tells the observer a run ended, when it started (an attempt exists) and is now final.
+    async fn observe_end(
+        &self,
+        observer: Arc<dyn crate::TurnObserver>,
+        thread_id: String,
+        run_id: String,
+    ) {
+        let (tid, rid) = (thread_id.clone(), run_id.clone());
+        let read = self
+            .db(
+                move |store| -> Result<Option<(Value, Option<String>)>, String> {
+                    let tx = store.tx()?;
+                    let found = (|| {
+                        let Some(run) = tx.entity(&tid, "runs", &rid)? else {
+                            return Ok(None);
+                        };
+                        let thread = tx.thread(&tid)?;
+                        let project = match &thread {
+                            Some(t) => tx.project(t["projectId"].as_str().unwrap_or_default())?,
+                            None => None,
+                        };
+                        let cwd = thread
+                            .as_ref()
+                            .and_then(|t| t["worktreePath"].as_str())
+                            .or_else(|| project.as_ref().and_then(|p| p["workspaceRoot"].as_str()))
+                            .map(str::to_owned);
+                        Ok(Some((run, cwd)))
+                    })();
+                    tx.rollback();
+                    found
+                },
+            )
+            .await;
+        let Ok(Some((run, cwd))) = read else { return };
+        if run["activeAttemptId"].is_null() || crate::commands::is_live(&run) {
+            return;
+        }
+        let point = crate::TurnPoint {
+            thread_id,
+            run_id,
+            run_ordinal: run["ordinal"].as_u64().unwrap_or(1),
+            root_node_id: run["rootNodeId"].as_str().unwrap_or_default().to_owned(),
+            cwd,
+        };
+        let status = run["status"].as_str().unwrap_or("failed").to_owned();
+        tokio::spawn(async move { observer.turn_ended(point, status).await });
+    }
+
+    /// Closes provider sessions idle for `idle`, so an idle thread does not keep a provider
+    /// process. The next turn opens a session and resumes the stored provider thread.
+    pub(crate) async fn reap_idle(&self, idle: Duration) {
+        let idle_threads: Vec<String> = lock(&self.live)
+            .iter()
+            .filter(|(_, live)| live.idle_for(idle, self.idle_max_hold))
+            .map(|(id, _)| id.clone())
+            .collect();
+        for thread_id in idle_threads {
+            self.close_session(&thread_id).await;
+        }
+    }
+
+    fn revoke_tools(&self, key: Option<&str>) {
+        if let (Some(host), Some(key)) = (&self.host, key) {
+            host.session_closed(key);
+        }
+    }
+
+    /// Closes every provider session, ending its process and what the process started. The
+    /// server calls this before it exits.
+    pub(crate) async fn close_all_sessions(&self) {
+        let threads: Vec<String> = lock(&self.live).keys().cloned().collect();
+        for thread_id in threads {
+            self.close_session(&thread_id).await;
+        }
+    }
+
     pub(crate) async fn close_session(&self, thread_id: &str) {
-        let live = self.live.lock().unwrap().remove(thread_id);
+        let live = lock(&self.live).remove(thread_id);
         if let Some(live) = live {
+            self.revoke_tools(live.tools_key.as_deref());
             live.session.close().await;
+            // `notify_one` keeps a permit, so a pump not yet waiting still sees it.
+            live.closed.notify_one();
         }
     }
 }
@@ -555,6 +980,15 @@ enum Translated {
     Event(Draft),
     ProviderTurn(ProviderTurnId, Draft),
     Terminal(&'static str, Option<Value>),
+    /// A provider-made thread (a subagent's child): created once, never overwritten.
+    CreateThread(Value),
+    /// A steer was taken or dropped: the user message's turn item follows.
+    Steer {
+        message_id: String,
+        status: &'static str,
+    },
+    /// The provider has output with no turn running and asks for one.
+    Continuation(Option<String>),
 }
 
 /// Maps one provider event to a domain event. Adding an event kind is one arm here.
@@ -562,7 +996,17 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
     let run_id = active.map(|a| a.run_id.as_str());
     let root = active.map(|a| a.root_node_id.as_str());
     // Provider rows name their thread and run; fill them in when a provider leaves them out.
+    // A row of another thread (a subagent's child thread) goes to that thread, without the
+    // parent's run.
     let scoped = |event_type: &'static str, mut payload: Value| {
+        let node = payload["nodeId"].as_str().map(str::to_owned);
+        if let Some(child) = payload["threadId"].as_str().filter(|t| *t != thread_id) {
+            let child = child.to_owned();
+            let run = payload["runId"].as_str().map(str::to_owned);
+            return Draft::new(&child, event_type, payload)
+                .run(run.as_deref())
+                .node(node.as_deref());
+        }
         if payload.is_object() {
             if payload["threadId"].is_null() {
                 payload["threadId"] = json!(thread_id);
@@ -571,7 +1015,6 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
                 payload["runId"] = json!(run_id);
             }
         }
-        let node = payload["nodeId"].as_str().map(str::to_owned);
         Draft::new(thread_id, event_type, payload)
             .run(run_id)
             .node(node.as_deref().or(root))
@@ -639,5 +1082,19 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
             };
             Translated::Terminal(status, failure)
         }
+        ProviderEvent::AppThreadCreated { app_thread, .. } => {
+            Translated::CreateThread(to_json(&app_thread))
+        }
+        ProviderEvent::SteerUpdated {
+            message_id, status, ..
+        } => Translated::Steer {
+            message_id: message_id.as_str().to_owned(),
+            status: match status {
+                SteerStatus::Pending => "pending",
+                SteerStatus::Completed => "completed",
+                SteerStatus::Cancelled => "cancelled",
+            },
+        },
+        ProviderEvent::ContinuationRequested(request) => Translated::Continuation(request.detail),
     }
 }

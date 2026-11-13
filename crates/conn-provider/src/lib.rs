@@ -24,6 +24,8 @@ use conn_contract::{
     RuntimeMode, RuntimeRequest, RuntimeRequestId, Subagent, ThreadId, TurnItem, TurnItemId,
     UserInputAnswers,
 };
+
+pub use conn_contract::AppThread as ProviderAppThread;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
@@ -43,6 +45,13 @@ pub trait Provider: Send + Sync {
     /// session closes; the engine is its only reader.
     fn open_session(&self, input: OpenSessionInput)
     -> BoxFuture<'_, ProviderResult<OpenedSession>>;
+
+    /// The `ServerProvider` entry (`packages/contracts/src/server.ts`) for
+    /// `ServerConfig.providers`, or `None` when the server builds it another way.
+    /// `checked_at` is ISO-8601.
+    fn server_provider_entry(&self, _checked_at: &str) -> Option<serde_json::Value> {
+        None
+    }
 }
 
 pub struct OpenedSession {
@@ -105,6 +114,131 @@ pub trait Session: Send + Sync {
 
     /// Ends the native process. The event channel closes after it.
     fn close(&self) -> BoxFuture<'_, ()>;
+
+    /// Starts a turn the provider asked for with [`ProviderEvent::ContinuationRequested`]
+    /// (`createdBy: agent`, `creationSource: provider` in TS). No user message is sent; the
+    /// turn shows the output the provider already holds for it.
+    fn start_continuation_turn(&self, _input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
+        unsupported("start_continuation_turn")
+    }
+
+    /// Sets the MCP servers every later turn of this session can use, replacing the previous
+    /// list. A running process picks them up when the provider supports a live change.
+    fn set_mcp_servers(&self, _servers: Vec<McpServer>) -> BoxFuture<'_, ProviderResult<()>> {
+        unsupported("set_mcp_servers")
+    }
+
+    /// `ProviderAdapterV2SessionRuntime.rollbackThread`: the next turn continues from `target`.
+    fn rollback_thread(
+        &self,
+        _input: RollbackThreadInput,
+    ) -> BoxFuture<'_, ProviderResult<ThreadSnapshot>> {
+        unsupported("rollback_thread")
+    }
+
+    /// `forkThread`: a new native thread with the source's history, up to a turn if given.
+    fn fork_thread(
+        &self,
+        _input: ForkThreadInput,
+    ) -> BoxFuture<'_, ProviderResult<ProviderThread>> {
+        unsupported("fork_thread")
+    }
+
+    /// `readThreadSnapshot`: the native thread's history as app rows.
+    fn read_thread_snapshot(
+        &self,
+        _provider_thread: ProviderThread,
+    ) -> BoxFuture<'_, ProviderResult<ThreadSnapshot>> {
+        unsupported("read_thread_snapshot")
+    }
+
+    /// `hasPendingBackgroundWork`: work still runs after the turn ended (a background
+    /// subagent), so an idle session should not be released yet.
+    fn has_pending_background_work(&self) -> bool {
+        false
+    }
+
+    /// `injectHistory`: gives the native thread earlier conversation as context. `Ok(false)`
+    /// means the native protocol cannot take it.
+    fn inject_history(&self, _input: InjectHistoryInput) -> BoxFuture<'_, ProviderResult<bool>> {
+        unsupported("inject_history")
+    }
+}
+
+/// One MCP server a session passes to its agent (`McpServerConfig`, HTTP transport).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpServer {
+    pub name: String,
+    pub url: String,
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+}
+
+/// `ProviderAdapterV2RollbackTarget`.
+#[expect(clippy::large_enum_variant, reason = "built once per rollback")]
+#[derive(Clone, Debug)]
+pub enum RollbackTarget {
+    ThreadStart {
+        checkpoint_id: String,
+    },
+    ProviderTurn {
+        checkpoint_id: String,
+        app_run_ordinal: u32,
+        provider_turn: ProviderTurn,
+    },
+}
+
+/// `ProviderAdapterV2RollbackThreadInput`.
+#[derive(Clone, Debug)]
+pub struct RollbackThreadInput {
+    pub provider_thread: ProviderThread,
+    pub target: RollbackTarget,
+    pub provider_thread_turns: Vec<ProviderTurn>,
+}
+
+/// `ProviderAdapterV2ForkThreadInput`.
+#[derive(Clone, Debug)]
+pub struct ForkThreadInput {
+    pub source_provider_thread: ProviderThread,
+    pub source_provider_turns: Vec<ProviderTurn>,
+    pub provider_turn_id: Option<ProviderTurnId>,
+    pub target_thread_id: ThreadId,
+    pub owner_node_id: Option<NodeId>,
+}
+
+/// `ProviderAdapterV2ThreadSnapshot`.
+#[derive(Clone, Debug)]
+pub struct ThreadSnapshot {
+    pub provider_thread: ProviderThread,
+    pub provider_turns: Vec<ProviderTurn>,
+    pub messages: Vec<ConversationMessage>,
+    pub runtime_requests: Vec<RuntimeRequest>,
+}
+
+/// `ProviderAdapterV2HistoricalContext` plus the thread.
+#[derive(Clone, Debug)]
+pub struct InjectHistoryInput {
+    pub provider_thread: ProviderThread,
+    pub messages: Vec<ConversationMessage>,
+    pub context: String,
+}
+
+/// What [`ProviderEvent::ContinuationRequested`] carries (`ProviderContinuationRequest`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContinuationRequest {
+    pub thread_id: ThreadId,
+    pub provider_thread_id: ProviderThreadId,
+    pub detail: Option<String>,
+}
+
+/// `ProviderAdapterV2Event` `steer.updated` status.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SteerStatus {
+    Pending,
+    Completed,
+    Cancelled,
 }
 
 fn unsupported<T: Send + 'static>(
@@ -205,6 +339,10 @@ pub struct RuntimeRequestResponse {
 /// Serializes like the TS event (`type` tag, camelCase fields) for recorded-session tests.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all_fields = "camelCase")]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "each event moves once into the channel"
+)]
 pub enum ProviderEvent {
     #[serde(rename = "provider_session.updated")]
     ProviderSessionUpdated { provider_session: ProviderSession },
@@ -240,6 +378,27 @@ pub enum ProviderEvent {
     PlanUpdated { plan: PlanArtifact },
     #[serde(rename = "turn.terminal")]
     TurnTerminal(TurnTerminal),
+    /// A provider-made thread, such as a subagent's child thread. `create_only`: create it
+    /// if missing, never overwrite.
+    #[serde(rename = "app_thread.created")]
+    AppThreadCreated {
+        app_thread: AppThread,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        create_only: Option<bool>,
+    },
+    /// A message sent into a running turn was taken (`completed`) or dropped (`cancelled`).
+    #[serde(rename = "steer.updated")]
+    SteerUpdated {
+        thread_id: ThreadId,
+        run_id: RunId,
+        message_id: MessageId,
+        status: SteerStatus,
+    },
+    /// Not in `ProviderAdapterV2Event` (TS uses a separate service): the provider produced
+    /// output with no turn running and asks the engine to start a turn for it with
+    /// [`Session::start_continuation_turn`].
+    #[serde(rename = "continuation.requested")]
+    ContinuationRequested(ContinuationRequest),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -58,7 +58,11 @@ export function redactText(text) {
   }
   out = out.split(home).join("/Users/user");
   out = out.replace(new RegExp(`\\b${escape(user)}\\b`, "gi"), "user");
-  out = out.replace(/\bnick\b/gi, "user");
+  // Also in shell prompts (`host:dir user$`), which follow escapes where `\b` finds no boundary.
+  for (const name of new Set(["nick", NodeOS.hostname().split(".")[0]])) {
+    out = out.replace(new RegExp(`(\\\\[nrt]|\\b)${escape(name)}\\b`, "gi"), "$1user");
+    out = out.replace(new RegExp(`${escape(name)}(?=:)`, "gi"), "user");
+  }
   out = out.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "user@example.com");
   // Query params that carry secrets or device identity.
   out = out.replace(

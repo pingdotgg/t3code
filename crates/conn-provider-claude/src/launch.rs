@@ -14,8 +14,9 @@
 //! No auth is set here. In an Orbit container the inherited environment points the CLI at the
 //! AI router.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
+use conn_provider_support::process::LaunchSpec;
 use serde_json::json;
 
 /// What `CLAUDE_HOST_SESSION_VARIABLES` in `ClaudeHome.ts` removes: a parent Claude Code
@@ -57,9 +58,29 @@ pub struct ClaudeConfig {
     /// Text T3 appends to Claude's system prompt (`buildRuntimeInstructions`). Sent in
     /// `initialize` as `appendSystemPrompt`, like the SDK does.
     pub append_system_prompt: Option<String>,
-    /// Extra directory added with `--add-dir` (T3 adds its attachments directory).
+    /// Extra directory added with `--add-dir` (T3 adds its attachments directory). Also where
+    /// attachments are read from, as `<dir>/<id><ext>` (T3's attachment store layout).
     pub attachments_dir: Option<PathBuf>,
+    /// `--setting-sources`. `None` passes no flag, so the CLI loads user, project and local
+    /// settings with their hooks and MCP helpers, as under T3. `Some(vec![])` loads none.
+    pub setting_sources: Option<Vec<String>>,
+    /// Ends an idle `claude` child after this long; the next turn resumes it. T3's session
+    /// manager uses 30 minutes. `None` keeps the child until the session closes.
+    pub idle_timeout: Option<Duration>,
+    /// How long background work (a running subagent, a pending continuation) may keep an idle
+    /// child alive. T3: 4 hours.
+    pub idle_max_hold: Duration,
+    /// Text appended to the system prompt when the session has a `t3-code` MCP server
+    /// (`T3_CODE_ORCHESTRATION_INSTRUCTIONS` in TS).
+    pub mcp_instructions: Option<String>,
 }
+
+/// T3's `DEFAULT_IDLE_TIMEOUT_MS`.
+pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// T3's `DEFAULT_MAX_IDLE_PIN_MS`.
+pub const DEFAULT_IDLE_MAX_HOLD: Duration = Duration::from_secs(4 * 60 * 60);
+/// The MCP server name whose tools T3 allows without asking.
+pub const T3_MCP_SERVER: &str = "t3-code";
 
 impl Default for ClaudeConfig {
     fn default() -> Self {
@@ -69,6 +90,10 @@ impl Default for ClaudeConfig {
             instance_env: Vec::new(),
             append_system_prompt: Some(DEFAULT_APPEND_SYSTEM_PROMPT.into()),
             attachments_dir: None,
+            setting_sources: None,
+            idle_timeout: Some(DEFAULT_IDLE_TIMEOUT),
+            idle_max_hold: DEFAULT_IDLE_MAX_HOLD,
+            mcp_instructions: None,
         }
     }
 }
@@ -88,15 +113,12 @@ pub struct LaunchInput {
     pub effort: Option<String>,
     pub permission_mode: String,
     pub cwd: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct LaunchSpec {
-    pub program: PathBuf,
-    pub args: Vec<String>,
-    pub cwd: Option<PathBuf>,
-    pub env_remove: Vec<String>,
-    pub env_set: Vec<(String, String)>,
+    /// `--resume-session-at`: continue from this message (rollback).
+    pub resume_at: Option<String>,
+    /// Fork: resume this native session into `native_thread_id` with `--fork-session`.
+    pub fork_from: Option<String>,
+    /// `--allowedTools` (the T3 MCP tools).
+    pub allowed_tools: Vec<String>,
 }
 
 pub fn launch_spec(config: &ClaudeConfig, input: &LaunchInput) -> LaunchSpec {
@@ -118,8 +140,17 @@ pub fn launch_spec(config: &ClaudeConfig, input: &LaunchInput) -> LaunchSpec {
     args.push(format!("--model={}", input.model));
     // canUseTool is always installed.
     args.push("--permission-prompt-tool=stdio".into());
-    if input.resume {
+    if let Some(source) = &input.fork_from {
+        args.push(format!("--resume={source}"));
+        args.push("--fork-session".into());
+    } else if input.resume {
         args.push(format!("--resume={}", input.native_thread_id));
+    }
+    if let Some(at) = &input.resume_at {
+        args.push(format!("--resume-session-at={at}"));
+    }
+    if !input.allowed_tools.is_empty() {
+        args.push(format!("--allowedTools={}", input.allowed_tools.join(",")));
     }
     // tools: { type: "preset", preset: "claude_code" }
     args.push("--tools=default".into());
@@ -136,8 +167,11 @@ pub fn launch_spec(config: &ClaudeConfig, input: &LaunchInput) -> LaunchSpec {
     for dir in dirs {
         args.push(format!("--add-dir={dir}"));
     }
-    if !input.resume {
+    if !input.resume || input.fork_from.is_some() {
         args.push(format!("--session-id={}", input.native_thread_id));
+    }
+    if let Some(sources) = &config.setting_sources {
+        args.extend(["--setting-sources".into(), sources.join(",")]);
     }
     // extraArgs { "thinking-display": "summarized" }, then options.settings.
     args.extend(["--thinking-display".into(), "summarized".into()]);
@@ -148,7 +182,7 @@ pub fn launch_spec(config: &ClaudeConfig, input: &LaunchInput) -> LaunchSpec {
     LaunchSpec {
         program: config.binary.clone(),
         args,
-        cwd: input.cwd.as_ref().map(PathBuf::from),
+        cwd: input.cwd.clone(),
         env_remove: REMOVED_ENV.iter().map(|s| s.to_string()).collect(),
         env_set: env_changes(config, input, |key| std::env::var_os(key).is_some()),
     }
@@ -181,15 +215,27 @@ pub fn env_changes(
     env
 }
 
-/// The `initialize` control request the SDK sends first.
-pub fn initialize_request(config: &ClaudeConfig, title: Option<&str>) -> serde_json::Value {
+/// The `initialize` control request the SDK sends first. `extra` is appended to the system
+/// prompt, as TS appends its orchestration instructions when the thread has its MCP server.
+pub fn initialize_request(
+    config: &ClaudeConfig,
+    title: Option<&str>,
+    extra: Option<&str>,
+) -> serde_json::Value {
     let mut request = json!({
         "subtype": "initialize",
         "promptSuggestions": false,
         "supportedDialogKinds": ["resume_return"],
     });
-    if let Some(text) = &config.append_system_prompt {
-        request["appendSystemPrompt"] = json!(text);
+    // T3 appends the MCP text to the runtime instructions with no separator; the text
+    // starts with its own blank lines.
+    let append = format!(
+        "{}{}",
+        config.append_system_prompt.as_deref().unwrap_or_default(),
+        extra.unwrap_or_default()
+    );
+    if !append.is_empty() {
+        request["appendSystemPrompt"] = json!(append);
     }
     if let Some(title) = title {
         request["title"] = json!(title);
@@ -239,6 +285,9 @@ mod tests {
             effort: Some("high".into()),
             permission_mode: "bypassPermissions".into(),
             cwd: Some("/workspace".into()),
+            resume_at: None,
+            fork_from: None,
+            allowed_tools: Vec::new(),
         }
     }
 
@@ -288,6 +337,33 @@ mod tests {
                 .iter()
                 .any(|a| a.starts_with("--setting-sources"))
         );
+    }
+
+    #[test]
+    fn rollback_fork_and_setting_sources_reach_argv() {
+        let config = ClaudeConfig {
+            setting_sources: Some(vec![]),
+            ..ClaudeConfig::default()
+        };
+        let mut fork = input(false);
+        fork.fork_from = Some("source-id".into());
+        fork.resume_at = Some("msg-uuid".into());
+        fork.allowed_tools = vec!["mcp__t3-code__*".into()];
+        let args = launch_spec(&config, &fork).args;
+        for expected in [
+            "--resume=source-id",
+            "--fork-session",
+            "--resume-session-at=msg-uuid",
+            "--allowedTools=mcp__t3-code__*",
+            "--session-id=1979620e-79c0-42d3-94d7-6c559c0f8ed4",
+        ] {
+            assert!(
+                args.contains(&expected.to_string()),
+                "{expected} in {args:?}"
+            );
+        }
+        let at = args.iter().position(|a| a == "--setting-sources").unwrap();
+        assert_eq!(args[at + 1], "");
     }
 
     #[test]

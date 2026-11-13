@@ -9,6 +9,7 @@ use conn_contract::{from_json, to_json};
 use conn_provider::{ProviderEvent, RuntimeRequestResponse, TurnInput, TurnMessage};
 use serde_json::{Value, json};
 
+use crate::DRIVER;
 use crate::ids::{self, FixedEnv};
 use crate::mapper::{Mapper, Out};
 use crate::protocol::Inbound;
@@ -25,7 +26,7 @@ struct Replay {
 
 fn provider_thread(native: &str) -> Value {
     json!({
-        "id": ids::provider_thread_id(native), "driver": "claudeAgent",
+        "id": ids::provider_thread_id(DRIVER, native), "driver": "claudeAgent",
         "providerInstanceId": "claudeAgent", "providerSessionId": SESSION,
         "appThreadId": THREAD, "ownerNodeId": null,
         "nativeThreadRef": {"driver": "claudeAgent", "nativeId": native, "strength": "strong"},
@@ -39,7 +40,7 @@ fn turn_input(n: u32, thread: &Value, text: &str, runtime_mode: &str) -> TurnInp
     let attempt = format!("attempt-{n}");
     TurnInput {
         app_thread: from_json(json!({
-            "createdBy": "user", "creationSource": "web", "id": THREAD, "projectId": "project-1",
+            "createdBy": "user", "creationSource": "web", "id": THREAD, "projectId": "project-thread-claude-wake",
             "title": "Claude attachment test", "providerInstanceId": "claudeAgent",
             "modelSelection": {"instanceId": "claudeAgent", "model": "claude-sonnet-4-6"},
             "runtimeMode": runtime_mode, "interactionMode": "default", "branch": null,
@@ -97,9 +98,20 @@ fn replay(name: &str, runtime_mode: &str) -> Replay {
             line["dir"].as_str().unwrap(),
             msg["type"].as_str().unwrap_or(""),
         ) {
+            ("out", "user") if msg["priority"] == "now" => {
+                mapper.steer_sent(msg["uuid"].as_str().unwrap(), "message-steer-1")
+            }
             ("out", "user") => {
                 turn += 1;
-                let text = msg["message"]["content"][0]["text"].as_str().unwrap();
+                let content = &msg["message"]["content"];
+                let text = content.as_str().unwrap_or_else(|| {
+                    content
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find_map(|b| b["text"].as_str())
+                        .unwrap()
+                });
                 mapper.begin_turn(&turn_input(turn, &thread, text, runtime_mode), mode)
             }
             ("out", "control_request") if msg["request"]["subtype"] == "interrupt" => {
@@ -146,6 +158,17 @@ fn replay(name: &str, runtime_mode: &str) -> Replay {
             }
             _ => vec![],
         };
+        // The engine answers a continuation request by starting the next turn.
+        let mut outs = outs;
+        if outs
+            .iter()
+            .any(|o| matches!(o, Out::Event(ProviderEvent::ContinuationRequested(_))))
+        {
+            turn += 1;
+            let next =
+                mapper.begin_continuation(&turn_input(turn, &thread, "", runtime_mode), mode);
+            outs.extend(next);
+        }
         for out in outs {
             match out {
                 Out::Event(event) => {
@@ -170,6 +193,9 @@ fn replay(name: &str, runtime_mode: &str) -> Replay {
 ///   `turnTokenUsage.otherUsage` (side-model usage), `failureItemOrdinal`.
 /// - TS emits `provider_turn.updated` again with unchanged usage after `message_delta`; equal
 ///   consecutive usage updates are folded.
+/// - TS re-sends an unchanged provider thread when Claude's background-task roster changes
+///   (`pendingBackgroundTasks`, which the trait does not carry): the field is dropped and a
+///   thread equal to the last one sent is folded.
 fn normalize(events: &[Value]) -> Vec<Value> {
     let mut text = serde_json::to_string(events).unwrap();
     let mut ids: Vec<String> = Vec::new();
@@ -188,6 +214,9 @@ fn normalize(events: &[Value]) -> Vec<Value> {
     }
     let mut out: Vec<Value> = Vec::new();
     for mut event in serde_json::from_str::<Vec<Value>>(&text).unwrap() {
+        if event["type"] == "continuation.requested" {
+            continue;
+        }
         let obj = event.as_object_mut().unwrap();
         obj.remove("driver");
         obj.remove("pendingBackgroundWork");
@@ -198,6 +227,7 @@ fn normalize(events: &[Value]) -> Vec<Value> {
         if let Some(thread) = obj.get_mut("providerThread").and_then(Value::as_object_mut) {
             thread.remove("nativeMetadata");
             thread.remove("goal");
+            thread.remove("pendingBackgroundTasks");
         }
         if let Some(usage) = event
             .pointer_mut("/providerTurn/turnTokenUsage")
@@ -206,6 +236,11 @@ fn normalize(events: &[Value]) -> Vec<Value> {
             usage.remove("otherUsage");
         }
         if event["type"] == "provider_turn.updated" && out.last() == Some(&event) {
+            continue;
+        }
+        if event["type"] == "provider_thread.updated"
+            && out.iter().rfind(|e| e["type"] == "provider_thread.updated") == Some(&event)
+        {
             continue;
         }
         out.push(event);
@@ -279,6 +314,33 @@ fn interrupted_turn_then_next_turn_match_the_ts_adapter() {
         .map(|e| e["status"].clone())
         .collect();
     assert_eq!(statuses, [json!("interrupted"), json!("completed")]);
+}
+
+#[test]
+fn background_subagent_and_its_continuation_match_the_ts_adapter() {
+    assert_same("e12_subagent", "full-access");
+}
+
+#[test]
+fn foreground_subagent_matches_the_ts_adapter() {
+    assert_same("e13_subagent_fg", "full-access");
+}
+
+#[test]
+fn steer_matches_the_ts_adapter() {
+    let replay = assert_same("e14_steer", "full-access");
+    let steers: Vec<_> = replay
+        .events
+        .iter()
+        .filter(|e| e["type"] == "steer.updated")
+        .map(|e| e["status"].clone())
+        .collect();
+    assert_eq!(steers, [json!("pending"), json!("completed")]);
+}
+
+#[test]
+fn image_turn_matches_the_ts_adapter() {
+    assert_same("e15_image", "full-access");
 }
 
 #[test]
@@ -516,11 +578,72 @@ fn subagent_compaction_and_retry_frames_decode_without_failing() {
     assert_eq!(
         kinds,
         [
-            json!("skip:assistant (subagent)"),
-            json!("turn_item.updated"),
-            json!("skip:system/api_retry"),
-            json!("skip:brand_new_kind"),
+            // task_started opens the row and replays the child reply it held.
+            "app_thread.created",
+            "node.updated",
+            "subagent.updated",
+            "node.updated",
+            "message.updated",
+            "turn_item.updated",
+            "turn_item.updated",
+            "message.updated",
+            "turn_item.updated",
+            // compacting, then the boundary with its token count.
+            "turn_item.updated",
+            "provider_turn.updated",
+            "turn_item.updated",
+            // api_retry row.
+            "turn_item.updated",
+            "skip:brand_new_kind",
         ]
+        .map(|k| json!(k))
     );
     assert!(mapper.turn_active());
+}
+
+/// Per-session state must not grow with the number of turns: replays the subagent, steer and
+/// continuation recordings 200 times into one mapper.
+#[test]
+fn mapper_state_stays_bounded_over_many_turns() {
+    let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
+    let mut sizes = Vec::new();
+    for round in 0..200 {
+        for name in ["e12_subagent", "e14_steer", "e06_permissions"] {
+            let thread = provider_thread("n-bounded");
+            for line in testdata::cli(name).lines() {
+                let line: Value = serde_json::from_str(line).unwrap();
+                let msg = &line["msg"];
+                match (line["dir"].as_str(), msg["type"].as_str()) {
+                    (Some("out"), Some("user")) if msg["priority"] == "now" => {
+                        mapper.steer_sent(msg["uuid"].as_str().unwrap(), "m");
+                    }
+                    (Some("out"), Some("user")) => {
+                        if mapper.turn_active() {
+                            mapper.on_exit(true, "next round");
+                        }
+                        mapper.begin_turn(&turn_input(1, &thread, "x", "full-access"), "default");
+                    }
+                    (Some("in"), Some(_)) => {
+                        let outs = mapper.handle(Inbound::from_value(msg.clone()));
+                        if outs.iter().any(|o| {
+                            matches!(o, Out::Event(ProviderEvent::ContinuationRequested(_)))
+                        }) {
+                            mapper.begin_continuation(
+                                &turn_input(2, &thread, "", "full-access"),
+                                "default",
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if mapper.turn_active() {
+            mapper.on_exit(true, "end of round");
+        }
+        if round == 1 || round == 199 {
+            sizes.push(mapper.held_sizes());
+        }
+    }
+    assert_eq!(sizes[0], sizes[1], "state after round 2 vs round 200");
 }

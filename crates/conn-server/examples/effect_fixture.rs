@@ -67,6 +67,7 @@ fn main() {
         let addr = listener.local_addr().unwrap();
         let code = auth
             .issue_pairing_code(None, auth::PAIRING_CODE_TTL_MS)
+            .unwrap()
             .code;
         println!("conn-server listening on http://{addr}");
         println!("pairingUrl: http://{addr}/pair#token={code}");

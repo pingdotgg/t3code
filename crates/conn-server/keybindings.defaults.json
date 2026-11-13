@@ -1,0 +1,133 @@
+{
+  "maxCount": 256,
+  "maxWhenDepth": 64,
+  "defaults": [
+    { "key": "mod+b", "command": "sidebar.toggle" },
+    { "key": "f6", "command": "workspace.focusNext" },
+    { "key": "shift+f6", "command": "workspace.focusPrevious" },
+    { "key": "mod+f6", "command": "workspace.focusNext" },
+    { "key": "mod+shift+f6", "command": "workspace.focusPrevious" },
+    { "key": "mod+[", "command": "navigation.back", "when": "!terminalFocus" },
+    { "key": "mod+]", "command": "navigation.forward", "when": "!terminalFocus" },
+    { "key": "mod+j", "command": "terminal.toggle" },
+    { "key": "mod+alt+b", "command": "rightPanel.toggle" },
+    { "key": "mod+shift+b", "command": "threadPanel.toggle", "when": "!terminalFocus" },
+    { "key": "mod+t", "command": "rightPanel.new", "when": "rightPanelOpen && !terminalFocus" },
+    { "key": "mod+d", "command": "terminal.split", "when": "terminalFocus" },
+    { "key": "mod+shift+d", "command": "terminal.splitVertical", "when": "terminalFocus" },
+    { "key": "mod+shift+d", "command": "composer.dictation", "when": "!terminalFocus" },
+    { "key": "mod+n", "command": "terminal.new", "when": "terminalFocus" },
+    { "key": "mod+w", "command": "terminal.close", "when": "terminalFocus" },
+    { "key": "mod+w", "command": "rightPanel.close", "when": "!terminalFocus" },
+    { "key": "mod+shift+t", "command": "view.reopenClosed" },
+    { "key": "mod+d", "command": "diff.toggle", "when": "!terminalFocus" },
+    { "key": "mod+shift+j", "command": "preview.toggle" },
+    { "key": "mod+r", "command": "preview.refresh", "when": "previewFocus" },
+    { "key": "mod+l", "command": "preview.focusUrl", "when": "previewFocus" },
+    { "key": "mod+=", "command": "preview.zoomIn", "when": "previewFocus" },
+    { "key": "mod++", "command": "preview.zoomIn", "when": "previewFocus" },
+    { "key": "mod+-", "command": "preview.zoomOut", "when": "previewFocus" },
+    { "key": "mod+0", "command": "preview.resetZoom", "when": "previewFocus" },
+    { "key": "mod+f", "command": "preview.find", "when": "previewFocus" },
+    { "key": "mod+k", "command": "commandPalette.toggle", "when": "!terminalFocus" },
+    { "key": "mod+p", "command": "filePicker.toggle", "when": "!terminalFocus" },
+    { "key": "mod+shift+f", "command": "projectSearch.toggle", "when": "!terminalFocus" },
+    { "key": "mod+u", "command": "usage.open", "when": "!terminalFocus" },
+    { "key": "mod+alt+a", "command": "theme.select", "when": "!terminalFocus" },
+    { "key": "mod+alt+shift+a", "command": "appearance.cycle", "when": "!terminalFocus" },
+    { "key": "mod+alt+shift+t", "command": "themeEditor.toggle" },
+    { "key": "mod+s", "command": "composer.stash", "when": "!terminalFocus" },
+    { "key": "mod+shift+enter", "command": "thread.steerQueuedMessage", "when": "!terminalFocus" },
+    { "key": "alt+arrowup", "command": "thread.editQueuedMessage", "when": "composerFocus" },
+    {
+      "key": "mod+enter",
+      "command": "composer.sendAlternate",
+      "when": "composerFocus && turnRunning"
+    },
+    {
+      "key": "mod+enter",
+      "command": "composer.sendBackground",
+      "when": "composerFocus && draftThreadRoute"
+    },
+    {
+      "key": "mod+alt+enter",
+      "command": "composer.sendBackground",
+      "when": "composerFocus && draftThreadRoute"
+    },
+    {
+      "key": "mod+alt+enter",
+      "command": "composer.sendAndNewThread",
+      "when": "composerFocus && !draftThreadRoute"
+    },
+    { "key": "mod+n", "command": "chat.new", "when": "!terminalFocus" },
+    { "key": "mod+shift+o", "command": "chat.new", "when": "!terminalFocus" },
+    { "key": "mod+shift+n", "command": "chat.newLocal", "when": "!terminalFocus" },
+    { "key": "mod+alt+n", "command": "chat.newWithoutProject", "when": "!terminalFocus" },
+    { "key": "mod+f", "command": "chat.find", "when": "!terminalFocus && !previewFocus" },
+    { "key": "mod+shift+m", "command": "modelPicker.toggle", "when": "!terminalFocus" },
+    { "key": "mod+shift+h", "command": "composer.host", "when": "!terminalFocus" },
+    { "key": "mod+shift+e", "command": "composer.effort", "when": "!terminalFocus" },
+    { "key": "mod+shift+a", "command": "composer.mode", "when": "!terminalFocus" },
+    { "key": "mod+shift+x", "command": "composer.workspace", "when": "!terminalFocus" },
+    { "key": "mod+shift+g", "command": "composer.branch", "when": "!terminalFocus" },
+    { "key": "mod+shift+l", "command": "composer.previousWorktree", "when": "!terminalFocus" },
+    { "key": "mod+shift+k", "command": "pullRequest.copyNumber", "when": "!terminalFocus" },
+    {
+      "key": "mod+shift+arrowup",
+      "command": "modelPicker.previousProvider",
+      "when": "modelPickerOpen"
+    },
+    {
+      "key": "mod+shift+arrowdown",
+      "command": "modelPicker.nextProvider",
+      "when": "modelPickerOpen"
+    },
+    { "key": "mod+o", "command": "editor.openFavorite" },
+    { "key": "mod+shift+[", "command": "thread.previous" },
+    { "key": "mod+shift+]", "command": "thread.next" },
+    { "key": "mod+shift+c", "command": "thread.copyReference", "when": "!terminalFocus" },
+    { "key": "mod+shift+s", "command": "thread.settle", "when": "!terminalFocus" },
+    { "key": "mod+shift+p", "command": "thread.pin", "when": "!terminalFocus" },
+    { "key": "mod+z", "command": "thread.undo", "when": "!terminalFocus && !editableFocus" },
+    { "key": "mod+1", "command": "thread.jump.1", "when": "!modelPickerOpen && isDesktop" },
+    { "key": "mod+2", "command": "thread.jump.2", "when": "!modelPickerOpen && isDesktop" },
+    { "key": "mod+3", "command": "thread.jump.3", "when": "!modelPickerOpen && isDesktop" },
+    { "key": "mod+4", "command": "thread.jump.4", "when": "!modelPickerOpen && isDesktop" },
+    { "key": "mod+5", "command": "thread.jump.5", "when": "!modelPickerOpen && isDesktop" },
+    { "key": "mod+6", "command": "thread.jump.6", "when": "!modelPickerOpen && isDesktop" },
+    { "key": "mod+7", "command": "thread.jump.7", "when": "!modelPickerOpen && isDesktop" },
+    { "key": "mod+8", "command": "thread.jump.8", "when": "!modelPickerOpen && isDesktop" },
+    { "key": "mod+9", "command": "thread.jump.9", "when": "!modelPickerOpen && isDesktop" },
+    { "key": "mod+1", "command": "modelPicker.jump.1", "when": "modelPickerOpen && isDesktop" },
+    { "key": "mod+2", "command": "modelPicker.jump.2", "when": "modelPickerOpen && isDesktop" },
+    { "key": "mod+3", "command": "modelPicker.jump.3", "when": "modelPickerOpen && isDesktop" },
+    { "key": "mod+4", "command": "modelPicker.jump.4", "when": "modelPickerOpen && isDesktop" },
+    { "key": "mod+5", "command": "modelPicker.jump.5", "when": "modelPickerOpen && isDesktop" },
+    { "key": "mod+6", "command": "modelPicker.jump.6", "when": "modelPickerOpen && isDesktop" },
+    { "key": "mod+7", "command": "modelPicker.jump.7", "when": "modelPickerOpen && isDesktop" },
+    { "key": "mod+8", "command": "modelPicker.jump.8", "when": "modelPickerOpen && isDesktop" },
+    { "key": "mod+9", "command": "modelPicker.jump.9", "when": "modelPickerOpen && isDesktop" },
+    { "key": "c", "command": "usage.cost", "when": "usagePageOpen" },
+    { "key": "t", "command": "usage.tokens", "when": "usagePageOpen" },
+    { "key": "l", "command": "usage.limits", "when": "usagePageOpen" },
+    { "key": "mod+shift+1", "command": "usage.period.day", "when": "usagePageOpen" },
+    { "key": "mod+shift+2", "command": "usage.period.week", "when": "usagePageOpen" },
+    { "key": "mod+shift+3", "command": "usage.period.month", "when": "usagePageOpen" },
+    { "key": "mod+shift+4", "command": "usage.period.quarter", "when": "usagePageOpen" }
+  ],
+  "late": [
+    {
+      "id": "composer.sendBackground:mod+enter",
+      "alongside": {
+        "key": "mod+alt+enter",
+        "command": "composer.sendBackground",
+        "when": "composerFocus && draftThreadRoute"
+      },
+      "rule": {
+        "key": "mod+enter",
+        "command": "composer.sendBackground",
+        "when": "composerFocus && draftThreadRoute"
+      }
+    }
+  ]
+}

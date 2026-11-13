@@ -130,6 +130,95 @@ async fn main() {
     })
     .await;
 
+    // A client that opts in to compact snapshots gets the same thread.
+    let mut compact_items = vec![];
+    let mut compact = engine
+        .subscribe_thread(
+            from_json(
+                json!({"threadId": "thread-1", "requestCompletionMarker": true,
+                "acceptDedupedBodies": true, "acceptCompactTurnItems": true}),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut compact, &mut compact_items, |item| {
+        item["kind"] == "synchronized"
+    })
+    .await;
+
+    // A message sent while a turn runs waits in the queue and runs after it.
+    let mut queue_items = vec![];
+    engine
+        .launch_thread(launch_input("launch-3", "thread-3", "hang"))
+        .await
+        .unwrap();
+    let mut queue = engine
+        .subscribe_thread(
+            from_json(json!({"threadId": "thread-3", "requestCompletionMarker": true})).unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut queue, &mut queue_items, |item| {
+        item["event"]["type"] == "provider-turn.updated"
+    })
+    .await;
+    engine
+        .dispatch(
+            from_json(json!({
+                "type": "message.dispatch", "commandId": "queued-1", "threadId": "thread-3",
+                "messageId": "message:queued-1", "text": "after that", "attachments": [],
+                "dispatchMode": {"type": "queue_after_active"}, "createdBy": "user", "creationSource": "web",
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    engine
+        .dispatch(
+            from_json(
+                json!({"type": "run.interrupt", "commandId": "stop-3", "threadId": "thread-3",
+                "runId": "run:thread-3:1"}),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut queue, &mut queue_items, |item| {
+        run_ended(item) && item["event"]["payload"]["id"] == "run:thread-3:2"
+    })
+    .await;
+    read(&mut queue, &mut queue_items, |_| false).await;
+
+    // A client adds a project and removes it again.
+    let added =
+        std::env::temp_dir().join(format!("conn-engine-export-added-{}", std::process::id()));
+    std::fs::create_dir_all(&added).unwrap();
+    engine
+        .call(
+            "projects.mutate",
+            json!({"type": "project.create", "commandId": "project-1", "projectId": "project:added",
+                   "title": "Added", "workspaceRoot": added.to_string_lossy()}),
+        )
+        .await
+        .unwrap();
+    read(&mut shell, &mut shell_items, |item| {
+        item["kind"] == "project.updated"
+    })
+    .await;
+    engine
+        .call(
+            "projects.mutate",
+            json!({"type": "project.delete", "commandId": "project-2", "projectId": "project:added"}),
+        )
+        .await
+        .unwrap();
+    read(&mut shell, &mut shell_items, |item| {
+        item["kind"] == "project.removed"
+    })
+    .await;
+    let _ = std::fs::remove_dir_all(&added);
+
     // A turn that is still running when the server stops.
     engine
         .launch_thread(launch_input("launch-2", "thread-2", "hang"))
@@ -143,9 +232,19 @@ async fn main() {
         item["event"]["type"] == "provider-turn.updated"
     })
     .await;
-    drop((shell, thread, socket, hang, engine));
+    drop((shell, thread, socket, compact, queue, hang, engine));
 
     let engine = open(&db);
+    // The cut turn continues in a new run; open the views once it has finished.
+    let mut follow = engine
+        .subscribe_thread(from_json(json!({"threadId": "thread-2"})).unwrap())
+        .await
+        .unwrap();
+    read(&mut follow, &mut vec![], |item| {
+        run_ended(item) && item["event"]["payload"]["id"] == "run:thread-2:2"
+    })
+    .await;
+    drop(follow);
     let mut restart_shell = vec![];
     let mut shell = engine
         .subscribe_shell(from_json(json!({"requestCompletionMarker": true})).unwrap())
@@ -173,6 +272,8 @@ async fn main() {
         "threadHttp": thread_http,
         "threadItems": thread_items,
         "socketItems": socket_items,
+        "compactItems": compact_items,
+        "queueItems": queue_items,
         "restartShellItems": restart_shell,
         "restartThreadItems": restart_thread,
     });

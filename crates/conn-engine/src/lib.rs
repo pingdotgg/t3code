@@ -18,19 +18,161 @@
 
 use std::{future::Future, pin::Pin};
 
+mod calls;
 mod commands;
 mod engine;
 #[cfg(test)]
 mod engine_tests;
 #[cfg(any(test, feature = "fake-provider"))]
 pub mod fake;
+mod families;
+mod output;
+mod projects;
+mod reads;
+mod restart;
 mod runner;
 mod shell;
 mod store;
 mod streams;
 mod time;
+mod titles;
 
-pub use engine::{EngineConfig, ProjectConfig, SqliteEngine};
+pub use engine::{DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig, SqliteEngine};
+
+/// What a [`TitleGenerator`] titles: the first message of a new thread, or a whole thread whose
+/// title the user asked to regenerate.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TitleRequest {
+    pub thread_id: String,
+    /// The folder the thread works in, for a generator that reads linked files.
+    pub cwd: Option<String>,
+    /// The project's title, which a good thread title does not repeat.
+    pub project_title: Option<String>,
+    pub kind: TitleKind,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TitleKind {
+    /// The first user message, at most 8,000 characters.
+    Initial { message: String },
+    /// The current title and the thread's user and assistant texts, newest last, at most
+    /// 8,000 characters in all.
+    Regenerate {
+        previous_title: String,
+        transcript: Vec<(String, String)>,
+    },
+}
+
+/// Where a turn starts or ends, for a [`TurnObserver`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct TurnPoint {
+    pub thread_id: String,
+    pub run_id: String,
+    /// 1 for the thread's first run; checkpoint `n` is the workspace after run `n`.
+    pub run_ordinal: u64,
+    pub root_node_id: String,
+    /// The folder the turn works in: the thread's worktree, else its project root.
+    pub cwd: Option<String>,
+}
+
+/// Watches turns start and end; the hook for per-turn git checkpoints (`getTurnDiff`,
+/// `getFullThreadDiff`, restore).
+///
+/// [`TurnObserver::turn_started`] runs after the run is `running` and before the provider
+/// gets the message, and the turn waits for it: a baseline taken there holds no change of this
+/// turn. [`TurnObserver::turn_ended`] runs after the run's final status is committed, once per
+/// run that started (`completed`, `interrupted`, `failed` or `cancelled`), off the turn's path.
+/// A failing observer must log and return; it cannot fail the turn. Wire one with
+/// [`EngineConfig::turn_observer`].
+pub trait TurnObserver: Send + Sync {
+    fn turn_started(&self, point: TurnPoint) -> BoxFuture<'_, ()>;
+    fn turn_ended(&self, point: TurnPoint, status: String) -> BoxFuture<'_, ()>;
+}
+
+/// The server's services the engine calls out to. Every method has a no-op default, so a test
+/// or a server without the service passes nothing. Wire one with [`EngineConfig::host`].
+pub trait EngineHost: Send + Sync {
+    /// MCP servers for a provider session about to open, and the key that revokes them.
+    fn agent_tools(&self, _session: AgentSession) -> Option<AgentTools> {
+        None
+    }
+
+    /// A provider session closed: revoke what [`EngineHost::agent_tools`] issued under `key`.
+    fn session_closed(&self, _key: &str) {}
+
+    /// Copies a message's pending uploads to the thread before the message is written. The
+    /// result replaces the command's `attachments`; an error refuses the command.
+    fn claim_attachments(
+        &self,
+        _thread_id: String,
+        attachments: Value,
+    ) -> BoxFuture<'_, Result<Value, String>> {
+        Box::pin(std::future::ready(Ok(attachments)))
+    }
+
+    /// The message that claimed `attachments` was refused: remove the copies.
+    fn release_attachments(&self, _attachments: Value) -> BoxFuture<'_, ()> {
+        Box::pin(std::future::ready(()))
+    }
+
+    /// Creates a git worktree for `launchThread` with a `worktree` strategy.
+    fn provision_worktree(
+        &self,
+        _request: WorktreeRequest,
+    ) -> BoxFuture<'_, Result<ProvisionedWorktree, String>> {
+        Box::pin(std::future::ready(Err(
+            "This server cannot create worktrees.".to_owned(),
+        )))
+    }
+
+    /// A thread was archived, deleted or settled; end what it holds open (terminals).
+    fn thread_closed(&self, _thread_id: &str, _reason: ThreadClose) {}
+}
+
+/// A provider session asking for agent tools.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentSession {
+    pub thread_id: String,
+    pub provider_instance_id: String,
+    /// The thread is a delegated child (`lineage.relationshipToParent: subagent`).
+    pub subagent: bool,
+}
+
+/// What [`EngineHost::agent_tools`] grants one provider session.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentTools {
+    pub servers: Vec<conn_provider::McpServer>,
+    /// Passed back to [`EngineHost::session_closed`].
+    pub key: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WorktreeRequest {
+    pub thread_id: String,
+    pub project_root: String,
+    pub base_ref: String,
+    pub branch: Option<String>,
+    pub start_from_origin: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProvisionedWorktree {
+    pub path: String,
+    pub branch: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThreadClose {
+    Archived,
+    Deleted,
+    Settled,
+}
+
+/// Asks a small model for a thread title (`generateTitle`, `regenerateTitle`). The engine
+/// keeps the seed title when this fails. Wire one with [`EngineConfig::title_generator`].
+pub trait TitleGenerator: Send + Sync {
+    fn generate(&self, request: TitleRequest) -> BoxFuture<'_, Result<String, String>>;
+}
 
 use conn_contract::{
     Command, DispatchCommandError, DispatchCommandResult, GetShellSnapshotError,
@@ -110,6 +252,48 @@ pub trait Engine: Send + Sync {
     /// `GET /api/orchestration/shell`: `OrchestrationV2ShellSnapshot`.
     fn shell_snapshot(&self) -> BoxFuture<'_, Result<Value, EngineError<GetShellSnapshotError>>> {
         unsupported("the shell snapshot")
+    }
+
+    /// The unary and stream RPC methods [`Engine::call`] and [`Engine::open_stream`] serve, by
+    /// tag. The server registers each one; the rest answer "not supported".
+    fn methods(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// A unary method from [`Engine::methods`] (`projects.mutate`, `orchestration.searchThreads`,
+    /// ...). Input and output are the contract's JSON for that tag; `Rejected` holds the
+    /// method's typed error.
+    fn call(
+        &self,
+        method: &str,
+        _input: Value,
+    ) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
+        let method = method.to_owned();
+        Box::pin(async move {
+            Err(EngineError::Internal(format!(
+                "this engine does not support {method}"
+            )))
+        })
+    }
+
+    /// A stream method from [`Engine::methods`], with the same JSON rules as [`Engine::call`].
+    fn open_stream(
+        &self,
+        method: &str,
+        _input: Value,
+    ) -> BoxFuture<'_, Result<Subscription<Value, Value>, EngineError<Value>>> {
+        let method = method.to_owned();
+        Box::pin(async move {
+            Err(EngineError::Internal(format!(
+                "this engine does not support {method}"
+            )))
+        })
+    }
+
+    /// Closes every provider session before the server exits, so no provider process, nor a
+    /// tool it started, outlives the server.
+    fn shutdown(&self) -> BoxFuture<'_, ()> {
+        Box::pin(std::future::ready(()))
     }
 
     /// `GET /api/orchestration/threads/:threadId`: `OrchestrationV2ThreadDetailSnapshot`, or

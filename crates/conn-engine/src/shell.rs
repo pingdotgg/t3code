@@ -11,7 +11,8 @@ use crate::store::{StoreResult, Tx};
 
 pub(crate) const LIVE_RUN_STATUSES: [&str; 5] =
     ["preparing", "queued", "starting", "running", "waiting"];
-const ACTIVITY_STATUSES: [&str; 4] = ["preparing", "starting", "running", "waiting"];
+/// `isActiveRun`: the run that owns the provider. A queued run waits behind it.
+pub(crate) const ACTIVE_RUN_STATUSES: [&str; 4] = ["preparing", "starting", "running", "waiting"];
 
 fn one(tx: &Tx<'_>, sql: &str, args: &[&dyn rusqlite::ToSql]) -> StoreResult<Option<Value>> {
     tx.conn()
@@ -34,16 +35,21 @@ pub(crate) fn thread_shell(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Value> {
         )
         .map_err(|e| format!("store: {e}"))?;
 
+    // Queued runs and runs cancelled from the queue never started: the thread's status is the
+    // latest run that did.
     let latest_run = one(
         tx,
-        "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'runs' ORDER BY ordinal DESC LIMIT 1",
+        "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'runs'
+         AND json_extract(body, '$.status') != 'queued'
+         AND NOT (json_extract(body, '$.status') = 'cancelled' AND json_extract(body, '$.startedAt') IS NULL
+                  AND json_extract(body, '$.activeAttemptId') IS NULL)
+         ORDER BY ordinal DESC LIMIT 1",
         params![thread_id],
     )?;
     let active_run = latest_run
         .as_ref()
-        .filter(|run| LIVE_RUN_STATUSES.contains(&run["status"].as_str().unwrap_or("")));
-    let activity_run =
-        active_run.filter(|run| ACTIVITY_STATUSES.contains(&run["status"].as_str().unwrap_or("")));
+        .filter(|run| ACTIVE_RUN_STATUSES.contains(&run["status"].as_str().unwrap_or("")));
+    let activity_run = active_run;
     let pending = one(
         tx,
         "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'runtimeRequests'
@@ -149,17 +155,19 @@ pub(crate) fn thread_shell(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Value> {
         "archivedAt": field("archivedAt"),
         "settledOverride": field("settledOverride"),
         "settledAt": field("settledAt"),
-        "unsettledAt": null,
+        "unsettledAt": field("unsettledAt"),
         "snoozedUntil": field("snoozedUntil"),
         "snoozedAt": field("snoozedAt"),
-        "pinnedAt": null,
-        "autoSettleDisabledAt": null,
-        "pinOrderKey": null,
+        "pinnedAt": field("pinnedAt"),
+        "autoSettleDisabledAt": field("autoSettleDisabledAt"),
+        "pinOrderKey": field("pinOrderKey"),
+        "activeOrderKey": field("activeOrderKey"),
+        "tags": thread.get("tags").cloned().unwrap_or(json!([])),
         "lastVisitedAt": field("lastVisitedAt"),
-        "opens": null,
-        "titleRegeneration": null,
-        "lastTitleRegeneration": null,
-        "limitRecovery": null,
+        "opens": field("opens"),
+        "titleRegeneration": field("titleRegeneration"),
+        "lastTitleRegeneration": field("lastTitleRegeneration"),
+        "limitRecovery": field("limitRecovery"),
         "deletedAt": field("deletedAt"),
     }))
 }

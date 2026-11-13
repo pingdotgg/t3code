@@ -1,14 +1,13 @@
-//! One `claude` child process: a writer task for stdin, a reader task for stdout, a stderr
-//! tail, and a supervisor that owns the child, reaps it, and stops its process group.
+//! One CLI child process: a writer task for stdin, a reader task for stdout, a stderr tail, and
+//! a supervisor that owns the child, reaps it, and stops its process group.
 //!
-//! Bounded everywhere: stdin lines queue in a 64-slot channel, stdout lines are capped at
-//! [`MAX_LINE_BYTES`] (longer lines are dropped and reported), decoded messages go to the
-//! session over a bounded channel, so a slow consumer slows the CLI instead of growing memory.
-//! Nothing blocks the runtime thread. The general shape (spawn, line framing, supervisor) fits a
-//! Codex crate too.
+//! Bounded everywhere: stdin lines queue in a 64-slot channel, stdout lines are capped (longer
+//! ones are reported and dropped), and lines go to the owner over the bounded channel it passes
+//! in, so a slow consumer slows the CLI instead of growing memory.
 
 use std::{
     io,
+    path::PathBuf,
     process::Stdio,
     sync::{Arc, Mutex},
     time::Duration,
@@ -20,21 +19,25 @@ use tokio::{
     sync::{Notify, mpsc, oneshot, watch},
 };
 
-use crate::launch::LaunchSpec;
-use crate::protocol::Inbound;
+use crate::lines::{Line, read_lines};
 
-/// A line longer than this is dropped. Large tool results (images as base64) stay below it.
-pub const MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
 const STDERR_TAIL_BYTES: usize = 4096;
 /// How long a closed stdin may take to end the CLI before it is killed.
 pub const CLOSE_GRACE: Duration = Duration::from_secs(3);
 
+/// Everything needed to start a child: program, argv, working directory, environment edits.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LaunchSpec {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+    pub env_remove: Vec<String>,
+    pub env_set: Vec<(String, String)>,
+}
+
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)] // Moved once per line; boxing adds an allocation each.
 pub enum ProcEvent {
-    Message(Inbound),
-    /// A stdout line over [`MAX_LINE_BYTES`] was dropped.
-    Oversized(usize),
+    Line(Line),
     /// The child exited and stdout is drained. Always the last event.
     Exited(ExitInfo),
 }
@@ -64,8 +67,13 @@ pub struct Process {
 }
 
 impl Process {
-    /// Starts the CLI. Events arrive on `events` until [`ProcEvent::Exited`].
-    pub fn spawn(spec: &LaunchSpec, events: mpsc::Sender<ProcEvent>) -> io::Result<Process> {
+    /// Starts the child in its own process group. Events arrive on `events` until
+    /// [`ProcEvent::Exited`]. Stdout lines longer than `max_line_bytes` are dropped.
+    pub fn spawn(
+        spec: &LaunchSpec,
+        max_line_bytes: usize,
+        events: mpsc::Sender<ProcEvent>,
+    ) -> io::Result<Process> {
         let mut command = Command::new(&spec.program);
         command
             .args(&spec.args)
@@ -86,9 +94,11 @@ impl Process {
         }
         let mut child = command.spawn()?;
         let pid = child.id().unwrap_or(0);
-        let stdin = child.stdin.take().expect("piped stdin");
-        let stdout = child.stdout.take().expect("piped stdout");
-        let stderr = child.stderr.take().expect("piped stderr");
+        let (Some(stdin), Some(stdout), Some(stderr)) =
+            (child.stdin.take(), child.stdout.take(), child.stderr.take())
+        else {
+            return Err(io::Error::other("the child's stdio pipes are missing"));
+        };
 
         let (writer, mut lines) = mpsc::channel::<String>(64);
         tokio::spawn(async move {
@@ -112,22 +122,26 @@ impl Process {
         let (stdout_done_tx, stdout_done) = oneshot::channel();
         let reader_events = events.clone();
         tokio::spawn(async move {
-            read_lines(stdout, &reader_events).await;
+            read_lines(stdout, max_line_bytes, |line| {
+                let events = reader_events.clone();
+                async move { events.send(ProcEvent::Line(line)).await.is_ok() }
+            })
+            .await;
             let _ = stdout_done_tx.send(());
         });
 
         let kill = Arc::new(Notify::new());
         let (exited_tx, exited) = watch::channel(false);
-        tokio::spawn(supervise(
+        tokio::spawn(supervise(Supervised {
             child,
             pid,
-            kill.clone(),
+            kill: kill.clone(),
             stdout_done,
             stderr_done,
             tail,
             events,
-            exited_tx,
-        ));
+            exited: exited_tx,
+        }));
         Ok(Process {
             pid,
             writer,
@@ -166,9 +180,8 @@ impl Process {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn supervise(
-    mut child: Child,
+struct Supervised {
+    child: Child,
     pid: u32,
     kill: Arc<Notify>,
     stdout_done: oneshot::Receiver<()>,
@@ -176,7 +189,19 @@ async fn supervise(
     tail: Arc<Mutex<String>>,
     events: mpsc::Sender<ProcEvent>,
     exited: watch::Sender<bool>,
-) {
+}
+
+async fn supervise(s: Supervised) {
+    let Supervised {
+        mut child,
+        pid,
+        kill,
+        stdout_done,
+        stderr_done,
+        tail,
+        events,
+        exited,
+    } = s;
     let status = tokio::select! {
         status = child.wait() => status,
         _ = kill.notified() => {
@@ -184,9 +209,11 @@ async fn supervise(
             child.wait().await
         }
     };
-    // Tools the agent started (Bash jobs) share the CLI's process group; stop what is left.
+    // Tools the agent started share the CLI's process group; stop what is left.
     #[cfg(unix)]
     kill_group(pid).await;
+    #[cfg(not(unix))]
+    let _ = pid;
     // A grandchild can hold stdout open; do not wait on it forever.
     let _ = tokio::time::timeout(Duration::from_secs(2), stdout_done).await;
     let _ = tokio::time::timeout(Duration::from_millis(200), stderr_done).await;
@@ -216,20 +243,31 @@ fn exit_signal(_: &std::process::ExitStatus) -> Option<i32> {
     None
 }
 
-/// `kill -KILL -<pgid>` for the group created at spawn (pgid = the pid we captured).
+/// SIGKILL to the group created at spawn (pgid = the pid captured at spawn).
 #[cfg(unix)]
 async fn kill_group(pgid: u32) {
-    if pgid == 0 {
+    signal_group(pgid, rustix::process::Signal::KILL);
+}
+
+/// Sends `signal` to the process group `pgid`. A group already gone is not an error.
+#[cfg(unix)]
+pub fn signal_group(pgid: u32, signal: rustix::process::Signal) {
+    let Some(pgid) = i32::try_from(pgid)
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+    else {
         return;
-    }
-    let result = Command::new("kill")
-        .args(["-KILL", "--", &format!("-{pgid}")])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .await;
-    let _ = result;
+    };
+    let _ = rustix::process::kill_process_group(pgid, signal);
+}
+
+/// Whether a process with this pid exists (signal 0). For checking that a child ended.
+#[cfg(unix)]
+pub fn pid_alive(pid: u32) -> bool {
+    i32::try_from(pid)
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+        .is_some_and(|pid| rustix::process::test_kill_process(pid).is_ok())
 }
 
 fn spawn_stderr_tail(
@@ -257,91 +295,24 @@ fn spawn_stderr_tail(
     done
 }
 
-/// Reads newline-framed JSON, capping each line at [`MAX_LINE_BYTES`].
-async fn read_lines(stdout: impl AsyncRead + Unpin, events: &mpsc::Sender<ProcEvent>) {
-    let mut reader = BufReader::with_capacity(64 * 1024, stdout);
-    let mut line: Vec<u8> = Vec::new();
-    let mut dropped = 0usize;
-    while let Ok(buf) = reader.fill_buf().await {
-        if buf.is_empty() {
-            break;
-        }
-        let (chunk, found_newline) = match buf.iter().position(|b| *b == b'\n') {
-            Some(i) => (&buf[..i], true),
-            None => (buf, false),
-        };
-        let consumed = chunk.len() + usize::from(found_newline);
-        if dropped > 0 || line.len() + chunk.len() > MAX_LINE_BYTES {
-            dropped += chunk.len() + line.len();
-            line.clear();
-        } else {
-            line.extend_from_slice(chunk);
-        }
-        reader.consume(consumed);
-        if !found_newline {
-            continue;
-        }
-        let event = if dropped > 0 {
-            Some(ProcEvent::Oversized(std::mem::take(&mut dropped)))
-        } else {
-            let text = String::from_utf8_lossy(&line);
-            let text = text.trim();
-            (!text.is_empty()).then(|| ProcEvent::Message(Inbound::decode(text)))
-        };
-        line.clear();
-        // Release the big buffer after a large line instead of keeping it for the session.
-        if line.capacity() > 1024 * 1024 {
-            line = Vec::new();
-        }
-        if let Some(event) = event
-            && events.send(event).await.is_err()
-        {
-            return;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn reader_frames_lines_and_drops_oversized_ones() {
-        let big = "x".repeat(MAX_LINE_BYTES + 10);
-        let input = format!("{{\"type\":\"keep_alive\"}}\n{big}\n\n{{\"type\":\"nope\"}}");
-        let (tx, mut rx) = mpsc::channel(8);
-        read_lines(input.as_bytes(), &tx).await;
-        drop(tx);
-        let mut got = Vec::new();
-        while let Some(event) = rx.recv().await {
-            got.push(event);
+    fn sh(script: &str) -> LaunchSpec {
+        LaunchSpec {
+            program: "sh".into(),
+            args: vec!["-c".into(), script.into()],
+            ..LaunchSpec::default()
         }
-        assert!(matches!(got[0], ProcEvent::Message(Inbound::Ignored(_))));
-        assert!(matches!(got[1], ProcEvent::Oversized(n) if n > MAX_LINE_BYTES));
-        // The last line has no trailing newline: EOF ends it without a message, as the CLI
-        // always terminates lines.
-        assert_eq!(got.len(), 2);
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn a_dead_child_reports_its_exit_and_is_reaped() {
-        let spec = LaunchSpec {
-            program: "sh".into(),
-            args: vec![
-                "-c".into(),
-                r#"echo '{"type":"keep_alive"}'; echo boom >&2; exit 3"#.into(),
-            ],
-            cwd: None,
-            env_remove: vec![],
-            env_set: vec![],
-        };
         let (tx, mut rx) = mpsc::channel(8);
-        let process = Process::spawn(&spec, tx).unwrap();
+        let process = Process::spawn(&sh("echo '{}'; echo boom >&2; exit 3"), 1024, tx).unwrap();
         assert!(process.pid > 0);
-        assert!(matches!(
-            rx.recv().await,
-            Some(ProcEvent::Message(Inbound::Ignored(_)))
-        ));
+        assert!(matches!(rx.recv().await, Some(ProcEvent::Line(Line::Text(t))) if t == "{}"));
         let Some(ProcEvent::Exited(info)) = rx.recv().await else {
             panic!("expected exit")
         };
@@ -352,15 +323,8 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn shutdown_kills_a_child_that_ignores_end_of_input() {
-        let spec = LaunchSpec {
-            program: "sh".into(),
-            args: vec!["-c".into(), "trap '' TERM; sleep 30".into()],
-            cwd: None,
-            env_remove: vec![],
-            env_set: vec![],
-        };
         let (tx, mut rx) = mpsc::channel(8);
-        let process = Process::spawn(&spec, tx).unwrap();
+        let process = Process::spawn(&sh("trap '' TERM; sleep 30"), 1024, tx).unwrap();
         let started = std::time::Instant::now();
         process.shutdown().await;
         assert!(started.elapsed() < CLOSE_GRACE + Duration::from_secs(2));
@@ -368,5 +332,19 @@ mod tests {
             panic!("expected exit")
         };
         assert_eq!(info.signal, Some(9));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_group_kill_reaches_grandchildren() {
+        let (tx, mut rx) = mpsc::channel(8);
+        // The grandchild writes its pid, then outlives the parent.
+        let process = Process::spawn(&sh("sleep 30 & echo $!; exit 0"), 1024, tx).unwrap();
+        let Some(ProcEvent::Line(Line::Text(pid))) = rx.recv().await else {
+            panic!("expected the grandchild pid")
+        };
+        while !matches!(rx.recv().await, Some(ProcEvent::Exited(_))) {}
+        drop(process);
+        let alive = pid.parse().is_ok_and(pid_alive);
+        assert!(!alive, "grandchild {pid} survived the group kill");
     }
 }

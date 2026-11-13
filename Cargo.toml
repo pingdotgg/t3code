@@ -15,6 +15,9 @@ conn-contract = { path = "crates/conn-contract" }
 conn-engine = { path = "crates/conn-engine" }
 conn-provider = { path = "crates/conn-provider" }
 conn-provider-claude = { path = "crates/conn-provider-claude" }
+conn-vcs = { path = "crates/conn-vcs" }
+conn-files = { path = "crates/conn-files" }
+conn-terminal = { path = "crates/conn-terminal" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

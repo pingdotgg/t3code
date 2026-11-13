@@ -1,6 +1,5 @@
 //! Ids, time and randomness, shaped like `IdAllocatorV2` in
-//! `packages/provider-core/src/server/IdAllocator.ts`. Nothing here is Claude-specific; a Codex
-//! crate needs the same helpers (candidate for a shared crate later).
+//! `packages/provider-core/src/server/IdAllocator.ts`. Each id helper takes the driver kind.
 
 use std::{
     collections::hash_map::RandomState,
@@ -37,37 +36,35 @@ pub fn join_id(prefix: &str, parts: &[&str]) -> String {
     out
 }
 
-pub const DRIVER: &str = "claudeAgent";
-
-pub fn provider_thread_id(native_thread_id: &str) -> String {
+pub fn provider_thread_id(driver: &str, native_thread_id: &str) -> String {
     join_id(
         "provider-thread",
-        &["provider", DRIVER, "native-thread", native_thread_id],
+        &["provider", driver, "native-thread", native_thread_id],
     )
 }
 
-pub fn provider_turn_id(native_turn_id: &str) -> String {
+pub fn provider_turn_id(driver: &str, native_turn_id: &str) -> String {
     join_id(
         "provider-turn",
-        &["provider", DRIVER, "native-turn", native_turn_id],
+        &["provider", driver, "native-turn", native_turn_id],
     )
 }
 
-pub fn node_from_item(native_item_id: &str) -> String {
-    join_id("node", &["provider", DRIVER, "native-item", native_item_id])
+pub fn node_from_item(driver: &str, native_item_id: &str) -> String {
+    join_id("node", &["provider", driver, "native-item", native_item_id])
 }
 
-pub fn message_from_item(native_item_id: &str) -> String {
+pub fn message_from_item(driver: &str, native_item_id: &str) -> String {
     join_id(
         "message",
-        &["provider", DRIVER, "native-item", native_item_id],
+        &["provider", driver, "native-item", native_item_id],
     )
 }
 
-pub fn turn_item_from_item(native_item_id: &str) -> String {
+pub fn turn_item_from_item(driver: &str, native_item_id: &str) -> String {
     join_id(
         "turn-item",
-        &["provider", DRIVER, "native-item", native_item_id],
+        &["provider", driver, "native-item", native_item_id],
     )
 }
 
@@ -79,11 +76,43 @@ pub fn approval_turn_item(request_id: &str) -> String {
     join_id("turn-item", &["runtime-request", request_id])
 }
 
-/// Time and randomness the mapper needs, injectable so recorded-session tests are exact.
+/// `allocate.runtimeRequest`: derived from the turn and native id, plus a uuid.
+pub fn runtime_request_id(
+    driver: &str,
+    provider_turn_id: &str,
+    native_request_id: &str,
+    uuid: &str,
+) -> String {
+    format!(
+        "{}:{uuid}",
+        join_id(
+            "runtime-request",
+            &[
+                "provider",
+                driver,
+                "provider-turn",
+                provider_turn_id,
+                "native-request",
+                native_request_id,
+            ],
+        )
+    )
+}
+
+/// `allocate.plan`: `plan:thread:<thread>:provider:<driver>[:run:<run>]:<uuid>`.
+pub fn plan_id(thread_id: &str, run_id: Option<&str>, driver: &str, uuid: &str) -> String {
+    let mut parts = vec!["thread", thread_id, "provider", driver];
+    if let Some(run_id) = run_id {
+        parts.extend(["run", run_id]);
+    }
+    format!("{}:{uuid}", join_id("plan", &parts))
+}
+
+/// Time and randomness a mapper needs, injectable so recorded-session tests are exact.
 pub trait Env: Send {
     /// ISO-8601 UTC with milliseconds, like `DateTime.formatIso`.
     fn now(&mut self) -> String;
-    /// Milliseconds since the epoch, for cache-expiry arithmetic.
+    /// Milliseconds since the epoch.
     fn now_ms(&mut self) -> u64;
     fn uuid(&mut self) -> String;
 }
@@ -153,7 +182,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 }
 
 /// A random v4 UUID from the std hasher's per-process random keys. Not cryptographic; these
-/// are session and request ids, which the CLI only needs to be unique.
+/// are session and request ids, which only need to be unique.
 pub fn uuid_v4() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let mut words = [0u64; 2];
@@ -191,14 +220,18 @@ mod tests {
     #[test]
     fn ids_match_the_ts_allocator() {
         assert_eq!(
-            provider_turn_id("turn:attempt-1"),
-            "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1"
+            provider_turn_id("codex", "01a0d5eb-f176"),
+            "provider-turn:provider:codex:native-turn:01a0d5eb-f176"
         );
         assert_eq!(
-            node_from_item("msg_011CgzYP5o1Sd5ktcHZviWkc:text:0"),
-            "node:provider:claudeAgent:native-item:msg_011CgzYP5o1Sd5ktcHZviWkc%3Atext%3A0"
+            node_from_item("claudeAgent", "msg_1:text:0"),
+            "node:provider:claudeAgent:native-item:msg_1%3Atext%3A0"
         );
         assert_eq!(encode_component("a b/c'(x)"), "a%20b%2Fc'(x)");
+        assert_eq!(
+            runtime_request_id("codex", "provider-turn:x", "exec-1", "u"),
+            "runtime-request:provider:codex:provider-turn:provider-turn%3Ax:native-request:exec-1:u"
+        );
     }
 
     #[test]

@@ -11,10 +11,11 @@ use crate::table::MethodTable;
 
 mod files;
 mod orchestration;
+mod projects;
 pub mod provider;
 pub mod server;
-mod terminal;
-mod vcs;
+pub mod terminal;
+pub mod vcs;
 
 /// Services handlers may use. `None` until the owning track wires it in `main.rs`.
 #[derive(Clone, Default)]
@@ -23,11 +24,19 @@ pub struct Deps {
     pub providers: Vec<Arc<dyn Provider>>,
     /// Set by `main.rs`; without it the server config streams are not registered.
     pub environment: Option<Arc<Environment>>,
+    /// `/mcp`; `serve.rs` builds it with `routes::mcp::service`.
+    pub mcp: Option<Arc<conn_mcp::McpService>>,
+    pub vcs: vcs::VcsShared,
+    /// Shared with the engine host, so a thread's terminals close with it.
+    pub terminals: Option<conn_terminal::TerminalManager>,
+    /// Files, assets and attachments; without it those methods and routes are not served.
+    pub files: Option<Arc<conn_files::Files>>,
 }
 
 pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     server::register(table, deps);
     orchestration::register(table, deps);
+    projects::register(table, deps);
     provider::register(table, deps);
     vcs::register(table, deps);
     files::register(table, deps);

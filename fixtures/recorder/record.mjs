@@ -14,7 +14,9 @@ import { redactText, redactValue, addSecret } from "./redact.mjs";
 import { SCENARIOS } from "./scenarios.mjs";
 
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-const repo = NodePath.resolve(here, "../../../..");
+// The Conn monorepo (web client, TypeScript server): `$CONN_MONOREPO`, else the checkout
+// this folder sits in.
+const repo = NodePath.resolve(process.env.CONN_MONOREPO ?? NodePath.resolve(here, "../../../.."));
 const sessionsDir = NodePath.resolve(here, "../sessions");
 const require = NodeModule.createRequire(NodePath.join(repo, "apps/server/package.json"));
 const { chromium } = require("playwright-core");
@@ -72,7 +74,7 @@ function scratchProject(root, name = "project") {
  * Starts the Rust conn-server on a scratch project. Pass an earlier result to restart it on the
  * same state directory and port.
  */
-async function startRustServer(previous) {
+async function startRustServer(previous, prepare) {
   if (rustUrl !== null && previous === undefined) {
     const url = new URL(rustUrl);
     addSecret(url.hash.replace("#token=", ""));
@@ -86,6 +88,7 @@ async function startRustServer(previous) {
   if (rustBinary === null) throw new Error("rust-* scenarios need --rust <conn-server binary>");
   const root = previous?.root ?? NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-rust-"));
   const project = previous?.project ?? scratchProject(root, "rust-project");
+  if (previous === undefined) prepare?.(project);
   const port = previous?.port ?? (await freePort());
   const child = NodeChildProcess.spawn(
     rustBinary,
@@ -119,7 +122,7 @@ async function startRustServer(previous) {
   return { root, project, port, token, child, origin: `http://127.0.0.1:${port}`, rust: true };
 }
 
-async function startServer() {
+async function startServer(name = "project", prepare) {
   if (!NodeFS.existsSync(NodePath.join(repo, "apps/web/dist/index.html"))) {
     log("building apps/web (no dist yet)");
     NodeChildProcess.execFileSync("vp", ["build"], {
@@ -130,7 +133,8 @@ async function startServer() {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-rec-"));
   const base = NodePath.join(root, "base");
   NodeFS.mkdirSync(base);
-  const project = scratchProject(root);
+  const project = scratchProject(root, name);
+  prepare?.(project);
 
   const port = await freePort();
   // env -i: the service launcher IPC channel of an outer T3 must not leak in.
@@ -349,7 +353,11 @@ try {
   for (const name of selected) {
     const page = await context.newPage();
     const cap = capture(page, server);
-    const shots = NodePath.join(server.root, "shots", name);
+    // CONN_RECORDER_SHOTS keeps screenshots after the run; else they go with the temp folder.
+    const shots = NodePath.join(
+      process.env.CONN_RECORDER_SHOTS ?? NodePath.join(server.root, "shots"),
+      name,
+    );
     NodeFS.mkdirSync(shots, { recursive: true });
     let step = 0;
     const ctx = {
@@ -363,16 +371,55 @@ try {
         log(name, "shot", file);
       },
       cap,
-      startServer: async () => {
-        const extra = await startServer();
+      startServer: async (name, prepare) => {
+        const extra = await startServer(name, prepare);
         extraServers.push(extra);
         return extra;
       },
-      startRustServer: async (previous) => {
-        const extra = await startRustServer(previous);
+      startRustServer: async (previous, prepare) => {
+        const extra = await startRustServer(previous, prepare);
         if (previous) extraServers[extraServers.indexOf(previous)] = extra;
         else extraServers.push(extra);
         return extra;
+      },
+      /** Issues a bearer session on `s` from its own CLI, as Orbit does; returns its id. */
+      issueSession: (s, label) => {
+        const argv = s.rust
+          ? [
+              rustBinary,
+              [
+                "auth",
+                "session",
+                "issue",
+                "--state-dir",
+                NodePath.join(s.root, "state"),
+                "--label",
+                label,
+                "--json",
+              ],
+            ]
+          : [
+              process.execPath,
+              [
+                NodePath.join(repo, "apps/server/src/bin.ts"),
+                "auth",
+                "session",
+                "issue",
+                "--base-dir",
+                s.base,
+                "--label",
+                label,
+                "--json",
+              ],
+            ];
+        const out = NodeChildProcess.execFileSync(argv[0], argv[1], {
+          cwd: s.project,
+          encoding: "utf8",
+          env: { ...process.env, T3CODE_HOME: s.base ?? "" },
+        });
+        const issued = JSON.parse(out.slice(out.indexOf("{")));
+        addSecret(issued.token);
+        return issued.sessionId;
       },
       stopServer: (s) =>
         new Promise((r) => {
