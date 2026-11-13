@@ -1,5 +1,3 @@
-import * as NodeChildProcess from "node:child_process";
-
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -182,9 +180,9 @@ describe("ssh command", () => {
         assert.equal(failure.message, "SSH command timed out after 1000ms.");
         const proxyPid = Number(failure.stdout?.trim());
         assert.isTrue(Number.isSafeInteger(proxyPid) && proxyPid > 1);
-        const state = NodeChildProcess.spawnSync("ps", ["-p", String(proxyPid), "-o", "stat="], {
-          encoding: "utf8",
-        }).stdout.trim();
+        const state = (yield* nativeSpawner.string(
+          ChildProcess.make("ps", ["-p", String(proxyPid), "-o", "stat="]),
+        )).trim();
         if (state !== "" && !state.startsWith("Z")) process.kill(proxyPid, "SIGKILL");
         assert.isTrue(state === "" || state.startsWith("Z"), `proxy still running (${state})`);
       }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
