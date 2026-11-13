@@ -52,3 +52,70 @@ export function getFileViewedRange<T extends { readonly fileKey: string }>(
   if (anchorIndex === -1) return files.slice(index, index + 1);
   return files.slice(Math.min(index, anchorIndex), Math.max(index, anchorIndex) + 1);
 }
+
+interface DiffPage {
+  readonly cursor: string | null;
+  readonly patch: string;
+  readonly truncated: boolean;
+  readonly nextCursor: string | null;
+  readonly omittedFileStats: ReadonlyArray<{
+    readonly path: string;
+    readonly additions: number;
+    readonly deletions: number;
+  }>;
+}
+
+export function isSameDiffPage(left: DiffPage, right: DiffPage): boolean {
+  return (
+    left.cursor === right.cursor &&
+    left.patch === right.patch &&
+    left.truncated === right.truncated &&
+    left.nextCursor === right.nextCursor &&
+    left.omittedFileStats.length === right.omittedFileStats.length &&
+    left.omittedFileStats.every((file, index) => {
+      const other = right.omittedFileStats[index];
+      return (
+        other !== undefined &&
+        other.path === file.path &&
+        other.additions === file.additions &&
+        other.deletions === file.deletions
+      );
+    })
+  );
+}
+
+/** A refresh under way: the pages re-read so far, and how many the reader had loaded. */
+export interface DiffRevalidation<Page> {
+  readonly fresh: ReadonlyArray<Page>;
+  readonly depth: number;
+}
+
+/**
+ * A refresh re-reads every loaded page in order, each from the cursor the page before it just
+ * returned, and shows them together. Replacing one page alone would leave later pages on cursors
+ * of the old diff, and dropping those would shorten the view under a reader further down.
+ */
+export function revalidateDiffPage<Page extends DiffPage>(
+  revalidation: DiffRevalidation<Page>,
+  page: Page,
+):
+  | { readonly pages: ReadonlyArray<Page> }
+  | { readonly revalidation: DiffRevalidation<Page>; readonly cursor: string } {
+  const fresh = [...revalidation.fresh, page];
+  if (page.nextCursor === null || fresh.length >= revalidation.depth) return { pages: fresh };
+  return { revalidation: { fresh, depth: revalidation.depth }, cursor: page.nextCursor };
+}
+
+/** Unchanged pages keep their identity, and with it their parses and rendered files. */
+export function keepUnchangedDiffPages<Page extends DiffPage>(
+  previous: ReadonlyArray<Page>,
+  fresh: ReadonlyArray<Page>,
+): ReadonlyArray<Page> {
+  const pages = fresh.map((page, index) => {
+    const shown = previous[index];
+    return shown !== undefined && isSameDiffPage(shown, page) ? shown : page;
+  });
+  return pages.length === previous.length && pages.every((page, index) => page === previous[index])
+    ? previous
+    : pages;
+}

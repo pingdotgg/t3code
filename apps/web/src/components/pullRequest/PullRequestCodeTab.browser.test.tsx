@@ -13,7 +13,7 @@ import "~/index.css";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
-const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
+const { diffAtom, pagedDiffAtom, pages, filePatch } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const filePatch = (path: string) =>
     [
@@ -47,6 +47,8 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
     "page-2": { patch: filePatch("late.test.ts"), truncated: false, nextCursor: null },
   };
   return {
+    pages,
+    filePatch,
     // An environment query whose refetch returns equal content hands back the previous value
     // itself, so a refresh publishes a new result around the very same page.
     diffAtom: Atom.make(() => AsyncResult.success(firstPage)),
@@ -109,6 +111,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
 
 import { render } from "../../../test/render";
 import PullRequestCodeTab from "./PullRequestCodeTab";
+import { pullRequestCodeViewKey, usePullRequestReviewStore } from "./pullRequestReviewStore";
 
 const detail: PullRequestDetailView = {
   provider: SourceControlProviderKind.make("github"),
@@ -169,6 +172,7 @@ function setup({ paged }: { paged: boolean }) {
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
   mocks.viewedListeners.clear();
+  usePullRequestReviewStore.setState({ codeViews: {}, codeDraftTexts: {}, codePositions: {} });
 }
 
 const tab = (
@@ -286,6 +290,69 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
   await expectFileHeaderShown(screen, container, "early-0.ts");
   await screen.rerender(tab(0, { path: "early-0.ts", nonce: 1 }, url, settled));
   await expectFileHeaderShown(screen, container, "late.test.ts");
+});
+
+// regression: #22886 a push to a file on an earlier page must not move a reader on a later one
+it("keeps later pages and the reader's place when a refresh changes an earlier page", async () => {
+  setup({ paged: true });
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
+  const firstPatch = pages.first!.patch;
+  using _restore = {
+    [Symbol.dispose]() {
+      pages.first = { ...pages.first!, patch: firstPatch };
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    },
+  };
+  const container = pagedContainer();
+  await using screen = await render(tab(0, { path: "late.test.ts", nonce: 1 }), { container });
+  await expectFileHeaderShown(screen, container, "late.test.ts");
+  await expect.element(screen.getByText("41 files", { exact: true })).toBeVisible();
+  const scroller = container.querySelector<HTMLElement>(".diff-render-surface")!;
+  // The reader takes over from the reveal, as any scroll of their own does.
+  scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+  // The viewer re-measures files above, so the place is where the file sits, not a scroll offset.
+  const header = screen.getByText("late.test.ts", { exact: true }).first();
+  const headerTop = () => header.element().getBoundingClientRect().top;
+  const before = headerTop();
+
+  pages.first = { ...pages.first!, patch: firstPatch + filePatch("early-new.ts") };
+  await screen.rerender(tab(1));
+
+  await expect.element(screen.getByText("42 files", { exact: true })).toBeVisible();
+  await vi.waitFor(() => expect(headerTop()).toBeCloseTo(before, 0));
+  const key = pullRequestCodeViewKey(EnvironmentId.make("environment"), detail);
+  expect(usePullRequestReviewStore.getState().codePositions[key]).toMatchObject({
+    path: "late.test.ts",
+    pages: 2,
+  });
+});
+
+it("returns to the folds and the file a reader left when the tab opens again", async () => {
+  setup({ paged: true });
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: true });
+  using _preferences = {
+    [Symbol.dispose]() {
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    },
+  };
+  const key = pullRequestCodeViewKey(EnvironmentId.make("environment"), detail);
+  {
+    const container = pagedContainer();
+    await using screen = await render(tab(0, { path: "late.test.ts", nonce: 1 }), { container });
+    await expectFileHeaderShown(screen, container, "late.test.ts");
+    const scroller = container.querySelector<HTMLElement>(".diff-render-surface")!;
+    scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+    scroller.scrollTop -= 1;
+    await vi.waitFor(() =>
+      expect(usePullRequestReviewStore.getState().codePositions[key]?.pages).toBe(2),
+    );
+  }
+
+  const container = pagedContainer();
+  await using screen = await render(tab(0), { container });
+  await expectFileHeaderShown(screen, container, "late.test.ts");
+  // The reveal unfolded it, and that choice came back with the place.
+  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
 });
 
 it("never requests the diff of a selected commit the pull request no longer has", async () => {

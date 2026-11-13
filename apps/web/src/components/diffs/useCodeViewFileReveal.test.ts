@@ -185,4 +185,27 @@ describe("createCodeViewFileReveal", () => {
     reveal.flush();
     expect(scrolledAway.scrolls).toEqual([]);
   });
+
+  it("reports the file at the top of the viewport and returns to that place, folded or not", () => {
+    const reveal = createCodeViewFileReveal();
+    const view = viewer(["a", "b", "c"]);
+    const tops: Record<string, number> = { a: 0, b: 300, c: 900 };
+    let scrollTop = 420;
+    reveal.attach({
+      ...view,
+      getInstance: () => ({
+        getScrollTop: () => scrollTop,
+        getTopForItem: (id: string) => tops[id],
+        getRenderedItems: () => ["a", "b", "c"].map((id) => ({ id, instance: {} as never })),
+      }),
+    });
+
+    expect(reveal.position()).toEqual({ id: "b", offset: 120 });
+    scrollTop = -10;
+    expect(reveal.position()).toEqual({ id: "a", offset: -10 });
+
+    view.collapsed.add("b");
+    reveal.restore("b", 120);
+    expect(view.scrolls).toEqual([{ type: "item", id: "b", align: "start", offset: -120 }]);
+  });
 });

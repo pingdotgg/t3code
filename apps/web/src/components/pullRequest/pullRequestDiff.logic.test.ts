@@ -5,6 +5,8 @@ import {
   getFileViewedRange,
   isFileDiffCollapsed,
   isLineInFileDiff,
+  keepUnchangedDiffPages,
+  revalidateDiffPage,
   withFileDiffFold,
 } from "./pullRequestDiff.logic";
 
@@ -82,5 +84,49 @@ describe("getFileViewedRange", () => {
     expect(getFileViewedRange(files, "a.ts", null)).toEqual([files[1]]);
     expect(getFileViewedRange(files, "a.ts", "removed.ts")).toEqual([files[1]]);
     expect(getFileViewedRange(files, "removed.ts", "a.ts")).toEqual([]);
+  });
+});
+
+describe("revalidateDiffPage", () => {
+  const page = (cursor: string | null, patch: string, nextCursor: string | null) => ({
+    cursor,
+    patch,
+    nextCursor,
+    truncated: false,
+    omittedFileStats: [],
+  });
+  const shown = [page(null, "one", "2"), page("2", "two", "3"), page("3", "three", "4")];
+
+  it("re-reads every loaded page from fresh cursors before replacing any of them", () => {
+    const first = revalidateDiffPage({ fresh: [], depth: 3 }, page(null, "one changed", "2b"));
+    // The pages after the changed one stay on screen until all three are read again.
+    if (!("revalidation" in first)) throw new Error("expected the refresh to continue");
+    expect(first.cursor).toBe("2b");
+    const second = revalidateDiffPage(first.revalidation, page("2b", "two", "3b"));
+    if (!("revalidation" in second)) throw new Error("expected the refresh to continue");
+    const third = revalidateDiffPage(second.revalidation, page("3b", "three", "4b"));
+    expect(third).toEqual({
+      pages: [page(null, "one changed", "2b"), page("2b", "two", "3b"), page("3b", "three", "4b")],
+    });
+  });
+
+  it("ends where the refreshed diff does", () => {
+    expect(revalidateDiffPage({ fresh: [], depth: 3 }, page(null, "all", null))).toEqual({
+      pages: [page(null, "all", null)],
+    });
+  });
+
+  it("keeps the identity of pages a refresh brought back unchanged", () => {
+    const changed = page(null, "one changed", "2");
+    const merged = keepUnchangedDiffPages(shown, [changed, { ...shown[1]! }, { ...shown[2]! }]);
+    expect(merged[0]).toBe(changed);
+    expect(merged[1]).toBe(shown[1]);
+    expect(merged[2]).toBe(shown[2]);
+    expect(
+      keepUnchangedDiffPages(
+        shown,
+        shown.map((entry) => ({ ...entry })),
+      ),
+    ).toBe(shown);
   });
 });

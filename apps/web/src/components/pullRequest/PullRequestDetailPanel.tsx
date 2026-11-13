@@ -109,6 +109,7 @@ import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavai
 import { SourceControlAppAccessNotice } from "../SourceControlAppAccessNotice";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
+import { pullRequestCodeViewKey, usePullRequestReviewStore } from "./pullRequestReviewStore";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
@@ -409,14 +410,14 @@ export function PullRequestDetailPanel({
     onTabChange?.(next);
   };
   const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
-  const [codeCommitScope, setCodeCommitScope] = useState<{
-    readonly pullRequestKey: string;
-    readonly oid: string | null;
-  }>(() => ({ pullRequestKey, oid: pullRequestLinkCommit(revealUrl) }));
-  const selectedCodeCommitOid =
-    codeCommitScope.pullRequestKey === pullRequestKey ? codeCommitScope.oid : null;
+  // Kept with the rest of the Code tab's view, so reopening the panel returns to the same commit.
+  const codeViewKey = pullRequestCodeViewKey(environmentId, reference);
+  const selectedCodeCommitOid = usePullRequestReviewStore(
+    (store) => store.codeViews[codeViewKey]?.commit ?? null,
+  );
+  const updateCodeView = usePullRequestReviewStore((store) => store.updateCodeView);
   const selectCodeCommit = (oid: string | null) => {
-    setCodeCommitScope({ pullRequestKey, oid });
+    updateCodeView(codeViewKey, () => ({ commit: oid }));
   };
   const openCommit = (oid: string) => {
     selectCodeCommit(oid);

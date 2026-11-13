@@ -9,6 +9,8 @@ import { useState } from "react";
 interface FileRevealHandle {
   getInstance():
     | {
+        getScrollTop?(): number;
+        getTopForItem?(id: string): number | undefined;
         getRenderedItems?(): readonly {
           id: string;
           instance: {
@@ -66,6 +68,7 @@ export function createCodeViewFileReveal() {
   let pending: {
     id: string;
     range?: SelectedLineRange;
+    offset?: number;
     positionedFile?: boolean;
     loadingFile?: boolean;
     settling?: boolean;
@@ -73,7 +76,9 @@ export function createCodeViewFileReveal() {
   const flush = () => {
     if (pending === null || viewer === null) return;
     const item = viewer.getItem(pending.id);
-    if (!viewer.getInstance() || item === undefined || item.collapsed === true) return;
+    if (!viewer.getInstance() || item === undefined) return;
+    // A reader's own place can be in a folded file; a revealed file is unfolded first.
+    if (item.collapsed === true && pending.offset === undefined) return;
     const renderedItems = viewer.getInstance()?.getRenderedItems?.();
     if (pending.range && renderedItems) {
       const rendered = renderedItems.find((entry) => entry.id === pending?.id);
@@ -142,7 +147,13 @@ export function createCodeViewFileReveal() {
     viewer.scrollTo(
       target.range
         ? { type: "range", id: target.id, range: target.range, align: "center" }
-        : { type: "item", id: target.id, align: "start" },
+        : {
+            type: "item",
+            id: target.id,
+            align: "start",
+            // The viewer subtracts an offset from the file's top.
+            ...(target.offset === undefined ? {} : { offset: -target.offset }),
+          },
     );
   };
   return {
@@ -166,6 +177,33 @@ export function createCodeViewFileReveal() {
     request(fileKey: string, range?: SelectedLineRange) {
       pending = { id: fileKey, ...(range ? { range } : {}) };
       flush();
+    },
+    /** Returns the reader to a place `position` reported, `offset` pixels below the file's top. */
+    restore(fileKey: string, offset: number) {
+      pending = { id: fileKey, offset };
+      flush();
+    },
+    /** The file at the top of the viewport and how far the reader is past its top. */
+    position(): { readonly id: string; readonly offset: number } | null {
+      const instance = viewer?.getInstance();
+      if (!instance?.getRenderedItems || !instance.getTopForItem || !instance.getScrollTop) {
+        return null;
+      }
+      const scrollTop = instance.getScrollTop();
+      let first: { readonly id: string; readonly offset: number } | null = null;
+      for (const { id } of instance.getRenderedItems()) {
+        const top = instance.getTopForItem(id);
+        if (top === undefined) continue;
+        const offset = scrollTop - top;
+        // The last file starting at or above the viewport's top, else the first below it.
+        if (
+          first === null ||
+          (offset >= 0 ? first.offset < 0 || offset < first.offset : first.offset < offset)
+        ) {
+          first = { id, offset };
+        }
+      }
+      return first;
     },
     /** The user scrolled; a reveal still being positioned must not pull them back. */
     cancel() {
