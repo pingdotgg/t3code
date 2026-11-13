@@ -5578,6 +5578,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return yield* withListRefsInvalidation(input.cwd, switchRef(input));
     }),
     initRepo: initRepoWithListRefsInvalidation,
+    invalidateRefs: Effect.fn("GitVcsDriver.invalidateRefs")(function* (cwd) {
+      return yield* withListRefsInvalidation(cwd, Effect.void);
+    }),
     listLocalBranchNames,
     listWorktreePaths,
   });

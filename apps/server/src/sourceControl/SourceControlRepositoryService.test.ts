@@ -78,6 +78,7 @@ function layer(input: {
     Layer.provide(
       Layer.mock(GitVcsDriver.GitVcsDriver)({
         execute: () => Effect.succeed(processOutput()),
+        invalidateRefs: () => Effect.void,
         ensureRemote: () => Effect.succeed("origin"),
         pushCurrentBranch: () =>
           Effect.succeed({
@@ -220,7 +221,7 @@ it.effect.each(["--bare", "source.git"])(
         });
         assert.strictEqual(result.cwd, destinationPath);
         assert.isTrue(yield* fs.exists(path.join(destinationPath, ".git")));
-      }).pipe(Effect.provide(layer({ git: { execute: git.execute } })));
+      }).pipe(Effect.provide(layer({ git })));
     }).pipe(
       Effect.provide(
         GitVcsDriver.layer.pipe(
@@ -233,6 +234,67 @@ it.effect.each(["--bare", "source.git"])(
         ),
       ),
     ),
+);
+
+it.effect("lists the cloned branches after a ref list was read while the clone ran", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-clone-refs-" });
+    const source = path.join(parent, "source");
+    const destinationPath = path.join(parent, "checkout");
+    const run = (cwd: string, args: ReadonlyArray<string>) =>
+      git.execute({ operation: "test.git", cwd, args });
+    yield* run(parent, ["init", "--initial-branch=staging", source]);
+    yield* run(source, [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "init",
+    ]);
+    const refNames = git
+      .listRefs({ cwd: destinationPath })
+      .pipe(Effect.map((result) => result.refs.map((ref) => ref.name)));
+    let duringClone: ReadonlyArray<string> | null = null;
+    // Stands in for git clone so the read lands while HEAD is still unborn.
+    const cloneInTwoSteps = Effect.gen(function* () {
+      yield* run(parent, ["init", "--initial-branch=staging", destinationPath]);
+      duringClone = yield* refNames;
+      return yield* run(destinationPath, ["pull", source, "staging"]);
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      yield* service.cloneRepository({ remoteUrl: source, destinationPath });
+    }).pipe(
+      Effect.provide(
+        layer({
+          git: {
+            ...git,
+            execute: (input) => (input.args[0] === "clone" ? cloneInTwoSteps : git.execute(input)),
+          },
+        }),
+      ),
+    );
+
+    assert.deepStrictEqual(duringClone, []);
+    assert.deepStrictEqual(yield* refNames, ["staging"]);
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-clone-refs-config-",
+          }),
+        ),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
 );
 
 it.effect("reports clone progress from git's stderr and keeps its error text on failure", () =>
