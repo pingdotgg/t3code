@@ -10,8 +10,8 @@ import {
   type ModelSelection,
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpThreadInterruptResult,
-  OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadSendResult,
+  OrchestratorMcpThreadReadResult,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -80,13 +80,13 @@ const delegatedResult = "Delegated API boundary inspected.";
 const cancellationPrompt = "Remain active until the parent cancels this delegated task.";
 const queuedFollowupPrompt = "Complete the queued follow-up and return the final result.";
 const queuedFollowupResult = "Queued delegated follow-up completed.";
+const decodeThreadRead = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 const longFollowupResult = "Long delegated follow-up line. ".repeat(1_500);
 
 const decodeDelegateTaskResult = Schema.decodeUnknownEffect(OrchestratorMcpDelegateTaskResult);
 const decodeThreadInterruptResult = Schema.decodeUnknownEffect(
   OrchestratorMcpThreadInterruptResult,
 );
-const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 const decodeThreadSendResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadSendResult);
 
 const codexSelection = {
@@ -732,7 +732,7 @@ describe("orchestrator MCP toolkit", () => {
           }).pipe(Effect.withTracer(tracer));
           expect(read.isError).not.toBe(true);
           expect(transferReads.length).toBeGreaterThan(0);
-          const firstPage = yield* decodeThreadReadResult(read.structuredContent);
+          const firstPage = yield* decodeThreadRead(read.structuredContent);
           const finalItem = firstPage.items.find((item) => item.text === result.slice(0, 500));
           expect(finalItem).toBeDefined();
           if (result.length > 500) {
@@ -758,7 +758,7 @@ describe("orchestrator MCP toolkit", () => {
               textOffset: nextTextOffset,
               maxCharsPerItem: 50_000,
             }).pipe(Effect.withTracer(tracer));
-            const nextPage = yield* decodeThreadReadResult(continuation.structuredContent);
+            const nextPage = yield* decodeThreadRead(continuation.structuredContent);
             text += nextPage.items[0]?.text ?? "";
             nextTextOffset = nextPage.items[0]?.nextTextOffset ?? null;
           }
