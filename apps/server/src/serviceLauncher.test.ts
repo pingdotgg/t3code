@@ -318,6 +318,70 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     }),
   );
 
+  it.effect(
+    "repoints the systemd unit the manager loads when environment.d moves XDG_CONFIG_HOME",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-xdg-" });
+        const home = path.join(root, "home");
+        const managerUnitDir = path.join(home, ".config", "systemd", "user");
+        const unitPath = path.join(managerUnitDir, "t3code.service");
+        const render = (version: string) =>
+          renderBootServiceUnit({ ...unitPlan(root, version), unitPath });
+        yield* fs.makeDirectory(managerUnitDir, { recursive: true });
+        yield* fs.writeFileString(unitPath, render("1.0.0"));
+        // Fake manager: busctl reports the unit search path, systemctl reloads.
+        const bin = path.join(root, "bin");
+        yield* fs.makeDirectory(bin, { recursive: true });
+        const unitPathJson = JSON.stringify({
+          type: "as",
+          data: [`${managerUnitDir}.control`, managerUnitDir, "/usr/lib/systemd/user"],
+        });
+        yield* fs.writeFileString(
+          path.join(bin, "busctl"),
+          `#!/bin/sh\nprintf '%s\\n' '${unitPathJson}'\n`,
+        );
+        yield* fs.writeFileString(
+          path.join(bin, "systemctl"),
+          `#!/bin/sh\necho reload >> '${path.join(root, "reloads")}'\n`,
+        );
+        yield* fs.chmod(path.join(bin, "busctl"), 0o755);
+        yield* fs.chmod(path.join(bin, "systemctl"), 0o755);
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", "1.1.0"),
+          "process.exit(0);\n",
+        );
+        yield* Effect.promise(() =>
+          writeServiceState(path.join(root, "runtime", "service-state.json"), {
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.1.0",
+            update: {
+              id: "update-1",
+              fromVersion: "1.0.0",
+              targetVersion: "1.1.0",
+              status: "committed",
+            },
+          }),
+        );
+        vi.stubEnv("PATH", bin);
+        vi.stubEnv("HOME", home);
+        // environment.d changes what services inherit, not where the manager reads units.
+        vi.stubEnv("XDG_CONFIG_HOME", path.join(home, "service-config"));
+        vi.stubEnv("T3_BOOT_SERVICE_UNIT", "t3code.service");
+
+        yield* Effect.promise(() =>
+          expect(runLauncher(root)).rejects.toThrow("Active child exited unexpectedly (0)."),
+        );
+
+        assert.equal(yield* fs.readFileString(unitPath), render("1.1.0"));
+        assert.equal(yield* fs.readFileString(path.join(root, "reloads")), "reload\n");
+      }),
+  );
+
   it.effect("keeps the service manager's append log bounded when it starts", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -389,6 +453,36 @@ process.exit(0);
       assert.isTrue(yield* fs.exists(path.join(versionDir, "started")));
       assert.isFalse(yield* fs.exists(restartPending));
       assert.equal(yield* fs.readFileString(statePath), legacyContents);
+    }),
+  );
+
+  it.effect("starts the runtime in a T3 home whose name ends in a space", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-space-" });
+      const root = path.join(parent, "T3 data ");
+      const versionDir = path.join(root, "runtime", "versions", "1.0.0");
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        versionDir,
+        `
+import { writeFileSync } from "node:fs";
+writeFileSync(new URL("./started", import.meta.url), "");
+process.exit(0);
+`,
+      );
+      yield* fs.writeFileString(
+        path.join(root, "runtime", "service-state.json"),
+        JSON.stringify({ protocol: 4, activeVersion: "1.0.0" }),
+      );
+
+      yield* Effect.promise(() =>
+        expect(runLauncher(root)).rejects.toThrow("Active child exited unexpectedly (0)."),
+      );
+
+      assert.isTrue(yield* fs.exists(path.join(versionDir, "started")));
     }),
   );
 
@@ -1489,6 +1583,56 @@ process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: paths.dat
       // The lock is released only once the launcher is done with the home.
       assert.isFalse(yield* Effect.promise(() => serviceLauncherIsRunning(lockPath)));
       assert.deepEqual(yield* Effect.promise(() => readServiceState(statePath)), pending);
+    }),
+  );
+
+  it.effect("starts no trial when stopped during the pre-update backup", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-backup-stop-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const childSource = "setInterval(() => {}, 1000);\n";
+      for (const version of ["1.0.0", "1.1.0"]) {
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", version),
+          childSource,
+        );
+      }
+      const dbPath = path.join(root, "userdata", "state.sqlite");
+      yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
+      yield* fs.writeFileString(dbPath, "database");
+      const pending = {
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: "1.0.0",
+        update: {
+          id: "update-1",
+          fromVersion: "1.0.0",
+          targetVersion: "1.1.0",
+          dbPath,
+          status: "pending",
+        },
+      } as const;
+      yield* Effect.promise(() => writeServiceState(statePath, pending));
+      const childCount = spawnedChildren.length;
+      const launcher = new Launcher(root, pending);
+
+      // Recovery is already queued, so this stop lands while the backup runs.
+      const running = launcher.run();
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
+
+      // A trial started here arms its 30-minute prepared timer, which keeps the stopped launcher alive.
+      assert.deepEqual(
+        spawnedChildren.slice(childCount).map((child) => child.spawnargs.join(" ")),
+        [],
+      );
+      assert.deepEqual(yield* Effect.promise(() => readServiceState(statePath)), pending);
+      const backupDir = path.join(root, "runtime", "db-backup", "update-1");
+      assert.isFalse(yield* fs.exists(backupDir));
+      assert.isFalse(yield* fs.exists(`${backupDir}.staging`));
     }),
   );
 

@@ -2039,6 +2039,25 @@ code {
   text-decoration: none;
 }
 
+/* Triple-click selection stops at block-level boxes, flex items included, so file chips in
+   prose stay inline-level down to the icon and label. */
+.chat-markdown-file-link {
+  display: inline-block;
+  overflow-x: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-markdown-file-link > :is(svg, img) {
+  display: inline;
+  margin-inline-end: 0.2em;
+  vertical-align: -0.125em;
+}
+
+.chat-markdown-file-link > [data-slot="context-chip-label"] {
+  display: inline;
+}
+
 /* File links and context chips own their color and focus ring. */
 .chat-markdown a:not(.chat-markdown-file-link, :has([data-slot="context-chip-label"])) {
   color: var(--info-foreground);
@@ -2605,11 +2624,19 @@ code {
 }
 
 /* A workspace area with no control of its own takes F6 focus itself; keep that visible.
-   workspaceFocus.ts marks those, since :focus-visible also matches a clicked area after a key press. */
+   workspaceFocus.ts marks those, since :focus-visible also matches a clicked area after a key press.
+   The conversation's timeline takes it instead, and its top fade mask would hide its own ring. */
 [data-workspace-area]:focus-visible {
   outline: none;
 }
-[data-workspace-keyboard-focus]:focus {
+[data-workspace-keyboard-focus]:focus,
+[data-workspace-area="conversation"]:has(
+  .messages-timeline-scroll[data-workspace-keyboard-focus]:focus
+) {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
+}
+
+.messages-timeline-scroll:focus-visible {
+  outline: none;
 }
