@@ -3417,6 +3417,97 @@ describe("orchestration v2 provider switching", () => {
       }),
   );
 
+  it.live("keeps the user's conversation after a scheduled fresh run in the same thread", () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("scheduled-fresh-user-chat");
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          driver: CLAUDE_DRIVER,
+          capabilities: ClaudeProviderCapabilitiesV2,
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          responseByRunOrdinal: {},
+          capturedTurns,
+          nativeThreadGeneration: yield* Ref.make(0),
+        }),
+      ]);
+      const threadId = ThreadId.make("thread:scheduled-fresh-user-chat");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const send = (name: string, scheduled: boolean) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:scheduled-fresh-user-chat:${name}`),
+            threadId,
+            messageId: MessageId.make(`message:scheduled-fresh-user-chat:${name}`),
+            text: name,
+            attachments: [],
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            dispatchMode: { type: "queue_after_active" },
+            ...(scheduled
+              ? {
+                  scheduledTaskId: ScheduledTaskId.make("scheduled-fresh-user-chat"),
+                  freshContext: true,
+                }
+              : {}),
+          });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:scheduled-fresh-user-chat:create"),
+          threadId,
+          projectId: ProjectId.make("project:scheduled-fresh-user-chat"),
+          title: "User chat with a fresh-session schedule",
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        for (const [name, scheduled] of [
+          ["user-first", false],
+          ["scheduled", true],
+          ["user-second", false],
+        ] as const) {
+          yield* send(name, scheduled);
+          yield* worker.drain();
+          yield* waitForIdle(threadId);
+        }
+        const turns = yield* Ref.get(capturedTurns);
+        const turnFor = (name: string) => turns.find((turn) => turn.text.endsWith(name));
+        assert.notEqual(
+          turnFor("scheduled")!.nativeThreadId,
+          turnFor("user-first")!.nativeThreadId,
+        );
+        // The scheduled run's fresh session must not replace the user's conversation.
+        assert.equal(turnFor("user-second")!.nativeThreadId, turnFor("user-first")!.nativeThreadId);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: "scheduled-fresh-user-chat",
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    }),
+  );
+
   it.live("keeps the thread a queued fresh run reserved for that run", () =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("fresh-context-reserved");
