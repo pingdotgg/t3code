@@ -179,7 +179,7 @@ const decodeCodexHistoryBase = Schema.decodeUnknownOption(
 // Original rollouts end in their thread ID, rewound ones in `<thread ID>_<rollout ID>`.
 const CODEX_ROLLOUT_ID_PATTERN =
   /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?\.jsonl$/i;
-// Codex records a chat's project only here; moving a chat leaves its rollout cwd unchanged.
+// Codex records a chat's project here, not in the rollout; moving a chat leaves its cwd unchanged.
 const CODEX_STATE_DATABASE = "state_5.sqlite";
 // Codex Desktop keeps chats moved into a local project here and leaves threads.project_id NULL.
 const CODEX_GLOBAL_STATE = ".codex-global-state.json";
