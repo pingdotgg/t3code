@@ -28,6 +28,7 @@ import { isExpiredAgentActivityState, notificationForActivity } from "./agentAct
 import {
   alertForActivityRows,
   attentionTransitionRows,
+  baselineAfterSilentDelivery,
   terminalTransitionRows,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
@@ -327,12 +328,22 @@ const make = Effect.gen(function* () {
             ),
           );
       } else if (acknowledgeAggregate) {
+        // An alerting job queued earlier may still be on its way behind this replay.
+        const baseline =
+          job.replay && aggregate && previousAggregate && preferences.value.notificationsEnabled
+            ? baselineAfterSilentDelivery({
+                previousAggregate,
+                nextAggregate: aggregate,
+                preferences: preferences.value,
+                nowMs: now.epochMilliseconds,
+              })
+            : aggregate;
         yield* devices.markDelivery({
           userId: job.userId,
           deviceId: job.deviceId,
           kind: active ? "live_activity_update" : "live_activity_end",
           // Retain terminal rows as the baseline so finished-card replays cannot alert again.
-          aggregate: preferences.value.liveActivitiesEnabled ? aggregate : null,
+          aggregate: preferences.value.liveActivitiesEnabled ? baseline : null,
           deliveredAt: DateTime.formatIso(now),
         });
       }

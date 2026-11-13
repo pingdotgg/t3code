@@ -613,9 +613,12 @@ describe("environments turned off on the device", () => {
       expect(h.sent).toHaveLength(0);
 
       h.current.state = { ...state, phase: "waiting_for_input" };
+      // Turning the environment off re-registers, and that silent replay overtakes the alert.
+      yield* deliveries.process({ ...h.job, state: null, replay: true });
+      expect(h.sent.map((message) => message.alert)).toEqual([false]);
       yield* deliveries.process({ ...h.job, state: h.current.state });
-      expect(h.sent).toHaveLength(1);
-      expect(h.sent[0]?.data).toMatchObject({
+      expect(h.sent.map((message) => message.alert)).toEqual([false, true]);
+      expect(h.sent[1]?.data).toMatchObject({
         alert_path: state.deepLink,
         ...androidActivityData(aggregateFor([h.current.state])),
       });
