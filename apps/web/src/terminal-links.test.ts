@@ -299,6 +299,18 @@ describe("resolvePathLinkTarget", () => {
     );
   });
 
+  it.each([
+    ["src/main.ts", "/repo/src/main.ts"],
+    ["/repo/src/main.ts", "/repo/src/main.ts"],
+    [String.raw`C:\repo\src\main.ts`, String.raw`C:\repo\src\main.ts`],
+    ["app/(auth)/page.tsx", "/repo/app/(auth)/page.tsx"],
+  ])("preserves a TypeScript compiler location on %s", (path, target) => {
+    const text = `${path}(42,7)`;
+    const links = extractTerminalLinks(`${text}: error TS2322`);
+    expect(links).toEqual([{ kind: "path", text, start: 0, end: text.length }]);
+    expect(resolveTerminalLinkTarget(links[0]?.text ?? "", "/repo")).toBe(`${target}:42:7`);
+  });
+
   // regression: #36005 OSC 8 file URIs were joined onto the cwd as relative paths
   it("does not resolve an OSC 8 file URI target against the cwd", () => {
     expect(resolveTerminalLinkTarget("file:///var/tmp/report.txt", "/workspace/project")).toBe(
