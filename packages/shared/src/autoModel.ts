@@ -113,6 +113,13 @@ export function isAutoModelSlug(slug: string | null | undefined): boolean {
   );
 }
 
+/** One picker row per level; every Claude provider lists them, so Auto needs no settings. */
+export const AUTO_LEVEL_MODELS: ReadonlyArray<{ readonly slug: string; readonly name: string }> =
+  AUTO_LEVELS.map((level) => ({
+    slug: `${AUTO_MODEL_SLUG}-${level}`,
+    name: `Auto ${level[0]!.toUpperCase()}${level.slice(1)}`,
+  }));
+
 export function isAutoModelSelection(selection: ModelSelection | null | undefined): boolean {
   return isAutoModelSlug(selection?.model);
 }
