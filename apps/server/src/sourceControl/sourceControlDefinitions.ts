@@ -26,7 +26,9 @@ export const isChangeRequestCloseCommand = (command: string) =>
     (definition) => definition.changeRequestCloseCommand?.test(command) === true,
   );
 
-const NAMED_CHANGE_REQUEST = /(?:^|[\s=])#?(\d+)(?=\s|$)|\/(?:pulls?|merge_requests)\/(\d+)/gu;
+// Quotes included, since Codex runs `/bin/zsh -lc "gh pr merge 19"`.
+const NAMED_CHANGE_REQUEST =
+  /(?:^|[\s=])["']?#?(\d+)["']?(?=\s|$)|\/(?:pulls?|merge_requests)\/(\d+)/gu;
 
 /**
  * The change request numbers a merge or close command names, or "any" when one names none, as a
