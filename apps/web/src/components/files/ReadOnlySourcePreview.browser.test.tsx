@@ -64,4 +64,27 @@ describe("ReadOnlySourcePreview", () => {
     document.getSelection()!.setBaseAndExtent(firstText, 4, pre, pre.childNodes.length);
     expect(copiedText(rows()[0]!)).toBeNull();
   });
+
+  it("keeps a selection whose rows scroll out of the render window", async () => {
+    await getSyntaxHighlighterPromise("text");
+    await using screen = await render(
+      <div className="flex h-[400px] flex-col">
+        <ReadOnlySourcePreview name="notes.txt" text={text} wordWrap={false} />
+      </div>,
+    );
+    const root = screen.container.querySelector("diffs-container")!.shadowRoot!;
+    const rows = () => root.querySelectorAll("[data-line]");
+    await vi.waitFor(() => expect(rows()[0]?.textContent).toBe("line 1"));
+
+    // A drag from line 1 to line 30, then the preview scrolls on while the button is held.
+    const firstText = rows()[0]!.querySelector("span")!.firstChild!;
+    const endText = rows()[29]!.querySelector("span")!.firstChild!;
+    document.getSelection()!.setBaseAndExtent(firstText, 0, endText, "line 30".length);
+    const scroller = screen.container.querySelector(".file-preview-virtualizer")!;
+    scroller.scrollTop = scroller.scrollHeight;
+    await vi.waitFor(() => expect(rows()[0]?.textContent).not.toBe("line 1"));
+
+    const selected = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join("\n");
+    expect(copiedText(rows()[0]!)?.trimEnd()).toBe(selected);
+  });
 });
