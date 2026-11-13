@@ -97,8 +97,10 @@ function summarizeDynamicValue(value: unknown): unknown {
     pendingSpace = false;
     if (firstLine.length > 160) break;
   }
+  const last = firstLine.charCodeAt(158);
+  const end = last >= 0xd800 && last <= 0xdbff ? 158 : 159;
   return {
-    summary: firstLine.length <= 160 ? firstLine : `${firstLine.slice(0, 159).trimEnd()}…`,
+    summary: firstLine.length <= 160 ? firstLine : `${firstLine.slice(0, end).trimEnd()}…`,
     truncated: true,
   };
 }
