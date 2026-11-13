@@ -1550,13 +1550,22 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
   if (instance.driver === "codex") {
     const config = decodeCodexSettings(instance.config ?? {});
     if (Option.isSome(config)) {
-      const layout = yield* resolveCodexHomeLayout(config.value).pipe(
-        Effect.provideService(Path.Path, input.path),
-      );
+      const hostEnvironment = yield* HostProcess.Environment;
+      // A shadow shares the instance environment's CODEX_HOME, as the provider resolves it.
+      const environmentHome = (yield* mergeProviderInstanceEnvironment(
+        instance.environment,
+        hostEnvironment,
+      )).CODEX_HOME;
+      const layout = yield* resolveCodexHomeLayout(
+        config.value.shadowHomePath.trim() &&
+          !config.value.homePath.trim() &&
+          environmentHome?.trim()
+          ? { ...config.value, homePath: environmentHome }
+          : config.value,
+      ).pipe(Effect.provideService(Path.Path, input.path));
       if (layout.effectiveHomePath)
         resolved = { ...resolved, CODEX_HOME: layout.effectiveHomePath };
       if (layout.mode === "authOverlay") {
-        const hostEnvironment = yield* HostProcess.Environment;
         const sqliteEnvironment = yield* codexHomeEnvironment(layout, {
           ...hostEnvironment,
           ...resolved,

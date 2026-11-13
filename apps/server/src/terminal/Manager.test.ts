@@ -2352,6 +2352,38 @@ it.layer(
       ),
   );
 
+  it.effect("routes a shadow terminal's SQLite to the instance environment CODEX_HOME", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+        deriveProviderInstanceConfigMap,
+        serverSettings,
+        fileSystem: yield* FileSystem.FileSystem,
+        path,
+        rawProviderInstanceId: "environment_home",
+        env: undefined,
+      }).pipe(Effect.provideService(HostProcess.Environment, {}));
+
+      expect(environment.CODEX_HOME).toBe(path.resolve("/configured/environment-shadow"));
+      expect(environment.CODEX_SQLITE_HOME).toBe(path.resolve("/configured/environment-codex"));
+    }).pipe(
+      Effect.provide(
+        ServerSettings.layerTest({
+          providerInstances: {
+            [ProviderInstanceId.make("environment_home")]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [
+                { name: "CODEX_HOME", value: "/configured/environment-codex", sensitive: false },
+              ],
+              config: { shadowHomePath: "/configured/environment-shadow" },
+            },
+          },
+        }),
+      ),
+    ),
+  );
+
   it.effect("restarts a running terminal when the resolved provider environment changes", () =>
     Effect.gen(function* () {
       const providerInstanceId = ProviderInstanceId.make("codex_work");
