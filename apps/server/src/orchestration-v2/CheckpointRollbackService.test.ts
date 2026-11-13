@@ -32,7 +32,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
-import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import { withTurnStartReservation, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import { resolveCodexRollbackTurnCount } from "./Adapters/CodexAdapterV2.ts";
 import * as CheckpointService from "./CheckpointService.ts";
@@ -177,8 +177,10 @@ it.effect.each([
   { order: "cleanup-first", restoreFiles: true, leavesFolder: true },
   { order: "cleanup-first", restoreFiles: false, leavesFolder: true },
   { order: "cleanup-first", restoreFiles: true, leavesFolder: true, shared: true },
-])("locks rollback with %s", ({ order, restoreFiles, unmanaged, leavesFolder, shared }) =>
+  { order: "cleanup-first", restoreFiles: true, leavesFolder: true, createFails: true },
+])("locks rollback with %s", (row) =>
   Effect.gen(function* () {
+    const { order, restoreFiles, unmanaged, leavesFolder, shared, createFails } = row;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const workspaceRoot = yield* fileSystem.realPath(
@@ -249,6 +251,7 @@ it.effect.each([
                   path: worktreePath,
                 });
                 calls.push("create");
+                if (createFails) return yield* Effect.die("the branch is gone");
                 yield* fileSystem
                   .makeDirectory(path.join(worktreePath, ".git"), { recursive: true })
                   .pipe(Effect.orDie);
@@ -362,6 +365,16 @@ it.effect.each([
         }
         return;
       }
+      if (createFails) {
+        yield* Fiber.join(rollback).pipe(Effect.exit);
+        assert.deepEqual(calls, ["cleanup", "prune", "create"]);
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(worktreePath, "unsaved.txt")),
+          "keep",
+        );
+        assert.deepEqual(yield* fileSystem.readDirectory(path.dirname(worktreePath)), ["feature"]);
+        return;
+      }
       yield* Fiber.join(rollback);
       if (laterCleanup !== undefined) yield* Fiber.join(laterCleanup);
       const rollbackCalls = restoreFiles
@@ -379,6 +392,136 @@ it.effect.each([
       }
     }).pipe(Effect.provide(testLayer));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each([{ restoreFiles: true }, { restoreFiles: false }])(
+  "holds turn starts inside the worktree during rollback with restoreFiles $restoreFiles",
+  ({ restoreFiles }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceRoot = yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-rollback-reservation-" }),
+      );
+      const worktreesDir = path.join(workspaceRoot, "worktrees");
+      const worktreePath = path.join(worktreesDir, "repo", "feature");
+      yield* fileSystem.makeDirectory(path.join(worktreePath, ".git"), { recursive: true });
+      const threadId = ThreadId.make("rollback-reservation");
+      const providerThreadId = ProviderThreadId.make("rollback-reservation-provider-thread");
+      const providerInstanceId = ProviderInstanceId.make("rollback-reservation-provider");
+      const checkpointId = CheckpointId.make("rollback-reservation-checkpoint");
+      const scopeId = CheckpointScopeId.make("rollback-reservation-scope");
+      const release = Deferred.makeUnsafe<void>();
+      const openEntered = Deferred.makeUnsafe<void>();
+      const restoreEntered = Deferred.makeUnsafe<void>();
+      const releaseRestore = Deferred.makeUnsafe<void>();
+      const calls: string[] = [];
+      const projection = {
+        thread: {
+          id: threadId,
+          projectId: ProjectId.make("rollback-reservation-project"),
+          worktreePath,
+          branch: "feature/rollback-reservation",
+          activeProviderThreadId: providerThreadId,
+          modelSelection: { instanceId: providerInstanceId, model: "test-model" },
+        },
+        providerThread: {
+          id: providerThreadId,
+          providerSessionId: ProviderSessionId.make("rollback-reservation-session"),
+          providerInstanceId,
+        },
+        providerSession: undefined,
+        checkpoint: { id: checkpointId, scopeId, status: "ready", appRunOrdinal: 0 },
+        scope: { id: scopeId, cwd: worktreePath },
+        runsToRollback: [],
+        targetAttempt: undefined,
+        rolledBackAttemptIds: [],
+        staleCheckpoints: [],
+        rootNodes: [],
+        providerTurns: [],
+      } as unknown as ProjectionStore.ProjectionCheckpointRollbackContext;
+      const testLayer = CheckpointRollbackService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            ThreadCommandExecutor.layer,
+            NodeServices.layer,
+            Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as never),
+            ServerSettings.layerTest(),
+            Layer.mock(ProjectStore.ProjectStoreV2)({
+              get: () => Effect.succeedSome({ workspaceRoot } as never),
+            }),
+            Layer.mock(GitWorkflow.GitWorkflowService)({}),
+            Layer.mock(CheckpointService.CheckpointServiceV2)({
+              restore: () =>
+                Deferred.succeed(restoreEntered, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseRestore)),
+                  Effect.andThen(Effect.sync(() => calls.push("files"))),
+                ),
+            }),
+            Layer.mock(EventSink.EventSinkV2)({ write: () => Effect.succeed([]) }),
+            IdAllocator.layer,
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThread: () => Effect.succeed(projection.thread),
+              getCheckpointRollbackContext: () => Effect.succeed(projection),
+              getShellSnapshot: () =>
+                Effect.succeed({
+                  schemaVersion: 1,
+                  snapshotSequence: 0,
+                  threads: [],
+                  archivedThreads: [],
+                }),
+            }),
+            Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+              open: () =>
+                Deferred.succeed(openEntered, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.as({} as never),
+                ),
+            }),
+            Layer.mock(RuntimePolicy.RuntimePolicyV2)({
+              resolve: () => Effect.succeed({ cwd: worktreePath } as never),
+            }),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
+        const rollback = yield* service
+          .execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(openEntered);
+        // A synchronous realPath lets the forked start reach the reservation
+        // before the next assertion, so "not entered" means "waiting".
+        const startTurn = withTurnStartReservation(
+          FileSystem.makeNoop({ realPath: (target) => Effect.succeed(target) }),
+          path,
+          path.join(worktreePath, "packages", "app"),
+          Effect.sync(() => calls.push("turn start")),
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        const turnStart = yield* startTurn;
+        if (restoreFiles) {
+          assert.deepEqual(calls, []);
+          yield* Deferred.succeed(release, undefined);
+          // The reservation must still be held while files are being restored,
+          // not only while the provider rollback is in flight.
+          yield* Deferred.await(restoreEntered);
+          const duringRestore = yield* startTurn;
+          assert.deepEqual(calls, []);
+          yield* Deferred.succeed(releaseRestore, undefined);
+          yield* Fiber.join(duringRestore);
+        } else {
+          // Nothing is rewritten, so the turn start must not wait for the provider.
+          yield* Fiber.join(turnStart);
+          yield* Deferred.succeed(release, undefined);
+        }
+        yield* Fiber.join(rollback);
+        yield* Fiber.join(turnStart);
+        assert.deepEqual(
+          calls,
+          restoreFiles ? ["files", "turn start", "turn start"] : ["turn start"],
+        );
+      }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 const seedRollbackHistory = Effect.gen(function* () {
