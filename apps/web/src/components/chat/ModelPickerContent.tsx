@@ -45,6 +45,7 @@ import {
   ComboboxListVirtualized,
 } from "../ui/combobox";
 import { ModelEsque } from "./providerIconUtils";
+import type { AutoRoute } from "./autoRoute";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { registerModelPickerContent } from "../../modelPickerVisibility";
 import { primaryServerKeybindingsAtom } from "../../state/server";
@@ -338,6 +339,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   workspaceCwd?: string | null;
   activeInstanceId: ProviderInstanceId;
   model: string;
+  /** What the `auto` model routes to right now; its rows show it. */
+  autoRoute?: AutoRoute | null;
   selectedModels?: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
   onToggleModel?: (instanceId: ProviderInstanceId, model: string) => void;
   lockedProvider: ProviderDriverKind | null;
@@ -876,6 +879,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     modelJumpLabelByKey,
     activeModelKey,
     selectedModelKeySet,
+    autoRouteLabel: props.autoRoute?.label,
   };
 
   const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -1189,15 +1193,16 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 }
                 const disabledReason =
                   getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
+                const autoRoute = model.slug === "auto" ? props.autoRoute : null;
                 return (
                   <ModelListRow
                     key={modelKey}
                     index={index}
                     slug={model.slug}
-                    name={model.name}
+                    name={autoRoute ? `${model.name} · ${autoRoute.label}` : model.name}
                     subProvider={model.subProvider}
                     instanceId={model.instanceId}
-                    driverKind={model.driverKind}
+                    driverKind={autoRoute?.driverKind ?? model.driverKind}
                     providerDisplayName={model.instanceDisplayName}
                     providerAccentColor={model.instanceAccentColor}
                     acpRegistryAgentId={model.acpRegistryAgentId}
