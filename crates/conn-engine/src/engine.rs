@@ -16,7 +16,7 @@ use conn_provider::Provider;
 use serde_json::{Value, json};
 use tokio::sync::watch;
 
-use crate::commands::{self, CommandError, Effect, failure, finish_run};
+use crate::commands::{self, CommandError, Effect};
 use crate::runner::LiveThread;
 use crate::store::{Store, StoreResult, Tx};
 use crate::{BoxFuture, Engine, EngineError, Subscription, streams};
@@ -78,8 +78,8 @@ pub(crate) fn project_id(workspace_root: &str) -> String {
 }
 
 impl SqliteEngine {
-    /// Opens the store, adds the configured projects, and ends every run a previous process
-    /// left live: no provider survives a restart, so those runs fail with a clear reason.
+    /// Opens the store, adds the configured projects, and recovers every run a previous process
+    /// left active (see `restart.rs`): a turn the provider had continues in a new run.
     pub fn open(config: EngineConfig) -> Result<Self, String> {
         let home = config.home.clone().unwrap_or_else(|| {
             config
@@ -98,34 +98,16 @@ impl SqliteEngine {
                 &project.workspace_root,
             )?;
         }
-        for (thread_id, run) in unfinished {
-            let run_id = run["id"].as_str().unwrap_or_default();
-            finish_run(
-                &mut tx,
-                &thread_id,
-                run_id,
-                "failed",
-                Some(failure(
-                    "transport_error",
-                    "The Conn Server restarted while this turn was running. Send the message again to continue.",
-                    Some("server_restart"),
-                )),
-            )?;
-            for mut session in tx.entities(&thread_id, "providerSessions")? {
-                if session["status"] != "stopped" {
-                    session["status"] = json!("stopped");
-                    session["updatedAt"] = json!(tx.now());
-                    tx.append(crate::store::Draft::new(
-                        &thread_id,
-                        "provider-session.updated",
-                        session,
-                    ))?;
-                }
-            }
+        let mut effects = vec![];
+        for (thread_id, run) in unfinished
+            .iter()
+            .filter(|(_, run)| commands::is_active(run))
+        {
+            effects.extend(crate::restart::recover(&mut tx, thread_id, run)?);
         }
         tx.commit(None)?;
         let high = store.high_water();
-        Ok(Self {
+        let engine = Self {
             inner: Arc::new(Inner {
                 store: Arc::new(Mutex::new(store)),
                 notify: watch::Sender::new(high),
@@ -134,7 +116,17 @@ impl SqliteEngine {
                 stream_flush: config.stream_flush,
                 home,
             }),
-        })
+        };
+        // Continuations start once the caller's runtime runs; `open` itself never blocks on one.
+        if !effects.is_empty() {
+            match tokio::runtime::Handle::try_current() {
+                Ok(_) => effects
+                    .into_iter()
+                    .for_each(|e| engine.inner.spawn_effect(e)),
+                Err(_) => eprintln!("conn-engine: no runtime, so restarted turns do not continue"),
+            }
+        }
+        Ok(engine)
     }
 
     /// The project id the engine gives a configured folder.

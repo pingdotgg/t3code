@@ -29,6 +29,7 @@ mod families;
 mod output;
 mod projects;
 mod reads;
+mod restart;
 mod runner;
 mod shell;
 mod store;

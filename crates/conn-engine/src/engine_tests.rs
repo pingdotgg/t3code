@@ -385,74 +385,131 @@ async fn a_failed_turn_shows_its_error() {
     );
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn a_restart_ends_the_running_turn_and_keeps_the_thread() {
-    let db = TempDb::new("restart");
-    {
-        let (engine, _) = open(&db);
+/// Starts a `hang` turn on t1 and drops the engine while it runs, as a killed process would.
+async fn die_during_a_turn(db: &TempDb, command: &str) {
+    let (engine, _) = open(db);
+    if engine.get_thread_projection("t1".into()).await.is_err() {
         dispatch(&engine, create("t1", "c1")).await;
-        dispatch(&engine, message("t1", "c2", "done")).await;
-        let mut thread = engine
-            .subscribe_thread(from_json(json!({"threadId": "t1", "afterSequence": 1})).unwrap())
-            .await
-            .unwrap();
-        until_run_ends(&mut thread).await;
-        dispatch(&engine, message("t1", "c3", "hang")).await;
-        loop {
-            if next(&mut thread).await["event"]["type"] == "provider-turn.updated" {
-                break;
-            }
-        }
-        // The process dies here: no provider, no terminal.
     }
-
-    let (engine, provider) = open(&db);
-    let shell = engine.shell_snapshot().await.unwrap();
-    let row = &shell["threads"][0];
-    assert_eq!(row["status"], "failed");
-    assert_eq!(row["activeRunId"], Value::Null);
-    assert!(row["lastError"].as_str().unwrap().contains("restarted"));
-
     let mut thread = engine
-        .subscribe_thread(
-            from_json(json!({"threadId": "t1", "requestCompletionMarker": true})).unwrap(),
-        )
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
         .await
         .unwrap();
-    let snapshot = next(&mut thread).await;
-    let projection = &snapshot["projection"];
-    let runs: Vec<_> = projection["runs"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|r| r["status"].clone())
-        .collect();
-    assert_eq!(runs, [json!("completed"), json!("failed")]);
-    let texts: Vec<_> = projection["visibleTurnItems"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|row| (row["item"]["type"].clone(), row["position"].clone()))
-        .collect();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", command, "hang")).await;
+    until_provider_turn(&mut thread).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_restart_continues_the_running_turn_in_the_same_provider_thread() {
+    let db = TempDb::new("restart");
+    die_during_a_turn(&db, "c2").await;
+
+    let (engine, provider) = open(&db);
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
     assert_eq!(
-        texts,
+        run_statuses(&p),
         [
-            (json!("user_message"), json!(0)),
-            (json!("assistant_message"), json!(1)),
-            (json!("user_message"), json!(2)),
-            (json!("error"), json!(3)),
+            ("run:t1:1".into(), "cancelled".into()),
+            ("run:t1:2".into(), "completed".into())
         ]
     );
-    assert_eq!(next(&mut thread).await["kind"], "synchronized");
-
-    // The thread takes a new turn on a new session, resuming the stored provider thread.
-    dispatch(&engine, message("t1", "c4", "again")).await;
-    let events = until_run_ends(&mut thread).await;
-    assert_eq!(events.last().unwrap().1["status"], "completed");
+    assert_eq!(p["runs"][1]["restartContinuationOfRunId"], "run:t1:1");
+    let types: Vec<_> = p["visibleTurnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["item"]["type"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        types,
+        [
+            "user_message",
+            "system_notice",
+            "user_message",
+            "assistant_message"
+        ]
+    );
+    let continuation = &p["messages"][1];
+    assert_eq!(continuation["createdBy"], "agent");
+    assert_eq!(continuation["creationSource"], "server");
+    assert!(
+        continuation["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("Continue where you left off.")
+    );
+    // The new session resumed the stored provider thread instead of starting a new one.
+    assert_eq!(p["runs"][1]["providerThreadId"], "provider-thread:t1");
     assert_eq!(
         provider.sessions.load(std::sync::atomic::Ordering::SeqCst),
         1
     );
+    let shell = engine.shell_snapshot().await.unwrap();
+    assert_eq!(shell["threads"][0]["status"], "completed");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn restart_continuations_stop_after_three_in_a_row() {
+    let db = TempDb::new("restart-loop");
+    die_during_a_turn(&db, "c2").await;
+    // Each start continues the turn; the test then marks the continuation as running, as if
+    // the process died during it too.
+    for round in 1..=4 {
+        let (engine, _) = open(&db);
+        let runs = projection(&engine, "t1").await["runs"]
+            .as_array()
+            .unwrap()
+            .len();
+        if round <= 3 {
+            assert_eq!(runs, round + 1, "round {round} adds a continuation");
+            let run = format!("run:t1:{}", round + 1);
+            let p = run_to_end(&engine, "t1", &run).await;
+            assert_eq!(
+                p["runs"][round]["restartContinuationOfRunId"],
+                format!("run:t1:{round}")
+            );
+            let inner = engine.inner().clone();
+            inner
+                .write(move |tx| {
+                    let mut r = tx.entity("t1", "runs", &run)?.unwrap();
+                    r["status"] = json!("running");
+                    tx.append(crate::store::Draft::new("t1", "run.updated", r))
+                        .map(|_| ())
+                })
+                .await
+                .unwrap();
+        } else {
+            assert_eq!(runs, 4, "the fourth restart in a row only cancels");
+            let p = projection(&engine, "t1").await;
+            assert_eq!(p["runs"][3]["status"], "cancelled");
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_restart_sends_an_undelivered_message_again() {
+    let db = TempDb::new("restart-starting");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        // A run the provider never took: written, but its start effect never ran.
+        let inner = engine.inner().clone();
+        let command = message("t1", "c2", "late");
+        inner
+            .write(move |tx| {
+                let handler = crate::commands::handler("message.dispatch").unwrap();
+                handler(tx, command)
+                    .map(|_| ())
+                    .map_err(|_| "rejected".to_owned())
+            })
+            .await
+            .unwrap();
+    }
+    let (engine, _) = open(&db);
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(p["runs"][0]["status"], "completed");
+    assert_eq!(p["messages"][1]["text"], "echo: late");
 }
 
 #[tokio::test(flavor = "current_thread")]
