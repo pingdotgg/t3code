@@ -5,7 +5,8 @@ import type {
   SlideDisplayList,
   SlidePrimitive,
 } from "@betteroffice/pptx";
-import { loadFace, presentationFace, scriptFace } from "./fonts";
+import { resolveScriptFallbackFace } from "@betteroffice/fonts";
+import { loadFace, presentationFace } from "./fonts";
 import type { DeckText, FallbackScript, FontStyle } from "./slide-text";
 
 /** A face the deck asks for: a family it names, or the fallback for a script the Latin faces lack. */
@@ -32,13 +33,18 @@ export function slideFonts(deck: PresentationHandle, fonts: FontFaceSet) {
   /** Loads a face's bytes and browser face; the returned function registers both, so callers choose the order. */
   const prepare = async (want: Want, requested: FontStyle) => {
     const source = want.script
-      ? scriptFace(want.script, requested.bold, requested.italic)
+      ? resolveScriptFallbackFace(want.script, requested.bold, requested.italic)
       : presentationFace(want.family, requested.bold, requested.italic);
 
     if (!source) return;
 
-    // A family without the requested style gets the face it has, which the browser then slants or emboldens.
-    const style = { bold: source.weight === 700, italic: source.style === "italic" };
+    // A family without the requested style gets the face it has, which the browser then slants or emboldens. The engine
+    // draws a bold run with a family's regular face but never the reverse, so a heavier stand-in, such as Arial Black's
+    // bold one, registers at the requested style.
+    const style = {
+      bold: requested.bold && source.weight === 700,
+      italic: requested.italic && source.style === "italic",
+    };
     // The worker holds this deck's faces alone, so the names only need to differ from each other.
     const css = names.get(wantKey(want)) ?? `slide-${names.size}`;
     const key = faceKey(want, style);
@@ -118,6 +124,9 @@ export function slideFonts(deck: PresentationHandle, fonts: FontFaceSet) {
           runs: line.runs.map((run) => ({
             ...run,
             fontFamily: faces.get(run.fontId)?.css ?? run.fontFamily,
+            // The engine places glyphs no bundled face has, such as Thai ones or emoji, a missing glyph's width apart,
+            // but the browser draws them from its own fonts. Without positions a run is drawn whole.
+            glyphs: run.glyphs.some((glyph) => glyph.glyphId === 0) ? [] : run.glyphs,
           })),
         })),
       };
