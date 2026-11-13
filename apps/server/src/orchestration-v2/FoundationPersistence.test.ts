@@ -330,7 +330,7 @@ it.effect("paces scheduled compaction while preserving retention state and fixed
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
 
-it.effect("traces a provider batch as one span, not one per SQL statement", () => {
+it.effect("traces a commit or provider batch as one span, not one per SQL statement", () => {
   const traced: string[] = [];
   const tracer = Tracer.make({
     span(options) {
@@ -352,6 +352,10 @@ it.effect("traces a provider batch as one span, not one per SQL statement", () =
       traced.filter((name) => name !== "orchestrationV2.EventSink.write"),
       ["orchestrationV2.EventSink.providerBatch", "orchestrationV2.EventSink.providerBatch"],
     );
+    traced.length = 0;
+    const plain = makeThread(ThreadId.make("thread:traced-write"), now);
+    yield* sink.write({ events: [threadCreatedEvent({ id: "traced-write", thread: plain, now })] });
+    assert.deepEqual(traced, ["orchestrationV2.EventSink.write"]);
   }).pipe(
     Effect.provide(Layer.fresh(layerTest)),
     Effect.withTracer(tracer),

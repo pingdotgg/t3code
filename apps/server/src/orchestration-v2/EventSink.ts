@@ -302,8 +302,8 @@ const layerBase: Layer.Layer<
 
     // Serialize commit and publish; reordered publication makes clients drop earlier sequences.
     const publishLane = yield* Semaphore.make(1);
-    // Provider batches run per streamed event batch, so their span stands for the transaction:
-    // BEGIN, COMMIT and SAVEPOINT are not traced, and the work inside keeps the caller's tracing.
+    // Commits run per command and per streamed event batch, so the caller's span stands for the
+    // transaction: BEGIN, COMMIT and SAVEPOINT are not traced, and the work inside keeps its tracing.
     const withUntracedTransaction = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       Effect.flatMap(References.TracerEnabled, (enabled) =>
         sql
@@ -314,7 +314,6 @@ const layerBase: Layer.Layer<
     const commitThenPublishNow = <A, E, R>(
       transaction: Effect.Effect<A, E, R>,
       publish: (committed: A) => Effect.Effect<void>,
-      withTransaction: typeof withUntracedTransaction = sql.withTransaction,
     ) =>
       Effect.uninterruptibleMask((restore) => {
         let holdsLane = false;
@@ -329,7 +328,7 @@ const layerBase: Layer.Layer<
         // Cancellation may roll back the transaction's work. Once it commits,
         // every subscriber must hear about it before this writer can exit.
         // Otherwise a failed child run can leave its parent's task running.
-        return withTransaction(Effect.tap(restore(transaction), () => takeLane)).pipe(
+        return withUntracedTransaction(Effect.tap(restore(transaction), () => takeLane)).pipe(
           Effect.tap(publish),
           Effect.ensuring(Effect.suspend(() => (holdsLane ? publishLane.release(1) : Effect.void))),
         );
@@ -503,7 +502,7 @@ const layerBase: Layer.Layer<
           const outcomes = yield* applyStoredEvents(committed);
           yield* effectOutbox.enqueue(input.effects);
           return { committed, outcomes };
-        }).pipe(Effect.withTracerEnabled(false)),
+        }),
         ({ committed, outcomes }) =>
           Effect.gen(function* () {
             if (input.effects.length > 0) {
@@ -980,12 +979,14 @@ const layerBase: Layer.Layer<
       );
     };
 
+    // Every commit body is SQL, and the committing operation's span times it as one.
     const commitThenPublish = <A, E, R>(
-      transaction: Effect.Effect<A, E, R>,
+      body: Effect.Effect<A, E, R>,
       publish: (committed: A) => Effect.Effect<void>,
     ) =>
-      Effect.flatMap(CurrentProviderBatch, (batch) =>
-        batch === undefined
+      Effect.flatMap(CurrentProviderBatch, (batch) => {
+        const transaction = body.pipe(Effect.withTracerEnabled(false));
+        return batch === undefined
           ? Effect.flatMap(Effect.serviceOption(sql.transactionService), (existing) =>
               Option.isSome(existing)
                 ? commitThenPublishNow(transaction, publish)
@@ -997,8 +998,8 @@ const layerBase: Layer.Layer<
                   batch.publish.push(publish(committed));
                 }),
               ),
-            ),
-      );
+            );
+      });
 
     const withProviderBatch: EventSinkV2Shape["withProviderBatch"] = Effect.fn(
       "orchestrationV2.EventSink.providerBatch",
@@ -1011,7 +1012,6 @@ const layerBase: Layer.Layer<
           started = true;
         }).pipe(Effect.andThen(Effect.provideService(effect, CurrentProviderBatch, batch))),
         () => Effect.forEach(batch.publish, (publish) => publish, { discard: true }),
-        withUntracedTransaction,
       ).pipe(
         // Normalization mutates run-local state, so only retry before its transaction body starts.
         Effect.retry({
