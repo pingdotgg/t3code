@@ -146,11 +146,28 @@ const GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:token-exchange";
 const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_token";
 const BOOTSTRAP_TOKEN_TYPE: &str = "urn:t3:params:oauth:token-type:environment-bootstrap";
 
+/// `CREDENTIAL_RESPONSE_HEADERS`: no cache may keep a response that carries a credential.
+fn no_store(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
+    response
+}
+
 async fn token(
     State(state): State<AppState>,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     headers: HeaderMap,
     Form(request): Form<TokenRequest>,
+) -> Response {
+    no_store(exchange_token(&state, peer, &headers, request))
+}
+
+fn exchange_token(
+    state: &AppState,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    headers: &HeaderMap,
+    request: TokenRequest,
 ) -> Response {
     if request.grant_type != GRANT_TYPE
         || request.subject_token_type != BOOTSTRAP_TOKEN_TYPE
@@ -212,6 +229,7 @@ async fn token(
             "invalid_request",
             "scope_not_granted",
         ),
+        Err(ExchangeError::Storage) => internal_reason("access_token_issuance_failed"),
     }
 }
 
@@ -235,9 +253,9 @@ fn issue_ticket(state: &AppState, headers: &HeaderMap, route: Option<&str>) -> R
         return auth_invalid("missing_credential");
     };
     match state.auth.issue_ticket(token, route) {
-        Some((ticket, expires_at_ms)) => {
-            Json(json!({ "ticket": ticket, "expiresAt": iso8601(expires_at_ms) })).into_response()
-        }
+        Some((ticket, expires_at_ms)) => no_store(
+            Json(json!({ "ticket": ticket, "expiresAt": iso8601(expires_at_ms) })).into_response(),
+        ),
         None => auth_invalid("invalid_credential"),
     }
 }
@@ -358,7 +376,8 @@ async fn pairing_token(
     if let Some(label) = issued.label {
         body["label"] = json!(label);
     }
-    Json(body).into_response()
+    // The T3 server sends no cache headers here; the body is a credential all the same.
+    no_store(Json(body).into_response())
 }
 
 #[derive(Deserialize)]
@@ -730,6 +749,16 @@ mod tests {
 
     /// One HTTP/1.1 request; returns the status and the body.
     async fn call(addr: std::net::SocketAddr, head: &str, body: &str) -> (u16, String) {
+        let (status, _, body) = call_full(addr, head, body).await;
+        (status, body)
+    }
+
+    /// One HTTP/1.1 request; returns the status, the lowercased response head and the body.
+    async fn call_full(
+        addr: std::net::SocketAddr,
+        head: &str,
+        body: &str,
+    ) -> (u16, String, String) {
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         let request = format!(
             "{head}\r\nhost: {addr}\r\nconnection: close\r\ncontent-length: {}\r\n\r\n{body}",
@@ -750,11 +779,8 @@ mod tests {
         }
         let response = String::from_utf8(bytes).unwrap();
         let status = response[9..12].parse().unwrap();
-        let body = response
-            .split_once("\r\n\r\n")
-            .map(|(_, b)| b.to_owned())
-            .unwrap_or_default();
-        (status, body)
+        let (head, body) = response.split_once("\r\n\r\n").unwrap_or((&response, ""));
+        (status, head.to_ascii_lowercase(), body.to_owned())
     }
 
     const UPGRADE: &str = "connection: upgrade\r\nupgrade: websocket\r\nsec-websocket-version: 13\r\nsec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==";
@@ -1155,6 +1181,90 @@ mod tests {
         })
         .await;
         assert!(closed.is_ok(), "the socket stayed open after revocation");
+    }
+
+    /// `CREDENTIAL_RESPONSE_HEADERS`: no cache may keep a token or a ticket.
+    #[tokio::test(flavor = "current_thread")]
+    async fn credential_responses_are_never_cached() {
+        let (addr, auth) = serve().await;
+        let code = auth
+            .issue_pairing_code(None, auth::PAIRING_CODE_TTL_MS)
+            .unwrap()
+            .code;
+        let form = format!(
+            "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&subject_token={code}&subject_token_type=urn%3At3%3Aparams%3Aoauth%3Atoken-type%3Aenvironment-bootstrap&requested_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token"
+        );
+        let head = "POST /oauth/token HTTP/1.1\r\ncontent-type: application/x-www-form-urlencoded";
+        let (status, response_head, body) = call_full(addr, head, &form).await;
+        assert_eq!(status, 200, "{body}");
+        let token: Value = serde_json::from_str(&body).unwrap();
+        let bearer = format!(
+            "authorization: Bearer {}",
+            token["access_token"].as_str().unwrap()
+        );
+        let mut heads = vec![response_head];
+        for path in [
+            "/api/auth/websocket-ticket",
+            "/api/auth/websocket-ticket/rpc",
+        ] {
+            let (status, head, _) =
+                call_full(addr, &format!("POST {path} HTTP/1.1\r\n{bearer}"), "").await;
+            assert_eq!(status, 200);
+            heads.push(head);
+        }
+        let (status, head, _) = call_full(
+            addr,
+            &format!("POST /api/auth/pairing-token HTTP/1.1\r\n{bearer}\r\ncontent-type: application/json"),
+            "{}",
+        )
+        .await;
+        assert_eq!(status, 200);
+        heads.push(head);
+        for head in heads {
+            assert!(head.contains("\r\ncache-control: no-store"), "{head}");
+            assert!(head.contains("\r\npragma: no-cache"), "{head}");
+        }
+    }
+
+    /// A storage failure in the exchange is the server's fault (`access_token_issuance_failed`),
+    /// never a bad credential.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_storage_failure_in_the_exchange_answers_500() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("conn-server-http-ro-{}", auth::random_hex(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let auth = AuthStore::open(dir.join("auth.json")).unwrap();
+        let state = AppState {
+            table: Arc::new(MethodTable::new()),
+            auth: auth.clone(),
+            descriptor: Arc::new(crate::environment::descriptor("env-test", "Test")),
+            engine: None,
+            deps: Default::default(),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router(state)).await });
+        let code = auth
+            .issue_pairing_code(None, auth::PAIRING_CODE_TTL_MS)
+            .unwrap()
+            .code;
+        let form = format!(
+            "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&subject_token={code}&subject_token_type=urn%3At3%3Aparams%3Aoauth%3Atoken-type%3Aenvironment-bootstrap&requested_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token"
+        );
+        let head = "POST /oauth/token HTTP/1.1\r\ncontent-type: application/x-www-form-urlencoded";
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let (status, body) = call(addr, head, &form).await;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(status, 500, "{body}");
+        assert_eq!(
+            serde_json::from_str::<Value>(&body).unwrap()["reason"],
+            "access_token_issuance_failed"
+        );
+        // The code was not spent.
+        let (status, body) = call(addr, head, &form).await;
+        assert_eq!(status, 200, "{body}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test(flavor = "current_thread")]

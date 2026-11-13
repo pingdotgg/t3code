@@ -346,6 +346,8 @@ pub enum ExchangeError {
     InvalidScope,
     /// None of the requested scopes is in the grant.
     ScopeNotGranted,
+    /// The new session could not be saved; nothing changed.
+    Storage,
 }
 
 /// A client may not revoke its own session (`current_session_revoke_not_allowed`).
@@ -430,6 +432,7 @@ struct AuthFile {
     pairing_links: Vec<StoredPairing>,
 }
 
+#[derive(Clone)]
 struct Ticket {
     session: Hash,
     audience: Option<String>,
@@ -439,7 +442,7 @@ struct Ticket {
 /// Size and modification time of the auth file as last read or written.
 type Stamp = (u64, SystemTime);
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct State {
     pairing: HashMap<Hash, StoredPairing>,
     sessions: HashMap<Hash, StoredSession>,
@@ -616,7 +619,7 @@ impl AuthStore {
                 Ok(()) => Ok(issued),
                 Err(error) => {
                     eprintln!("conn-server: could not save auth state: {error}");
-                    Err(ExchangeError::InvalidCredential)
+                    Err(ExchangeError::Storage)
                 }
             };
         }
@@ -656,7 +659,7 @@ impl AuthStore {
         });
         if let Err(error) = written {
             eprintln!("conn-server: could not save auth state: {error}");
-            return Err(ExchangeError::InvalidCredential);
+            return Err(ExchangeError::Storage);
         }
         outcome
     }
@@ -961,7 +964,8 @@ impl AuthStore {
         Ok(())
     }
 
-    /// Runs `change` on fresh state under the cross-process lock, saves, and announces.
+    /// Runs `change` on a copy of fresh state under the cross-process lock, saves it, and
+    /// only then keeps it and announces. When the save fails, memory stays as it was.
     fn write(&self, change: impl FnOnce(&mut State) -> Vec<AccessChange>) -> io::Result<()> {
         let _file_lock = match &self.file {
             Some(path) => Some(lock_file(path)?),
@@ -969,19 +973,21 @@ impl AuthStore {
         };
         let mut state = self.lock();
         self.refresh(&mut state);
-        let changes = change(&mut state);
+        let mut next = state.clone();
+        let changes = change(&mut next);
         if !changes.is_empty()
             && let Some(path) = &self.file
         {
             let file = AuthFile {
                 version: 1,
-                sessions: state.sessions.values().cloned().collect(),
-                pairing_links: state.pairing.values().cloned().collect(),
+                sessions: next.sessions.values().cloned().collect(),
+                pairing_links: next.pairing.values().cloned().collect(),
             };
-            let bytes = serde_json::to_vec_pretty(&file).expect("auth file serializes");
+            let bytes = serde_json::to_vec_pretty(&file).map_err(io::Error::other)?;
             write_private(path, &bytes)?;
-            state.stamp = stamp(path);
+            next.stamp = stamp(path);
         }
+        *state = next;
         drop(state);
         self.announce(changes);
         Ok(())
@@ -1557,6 +1563,37 @@ mod tests {
             Some(session.principal)
         );
         assert_eq!(reopened.pairing_links().len(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A write that fails leaves memory as it was: the code stays unspent, no session appears
+    /// that nobody holds, and the caller learns it was a storage failure.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_write_changes_nothing() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("auth-readonly");
+        let file = dir.join("auth.json");
+        let store = AuthStore::open(file.clone()).unwrap();
+        let code = store
+            .issue_pairing_code(None, PAIRING_CODE_TTL_MS)
+            .unwrap()
+            .code;
+        let saved = fs::read(&file).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+        let failed = store.exchange(&code, None, ClientInfo::default());
+        let sessions_while_failed = store.client_sessions(None).len();
+        let links_while_failed = store.pairing_links().len();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(failed.unwrap_err(), ExchangeError::Storage);
+        assert_eq!((sessions_while_failed, links_while_failed), (0, 1));
+        assert_eq!(fs::read(&file).unwrap(), saved);
+        // The next write saves only what it made; the code still works once.
+        let session = store.exchange(&code, None, ClientInfo::default()).unwrap();
+        let reopened = AuthStore::open(file).unwrap();
+        assert_eq!(reopened.client_sessions(None).len(), 1);
+        assert!(reopened.authenticate_bearer(&session.token).is_some());
+        assert!(reopened.pairing_links().is_empty());
         fs::remove_dir_all(dir).unwrap();
     }
 
