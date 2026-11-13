@@ -143,16 +143,21 @@ interface ToolOutputState {
 }
 
 function ToolOutputImages(props: ToolOutputState) {
-  return props.images.map((resource) => (
-    <ChatMarkdownAssetImage
-      key={resource.index}
-      environmentId={props.environmentId}
-      resource={resource}
-      alt="Tool output image"
-      maxHeightRem={16}
-      onImageExpand={props.onImageExpand}
-    />
-  ));
+  if (props.images.length === 0) return null;
+  return (
+    <div className="space-y-1.5" data-image-gallery>
+      {props.images.map((resource) => (
+        <ChatMarkdownAssetImage
+          key={resource.index}
+          environmentId={props.environmentId}
+          resource={resource}
+          alt="Tool output image"
+          maxHeightRem={16}
+          onImageExpand={props.onImageExpand}
+        />
+      ))}
+    </div>
+  );
 }
 
 function ToolOutput(props: ToolOutputState) {

@@ -1752,6 +1752,46 @@ describe("MessagesTimeline attachments", () => {
       }),
     );
   });
+
+  it("pages between the images of one expanded tool result", async () => {
+    stubbedAsset.url =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    onTestFinished(() => {
+      stubbedAsset.url = "";
+    });
+    const onImageExpand = vi.fn<ComponentProps<typeof MessagesTimeline>["onImageExpand"]>();
+    const image = { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" };
+    await using screen = await renderTimeline(
+      [
+        work("screenshot", {
+          label: "Screenshot",
+          toolTitle: "Screenshot",
+          tone: "tool",
+          itemType: "dynamic_tool",
+          toolLifecycleStatus: "completed",
+          projectedItem: v2Item("dynamic_tool", {
+            id: "screenshot",
+            toolName: "screenshot",
+            input: { url: "https://example.com" },
+            output: { content: [image, image] },
+          }),
+        }),
+      ],
+      { onImageExpand },
+    );
+    await click(screen.button(/Screenshot/));
+    const images = await vi.waitFor(() => {
+      const found = screen.container.querySelectorAll<HTMLElement>(
+        "[aria-label='Preview Tool output image']",
+      );
+      expect(found).toHaveLength(2);
+      return found;
+    });
+    await click(images[1]!);
+    expect(onImageExpand).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ index: 1, images: [expect.anything(), expect.anything()] }),
+    );
+  });
 });
 
 describe("MessagesTimeline thread find", () => {
