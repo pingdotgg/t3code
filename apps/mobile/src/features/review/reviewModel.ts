@@ -609,7 +609,9 @@ export function buildReviewParsedDiff(
   try {
     const cacheKey = buildPatchCacheKey(text, cacheScope);
     const patchId = getReviewPatchId(cacheKey);
-    const parsedPatches = runDiffParserSilently(() => parsePatchFiles(text, cacheKey));
+    const parsedPatches = runDiffParserSilently(() =>
+      parsePatchFiles(text, { cacheKeyPrefix: cacheKey }),
+    );
     const rawFiles = new Map<string, string | null>();
     if (!truncated) {
       for (const rawFile of text.split(/(?=^diff --git )/m)) {

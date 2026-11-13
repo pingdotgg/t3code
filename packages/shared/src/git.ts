@@ -141,8 +141,13 @@ export function parseGitRemoteRepository(
 
   if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
     try {
-      const url = new URL(normalized);
-      const repositorySegments = url.pathname.split("/").filter((segment) => segment.length > 0);
+      // Parse the raw remote: `.git` may sit before a query or fragment, so strip it from the path once.
+      const url = new URL(value.trim().toLowerCase());
+      const repositorySegments = url.pathname
+        .replace(/\/+$/, "")
+        .replace(/\.git$/, "")
+        .split("/")
+        .filter((segment) => segment.length > 0);
       if (url.hostname && repositorySegments.length > 1) {
         return { host: url.hostname, path: repositorySegments.join("/") };
       }
@@ -280,26 +285,6 @@ export function parseOriginUrlFromGitConfig(configText: string): string | null {
   return originUrl ?? firstRemoteUrl;
 }
 
-function deriveLocalBranchNameCandidatesFromRemoteRef(
-  branchName: string,
-  remoteName?: string,
-): ReadonlyArray<string> {
-  const candidates = new Set<string>();
-  const firstSlashCandidate = deriveLocalBranchNameFromRemoteRef(branchName);
-  if (firstSlashCandidate.length > 0) {
-    candidates.add(firstSlashCandidate);
-  }
-
-  if (remoteName) {
-    const remotePrefix = `${remoteName}/`;
-    if (branchName.startsWith(remotePrefix) && branchName.length > remotePrefix.length) {
-      candidates.add(branchName.slice(remotePrefix.length));
-    }
-  }
-
-  return [...candidates];
-}
-
 // Replace only Git-rejected whitespace; nonbreaking spaces are valid ref characters.
 export function sanitizeNewRefName(rawName: string): string {
   return rawName.trim().replace(/[ \t\n\r\f\v]+/g, "-");
@@ -315,19 +300,12 @@ export function dedupeRemoteBranchesWithLocalMatches(
   );
 
   return refs.filter((refName) => {
-    if (!refName.isRemote) {
+    if (!refName.isRemote || refName.remoteName !== "origin") {
       return true;
     }
 
-    if (refName.remoteName !== "origin") {
-      return true;
-    }
-
-    const localBranchCandidates = deriveLocalBranchNameCandidatesFromRemoteRef(
-      refName.name,
-      refName.remoteName,
-    );
-    return !localBranchCandidates.some((candidate) => localBranchNames.has(candidate));
+    const localBranchName = deriveLocalBranchNameFromRemoteRef(refName.name);
+    return localBranchName.length === 0 || !localBranchNames.has(localBranchName);
   });
 }
 

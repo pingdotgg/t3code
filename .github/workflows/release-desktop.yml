@@ -157,7 +157,7 @@ jobs:
       # artifact leaves the cache empty, so installation runs the checks again.
       - name: Download dependency verification
         continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-dependency-verification
           path: ${{ runner.temp }}/pnpm-metadata
@@ -183,7 +183,7 @@ jobs:
 
       - name: Restore staged install cache
         id: stage_pnpm_cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.stage_pnpm.outputs.dir }}
           key: ${{ steps.stage_pnpm.outputs.prefix }}${{ github.run_id }}-${{ github.run_attempt }}
@@ -195,7 +195,7 @@ jobs:
 
       - name: Cache resource monitor
         id: resource_monitor_cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: native/resource-monitor/target/${{ inputs.rust_target }}/release/t3-resource-monitor${{ inputs.platform == 'win' && '.exe' || '' }}
           key: resource-monitor-${{ inputs.rust_target }}-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
@@ -203,12 +203,26 @@ jobs:
       - name: Cache Linux capture helpers
         if: inputs.platform == 'linux'
         id: capture_helper_cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             native/kde-snap-shot/target/${{ inputs.rust_target }}/release/t3-kde-snap-shot
             native/hyprland-snap-shot/target/${{ inputs.rust_target }}/release/t3-hyprland-snap-shot
           key: linux-capture-helpers-${{ inputs.rust_target }}-${{ hashFiles('native/kde-snap-shot/Cargo.lock', 'native/kde-snap-shot/Cargo.toml', 'native/kde-snap-shot/src/**', 'native/hyprland-snap-shot/Cargo.lock', 'native/hyprland-snap-shot/Cargo.toml', 'native/hyprland-snap-shot/src/**', 'native/hyprland-snap-shot/protocols/**') }}
+
+      # Every Linux build makes electron-builder fetch the AppImage runtime, FPM
+      # for the deb, and the 7-Zip that unpacks FPM from GitHub releases. It
+      # checks an archive found here against the SHA-256 pinned in those toolset
+      # files and downloads again on a mismatch, so only raw archives are cached.
+      - name: Cache Linux packaging tool archives
+        if: inputs.platform == 'linux'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/electron-builder/appimage@*/appimage-tools-runtime-*.tar.gz
+            ~/.cache/electron-builder/fpm@*/fpm-*.7z
+            ~/.cache/electron-builder/7zip@*/7zip-linux-*.tar.gz
+          key: electron-builder-linux-tools-${{ inputs.arch }}-${{ hashFiles('node_modules/.pnpm/app-builder-lib@*/node_modules/app-builder-lib/out/toolsets/linux.js', 'node_modules/.pnpm/app-builder-lib@*/node_modules/app-builder-lib/out/toolsets/7zip.js') }}
 
       - name: Ensure Rosetta for macOS x64 bytecode generation
         if: inputs.platform == 'mac' && inputs.arch == 'x64'
@@ -220,14 +234,14 @@ jobs:
 
       - name: Setup Rust
         if: steps.resource_monitor_cache.outputs.cache-hit != 'true' || (inputs.platform == 'linux' && steps.capture_helper_cache.outputs.cache-hit != 'true')
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
           targets: ${{ inputs.rust_target }}
 
       - name: Download relay client tracing config
         if: inputs.relay_client_tracing
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: relay-client-tracing-config
           path: ${{ runner.temp }}/relay-client-tracing
@@ -248,14 +262,14 @@ jobs:
       # ancestor of its paths), so extracting into `apps` restores
       # apps/server/dist and apps/desktop/dist-electron at their build paths.
       - name: Download JS bundle
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: js-bundle
           path: apps
 
       - name: Install cargo-xwin
         if: inputs.platform == 'win' && steps.resource_monitor_cache.outputs.cache-hit != 'true'
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-xwin@0.23.1
 
@@ -303,7 +317,7 @@ jobs:
       - name: Restore target Node.js for the CLI executable
         id: target_node_cache
         if: inputs.cli_archive && inputs.platform == 'win'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/node-download
           key: node-download-v${{ steps.target_node.outputs.version }}-win-${{ inputs.arch }}
@@ -330,7 +344,7 @@ jobs:
       # Saved right away so a later failure in this job still keeps the download.
       - name: Save target Node.js for the CLI executable
         if: inputs.cli_archive && inputs.platform == 'win' && steps.target_node_cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/node-download
           key: ${{ steps.target_node_cache.outputs.cache-primary-key }}
@@ -465,7 +479,7 @@ jobs:
       # macOS uploads its archive after "Await CLI notarization" instead.
       - name: Upload CLI archive
         if: inputs.cli_archive && inputs.platform != 'mac'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cli-${{ inputs.platform }}-${{ inputs.arch }}
           path: release-cli/*
@@ -545,7 +559,7 @@ jobs:
 
       - name: Download Linux CLI archive for WSL
         if: inputs.platform == 'win'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: cli-linux-${{ inputs.arch }}
           path: wsl-runtime
@@ -666,7 +680,7 @@ jobs:
 
       - name: Upload notarized CLI archive
         if: inputs.cli_archive && inputs.platform == 'mac'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cli-${{ inputs.platform }}-${{ inputs.arch }}
           path: release-cli/*
@@ -686,7 +700,7 @@ jobs:
 
       - name: Save staged install cache
         if: steps.stage_pnpm_changed.outputs.changed == 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.stage_pnpm.outputs.dir }}
           key: ${{ steps.stage_pnpm_cache.outputs.cache-primary-key }}
@@ -717,7 +731,7 @@ jobs:
 
       - name: Upload launch check output
         if: failure() && inputs.launch_check
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: desktop-launch-check-${{ inputs.platform }}-${{ inputs.arch }}
           path: ${{ runner.temp }}/desktop-launch-check
@@ -745,7 +759,7 @@ jobs:
 
       - name: Upload verification inputs
         if: inputs.verify_runner != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: verify-${{ inputs.platform }}-${{ inputs.arch }}
           path: verify/*
@@ -812,7 +826,7 @@ jobs:
           cp "$source_path" "$target_dir/$binary_name"
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: desktop-${{ inputs.platform }}-${{ inputs.arch }}
           path: release-publish/*
@@ -821,7 +835,7 @@ jobs:
           compression-level: 0
 
       - name: Upload resource monitor
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: resource-monitor-${{ inputs.resource_key }}
           path: resource-monitor-publish/${{ inputs.resource_key }}/*
@@ -835,14 +849,14 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Download verification inputs
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: verify-${{ inputs.platform }}-${{ inputs.arch }}
           path: verify
 
       - name: Download CLI archive
         if: inputs.cli_archive
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: cli-${{ inputs.platform }}-${{ inputs.arch }}
           path: release-cli
