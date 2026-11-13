@@ -70,6 +70,16 @@ export const ProviderAdapterV2TurnMessage = Schema.Struct({
 });
 export type ProviderAdapterV2TurnMessage = typeof ProviderAdapterV2TurnMessage.Type;
 
+/**
+ * Text an agent or the server wrote: a cross-thread send, a delegation brief, a completion wake.
+ * Skill syntax in it is not an invocation. A scheduled prompt runs as its author wrote it.
+ */
+export function isAgentAuthoredMessage(
+  message: Pick<ProviderAdapterV2TurnMessage, "createdBy" | "scheduledTaskId">,
+): boolean {
+  return message.createdBy === "agent" && message.scheduledTaskId === undefined;
+}
+
 export const ProviderAdapterV2SessionStatus = Schema.Literals([
   "starting",
   "ready",

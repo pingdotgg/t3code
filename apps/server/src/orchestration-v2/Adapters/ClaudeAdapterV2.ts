@@ -166,6 +166,7 @@ import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import {
+  claudeAgentAuthoredText,
   planClaudeSkillDispatch,
   type ClaudeSkillTarget,
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
@@ -4317,6 +4318,18 @@ function isClaudeProviderContinuationTurn(
   input: ProviderAdapter.ProviderAdapterV2TurnInput,
 ): boolean {
   return input.message.createdBy === "agent" && input.message.creationSource === "provider";
+}
+
+/** The prompt for text an agent wrote, or undefined for a user's. T3's own `/compact` and `/goal` still run. */
+function claudeAgentAuthoredPrompt(
+  message: ProviderAdapter.ProviderAdapterV2TurnMessage,
+  text: string,
+): string | undefined {
+  if (!ProviderAdapter.isAgentAuthoredMessage(message)) return undefined;
+  return isCompactionCommandMessage({ role: "user", ...message }) ||
+    parseGoalCommand(message) !== null
+    ? text
+    : claudeAgentAuthoredText(text);
 }
 
 function isClaudePromptEchoGatedFrame(message: SDKMessage): boolean {
@@ -12433,11 +12446,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               turnInput.message.text,
               compileClaudeModelSelection(turnInput.modelSelection, modelCatalog).promptEffort,
             );
+            const agentPrompt = claudeAgentAuthoredPrompt(turnInput.message, promptText);
             const userMessage =
               promptUuid === null
                 ? null
                 : yield* makeClaudeUserMessageWithAttachments({
-                    text: promptText,
+                    text: agentPrompt ?? promptText,
                     // Mentions in inline handoff history are history, not this turn's skill.
                     ...(turnInput.inlineContextLength === undefined
                       ? {}
@@ -12451,7 +12465,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     attachmentsDir,
                     fileSystem,
                     pdfReservation,
-                    skills: yield* userInvocableSkills(turnInput.runtimePolicy.cwd),
+                    ...(agentPrompt === undefined
+                      ? { skills: yield* userInvocableSkills(turnInput.runtimePolicy.cwd) }
+                      : {}),
                     uuid: promptUuid,
                   }).pipe(
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -12941,21 +12957,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 existing.openedPermissionMode === currentTurn.queryPolicy.permissionMode)
                 ? steerSelection
                 : undefined;
+            const steerText = applyClaudePromptEffortPrefix(
+              turnInput.message.text,
+              (
+                liveSteerSelection ??
+                compileClaudeModelSelection(currentTurn.input.modelSelection, modelCatalog)
+              ).promptEffort,
+            );
+            const agentPrompt = claudeAgentAuthoredPrompt(turnInput.message, steerText);
             const userMessage = yield* makeClaudeUserMessageWithAttachments({
-              text: applyClaudePromptEffortPrefix(
-                turnInput.message.text,
-                (
-                  liveSteerSelection ??
-                  compileClaudeModelSelection(currentTurn.input.modelSelection, modelCatalog)
-                ).promptEffort,
-              ),
+              text: agentPrompt ?? steerText,
               attachments: turnInput.message.attachments,
               priority: "now",
               uuid: steerUuid,
               attachmentsDir,
               fileSystem,
               pdfReservation,
-              skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),
+              ...(agentPrompt === undefined
+                ? { skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd) }
+                : {}),
             }).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),

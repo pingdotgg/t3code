@@ -3002,6 +3002,98 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  // regression: #24667 an agent's message ran any skill it mentioned in the recipient
+  it.effect.each([
+    {
+      name: "breaks mentions of the recipient's skills",
+      skillsFrame: {
+        result: {
+          data: [
+            {
+              cwd: "/workspace",
+              skills: [
+                {
+                  name: "review",
+                  description: "Review the change",
+                  path: "/skills/review/SKILL.md",
+                  enabled: true,
+                  scope: "repo",
+                },
+              ],
+              errors: [],
+            },
+          ],
+        },
+      },
+      sentPrompt:
+        'Use ($\u2060review) or [$\u2060it](/skills/review/SKILL.md), then result=ready; printf "%s" "$result" in posts.$postId.tsx',
+    },
+    {
+      name: "keeps plain text when the skill catalog is unavailable",
+      skillsFrame: { error: { code: -32603, message: "skills unavailable" } },
+      sentPrompt:
+        'Use ($review) or [$\u2060it](/skills/review/SKILL.md), then result=ready; printf "%s" "$result" in posts.$postId.tsx',
+    },
+  ])("another agent's message $name", ({ skillsFrame, sentPrompt }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "agent-mention-thread";
+        const nativeTurnId = "agent-mention-turn";
+        const prompt =
+          'Use ($review) or [$it](/skills/review/SKILL.md), then result=ready; printf "%s" "$result" in posts.$postId.tsx';
+        const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt, sentPrompt });
+        const transcript = makeCodexReplayTranscript({
+          scenario: "agent-skill-mention",
+          entries: [
+            ...preamble.slice(0, 5),
+            {
+              type: "expect_outbound",
+              label: "skills/list",
+              frame: { id: 3, method: "skills/list", params: { cwds: ["/workspace"] } },
+            },
+            { type: "emit_inbound", label: "skills/list", frame: { id: 3, ...skillsFrame } },
+            ...preamble.slice(5, 7).map((entry) => withReplayRequestId(entry, 4)),
+            ...preamble.slice(7),
+            {
+              type: "emit_inbound",
+              label: "done",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        const turnInput = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("agent-mention-attempt"),
+          text: prompt,
+        });
+        yield* harness.runtime.startTurn({
+          ...turnInput,
+          message: { ...turnInput.message, createdBy: "agent", creationSource: "mcp" },
+        });
+        yield* harness.firstTerminal;
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("compacts Codex with the native RPC and completes the compaction turn", () =>
     Effect.gen(function* () {
       const nativeThreadId = "compact-thread";

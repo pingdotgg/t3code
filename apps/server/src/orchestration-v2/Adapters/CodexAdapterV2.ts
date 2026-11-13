@@ -454,6 +454,22 @@ function codexSkillMentionText(text: string): string {
   return text.replace(SKILL_MENTION_PATTERN, "$1$$$2");
 }
 
+const CODEX_MENTION_PATTERN = /(\[?)\$([\w:-]+)(?=(\]\()?)/g;
+
+/**
+ * Codex runs a skill for `$name` anywhere in text, and for `[$label](path)` whatever the label.
+ * Only a listed skill's name or the link form is broken, so other `$name` text stays as written.
+ */
+function codexAgentAuthoredText(text: string, skillNames: ReadonlySet<string> | undefined): string {
+  return text.replace(
+    CODEX_MENTION_PATTERN,
+    (mention, open: string, name: string, link: string | undefined) =>
+      (open !== "" && link !== undefined) || skillNames?.has(name) === true
+        ? `${open}$\u2060${name}`
+        : mention,
+  );
+}
+
 const BACKGROUND_COMMAND_DETAIL_COMMAND_MAX_LENGTH = 200;
 const BACKGROUND_COMMAND_DETAIL_OUTPUT_TAIL_MAX_LENGTH = 1_000;
 
@@ -3556,16 +3572,42 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           },
         );
 
+        // A failed or slow lookup yields no catalog: the message is delivered as written.
+        const enabledSkillNames = Effect.fn("CodexAdapterV2.enabledSkillNames")(function* (
+          cwd: string | null,
+        ) {
+          return yield* client.request("skills/list", cwd === null ? {} : { cwds: [cwd] }).pipe(
+            Effect.timeout("5 seconds"),
+            Effect.map(
+              (response) =>
+                new Set(
+                  response.data.flatMap((entry) =>
+                    entry.skills.filter((skill) => skill.enabled).map((skill) => skill.name),
+                  ),
+                ),
+            ),
+            Effect.catch((cause) =>
+              Effect.logWarning("orchestration-v2.codex-agent-message-skills-unavailable", {
+                cause,
+              }).pipe(Effect.as(undefined)),
+            ),
+          );
+        });
+
         const toCodexInput = Effect.fn("CodexAdapterV2.toCodexInput")(function* (
           turnInput: Pick<
             | ProviderAdapter.ProviderAdapterV2TurnInput
             | ProviderAdapter.ProviderAdapterV2SteerInput,
             "message"
           >,
+          cwd: string | null,
         ) {
           const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
-          const text = yield* providerMessageTextWithAttachmentPaths({
-            text: codexSkillMentionText(turnInput.message.text),
+          const agentAuthored = ProviderAdapter.isAgentAuthoredMessage(turnInput.message);
+          const messageText = yield* providerMessageTextWithAttachmentPaths({
+            text: agentAuthored
+              ? turnInput.message.text
+              : codexSkillMentionText(turnInput.message.text),
             attachments: turnInput.message.attachments,
             resolveExtractedTextPath: (path) =>
               DocumentText.resolveExtractedTextPath(path).pipe(
@@ -3574,6 +3616,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             resolveAttachmentPath: (attachment) =>
               resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
           });
+          // After the attachment notes, which carry names the sender chose.
+          const text =
+            agentAuthored && messageText.includes("$")
+              ? codexAgentAuthoredText(messageText, yield* enabledSkillNames(cwd))
+              : messageText;
           if (text.length > 0) {
             inputItems.push({
               type: "text",
@@ -7509,13 +7556,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               turnInput,
               threadId,
               command.type === "set"
-                ? toCodexInput({
-                    ...turnInput,
-                    message: {
-                      ...turnInput.message,
-                      text: `This thread's goal is already set. Do not call create_goal. Start working on it now: ${command.objective}`,
+                ? toCodexInput(
+                    {
+                      ...turnInput,
+                      message: {
+                        ...turnInput.message,
+                        text: `This thread's goal is already set. Do not call create_goal. Start working on it now: ${command.objective}`,
+                      },
                     },
-                  })
+                    turnInput.runtimePolicy.cwd,
+                  )
                 : Effect.succeed([]),
             );
           },
@@ -7820,12 +7870,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 goalsPausedForWake.has(nativeThreadId) &&
                 goalsByNativeThread.get(nativeThreadId)?.status === "paused"
               ) {
-                return yield* activateGoal(turnInput, nativeThreadId, toCodexInput(turnInput));
+                return yield* activateGoal(
+                  turnInput,
+                  nativeThreadId,
+                  toCodexInput(turnInput, turnInput.runtimePolicy.cwd),
+                );
               }
               yield* startNativeTurn(
                 turnInput,
                 turnInput.restartContinuationOfRunId === undefined
-                  ? yield* toCodexInput(turnInput)
+                  ? yield* toCodexInput(turnInput, turnInput.runtimePolicy.cwd)
                   : [],
               );
             }).pipe(
@@ -7866,7 +7920,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 );
               }
 
-              const codexInput = yield* toCodexInput(turnInput);
+              const codexInput = yield* toCodexInput(turnInput, activeTurn.input.runtimePolicy.cwd);
               yield* client.request("turn/steer", {
                 expectedTurnId: activeTurn.nativeTurnId,
                 input: codexInput,

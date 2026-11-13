@@ -2058,6 +2058,27 @@ describe("ClaudeAdapterV2 attachments", () => {
       resumed: false,
       budget: "none",
     },
+    // regression: #24667 an agent's message ran any skill it mentioned in the recipient
+    {
+      name: "another agent's mid-sentence skill",
+      prompt: "please $implement fixes",
+      expectedText: "please $implement fixes",
+      command: undefined,
+      ultrathink: false,
+      resumed: false,
+      budget: "none",
+      createdBy: "agent" as const,
+    },
+    {
+      name: "another agent's prompt-leading command",
+      prompt: "/implement fixes",
+      expectedText: "\u2060/implement fixes",
+      command: undefined,
+      ultrathink: false,
+      resumed: false,
+      budget: "none",
+      createdBy: "agent" as const,
+    },
     {
       name: "resumed history without persisted counters",
       prompt: "Inspect this file",
@@ -2069,8 +2090,9 @@ describe("ClaudeAdapterV2 attachments", () => {
     },
   ])(
     "preserves $name with native PDFs, images, and paths on sends and steering",
-    ({ prompt, expectedText, command, ultrathink, resumed, budget }) =>
+    ({ prompt, expectedText, command, ultrathink, resumed, budget, ...row }) =>
       Effect.gen(function* () {
+        const createdBy = "createdBy" in row ? row.createdBy : "user";
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
@@ -2214,6 +2236,7 @@ describe("ClaudeAdapterV2 attachments", () => {
             modelSelection,
             text: prompt,
             attachments: resumed ? [attachment] : [attachment, document],
+            messageCreatedBy: createdBy,
           }),
           nativeThreadHasTurns: resumed,
         };
@@ -2454,7 +2477,7 @@ describe("ClaudeAdapterV2 attachments", () => {
           providerThread,
           providerTurnId,
           message: {
-            createdBy: "user",
+            createdBy,
             creationSource: "web",
             messageId: MessageId.make("message-claude-attachments-steer"),
             text: prompt,
