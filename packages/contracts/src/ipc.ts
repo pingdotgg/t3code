@@ -1061,12 +1061,11 @@ export interface DesktopBridge {
   revealWindow: () => Promise<void>;
   /**
    * The OS locale as a BCP-47 tag, which the renderer cannot read for itself:
-   * the packaged app ships only the `en-US` Chromium locale pak, so
-   * `navigator.language` and the default `Intl` locale are pinned to `en-US`
-   * regardless of OS settings.
+   * `navigator.language` and the default `Intl` locale snap to the closest
+   * Chromium locale pak and can drop the OS region.
    */
   getSystemLocale: () => string | null;
-  /** The OS's preferred languages, most preferred first; `navigator.languages` is pinned like the locale. */
+  /** The OS's preferred languages, most preferred first; `navigator.languages` follows the shipped locale pak instead. */
   getPreferredSystemLanguages: () => readonly string[];
   /** False when the OS turned off middle-click PRIMARY paste (`gtk-enable-primary-paste`). */
   getPrimaryPasteEnabled?: () => boolean;
