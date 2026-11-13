@@ -1,3 +1,7 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - The HTTPS test server needs certificate bytes.
+import * as NodeFS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - A peer with a certificate this machine does not trust.
+import * as NodeHttps from "node:https";
 import { NodeHttpServer } from "@effect/platform-node";
 import { type ExecutionEnvironmentDescriptor, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -8,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/http/HttpRouter";
@@ -118,16 +123,15 @@ const serveApart = (descriptor: ExecutionEnvironmentDescriptor) =>
   );
 
 it.effect("routes peer reads to readers and sees uncommitted link updates", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const context = yield* layerLinkingEnvironment(
-        laptop,
-        ServerSecretStore.layer,
-        layerReaderDatabase,
-      ).pipe(Layer.build);
-      const links = Context.get(context, PeerLinks.PeerLinks);
-      const sql = Context.get(context, SqlClient.SqlClient);
-      yield* sql`
+  Effect.gen(function* () {
+    const context = yield* layerLinkingEnvironment(
+      laptop,
+      ServerSecretStore.layer,
+      layerReaderDatabase,
+    ).pipe(Layer.build);
+    const links = Context.get(context, PeerLinks.PeerLinks);
+    const sql = Context.get(context, SqlClient.SqlClient);
+    yield* sql`
       INSERT INTO peer_environment_links (
         environment_id, secret_name, label, urls_json, access, linked_at, expires_at, fenced
       ) VALUES (
@@ -135,27 +139,26 @@ it.effect("routes peer reads to readers and sees uncommitted link updates", () =
         '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z', 1
       )
     `;
-      const { queries, trace } = traceSqlRouting();
-      yield* links.list.pipe(trace);
-      expect(Option.getOrThrow(yield* links.get(box.environmentId).pipe(trace)).label).toBe("Box");
-      const reads = queries.filter(({ query }) =>
-        query.includes("SELECT * FROM peer_environment_links"),
-      );
-      expect(reads).toHaveLength(2);
-      expect(reads.map((row) => row.connection)).toEqual(["reader", "reader"]);
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          yield* sql`UPDATE peer_environment_links SET label = 'Uncommitted box'`;
-          expect(Option.getOrThrow(yield* links.get(box.environmentId)).label).toBe(
-            "Uncommitted box",
-          );
-          expect((yield* links.list)[0]?.label).toBe("Uncommitted box");
-        }),
-      );
-      expect(yield* links.unlink(box.environmentId)).toBe(true);
-      expect(yield* links.list).toEqual([]);
-    }),
-  ),
+    const { queries, trace } = traceSqlRouting();
+    yield* links.list.pipe(trace);
+    expect(Option.getOrThrow(yield* links.get(box.environmentId).pipe(trace)).label).toBe("Box");
+    const reads = queries.filter(({ query }) =>
+      query.includes("SELECT * FROM peer_environment_links"),
+    );
+    expect(reads).toHaveLength(2);
+    expect(reads.map((row) => row.connection)).toEqual(["reader", "reader"]);
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`UPDATE peer_environment_links SET label = 'Uncommitted box'`;
+        expect(Option.getOrThrow(yield* links.get(box.environmentId)).label).toBe(
+          "Uncommitted box",
+        );
+        expect((yield* links.list)[0]?.label).toBe("Uncommitted box");
+      }),
+    );
+    expect(yield* links.unlink(box.environmentId)).toBe(true);
+    expect(yield* links.list).toEqual([]);
+  }),
 );
 
 it.effect("links with a pairing code, and the peer holds its agents to the limits they carry", () =>
@@ -385,6 +388,62 @@ it.effect("never sends a link's token to an address that stops answering as that
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("lists a peer asleep at every address as unreachable within one probe budget", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      // Another address of the same machine, asleep too.
+      const wake = yield* Deferred.make<void>();
+      const elsewhere = yield* serveRaw(() =>
+        Deferred.await(wake).pipe(Effect.as(HttpServerResponse.empty({ status: 503 }))),
+      );
+      yield* Effect.addFinalizer(() => Deferred.succeed(wake, undefined));
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({
+        url: b.url,
+        alternateUrls: [elsewhere],
+        pairingCode: pairing.credential,
+        access: "auto",
+      });
+
+      yield* Ref.set(b.asleep, true);
+      const listing = yield* a.links.list.pipe(Effect.forkScoped);
+      yield* Queue.take(b.unanswered);
+      yield* TestClock.adjust(Duration.seconds(3));
+      const listed = yield* Fiber.join(listing);
+      expect(listed.map((link) => link.status)).toEqual(["unreachable"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("lists a peer as reachable at another address while its first one sleeps", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const described = yield* HttpClient.get(`${b.url}/.well-known/t3/environment`).pipe(
+        Effect.flatMap((response) => response.text),
+        Effect.provide(FetchHttpClient.layer),
+      );
+      // Another address of the same machine that answers.
+      const elsewhere = yield* serveRaw(() =>
+        Effect.succeed(HttpServerResponse.text(described, { contentType: "application/json" })),
+      );
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({
+        url: b.url,
+        alternateUrls: [elsewhere],
+        pairingCode: pairing.credential,
+        access: "auto",
+      });
+
+      yield* Ref.set(b.asleep, true);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("cancelling a descriptor probe aborts its request and leaves later resolves fresh", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -432,6 +491,38 @@ it.effect("cancelling a descriptor probe aborts its request and leaves later res
       expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
       expect(yield* Ref.get(requests)).toBe(2);
       expect(yield* Ref.get(b.bearers)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.live("one dropped descriptor request does not list a live peer as unreachable", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const dropNext = yield* Ref.make(false);
+      const dropOnce = HttpRouter.middleware(
+        (httpEffect) =>
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            if (
+              request.url.startsWith("/.well-known/t3/environment") &&
+              (yield* Ref.getAndSet(dropNext, false))
+            ) {
+              return HttpServerResponse.empty({ status: 503 });
+            }
+            return yield* httpEffect;
+          }),
+        { global: true },
+      );
+      const b = yield* servePeer(
+        box,
+        Layer.merge(McpHttpServer.toolkitRegistration(ProbeToolkit, probeHandlers), dropOnce),
+      );
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+
+      yield* Ref.set(dropNext, true);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
@@ -599,10 +690,35 @@ it.effect(
           expectedEnvironmentId: box.environmentId,
         });
         expect(linked).toMatchObject({ environmentId: box.environmentId, urls: [b.url] });
+        // A picked machine is never linked at this machine's own loopback.
+        const own = yield* a.links
+          .link({
+            url: b.url.replace("127.0.0.1", "localhost"),
+            pairingCode: pairing.credential,
+            access: "auto",
+            expectedEnvironmentId: box.environmentId,
+          })
+          .pipe(Effect.flip);
+        expect(own.message).toContain("is this machine");
         yield* probe(a);
         expect(yield* linkedSessions(impostor)).toEqual([]);
         expect(yield* Ref.get(impostor.bearers)).toEqual([]);
         expect((yield* linkedSessions(b)).length).toBe(1);
+
+        // An address alone that answers as the linked box never takes over its link.
+        yield* Ref.set(impostor.descriptor, box);
+        const second = yield* impostor.auth.issuePairingCredential();
+        const taken = yield* a.links
+          .link({ url: impostor.url, pairingCode: second.credential, access: "auto" })
+          .pipe(Effect.flip);
+        expect(taken.message).toContain("already linked");
+        expect(yield* linkedSessions(impostor)).toEqual([]);
+        expect(Option.getOrUndefined(yield* a.links.get(box.environmentId))?.urls).toEqual([b.url]);
+        // The address the link already has still renews it.
+        const renewal = yield* b.auth.issuePairingCredential();
+        expect(
+          yield* a.links.link({ url: b.url, pairingCode: renewal.credential, access: "auto" }),
+        ).toMatchObject({ urls: [b.url] });
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
@@ -624,7 +740,7 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
         .pipe(Effect.flip);
       expect(failed.reason).toBe("unreachable");
       expect(failed.message).toBe(
-        `This environment could not reach Box at ${impostor.url}, http://192.168.1.20:3773.`,
+        `This environment could not reach Box: ${new URL(impostor.url).origin} answered as another environment, Impostor. http://192.168.1.20:3773 is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
       );
       expect(yield* a.links.list).toEqual([]);
       expect(yield* linkedSessions(impostor)).toEqual([]);
@@ -644,3 +760,93 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
+
+it.live("linking an address with nothing listening says so, unlike one that is not T3 Code", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const closed = yield* Effect.scoped(
+        serveRaw(() => Effect.succeed(HttpServerResponse.empty({ status: 404 }))),
+      );
+      const notT3 = yield* serveRaw(() =>
+        Effect.succeed(
+          HttpServerResponse.text("<h1>Not Found</h1>", { status: 404, contentType: "text/html" }),
+        ),
+      );
+      const a = yield* makeA(laptop);
+      const linking = (url: string) =>
+        a.links.link({ url, pairingCode: "unused", access: "auto" }).pipe(Effect.flip);
+      expect((yield* linking(closed)).message).toBe(`${closed} did not answer (ECONNREFUSED).`);
+      expect((yield* linking(notT3)).message).toBe(
+        `${notT3} answered, but not as a T3 Code environment this version understands.`,
+      );
+      expect(yield* a.links.list).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+/** An https listener whose certificate this machine does not trust. */
+const serveUntrusted = Layer.build(
+  Layer.fresh(
+    NodeHttpServer.layerServer(
+      () =>
+        NodeHttps.createServer({
+          key: NodeFS.readFileSync(new URL("./fixtures/localhost-key.pem", import.meta.url)),
+          cert: NodeFS.readFileSync(new URL("./fixtures/localhost-cert.pem", import.meta.url)),
+        }),
+      { port: 0, host: "127.0.0.1" },
+    ),
+  ),
+).pipe(
+  Effect.map((server) => {
+    const address = Context.get(server, HttpServer.HttpServer).address;
+    if (address._tag === "UnixPathAddress") throw new Error("expected a TCP address");
+    return `https://127.0.0.1:${address.port}`;
+  }),
+);
+
+it.effect("names an untrusted certificate instead of calling the peer something else", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const untrusted = yield* serveUntrusted;
+      const a = yield* makeA(laptop);
+      const failed = yield* a.links
+        .link({ url: untrusted, pairingCode: "unused", access: "auto" })
+        .pipe(Effect.flip);
+      expect(failed.reason).toBe("unreachable");
+      expect(failed.message).toContain("certificate this machine rejected");
+      expect(failed.message).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(yield* a.links.list).toEqual([]);
+
+      // A stored link tries its next address past an untrusted one.
+      const b = yield* serveB(box);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+      yield* a.sql`
+        UPDATE peer_environment_links
+        SET urls_json = ${JSON.stringify([untrusted, b.url])}
+        WHERE environment_id = ${box.environmentId}
+      `;
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it("reads Node's TLS verification code from anywhere in a cause chain", () => {
+  for (const code of [
+    "DEPTH_ZERO_SELF_SIGNED_CERT",
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "CERT_HAS_EXPIRED",
+    "ERR_TLS_CERT_ALTNAME_INVALID",
+    "HOSTNAME_MISMATCH",
+    "INVALID_CA",
+    "INVALID_PURPOSE",
+    "PATH_LENGTH_EXCEEDED",
+  ]) {
+    expect(PeerLinks.certificateErrorCode({ code })).toBe(code);
+  }
+  const wrapped = { message: "fetch failed", cause: { cause: { code: "INVALID_CA" } } };
+  expect(PeerLinks.certificateErrorCode(wrapped)).toBe("INVALID_CA");
+  expect(PeerLinks.certificateErrorCode({ cause: { code: "ECONNREFUSED" } })).toBeUndefined();
+  expect(PeerLinks.certificateErrorCode(new Error("timed out"))).toBeUndefined();
+});

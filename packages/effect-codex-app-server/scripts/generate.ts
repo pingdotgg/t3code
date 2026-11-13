@@ -145,6 +145,8 @@ const ManualSchemas: Record<string, Schema.Json> = {
 // `account/read` decode and take the provider down with it.
 const DefinitionOverrides: Record<string, Schema.Json> = {
   PlanType: { type: "string" },
+  // Newer Codex releases add hook events (e.g. `preModelRequest`); a closed enum drops their notifications.
+  HookEventName: { type: "string" },
   // Newer custom Codex binaries emit partial answers before additional tools or text.
   MessagePhase: {
     description:
@@ -203,12 +205,13 @@ const ensureGeneratedDir = Effect.fn("ensureGeneratedDir")(function* () {
   yield* fs.makeDirectory(generatedDir, { recursive: true });
 });
 
+const githubToken = process.env.GITHUB_TOKEN;
+
 const fetchText = Effect.fn("fetchText")(function* (url: string) {
-  const token = process.env.GITHUB_TOKEN;
   return yield* HttpClientRequest.get(url).pipe(
     HttpClientRequest.setHeader("user-agent", USER_AGENT),
-    token && url.startsWith("https://api.github.com/")
-      ? HttpClientRequest.bearerToken(token)
+    githubToken && url.startsWith("https://api.github.com/")
+      ? HttpClientRequest.bearerToken(githubToken)
       : (request) => request,
     HttpClient.execute,
     Effect.flatMap(HttpClientResponse.filterStatusOk),

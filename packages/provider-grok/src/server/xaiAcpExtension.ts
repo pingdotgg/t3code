@@ -549,13 +549,63 @@ function resolveXAiAcpToolTitle(toolCall: AcpToolCallState): string | undefined 
     nonEmptyString(rawInput?.command) ??
     nonEmptyString(unknownRecord(toolCall.data.rawOutput)?.command);
   if (command !== undefined) {
-    return command.length > 80 ? `${command.slice(0, 77)}...` : command;
+    if (command.length <= 80) return command;
+    const splitsPair =
+      /[\uD800-\uDBFF]/.test(command.charAt(76)) && /[\uDC00-\uDFFF]/.test(command.charAt(77));
+    return `${command.slice(0, splitsPair ? 76 : 77)}...`;
   }
   return nonEmptyString(toolCall.title);
 }
 
 /** Grok 1.0.41 monitor ticks report exit_code 0 before ending via _x.ai/task_completed. */
-export function normalizeXAiAcpToolCallState(toolCall: AcpToolCallState): AcpToolCallState {
+// Grok calls MCP tools through its `use_tool` built-in as "<server>__<tool>" and wraps results as
+// { type: "MCP", output: { OkayOutput } | { Error } }; rewrite both into the generic ACP MCP shapes.
+function normalizeXAiMcpToolCall(toolCall: AcpToolCallState): AcpToolCallState {
+  const meta = unknownRecord(toolCall.data.meta);
+  const rawInput = unknownRecord(toolCall.data.rawInput);
+  const toolName = nonEmptyString(rawInput?.tool_name) ?? "";
+  const separator = toolName.indexOf("__");
+  const isUseTool =
+    unknownRecord(meta?.["x.ai/tool"])?.name === "use_tool" &&
+    separator > 0 &&
+    separator + 2 < toolName.length;
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
+  const result = rawOutput?.type === "MCP" ? unknownRecord(rawOutput.output) : undefined;
+  const text =
+    typeof result?.Error === "string"
+      ? result.Error
+      : typeof result?.OkayOutput === "string"
+        ? result.OkayOutput
+        : undefined;
+  if (!isUseTool && text === undefined) return toolCall;
+  return {
+    ...toolCall,
+    data: {
+      ...toolCall.data,
+      ...(isUseTool
+        ? {
+            meta: { ...meta, is_mcp_tool_call: true },
+            rawInput: {
+              server: toolName.slice(0, separator),
+              tool: toolName.slice(separator + 2),
+              arguments: unknownRecord(rawInput?.tool_input) ?? {},
+            },
+          }
+        : {}),
+      ...(text === undefined
+        ? {}
+        : {
+            rawOutput: {
+              ...(typeof result?.Error === "string" ? { isError: true } : {}),
+              content: [{ type: "text", text }],
+            },
+          }),
+    },
+  };
+}
+
+export function normalizeXAiAcpToolCallState(incoming: AcpToolCallState): AcpToolCallState {
+  const toolCall = normalizeXAiMcpToolCall(incoming);
   const resolvedTitle = resolveXAiAcpToolTitle(toolCall);
   const withTitle =
     resolvedTitle !== undefined && resolvedTitle !== toolCall.title
@@ -1285,14 +1335,19 @@ function xAiPromptFailure(
       code: -32603,
       errorMessage: "Grok ended the turn with an error.",
       operation: "receive-response",
-      ...(agentResult === undefined ? {} : { cause: new XAiPromptFailureText(agentResult) }),
+      ...(agentResult === undefined
+        ? {}
+        : { cause: new XAiPromptFailureText({ message: agentResult }) }),
     });
   }
   return null;
 }
 
 /** Keep unbounded provider text out of structured attributes; read only at presentation. */
-export class XAiPromptFailureText extends Error {}
+export class XAiPromptFailureText extends Schema.TaggedError<XAiPromptFailureText>()(
+  "XAiPromptFailureText",
+  { message: Schema.String },
+) {}
 
 const registerXAiPromptCompletionFallback = (
   pendingRef: Ref.Ref<ReadonlyArray<PendingXAiPromptCompletion>>,
