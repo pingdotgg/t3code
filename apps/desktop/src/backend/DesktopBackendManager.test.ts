@@ -5,6 +5,11 @@ import {
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
   DesktopTelemetryControlMessage,
 } from "@t3tools/contracts";
+import {
+  DATABASE_MIGRATION_PROGRESS_MESSAGE,
+  DATABASE_MIGRATIONS_FINISHED_MESSAGE,
+  DATABASE_MIGRATIONS_STARTED_MESSAGE,
+} from "@t3tools/shared/databaseMigrationLog";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -688,12 +693,21 @@ describe("DesktopBackendManager", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const reports = yield* Queue.unbounded<DesktopBackendManager.BackendStartupFailure>();
-        const startInstance = (status: Ref.Ref<number>, onReady?: Effect.Effect<void>) =>
+        const startInstance = (
+          status: Ref.Ref<number>,
+          onReady?: Effect.Effect<void>,
+          stdout = "",
+        ) =>
           makeTestInstance({
             spawnerLayer: Layer.succeed(
               ChildProcessSpawner.ChildProcessSpawner,
               ChildProcessSpawner.make(() =>
-                Effect.succeed(makeProcess({ exitCode: Effect.never })),
+                Effect.succeed(
+                  makeProcess({
+                    exitCode: Effect.never,
+                    stdout: Stream.make(new TextEncoder().encode(stdout)),
+                  }),
+                ),
               ),
             ),
             httpClientLayer: layerHttpClient((request) =>
@@ -712,7 +726,30 @@ describe("DesktopBackendManager", () => {
         yield* Deferred.await(ready);
         assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
 
-        yield* startInstance(yield* Ref.make(503));
+        const migratingStatus = yield* Ref.make(503);
+        const migrated = yield* Deferred.make<void>();
+        yield* startInstance(
+          migratingStatus,
+          Deferred.succeed(migrated, undefined).pipe(Effect.asVoid),
+          // Enough progress lines that the start line scrolls out of the output tail.
+          `INFO ${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n` +
+            Array.from(
+              { length: 80 },
+              (_, index) =>
+                `INFO ${DATABASE_MIGRATION_PROGRESS_MESSAGE} migration=${index}_Migration progress="${index + 1} of 80"\n`,
+            ).join(""),
+        );
+        yield* TestClock.adjust(Duration.minutes(10));
+        assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
+        yield* Ref.set(migratingStatus, 200);
+        yield* TestClock.adjust(Duration.millis(100));
+        yield* Deferred.await(migrated);
+
+        yield* startInstance(
+          yield* Ref.make(503),
+          undefined,
+          `${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n${DATABASE_MIGRATIONS_FINISHED_MESSAGE}\n`,
+        );
         yield* TestClock.adjust(Duration.seconds(179));
         assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
         yield* TestClock.adjust(Duration.seconds(1));
