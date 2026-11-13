@@ -6,6 +6,7 @@ import type { HomeProjectScope } from "../home/homeThreadList";
 import {
   getProjectScopeSelectionTarget,
   newTaskDestination,
+  newTaskFilteredProject,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
   resolveNewTaskScratchOption,
@@ -74,6 +75,37 @@ describe("getProjectScopeSelectionTarget", () => {
     // With nothing connected, the usual order still applies.
     expect(target([], "server")).toBe(server);
     expect(target([])).toBe(mac);
+  });
+});
+
+describe("newTaskFilteredProject", () => {
+  it("never starts in an archived copy of the filtered project", () => {
+    const mac = { ...makeProject("t3code", "mac"), archivedAt: "2026-01-01T00:00:00.000Z" };
+    const server = makeProject("t3code", "server");
+    expect(
+      newTaskFilteredProject(
+        makeScope([mac, server]),
+        null,
+        new Set([mac.environmentId, server.environmentId]),
+        { environmentId: "mac", projectId: "t3code" },
+      ),
+    ).toEqual({ environmentId: "server", projectId: "t3code" });
+  });
+
+  it("prefers the remembered copy of the filtered project", () => {
+    const mac = makeProject("t3code", "mac");
+    const server = makeProject("t3code", "server");
+    const connected = new Set([mac.environmentId, server.environmentId]);
+    const filtered = (last?: { readonly environmentId: string; readonly projectId: string }) =>
+      newTaskFilteredProject(makeScope([mac, server]), null, connected, last);
+    expect(filtered({ environmentId: "server", projectId: "t3code" })).toEqual({
+      environmentId: "server",
+      projectId: "t3code",
+    });
+    expect(filtered({ environmentId: "server", projectId: "other" })).toEqual({
+      environmentId: "mac",
+      projectId: "t3code",
+    });
   });
 });
 
@@ -173,6 +205,7 @@ describe("newTaskDestination", () => {
     readonly useLastProject: boolean | undefined;
     readonly projects: ReadonlyArray<EnvironmentProject>;
     readonly current?: EnvironmentProject;
+    readonly filtered?: EnvironmentProject;
     readonly last?: { readonly environmentId: string; readonly projectId: string };
   }) {
     return newTaskDestination({
@@ -183,21 +216,40 @@ describe("newTaskDestination", () => {
         environmentId: options.current.environmentId,
         projectId: options.current.id,
       },
+      filteredProject: options.filtered && {
+        environmentId: options.filtered.environmentId,
+        projectId: options.filtered.id,
+      },
       lastProject: options.last,
     });
   }
 
-  it("starts in the current thread's project ahead of the remembered one", () => {
+  it("starts in the current thread's project ahead of the filtered and remembered ones", () => {
     const projects = [makeProject("remembered"), makeProject("current", "other-environment")];
     expect(
       destination({
         useLastProject: true,
         projects,
         current: projects[1],
+        filtered: projects[0],
         last: { environmentId: "environment", projectId: "remembered" },
       }),
     ).toEqual({
       draft: { requestId: "request", environmentId: "other-environment", projectId: "current" },
+    });
+  });
+
+  it("starts in the thread list's filtered project ahead of the remembered one", () => {
+    const projects = [makeProject("bravo"), makeProject("alpha")];
+    expect(
+      destination({
+        useLastProject: true,
+        projects,
+        filtered: projects[1],
+        last: { environmentId: "environment", projectId: "bravo" },
+      }),
+    ).toEqual({
+      draft: { requestId: "request", environmentId: "environment", projectId: "alpha" },
     });
   });
 
@@ -262,6 +314,7 @@ describe("newTaskDestination", () => {
         useLastProject: false,
         projects: [only],
         current: only,
+        filtered: only,
         last: { environmentId: "environment", projectId: "only" },
       }),
     ).toEqual(picker);
