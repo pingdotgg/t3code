@@ -3033,6 +3033,104 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.live("keeps an ACP plan's identity across turns for replacement and removal", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("acp-v2-plan-across-turns");
+      const threadId = ThreadId.make("thread-acp-v2-plan-across-turns");
+      type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let notify: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
+      let turn = 0;
+      const send = (update: EffectAcpSchema.SessionUpdate) =>
+        notify!({ sessionId: "mock-session-1", update });
+      const plan = (planId: string, content: string) =>
+        send({
+          sessionUpdate: "plan_update",
+          plan: {
+            type: "items",
+            planId,
+            entries: [{ content, priority: "medium", status: "pending" }],
+          },
+        });
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  notify = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: () =>
+                Effect.gen(function* () {
+                  turn++;
+                  if (turn === 1) {
+                    yield* plan("to-remove", "Remove next turn");
+                    yield* plan("to-replace", "Old contents");
+                  } else {
+                    yield* send({ sessionUpdate: "plan_removed", planId: "to-remove" });
+                    yield* plan("to-replace", "New contents");
+                  }
+                  return { stopReason: "end_turn" as const };
+                }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-v2-plan-across-turns"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const runTurn = (ordinal: number) =>
+        Effect.gen(function* () {
+          yield* runtime.startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal }),
+          );
+          const events = yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          );
+          return Array.from(events).flatMap((event) =>
+            event.type === "plan.updated" ? [event.plan] : [],
+          );
+        });
+
+      const [removable, replaceable] = yield* runTurn(1);
+      const second = yield* runTurn(2);
+
+      assert.deepEqual(
+        second.map((plan) => ({
+          id: plan.id,
+          status: plan.status,
+          steps: plan.kind === "todo_list" ? plan.steps.map((step) => step.text) : [],
+        })),
+        [
+          { id: removable!.id, status: "superseded", steps: ["Remove next turn"] },
+          { id: replaceable!.id, status: "active", steps: ["New contents"] },
+        ],
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("persists a bounded subset of streamed root and child tool updates", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
