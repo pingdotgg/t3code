@@ -211,11 +211,18 @@ export interface AgentSessionThread {
   readonly omittedMessageCount: number;
 }
 
+/** The linked worktree of the project root that an imported session ran in. */
+export interface AgentSessionWorktree {
+  readonly path: string;
+  readonly branch: string | null;
+}
+
 export type AgentSessionRecentThread =
   | {
       readonly _tag: "Importable";
       readonly thread: AgentSessionThread;
       readonly source: AgentSessionImportSource;
+      readonly worktree: AgentSessionWorktree | null;
     }
   | { readonly _tag: "AlreadyImported"; readonly source: AgentSessionImportSource }
   | { readonly _tag: "Duplicate"; readonly source: AgentSessionImportSource }
@@ -946,18 +953,23 @@ export const make = Effect.gen(function* () {
       | {
           readonly _tag: "Worktree";
           readonly mainCheckout: string | null;
+          readonly gitDir: string;
           readonly git: AgentSessionProjectGit | null;
         }
       | { readonly _tag: "NotGit" };
     const identities = new Map<string, GitIdentity>();
-    const repositories: Array<{ directory: string; gitDir: string; linkedWorktree: boolean }> = [];
+    const repositories: Array<{
+      directory: string;
+      gitDir: string;
+      worktreeGitDir: string | null;
+    }> = [];
     const pointers: Array<{ directory: string; gitPath: string }> = [];
     for (const directory of directories) {
       const gitPath = path.join(directory, ".git");
       const gitStats = yield* statOption(gitPath);
       if (Option.isNone(gitStats)) identities.set(directory, { _tag: "NotGit" });
       else if (gitStats.value.type === "Directory") {
-        repositories.push({ directory, gitDir: gitPath, linkedWorktree: false });
+        repositories.push({ directory, gitDir: gitPath, worktreeGitDir: null });
       } else pointers.push({ directory, gitPath });
     }
 
@@ -972,7 +984,7 @@ export const make = Effect.gen(function* () {
       const gitDir = path.resolve(directory, target);
       if (/[\\/]worktrees[\\/][^\\/]+[\\/]?$/.test(gitDir)) {
         linkedWorktrees.push({ directory, gitDir });
-      } else repositories.push({ directory, gitDir, linkedWorktree: false });
+      } else repositories.push({ directory, gitDir, worktreeGitDir: null });
     }
 
     const commonDirTexts = yield* readGitFiles(
@@ -981,19 +993,19 @@ export const make = Effect.gen(function* () {
     for (const { directory, gitDir } of linkedWorktrees) {
       const commonDir = (commonDirTexts.get(path.join(gitDir, "commondir")) ?? "").trim();
       if (commonDir.length === 0) {
-        identities.set(directory, { _tag: "Worktree", mainCheckout: null, git: null });
+        identities.set(directory, { _tag: "Worktree", mainCheckout: null, gitDir, git: null });
       } else
         repositories.push({
           directory,
           gitDir: path.resolve(gitDir, commonDir),
-          linkedWorktree: true,
+          worktreeGitDir: gitDir,
         });
     }
 
     const configTexts = yield* readGitFiles(
       repositories.map(({ gitDir }) => path.join(gitDir, "config")),
     );
-    for (const { directory, gitDir, linkedWorktree } of repositories) {
+    for (const { directory, gitDir, worktreeGitDir } of repositories) {
       const configText = configTexts.get(path.join(gitDir, "config")) ?? "";
       const originUrl = parseOriginUrlFromGitConfig(configText);
       const git: AgentSessionProjectGit = {
@@ -1002,13 +1014,14 @@ export const make = Effect.gen(function* () {
         repository: repositoryPathFromRemoteUrl(originUrl),
       };
       // Bare repositories have no main checkout, so offer their linked worktrees independently.
-      if (linkedWorktree && !isBareGitConfig(configText)) {
+      if (worktreeGitDir !== null && !isBareGitConfig(configText)) {
         identities.set(directory, {
           _tag: "Worktree",
           // Only a common dir named .git sits inside its main checkout, and an
           // unreadable config can't rule out a bare repository.
           mainCheckout:
             configText.length > 0 && path.basename(gitDir) === ".git" ? path.dirname(gitDir) : null,
+          gitDir: worktreeGitDir,
           git,
         });
         continue;
@@ -1860,21 +1873,61 @@ export const make = Effect.gen(function* () {
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const cutoffMs = nowMs - RECENT_THREAD_WINDOW_MS;
 
+    // Like the scan, a session in a linked worktree of the root belongs to the root's project.
+    const checkouts = new Map<string, { readonly worktreeGitDir: string | null } | null>();
+    const resolveCheckouts = Effect.fn("AgentSessionScanner.resolveCheckouts")(function* (
+      directories: Iterable<string>,
+    ) {
+      const unresolved: Array<string> = [];
+      for (const directory of new Set(directories)) {
+        if (checkouts.has(directory)) continue;
+        if ((yield* directoryIdentity(directory)) === rootIdentity) {
+          checkouts.set(directory, { worktreeGitDir: null });
+          continue;
+        }
+        checkouts.set(directory, null);
+        // Only a .git file can link a directory to another checkout's repository.
+        const gitStats = yield* statOption(path.join(directory, ".git"));
+        if (
+          Option.exists(gitStats, (stats) => stats.type === "File") &&
+          Option.isSome(yield* projectDirectoryStats(directory))
+        ) {
+          unresolved.push(directory);
+        }
+      }
+      const identities = yield* readGitIdentities(unresolved);
+      for (const directory of unresolved) {
+        const identity = identities.get(directory);
+        checkouts.set(
+          directory,
+          identity?._tag === "Worktree" &&
+            identity.mainCheckout !== null &&
+            (yield* directoryIdentity(identity.mainCheckout)) === rootIdentity
+            ? { worktreeGitDir: identity.gitDir }
+            : null,
+        );
+      }
+    });
+
     // Imports recorded since a budget-truncated collection can free budget for transcripts it cut off.
     if (cachedCandidates === null || cachedCandidates.metadataTruncated) {
       cachedCandidates = yield* collectCandidates();
     }
     const { candidates } = cachedCandidates;
 
+    const candidateDirectories = new Map<RawCandidate, string>();
+    for (const candidate of candidates) {
+      const expanded = expandHomePath(candidate.cwd.trim(), homeDir);
+      if (path.isAbsolute(expanded)) candidateDirectories.set(candidate, path.resolve(expanded));
+    }
+    yield* resolveCheckouts(candidateDirectories.values());
+
     const eligibleTranscripts: Array<{
       readonly candidate: RawCandidate;
       readonly transcript: RawCandidate["transcripts"][number] & { readonly mtimeMs: number };
     }> = [];
-    for (const candidate of candidates) {
-      const expanded = expandHomePath(candidate.cwd.trim(), homeDir);
-      if (!path.isAbsolute(expanded)) continue;
-      const resolved = path.resolve(expanded);
-      if ((yield* directoryIdentity(resolved)) !== rootIdentity) continue;
+    for (const [candidate, directory] of candidateDirectories) {
+      if (checkouts.get(directory) == null) continue;
 
       for (const transcript of candidate.transcripts) {
         if (
@@ -2005,10 +2058,13 @@ export const make = Effect.gen(function* () {
             projectCwd(snapshot.cwd.value, transcript.projectRoots).trim(),
             homeDir,
           );
-          if (
-            !path.isAbsolute(expandedCwd) ||
-            (yield* directoryIdentity(path.resolve(expandedCwd))) !== rootIdentity
-          ) {
+          if (!path.isAbsolute(expandedCwd)) {
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+          }
+          const cwd = path.resolve(expandedCwd);
+          yield* resolveCheckouts([cwd]);
+          const checkout = checkouts.get(cwd);
+          if (checkout == null) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
 
@@ -2056,11 +2112,21 @@ export const make = Effect.gen(function* () {
             return Option.some<AgentSessionRecentThread>({ _tag: "Duplicate", source });
           }
           importedSessions.add(sessionKey);
+          let worktree: AgentSessionWorktree | null = null;
+          if (checkout.worktreeGitDir !== null) {
+            const headPath = path.join(checkout.worktreeGitDir, "HEAD");
+            const head = (yield* readGitFiles([headPath])).get(headPath) ?? "";
+            worktree = {
+              path: cwd,
+              branch: /^ref: refs\/heads\/(.+)$/.exec(head.trim())?.[1] ?? null,
+            };
+          }
           return Option.some<AgentSessionRecentThread>({
             _tag: "Importable",
             thread:
               savedTitle === undefined ? parsedThread : { ...parsedThread, title: savedTitle },
             source,
+            worktree,
           });
         }).pipe(importReadLock.withPermits(1)),
       ),

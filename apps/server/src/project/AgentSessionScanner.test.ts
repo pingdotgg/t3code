@@ -1019,6 +1019,79 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("imports the sessions of a checkout's linked worktrees with their branches", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
+        const repo = yield* makeTempDir("t3code-workspace-repo-");
+        const otherRepo = yield* makeTempDir("t3code-workspace-other-");
+        const feature = path.join(repo, ".claude", "worktrees", "feature");
+        const detached = yield* makeTempDir("t3code-workspace-detached-");
+        const managed = path.join(configBaseDir, "worktrees", "repo", "managed");
+        const elsewhere = path.join(otherRepo, ".claude", "worktrees", "elsewhere");
+        for (const main of [repo, otherRepo]) {
+          yield* fileSystem.makeDirectory(path.join(main, ".git"));
+          yield* fileSystem.writeFileString(path.join(main, ".git", "config"), "[core]\n");
+        }
+        for (const [main, checkout, head] of [
+          [repo, feature, "ref: refs/heads/feature\n"],
+          [repo, detached, "0123456789abcdef0123456789abcdef01234567\n"],
+          [repo, managed, "ref: refs/heads/managed\n"],
+          [otherRepo, elsewhere, "ref: refs/heads/elsewhere\n"],
+        ] as const) {
+          const gitDir = path.join(main, ".git", "worktrees", path.basename(checkout));
+          yield* fileSystem.makeDirectory(gitDir, { recursive: true });
+          yield* fileSystem.writeFileString(path.join(gitDir, "commondir"), "../..\n");
+          yield* fileSystem.writeFileString(path.join(gitDir, "HEAD"), head);
+          yield* fileSystem.makeDirectory(checkout, { recursive: true });
+          yield* fileSystem.writeFileString(path.join(checkout, ".git"), `gitdir: ${gitDir}\n`);
+        }
+        const sessions = [
+          ["root-session", repo],
+          ["feature-session", feature],
+          ["detached-session", detached],
+          ["managed-session", managed],
+          ["elsewhere-session", elsewhere],
+        ] as const;
+        for (const [index, [sessionId, cwd]] of sessions.entries()) {
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", `-slug-${index}`, `${sessionId}.jsonl`),
+            contents: `${JSON.stringify({
+              type: "user",
+              cwd,
+              sessionId,
+              message: { role: "user", content: "Fix the project" },
+            })}\n`,
+            mtimeMs: nowMs - (index + 1) * 60_000,
+          });
+        }
+
+        const outcomes = yield* runRecentThreadOutcomes({
+          claudeHomePath,
+          codexHomePath,
+          configBaseDir,
+          workspaceRoot: repo,
+        });
+
+        expect(
+          outcomes.flatMap((outcome) =>
+            outcome._tag === "Importable"
+              ? [{ sessionId: outcome.thread.providerSessionId, worktree: outcome.worktree }]
+              : [],
+          ),
+        ).toEqual([
+          { sessionId: "root-session", worktree: null },
+          { sessionId: "feature-session", worktree: { path: feature, branch: "feature" } },
+          { sessionId: "detached-session", worktree: { path: detached, branch: null } },
+        ]);
+      }),
+    );
+
     it.effect(
       "offers bare-repository worktrees separately and imports only their own sessions",
       () =>
@@ -1083,6 +1156,8 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           ]);
           const threads = yield* runRecentThreads({ ...input, workspaceRoot: dev });
           expect(threads.map((thread) => thread.providerSessionId)).toEqual(["session-1"]);
+          const bareThreads = yield* runRecentThreads({ ...input, workspaceRoot: bare });
+          expect(bareThreads.map((thread) => thread.providerSessionId)).toEqual(["session-0"]);
           const managedThreads = yield* runRecentThreads({ ...input, workspaceRoot: managed });
           expect(managedThreads).toEqual([]);
         }),
