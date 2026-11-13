@@ -21,6 +21,9 @@ export const copilotClientCapabilitiesMeta = {
       "subagent.failed",
       "assistant.message_delta",
       "assistant.reasoning_delta",
+      "session.compaction_complete",
+      "assistant.turn_start",
+      "assistant.idle",
     ],
   },
 };
@@ -116,6 +119,27 @@ export function makeCopilotSubagentRouting() {
             childSessionId: childSessionId(data.toolCallId),
             status: event.type === "subagent.failed" ? "failed" : "completed",
             result: typeof data.error === "string" ? data.error : null,
+          });
+        }
+        // Copilot sends no ACP compaction_update; agentId marks a subagent's own compaction.
+        // Older Copilot builds report a successful compaction without `outcome`.
+        case "session.compaction_complete": {
+          if (
+            event.agentId !== undefined ||
+            data.success !== true ||
+            (data.outcome !== undefined && data.outcome !== "applied")
+          ) {
+            return Effect.void;
+          }
+          return context.markSessionCompacted(event.sessionId);
+        }
+        // Copilot holds session/prompt while an attached async shell runs (github/copilot-cli#5293).
+        case "assistant.turn_start":
+        case "assistant.idle": {
+          if (event.agentId !== undefined || data.aborted === true) return Effect.void;
+          return context.reportForegroundWork({
+            sessionId: event.sessionId,
+            state: event.type === "assistant.idle" ? "idle" : "running",
           });
         }
         default:
