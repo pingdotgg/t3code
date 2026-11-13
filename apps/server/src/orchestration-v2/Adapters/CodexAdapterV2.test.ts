@@ -8690,6 +8690,60 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect("recovers a child's model after its first metadata lookup hits an empty rollout", () =>
+    Effect.gen(function* () {
+      const completed = yield* Deferred.make<void>();
+      let lookups = 0;
+      const harness = yield* makeCodexReplayHarness(
+        resumeSubagentTranscript,
+        (event) =>
+          event.type === "subagent.updated" && event.subagent.status === "completed"
+            ? Deferred.succeed(completed, undefined)
+            : Effect.void,
+        undefined,
+        (threadId, method) => {
+          lookups += 1;
+          // Codex answers both lookups of the first attempt before the child's rollout is written.
+          return lookups <= 2
+            ? Effect.fail(
+                new CodexError.CodexAppServerRequestError({
+                  code: -32603,
+                  errorMessage: `failed to read thread: thread-store internal error: failed to read session metadata /tmp/${threadId}.jsonl: rollout at /tmp/${threadId}.jsonl is empty`,
+                  method,
+                }),
+              )
+            : Effect.succeed({
+                thread: { id: threadId, model: "gpt-6-luna", reasoningEffort: "max" },
+                model: "gpt-6-luna",
+                reasoningEffort: "max",
+              });
+        },
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-child-model-retry"),
+          text: RESUME_PROMPT,
+        }),
+      );
+      yield* TestClock.adjust("100 millis");
+      yield* Deferred.await(completed);
+      yield* TestClock.adjust("60 seconds");
+      assert.equal(harness.subagentUpdates().at(-1)?.subagent.model, "gpt-6-luna");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["activity", "spawn", "activity then spawn"] as const)(
     "creates a child from %s without the parent's effort",
     (source) =>
