@@ -6,6 +6,9 @@ import {
   DEFAULT_TERMINAL_ID,
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   retainedTerminalHistory,
+  TERMINAL_SEQUENCE_GROUND,
+  terminalSequenceEnd,
+  terminalSequenceStateAfter,
   TerminalCwdError,
   TerminalCwdNotDirectoryError,
   TerminalCwdNotFoundError,
@@ -888,6 +891,14 @@ interface TerminalHistoryPersistenceCursor {
   readonly fileBytes: number;
 }
 
+function countLineBreaks(data: string): number {
+  let lineBreaks = 0;
+  for (let index = data.indexOf("\n"); index !== -1; index = data.indexOf("\n", index + 1)) {
+    lineBreaks += 1;
+  }
+  return lineBreaks;
+}
+
 export class BoundedTerminalHistory {
   private readonly maxLines: number;
   private readonly maxBytes: number;
@@ -897,6 +908,8 @@ export class BoundedTerminalHistory {
   private lineBreaks = 0;
   // Reading the old string's tail on each append can force chunk concatenation.
   private lastCodeUnit: number | undefined;
+  // The terminal parser's state at the first retained code unit, which is where a replay starts.
+  private sequenceState = TERMINAL_SEQUENCE_GROUND;
   private cachedValue: string | null = "";
   private generation = 0;
   private appendedLength = 0;
@@ -961,10 +974,7 @@ export class BoundedTerminalHistory {
 
   private appendChunk(data: string): void {
     const byteLength = Buffer.byteLength(data);
-    let lineBreaks = 0;
-    for (let index = data.indexOf("\n"); index !== -1; index = data.indexOf("\n", index + 1)) {
-      lineBreaks += 1;
-    }
+    const lineBreaks = countLineBreaks(data);
     const previous = this.chunks.at(-1);
     if (previous && previous.data.length + data.length <= MAX_HISTORY_CHUNK_LENGTH) {
       previous.data += data;
@@ -981,6 +991,7 @@ export class BoundedTerminalHistory {
 
   private discardChunk(): void {
     const first = this.chunks[this.start]!;
+    this.sequenceState = terminalSequenceStateAfter(this.sequenceState, first.data);
     this.byteLength -= first.byteLength;
     this.lineBreaks -= first.lineBreaks;
     this.chunks[this.start++] = undefined;
@@ -992,6 +1003,7 @@ export class BoundedTerminalHistory {
       this.discardChunk();
       return;
     }
+    this.sequenceState = terminalSequenceStateAfter(this.sequenceState, first.data, 0, offset);
     first.data = first.data.slice(offset);
     first.byteLength -= byteLength;
     first.lineBreaks -= lineBreaks;
@@ -1039,6 +1051,12 @@ export class BoundedTerminalHistory {
       }
       this.trimChunk(offset, bytes, lineBreaks);
     }
+    // A cut inside a control sequence would replay the rest of it as text.
+    while (this.sequenceState !== TERMINAL_SEQUENCE_GROUND && this.start < this.chunks.length) {
+      const first = this.chunks[this.start]!;
+      const dropped = first.data.slice(0, terminalSequenceEnd(this.sequenceState, first.data));
+      this.trimChunk(dropped.length, Buffer.byteLength(dropped), countLineBreaks(dropped));
+    }
     if (
       this.start === this.chunks.length ||
       (this.start > 2_048 && this.start * 2 >= this.chunks.length)
@@ -1057,6 +1075,7 @@ export class BoundedTerminalHistory {
     this.byteLength = 0;
     this.lineBreaks = 0;
     this.lastCodeUnit = undefined;
+    this.sequenceState = TERMINAL_SEQUENCE_GROUND;
     this.cachedValue = "";
   }
 
