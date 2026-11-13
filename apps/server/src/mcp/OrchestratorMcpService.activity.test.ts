@@ -685,6 +685,7 @@ it("readThread shows output a running command has already printed", async () => 
               items: [row] as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
               totalItems: 1,
               hasMore: false,
+              hasEarlier: false,
             }),
           getThreadRecords: () => Effect.succeed(projection),
           getProjectThreadRecords: () => Effect.succeed(projection),
