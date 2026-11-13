@@ -1,8 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { buildServerProvider } from "@t3tools/provider-core/server/snapshotProbe";
+
+import { applyClaudeGatewayModels } from "./Drivers/ClaudeGatewayModels.ts";
 
 import { resolveProviderCatalog, type ModelManifestData } from "./ModelManifest.ts";
 import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
   capClaudeCatalogEffort,
   type ClaudeModelCatalog,
   formatClaudeVersionUpgradeMessage,
@@ -72,6 +76,58 @@ const catalogFromManifest = (data: ModelManifestData) =>
   resolveClaudeModelCatalog(resolveProviderCatalog(data, CLAUDE) ?? undefined);
 
 describe("Claude model catalog", () => {
+  it("advertises discovered gateway models without requiring saved custom model settings", () => {
+    const opus = BUNDLED_CLAUDE_MODEL_CATALOG.models.find(
+      (entry) => entry.model.slug === "claude-opus-4-5",
+    )!.model;
+    const provider = buildServerProvider({
+      presentation: { displayName: "Claude" },
+      enabled: true,
+      checkedAt: "2026-11-01T00:00:00Z",
+      updateRequiredModels: [{ slug: "claude-haiku-5-5", name: "Haiku", minVersion: "2.1.293" }],
+      models: [
+        opus,
+        { slug: "haiku", name: "Custom Haiku", isCustom: true, capabilities: null },
+        { slug: "claude-sonnet-4-6", name: "Saved Sonnet", isCustom: false, capabilities: null },
+        { slug: "known", name: "Known", isCustom: false, capabilities: null },
+        { slug: "omitted", name: "Omitted", isCustom: false, capabilities: null },
+        { slug: "saved", name: "Saved", isCustom: true, capabilities: null },
+      ],
+      probe: {
+        installed: true,
+        version: "2.1.316",
+        status: "ready",
+        auth: { status: "authenticated" },
+      },
+    });
+    const result = applyClaudeGatewayModels(
+      provider,
+      [
+        { id: "known" },
+        { id: "claude-opus-4-5-20251101" },
+        { id: "claude-haiku-5-5-20261101" },
+        { id: "claude-haiku-4-5-20251001", display_name: "Gateway Haiku" },
+        { id: "haiku" },
+      ],
+      BUNDLED_CLAUDE_MODEL_CATALOG,
+      ["saved", "haiku", "claude-sonnet-4-6"],
+    );
+    assert.deepStrictEqual(result.models, [
+      { slug: "known", name: "Known", isCustom: false, capabilities: null },
+      { ...opus, slug: "claude-opus-4-5-20251101" },
+      {
+        slug: "claude-haiku-4-5-20251001",
+        name: "Gateway Haiku",
+        isCustom: false,
+        capabilities: { optionDescriptors: [] },
+      },
+      { slug: "haiku", name: "Custom Haiku", isCustom: true, capabilities: null },
+      { slug: "claude-sonnet-4-6", name: "Saved Sonnet", isCustom: false, capabilities: null },
+      { slug: "saved", name: "Saved", isCustom: true, capabilities: null },
+    ]);
+    assert.deepStrictEqual(result.updateRequiredModels, provider.updateRequiredModels);
+  });
+
   it("resolves capacity from selected options and fixed catalog windows without guessing custom models", () => {
     const source = manifest();
     const profile = source.providers!.claudeAgent!.profiles.synthetic!;
@@ -152,12 +208,26 @@ describe("Claude model catalog", () => {
               aliases: ["claude-synthetic-next"],
               status: "current",
             },
-            ...base.providers!.claudeAgent!.models,
+            ...base.providers!.claudeAgent!.models.map((model) => ({
+              ...model,
+              aliases: [...(model.aliases ?? []), "claude-synthetic-next-20251001"],
+            })),
           ],
         },
       },
     };
     const catalog = catalogFromManifest(input);
+    assert.strictEqual(
+      resolveClaudeModelSlug(catalog, "claude-synthetic-next-20251001"),
+      "claude-synthetic-next",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(catalog, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-synthetic-next-20251001",
+      }),
+      "claude-synthetic-next-20251001[large]",
+    );
     assert.strictEqual(resolveClaudeModelSlug(catalog, "synthetic"), "claude-synthetic-next");
     assert.strictEqual(
       resolveClaudeModelSlug(catalog, "claude-synthetic-next"),

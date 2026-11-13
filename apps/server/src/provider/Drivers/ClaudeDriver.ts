@@ -23,6 +23,7 @@ import {
 } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { claudeUsageReader } from "./claudeUsage.ts";
+import { applyClaudeGatewayModels, discoverClaudeGatewayModels } from "./ClaudeGatewayModels.ts";
 import { makeClaudeScopedLimitNames } from "../claudeUsageLimits.ts";
 import * as ClaudeResetCredits from "../claudeResetCredits.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
@@ -252,6 +253,25 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
                 ),
+            ).pipe(
+              Effect.flatMap((provider) =>
+                Effect.gen(function* () {
+                  if (!provider.enabled || !provider.installed) return provider;
+                  const models = yield* discoverClaudeGatewayModels(
+                    effectiveConfig,
+                    processEnv,
+                    stateDir,
+                  ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+                  return models === undefined
+                    ? provider
+                    : applyClaudeGatewayModels(
+                        provider,
+                        models,
+                        catalog,
+                        effectiveConfig.customModels,
+                      );
+                }),
+              ),
             ),
           ),
           Effect.tap((provider) =>
