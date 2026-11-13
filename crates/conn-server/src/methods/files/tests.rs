@@ -543,3 +543,46 @@ async fn persisted_attachments_keep_the_contract_limits() {
         .count();
     assert_eq!(stored, 1, "only the valid image is stored");
 }
+
+/// Path limits of `ProjectReadFileInput`, `ProjectWriteFileInput`, `FilesystemGetMetadataInput`
+/// and `FilesystemBrowseInput`: non-empty, at most 512 UTF-16 units.
+#[tokio::test(flavor = "current_thread")]
+async fn file_paths_keep_the_contract_limits() {
+    let s = setup("path-limits");
+    let cwd = s.dir.join("project").to_string_lossy().into_owned();
+    let long = "a".repeat(513);
+    let ctx = CallContext::default;
+    for (tag, input) in [
+        (
+            "projects.readFile",
+            json!({"cwd": cwd, "relativePath": long}),
+        ),
+        ("projects.readFile", json!({"cwd": cwd, "relativePath": ""})),
+        (
+            "projects.writeFile",
+            json!({"cwd": cwd, "relativePath": long, "contents": "x"}),
+        ),
+        (
+            "filesystem.getMetadata",
+            json!({"paths": [format!("/{long}")]}),
+        ),
+        ("filesystem.getMetadata", json!({"paths": ["  "]})),
+        (
+            "filesystem.browse",
+            json!({"partialPath": format!("/{long}")}),
+        ),
+        (
+            "filesystem.browse",
+            json!({"partialPath": "/", "cwd": format!("/{long}")}),
+        ),
+    ] {
+        let result = call(&s.table, ctx(), tag, input.clone()).await;
+        assert!(
+            matches!(result, Err(Failure::Die(_))),
+            "{tag} {input}: {result:?}"
+        );
+    }
+    let ok = call(&s.table, ctx(), "projects.readFile",
+        json!({"cwd": cwd, "relativePath": format!("{}xy", "d/".repeat(255)), "allowMissing": true})).await;
+    assert!(ok.is_ok(), "{ok:?}");
+}

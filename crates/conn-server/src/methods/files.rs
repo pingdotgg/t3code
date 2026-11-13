@@ -32,6 +32,23 @@ fn fail<E: Serialize>(error: E) -> Failure {
     Failure::fail(&error)
 }
 
+/// `PROJECT_READ_FILE_PATH_MAX_LENGTH`, `_WRITE_FILE_`, `FILESYSTEM_PATH_MAX_LENGTH`.
+const PATH_MAX_LENGTH: usize = 512;
+
+/// A contract string limit the generated types do not check: 1 to `max` UTF-16 units, after
+/// trimming when the schema is `TrimmedNonEmptyString`. A breach is a defect, as a decode
+/// failure is on the T3 server.
+fn check_length(value: &str, trimmed: bool, max: usize, field: &str) -> Result<(), Failure> {
+    let value = if trimmed { value.trim() } else { value };
+    let n = value.encode_utf16().count();
+    if n == 0 || n > max {
+        return Err(Failure::die(format!(
+            "{field} must be 1 to {max} characters"
+        )));
+    }
+    Ok(())
+}
+
 /// Where the engine says projects and threads live. Empty without an engine.
 #[derive(Default)]
 struct Layout {
@@ -153,6 +170,7 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         move |_, input: ProjectReadFileInput| {
             let f = f.clone();
             async move {
+                check_length(&input.relative_path, false, PATH_MAX_LENGTH, "relativePath")?;
                 blocking(move || {
                     workspace::read_file(&input, f.home.as_deref(), &f.internal)
                         .map_err(|e| fail(e.into_read_error(&input.cwd, &input.relative_path)))
@@ -168,6 +186,7 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         move |_, input: ProjectWriteFileInput| {
             let e = e.clone();
             async move {
+                check_length(&input.relative_path, false, PATH_MAX_LENGTH, "relativePath")?;
                 let layout = Layout::load(e.as_ref()).await;
                 let (projects, worktrees) = layout.known_workspaces();
                 blocking(move || {
@@ -269,6 +288,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
                 if input.paths.is_empty() || input.paths.len() > 64 {
                     return Err(Failure::die("paths must hold 1 to 64 entries"));
                 }
+                for path in &input.paths {
+                    check_length(path, true, PATH_MAX_LENGTH, "paths[]")?;
+                }
                 blocking(move || {
                     workspace::get_metadata(&input.paths, f.home.as_deref(), &f.internal)
                 })
@@ -283,6 +305,10 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         move |_, input: FilesystemBrowseInput| {
             let f = f.clone();
             async move {
+                check_length(&input.partial_path, true, PATH_MAX_LENGTH, "partialPath")?;
+                if let Some(cwd) = &input.cwd {
+                    check_length(cwd, true, PATH_MAX_LENGTH, "cwd")?;
+                }
                 blocking(move || workspace::browse(&input, f.home.as_deref()).map_err(fail)).await?
             }
         },
