@@ -51,6 +51,7 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
+import { pullRequestWatchMessage } from "../../apps/server/src/orchestration-v2/pullRequestWatch.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
@@ -338,6 +339,8 @@ export const McpToolUseCase = Schema.Struct({
   }),
   /** Empty to resume a top-level thread without side-chat context after its last tool result. */
   prompt: Schema.String,
+  /** `pullRequestWatchMessage` input; its text replaces `prompt`, so the case reads T3's current wake. */
+  wake: Schema.optional(Schema.Unknown),
   /** Records for the context chips `prompt` links, projected as T3 sends them. */
   promptContext: Schema.optional(Schema.Struct({ records: Schema.Array(ComposerContextRecord) })),
   expect: McpToolUseExpect,
@@ -2447,6 +2450,15 @@ const decodeFlags = Schema.decodeUnknownEffect(Flags);
 const decodeCapture = Schema.decodeUnknownEffect(Schema.fromJsonString(Capture));
 const decodeCodexCapture = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexCapture));
 const decodeCase = Schema.decodeUnknownEffect(Schema.fromJsonString(McpToolUseCase));
+const withWake = (testCase: McpToolUseCase): McpToolUseCase =>
+  testCase.wake === undefined
+    ? testCase
+    : {
+        ...testCase,
+        prompt: pullRequestWatchMessage(
+          testCase.wake as Parameters<typeof pullRequestWatchMessage>[0],
+        ).text,
+      };
 const decodeBaselineRow = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Struct({
@@ -2507,7 +2519,9 @@ const main = Effect.gen(function* () {
       .filter((name) => name.endsWith(".ndjson"))
       .toSorted()
       .map((name) => path.join(casesDir, name));
-  const cases = (yield* Effect.forEach(caseFiles, (file) => readNdjson(file, decodeCase))).flat();
+  const cases = (yield* Effect.forEach(caseFiles, (file) => readNdjson(file, decodeCase)))
+    .flat()
+    .map(withWake);
   const wanted = flags.case?.flatMap((ids) => ids.split(","));
   const codex = isCodex(flags.model);
   const harness = codex ? "codex" : "claude";
