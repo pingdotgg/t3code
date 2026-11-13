@@ -9,11 +9,15 @@ import {
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { act, fakeTimers, render } from "../../../test/render";
+import { page } from "vite-plus/test/browser";
+import { act, render } from "../../../test/render";
 
-const { permissions, reads } = vi.hoisted(() => ({
+const { permissions, current } = vi.hoisted(() => ({
   permissions: { checkout: true, operate: true },
-  reads: { diff: [] as unknown[] },
+  current: {
+    detail: null as PullRequestDetailView | null,
+    runAction: null as unknown as ReturnType<typeof vi.fn>,
+  },
 }));
 
 vi.mock(import("~/state/session"), async (original) => ({
@@ -38,9 +42,9 @@ vi.mock(import("./usePullRequestDetail"), async (original) => ({
     detailQuery: { isPending: false, refresh: vi.fn() },
     activityQuery: { isPending: false, refresh: vi.fn(), error: null },
     activity: null,
-    sharedSummary: detail,
-    coreDetail: detail,
-    detail,
+    sharedSummary: current.detail,
+    coreDetail: current.detail,
+    detail: current.detail,
   })) as never,
 }));
 vi.mock(import("~/state/usePullRequestStack"), async (original) => ({
@@ -53,23 +57,14 @@ vi.mock(import("~/state/usePullRequestStack"), async (original) => ({
     refresh: vi.fn(),
   })) as never,
 }));
-vi.mock(import("~/state/pullRequests"), async (original) => {
-  const actual = await original();
+vi.mock(import("~/state/use-atom-command"), async (original) => {
+  const { pullRequestEnvironment } = await import("~/state/pullRequests");
   return {
-    ...actual,
-    pullRequestEnvironment: {
-      ...actual.pullRequestEnvironment,
-      diff: ((target: unknown) => {
-        reads.diff.push(target);
-        return actual.pullRequestEnvironment.diff(target as never);
-      }) as never,
-    },
+    ...(await original()),
+    useAtomCommand: ((command: unknown) =>
+      command === pullRequestEnvironment.runAction ? current.runAction : vi.fn()) as never,
   };
 });
-vi.mock(import("~/state/use-atom-command"), async (original) => ({
-  ...(await original()),
-  useAtomCommand: (() => vi.fn()) as never,
-}));
 
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 
@@ -145,10 +140,11 @@ const panel = (attach = false) => (
   />
 );
 
-function setup() {
+function setup(nextDetail: PullRequestDetailView = detail) {
   permissions.checkout = true;
   permissions.operate = true;
-  reads.diff = [];
+  current.detail = nextDetail;
+  current.runAction = vi.fn(async () => ({ _tag: "Success", value: undefined }));
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
 }
 
@@ -179,20 +175,26 @@ it("can still add conflict resolution to an existing composer without checkout s
   expect(draft?.prompt).toContain(detail.url);
 });
 
-it("reads the first diff page once the pointer rests on the Code tab", async () => {
-  setup();
+it("binds an admin bypass merge to the displayed head", async () => {
+  setup({
+    ...detail,
+    mergeability: "mergeable",
+    headSha: "displayed-head",
+    autoMergeEnabled: false,
+    mergeCapabilities: { merge: false, squash: true, rebase: false },
+    capabilities: { ...detail.capabilities, actions: ["merge"], mergeMethods: ["squash"] },
+    viewerPermissions: { ...detail.viewerPermissions, actions: ["merge"], adminMerge: true },
+  });
   await using screen = await render(panel());
-  using _timers = fakeTimers({ now: 0 });
-  const code = screen.getByRole("button", { name: "Code", exact: true });
-  await expect.element(code).toBeVisible();
-
-  await userEvent.hover(code);
-  await act(() => vi.advanceTimersByTime(149));
-  expect(reads.diff).toEqual([]);
-  await act(() => vi.advanceTimersByTime(1));
-  // The page the Code tab reads first, keyed as the tab keys it, so a click paints from it.
-  expect(reads.diff).toContainEqual({
+  await screen.getByRole("button", { name: "Squash and merge" }).click();
+  await page.getByText("Merge with admin permissions").click();
+  await page.getByRole("button", { name: "Bypass rules and merge" }).click();
+  expect(current.runAction).toHaveBeenCalledWith({
     environmentId,
-    input: { projectId: detail.projectId, repository: detail.repository, number: detail.number },
+    input: expect.objectContaining({
+      action: "merge",
+      adminOverride: true,
+      expectedHeadSha: "displayed-head",
+    }),
   });
 });

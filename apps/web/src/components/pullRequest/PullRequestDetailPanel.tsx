@@ -805,6 +805,7 @@ export function PullRequestDetailPanel({
     method?: PullRequestMergeMethod,
     updateMethod?: PullRequestUpdateMethod,
     adminOverride = false,
+    expectedHeadSha?: string,
   ) => {
     onActed?.(action, "sent");
     const result = await runAction({
@@ -815,6 +816,7 @@ export function PullRequestDetailPanel({
         ...(method ? { mergeMethod: method } : {}),
         ...(updateMethod ? { updateMethod } : {}),
         ...(adminOverride ? { adminOverride: true } : {}),
+        ...(expectedHeadSha === undefined ? {} : { expectedHeadSha }),
       },
     });
     setPendingAction(null);
@@ -855,10 +857,11 @@ export function PullRequestDetailPanel({
     method?: PullRequestMergeMethod,
     updateMethod?: PullRequestUpdateMethod,
     adminOverride = false,
+    expectedHeadSha?: string,
   ) => {
     if (!canWriteSourceControl || pendingAction !== null) return false;
     setPendingAction(action);
-    return finishAction(action, method, updateMethod, adminOverride);
+    return finishAction(action, method, updateMethod, adminOverride, expectedHeadSha);
   };
 
   const performCommentAction = async (body: string, action: "close" | "reopen") => {
@@ -1396,6 +1399,7 @@ export function PullRequestDetailPanel({
             selectedMergeMethod,
             undefined,
             adminOverride,
+            adminOverride ? (detail.headSha ?? undefined) : undefined,
           )
         }
       />
