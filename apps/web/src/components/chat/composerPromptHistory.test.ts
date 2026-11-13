@@ -57,12 +57,22 @@ describe("recallableComposerPrompt", () => {
     expect(recallableComposerPrompt(sent, {})).toBe(sent);
   });
 
-  it("leaves out the ultrathink prefix only when the send recorded adding it", () => {
-    const sent = "Ultrathink:\nInvestigate this";
-    expect(recallableComposerPrompt(sent, { effortPrefix: true })).toBe("Investigate this");
-    expect(recallableComposerPrompt(sent, {})).toBe(sent);
-    expect(recallableComposerPrompt(sent)).toBe(sent);
-    expect(recallableComposerPrompt(`Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`)).toBe("");
+  // The same text is typed or generated; a send that recorded which decides, else the text does.
+  it.each([
+    ["Ultrathink:\nInvestigate this", ["effortPrefix"], "Investigate this"],
+    [ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, ["attachmentBootstrap"], ""],
+    [
+      `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+      ["effortPrefix", "attachmentBootstrap"],
+      "",
+    ],
+    ["PLEASE IMPLEMENT THIS PLAN:\nKeep this literal example", undefined, ""],
+  ] as const)("recalls %j as typed unless it was generated", (sent, generatedText, generated) => {
+    expect(recallableComposerPrompt(sent, { generatedText: [] })).toBe(sent);
+    if (generatedText) expect(recallableComposerPrompt(sent, { generatedText })).toBe(generated);
+    // Sends from before the record, with or without context records, are matched by text.
+    expect(recallableComposerPrompt(sent)).toBe(generated);
+    expect(recallableComposerPrompt(sent, {})).toBe(generated);
   });
 
   it.each([

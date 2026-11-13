@@ -1372,7 +1372,12 @@ export function withMessageContext(input: {
   const effortPrefix =
     text.startsWith(CLAUDE_ULTRATHINK_PROMPT_PREFIX) &&
     !input.typedText.trim().startsWith("Ultrathink:");
-  return { text, context: effortPrefix ? { ...context, effortPrefix } : context };
+  const generatedText = [
+    ...(effortPrefix ? (["effortPrefix"] as const) : []),
+    // An empty composer goes out as the bootstrap prompt.
+    ...(input.typedText.length === 0 ? (["attachmentBootstrap"] as const) : []),
+  ];
+  return { text, context: { ...context, generatedText } };
 }
 
 /** The attachments the optimistic user row shows before the server echoes the message. */

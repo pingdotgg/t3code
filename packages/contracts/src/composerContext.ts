@@ -313,10 +313,13 @@ export const OrchestrationMessageContext = Schema.Struct({
   version: Schema.Literal(1),
   guest: Schema.optional(GuestMessageAttribution),
   /**
-   * The sending client put the effort prefix (`Ultrathink:\n`) in front of what the user typed.
-   * Absent when the user typed that line, so prompt recall leaves out only a prefix marked here.
+   * The parts of the text the sending client wrote in place of the user: the effort prefix
+   * (`Ultrathink:\n`) or the attachment-only bootstrap prompt. Empty when the user typed it all.
+   * Absent on sends that did not record it, where prompt recall matches the text instead.
    */
-  effortPrefix: Schema.optional(Schema.Literal(true)),
+  generatedText: Schema.optional(
+    Schema.Array(Schema.Literals(["effortPrefix", "attachmentBootstrap"])),
+  ),
   records: Schema.Array(Schema.Unknown)
     .check(
       Schema.isMaxLength(COMPOSER_CONTEXT_MAX_RECORDS),

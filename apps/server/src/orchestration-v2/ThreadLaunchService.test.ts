@@ -2271,7 +2271,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       messageId: MessageId.make("intake-second"),
       text: "Second",
       attachments: [attachment],
-      context: { version: 1, records: [], effortPrefix: true },
+      context: { version: 1, records: [], generatedText: ["effortPrefix"] },
       dispatchMode: { type: "queue_after_active" },
       createdBy: "user",
       creationSource: "web",
@@ -2288,7 +2288,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       (message) => message.id === queuedRun.userMessageId,
     );
     assert.isDefined(queuedMessage);
-    assert.isTrue(queuedMessage.context?.effortPrefix);
+    assert.deepEqual(queuedMessage.context?.generatedText, ["effortPrefix"]);
     const file: ChatAttachment = {
       type: "file",
       id: ChatAttachmentId.make(createPendingAttachmentId("pdf")),

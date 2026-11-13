@@ -17,6 +17,7 @@ import {
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { ensureInlineContextReferences } from "../lib/composerContextReferences";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import {
   buildMessageContext,
   responseContextRecord,
@@ -1224,7 +1225,7 @@ describe("withMessageContext", () => {
   it("sends the context inline", () => {
     expect(withMessageContext({ text: "hi", typedText: "hi", context })).toEqual({
       text: "hi",
-      context,
+      context: { ...context, generatedText: [] },
     });
   });
 
@@ -1240,19 +1241,20 @@ describe("withMessageContext", () => {
         previewAnnotations: [],
       }),
     });
-    expect(sent).toEqual({ text: typed, context: { version: 1, records: [] } });
+    expect(sent).toEqual({ text: typed, context: { version: 1, records: [], generatedText: [] } });
     expect(recallableComposerPrompt(sent.text, sent.context)).toBe(typed);
   });
 
-  it("records the effort prefix only when the send added it", () => {
-    const text = "Ultrathink:\nhi";
-    expect(withMessageContext({ text, typedText: " hi", context: undefined })).toEqual({
-      text,
-      context: { version: 1, records: [], effortPrefix: true },
-    });
-    expect(withMessageContext({ text, typedText: text, context: undefined }).context).toEqual({
+  it.each([
+    ["Ultrathink:\nhi", " hi", ["effortPrefix"]],
+    ["Ultrathink:\nhi", "Ultrathink:\nhi", []],
+    [ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, "", ["attachmentBootstrap"]],
+    [ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, []],
+  ])("records what the send wrote: %j from %j", (text, typedText, generatedText) => {
+    expect(withMessageContext({ text, typedText, context: undefined }).context).toEqual({
       version: 1,
       records: [],
+      generatedText,
     });
   });
 });

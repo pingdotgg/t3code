@@ -11,7 +11,7 @@ const REVIEW_COMMENT_BLOCK_PATTERN = /<review_comment\b[^>]*>[\s\S]*?<\/review_c
 const TRAILING_LEGACY_CONTEXT =
   /\n*<(terminal_context|element_context|preview_annotation)>\n([\s\S]*?)\n<\/\1>\s*$/;
 
-type RecallContext = Pick<OrchestrationMessageContext, "effortPrefix">;
+type RecallContext = Pick<OrchestrationMessageContext, "generatedText">;
 
 type ComposerPromptHistoryMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {
   readonly id: string;
@@ -76,8 +76,12 @@ function stripInlineTerminalLabels(prompt: string, headers: ReadonlyArray<string
 
 export function recallableComposerPrompt(messageText: string, context?: RecallContext): string {
   let prompt = messageText.trim();
-  // The formatter keeps a typed "Ultrathink:" line, so the text alone cannot say who wrote it.
-  if (context?.effortPrefix && prompt.startsWith(CLAUDE_ULTRATHINK_PROMPT_PREFIX)) {
+  // What the send recorded writing itself; without a record, the text is all there is to go on.
+  const generated = context?.generatedText;
+  if (
+    (generated?.includes("effortPrefix") ?? true) &&
+    prompt.startsWith(CLAUDE_ULTRATHINK_PROMPT_PREFIX)
+  ) {
     prompt = prompt.slice(CLAUDE_ULTRATHINK_PROMPT_PREFIX.length);
   }
 
@@ -114,17 +118,12 @@ export function recallableComposerPrompt(messageText: string, context?: RecallCo
   }
 
   const trimmed = prompt.trim();
-  // Sends from before the prefix was recorded keep it, and it can lead a prompt that is hidden.
-  const body = trimmed.startsWith(CLAUDE_ULTRATHINK_PROMPT_PREFIX)
-    ? trimmed.slice(CLAUDE_ULTRATHINK_PROMPT_PREFIX.length)
-    : trimmed;
-  if (
-    body === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT ||
-    body.startsWith(PLAN_IMPLEMENTATION_PROMPT_PREFIX)
-  ) {
-    return "";
-  }
-  return trimmed;
+  // No recording send writes the plan prompt, so only an unrecorded one can be generated.
+  const hidden = generated
+    ? generated.includes("attachmentBootstrap")
+    : trimmed === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT ||
+      trimmed.startsWith(PLAN_IMPLEMENTATION_PROMPT_PREFIX);
+  return hidden ? "" : trimmed;
 }
 
 export function buildComposerPromptHistoryEntries(
