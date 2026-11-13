@@ -54,27 +54,28 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usageProviders";
+import { UsageScreen } from "./UsageRouteScreenParts";
 
-type UsageView = UsageChartMetric | "limits";
-const VIEW_OPTIONS = [
+export type UsageView = UsageChartMetric | "limits";
+export const VIEW_OPTIONS = [
   { value: "cost", label: "Cost" },
   { value: "tokens", label: "Tokens" },
   { value: "limits", label: "Limits" },
 ] as const satisfies readonly { value: UsageView; label: string }[];
 
-const WINDOW_OPTIONS = [
+export const WINDOW_OPTIONS = [
   { value: 1, label: "24h", accessibilityLabel: "Past 24 hours" },
   { value: 7, label: "7d", accessibilityLabel: "Past 7 days" },
   { value: 30, label: "30d", accessibilityLabel: "Past 30 days" },
   { value: 90, label: "90d", accessibilityLabel: "Past 90 days" },
 ] as const;
 
-const CHART_HEIGHT = 180;
-const WIDE_CHART_HEIGHT = 260;
+export const CHART_HEIGHT = 180;
+export const WIDE_CHART_HEIGHT = 260;
 // Below this the page keeps the phone's single column.
-const WIDE_WIDTH = 600;
-const MAX_CONTENT_WIDTH = 1080;
-const providerLabel = (provider: UsageProviderKind) => PROVIDER_LABEL[provider];
+export const WIDE_WIDTH = 600;
+export const MAX_CONTENT_WIDTH = 1080;
+export const providerLabel = (provider: UsageProviderKind) => PROVIDER_LABEL[provider];
 const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";
 
 export function UsageRouteScreen(props: { readonly workspace?: boolean }) {
@@ -82,359 +83,7 @@ export function UsageRouteScreen(props: { readonly workspace?: boolean }) {
   return <UsageScreen workspace={props.workspace} tabParam={route.params?.tab} />;
 }
 
-function UsageScreen(props: {
-  readonly workspace?: boolean;
-  readonly tabParam: string | undefined;
-}) {
-  const insets = useSafeAreaInsets();
-  const [selection, setSelection] = useState(() => ({
-    params: props.tabParam,
-    view: (props.tabParam === "usage" ? "cost" : "limits") as UsageView,
-  }));
-  if (selection.params !== props.tabParam) {
-    setSelection({
-      params: props.tabParam,
-      view: props.tabParam === "usage" ? "cost" : "limits",
-    });
-  }
-  const { view } = selection;
-  const setView = (view: UsageView) => setSelection({ params: props.tabParam, view });
-  const [width, setWidth] = useState(0);
-  const wide = width >= WIDE_WIDTH;
-  const [windowSelection, setWindowSelection] = useState(() => ({
-    days: 30,
-    window: makeWindow(30),
-  }));
-  const { days: windowDays, window } = windowSelection;
-  const isPast24Hours = windowDays === 1;
-  const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
-    useState<ReadonlySet<EnvironmentId> | null>(null);
-  const { merged, environments, selectedEnvironments, isPending, refresh } = useUsage(
-    window,
-    selectedEnvironmentIds,
-  );
-  const isFocused = useIsFocused();
-  const limits = useRefreshLimits(selectedEnvironmentIds, isFocused && view === "limits");
-  const cursorAccessEnvironments = cursorKeychainAccessEnvironments(selectedEnvironments);
-  const refreshAfterCursorEnable = () => {
-    void refresh();
-    void limits.refreshAfterEnable();
-  };
-  const sourceMessages = usageSourceMessages(
-    selectedEnvironments.flatMap((environment) => environment.summary?.sources ?? []),
-  );
-  const canReadDiagnostics = selectedEnvironments.some(
-    (environment) => environment.canReadDiagnostics,
-  );
-
-  const days = enumerateDays(window.sinceDay, window.untilDay);
-  const chartDays =
-    isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
-      ? enumerateHourStarts(window.sinceTime, window.untilTime)
-      : days;
-  const chartTotals: readonly DailyTotals[] = isPast24Hours
-    ? merged.hourly.map((hour) => ({
-        day: hour.hourStart,
-        costUsd: hour.costUsd,
-        totalTokens: hour.totalTokens,
-        byProvider: hour.byProvider,
-      }))
-    : merged.daily;
-
-  const [refreshingUsage, setRefreshingUsage] = useState(false);
-  const refreshingRef = useRef(false);
-  const showingLimits = view === "limits";
-  const metric: UsageChartMetric = view === "tokens" ? "tokens" : "cost";
-  const progress = usageProgress(selectedEnvironments, {
-    refreshing: refreshingUsage,
-    providerLabel,
-  });
-  const selectWindow = (days: number) => {
-    setWindowSelection({
-      days,
-      window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
-    });
-  };
-  const refreshWindow = () => {
-    if (refreshingRef.current) return;
-    const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
-    if (
-      nextWindow.sinceDay !== window.sinceDay ||
-      nextWindow.untilDay !== window.untilDay ||
-      nextWindow.sinceTime !== window.sinceTime ||
-      nextWindow.untilTime !== window.untilTime
-    ) {
-      setWindowSelection({ days: windowDays, window: nextWindow });
-    }
-    refreshingRef.current = true;
-    setRefreshingUsage(true);
-    void refresh(nextWindow).finally(() => {
-      refreshingRef.current = false;
-      setRefreshingUsage(false);
-    });
-  };
-
-  const chart = {
-    merged,
-    days: chartDays,
-    daily: chartTotals,
-    metric,
-    sinceDay: window.sinceDay,
-    untilDay: window.untilDay,
-    isPast24Hours,
-    timeZone: window.timeZone,
-  };
-  const providers = (
-    <ProviderSection
-      merged={merged}
-      metric={metric}
-      cursorAccessEnvironments={cursorAccessEnvironments}
-      showCursorEnvironment={selectedEnvironments.length > 1}
-      onCursorEnabled={refreshAfterCursorEnable}
-      compact={wide}
-    />
-  );
-
-  const showEnvironmentFilter = environments.length > 0 || selectedEnvironmentIds !== null;
-  const filterIcon =
-    selectedEnvironmentIds === null
-      ? "line.3.horizontal.decrease"
-      : "line.3.horizontal.decrease.circle.fill";
-  const environmentActions = [
-    {
-      id: "all",
-      title: "All environments",
-      subtitle: undefined,
-      state: selectedEnvironmentIds === null ? ("on" as const) : ("off" as const),
-    },
-    ...environments.map((environment) => ({
-      id: environment.environmentId,
-      title: environment.label,
-      subtitle: usageEnvironmentStatus(environment, refreshingUsage),
-      state:
-        selectedEnvironmentIds === null || selectedEnvironmentIds.has(environment.environmentId)
-          ? ("on" as const)
-          : ("off" as const),
-    })),
-  ];
-  const selectEnvironment = (value: string) => {
-    if (value === "all") {
-      setSelectedEnvironmentIds(null);
-      return;
-    }
-    const id = EnvironmentId.make(value);
-    setSelectedEnvironmentIds((selected) => toggleUsageEnvironment(selected, environments, id));
-  };
-  const environmentFilter = showEnvironmentFilter ? (
-    <Menu
-      accessible
-      accessibilityRole="button"
-      accessibilityLabel="Filter usage environments"
-      title="Environments"
-      actions={environmentActions}
-      onPressAction={({ nativeEvent }) => selectEnvironment(nativeEvent.event)}
-    >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Filter usage environments"
-        className={cn(
-          "items-center justify-center rounded-full",
-          Platform.OS === "ios" ? "size-[28px]" : "size-[44px]",
-        )}
-      >
-        <SymbolView name={filterIcon} size={22} tintColorClassName="accent-icon" />
-      </Pressable>
-    </Menu>
-  ) : null;
-
-  return (
-    <SettingsScreen title="Usage" trailing={environmentFilter} workspaceRoot={props.workspace}>
-      {Platform.OS === "ios" ? (
-        <NativeStackScreenOptions
-          optionsVersion={JSON.stringify({ showEnvironmentFilter, filterIcon, environmentActions })}
-          options={{
-            // A native menu item, unlike a custom view, moves into the Duo's vertical bar.
-            unstable_headerRightItems: () =>
-              showEnvironmentFilter
-                ? [
-                    withNativeGlassHeaderItem({
-                      accessibilityLabel: "Filter usage environments",
-                      icon: { name: filterIcon, type: "sfSymbol" },
-                      label: "",
-                      type: "menu",
-                      menu: {
-                        title: "Environments",
-                        items: environmentActions.map((action) => ({
-                          type: "action" as const,
-                          label: action.title,
-                          description: action.subtitle,
-                          state: action.state === "on" ? ("on" as const) : undefined,
-                          onPress: () => selectEnvironment(action.id),
-                        })),
-                      },
-                    }),
-                  ]
-                : [],
-          }}
-        />
-      ) : null}
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        showsVerticalScrollIndicator={false}
-        className="flex-1"
-        contentContainerClassName="px-5 pt-4"
-        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
-        onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
-        refreshControl={
-          showingLimits || canReadDiagnostics ? (
-            <RefreshControl
-              refreshing={showingLimits ? limits.refreshing : refreshingUsage}
-              onRefresh={showingLimits ? () => void limits.refresh() : refreshWindow}
-            />
-          ) : undefined
-        }
-      >
-        <View className="w-full gap-6 self-center" style={{ maxWidth: MAX_CONTENT_WIDTH }}>
-          {wide ? (
-            <View className="flex-row items-center gap-3">
-              {showingLimits ? (
-                <View className="flex-1" />
-              ) : (
-                <SegmentedControl
-                  options={WINDOW_OPTIONS}
-                  selected={windowDays}
-                  onSelect={selectWindow}
-                  size="compact"
-                  className="flex-1"
-                />
-              )}
-              <SegmentedControl
-                options={VIEW_OPTIONS}
-                selected={view}
-                onSelect={setView}
-                size="compact"
-                role="tab"
-                className="w-60"
-              />
-            </View>
-          ) : (
-            <SegmentedControl
-              options={VIEW_OPTIONS}
-              selected={view}
-              onSelect={setView}
-              role="tab"
-            />
-          )}
-          <Animated.View
-            key={showingLimits ? "limits" : "usage"}
-            entering={FadeIn.duration(160).reduceMotion(ReduceMotion.System)}
-            className="gap-6"
-          >
-            {showingLimits ? (
-              <UsageLimitsSection
-                now={limits.now}
-                failedLabels={limits.failedLabels}
-                selectedEnvironmentIds={selectedEnvironmentIds}
-                wide={wide}
-                cursorPrompt={
-                  cursorAccessEnvironments.length > 0 ? (
-                    <CursorEnableLimits
-                      environments={cursorAccessEnvironments}
-                      onEnabled={refreshAfterCursorEnable}
-                    />
-                  ) : null
-                }
-              />
-            ) : (
-              <>
-                {wide ? null : (
-                  <SegmentedControl
-                    options={WINDOW_OPTIONS}
-                    selected={windowDays}
-                    onSelect={selectWindow}
-                    size="compact"
-                  />
-                )}
-                <ChatGptUsageSummary selectedEnvironmentIds={selectedEnvironmentIds} />
-                {merged.duplicateSources.length > 0 ? (
-                  <Text className="text-sm text-foreground-muted">
-                    Counted once across environments sharing a transcript directory:{" "}
-                    {merged.duplicateSources.join(", ")}
-                  </Text>
-                ) : null}
-                {isPending ? (
-                  <Text className="py-16 text-center text-base text-foreground-muted">
-                    Scanning provider transcripts…
-                  </Text>
-                ) : selectedEnvironments.length === 0 ? (
-                  <Text className="py-16 text-center text-base text-foreground-muted">
-                    {environments.length === 0
-                      ? "Connect an environment to see usage."
-                      : "Select an environment to see usage."}
-                  </Text>
-                ) : !canReadDiagnostics ? (
-                  <View className="gap-2 py-16">
-                    {selectedEnvironments.map((environment) => (
-                      <Text
-                        key={environment.environmentId}
-                        className="text-center text-base text-foreground-muted"
-                      >
-                        {selectedEnvironments.length > 1 ? `${environment.label}: ` : null}
-                        {environment.error}
-                      </Text>
-                    ))}
-                  </View>
-                ) : (
-                  <>
-                    {sourceMessages.map((message) => (
-                      <Text key={message} className="text-sm text-foreground-muted">
-                        {message}
-                      </Text>
-                    ))}
-                    <UsageUpdating dimmed={progress.dimmed} label={progress.label}>
-                      {wide ? (
-                        <View className="flex-row gap-6">
-                          <View className="w-72 gap-6">
-                            <View className="rounded-[24px] border-continuous bg-grouped-card p-4">
-                              <UsageSummary merged={merged} metric={metric} />
-                            </View>
-                            {providers}
-                          </View>
-                          <View className="min-w-0 flex-1">
-                            <ChartCard
-                              {...chart}
-                              height={WIDE_CHART_HEIGHT}
-                              fill
-                              title={`${isPast24Hours ? "Hourly" : "Daily"} ${metric === "cost" ? "cost" : "processed tokens"}`}
-                            />
-                          </View>
-                        </View>
-                      ) : (
-                        <>
-                          <ChartCard {...chart} height={CHART_HEIGHT} />
-                          {providers}
-                        </>
-                      )}
-                      <TotalsSection
-                        merged={merged}
-                        isPast24Hours={isPast24Hours}
-                        columns={width >= 900 ? 6 : wide ? 3 : 2}
-                      />
-                      <CostSection merged={merged} wide={wide} />
-                      <ModelsSection merged={merged} metric={metric} columns={wide ? 2 : 1} />
-                    </UsageUpdating>
-                  </>
-                )}
-              </>
-            )}
-          </Animated.View>
-        </View>
-      </ScrollView>
-    </SettingsScreen>
-  );
-}
-
-function UsageUpdating({
+export function UsageUpdating({
   dimmed,
   label,
   children,
@@ -542,7 +191,7 @@ function CursorEnableRow({
   );
 }
 
-function CursorEnableLimits({
+export function CursorEnableLimits({
   environments,
   onEnabled,
 }: {
@@ -573,7 +222,7 @@ function CursorEnableLimits({
   );
 }
 
-function ChartCard(props: {
+export function ChartCard(props: {
   readonly merged: MergedUsage;
   readonly days: readonly string[];
   readonly daily: readonly DailyTotals[];
@@ -655,7 +304,7 @@ function ChartCard(props: {
   );
 }
 
-function UsageSummary(props: { readonly merged: MergedUsage; readonly metric: UsageChartMetric }) {
+export function UsageSummary(props: { readonly merged: MergedUsage; readonly metric: UsageChartMetric }) {
   const { merged, metric } = props;
   return (
     <View className="gap-0.5">
@@ -674,7 +323,7 @@ function UsageSummary(props: { readonly merged: MergedUsage; readonly metric: Us
   );
 }
 
-function ProviderSection(props: {
+export function ProviderSection(props: {
   readonly merged: MergedUsage;
   readonly metric: UsageChartMetric;
   readonly cursorAccessEnvironments: readonly EnvironmentUsageStatus[];
@@ -781,7 +430,7 @@ function ProviderSection(props: {
   );
 }
 
-function TotalsSection(props: {
+export function TotalsSection(props: {
   readonly merged: MergedUsage;
   readonly isPast24Hours: boolean;
   readonly columns: number;
@@ -842,7 +491,7 @@ function TotalsSection(props: {
   );
 }
 
-function CostSection(props: { readonly merged: MergedUsage; readonly wide: boolean }) {
+export function CostSection(props: { readonly merged: MergedUsage; readonly wide: boolean }) {
   const { categoryCost, speedCost } = props.merged;
   const colors = useUsageMixColors();
   const byType = [
@@ -944,7 +593,7 @@ function MetricCell(props: {
   );
 }
 
-function ModelsSection(props: {
+export function ModelsSection(props: {
   readonly merged: MergedUsage;
   readonly metric: UsageChartMetric;
   readonly columns: 1 | 2;
@@ -1005,7 +654,7 @@ function ModelsSection(props: {
   );
 }
 
-function usageEnvironmentStatus(environment: EnvironmentUsageStatus, refreshing: boolean): string {
+export function usageEnvironmentStatus(environment: EnvironmentUsageStatus, refreshing: boolean): string {
   if (
     environment.summary &&
     !isCompatibleUsageContractVersion(environment.summary.contractVersion, USAGE_CONTRACT_VERSION)
