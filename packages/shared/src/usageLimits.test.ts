@@ -1109,6 +1109,28 @@ describe("pooled account columns", () => {
     expect(pool?.windows[0]?.usedPercent).toBe(50);
   });
 
+  it("keeps the freshest report of a credential that repeats", () => {
+    const goAccount = (key: string, checkedAt: string, usedPercent: number) => {
+      const windows = [
+        { ...weekly, id: "go_weekly", usedPercent, credentialFingerprint: "go-key" },
+      ];
+      return {
+        ...account(key, windows),
+        driver: ProviderDriverKind.make("opencode"),
+        limits: { checkedAt, windows },
+      };
+    };
+    const [pool] = collectLimitPools(
+      [
+        goAccount("env-a", "2026-09-03T10:00:00.000Z", 20),
+        goAccount("env-b", "2026-09-03T11:30:00.000Z", 80),
+      ],
+      now,
+    );
+    expect(pool?.windows[0]?.members).toHaveLength(1);
+    expect(pool?.windows[0]?.usedPercent).toBe(80);
+  });
+
   it.each([
     {
       reports: [

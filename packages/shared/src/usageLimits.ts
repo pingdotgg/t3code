@@ -632,13 +632,23 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
         : pooled;
       const list = byKey.get(key);
       if (list) {
-        // The same credential on two accounts is one allowance, so it counts once.
+        // The same credential on two accounts is one allowance, so it counts
+        // once, and the fresher report of it is the one that counts.
         const credential = window.credentialFingerprint;
-        if (
-          credential !== undefined &&
-          list.some((member) => member.window.credentialFingerprint === credential)
-        )
+        const repeated =
+          credential === undefined
+            ? -1
+            : list.findIndex((member) => member.window.credentialFingerprint === credential);
+        if (repeated !== -1) {
+          const previous = list[repeated]!;
+          if (
+            Date.parse(member.account.limits.checkedAt) >
+            Date.parse(previous.account.limits.checkedAt)
+          ) {
+            list[repeated] = member;
+          }
           continue;
+        }
         list.push(member);
       } else byKey.set(key, [member]);
     }
