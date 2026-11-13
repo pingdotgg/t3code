@@ -18,8 +18,8 @@ node_bin="$(dirname "$(command -v node)")"
 
 [ -d "$adapters" ] || { echo "CONN_MONOREPO=$repo has no apps/server Adapters directory" >&2; exit 1; }
 [ ! -e "$copy" ] || { echo "$copy already exists; refusing to overwrite it" >&2; exit 1; }
-[ -d "$workspace_root/helpers/claude-sdk/node_modules" ] || {
-  echo "run 'npm ci' in helpers/claude-sdk first" >&2
+[ -d "$workspace_root/helpers/sdk-host/node_modules" ] || {
+  echo "run 'npm ci' in helpers/sdk-host first" >&2
   exit 1
 }
 
@@ -78,7 +78,7 @@ if [ "${CONFORMANCE_SKIP_RUST:-}" != "1" ]; then
   env -i "${base_env[@]}" \
     "$workspace_root/target/debug/examples/conformance" \
     "$here/scenarios.json" "$OUT/rust" "$OUT/workspace" "$OUT/attachments" \
-    "${CONFORMANCE_HELPER:-$workspace_root/helpers/claude-sdk/index.mjs}" "$@" \
+    "${CONFORMANCE_HELPER:-$workspace_root/helpers/sdk-host/index.mjs}" "$@" \
     2>&1 | tee "$OUT/rust.log"
 fi
 

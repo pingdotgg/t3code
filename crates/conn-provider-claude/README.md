@@ -1,8 +1,8 @@
 # conn-provider-claude
 
 The Claude provider for the Conn Server. It runs Claude through Anthropic's official Agent SDK
-(`@anthropic-ai/claude-agent-sdk` 0.3.321, as the T3 server) in a small Node helper
-(`helpers/claude-sdk`), and implements `Provider` and `Session` from `conn-provider`. The SDK
+(`@anthropic-ai/claude-agent-sdk` 0.3.321, as the T3 server) in the SDK host, a small Node
+program (`helpers/sdk-host`, driver `claude`), and implements `Provider` and `Session` from `conn-provider`. The SDK
 starts the `claude` CLI and speaks its protocol; this crate builds the same `query()` options
 the T3 server builds and maps the SDK's messages to events. Reference: `ClaudeAdapterV2.ts`
 in the Conn monorepo at the pinned commit.
@@ -11,7 +11,7 @@ in the Conn monorepo at the pinned commit.
 
 | Module             | Holds                                                                                   |
 | ------------------ | --------------------------------------------------------------------------------------- |
-| `helper`           | The shared helper process: start on first query, stop after the last, a router per process |
+| `helper`           | The shared SDK host process: start on first query, stop after the last, a router per process |
 | `launch`           | The `query()` option object, its environment, the runtime policy → permission mode       |
 | `catalog`          | `compileClaudeModelSelection` over T3's bundled catalog (`model_catalog.json`, generated) |
 | `ordered`          | JSON with T3's key order for what the SDK writes to the CLI verbatim                    |
@@ -33,9 +33,9 @@ Everything below is what `makeClaudeQueryOptions`, `createClaudeAdapterV2` and t
 pass; the SDK turns it into argv, environment and `initialize`. `tools/conformance` proves the
 result equal, byte for byte.
 
-- **Helper:** `ClaudeConfig.helper`; the server sets it from `--claude-helper`, else
-  `$CONN_CLAUDE_HELPER`, else `conn-claude-sdk-helper` beside the binary, else this checkout's
-  `helpers/claude-sdk/index.mjs` under `node`. A missing helper is a provider error in the turn.
+- **Helper:** `ClaudeConfig.helper`; the server sets it from `--sdk-host`, else
+  `$CONN_SDK_HOST`, else `conn-sdk-host` beside the binary, else this checkout's
+  `helpers/sdk-host/index.mjs` under `node`. A missing helper is a provider error in the turn.
 - **Executable:** `ClaudeConfig.binary` as `pathToClaudeCodeExecutable` (default `claude`).
   The helper spawns it like T3: `/bin/sh` watchdog with argv0 `t3-claude`, its own process
   group, an fd 3 pipe whose EOF stops the group, and the descendant tracker.
@@ -172,7 +172,7 @@ checks that every per-session collection keeps its size.
 These child-tree figures are from the CLI-only provider before the SDK helper; the CLI's own
 memory does not depend on who starts it. The helper adds one process for all sessions while
 any query is open: 43 to 44 MB footprint (88 MiB RSS), flat over 10 turns, and none once the
-last query closed (`helpers/claude-sdk/README.md`). The host process stayed at 4.6 MiB RSS /
+last query closed (`helpers/sdk-host/README.md`). The host process stayed at 4.6 MiB RSS /
 2.8 MB footprint after 10 turns through the helper.
 
 ## Tests
@@ -188,4 +188,4 @@ cargo run --release -p conn-provider-claude --example helper_memory -- <claude> 
 The live tests (11, about 20 Haiku turns) cover one turn, a permission round trip, interrupt,
 resume in a new session, steer, idle close then resume (the helper stops), an MCP tool call,
 fork, rollback, a foreground subagent running Bash, and an image. They need `npm ci` in
-`helpers/claude-sdk`.
+`helpers/sdk-host`.

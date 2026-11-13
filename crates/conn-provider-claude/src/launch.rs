@@ -1,6 +1,6 @@
 //! What a Claude query starts with: the `query()` option object and its environment.
 //!
-//! The SDK (in the helper, `helpers/claude-sdk`) turns these into the CLI's argv, environment and
+//! The SDK (in the helper, `helpers/sdk-host`) turns these into the CLI's argv, environment and
 //! `initialize` request, as it does for the T3 server. This module builds the same option object
 //! `makeClaudeQueryOptions` in `ClaudeAdapterV2.ts` builds, and the environment
 //! `mergeClaudeProcessEnvironment`, `makeClaudeEnvironment` (`ClaudeHome.ts`),

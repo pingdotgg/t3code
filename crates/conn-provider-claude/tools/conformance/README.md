@@ -8,7 +8,7 @@ CONN_MONOREPO=/path/to/conn ./run.sh            # all scenarios
 ./run.sh fork image                              # some
 ```
 
-Needs: `npm ci` in `helpers/claude-sdk`, and `vp i` in the Conn monorepo checkout at the pinned
+Needs: `npm ci` in `helpers/sdk-host`, and `vp i` in the Conn monorepo checkout at the pinned
 commit (default `/Users/nckrtl/.t3/headless/worktrees/conn/conn-server-monorepo`). Rerun it on
 every SDK, CLI or pinned-commit change. Exit 0 means no difference.
 

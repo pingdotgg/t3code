@@ -20,7 +20,7 @@ fn main() {
         )),
         ..ClaudeConfig::default()
     };
-    if let Some(helper) = &options.claude_helper {
+    if let Some(helper) = &options.sdk_host {
         claude.helper = HelperCommand::from_path(helper);
     }
     let mut providers: Vec<Arc<dyn Provider>> =

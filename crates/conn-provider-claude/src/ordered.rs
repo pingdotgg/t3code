@@ -48,7 +48,17 @@ fn preferred(keys: &[&String]) -> &'static [&'static str] {
         &["action", "content"]
     } else {
         &[
-            "t", "s", "id", "type", "method", "name", "text", "source", "options",
+            "t",
+            "driver",
+            "instanceId",
+            "sessionId",
+            "id",
+            "type",
+            "method",
+            "name",
+            "text",
+            "source",
+            "options",
         ]
     }
 }

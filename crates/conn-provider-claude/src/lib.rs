@@ -1,5 +1,5 @@
 //! The Claude provider: runs Claude through the official Claude Agent SDK in a small Node
-//! helper (`helpers/claude-sdk`), as the T3 server does, and implements
+//! SDK host (`helpers/sdk-host`), as the T3 server does, and implements
 //! [`conn_provider::Provider`].
 //!
 //! - [`helper`]: the shared helper process and its JSON-lines protocol.
@@ -47,13 +47,13 @@ pub const DRIVER: &str = "claudeAgent";
 pub struct ClaudeProvider {
     instance_id: ProviderInstanceId,
     config: ClaudeConfig,
-    /// One helper for all sessions; it runs only while a query is open.
+    /// One SDK host for all sessions; it runs only while a query is open.
     helper: Helper,
 }
 
 impl ClaudeProvider {
     pub fn new(instance_id: ProviderInstanceId, config: ClaudeConfig) -> Self {
-        let helper = Helper::new(config.helper.clone());
+        let helper = Helper::new(config.helper.clone(), instance_id.as_str());
         Self {
             instance_id,
             config,

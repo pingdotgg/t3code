@@ -331,7 +331,7 @@ async fn drive(
                 }
                 Inbound::from_value(value)
             }
-            Some(QueryEvent::Callback { id, kind, args }) => match callback_request(&kind, &args) {
+            Some(QueryEvent::Request { id, kind, args }) => match callback_request(&kind, &args) {
                 Some(request) => Inbound::ControlRequest {
                     request_id: id,
                     request,
@@ -946,9 +946,8 @@ impl ClaudeSession {
         };
         inner.deliver(Some(&query), outs).await;
         let offered = query
-            .call(
-                "offer",
-                json!([user_message_value(content, &uuid, Delivery::Turn)]),
+            .input(
+                user_message_value(content, &uuid, Delivery::Turn),
                 CONTROL_TIMEOUT,
             )
             .await;
@@ -1244,9 +1243,8 @@ impl Session for ClaudeSession {
             };
             self.inner.deliver(Some(&query), outs).await;
             let offered = query
-                .call(
-                    "offer",
-                    json!([user_message_value(content, &uuid, Delivery::Steer)]),
+                .input(
+                    user_message_value(content, &uuid, Delivery::Steer),
                     CONTROL_TIMEOUT,
                 )
                 .await;

@@ -2,4 +2,4 @@
 **/target
 /.conn
 node_modules/
-/helpers/claude-sdk/dist/
+/helpers/sdk-host/dist/

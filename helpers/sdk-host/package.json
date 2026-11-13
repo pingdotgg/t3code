@@ -1,5 +1,5 @@
 {
-  "name": "conn-claude-sdk-helper",
+  "name": "conn-sdk-host",
   "private": true,
   "version": "0.1.0",
   "description": "Runs Claude for the Conn Server through the official Claude Agent SDK.",

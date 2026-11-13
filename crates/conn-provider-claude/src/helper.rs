@@ -1,5 +1,6 @@
-//! The Claude SDK helper: one Node process per provider that runs every Claude query through
-//! the official Claude Agent SDK (`helpers/claude-sdk`, protocol in its `PROTOCOL.md`).
+//! The SDK host (`helpers/sdk-host`, protocol in its `PROTOCOL.md`): one Node process that runs
+//! vendor SDKs as the T3 server does. This crate uses its `claude` driver (the official Claude
+//! Agent SDK) for every Claude query of a provider.
 //!
 //! The helper starts with the first query and stops when the last query has ended and no
 //! session-file call is running, so an idle server has no helper. Each query gets its own event
@@ -24,9 +25,9 @@ const MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
 /// Events buffered per query before the router waits for that query's driver.
 const QUERY_EVENT_CAPACITY: usize = 256;
 /// Environment variable naming the helper (a Node single executable, or an `.mjs` script).
-pub const HELPER_ENV: &str = "CONN_CLAUDE_HELPER";
+pub const HELPER_ENV: &str = "CONN_SDK_HOST";
 /// The single-executable name looked for next to the server binary.
-pub const HELPER_EXECUTABLE: &str = "conn-claude-sdk-helper";
+pub const HELPER_EXECUTABLE: &str = "conn-sdk-host";
 
 /// How to start the helper.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,8 +58,8 @@ impl HelperCommand {
         }
     }
 
-    /// `$CONN_CLAUDE_HELPER`, else `conn-claude-sdk-helper` next to the running binary, else the
-    /// checkout's `helpers/claude-sdk/index.mjs` (development).
+    /// `$CONN_SDK_HOST`, else `conn-sdk-host` next to the running binary, else the checkout's
+    /// `helpers/sdk-host/index.mjs` (development).
     pub fn discover() -> Self {
         if let Some(path) = std::env::var_os(HELPER_ENV).filter(|p| !p.is_empty()) {
             return Self::from_path(PathBuf::from(path));
@@ -74,9 +75,9 @@ impl HelperCommand {
     }
 }
 
-/// `helpers/claude-sdk/index.mjs` in this checkout.
+/// `helpers/sdk-host/index.mjs` in this checkout.
 pub fn development_script() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../helpers/claude-sdk/index.mjs")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../helpers/sdk-host/index.mjs")
 }
 
 /// What a query's driver receives.
@@ -85,7 +86,7 @@ pub enum QueryEvent {
     /// An SDK message, as the SDK yields it.
     Message(Value),
     /// The SDK called one of our callbacks; answer with [`Query::answer`].
-    Callback {
+    Request {
         id: String,
         kind: String,
         args: Value,
@@ -139,8 +140,13 @@ pub struct Helper {
     inner: Arc<Inner>,
 }
 
+/// The host driver this crate uses.
+pub const DRIVER: &str = "claude";
+
 struct Inner {
     command: HelperCommand,
+    /// The provider instance, named on every message.
+    instance_id: String,
     state: Mutex<State>,
 }
 
@@ -163,10 +169,11 @@ struct Running {
 }
 
 impl Helper {
-    pub fn new(command: HelperCommand) -> Self {
+    pub fn new(command: HelperCommand, instance_id: &str) -> Self {
         Self {
             inner: Arc::new(Inner {
                 command,
+                instance_id: instance_id.to_string(),
                 state: Mutex::new(State::default()),
             }),
         }
@@ -194,7 +201,10 @@ impl Helper {
             state.queries.insert(id.clone(), (generation, tx));
             (id, writer)
         };
-        let mut command = json!({"t": "open", "s": id, "options": options});
+        let mut command = json!({
+            "t": "open", "driver": DRIVER, "instanceId": self.inner.instance_id,
+            "sessionId": id, "options": options,
+        });
         if let (Some(target), Value::Object(extra)) = (command.as_object_mut(), extra) {
             target.extend(extra);
         }
@@ -228,7 +238,10 @@ impl Helper {
             state.holds += 1;
             writer
         };
-        let mut command = json!({"t": "fn", "name": name, "args": args});
+        let mut command = json!({
+            "t": "fn", "driver": DRIVER, "instanceId": self.inner.instance_id,
+            "name": name, "args": args,
+        });
         if let Some(dir) = config_dir {
             command["configDir"] = json!(dir);
         }
@@ -300,7 +313,7 @@ impl Inner {
         let (tx, rx) = mpsc::channel(QUERY_EVENT_CAPACITY);
         let process = Process::spawn(&spec, MAX_LINE_BYTES, tx).map_err(|e| {
             helper_err(format!(
-                "Could not start the Claude helper ({}): {e}. Set --claude-helper or {HELPER_ENV}.",
+                "Could not start the SDK host ({}): {e}. Set --sdk-host or {HELPER_ENV}.",
                 self.command.program.display()
             ))
         })?;
@@ -355,7 +368,7 @@ async fn route(inner: Arc<Inner>, generation: u64, mut rx: mpsc::Receiver<ProcEv
         match event {
             ProcEvent::Line(Line::Text(text)) => {
                 let Ok(line) = serde_json::from_str::<Value>(&text) else {
-                    eprintln!("conn-provider-claude: the helper wrote a line that is not JSON");
+                    eprintln!("conn-provider-claude: the SDK host wrote a line that is not JSON");
                     continue;
                 };
                 dispatch(&inner, line).await;
@@ -417,33 +430,45 @@ async fn route(inner: Arc<Inner>, generation: u64, mut rx: mpsc::Receiver<ProcEv
 }
 
 async fn dispatch(inner: &Inner, mut line: Value) {
-    let kind = line["t"].as_str().unwrap_or("").to_string();
-    if kind == "reply" {
-        let Some(id) = line["id"].as_u64() else {
-            return;
-        };
-        let result = if line["ok"] == json!(true) {
-            Ok(line
-                .get_mut("value")
-                .map(Value::take)
-                .unwrap_or(Value::Null))
-        } else {
-            Err(line["error"]["message"]
-                .as_str()
-                .unwrap_or("the helper call failed")
-                .to_string())
-        };
-        if let Some(tx) = inner.lock().replies.remove(&id) {
-            let _ = tx.send(result);
+    match line["ch"].as_str().unwrap_or("") {
+        "reply" => {
+            let Some(id) = line["id"].as_u64() else {
+                return;
+            };
+            let result = if line["ok"] == json!(true) {
+                Ok(line
+                    .get_mut("value")
+                    .map(Value::take)
+                    .unwrap_or(Value::Null))
+            } else {
+                Err(line["error"]["message"]
+                    .as_str()
+                    .unwrap_or("the host call failed")
+                    .to_string())
+            };
+            if let Some(tx) = inner.lock().replies.remove(&id) {
+                let _ = tx.send(result);
+            }
         }
-        return;
+        "sdk" => dispatch_sdk(inner, line).await,
+        "log" => eprintln!(
+            "conn-provider-claude: {} {}",
+            line["level"].as_str().unwrap_or("info"),
+            line["text"].as_str().unwrap_or_default()
+        ),
+        // `host` (ready) and channels added later.
+        _ => {}
     }
-    let Some(query) = line["s"].as_str().map(str::to_string) else {
+}
+
+/// A session's SDK message, request, cancel or end.
+async fn dispatch_sdk(inner: &Inner, mut line: Value) {
+    let Some(query) = line["sessionId"].as_str().map(str::to_string) else {
         return;
     };
-    let event = match kind.as_str() {
+    let event = match line["t"].as_str().unwrap_or("") {
         "msg" => QueryEvent::Message(line.get_mut("m").map(Value::take).unwrap_or(Value::Null)),
-        "callback" => QueryEvent::Callback {
+        "request" => QueryEvent::Request {
             id: line["id"].as_str().unwrap_or_default().to_string(),
             kind: line["kind"].as_str().unwrap_or_default().to_string(),
             args: line.get_mut("args").map(Value::take).unwrap_or(Value::Null),
@@ -470,7 +495,7 @@ async fn dispatch(inner: &Inner, mut line: Value) {
 
 fn helper_err(detail: impl Into<String>) -> ProviderError {
     ProviderError::Failed {
-        operation: "claude_helper",
+        operation: "sdk_host",
         detail: detail.into(),
     }
 }
@@ -530,7 +555,23 @@ impl QueryHandle {
         self.helper.inner.lock().queries.contains_key(&self.id)
     }
 
-    /// Calls a `Query` method (`interrupt`, `setModel`, ...) or `offer` (a prompt).
+    /// Pushes input (a prompt or a steer, an `SDKUserMessage`) into the session.
+    pub async fn input(&self, message: Value, timeout: Duration) -> ProviderResult<Value> {
+        let Some(writer) = self.writer().filter(|_| self.is_open()) else {
+            return Err(ProviderError::SessionStopped);
+        };
+        let command = json!({"t": "input", "sessionId": self.id, "message": message});
+        self.helper
+            .inner
+            .request(&writer, command, timeout)
+            .await
+            .map_err(|detail| ProviderError::Failed {
+                operation: "input",
+                detail,
+            })
+    }
+
+    /// Calls a `Query` method (`interrupt`, `setModel`, ...).
     pub async fn call(
         &self,
         method: &str,
@@ -540,7 +581,7 @@ impl QueryHandle {
         let Some(writer) = self.writer().filter(|_| self.is_open()) else {
             return Err(ProviderError::SessionStopped);
         };
-        let command = json!({"t": "call", "s": self.id, "method": method, "args": args});
+        let command = json!({"t": "call", "sessionId": self.id, "method": method, "args": args});
         self.helper
             .inner
             .request(&writer, command, timeout)
@@ -557,8 +598,8 @@ impl QueryHandle {
             return;
         };
         let command = match result {
-            Ok(value) => json!({"t": "answer", "s": self.id, "id": id, "value": value}),
-            Err(error) => json!({"t": "answer", "s": self.id, "id": id, "error": error}),
+            Ok(value) => json!({"t": "response", "sessionId": self.id, "id": id, "value": value}),
+            Err(error) => json!({"t": "response", "sessionId": self.id, "id": id, "error": error}),
         };
         let _ = writer.send(crate::ordered::to_string(&command)).await;
     }
@@ -568,7 +609,7 @@ impl QueryHandle {
     pub async fn close(&self) {
         if let Some(writer) = self.writer() {
             let _ = writer
-                .send(json!({"t": "close", "s": self.id}).to_string())
+                .send(json!({"t": "close", "sessionId": self.id}).to_string())
                 .await;
         }
     }
@@ -583,17 +624,20 @@ mod tests {
         let script = HelperCommand::from_path("/x/index.mjs");
         assert_eq!(script.program, PathBuf::from("node"));
         assert_eq!(script.args, ["/x/index.mjs"]);
-        let sea = HelperCommand::from_path("/x/conn-claude-sdk-helper");
-        assert_eq!(sea.program, PathBuf::from("/x/conn-claude-sdk-helper"));
+        let sea = HelperCommand::from_path("/x/conn-sdk-host");
+        assert_eq!(sea.program, PathBuf::from("/x/conn-sdk-host"));
         assert!(sea.args.is_empty());
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn a_missing_helper_is_a_provider_error() {
-        let helper = Helper::new(HelperCommand::from_path("/nonexistent/conn-claude-helper"));
+        let helper = Helper::new(
+            HelperCommand::from_path("/nonexistent/conn-sdk-host"),
+            "claudeAgent",
+        );
         let error = helper.open(json!({}), json!({})).err();
         assert!(
-            matches!(&error, Some(ProviderError::Failed { detail, .. }) if detail.contains("Could not start the Claude helper")),
+            matches!(&error, Some(ProviderError::Failed { detail, .. }) if detail.contains("Could not start the SDK host")),
             "{error:?}"
         );
         assert_eq!(helper.pid(), None);

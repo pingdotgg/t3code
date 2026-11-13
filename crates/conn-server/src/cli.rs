@@ -25,7 +25,7 @@ usage:
   conn-server [serve] [--host <host>] [--port <port>] [--listen <host:port>]
               [--base-dir <dir>] [--state-dir <dir>] [--project <dir>]... [--label <name>]
               [--mode web|desktop] [--bootstrap-fd <fd>] [--no-browser]
-              [--session-idle-timeout <minutes>] [--claude-helper <path>] [<cwd>]
+              [--session-idle-timeout <minutes>] [--sdk-host <path>] [<cwd>]
   conn-server pair [--scopes <list>] [--ttl <ttl>] [--label <label>]
   conn-server auth pairing create [--scopes <list>] [--ttl <ttl>] [--label <label>] [--base-url <url>] [--json]
   conn-server auth pairing list [--json]
@@ -38,9 +38,9 @@ usage:
 Every command takes --base-dir (or $T3CODE_HOME, default ~/.t3) or --state-dir.
 --session-idle-timeout (or $CONN_SESSION_IDLE_TIMEOUT): minutes before an idle provider
 session and its process close; 0 keeps them open. Default 30, as the T3 server.
---claude-helper (or $CONN_CLAUDE_HELPER): the Claude Agent SDK helper, a single executable or
-an .mjs script run with node. Default: conn-claude-sdk-helper beside this binary, else the
-checkout's helpers/claude-sdk/index.mjs.
+--sdk-host (or $CONN_SDK_HOST): the SDK host that runs Claude's Agent SDK, a single executable or
+an .mjs script run with node. Default: conn-sdk-host beside this binary, else the
+checkout's helpers/sdk-host/index.mjs.
 Environment: T3CODE_HOME, T3CODE_PORT, T3CODE_HOST, T3CODE_MODE, T3CODE_BOOTSTRAP_FD.";
 
 pub const DEFAULT_PORT: u16 = 3773;
@@ -58,8 +58,8 @@ pub struct ServeArgs {
     pub bootstrap_fd: Option<u32>,
     /// How long an idle provider session stays open; `None` keeps it open.
     pub session_idle: Option<std::time::Duration>,
-    /// `--claude-helper`: where the Claude SDK helper is. `None`: found by the provider.
-    pub claude_helper: Option<PathBuf>,
+    /// `--sdk-host`: where the SDK host is. `None`: found by the provider.
+    pub sdk_host: Option<PathBuf>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -333,7 +333,7 @@ fn serve_args(args: &Args, state_dir: PathBuf) -> Result<Command, String> {
         "--log-websocket-events",
         "--log-ws-events",
         "--session-idle-timeout",
-        "--claude-helper",
+        "--sdk-host",
     ])?;
     let subcommand = args.positionals.first().map(String::as_str);
     let positional_cwd = match subcommand {
@@ -407,7 +407,7 @@ fn serve_args(args: &Args, state_dir: PathBuf) -> Result<Command, String> {
         desktop,
         bootstrap_fd,
         session_idle,
-        claude_helper: args.value("--claude-helper").map(PathBuf::from),
+        sdk_host: args.value("--sdk-host").map(PathBuf::from),
     }))
 }
 
