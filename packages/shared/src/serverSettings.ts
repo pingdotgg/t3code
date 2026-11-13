@@ -107,9 +107,10 @@ export function fallbackTextGenerationModelSelection(
 
 export function defaultTextGenerationModel(driver: ProviderDriverKind): string {
   return (
-    DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
-    DEFAULT_MODEL_BY_PROVIDER[driver] ??
-    DEFAULT_TEXT_GENERATION_MODEL
+    provider.enabled === true &&
+    provider.installed !== false &&
+    isProviderAvailable(provider) &&
+    provider.auth.status !== "unauthenticated"
   );
 }
 
