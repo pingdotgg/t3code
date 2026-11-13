@@ -154,6 +154,14 @@ describe("toViewerPermissions", () => {
     assert.isTrue(locked(true).comment);
     assert.deepStrictEqual(locked(true).verdicts, []);
   });
+
+  it.each([
+    { edit: true, manageLabels: false },
+    { edit: false, manageLabels: true },
+  ])("takes label access from manageLabels, not edit: %o", ({ edit, manageLabels }) => {
+    const result = permissions({ capabilities: { ...detail.capabilities, edit, manageLabels } });
+    assert.strictEqual(result.labels, manageLabels);
+  });
 });
 
 describe("toActivity", () => {
