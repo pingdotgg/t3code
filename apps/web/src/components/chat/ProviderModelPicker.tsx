@@ -189,20 +189,22 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   // Each Auto level row in the list names its own route.
   const autoRouteFor = (slug: string) =>
     describeAutoRoute({ entries: props.instanceEntries, model: slug, now });
-  const triggerTitle =
-    isAuto && autoRoute
-      ? `Auto · ${autoRoute.label}`
-      : selectedModel
-        ? getTriggerDisplayModelName(selectedModel, activeEntry?.driverKind)
-        : props.model === ANTIGRAVITY_DEFAULT_MODEL
-          ? "Choose model"
-          : props.model || "Choose model";
-  const triggerLabel =
-    isAuto && autoRoute
-      ? triggerTitle
-      : selectedModel
-        ? `${getDisplayModelName(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
-        : triggerTitle;
+  // The button names the chosen Auto level; the model it routes to now goes in the tooltip.
+  const autoName = selectedModel ? getDisplayModelName(selectedModel) : "Auto";
+  const triggerTitle = isAuto
+    ? autoName
+    : selectedModel
+      ? getTriggerDisplayModelName(selectedModel, activeEntry?.driverKind)
+      : props.model === ANTIGRAVITY_DEFAULT_MODEL
+        ? "Choose model"
+        : props.model || "Choose model";
+  const triggerLabel = isAuto
+    ? autoRoute
+      ? `${autoName} · now ${autoRoute.label}`
+      : autoName
+    : selectedModel
+      ? `${getDisplayModelName(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
+      : triggerTitle;
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
 
