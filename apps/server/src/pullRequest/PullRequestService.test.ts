@@ -2215,6 +2215,72 @@ it.effect("routes a hosted reference to another repository through a project on 
   }),
 );
 
+it.effect("an uncached summary reaches the host despite a cached read in another project", () =>
+  Effect.gen(function* () {
+    const caller = project({
+      id: "caller",
+      title: "caller",
+      workspaceRoot: "/caller",
+      repository: "acme/other",
+    });
+    const target = project({
+      id: "gitlab",
+      title: "gitlab",
+      workspaceRoot: "/gitlab",
+      repository: "team/project",
+      provider: "gitlab",
+    });
+    let missing = false;
+    let reads = 0;
+    const service = yield* makeService({
+      projects: [caller, target],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github")),
+        fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
+          getChangeRequestSummary: (input) =>
+            Effect.suspend(() => {
+              reads++;
+              assert.strictEqual(input.cwd, target.workspaceRoot);
+              assert.strictEqual(input.repository, "team/project");
+              assert.strictEqual(input.host, "gitlab.com");
+              return missing
+                ? Effect.fail(
+                    new PullRequestProviderError({
+                      provider: SourceControlProviderKind.make("gitlab"),
+                      operation: "summary",
+                      reason: "missing-tool",
+                      detail: "The hosting CLI is unavailable.",
+                    }),
+                  )
+                : Effect.succeed(changeRequest(42, "2026-07-02T00:00:00Z"));
+            }),
+        }),
+      ],
+    });
+    const reference = {
+      projectId: caller.id,
+      host: "gitlab.com",
+      repository: "team/project",
+      number: 42,
+      allowStale: false,
+    };
+    yield* service.summary(reference, { recoverTransientFailure: false });
+    missing = true;
+    yield* service.summary(reference, { recoverTransientFailure: false });
+    assert.strictEqual(reads, 1);
+
+    const error = yield* service
+      .summary(reference, { recoverTransientFailure: false, bypassCache: true })
+      .pipe(Effect.flip);
+    expect(error).toMatchObject({
+      _tag: "PullRequestUnavailableError",
+      reason: "cli-missing",
+      provider: "gitlab",
+    });
+    assert.strictEqual(reads, 2);
+  }),
+);
+
 it.effect("routes Azure reads and writes through the requested organization's checkout", () =>
   Effect.gen(function* () {
     const seen: string[] = [];
@@ -3429,6 +3495,27 @@ it.effect(
       assert.strictEqual(summary.reviewDecision, "approved");
       assert.strictEqual(summary.checksState, "passing");
     }),
+);
+
+it.effect("preserves merge queue removal details from the provider", () =>
+  Effect.gen(function* () {
+    const removal = { id: "RMQE_1", removedAt: "2026-07-02T00:00:00Z", reason: "CI failed" };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: () =>
+            Effect.succeed({ ...hostedChangeRequest("body"), mergeQueueRemoval: removal }),
+        }),
+      ],
+    });
+    const detail = yield* service.detail({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+    });
+    assert.deepStrictEqual(detail.mergeQueueRemoval, removal);
+  }),
 );
 
 it.effect("notifies linked threads when detail changes draft status in either direction", () =>

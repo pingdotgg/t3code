@@ -647,7 +647,7 @@ function useChatMarkdownState({
   const projects = useProjects();
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
-  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
+  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors, cwd);
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });

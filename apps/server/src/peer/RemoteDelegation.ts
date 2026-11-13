@@ -639,7 +639,7 @@ const make = Effect.gen(function* () {
         threadId: remote.threadId,
         itemId: reply.itemId,
         textOffset,
-        maxCharsPerItem: 50_000,
+        maxCharsPerItem: 20_000,
       });
       const part = rest.items[0];
       if (part === undefined) break;
