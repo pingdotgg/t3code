@@ -182,22 +182,31 @@ const make = Effect.gen(function* () {
     }
   };
 
-  const detach = (id: string, key: DesktopTabKey) => {
+  const detach = (id: string, key: DesktopTabKey, isCurrent = () => true) => {
     attachedTabs.delete(id);
     shownTabs.delete(id);
     loadFailures.delete(id);
     const queue = inbound.get(id);
     return (queue ? Queue.shutdown(queue) : Effect.void).pipe(
-      Effect.andThen(PubSub.publish(changes, { key, attached: false })),
+      Effect.andThen(() =>
+        isCurrent() ? PubSub.publish(changes, { key, attached: false }) : Effect.void,
+      ),
       Effect.asVoid,
     );
   };
 
-  const detachAll = Effect.suspend(() => {
-    shownTabs.clear();
-    loadFailures.clear();
-    return Effect.forEach([...attachedTabs], ([id, key]) => detach(id, key), { discard: true });
-  });
+  const detachAll = (isCurrent: () => boolean) =>
+    Effect.suspend(() => {
+      if (!isCurrent()) return Effect.void;
+      shownTabs.clear();
+      loadFailures.clear();
+      return Effect.forEach(
+        [...attachedTabs],
+        ([id, key]) =>
+          Effect.suspend(() => (isCurrent() ? detach(id, key, isCurrent) : Effect.void)),
+        { discard: true },
+      );
+    });
 
   if (inputFd !== undefined && controlFd !== undefined) {
     // Socket reads can be cancelled while the desktop keeps its write end open.
@@ -239,26 +248,37 @@ const make = Effect.gen(function* () {
       const connection = {
         close: writer.write(new Socket.CloseEvent(1000, "replaced")).pipe(Effect.ignore),
       };
+      const isCurrent = () => currentSocket === connection;
       currentSocket = connection;
       writeLine = (line) => writer.write(line);
-      if (replaced !== null) yield* replaced.close;
-      yield* detachAll;
       yield* Effect.addFinalizer(() =>
-        currentSocket === connection
-          ? Effect.suspend(() => {
-              currentSocket = null;
-              writeLine = null;
-              return detachAll;
-            })
-          : Effect.void,
+        Effect.suspend(() => {
+          if (!isCurrent()) return Effect.void;
+          writeLine = null;
+          return detachAll(isCurrent).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                if (isCurrent()) currentSocket = null;
+              }),
+            ),
+          );
+        }),
       );
+      if (replaced !== null) yield* replaced.close;
+      // Closing the replaced socket can yield while a newer desktop takes ownership.
+      if (!isCurrent()) return;
+      yield* detachAll(isCurrent);
+      if (!isCurrent()) return;
       const receiveFrames = (frames: ReadonlyArray<string | Uint8Array>) =>
         Effect.forEach(
           frames.flatMap((frame) => frameText(frame).split("\n")),
           (line) =>
             line.trim().length === 0 || currentSocket !== connection
               ? Effect.void
-              : decodeEventLine(line).pipe(Effect.flatMap(receive), Effect.ignore),
+              : decodeEventLine(line).pipe(
+                  Effect.flatMap((event) => (isCurrent() ? receive(event) : Effect.void)),
+                  Effect.ignore,
+                ),
           { discard: true },
         );
       return yield* reader.pull.pipe(Effect.flatMap(receiveFrames), Effect.forever);
@@ -267,7 +287,6 @@ const make = Effect.gen(function* () {
   );
 
   const endpoint = Effect.fn("DesktopBrowserChannel.endpoint")(function* (key: DesktopTabKey) {
-    const channelWriter = writeLine;
     const id = keyOf(key);
     const secret = NodeCrypto.randomBytes(24).toString("base64url");
     const server = yield* NodeSocketServer.makeWebSocket({
@@ -282,6 +301,7 @@ const make = Effect.gen(function* () {
       inbound.delete(id);
       return yield* Effect.die("The desktop tab detached before the server connected.");
     }
+    const channelWriter = writeLine;
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         if (inbound.get(id) === queue) inbound.delete(id);

@@ -200,12 +200,14 @@ describe("ElectronBrowserHost", () => {
       });
       await using screen = await renderHost();
 
-      const host = screen.container.querySelector("[data-electron-browser-host]")!;
-      expect(
-        [...host.querySelectorAll("webview")].map((node) =>
-          node.getAttribute("data-preview-server-tab"),
-        ),
-      ).toEqual(mounted);
+      await vi.waitFor(() => {
+        const host = screen.container.querySelector("[data-electron-browser-host]")!;
+        expect(
+          [...host.querySelectorAll("webview")].map((node) =>
+            node.getAttribute("data-preview-server-tab"),
+          ),
+        ).toEqual(mounted);
+      });
     },
   );
 });

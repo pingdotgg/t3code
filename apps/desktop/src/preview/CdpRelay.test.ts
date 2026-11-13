@@ -332,6 +332,57 @@ describe("CDP relay downloads", () => {
     ]);
   });
 
+  it("applies download settings in arrival order while a WSL path conversion waits", async () => {
+    const conversion = Promise.withResolvers<string>();
+    const completed = Promise.withResolvers<void>();
+    const send = vi.fn(async () => ({}));
+    const directories: Array<string | null> = [];
+    const written: Array<Record<string, unknown>> = [];
+    const replies = new Set<number>();
+    const relay = makeRelay(
+      makeTarget(
+        send,
+        (directory) => directories.push(directory),
+        () => conversion.promise,
+      ),
+      (raw) => {
+        const message = JSON.parse(raw) as Record<string, unknown>;
+        written.push(message);
+        if (message["id"] === 1 || message["id"] === 2) {
+          replies.add(message["id"]);
+          if (replies.size === 2) completed.resolve();
+        }
+      },
+    );
+    relay.receive(JSON.stringify({ id: 0, method: "Target.setAutoAttach", params: {} }));
+    relay.receive(
+      JSON.stringify({
+        id: 1,
+        method: "Browser.setDownloadBehavior",
+        params: { behavior: "allowAndName", downloadPath: "/mnt/c/artifacts", eventsEnabled: true },
+      }),
+    );
+    relay.receive(
+      JSON.stringify({
+        id: 2,
+        method: "Browser.setDownloadBehavior",
+        params: { behavior: "deny", eventsEnabled: false },
+      }),
+    );
+    conversion.resolve("C:\\artifacts");
+    await completed.promise;
+
+    expect(send.mock.calls).toEqual([
+      ["Page.setDownloadBehavior", { behavior: "default" }, undefined],
+      ["Page.setDownloadBehavior", { behavior: "deny" }, undefined],
+    ]);
+    expect(directories).toEqual(["C:\\artifacts", null]);
+    relay.event("Page.downloadWillBegin", { guid: "g1" }, "");
+    expect(written.filter((message) => message["method"] === "Browser.downloadWillBegin")).toEqual(
+      [],
+    );
+  });
+
   it("does not publish download events when the connection has disabled them", async () => {
     const written: Array<Record<string, unknown>> = [];
     const relay = makeRelay(makeTarget(vi.fn(async () => ({}))), (raw) =>

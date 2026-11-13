@@ -101,6 +101,7 @@ export function createCdpRelayConnection(
   };
   let attached = false;
   let downloadEventsEnabled = false;
+  let pendingDownloadBehavior = Promise.resolve<unknown>(undefined);
   /** Relay-created page sessions share one real debugger; child frame sessions retain their own ids. */
   const sessions = new Map<string, "browser" | "page">([[PAGE_SESSION_ID, "page"]]);
   let sessionSequence = 0;
@@ -123,17 +124,22 @@ export function createCdpRelayConnection(
     if (ACKNOWLEDGED.has(command.method)) return {};
     switch (command.method) {
       case "Browser.setDownloadBehavior": {
-        const directory = command.params?.["downloadPath"];
-        const allowed = command.params?.["behavior"] !== "deny" && typeof directory === "string";
-        const downloadDirectory = allowed ? await target.serverPath(directory) : null;
-        // Browser-scoped behavior targets Electron's app session; preview paths belong to will-download.
-        const result = await target.send(
-          "Page.setDownloadBehavior",
-          { behavior: command.params?.["behavior"] === "deny" ? "deny" : "default" },
-          undefined,
-        );
-        target.setDownloadDirectory(downloadDirectory);
-        downloadEventsEnabled = command.params?.["eventsEnabled"] === true;
+        // Path conversion must not let an earlier allow overtake a later deny.
+        const result = pendingDownloadBehavior.then(async () => {
+          const directory = command.params?.["downloadPath"];
+          const allowed = command.params?.["behavior"] !== "deny" && typeof directory === "string";
+          const downloadDirectory = allowed ? await target.serverPath(directory) : null;
+          // Browser-scoped behavior targets Electron's app session; preview paths belong to will-download.
+          const result = await target.send(
+            "Page.setDownloadBehavior",
+            { behavior: command.params?.["behavior"] === "deny" ? "deny" : "default" },
+            undefined,
+          );
+          target.setDownloadDirectory(downloadDirectory);
+          downloadEventsEnabled = command.params?.["eventsEnabled"] === true;
+          return result;
+        });
+        pendingDownloadBehavior = result.catch(() => undefined);
         return result;
       }
       case "Browser.getVersion":
