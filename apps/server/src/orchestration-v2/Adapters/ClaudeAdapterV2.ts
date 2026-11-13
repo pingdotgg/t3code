@@ -173,8 +173,11 @@ import {
   claudeLaunchArgDirectories,
   customClaudeApiEndpointHost,
   discoverClaudeSkills,
+  readClaudeLaunchArgSettings,
   readClaudeSettingsEnv,
 } from "../../provider/Drivers/ClaudeSkills.ts";
+
+export { ClaudeSettingsLaunchArgError } from "../../provider/Drivers/ClaudeSkills.ts";
 import {
   compileClaudeModelSelection,
   type CompiledClaudeModelSelection,
@@ -739,18 +742,6 @@ export class ClaudeAppendSystemPromptMissingValueError extends Schema.TaggedErro
 ) {
   override get message(): string {
     return `The ${this.flag} launch argument has no ${this.flag === "--append-system-prompt" ? "text" : "file path"}. Add it after the flag in the Claude launch arguments, then send the message again.`;
-  }
-}
-
-export class ClaudeSettingsLaunchArgError extends Schema.TaggedError<ClaudeSettingsLaunchArgError>()(
-  "ClaudeSettingsLaunchArgError",
-  {
-    path: Schema.optional(Schema.String),
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    return `Claude could not read the --settings launch argument${this.path === undefined ? "" : ` at ${this.path}`} as a JSON object. Fix it in the Claude launch arguments, then send the message again.`;
   }
 }
 
@@ -2192,46 +2183,6 @@ const readClaudeAppendSystemPromptFile = Effect.fnUntraced(function* (input: {
       Effect.mapError((cause) => new ClaudeAppendSystemPromptFileError({ path: filePath, cause })),
     );
 });
-
-const decodeClaudeLaunchArgSettings = Schema.decodeUnknownEffect(
-  fromLenientJson(Schema.Record(Schema.String, Schema.Unknown)),
-);
-
-/**
- * Reads the --settings launch argument: a value starting with a brace is inline
- * JSON, anything else is a file path that expands a leading ~ and is otherwise
- * relative to the thread's cwd (the project or its worktree).
- * makeClaudeQueryOptions merges the result beneath T3's own settings.
- */
-const readClaudeLaunchArgSettings = Effect.fn("ClaudeAdapterV2.readLaunchArgSettings")(
-  function* (input: {
-    readonly settings: ClaudeSettings | undefined;
-    readonly cwd: string | null;
-    readonly fileSystem: FileSystem.FileSystem;
-    readonly path: Path.Path;
-  }) {
-    if (input.settings === undefined) return undefined;
-    const value = parseCliArgs(input.settings.launchArgs).flags.settings;
-    if (value === undefined) return undefined;
-    const trimmed = value?.trim() ?? "";
-    if (trimmed.length === 0) return yield* new ClaudeSettingsLaunchArgError({});
-    // The CLI also wants a closing brace, but then malformed JSON, secrets included, would
-    // become the file path in the error message.
-    if (trimmed.startsWith("{")) {
-      return (yield* decodeClaudeLaunchArgSettings(trimmed).pipe(
-        Effect.mapError((cause) => new ClaudeSettingsLaunchArgError({ cause })),
-      )) as ClaudeSdkSettings;
-    }
-    const filePath = input.path.resolve(
-      input.cwd ?? ".",
-      expandHomePath(trimmed, yield* HostProcess.HomeDirectory),
-    );
-    return (yield* input.fileSystem.readFileString(filePath).pipe(
-      Effect.flatMap(decodeClaudeLaunchArgSettings),
-      Effect.mapError((cause) => new ClaudeSettingsLaunchArgError({ path: filePath, cause })),
-    )) as ClaudeSdkSettings;
-  },
-);
 
 export const CLAUDE_T3_MCP_TOOL_WILDCARD = "mcp__t3-code__*";
 
