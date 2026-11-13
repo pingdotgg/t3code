@@ -71,9 +71,24 @@ const decodeFailure = Schema.decodeUnknownOption(
   ),
 );
 
+const noAnswer = new WeakMap<OrchestratorMcpFailure, "unreachable" | "lost">();
+
+/**
+ * Why a failed call carries no answer from the peer, if it carries none: `unreachable` was
+ * never sent, `lost` was sent and may have run there. Any other failure is a refusal, by the
+ * peer or by the link.
+ */
+export const unanswered = (error: OrchestratorMcpFailure) => noAnswer.get(error);
+
+const lost = (message: string) => {
+  const failure = new OrchestratorMcpFailure({ code: "orchestration_error", message });
+  noAnswer.set(failure, "lost");
+  return failure;
+};
+
 /** A peer link problem, as the agent that asked hears it. */
-const fromLinkError = (error: PeerLinkError) =>
-  new OrchestratorMcpFailure({
+const fromLinkError = (error: PeerLinkError) => {
+  const failure = new OrchestratorMcpFailure({
     code:
       error.reason === "unknown_link"
         ? "invalid_request"
@@ -82,6 +97,9 @@ const fromLinkError = (error: PeerLinkError) =>
           : "orchestration_error",
     message: error.message,
   });
+  if (error.reason === "unreachable") noAnswer.set(failure, "unreachable");
+  return failure;
+};
 
 /** Not final, so a task already running there resumes once the beta is on there again. */
 const linkedEnvironmentsOffThere = new OrchestratorMcpFailure({
@@ -90,10 +108,7 @@ const linkedEnvironmentsOffThere = new OrchestratorMcpFailure({
     "The linked environment has Linked environments turned off. Turn it on in its Settings → Labs.",
 });
 
-const stoppedAnswering = new OrchestratorMcpFailure({
-  code: "orchestration_error",
-  message: "The linked environment stopped answering.",
-});
+const stoppedAnswering = lost("The linked environment stopped answering.");
 
 /** The body of an MCP response: JSON, or a single server-sent event carrying JSON. */
 const responseJson = (contentType: string | undefined, text: string) =>
@@ -233,13 +248,7 @@ const make = Effect.gen(function* () {
       const body = yield* decodeToolCallResponse(
         responseJson(response.headers["content-type"], yield* response.text),
       ).pipe(
-        Effect.mapError(
-          () =>
-            new OrchestratorMcpFailure({
-              code: "orchestration_error",
-              message: "The linked environment answered in an unexpected shape.",
-            }),
-        ),
+        Effect.mapError(() => lost("The linked environment answered in an unexpected shape.")),
       );
       if (body.error !== undefined) {
         return Result.fail(

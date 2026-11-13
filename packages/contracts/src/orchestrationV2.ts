@@ -896,10 +896,23 @@ const DedupedBodyMarker = Schema.optionalKey(Schema.Literal(true));
  */
 export const OrchestrationV2RemoteTaskChild = Schema.Struct({
   environmentId: EnvironmentId,
-  threadId: ThreadId,
+  /** Absent until the launch there answered: the task is recorded here before it is sent. */
+  threadId: Schema.optional(ThreadId),
   label: Schema.String,
   /** The title it launched with there; absent on tasks recorded before it was kept. */
   title: Schema.optional(Schema.String),
+  /**
+   * What the launch there was sent with, kept only while `threadId` is absent, so a restart
+   * here sends it again under the same key and the other side replays the thread it made.
+   */
+  launch: Schema.optional(
+    Schema.Struct({
+      projectId: ProjectId,
+      modelSelection: ModelSelection,
+      runtimeMode: Schema.optional(RuntimeMode),
+      interactionMode: Schema.optional(ProviderInteractionMode),
+    }),
+  ),
   /** The run there that carries the task; absent on tasks recorded before it was kept. */
   runId: Schema.optional(RunId),
   /**
@@ -3619,10 +3632,10 @@ const OrchestrationV2InternalCommand = Schema.Union([
     ),
   }),
   /**
-   * Records a delegated task that runs in a linked environment: the task, its
-   * node and its turn item on the parent, as `delegated_task.request` does,
-   * without a child thread here. `remoteChild` is the thread already launched
-   * there. The ids derive from `commandId`, so a retry records nothing new.
+   * Records a delegated task that runs in a linked environment: the task, its node and its
+   * turn item on the parent, as `delegated_task.request` does, without a child thread here.
+   * A new task is recorded before its launch is sent, with `remoteChild.launch` and no
+   * thread. The ids derive from `commandId`, so a retry records nothing new.
    */
   Schema.Struct({
     type: Schema.Literal("delegated_task.remote.request"),
@@ -3636,6 +3649,20 @@ const OrchestrationV2InternalCommand = Schema.Union([
     modelSelection: ModelSelection,
     remoteChild: OrchestrationV2RemoteTaskChild,
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
+  }),
+  /**
+   * Gives a remote task recorded before its launch the thread that launch made there. It
+   * needs no active parent run, since the answer can arrive after a restart here, and it
+   * leaves a result the task already has (a cancel or Stop) as it is.
+   */
+  Schema.Struct({
+    type: Schema.Literal("delegated_task.remote.attach"),
+    commandId: CommandId,
+    parentThreadId: ThreadId,
+    taskId: NodeId,
+    threadId: ThreadId,
+    runId: Schema.NullOr(RunId),
+    modelSelection: ModelSelection,
   }),
   /**
    * Completes a delegated task that ran in a linked environment, with what its

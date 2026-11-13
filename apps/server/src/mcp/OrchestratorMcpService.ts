@@ -1925,7 +1925,14 @@ const make = Effect.gen(function* () {
         ? {}
         : {
             remoteChild: task.remoteChild,
-            link: formatThreadLink(task.remoteChild, task.remoteChild.title),
+            ...(task.remoteChild.threadId === undefined
+              ? {}
+              : {
+                  link: formatThreadLink(
+                    { ...task.remoteChild, threadId: task.remoteChild.threadId },
+                    task.remoteChild.title,
+                  ),
+                }),
           }),
       childRunId: null,
       childNodeId: task.id,

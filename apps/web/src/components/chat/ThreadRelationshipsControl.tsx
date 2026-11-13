@@ -267,6 +267,9 @@ function RemoteSubagentRow(props: {
   const navigate = useNavigate();
   const environment = useEnvironment(props.agent.remoteChild.environmentId);
   const { remoteChild } = props.agent;
+  // Absent until the launch there answered, so there is no thread to open yet.
+  const remoteThreadId = remoteChild.threadId;
+  const canOpen = environment !== null && remoteThreadId !== undefined;
   const status = props.agent.status;
   const failed = status === "failed";
   const title = relationshipThreadTitle({
@@ -283,13 +286,13 @@ function RemoteSubagentRow(props: {
               size="sm"
               variant="ghost"
               part="row"
-              aria-disabled={environment === null || undefined}
+              aria-disabled={!canOpen || undefined}
               onClick={() => {
-                if (environment === null) return;
+                if (environment === null || remoteThreadId === undefined) return;
                 void navigate({
                   to: "/$environmentId/$threadId",
                   params: buildThreadRouteParams(
-                    scopeThreadRef(remoteChild.environmentId, remoteChild.threadId),
+                    scopeThreadRef(remoteChild.environmentId, remoteThreadId),
                   ),
                 });
               }}
@@ -319,9 +322,11 @@ function RemoteSubagentRow(props: {
           <LineageTooltipContent
             title={title}
             hint={
-              environment === null
-                ? `Runs on ${remoteChild.label}. Connect to it to open the thread there.`
-                : `Open on ${remoteChild.label}`
+              remoteThreadId === undefined
+                ? `Runs on ${remoteChild.label}.`
+                : environment === null
+                  ? `Runs on ${remoteChild.label}. Connect to it to open the thread there.`
+                  : `Open on ${remoteChild.label}`
             }
           />
         </TooltipPopup>

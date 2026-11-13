@@ -9,6 +9,7 @@ import {
   type ModelSelection,
   NodeId,
   type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -141,6 +142,10 @@ interface BoxThread {
   readonly sent: Ref.Ref<ReadonlyArray<string>>;
   /** Runs as the launch there is answered, before the laptop hears back. */
   readonly afterLaunch: Ref.Ref<Effect.Effect<void>>;
+  /** The thread each launch there made or replayed, in order. */
+  readonly launches: Ref.Ref<ReadonlyArray<ThreadId>>;
+  /** While set, the box's launch fails, as its launch service does for a reason it does not name. */
+  readonly refuseLaunch: Ref.Ref<boolean>;
 }
 
 const makeBoxThread = Effect.gen(function* () {
@@ -179,6 +184,8 @@ const makeBoxThread = Effect.gen(function* () {
     releaseStop: yield* Deferred.make<void>(),
     sent: yield* Ref.make<ReadonlyArray<string>>([]),
     afterLaunch: yield* Ref.make<Effect.Effect<void>>(Effect.void),
+    launches: yield* Ref.make<ReadonlyArray<ThreadId>>([]),
+    refuseLaunch: yield* Ref.make(false),
   } satisfies BoxThread;
 });
 
@@ -502,9 +509,22 @@ const boxToolkitLayer = (thread: BoxThread) => {
   });
   const layerBoxLaunches = Layer.mock(ThreadLaunch.ThreadLaunchService)({
     launch: (input) =>
-      Ref.get(thread.runless).pipe(
+      Ref.get(thread.refuseLaunch).pipe(
+        Effect.flatMap((refuse) =>
+          refuse
+            ? Effect.fail(
+                new ThreadLaunch.ThreadLaunchError({
+                  operation: "create-thread",
+                  commandId: CommandId.make("command:box-launch"),
+                  projectId: input.projectId,
+                  cause: "The box could not launch.",
+                }),
+              )
+            : Ref.get(thread.runless),
+        ),
         Effect.flatMap((runless) =>
           Ref.set(thread.launched, input.threadId!).pipe(
+            Effect.andThen(Ref.update(thread.launches, (seen) => [...seen, input.threadId!])),
             Effect.andThen(Ref.set(thread.linkOrigin, input.linkOrigin ?? null)),
             Effect.andThen(Ref.set(thread.delegatedFrom, input.delegatedFrom ?? null)),
             Effect.andThen(Ref.set(thread.message, input.initialMessage?.text ?? null)),
@@ -1329,6 +1349,166 @@ it.effect("follows an open task again after the laptop restarts", () =>
       yield* after.remote.start();
       const task = yield* taskResult(after, delegated.taskId);
       expect(task).toMatchObject({ status: "completed", result: "Finished while you were away." });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+/**
+ * The laptop delegates and goes away once the box has accepted the launch, before its answer
+ * arrives. Returns the laptop's links, which a restart keeps.
+ */
+const delegateAndLoseTheAnswer = (
+  thread: BoxThread,
+  b: Effect.Success<ReturnType<typeof serveBox>>,
+  database: Context.Context<SqlClient.SqlClient>,
+  offers: SubscriptionRef.SubscriptionRef<
+    ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+  >,
+) =>
+  Effect.gen(function* () {
+    const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
+    const accepted = yield* Deferred.make<void>();
+    const laptopGone = yield* Deferred.make<void>();
+    yield* Ref.set(
+      thread.afterLaunch,
+      Deferred.succeed(accepted, undefined).pipe(Effect.andThen(Deferred.await(laptopGone))),
+    );
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const before = yield* makeLaptop(database, offers, linking);
+        yield* linkTo(before.links, b, "full-access");
+        yield* seedParent(before);
+        yield* Effect.forkScoped(delegateToBox(before));
+        yield* Deferred.await(accepted);
+      }),
+    );
+    yield* Ref.set(thread.afterLaunch, Effect.void);
+    yield* Deferred.succeed(laptopGone, undefined);
+    return linking;
+  });
+
+/** Waits for the task's first recorded state that `matches`. */
+const taskWhen = (
+  laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>,
+  matches: (task: OrchestrationV2Subagent) => boolean,
+) =>
+  laptopEnv.orchestrator
+    .streamStoredEventsFrom({
+      threadId: parentThreadId,
+      afterSequence: 0,
+      eventType: "subagent.updated",
+    })
+    .pipe(
+      Stream.map((stored) => stored.event),
+      Stream.filter((event) => event.type === "subagent.updated" && matches(event.payload)),
+      Stream.runHead,
+      Effect.map((event) => {
+        if (Option.isNone(event) || event.value.type !== "subagent.updated") {
+          throw new Error("The task never reached that state.");
+        }
+        return event.value.payload;
+      }),
+    );
+
+it.effect("a launch whose answer never arrived is followed after the laptop restarts", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const linking = yield* delegateAndLoseTheAnswer(thread, b, database, offers);
+
+      const after = yield* makeLaptop(database, offers, linking);
+      // The task was recorded before its launch left, with no thread yet.
+      const [pending] = (yield* after.orchestrator.getThreadProjection(parentThreadId)).subagents;
+      expect(pending).toMatchObject({ status: "running", result: null });
+      expect(pending?.remoteChild?.threadId).toBeUndefined();
+
+      yield* after.remote.start();
+      const attached = yield* taskWhen(after, (task) => task.remoteChild?.threadId !== undefined);
+      // The launch sent again is the one the box already accepted, not a second thread.
+      const launches = yield* Ref.get(thread.launches);
+      expect(launches).toHaveLength(2);
+      expect(new Set(launches)).toEqual(new Set([attached.remoteChild?.threadId]));
+      expect(attached.remoteChild?.launch).toBeUndefined();
+
+      yield* Ref.set(thread.reply, "Finished after the restart.");
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+      expect(yield* taskResult(after, attached.id)).toMatchObject({
+        status: "completed",
+        result: "Finished after the restart.",
+      });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a task cancelled before its launch answered is stopped there once it has", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const linking = yield* delegateAndLoseTheAnswer(thread, b, database, offers);
+
+      const after = yield* makeLaptop(database, offers, linking);
+      const [pending] = (yield* after.orchestrator.getThreadProjection(parentThreadId)).subagents;
+      const cancelled = yield* after.call("task_cancel", { taskId: pending!.id });
+      expect(cancelled.isError, JSON.stringify(cancelled.content)).toBe(false);
+
+      yield* Deferred.await(thread.interruptedOnce);
+      const stopped = yield* taskWhen(after, (task) => task.remoteChild?.stoppedThere === true);
+      expect(stopped).toMatchObject({ status: "cancelled", result: "Cancelled." });
+      expect(stopped.remoteChild?.threadId).toBe(yield* Ref.get(thread.launched));
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a launch the box refuses fails the call at once and leaves no task running", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      yield* Ref.set(thread.refuseLaunch, true);
+      const delegate = a.call("delegate_task", {
+        task: "Run the full suite on the box.",
+        target: {
+          environmentId: box.environmentId,
+          projectId: boxProject,
+          providerInstanceId: instanceId,
+          model: "gpt-5.4",
+        },
+        mode: "async",
+        clientRequestId: "suite-on-box",
+      });
+
+      const refused = yield* delegate;
+      expect(refused.isError).toBe(true);
+      expect(JSON.stringify(refused.content)).toContain("The operation could not be completed.");
+      const { subagents } = yield* a.orchestrator.getThreadProjection(parentThreadId);
+      expect(subagents).toMatchObject([
+        { status: "failed", result: "The operation could not be completed." },
+      ]);
+      // The call carried the refusal, so the failed task wakes no one with it again.
+      expect(yield* SubscriptionRef.get(offers)).toEqual([]);
+
+      // The same key answers as it did, without a launch the box would now accept.
+      yield* Ref.set(thread.refuseLaunch, false);
+      expect((yield* delegate).isError).toBe(true);
+      expect(yield* Ref.get(thread.launches)).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

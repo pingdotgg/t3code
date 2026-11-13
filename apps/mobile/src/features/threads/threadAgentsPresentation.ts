@@ -48,7 +48,8 @@ export function subagentThreadTarget(
     return { environmentId, threadId: subagent.childThreadId };
   }
   const remote = subagent.remoteChild;
-  return remote !== undefined && isKnownEnvironment(remote.environmentId)
+  // No thread until the launch there answered.
+  return remote?.threadId !== undefined && isKnownEnvironment(remote.environmentId)
     ? { environmentId: remote.environmentId, threadId: remote.threadId }
     : null;
 }
@@ -105,7 +106,8 @@ export function resolveSubagentRowPresentation(
     tone: rowTone(subagent.status),
     live,
     canOpenThread:
-      subagent.childThreadId !== null || (subagent.remoteChild !== undefined && canOpenRemote),
+      subagent.childThreadId !== null ||
+      (subagent.remoteChild?.threadId !== undefined && canOpenRemote),
     runsOn: subagent.remoteChild?.label ?? null,
   };
 }

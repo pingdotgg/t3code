@@ -422,17 +422,18 @@ function SubagentTimelineLink(props: {
   );
   const remote = props.remote ?? agent?.remoteChild;
   const remoteEnvironment = useEnvironment(remote?.environmentId ?? null);
+  const remoteThreadId = remote?.threadId;
   const navigate = useNavigate();
   const threadId = props.threadId;
   // A task in a linked environment opens there, if this client is connected to it.
   const open =
     threadId !== null
       ? () => props.onOpenThread(threadId)
-      : remote !== undefined && remoteEnvironment !== null
+      : remote !== undefined && remoteThreadId !== undefined && remoteEnvironment !== null
         ? () =>
             void navigate({
               to: "/$environmentId/$threadId",
-              params: buildThreadRouteParams(scopeThreadRef(remote.environmentId, remote.threadId)),
+              params: buildThreadRouteParams(scopeThreadRef(remote.environmentId, remoteThreadId)),
             })
         : null;
   const liveStatus = agent?.status ?? props.status;

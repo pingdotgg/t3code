@@ -164,7 +164,9 @@ function AgentRow(props: {
         accessibilityHint={
           subagent.remoteChild === undefined
             ? "Provider-managed agent. Its work appears in the transcript."
-            : `Runs on ${subagent.remoteChild.label}. Connect to it to open its thread.`
+            : subagent.remoteChild.threadId === undefined
+              ? `Runs on ${subagent.remoteChild.label}.`
+              : `Runs on ${subagent.remoteChild.label}. Connect to it to open its thread.`
         }
       >
         {row}
