@@ -2626,7 +2626,11 @@ const make = Effect.gen(function* () {
         return loadError ? { ...snapshot, url: loadError.url, loadError } : snapshot;
       }
       case "click": {
-        const clickInput = input as PreviewAutomationClickInput;
+        // Time spent queued behind other work on this tab counts against the broker's deadline.
+        const clickInput = {
+          ...(input as PreviewAutomationClickInput),
+          timeoutMs: Math.max(1, Math.floor(deadlineMs - performance.now())),
+        };
         await recordAction(tab, "click", () =>
           ServerBrowserPage.click(tab.page, clickInput, pointerFor(tab)),
         );
