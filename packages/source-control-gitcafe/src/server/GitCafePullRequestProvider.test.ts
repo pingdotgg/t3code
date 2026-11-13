@@ -1311,6 +1311,43 @@ describe("GitCafePullRequestProvider", () => {
     }).pipe(Effect.provide(server.layer));
   });
 
+  it.effect("never sends a review summary's id as a comment reaction subject", () => {
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/pulls/7": pull,
+      "GET /repos/owner/repo/pulls/7/reactions/": { items: [], next: null },
+      "GET /repos/owner/repo/pulls/7/reviews": {
+        items: [
+          {
+            id: "review_fixture",
+            author: actor,
+            body: "Looks good",
+            verdict: "approve",
+            createdAt: timestamp,
+            dismissedAt: null,
+          },
+        ],
+        next: null,
+      },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      yield* provider
+        .setReaction({
+          ...target,
+          subjectId: "review_fixture",
+          content: "thumbs-up",
+          reacted: true,
+        })
+        .pipe(Effect.result);
+      assert.deepStrictEqual(
+        server.sent
+          .filter((request) => request.method === "POST")
+          .map((request) => (request.body as { readonly subject?: unknown }).subject),
+        [],
+      );
+    }).pipe(Effect.provide(server.layer));
+  });
+
   it.effect("refuses to drop a reaction whose id it cannot address", () => {
     const server = fakeGitCafe({
       "GET /repos/owner/repo/pulls/7/reactions/": {
