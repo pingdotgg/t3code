@@ -31,3 +31,10 @@
 - Numbers: autoModel tests 9/9 (3 new routing cases failed before the change, plus a level-slug test). Web typecheck clean in 47 s warm.
 - What worked: the Limits page showed Claude and distinct A/B numbers once the hub was quiet. The missing Claude section and copied numbers came from limit probes timing out while the hub was overloaded (load 11, IO pressure ~90).
 - Next: one combined web + server build, deployed with a stop/start of t3code.service, then settings switch the Auto tab to the three level rows.
+
+## 2026-11-13: Agents commit each step with its origin
+
+- What: `AGENTS.md` gets a Commits section. Agents commit and push each finished, checked step of medium size or larger, one idea per commit, with a body that says why and where the change came from (issue, PR, review finding, thread link, or the request). PRs merge with a merge commit so those steps stay in `main`. The PR template repeats the rule in one line. Outside the repo, `~/.agents/T3-CODE.md` and the `auto` and `swarm` skills got the same rule.
+- Why: Tomáš wants to trace a problem back to the step and request that caused it. One big commit per task, or a squash merge, hides that.
+- Numbers: docs only, 4 commits in PR #4. The fork runs no CI checks on PRs.
+- Next: watch whether agents keep the cadence. If they do not, add the rule to the built-in orchestration instructions (`orchestrationInstructions.ts`, needs evals).
