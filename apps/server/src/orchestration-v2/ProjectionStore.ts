@@ -5038,7 +5038,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `.pipe(Effect.flatMap(decodeRows(decodeNodePayload, threadId)));
             const subagents = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_subagents
-              WHERE thread_id = ${threadId} AND status NOT IN ('interrupted','failed','cancelled') ORDER BY subagent_id ASC
+              -- Turn start routes only completed subagents (RunExecutionService.canRouteRelatedSubagent).
+              WHERE thread_id = ${threadId} AND status = 'completed' ORDER BY subagent_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeSubagentPayload, threadId)));
             const providerThreads = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_provider_threads
@@ -5058,7 +5059,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `.pipe(Effect.flatMap(decodeRows(decodeContextHandoffPayload, threadId)));
             const contextTransfers = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_context_transfers
-              WHERE source_thread_id = ${threadId} OR target_thread_id = ${threadId} ORDER BY rowid ASC
+              -- Turn start reads forks into this thread and the transfers its handoffs reference.
+              WHERE (target_thread_id = ${threadId} AND type = 'fork')
+                OR context_transfer_id IN (SELECT json_extract(payload_json, '$.transferId') FROM orchestration_v2_projection_context_handoffs WHERE thread_id = ${threadId})
+              ORDER BY rowid ASC
             `.pipe(Effect.flatMap(decodeRows(decodeContextTransferPayload, threadId)));
             const turnItems = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_turn_items
@@ -5125,6 +5129,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       function* (threadId, runIds) {
         const rows = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_turn_items
+          -- Without planner statistics SQLite would test run_id on every item via the ordinal index.
+          ${runIds === undefined ? sql`` : sql`INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx`}
           WHERE thread_id = ${threadId}
             AND type IN ('user_message','assistant_message','command_execution','error',
               'run_interrupt_result','file_change','proposed_plan')
