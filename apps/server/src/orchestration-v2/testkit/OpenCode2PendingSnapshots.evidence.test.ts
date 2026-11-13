@@ -151,9 +151,6 @@ const runRow = (row: Row) =>
 
 describe("OpenCode 2 pending-work snapshots (#19228 evidence)", () => {
   it.effect.each(ROWS.map((row) => [`${row.id} ${row.fixture}`, row] as const))("%s", ([, row]) =>
-    runRow(row).pipe(
-      Effect.map((failures) => assert.deepEqual(failures, [])),
-      Effect.scoped,
-    ),
+    runRow(row).pipe(Effect.map((failures) => assert.deepEqual(failures, []))),
   );
 });
