@@ -20,6 +20,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { AUTO_LEVEL_MODELS } from "@t3tools/shared/autoModel";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { envTrampoline, supportsEnvChdir } from "@t3tools/shared/envTrampoline";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -83,12 +84,19 @@ const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabili
   optionDescriptors: [],
 });
 
+const AUTO_MODELS: ReadonlyArray<ServerProviderModel> = AUTO_LEVEL_MODELS.map((model) => ({
+  ...model,
+  isCustom: false,
+  capabilities: DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+}));
+
 function claudeProviderModels(
   builtInModels: ReadonlyArray<ServerProviderModel>,
   customModels: ClaudeSettings["customModels"],
 ): ReadonlyArray<ServerProviderModel> {
   return providerModelsFromSettings(
-    builtInModels,
+    // After the real models: callers that default to a provider's first model keep a real one.
+    [...builtInModels, ...AUTO_MODELS],
     customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   ).map((model) =>
