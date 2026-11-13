@@ -577,6 +577,37 @@ describe("server browser drag", () => {
       process.off("unhandledRejection", onUnhandled);
     }
   });
+
+  it("moves the mouse after dragstart, so pages that track a drag with mousemove see it", async () => {
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`
+        <div style="display:flex;gap:40px">
+          <div id="source" draggable="true" style="width:200px;height:120px">source</div>
+          <div id="target" style="width:200px;height:120px">target</div>
+        </div>
+        <script>
+          window.events = [];
+          let dragging = false;
+          source.addEventListener("dragstart", (event) => {
+            event.preventDefault();
+            dragging = true;
+            events.push("dragstart");
+          });
+          addEventListener("mousemove", () => dragging && events.push("mousemove"));
+          addEventListener("mouseup", () => events.push("mouseup"));
+        </script>`);
+
+      await ServerBrowserPage.drag(page, { source: "#source", target: "#target" });
+
+      const events = (await page.evaluate("window.events")) as Array<string>;
+      expect(events.slice(0, 2)).toEqual(["dragstart", "mousemove"]);
+      expect(events.at(-1)).toBe("mouseup");
+    } finally {
+      await browser.close();
+    }
+  });
 });
 
 describe("server browser evaluate", () => {
