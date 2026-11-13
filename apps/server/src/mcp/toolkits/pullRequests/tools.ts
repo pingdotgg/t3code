@@ -1,7 +1,5 @@
 import {
-  clampedPositiveInt,
   McpCapabilityUnavailableError,
-  NonNegativeInt,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   PositiveInt,
@@ -229,18 +227,8 @@ export const ThreadPullRequestEntry = Schema.Struct({
 });
 export type ThreadPullRequestEntry = typeof ThreadPullRequestEntry.Type;
 
-export const ListThreadPullRequestsInput = Schema.Struct({
-  environmentId: OrchestratorMcpEnvironmentTarget,
-  threadId: Schema.optional(ThreadId.annotate({ description: "Thread. Default: this thread." })),
-  states: Schema.optional(Schema.Array(PullRequestState).check(Schema.isMinLength(1))),
-  cursor: Schema.optional(NonNegativeInt),
-  limit: Schema.optional(clampedPositiveInt(50)).annotate({ description: "Max 50." }),
-});
-export type ListThreadPullRequestsInput = typeof ListThreadPullRequestsInput.Type;
-
 export const ListThreadPullRequestsResult = Schema.Struct({
   pullRequests: Schema.Array(ThreadPullRequestEntry),
-  /** Stacks with a pull request on this page, whole. */
   chains: Schema.Array(
     Schema.Struct({
       kind: Schema.Literals(["native", "derived"]),
@@ -248,9 +236,6 @@ export const ListThreadPullRequestsResult = Schema.Struct({
       numbers: Schema.Array(Schema.Int),
     }),
   ),
-  nextCursor: Schema.NullOr(NonNegativeInt),
-  /** Pull requests matching `states`, across all pages. */
-  total: NonNegativeInt,
 });
 export type ListThreadPullRequestsResult = typeof ListThreadPullRequestsResult.Type;
 
@@ -320,8 +305,11 @@ const UnlinkPullRequestsTool = Tool.make("unlink_pull_requests", {
 
 const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
   description:
-    "List PRs linked to a thread, with last known state and stack order (bottom to top). Page with `cursor=nextCursor`. Call only when you need that list. Never as an end-of-work check.",
-  parameters: ListThreadPullRequestsInput,
+    "List PRs linked to a thread, with last known state and stack order (bottom to top). Call only when you need that list. Never as an end-of-work check.",
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    threadId: Schema.optional(ThreadId.annotate({ description: "Thread. Default: this thread." })),
+  }),
   success: ListThreadPullRequestsResult,
   failure: PullRequestToolError,
   dependencies,

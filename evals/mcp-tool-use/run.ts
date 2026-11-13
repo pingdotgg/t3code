@@ -1302,21 +1302,15 @@ export const t3Default = (
       return { ...pr(), watching: true, wasWatching: false };
     case "unwatch_pull_request":
       return { ...pr(), watching: false, wasWatching: true };
-    case "list_thread_pull_requests": {
-      const states = Array.isArray(input.states) ? input.states : undefined;
-      const matching = [...sample.linked]
-        .map((url) => ({ ...linkedEntry(sample, url), source: "agent", watching: false }))
-        .filter((entry) => states === undefined || states.includes(entry.state));
-      const cursor = typeof input.cursor === "number" ? input.cursor : 0;
-      const limit = Math.min(typeof input.limit === "number" ? input.limit : 50, 50);
-      const page = matching.slice(cursor, cursor + limit);
+    case "list_thread_pull_requests":
       return {
-        pullRequests: page,
+        pullRequests: [...sample.linked].map((url) => ({
+          ...linkedEntry(sample, url),
+          source: "agent",
+          watching: false,
+        })),
         chains: [],
-        nextCursor: cursor + page.length < matching.length ? cursor + page.length : null,
-        total: matching.length,
       };
-    }
     case "t3_thread_read": {
       const threadId = valueText(input.threadId);
       const launched = sample.threads.get(threadId);

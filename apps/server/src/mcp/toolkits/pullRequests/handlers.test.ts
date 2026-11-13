@@ -608,29 +608,6 @@ describe("listThreadPullRequests", () => {
     ]);
     expect(result.chains).toEqual([{ kind: "derived", numbers: [1, 2, 3] }]);
   });
-
-  it("pages the links in the requested states, with each page's stacks whole", () => {
-    const merged = makeLink(5, { headBranch: "feat-e" });
-    const thread = {
-      pullRequests: [
-        makeLink(1, { headBranch: "feat-a" }),
-        makeLink(2, { headBranch: "feat-b", baseBranch: "feat-a" }),
-        makeLink(4),
-        { ...merged, snapshot: { ...merged.snapshot!, state: "merged" as const } },
-        makeLink(6, { headBranch: "feat-f", baseBranch: "feat-b" }),
-      ],
-    };
-    const first = listThreadPullRequests(thread, { states: ["open"], limit: 1 });
-    expect(first.pullRequests.map((entry) => entry.number)).toEqual([1]);
-    expect(first.chains).toEqual([{ kind: "derived", numbers: [1, 2, 6] }]);
-    expect([first.nextCursor, first.total]).toEqual([1, 3]);
-    const last = listThreadPullRequests(thread, { states: ["open"], cursor: 1, limit: 5 });
-    expect(last.pullRequests.map((entry) => entry.number)).toEqual([2, 6]);
-    expect(last.nextCursor).toBeNull();
-    expect(listThreadPullRequests(thread, { states: ["merged"] }).chains).toEqual([
-      { kind: "derived", numbers: [5] },
-    ]);
-  });
 });
 
 describe("pull request guide tools", () => {
