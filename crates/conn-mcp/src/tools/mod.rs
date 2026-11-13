@@ -225,6 +225,66 @@ impl Cx<'_> {
         }
     }
 
+    /// TS `writingCaller`: refuses a read-only client, then a thread caller that no longer
+    /// owns a live run (`loadCaller`, `assertLiveCaller`). Returns the caller's limits.
+    async fn writing_caller(&self) -> Result<Limits, ToolError> {
+        self.require_write()?;
+        let Caller::Thread(caller) = self.caller else {
+            return self.limits().await;
+        };
+        let own = match self.projection(&caller.thread_id).await {
+            Ok(projection) => projection,
+            Err(ToolError::Failure {
+                code: "thread_not_found",
+                ..
+            }) => {
+                return Err(fail(
+                    "thread_not_found",
+                    "The calling thread was not found.",
+                ));
+            }
+            Err(other) => return Err(other),
+        };
+        if !is_live_caller(&own, &caller.provider_instance_id) {
+            return Err(fail(
+                "parent_not_active",
+                "The calling provider no longer owns an active thread run.",
+            ));
+        }
+        let thread = &own["thread"];
+        Ok(Limits {
+            runtime_mode: thread["runtimeMode"]
+                .as_str()
+                .unwrap_or("approval-required")
+                .to_owned(),
+            interaction_mode: thread["interactionMode"]
+                .as_str()
+                .unwrap_or("default")
+                .to_owned(),
+        })
+    }
+
+    /// TS `writesThreads`: the writing caller's checks, then each named thread other than the
+    /// caller's own may not run in broader modes than the caller. A thread that does not
+    /// exist is left to the handler, which reports it.
+    async fn writes_threads(&self, targets: &[Option<&str>]) -> Result<Limits, ToolError> {
+        let limits = self.writing_caller().await?;
+        for target in targets.iter().flatten() {
+            if Some(*target) == self.caller_thread_id() {
+                continue;
+            }
+            match self.projection(target).await {
+                Ok(projection) => self.within_limits(&limits, &projection["thread"])?,
+                Err(ToolError::Failure {
+                    code: "thread_not_found",
+                    ..
+                }) => {}
+                Err(other) => return Err(other),
+            }
+        }
+        Ok(limits)
+    }
+
     /// A target thread may not run with broader modes than the caller's.
     fn within_limits(&self, limits: &Limits, thread: &Value) -> Result<(), ToolError> {
         let runtime = thread["runtimeMode"]
@@ -295,6 +355,44 @@ impl Cx<'_> {
         let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
         format!("{prefix}{hex}")
     }
+}
+
+/// Run statuses that make a run the thread's `activeRunId` (the engine's shell rule).
+const ACTIVE_RUN_STATUSES: [&str; 4] = ["preparing", "starting", "running", "waiting"];
+
+/// The thread shell's `activeRunId`, from a projection: the latest run that started (queued
+/// runs and runs cancelled before they started do not count), if it is still active.
+fn has_active_run(projection: &Value) -> bool {
+    let Some(runs) = projection["runs"].as_array() else {
+        return false;
+    };
+    runs.iter()
+        .filter(|run| {
+            let status = run["status"].as_str().unwrap_or_default();
+            let never_started = status == "cancelled"
+                && run["startedAt"].is_null()
+                && run["activeAttemptId"].is_null();
+            status != "queued" && !never_started
+        })
+        .max_by_key(|run| run["ordinal"].as_u64().unwrap_or(0))
+        .is_some_and(|run| ACTIVE_RUN_STATUSES.contains(&run["status"].as_str().unwrap_or("")))
+}
+
+/// TS `isLiveCallerShell`: an unarchived thread on the caller's provider instance with an
+/// active run, or with a background subagent of that instance still pending (background
+/// subagents keep their credential until the provider exits).
+fn is_live_caller(projection: &Value, provider_instance_id: &str) -> bool {
+    let thread = &projection["thread"];
+    let background = thread["pendingBackgroundTasks"]
+        .as_array()
+        .is_some_and(|tasks| {
+            tasks.iter().any(|task| {
+                task["kind"] == "subagent" && task["providerInstanceId"] == provider_instance_id
+            })
+        });
+    thread["archivedAt"].is_null()
+        && thread["providerInstanceId"] == provider_instance_id
+        && (has_active_run(projection) || background)
 }
 
 /// `encodeURIComponent`.

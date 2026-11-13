@@ -401,8 +401,7 @@ pub async fn launch_thread(cx: &Cx<'_>, input: Value) -> ToolResult {
 }
 
 pub async fn launch(cx: &Cx<'_>, args: &Args) -> ToolResult {
-    cx.require_write()?;
-    let limits = cx.limits().await?;
+    let limits = cx.writing_caller().await?;
     let own = cx.caller_projection().await?;
     if bool_arg(args, "scratch") == Some(true) {
         return Err(fail(
@@ -524,11 +523,9 @@ fn normalize_selection(mut selection: Value) -> Value {
 }
 
 pub async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
-    cx.require_write()?;
     let id = thread_id(args);
-    let limits = cx.limits().await?;
+    cx.writes_threads(&[str_arg(args, "threadId")]).await?;
     let projection = cx.projection(id).await?;
-    cx.within_limits(&limits, &projection["thread"])?;
     let mode = str_arg(args, "mode").unwrap_or("auto");
     if bool_arg(args, "freshContext") == Some(true) {
         return Err(fail(
@@ -690,11 +687,9 @@ pub async fn wait(cx: &Cx<'_>, args: &Args) -> ToolResult {
 }
 
 pub async fn interrupt(cx: &Cx<'_>, args: &Args) -> ToolResult {
-    cx.require_write()?;
     let id = thread_id(args);
-    let limits = cx.limits().await?;
+    cx.writes_threads(&[str_arg(args, "threadId")]).await?;
     let projection = cx.projection(id).await?;
-    cx.within_limits(&limits, &projection["thread"])?;
     let key = Cx::request_key(args);
     let reason = str_arg(args, "reason")
         .map(str::to_owned)
@@ -739,7 +734,7 @@ pub async fn interrupt(cx: &Cx<'_>, args: &Args) -> ToolResult {
 }
 
 pub async fn update(cx: &Cx<'_>, args: &Args) -> ToolResult {
-    cx.require_write()?;
+    cx.writes_threads(&[str_arg(args, "threadId")]).await?;
     let id = target_id(cx, args)?.to_owned();
     let action = str_arg(args, "action").unwrap_or_default();
     if action == "regenerate_title" {
@@ -781,7 +776,7 @@ pub async fn update(cx: &Cx<'_>, args: &Args) -> ToolResult {
 pub async fn pending_request(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let action = str_arg(args, "action").unwrap_or_default();
     if action == "respond" {
-        cx.require_write()?;
+        cx.writes_threads(&[str_arg(args, "threadId")]).await?;
     }
     let id = target_id(cx, args)?.to_owned();
     let projection = cx

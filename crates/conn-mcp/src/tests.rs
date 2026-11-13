@@ -752,3 +752,173 @@ fn caller_namespaces_key_idempotency_per_credential() {
     assert_eq!(thread.namespace(), "p");
     assert_eq!(client(true).namespace(), "client:swamp");
 }
+
+/// Launches a thread from Swamp in the given modes with a first message; returns its id.
+async fn launch_as_swamp(
+    swamp: &mut Client<'_>,
+    title: &str,
+    message: &str,
+    runtime: &str,
+    interaction: &str,
+) -> String {
+    let launched = swamp
+        .ok(
+            "t3_thread_launch",
+            json!({
+                "projectId": project_id(), "title": title, "message": message,
+                "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},
+                "runtimeMode": runtime, "interactionMode": interaction,
+            }),
+        )
+        .await;
+    launched["threadId"].as_str().unwrap().to_owned()
+}
+
+fn agent_of(f: &Fixture, thread_id: &str) -> Caller {
+    let entry = f.service.issue_thread_credential(ThreadCredentialRequest {
+        thread_id: thread_id.to_owned(),
+        provider_instance_id: "claudeAgent".into(),
+        subagent: false,
+    });
+    let token = entry.authorization.strip_prefix("Bearer ").unwrap();
+    Caller::Thread(f.service.resolve_thread_token(token).unwrap())
+}
+
+async fn dispatch(f: &Fixture, command: Value) {
+    f.service
+        .config
+        .engine
+        .dispatch(conn_contract::from_json(command).unwrap())
+        .await
+        .unwrap();
+}
+
+/// TS `writesThreads` and `writingCaller` (`McpToolAccess.ts`): a write from a thread
+/// credential needs a live caller, and every target thread within the caller's modes.
+#[tokio::test(flavor = "current_thread")]
+async fn writes_need_a_live_caller_within_the_target_limits() {
+    let f = fixture("live-caller");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let full = launch_as_swamp(&mut swamp, "Full", "hang", "full-access", "default").await;
+    let narrow = launch_as_swamp(&mut swamp, "Narrow", "hang", "approval-required", "plan").await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &narrow)).await;
+
+    // A live caller below the target's modes is refused on every write tool.
+    let respond = json!({"action": "respond", "threadId": full, "requestId": "r1", "answers": {}});
+    for (tool, args) in [
+        (
+            "t3_thread_update",
+            json!({"threadId": full, "action": "rename", "title": "pwned"}),
+        ),
+        ("t3_thread_send", json!({"threadId": full, "message": "x"})),
+        ("t3_thread_interrupt", json!({"threadId": full})),
+        ("t3_pending_request", respond),
+    ] {
+        let (code, _) = agent.failure(tool, args).await;
+        assert_eq!(code, "runtime_mode_escalation_denied", "{tool}");
+    }
+    // Normal cases: its own thread, and a thread within its modes.
+    let renamed = agent
+        .ok(
+            "t3_thread_update",
+            json!({"action": "rename", "title": "Mine"}),
+        )
+        .await;
+    assert_eq!(renamed["title"], "Mine");
+    let (code, message) = agent
+        .failure(
+            "t3_pending_request",
+            json!({"action": "respond", "requestId": "r1", "answers": {}}),
+        )
+        .await;
+    assert_eq!(
+        (code.as_str(), message.as_str()),
+        (
+            "invalid_request",
+            "The pending user-input request was not found."
+        )
+    );
+    let child = agent
+        .ok(
+            "t3_thread_launch",
+            json!({"title": "Child", "message": "hang"}),
+        )
+        .await;
+    let child = child["threadId"].as_str().unwrap().to_owned();
+    agent
+        .ok(
+            "t3_thread_send",
+            json!({"threadId": child, "message": "more", "mode": "queue"}),
+        )
+        .await;
+    agent
+        .ok("t3_thread_interrupt", json!({"threadId": child}))
+        .await;
+    let task = agent.ok("delegate_task", json!({"task": "hang"})).await;
+    let task_id = task["taskId"].as_str().unwrap().to_owned();
+    agent.ok("task_status", json!({"taskId": task_id})).await;
+    assert_eq!(
+        agent.ok("task_cancel", json!({"taskId": task_id})).await["status"],
+        "cancel_requested"
+    );
+
+    // Archived: the credential still resolves, but the caller is no longer live.
+    dispatch(
+        &f,
+        json!({"type": "thread.archive", "commandId": "archive-narrow", "threadId": narrow}),
+    )
+    .await;
+    let dead = [
+        ("t3_thread_launch", json!({"title": "Late"})),
+        (
+            "t3_thread_update",
+            json!({"threadId": child, "action": "rename", "title": "x"}),
+        ),
+        (
+            "t3_thread_update",
+            json!({"action": "rename", "title": "x"}),
+        ),
+        ("t3_thread_send", json!({"threadId": child, "message": "x"})),
+        ("t3_thread_interrupt", json!({"threadId": child})),
+        (
+            "t3_pending_request",
+            json!({"action": "respond", "threadId": child, "requestId": "r1", "answers": {}}),
+        ),
+        ("delegate_task", json!({"task": "x"})),
+        ("task_status", json!({"taskId": task_id})),
+        ("task_cancel", json!({"taskId": task_id})),
+    ];
+    for (tool, args) in dead.clone() {
+        let (code, message) = agent.failure(tool, args).await;
+        assert_eq!(
+            (code.as_str(), message.as_str()),
+            (
+                "parent_not_active",
+                "The calling provider no longer owns an active thread run."
+            ),
+            "{tool}"
+        );
+    }
+    // Reads stay open to it.
+    agent.ok("t3_thread_read", json!({"threadId": child})).await;
+    agent
+        .ok(
+            "t3_pending_request",
+            json!({"action": "list", "threadId": child}),
+        )
+        .await;
+
+    // A thread whose run ended is not live either.
+    let idle = launch_as_swamp(&mut swamp, "Idle", "done", "full-access", "default").await;
+    swamp
+        .ok(
+            "t3_thread_wait",
+            json!({"threadId": idle, "timeoutMs": 10_000}),
+        )
+        .await;
+    let mut idle_agent = Client::open(&f.service, agent_of(&f, &idle)).await;
+    for (tool, args) in dead {
+        let (code, _) = idle_agent.failure(tool, args).await;
+        assert_eq!(code, "parent_not_active", "{tool}");
+    }
+}

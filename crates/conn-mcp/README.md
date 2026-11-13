@@ -56,6 +56,15 @@ Measured on a live T3 server at the pinned commit (`tools/mcp-client.mjs` drives
   Swamp driver authenticates with an `Orbit Swamp` session from `t3 auth session issue`, which
   the T3 server would refuse here; a session that may already drive threads over `/ws` gains
   nothing new on `/mcp`. Not served: `T3-Mode-Limit`, `T3-Sender-Thread`, linked environments.
+- Write tools check the caller as `McpToolAccess.ts` does (`tools/mod.rs`, `writing_caller` and
+  `writes_threads`). A read-only client is refused. A thread caller must still be live: its
+  thread exists, is not archived, is on the credential's provider instance, and has an active
+  run or a pending background subagent of that instance (`parent_not_active` otherwise). Every
+  target thread other than the caller's own may not run in broader modes than the caller.
+  `t3_thread_launch` takes the live check; `send`, `interrupt`, `update` and the `respond`
+  action of `t3_pending_request` take both; `delegate_task`, `task_status` and `task_cancel`
+  act as the caller and take the live check. Reads take neither. The engine records no
+  background tasks yet, so the background-subagent exception never applies today.
 - 401 carries `www-authenticate: Bearer` and no `resource_metadata`, so no agent starts a sign-in.
 
 ## Tools
