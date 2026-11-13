@@ -11,7 +11,6 @@ import {
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import { identity } from "effect/Function";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -97,13 +96,6 @@ interface EnvironmentQueryAtomOptions<Input, A, E, R> extends Omit<
   readonly persistence?: QueryPersistence<A>;
   readonly staleTimeMs?: number;
   readonly idleTtlMs?: number;
-  /**
-   * Check staleness each time the query is mounted again. By default the idle
-   * TTL keeps the stale-while-revalidate node warm, so a remount within it
-   * reads the cached value without checking. The cached value still shows
-   * while the query revalidates.
-   */
-  readonly revalidateOnRemount?: boolean;
   readonly refreshIntervalMs?: number;
   readonly refreshTrigger?: (target: {
     readonly environmentId: EnvironmentIdType;
@@ -567,6 +559,45 @@ const refreshEveryUntilFinal =
       { initialValueTarget: self },
     );
 
+const isStale = (result: AsyncResult.AsyncResult<unknown, unknown>, staleTimeMs: number) => {
+  if (result.waiting) return false;
+  const success =
+    result._tag === "Failure" ? Option.getOrUndefined(result.previousSuccess) : result;
+  if (success?._tag !== "Success") return result._tag === "Failure";
+  // @effect-diagnostics-next-line globalDate:off - `AsyncResult` timestamps come from `Date.now`.
+  return Date.now() - success.timestamp >= staleTimeMs;
+};
+
+/**
+ * Stale-while-revalidate on every mount. `Atom.swr` checks only when its node builds, which an idle
+ * TTL skips on a remount; this layer has no TTL (a transform drops it) while `self` keeps the cache.
+ * It reads `self` as a dependency, not a subscription, so `self` goes idle with its last reader.
+ */
+const revalidateOnMount =
+  (staleTimeMs: number) =>
+  <A, E>(
+    self: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+  ): Atom.Atom<AsyncResult.AsyncResult<A, E>> =>
+    Atom.transform(
+      self,
+      (get) => {
+        const current = get(self);
+        if (Option.isNone(get.self()) && isStale(current, staleTimeMs)) {
+          let active = true;
+          get.addFinalizer(() => {
+            active = false;
+          });
+          // Deferred out of the build, which runs while React renders. A plain read drops this
+          // node before the task runs, so only a mount refetches.
+          get.registry.schedulerAsync.makeDispatcher().scheduleTask(() => {
+            if (active && isStale(get.once(self), staleTimeMs)) get.refresh(self);
+          }, 0);
+        }
+        return current;
+      },
+      { initialValueTarget: self },
+    );
+
 /**
  * A query result's data alone. A refetch always publishes a new result (a new
  * timestamp, `waiting` on and off), while equal data keeps its identity, so a
@@ -617,6 +648,13 @@ function environmentConnectionAtoms<R, ER>(
   ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentConnection | null>>;
   connectionAtomsByRuntime.set(runtime, family);
   return family;
+}
+
+export function environmentConnectionAtom<R, ER>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  environmentId: EnvironmentIdType,
+) {
+  return environmentConnectionAtoms(runtime)(environmentId);
 }
 
 const sessionGenerationAtomsByRuntime = new WeakMap<
@@ -678,15 +716,12 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   readonly input: Input;
 }) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
   const connectionAtom = environmentConnectionAtoms(runtime);
+  // `Atom.family` holds members weakly and the mounted layer has no TTL, so each member lives
+  // as long as its cache: keyed weakly, this lets both go once the cache's TTL ends.
+  const membersByCache = new WeakMap<Atom.Atom<unknown>, Atom.Atom<unknown>>();
   const family = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
     const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
-    // `Atom.swr` checks staleness only when its node builds. To revalidate on
-    // remount, the wrappers drop on unmount and the source alone keeps the
-    // cached value warm.
-    const keepWarm = Atom.setIdleTTL(idleTtlMs);
-    const keepSourceWarm = options.revalidateOnRemount ? keepWarm : identity;
-    const keepWrapperWarm = options.revalidateOnRemount ? identity : keepWarm;
     const queryAtom = runtime
       .atom<
         A,
@@ -810,14 +845,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
           );
         });
       })
-      .pipe(
-        keepSourceWarm,
-        Atom.swr({
-          staleTime: options.staleTimeMs ?? 30_000,
-          revalidateOnMount: true,
-        }),
-        keepWrapperWarm,
-      );
+      .pipe(Atom.setIdleTTL(idleTtlMs));
     const isFinal = (result: AsyncResult.AsyncResult<A, unknown>) =>
       options.isFinal !== undefined && Option.exists(AsyncResult.value(result), options.isFinal);
     const intervalQuery =
@@ -825,11 +853,17 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         ? queryAtom
         : queryAtom.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal));
     const refreshTrigger = options.refreshTrigger?.(target);
-    return (
+    const cache = (
       refreshTrigger === undefined
         ? intervalQuery
         : intervalQuery.pipe(refreshOnSignalWhileRead(refreshTrigger, isFinal))
-    ).pipe(keepWrapperWarm, Atom.withLabel(`${options.label}:${key}`));
+    ).pipe(Atom.setIdleTTL(idleTtlMs));
+    const member = cache.pipe(
+      revalidateOnMount(options.staleTimeMs ?? 30_000),
+      Atom.withLabel(`${options.label}:${key}`),
+    );
+    membersByCache.set(cache, member);
+    return member;
   });
   return (target) => family(environmentRpcKey(target));
 }
@@ -927,7 +961,6 @@ export function createEnvironmentRpcQueryAtomFamily<
     readonly persistence?: QueryPersistence<EnvironmentRpcSuccess<TTag>>;
     readonly staleTimeMs?: number;
     readonly idleTtlMs?: number;
-    readonly revalidateOnRemount?: boolean;
     readonly refreshIntervalMs?: number;
     readonly refreshTrigger?: (target: {
       readonly environmentId: EnvironmentIdType;
@@ -942,9 +975,6 @@ export function createEnvironmentRpcQueryAtomFamily<
     ...(options.persistence === undefined ? {} : { persistence: options.persistence }),
     ...(options.staleTimeMs === undefined ? {} : { staleTimeMs: options.staleTimeMs }),
     ...(options.idleTtlMs === undefined ? {} : { idleTtlMs: options.idleTtlMs }),
-    ...(options.revalidateOnRemount === undefined
-      ? {}
-      : { revalidateOnRemount: options.revalidateOnRemount }),
     ...(options.refreshIntervalMs === undefined
       ? {}
       : { refreshIntervalMs: options.refreshIntervalMs }),
@@ -1024,6 +1054,8 @@ export function createEnvironmentRpcCommand<
     ) => Started;
     readonly execute?: (
       input: Input,
+      registry: AtomRegistry.AtomRegistry,
+      environmentId: EnvironmentIdType,
     ) => Effect.Effect<
       EnvironmentRpcSuccess<TTag>,
       EnvironmentRpcFailure<TTag> | EnvironmentRpcUnavailableError,
@@ -1068,7 +1100,9 @@ export function createEnvironmentRpcCommand<
       return permissions.authorize(registry, environmentId, input).pipe(
         Effect.andThen(() => {
           started = options.onStart?.(target, registry);
-          return options.execute?.(input) ?? requestGuarded(options.tag, input);
+          return (
+            options.execute?.(input, registry, environmentId) ?? requestGuarded(options.tag, input)
+          );
         }),
         Effect.provideService(RpcPermissionGuard, {
           authorize: (id, method, payload) =>

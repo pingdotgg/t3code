@@ -46,6 +46,21 @@ it.effect("preserves shell metacharacters and newlines in remote arguments", () 
   }),
 );
 
+it.effect("rejects a Node release below the pinned agent-device engine floor", () =>
+  Effect.gen(function* () {
+    if ((yield* HostProcess.Platform) === "win32") return;
+    const probe = NodeChildProcess.spawnSync(process.execPath, [], {
+      input:
+        `Object.defineProperty(process.versions, "node", { value: "22.11.0" });\n` +
+        remoteDeviceScript("owner", "probe"),
+      env: { HOME: NodeOS.tmpdir(), PATH: NodePath.dirname(process.execPath) },
+      encoding: "utf8",
+    });
+    expect(probe.status).not.toBe(0);
+    expect(probe.stderr).toContain("Node 22.12 or newer");
+  }),
+);
+
 it.effect("stops a daemon left for its owner when starting without agent tools", () =>
   Effect.gen(function* () {
     if ((yield* HostProcess.Platform) === "win32") return;
