@@ -5587,7 +5587,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           content: appendToolContentText(previous.data.content, text),
                         },
                       }
-                    : appendToolOutputText(previous, text),
+                    : previous.data.rawOutput === undefined
+                      ? setToolOutputText(
+                          previous,
+                          `${textFromUnknown(previous.data.content) ?? ""}${text}`,
+                        )
+                      : appendToolOutputText(previous, text),
                 );
               }
               break;

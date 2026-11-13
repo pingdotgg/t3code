@@ -2120,6 +2120,15 @@ describe("AcpRegistryAdapterV2", () => {
           toolCallId: "root-tool",
           content: { type: "content", content: { type: "text", text: "-more" } },
         }),
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_content_chunk",
+          toolCallId: "root-tool",
+          content: {
+            type: "diff",
+            changes: [{ operation: "add", path: "/a.txt" }],
+            patch: { format: "git_patch", text: "PATCH" },
+          },
+        }),
         claudeMarker("tools complete"),
         claudeFrames.idle("end_turn"),
         claudeFrames.closeRequest,
@@ -2139,6 +2148,7 @@ describe("AcpRegistryAdapterV2", () => {
         text("onetwo"),
         text("replacement"),
         text("replacement-more"),
+        { type: "Text", text: "replacement-morePATCH" },
       ]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
