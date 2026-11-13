@@ -307,6 +307,10 @@ export function editAutoSettleDaysField(
   return { ...field, draft, dirty: true };
 }
 
+export function cancelAutoSettleDaysField(field: AutoSettleDaysField): AutoSettleDaysField {
+  return { ...field, draft: String(field.pending ?? field.saved), dirty: false };
+}
+
 export function commitAutoSettleDaysField(field: AutoSettleDaysField): {
   readonly field: AutoSettleDaysField;
   readonly submit: number | null;

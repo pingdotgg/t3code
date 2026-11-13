@@ -90,6 +90,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   autoSettleDaysField,
+  cancelAutoSettleDaysField,
   commitAutoSettleDaysField,
   editAutoSettleDaysField,
   failAutoSettleDaysField,
@@ -764,7 +765,14 @@ function AutoSettleDaysInput({
       onChange={(event) => setField(editAutoSettleDaysField(field, event.target.value))}
       onBlur={commit}
       onKeyDown={(event) => {
-        if (event.key === "Enter" && !event.nativeEvent.isComposing) commit();
+        if (event.nativeEvent.isComposing) return;
+        if (event.key === "Enter") commit();
+        if (event.key === "Escape" && field.dirty) {
+          // An unhandled Escape closes the settings page, and the blur that follows would save.
+          event.preventDefault();
+          event.stopPropagation();
+          setField(cancelAutoSettleDaysField(field));
+        }
       }}
       aria-label="Days of inactivity before auto-settle"
     />

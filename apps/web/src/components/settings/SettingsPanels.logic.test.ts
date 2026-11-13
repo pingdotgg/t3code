@@ -5,6 +5,7 @@ import {
   autoSettleDaysField,
   type AutoSettleDaysField,
   backgroundActivitySharedPolicySettings,
+  cancelAutoSettleDaysField,
   commitAutoSettleDaysField,
   editAutoSettleDaysField,
   failAutoSettleDaysField,
@@ -132,6 +133,12 @@ describe("auto-settle days field", () => {
     const back = commitAutoSettleDaysField(type(submitted, "14"));
     expect(back.submit).toBe(14);
     expect(failAutoSettleDaysField(back.field, submitted.revision)).toBe(back.field);
+  });
+
+  it("a cancelled edit restores the saved value and saves nothing", () => {
+    const cancelled = cancelAutoSettleDaysField(type(autoSettleDaysField(14), "1"));
+    expect(cancelled).toMatchObject({ draft: "14", dirty: false });
+    expect(commitAutoSettleDaysField(cancelled).submit).toBeNull();
   });
 
   it("keeps a draft in progress when the saved value changes underneath it", () => {
