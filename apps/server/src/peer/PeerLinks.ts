@@ -26,6 +26,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -46,11 +47,13 @@ const PeerHttpApi = HttpApi.make(EnvironmentHttpApi.identifier)
 /** The redirect registered for a link. Nothing ever listens there: the code comes back in the response. */
 const LINK_REDIRECT_URI = "http://127.0.0.1/t3code-peer-link";
 /**
- * How long a peer's descriptor may take before a route counts as unreachable.
- * A tailnet or relayed route to a machine that is waking up takes longer.
+ * How long a peer's descriptor or MCP handshake may take before a route counts
+ * as unreachable. A tailnet or relayed route to a machine that is waking up takes longer.
  */
-const probeTimeout = (origin: string) =>
+export const probeTimeout = (origin: string) =>
   isLocalLoopbackHost(new URL(origin).hostname) ? Duration.seconds(3) : Duration.seconds(10);
+/** How long a listing waits on a link's addresses; a real call still gives a waking peer `probeTimeout`. */
+const LIST_PROBE_TIMEOUT = Duration.seconds(3);
 
 /** Node's TLS verification code in a failed request's cause chain, if any. */
 export const certificateErrorCode = (error: unknown) => {
@@ -222,6 +225,12 @@ const make = Effect.gen(function* () {
   const describe = (origin: string) =>
     clientFor(origin).pipe(
       Effect.flatMap((client) => client.metadata.descriptor()),
+      // A brief network drop must not list a live peer as down; the timeout still bounds both tries.
+      Effect.retry({
+        times: 1,
+        schedule: Schedule.spaced("1 second"),
+        while: (error) => certificateErrorCode(error) === undefined,
+      }),
       Effect.timeout(probeTimeout(origin)),
       Effect.asSome,
       Effect.catch((error) => {
@@ -567,18 +576,15 @@ const make = Effect.gen(function* () {
     now: DateTime.Utc,
   ): Effect.fn.Return<PeerLinkSummary> {
     if (DateTime.isLessThanOrEqualTo(link.expiresAt, now)) return { ...link, status: "expired" };
-    let label = link.label;
-    const answered = yield* Effect.findFirst(link.urls, (url) =>
-      answersAs(url, link.environmentId).pipe(
-        Effect.map((found) => {
-          if (Option.isNone(found)) return false;
-          label = found.value.label;
-          return true;
-        }),
+    // A race over no addresses never settles.
+    if (link.urls.length === 0) return { ...link, status: "unreachable" };
+    const answered = yield* Effect.raceAll(
+      link.urls.map((url) =>
+        answersAs(url, link.environmentId).pipe(Effect.flatMap(Effect.fromOption)),
       ),
-    );
+    ).pipe(Effect.timeoutOption(LIST_PROBE_TIMEOUT), Effect.orElseSucceed(Option.none));
     if (Option.isNone(answered)) return { ...link, status: "unreachable" };
-    return { ...(yield* withLabel(link, label)), status: "reachable" };
+    return { ...(yield* withLabel(link, answered.value.label)), status: "reachable" };
   });
 
   const list: PeerLinks["Service"]["list"] = Effect.gen(function* () {
