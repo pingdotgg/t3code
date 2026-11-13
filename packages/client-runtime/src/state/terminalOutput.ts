@@ -20,6 +20,8 @@ export interface TerminalOutputState {
   // The terminal parser's state at the first retained code unit. Trimming can cut a control
   // sequence, and a replay has to skip the rest of it instead of printing it.
   readonly sequenceState: number;
+  /** Chunks before this offset are replayed to emulators but are no longer displayed text. */
+  readonly textStartOffset: number;
 }
 
 export interface TerminalOutputCursor {
@@ -66,6 +68,7 @@ export const EMPTY_TERMINAL_OUTPUT_STATE = Object.freeze<TerminalOutputState>({
   resetVersion: 0,
   nextOffset: 0,
   sequenceState: TERMINAL_SEQUENCE_GROUND,
+  textStartOffset: 0,
 });
 
 interface Utf8Chunk {
@@ -188,6 +191,7 @@ function appendOutput(
       resetVersion: current.resetVersion + 1,
       nextOffset: current.nextOffset + data.length,
       sequenceState: TERMINAL_SEQUENCE_GROUND,
+      textStartOffset: current.textStartOffset,
     };
   }
   const appended = splitOutputChunks(
@@ -244,6 +248,7 @@ function appendOutput(
     resetVersion: current.resetVersion,
     nextOffset: appended.nextOffset,
     sequenceState,
+    textStartOffset: current.textStartOffset,
   };
 }
 
@@ -265,13 +270,43 @@ function resetOutput(
     resetVersion: current.resetVersion + 1,
     nextOffset: reset.nextOffset,
     sequenceState: TERMINAL_SEQUENCE_GROUND,
+    textStartOffset: 0,
   };
 }
 
-/** The retained output a fresh terminal can replay: it starts outside any control sequence. */
-export function terminalOutputText(output: TerminalOutputState): string {
+// Erases the screen and scrollback only. A full emulator reset would drop the
+// screen and input modes the still-running program negotiated.
+const CLEAR_TERMINAL_TEXT = "\u001b[H\u001b[2J\u001b[3J";
+
+/** Earlier output stays retained so a replay from the start restores those modes. */
+function clearOutput(current: TerminalOutputState, maxBufferBytes: number): TerminalOutputState {
+  // The erase rides over the budget: trimming here would evict the output that set those modes.
+  const cleared = appendOutput(
+    current,
+    CLEAR_TERMINAL_TEXT,
+    maxBufferBytes <= 0
+      ? maxBufferBytes
+      : Math.max(maxBufferBytes, current.retainedBytes + CLEAR_TERMINAL_TEXT.length),
+  );
+  return { ...cleared, textStartOffset: cleared.nextOffset };
+}
+
+/** Everything a fresh emulator replays: retained output from outside any control sequence. */
+export function terminalOutputReplay(output: TerminalOutputState): string {
   const text = output.chunks.map((chunk) => chunk.data).join("");
   return text.slice(terminalSequenceEnd(output.sequenceState, text));
+}
+
+/** The output as plain text, for surfaces that do not interpret escape sequences. */
+export function terminalOutputText(output: TerminalOutputState): string {
+  const text = output.chunks.map((chunk) => chunk.data).join("");
+  const firstOffset = output.chunks[0]?.startOffset ?? output.nextOffset;
+  return text.slice(
+    Math.max(
+      terminalSequenceEnd(output.sequenceState, text),
+      output.textStartOffset - firstOffset,
+    ),
+  );
 }
 
 export function readTerminalOutputUpdate(
@@ -323,4 +358,4 @@ export function readTerminalOutputUpdate(
   return { type: "append", data: text.slice(start), cursor: nextCursor };
 }
 
-export { appendOutput, resetOutput };
+export { appendOutput, clearOutput, resetOutput };
