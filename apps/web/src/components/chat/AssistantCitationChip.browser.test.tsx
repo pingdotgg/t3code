@@ -55,6 +55,7 @@ function mount(
   sourceAnchor: AssistantCitationSourceAnchor | undefined,
   onSave: () => boolean,
   chipCitation: AssistantCitation = citation,
+  container?: HTMLElement,
 ) {
   function Composer() {
     const [open, setOpen] = useState(true);
@@ -65,7 +66,7 @@ function mount(
       />
     );
   }
-  return render(<Composer />);
+  return render(<Composer />, container ? { container } : {});
 }
 
 const textarea = () =>
@@ -216,5 +217,68 @@ describe("citation comment popup position", () => {
     const rect = popup()!.getBoundingClientRect();
     expect(rect.left).toBeGreaterThanOrEqual(0);
     expect(rect.right).toBeLessThanOrEqual(window.innerWidth);
+  });
+
+  it("pins to the timeline edge the quote scrolled past, and typing scrolls nothing", async () => {
+    using source = setup();
+    const spacer = () => {
+      const element = document.createElement("div");
+      element.style.height = `${window.innerHeight * 2}px`;
+      return element;
+    };
+    const timeline = document.createElement("div");
+    timeline.style.cssText = "position: fixed; inset: 0; overflow-y: auto;";
+    timeline.append(spacer(), source.sourceAnchor.source, spacer());
+    document.body.append(timeline);
+    using _timeline = { [Symbol.dispose]: () => timeline.remove() };
+    // Moving the source collapsed the range.
+    source.sourceAnchor.range.selectNodeContents(source.sourceAnchor.source);
+    const quoteAt = (top: number) => {
+      timeline.scrollTop += source.sourceAnchor.source.getBoundingClientRect().top - top;
+    };
+    quoteAt(100);
+    // The composer floats over the bottom of the timeline.
+    const composer = document.createElement("div");
+    composer.dataset.chatComposerStack = "true";
+    composer.style.cssText = "position: fixed; inset-inline: 0; bottom: 0; height: 120px;";
+    const composerTop = window.innerHeight - 120;
+
+    await using _screen = await mount(
+      { ...source.sourceAnchor, viewport: timeline },
+      vi.fn(() => true),
+      citation,
+      composer,
+    );
+    const popup = () => document.querySelector<HTMLElement>('[data-slot="popover-popup"]')!;
+    await vi.waitFor(() => {
+      const quote = source.sourceAnchor.source.getBoundingClientRect();
+      expect(popup().getBoundingClientRect().top).toBeGreaterThanOrEqual(quote.bottom);
+    });
+
+    // Scrolled up, the quote goes under the composer and the popup stops just above it.
+    quoteAt(window.innerHeight);
+    const scrolledUp = timeline.scrollTop;
+    await vi.waitFor(() => {
+      const rect = popup().getBoundingClientRect();
+      expect(rect.bottom).toBeLessThanOrEqual(composerTop);
+      expect(rect.bottom).toBeGreaterThan(composerTop - 20);
+    });
+    await userEvent.keyboard("note");
+    expect(textarea()?.value).toBe("note");
+    expect(document.scrollingElement?.scrollTop).toBe(0);
+    expect(timeline.scrollTop).toBe(scrolledUp);
+
+    // Scrolled down past the quote, the popup stops at the top of the timeline.
+    quoteAt(-200);
+    const scrolledDown = timeline.scrollTop;
+    await vi.waitFor(() => {
+      const rect = popup().getBoundingClientRect();
+      expect(rect.top).toBeGreaterThanOrEqual(0);
+      expect(rect.top).toBeLessThan(20);
+    });
+    await userEvent.keyboard("!");
+    expect(textarea()?.value).toBe("note!");
+    expect(document.scrollingElement?.scrollTop).toBe(0);
+    expect(timeline.scrollTop).toBe(scrolledDown);
   });
 });

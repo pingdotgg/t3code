@@ -50,6 +50,32 @@ function useCitationSourceLinkProps(citation: AssistantCitation) {
   };
 }
 
+/** The part of the timeline left visible by the composer, which floats over its bottom. */
+function visibleTimelineRect(viewport: HTMLElement, composer: Element | null | undefined) {
+  const bounds = viewport.getBoundingClientRect();
+  const composerTop = composer?.getBoundingClientRect().top ?? bounds.bottom;
+  const bottom = Math.max(bounds.top, Math.min(bounds.bottom, composerTop));
+  return new DOMRect(bounds.left, bounds.top, bounds.width, bottom - bounds.top);
+}
+
+/** Floating UI reads a rect boundary on every position update, so getters keep it current. */
+function liveBoundary(read: () => DOMRect) {
+  return {
+    get x() {
+      return read().x;
+    },
+    get y() {
+      return read().y;
+    },
+    get width() {
+      return read().width;
+    },
+    get height() {
+      return read().height;
+    },
+  };
+}
+
 const flat = (text: string) => text.replace(/\s+/g, " ");
 
 /**
@@ -195,6 +221,7 @@ export function AssistantCitationChip({
   const sourceLinkProps = useCitationSourceLinkProps(citation);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const commentPopupRef = useRef<HTMLDivElement>(null);
+  const [commentTrigger, setCommentTrigger] = useState<HTMLButtonElement | null>(null);
   const draftCommentRef = useRef<string | null>(null);
   const [voiceSetupOpen, setVoiceSetupOpen] = useState(false);
   const [unavailableSourceAnchor, setUnavailableSourceAnchor] =
@@ -234,6 +261,11 @@ export function AssistantCitationChip({
       onUnavailable: onSourceUnavailable,
     });
   }, [citation, commentOpen, sourceAnchor, unavailableSourceAnchor]);
+  const visibleTimeline = (anchor: AssistantCitationSourceAnchor) =>
+    visibleTimelineRect(
+      anchor.viewport,
+      commentTrigger?.closest('[data-chat-composer-stack="true"]'),
+    );
   const popupAnchor = activeSourceAnchor
     ? {
         contextElement: activeSourceAnchor.source,
@@ -247,9 +279,16 @@ export function AssistantCitationChip({
           const bounds = activeSourceAnchor.source.getBoundingClientRect();
           const left = Math.min(Math.max(rect.left, bounds.left), bounds.right);
           const right = Math.max(Math.min(rect.right, bounds.right), left);
-          return new DOMRect(left, rect.top, right - left, rect.height);
+          // A quote scrolled out of view pins the popup to the timeline edge it left by.
+          const timeline = visibleTimeline(activeSourceAnchor);
+          const top = Math.min(Math.max(rect.top, timeline.top), timeline.bottom);
+          const bottom = Math.min(Math.max(rect.bottom, top), timeline.bottom);
+          return new DOMRect(left, top, right - left, bottom - top);
         },
       }
+    : undefined;
+  const popupBoundary = activeSourceAnchor
+    ? liveBoundary(() => visibleTimeline(activeSourceAnchor))
     : undefined;
   const label = assistantCitationLabel(citation);
   const composerSourceLink = (
@@ -284,6 +323,7 @@ export function AssistantCitationChip({
           }}
         >
           <PopoverTrigger
+            ref={setCommentTrigger}
             aria-label={citation.comment ? "Edit citation comment" : "Add comment to citation"}
             data-citation-comment-trigger="true"
             render={<ContextChipAction />}
@@ -298,6 +338,7 @@ export function AssistantCitationChip({
               side={activeSourceAnchor ? "bottom" : "top"}
               align="end"
               anchor={popupAnchor}
+              collisionBoundary={popupBoundary}
               initialFocus={() => {
                 const input = commentInputRef.current;
                 if (input) {
