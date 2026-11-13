@@ -169,8 +169,8 @@ export const CursorDriver: ProviderDriver<
           apiKey === undefined ? Effect.succeed([]) : readCursorEnabledPlugins(apiKey),
         ),
         Effect.provideService(HttpClient.HttpClient, httpClient),
-        // Signed out or offline, folder and local plugin skills are still listed.
-        Effect.orElseSucceed((): ReadonlyArray<CursorEnabledPlugin> => []),
+        // A failed lookup is undefined, so a session asks again instead of keeping an empty answer.
+        Effect.orElseSucceed((): ReadonlyArray<CursorEnabledPlugin> | undefined => undefined),
       ),
       "1 minute",
     );
@@ -304,7 +304,8 @@ export const CursorDriver: ProviderDriver<
               snapshot.getSnapshot,
               readEnabledPlugins.pipe(
                 Effect.flatMap((enabledPlugins) =>
-                  probeCursorSkills(cwd, processEnv, enabledPlugins),
+                  // Signed out or offline, folder and local plugin skills are still listed.
+                  probeCursorSkills(cwd, processEnv, enabledPlugins ?? []),
                 ),
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),

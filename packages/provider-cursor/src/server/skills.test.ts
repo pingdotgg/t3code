@@ -145,6 +145,7 @@ describe("Cursor skills", () => {
           plugin: string,
           skill: string,
           manifest: object,
+          revision = "sha",
         ) {
           const root = path.join(
             userHome,
@@ -153,7 +154,7 @@ describe("Cursor skills", () => {
             "cache",
             marketplace,
             plugin,
-            "sha",
+            revision,
           );
           yield* fileSystem.makeDirectory(path.join(root, ".cursor-plugin"), { recursive: true });
           yield* fileSystem.writeFileString(path.join(root, ".cache-complete"), "");
@@ -169,6 +170,16 @@ describe("Cursor skills", () => {
           skills: ["./playbooks/", "../../../../../skills"],
         });
         yield* writeCachedSkill("cursor-public", "turned-off", "skills/stale", {});
+        // An update leaves the previous revision on disk until Cursor next prunes the cache.
+        yield* writeCachedSkill("cursor-public", "demo", "skills/removed", {}, "0-previous");
+        yield* fileSystem.utimes(
+          path.join(
+            userHome,
+            ".cursor/plugins/cache/cursor-public/demo/0-previous/.cache-complete",
+          ),
+          0,
+          0,
+        );
 
         const skills = yield* discoverCursorSkills(undefined, { HOME: userHome }, [
           { marketplace: "cursor-public", name: "demo" },

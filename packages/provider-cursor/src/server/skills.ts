@@ -297,11 +297,22 @@ const cursorPluginSkillSources = Effect.fn("cursorPluginSkillSources")(function*
       cacheSegment(plugin.marketplace),
       cacheSegment(plugin.name),
     );
+    // Cursor loads one revision and prunes the rest; until it does, the newest install is current.
+    let current: { readonly directory: string; readonly completedAt: number } | undefined;
     for (const version of yield* children(versionsRoot)) {
       const directory = path.join(versionsRoot, version);
       const complete = yield* orUndefined(fileSystem.stat(path.join(directory, ".cache-complete")));
       if (complete?.type !== "File") continue;
-      plugins.push({ directory, unlisted: plugin.marketplace !== CURSOR_PUBLIC_MARKETPLACE });
+      const completedAt = Option.getOrUndefined(complete.mtime)?.getTime() ?? 0;
+      if (current === undefined || completedAt > current.completedAt) {
+        current = { directory, completedAt };
+      }
+    }
+    if (current !== undefined) {
+      plugins.push({
+        directory: current.directory,
+        unlisted: plugin.marketplace !== CURSOR_PUBLIC_MARKETPLACE,
+      });
     }
   }
 

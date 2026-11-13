@@ -2323,6 +2323,7 @@ describe("CursorAdapterV2", () => {
         );
         const sent: unknown[] = [];
         const steered: string[] = [];
+        let pluginLookups = 0;
         let cancelled = 0;
         let outcome: "complete_delivered" | "revert_to_followup" = "complete_delivered";
         const finished = yield* Deferred.make<{
@@ -2343,7 +2344,10 @@ describe("CursorAdapterV2", () => {
         const adapter = yield* makeCursorAdapterV2({
           instanceId,
           environment: { HOME: workspace },
-          readEnabledPlugins: Effect.succeed([{ marketplace: "acme-team", name: "ops" }]),
+          // The first lookup fails, as it does while the Cursor API is unreachable.
+          readEnabledPlugins: Effect.sync(() =>
+            pluginLookups++ === 0 ? undefined : [{ marketplace: "acme-team", name: "ops" }],
+          ),
         }).pipe(
           Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
             assertComplete: Effect.void,
@@ -2444,8 +2448,7 @@ describe("CursorAdapterV2", () => {
           nativeTurnId: "native-cursor-steer-run",
         });
         yield* runtime.startTurn(turn);
-        // The SDK gives the model no team marketplace skills, so the first message lists them unasked.
-        assert.include(sent[0], `- rollback: Roll a deploy back. (${teamSkill})`);
+        assert.notInclude(sent[0], "rollback");
         yield* runtime.steerTurn({
           threadId,
           runId: turn.runId,
@@ -2503,6 +2506,15 @@ describe("CursorAdapterV2", () => {
           providerTurnId,
         });
         assert.equal(cancelled, 1);
+        yield* runtime.startTurn({
+          ...turn,
+          runId: RunId.make("cursor-steer-run-2"),
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+          attemptId: RunAttemptId.make("cursor-steer-attempt-2"),
+        });
+        // The SDK gives the model no team marketplace skills, so the first message that can lists them.
+        assert.include(sent[1], `- rollback: Roll a deploy back. (${teamSkill})`);
       }).pipe(
         Effect.scoped,
         Effect.provide(

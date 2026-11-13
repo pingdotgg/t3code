@@ -978,7 +978,8 @@ export interface CursorAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly environment: NodeJS.ProcessEnv;
   readonly getModels?: () => ReadonlyArray<ServerProviderModel>;
-  readonly readEnabledPlugins?: Effect.Effect<ReadonlyArray<CursorEnabledPlugin>>;
+  /** Undefined when the lookup failed, so the answer is not kept for the session. */
+  readonly readEnabledPlugins?: Effect.Effect<ReadonlyArray<CursorEnabledPlugin> | undefined>;
 }
 
 export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
@@ -2346,17 +2347,17 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           | undefined;
         const loadCursorSkills = Effect.fn("CursorAdapterV2.loadCursorSkills")(function* (
           cwd: string | undefined,
-          enabledPlugins: ReadonlyArray<CursorEnabledPlugin>,
+          enabledPlugins: ReadonlyArray<CursorEnabledPlugin> | undefined,
         ) {
           const { skills, unlisted } = yield* discoverCursorSessionSkills(
             cwd,
             adapterOptions.environment,
-            enabledPlugins,
+            enabledPlugins ?? [],
           ).pipe(
             Effect.provideService(FileSystem.FileSystem, fileSystem),
             Effect.provideService(Path.Path, path),
           );
-          cursorSkills = {
+          const loaded = {
             invocable: new Map(
               skills
                 .filter((skill) => skill.enabled && skill.userInvocable !== false)
@@ -2364,14 +2365,16 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             ),
             unlisted,
           };
-          return cursorSkills;
+          if (enabledPlugins !== undefined) cursorSkills = loaded;
+          return loaded;
         });
-        /** Skills to list in the prompt because the SDK keeps them out of the model's catalog. */
+        /** Skills the SDK keeps out of the model's catalog; undefined while they are unknown. */
         const resolveUnlistedCursorSkills = Effect.fn(
           "CursorAdapterV2.resolveUnlistedCursorSkills",
         )(function* (cwd: string | undefined) {
           if (cursorSkills !== undefined) return cursorSkills.unlisted;
           const enabledPlugins = yield* readEnabledPlugins;
+          if (enabledPlugins === undefined) return undefined;
           // Without a team plugin the SDK's catalog is complete, so the first turn skips the scan.
           return enabledPlugins.some((plugin) => plugin.marketplace !== CURSOR_PUBLIC_MARKETPLACE)
             ? (yield* loadCursorSkills(cwd, enabledPlugins)).unlisted
@@ -2379,14 +2382,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         });
         const resolveCursorSkillText = Effect.fn("CursorAdapterV2.resolveCursorSkillText")(
           function* (rawText: string, cwd: string | undefined) {
-            if (
-              cursorSkills === undefined &&
-              (hasCursorSkillMention(rawText) || cursorSlashSkillNames(rawText).size > 0)
-            ) {
-              yield* loadCursorSkills(cwd, yield* readEnabledPlugins);
-            }
-            if (cursorSkills === undefined) return rawText;
-            const skillsByName = cursorSkills.invocable;
+            const loaded =
+              cursorSkills ??
+              (hasCursorSkillMention(rawText) || cursorSlashSkillNames(rawText).size > 0
+                ? yield* loadCursorSkills(cwd, yield* readEnabledPlugins)
+                : undefined);
+            if (loaded === undefined) return rawText;
+            const skillsByName = loaded.invocable;
             const text = rewriteCursorSkillMentions(rawText, new Set(skillsByName.keys()));
             const invoked = yield* Effect.forEach(cursorSlashSkillNames(text), (name) => {
               const skill = skillsByName.get(name);
@@ -2413,9 +2415,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         ) {
           const rawText = turnInput.message.text;
           if (rawText.trim() === "/compress" && turnInput.message.attachments.length === 0) {
-            return { message: "/compress", prompt: undefined };
+            return { message: "/compress", prompt: undefined, skillsDelivered: false };
           }
           const cwd = turnInput.runtimePolicy.cwd ?? undefined;
+          const unlistedSkills = delivered.skills ? [] : yield* resolveUnlistedCursorSkills(cwd);
           const newText = t3OrchestrationPrompt({
             prompt: appendCursorSkillCatalog(
               yield* providerMessageTextWithAttachmentPaths({
@@ -2424,7 +2427,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 resolveAttachmentPath: host.resolveAttachmentPath,
                 resolveExtractedTextPath: host.resolveExtractedTextPath,
               }),
-              delivered.skills ? [] : yield* resolveUnlistedCursorSkills(cwd),
+              unlistedSkills ?? [],
             ),
             hasT3Mcp: mcpServers !== undefined,
             hasDeviceTools,
@@ -2474,6 +2477,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           return {
             message: images.length === 0 ? text : ({ text, images } satisfies SDKUserMessage),
             prompt: userText,
+            skillsDelivered: unlistedSkills !== undefined,
           };
         });
 
@@ -2511,7 +2515,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     skills: turnInput.runOrdinal > 1,
                   };
             const interrupted = yield* Ref.get(interruptedPrompt);
-            const { message, prompt } = yield* resolveUserMessage(
+            const { message, prompt, skillsDelivered } = yield* resolveUserMessage(
               turnInput,
               mcpServers,
               hasDeviceTools,
@@ -2555,7 +2559,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               agent: agent.nativeThreadId,
               orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),
               device: !compacted && hasDeviceTools,
-              skills: !compacted,
+              skills: !compacted && skillsDelivered,
             });
             if (!compacted) {
               yield* Ref.set(interruptedPrompt, null);
