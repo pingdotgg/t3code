@@ -2711,12 +2711,16 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const remoteDir = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
         yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
-        yield* runGit(repoDir, ["push", "origin", "main:dev"]);
+        yield* runGit(repoDir, ["checkout", "-b", "dev"]);
+        yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Released work"]);
+        const releasedSha = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Unreleased work"]);
+        yield* runGit(repoDir, ["push", "origin", "dev"]);
         yield* runGit(repoDir, ["fetch", "origin"]);
         yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
         yield* runGit(repoDir, ["checkout", "-b", "feature/plain-from-dev", "origin/dev"]);
 
-        const { manager, providerCalls } = yield* makeManager({
+        const { manager } = yield* makeManager({
           providerScenario: {
             prListByHeadSelector: {
               dev: [
@@ -2726,6 +2730,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                   url: "https://github.com/pingdotgg/codething-mvp/pull/49",
                   baseRefName: "main",
                   headRefName: "dev",
+                  headSha: releasedSha,
                   state: "merged",
                   updatedAt: "2026-08-20T10:00:00Z",
                 },
@@ -2737,7 +2742,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const status = yield* manager.status({ cwd: repoDir });
         expect(status.refName).toBe("feature/plain-from-dev");
         expect(status.pr).toBeNull();
-        expect(listedSelectors(providerCalls).includes("dev")).toBe(false);
       }),
   );
 
@@ -2758,7 +2762,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
         yield* runGit(repoDir, ["checkout", "-b", "upstream-work"]);
         yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Work not on main yet"]);
+        const headSha = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
         yield* runGit(repoDir, ["push", "origin", "upstream-work:feature/published"]);
+        if (state === "merged") yield* runGit(repoDir, ["push", "origin", "upstream-work:main"]);
         yield* runGit(repoDir, ["fetch", "origin"]);
         yield* runGit(repoDir, ["checkout", ...checkout]);
         yield* runGit(repoDir, ["branch", "-D", "upstream-work"]);
@@ -2773,6 +2779,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                   url: "https://github.com/pingdotgg/codething-mvp/pull/42",
                   baseRefName: "main",
                   headRefName: "feature/published",
+                  headSha,
                   state,
                   updatedAt: "2026-08-20T10:00:00Z",
                 },

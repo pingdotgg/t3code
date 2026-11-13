@@ -1293,7 +1293,20 @@ export const make = Effect.gen(function* () {
         ) {
           return { latest: null, headContext };
         }
-        const latest = yield* findLatestPrForHeadContext(cwd, headContext, details.defaultBranch);
+        // A differently named upstream may be this branch's base: its finished PRs count only at this commit.
+        const finishedHeadSha =
+          headContext.headBranch === details.branch || headContext.isCrossRepository
+            ? undefined
+            : yield* gitCore.resolveCommit({ cwd, revision: `refs/heads/${details.branch}` }).pipe(
+                Effect.map(({ commitSha }) => commitSha),
+                Effect.orElseSucceed(() => null),
+              );
+        const latest = yield* findLatestPrForHeadContext(
+          cwd,
+          headContext,
+          details.defaultBranch,
+          finishedHeadSha,
+        );
         if (latest !== null) yield* noteLookupState(latest);
         return { latest, headContext };
       });
@@ -1856,29 +1869,7 @@ export const make = Effect.gen(function* () {
       (details.defaultBranch === null &&
         (headContext.headBranch === "main" || headContext.headBranch === "master")) ||
       headContext.headBranch ===
-        (yield* gitCore
-          .readBranchBase(cwd, details.branch)
-          .pipe(Effect.orElseSucceed(() => null))) ||
-      // A head the default branch already contains has nothing left to propose.
-      (details.defaultBranch !== null &&
-        headContext.remoteName !== null &&
-        (yield* gitCore
-          .execute({
-            operation: "GitManager.resolveLookupHeadContext.containedInDefault",
-            cwd,
-            args: [
-              "merge-base",
-              "--is-ancestor",
-              `refs/remotes/${headContext.remoteName}/${headContext.headBranch}`,
-              `refs/remotes/${headContext.remoteName}/${details.defaultBranch}`,
-            ],
-            allowNonZeroExit: true,
-            timeoutMs: 5_000,
-          })
-          .pipe(
-            Effect.map((result) => result.exitCode === 0),
-            Effect.orElseSucceed(() => false),
-          )));
+        (yield* gitCore.readBranchBase(cwd, details.branch).pipe(Effect.orElseSucceed(() => null)));
     if (!upstreamHeadIsBase) {
       return { headContext, lookup: true };
     }
@@ -1976,6 +1967,7 @@ export const make = Effect.gen(function* () {
     cwd: string,
     headContext: BranchHeadContext,
     defaultBranch: string | null,
+    finishedHeadSha?: string | null,
   ) {
     const parsedByNumber = new Map<number, PullRequestInfo>();
 
@@ -1998,6 +1990,13 @@ export const make = Effect.gen(function* () {
 
       for (const pr of pullRequests.map(toPullRequestInfo)) {
         if (!matchesBranchHeadContext(pr, headContext)) {
+          continue;
+        }
+        if (
+          finishedHeadSha !== undefined &&
+          pr.state !== "open" &&
+          pr.headSha !== finishedHeadSha
+        ) {
           continue;
         }
         parsedByNumber.set(pr.number, pr);
