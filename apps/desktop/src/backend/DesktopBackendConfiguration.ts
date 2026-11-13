@@ -610,20 +610,28 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const runningDistro = preflight._tag === "Ready" ? preflight.runningDistro : null;
   const distroForConfig = runningDistro ?? input.distro;
 
-  const distroIp = yield* wslEnvironment.getDistroIp(distroForConfig);
+  const { bindHost: exposureBindHost } = yield* serverExposure.backendConfig;
+  const networkAccessible = exposureBindHost === "0.0.0.0";
+  // With network access off, Windows must not dial an in-distro tailnet address, and the
+  // backend must not listen on one.
+  const distroIp = yield* wslEnvironment.getDistroIp(distroForConfig, {
+    skipTailnet: !networkAccessible,
+  });
   const usesSharedNetworkStack = Option.match(distroIp, {
     onNone: () => false,
     onSome: (ip) => isLocalHostIpv4(ip),
   });
+  // wslhost loopback forwarding is unreliable on some Windows hosts, so NAT setups dial the
+  // distro IP instead.
   const rendererHost = usesSharedNetworkStack
     ? "127.0.0.1"
     : Option.getOrElse(distroIp, () => "127.0.0.1");
   const httpBaseUrl = new URL(`http://${rendererHost}:${input.port}`);
-  // wslhost loopback forwarding is unreliable on some Windows hosts, so NAT setups reach the
-  // distro IP, which a loopback bind cannot serve. Elsewhere follow the network access setting.
-  const windowsUsesLoopback = usesSharedNetworkStack || Option.isNone(distroIp);
-  const { bindHost: exposureBindHost } = yield* serverExposure.backendConfig;
-  const wslBindHost = windowsUsesLoopback ? exposureBindHost : "0.0.0.0";
+  // With network access off, listen only on the address Windows dials: loopback, or under NAT
+  // the distro's address on the host-only WSL switch, which neither the LAN nor tailnet peers
+  // reach. Anything but the explicit wildcard counts as off. A managed policy needs no case
+  // here: a managed machine runs no WSL backend (see DesktopWslEnvironment's availability).
+  const wslBindHost = networkAccessible ? "0.0.0.0" : rendererHost;
 
   const bootstrap = {
     mode: "desktop" as const,

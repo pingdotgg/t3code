@@ -4,6 +4,7 @@ import {
   extractDistroFromUncPath,
   isValidDistroName,
   parseWslDistroList,
+  pickDistroIpv4,
   resolveWslPickFolderDefaultPath,
   wslUncPathToLinuxPath,
 } from "./wslPathParsing.ts";
@@ -128,5 +129,23 @@ describe("isValidDistroName", () => {
     for (const name of ["bad\nname", "bad\tname", "bad/name", "bad!name", "bad;name"]) {
       expect(isValidDistroName(name)).toBe(false);
     }
+  });
+});
+
+describe("pickDistroIpv4", () => {
+  it("takes the first IPv4 address hostname -I lists", () => {
+    expect(pickDistroIpv4("172.27.0.99 100.101.102.103 fd7a:115c:a1e0::1\n")).toBe("172.27.0.99");
+  });
+
+  it("passes over tailnet addresses only when asked", () => {
+    const output = "100.101.102.103 172.27.0.99";
+    expect(pickDistroIpv4(output)).toBe("100.101.102.103");
+    expect(pickDistroIpv4(output, { skipTailnet: true })).toBe("172.27.0.99");
+    expect(pickDistroIpv4("100.101.102.103", { skipTailnet: true })).toBeNull();
+  });
+
+  it("finds nothing in empty or IPv6-only output", () => {
+    expect(pickDistroIpv4("")).toBeNull();
+    expect(pickDistroIpv4("fd7a:115c:a1e0::1")).toBeNull();
   });
 });
