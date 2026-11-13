@@ -64,6 +64,7 @@ monorepo_checks=(
   "gen-contract --check"
   "gen-tools --check"
   "gen-keybindings --check"
+  "gen-upstream --check"
   "effect-client (conn-server)"
   "effect-client (ack window)"
   "client-check"
@@ -78,6 +79,7 @@ else
   run "gen-contract --check" node crates/conn-contract/tools/gen-contract.mjs --check
   run "gen-tools --check" node crates/conn-mcp/tools/gen-tools.mjs --check
   run "gen-keybindings --check" node crates/conn-server/tools/gen-keybindings.mjs --check
+  run "gen-upstream --check" node tools/gen-upstream.mjs --check
   run "effect-client (conn-server)" \
     node crates/conn-server/tools/effect-client.mjs "$release/conn-server"
   run "effect-client (ack window)" \

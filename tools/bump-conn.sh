@@ -71,6 +71,7 @@ generated=(
   crates/conn-mcp/src/claude-background-wait.txt
   crates/conn-server/keybindings.defaults.json
   crates/conn-server/keybindings.resolved.json
+  crates/conn-server/src/scopes/generated.rs
   tools/upkeep/mcp-tools.json
 )
 for rel in "${generated[@]}"; do
@@ -117,6 +118,7 @@ mcp_digests() {
 }
 step "mcp tool list" mcp_digests
 step "gen-keybindings" node crates/conn-server/tools/gen-keybindings.mjs
+step "gen-upstream" node tools/gen-upstream.mjs
 # The keybinding files are formatted by hand; gen-keybindings --check compares values. Keep
 # the committed layout when the value did not change, so an empty bump leaves no diff.
 keep_layout() {
