@@ -22,13 +22,15 @@ export interface AutoRoute {
  */
 export function describeAutoRoute(input: {
   readonly entries: ReadonlyArray<ProviderInstanceEntry>;
+  /** `auto`, or a fixed-level `auto-low` / `auto-medium` / `auto-high`. */
+  readonly model?: string;
   readonly options?: ModelSelection["options"];
   readonly now: number;
 }): AutoRoute | null {
   const resolution = resolveAutoModelSelection({
     selection: {
       instanceId: ProviderInstanceId.make("auto"),
-      model: "auto",
+      model: input.model ?? "auto",
       ...(input.options ? { options: input.options } : {}),
     },
     providers: input.entries.map((entry) => entry.snapshot),

@@ -1,4 +1,5 @@
 import { type CSSProperties, memo } from "react";
+import { isAutoModelSlug } from "@t3tools/shared/autoModel";
 import { RouteIcon } from "lucide-react";
 
 import {
@@ -175,7 +176,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           {providerInstanceInitials(props.displayName)}
         </span>
       )}
-      {isCustomEndpoint ? null : props.modelSlug === "auto" ? (
+      {isCustomEndpoint ? null : isAutoModelSlug(props.modelSlug) ? (
         // Auto keeps the logo of the provider it routes to and marks it with a route badge.
         <span
           className={cn(

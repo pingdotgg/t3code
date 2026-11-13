@@ -38,6 +38,12 @@ const codex = (model: string, effort: string): AutoCandidate => ({
   effort,
 });
 const grok = (effort: string): AutoCandidate => ({ driver: "grok", model: "grok-4.7", effort });
+/** Claude models on the Antigravity (Google) subscription: a third Claude pool. */
+const antigravity = (model: string, effort: string): AutoCandidate => ({
+  driver: "antigravity",
+  model,
+  effort,
+});
 const opencode = (model: string, effort: string): AutoCandidate => ({
   driver: "opencode",
   model,
@@ -52,6 +58,7 @@ const AUTO_CANDIDATES: Readonly<Record<AutoLevel, ReadonlyArray<AutoCandidate>>>
   high: [
     claude("claude-fable-5-2", "high"),
     claude("claude-opus-5-5", "high"),
+    antigravity("claude-opus-4-6-thinking", "high"),
     codex("gpt-6.1-sol", "high"),
     codex("gpt-6-astra", "high"),
     grok("high"),
@@ -60,6 +67,7 @@ const AUTO_CANDIDATES: Readonly<Record<AutoLevel, ReadonlyArray<AutoCandidate>>>
   medium: [
     claude("claude-opus-5-5", "medium"),
     claude("claude-fable-5-2", "medium"),
+    antigravity("claude-opus-4-6-thinking", "medium"),
     codex("gpt-6.1-sol", "medium"),
     codex("gpt-6-astra", "medium"),
     claude("claude-sonnet-5-5", "medium"),
@@ -69,6 +77,7 @@ const AUTO_CANDIDATES: Readonly<Record<AutoLevel, ReadonlyArray<AutoCandidate>>>
   low: [
     claude("claude-sonnet-5-5", "low"),
     claude("claude-haiku-5-5", "low"),
+    antigravity("claude-sonnet-4-6", "low"),
     opencode("opencode/big-pickle", "medium"),
     opencode("opencode/deepseek-v4.1-flash-free", "medium"),
     codex("gpt-6-luna", "low"),
@@ -82,13 +91,26 @@ const EFFORT_OPTION_ID: Readonly<Record<string, string>> = {
   codex: "reasoningEffort",
   grok: "reasoningEffort",
   opencode: "variant",
+  antigravity: "thinking_level",
 };
 
+/**
+ * `auto` takes its level from the `effort` option; `auto-low`, `auto-medium` and `auto-high`
+ * fix it in the slug, so a picker can list one row per level.
+ */
+export function isAutoModelSlug(slug: string | null | undefined): boolean {
+  return (
+    slug === AUTO_MODEL_SLUG || AUTO_LEVELS.some((level) => slug === `${AUTO_MODEL_SLUG}-${level}`)
+  );
+}
+
 export function isAutoModelSelection(selection: ModelSelection | null | undefined): boolean {
-  return selection?.model === AUTO_MODEL_SLUG;
+  return isAutoModelSlug(selection?.model);
 }
 
 function autoLevelOf(selection: ModelSelection): AutoLevel {
+  const fixed = AUTO_LEVELS.find((level) => selection.model === `${AUTO_MODEL_SLUG}-${level}`);
+  if (fixed) return fixed;
   const value = selection.options?.find((option) => option.id === "effort")?.value;
   return AUTO_LEVELS.find((level) => level === value) ?? DEFAULT_LEVEL;
 }
@@ -105,13 +127,45 @@ export const AUTO_LEVEL_DESCRIPTOR: ProviderOptionDescriptor = {
   ],
 };
 
+/** Accounts whose 5-hour use differs by less than this many points count as equally free. */
+const SESSION_BAND_PERCENT = 10;
+
+function sessionUsedPercent(provider: ServerProvider): number {
+  const windows = (provider.usageLimits?.windows ?? []).filter((w) => w.kind === "session");
+  return Math.max(0, ...windows.map((w) => w.usedPercent ?? 0));
+}
+
+/** When the soonest weekly window resets; unused weekly quota is lost then. */
+function weeklyResetAt(provider: ServerProvider): number {
+  const resets = (provider.usageLimits?.windows ?? [])
+    .filter((w) => w.kind === "weekly" && w.resetsAt !== undefined)
+    .map((w) => Date.parse(w.resetsAt!))
+    .filter(Number.isFinite);
+  return resets.length > 0 ? Math.min(...resets) : Infinity;
+}
+
+/**
+ * Best instance first: Auto-aware (carries the Auto prompt), then the freer 5-hour window,
+ * then, between accounts with similar 5-hour use, the one whose weekly quota resets first.
+ */
+function compareInstances(a: ServerProvider, b: ServerProvider): number {
+  const aware = Number(isAutoAware(b)) - Number(isAutoAware(a));
+  if (aware !== 0) return aware;
+  const session = sessionUsedPercent(a) - sessionUsedPercent(b);
+  if (Math.abs(session) >= SESSION_BAND_PERCENT) return session;
+  const weekly = weeklyResetAt(a) - weeklyResetAt(b);
+  if (Number.isFinite(weekly) && weekly !== 0) return weekly;
+  if (weekly === Infinity || weekly === -Infinity) return weekly > 0 ? 1 : -1;
+  return session || peakUsedPercent(a) - peakUsedPercent(b);
+}
+
 function peakUsedPercent(provider: ServerProvider): number {
   return Math.max(0, ...(provider.usageLimits?.windows ?? []).map((w) => w.usedPercent ?? 0));
 }
 
 /** Instances that list the `auto` model carry the Auto-mode prompt, so they win ties. */
 function isAutoAware(provider: ServerProvider): boolean {
-  return provider.models.some((model) => model.slug === AUTO_MODEL_SLUG);
+  return provider.models.some((model) => isAutoModelSlug(model.slug));
 }
 
 function usable(provider: ServerProvider, model: string, now: number): boolean {
@@ -154,8 +208,8 @@ interface AutoResolution {
 
 /**
  * Keeps the thread's model while it fits this level and is under 90% used (no account hop, no
- * lost prompt cache); otherwise the first usable candidate, Auto-aware and least-used instance
- * first. Null when nothing is usable.
+ * lost prompt cache); otherwise the first usable candidate on the best instance (see
+ * `compareInstances`). Null when nothing is usable.
  */
 export function resolveAutoModelSelection(input: {
   readonly selection: ModelSelection;
@@ -190,11 +244,7 @@ export function resolveAutoModelSelection(input: {
           usable(provider, candidate.model, input.now),
       )
       // A copy: `filter` already returned a new array, and Hermes has no `toSorted`.
-      .sort(
-        (a, b) =>
-          Number(isAutoAware(b)) - Number(isAutoAware(a)) ||
-          peakUsedPercent(a) - peakUsedPercent(b),
-      );
+      .sort(compareInstances);
     const provider = instances[0];
     if (provider) return { selection: toSelection(provider, candidate), level, sticky: false };
   }
