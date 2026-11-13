@@ -129,6 +129,7 @@ import { useScratchProject } from "../hooks/useScratchProject";
 import { useStartTriage } from "../hooks/useStartTriage";
 import { pickTriageEnvironment } from "../lib/triageTarget";
 import { useNewProject } from "../hooks/useNewProject";
+import { CreateProjectForm } from "./CreateProjectForm";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
 import { reportProjectFailure, useProjectPin } from "../hooks/useProjectGroupUpdate";
 import {
@@ -366,7 +367,10 @@ function CommandPaletteDialog(props: {
             ? "Search project contents"
             : "Command palette"
       }
-      className={cn("overflow-hidden", props.mode === "content" && "h-105")}
+      className={cn(
+        "overflow-hidden has-data-[create-project-form]:max-h-[min(32rem,80dvh)] has-data-[create-project-form]:max-w-lg",
+        props.mode === "content" && "h-105",
+      )}
       data-command-palette="true"
       data-palette-mode={props.mode}
       data-testid="command-palette"
@@ -525,6 +529,10 @@ function OpenCommandPaletteDialog(props: {
     null,
   );
   const [isPickingProjectFolder, setIsPickingProjectFolder] = useState(false);
+  const [projectName, setProjectName] = useState("");
+  const [autoFilledProjectName, setAutoFilledProjectName] = useState<string | null>(null);
+  const [selectedProjectFolder, setSelectedProjectFolder] = useState<string | null>(null);
+  const [isChoosingProjectSource, setIsChoosingProjectSource] = useState(false);
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
   const [newProjectFlow, setNewProjectFlow] = useState<{
     readonly environmentId: EnvironmentId;
@@ -942,6 +950,7 @@ function OpenCommandPaletteDialog(props: {
 
   function popView(): void {
     browseNavigation.invalidate();
+    setIsChoosingProjectSource(false);
     setAddProjectCloneFlow(null);
     setNewProjectFlow(null);
     if (viewStack.length <= 1) {
@@ -1146,6 +1155,12 @@ function OpenCommandPaletteDialog(props: {
     return [{ value: `sources:${environmentId}`, label: "Sources", items: sourceItems }];
   };
 
+  const clearProjectFolder = useStableCallback(() => {
+    setSelectedProjectFolder(null);
+    if (projectName === autoFilledProjectName) setProjectName("");
+    setAutoFilledProjectName(null);
+  });
+
   const startAddProjectSourceSelection = (environmentId: EnvironmentId): void => {
     const environment = environments.find((candidate) => candidate.environmentId === environmentId);
     if (!canCreateProjectInEnvironment(environment?.connection.phase)) {
@@ -1158,6 +1173,7 @@ function OpenCommandPaletteDialog(props: {
       );
       return;
     }
+    clearProjectFolder();
     setAddProjectEnvironmentId(environmentId);
     setAddProjectCloneFlow(null);
     pushPaletteView({
@@ -1277,8 +1293,27 @@ function OpenCommandPaletteDialog(props: {
   };
 
   const openNewProjectFlow = () => {
+    if (newProjectEnvironmentOptions.length > 1) {
+      pushPaletteView({
+        addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
+        groups: [
+          {
+            value: "environments",
+            label: "Environments",
+            items: newProjectEnvironmentOptions.map((option) =>
+              buildEnvironmentItem(
+                option,
+                `action:new-project:environment:${option.environmentId}`,
+                startAddProjectSourceSelection,
+              ),
+            ),
+          },
+        ],
+      });
+      return;
+    }
     const firstOption = newProjectEnvironmentOptions[0];
-    if (firstOption) startNewProject(firstOption.environmentId, null);
+    if (firstOption) startAddProjectSourceSelection(firstOption.environmentId);
   };
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
@@ -1784,12 +1819,12 @@ function OpenCommandPaletteDialog(props: {
       });
     },
   }));
-  const sourceSelectionViewValue =
-    addProjectEnvironmentId === null ? null : `sources:${addProjectEnvironmentId}`;
   const activeGroups =
     addProjectEnvironmentId !== null &&
     currentView !== null &&
-    currentView.groups[0]?.value === sourceSelectionViewValue
+    (currentView.groups[0]?.value.startsWith("sources:") ||
+      (currentView.groups[0]?.value === ADD_PROJECT_ENTRY_GROUP &&
+        addProjectEntry.kind === "choose-source"))
       ? buildAddProjectSourceGroups(
           addProjectEnvironmentId,
           buildPaletteRemoteSourceReadiness(sourceControlDiscovery.data),
@@ -1857,6 +1892,7 @@ function OpenCommandPaletteDialog(props: {
     readonly rawCwd: string;
     readonly platform: string;
     readonly currentProjectCwd: string | null;
+    readonly title?: string;
   }) => {
     const environment = environments.find(
       (candidate) => candidate.environmentId === input.environmentId,
@@ -1957,7 +1993,7 @@ function OpenCommandPaletteDialog(props: {
       environmentId: input.environmentId,
       input: {
         projectId,
-        title: inferProjectTitleFromPath(cwd),
+        title: input.title?.trim() || inferProjectTitleFromPath(cwd),
         workspaceRoot: cwd,
         createWorkspaceRootIfMissing: true,
         defaultModelSelection: null,
@@ -1994,8 +2030,24 @@ function OpenCommandPaletteDialog(props: {
     setOpen(false);
   };
 
+  const selectProjectFolder = (folder: string, environmentId: EnvironmentId) => {
+    const inferred = inferProjectTitleFromPath(folder);
+    setAddProjectEnvironmentId(environmentId);
+    setSelectedProjectFolder(folder);
+    const shouldInferName = !projectName.trim() || projectName === autoFilledProjectName;
+    if (shouldInferName) setProjectName(inferred);
+    setAutoFilledProjectName(shouldInferName ? inferred : null);
+    setIsChoosingProjectSource(false);
+    popView();
+  };
+
   const handleAddProject = async (rawCwd: string) => {
     if (!browseEnvironmentId) return;
+    if (isChoosingProjectSource && addProjectCloneFlow === null) {
+      const folder = resolveProjectPathForDispatch(rawCwd, currentProjectCwdForBrowse);
+      selectProjectFolder(folder, browseEnvironmentId);
+      return;
+    }
     await handleAddProjectForEnvironment({
       environmentId: browseEnvironmentId,
       rawCwd,
@@ -2209,7 +2261,7 @@ function OpenCommandPaletteDialog(props: {
       environmentId: addProjectCloneFlow.environmentId,
       input: {
         projectId: newProjectId(),
-        title: inferProjectTitleFromPath(destinationPath),
+        title: projectName.trim() || inferProjectTitleFromPath(destinationPath),
         // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
         createdAt: new Date().toISOString(),
         remoteUrl: addProjectCloneFlow.remoteUrl,
@@ -2836,6 +2888,10 @@ function OpenCommandPaletteDialog(props: {
         );
         return;
       }
+      if (isChoosingProjectSource && addProjectCloneFlow === null) {
+        selectProjectFolder(selection.linuxPath, selection.environmentId);
+        return;
+      }
       await handleAddProjectForEnvironment({
         environmentId: selection.environmentId,
         rawCwd: selection.linuxPath,
@@ -2942,6 +2998,63 @@ function OpenCommandPaletteDialog(props: {
     // still arrive below it.
     <span className="text-muted-foreground text-xs">Searching messages…</span>
   ) : null;
+
+  const projectSources = activeGroups.find((group) => group.value.startsWith("sources:"));
+  if (projectSources && !isBrowsing && addProjectCloneFlow === null && newProjectFlow === null) {
+    const environmentId =
+      addProjectEnvironmentId ??
+      (addProjectEntry.kind === "choose-source" ? addProjectEntry.environmentId : null);
+    const canSubmit =
+      environmentId !== null &&
+      canCreateProject &&
+      canCreateProjectInEnvironment(browseEnvironment?.connection.phase) &&
+      !isCreatingNewProject &&
+      (selectedProjectFolder !== null ||
+        (projectName.trim().length > 0 && newProjectsRootFor(environmentId) !== null));
+    return (
+      <CreateProjectForm
+        name={projectName}
+        folder={selectedProjectFolder}
+        sources={projectSources.items.filter((item) => !item.value.endsWith(":new"))}
+        pending={isCreatingNewProject}
+        canSubmit={canSubmit}
+        onNameChange={(name) => {
+          setProjectName(name);
+          setAutoFilledProjectName(null);
+        }}
+        onClearFolder={clearProjectFolder}
+        onClose={() => setOpen(false)}
+        {...(viewStack.length > 1 ? { onBack: popView } : {})}
+        onSelectSource={(source) => {
+          setIsChoosingProjectSource(true);
+          void executeItem(source);
+        }}
+        onSubmit={async () => {
+          if (!canSubmit || environmentId === null || newProjectSubmittingRef.current) return;
+          newProjectSubmittingRef.current = true;
+          setIsCreatingNewProject(true);
+          const result = await settlePromise(async () => {
+            if (selectedProjectFolder !== null) {
+              await handleAddProjectForEnvironment({
+                environmentId,
+                rawCwd: selectedProjectFolder,
+                platform: browseEnvironmentPlatform,
+                currentProjectCwd: null,
+                title: projectName,
+              });
+            } else if (
+              await createNewProject({ environmentId, name: projectName.trim(), publishTo: null })
+            ) {
+              setOpen(false);
+            }
+          });
+          newProjectSubmittingRef.current = false;
+          setIsCreatingNewProject(false);
+          if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+        }}
+      />
+    );
+  }
 
   return (
     <CommandPaletteContent

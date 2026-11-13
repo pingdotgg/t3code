@@ -2,16 +2,44 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import type { SourceControlDiscoveryResult } from "@t3tools/contracts";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import * as Option from "effect/Option";
 import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
 import { act, render } from "../../test/render";
 import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../state/server";
 
-const scopes = vi.hoisted(() => ({ denied: undefined as string | undefined }));
-const setup = (deniedScope?: string) => {
-  scopes.denied = deniedScope;
-};
+const commands = vi.hoisted(() => ({
+  run: vi.fn(async (_input: unknown) => ({
+    _tag: "Success",
+    value: { projectId: "project-cloned" },
+  })),
+  createNew: vi.fn(async (_input: unknown) => true),
+  query: vi.fn<(_input: unknown) => Promise<{ _tag: "Success"; value: unknown }>>(async () => ({
+    _tag: "Success",
+    value: undefined,
+  })),
+}));
+const state = vi.hoisted(() => ({
+  discoveryKey: Symbol("source-control discovery"),
+  discovery: undefined as SourceControlDiscoveryResult | undefined,
+  canOperate: true,
+  multipleEnvironments: false,
+  deniedScope: undefined as string | undefined,
+}));
+
+function setup(deniedScope?: string) {
+  commands.run.mockClear();
+  commands.createNew.mockClear();
+  commands.query.mockReset();
+  commands.query.mockResolvedValue({ _tag: "Success", value: undefined });
+  state.discovery = undefined;
+  state.canOperate = true;
+  state.multipleEnvironments = false;
+  state.deniedScope = deniedScope;
+}
 
 vi.mock("@effect/atom-react", async (original) => ({
   ...(await original<typeof import("@effect/atom-react")>()),
@@ -32,7 +60,7 @@ vi.mock("../hooks/useSettings", async (original) => ({
 vi.mock("../hooks/useScratchProject", () => ({
   useScratchProject: () => ({ scratchEnvironmentId: () => null }),
 }));
-vi.mock("../hooks/useNewProject", () => ({ useNewProject: () => async () => undefined }));
+vi.mock("../hooks/useNewProject", () => ({ useNewProject: () => commands.createNew }));
 vi.mock("../hooks/useHandleNewThread", () => ({
   useHandleNewThread: () => ({
     activeDraftThread: null,
@@ -45,28 +73,47 @@ vi.mock("../hooks/useHandleNewThread", () => ({
 vi.mock("../hooks/useOpenPanelPullRequestUrl", () => ({ useOpenPanelPullRequestUrl: () => null }));
 vi.mock("../connection/useDesktopLocalBootstraps", () => ({ useDesktopLocalBootstraps: () => [] }));
 vi.mock("../state/use-atom-command", () => ({
-  // The add-project destination step starts a clone and follows its project id.
-  useAtomCommand: () => async () => ({ _tag: "Success", value: { projectId: "project-cloned" } }),
+  useAtomCommand: () => commands.run,
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
-  useAtomQueryRunner: () => async () => ({ _tag: "Success", value: undefined }),
+  useAtomQueryRunner: () => commands.query,
 }));
+vi.mock("../state/sourceControl", async (original) => {
+  const actual = await original<typeof import("../state/sourceControl")>();
+  return {
+    ...actual,
+    sourceControlEnvironment: {
+      ...actual.sourceControlEnvironment,
+      discovery: () => state.discoveryKey,
+    },
+  };
+});
 vi.mock("../state/environments", async (original) => ({
   ...(await original<typeof import("../state/environments")>()),
   useEnvironments: () => ({
-    environments: [
-      {
-        environmentId: "local",
-        label: "Local",
+    environments: (state.multipleEnvironments ? ["local", "remote"] : ["local"]).map(
+      (environmentId) => ({
+        environmentId,
+        label: environmentId === "local" ? "Local" : "Remote",
         connection: { phase: "connected" },
-        entry: { target: { _tag: "PrimaryConnectionTarget" } },
-        serverConfig: {
-          environment: { platform: { os: "linux" }, capabilities: { projectCloneTracking: true } },
-          settings: { addProjectBaseDirectory: "/workspace/" },
-          newProjectsRoot: "/workspace/",
+        entry: {
+          target:
+            environmentId === "local"
+              ? { _tag: "PrimaryConnectionTarget" }
+              : { _tag: "BearerConnectionTarget", connectionId: "test-remote" },
         },
-      },
-    ],
+        serverConfig: {
+          newProjectsRoot: "/workspace/",
+          environment: { platform: { os: "linux" }, capabilities: { projectCloneTracking: true } },
+          settings: {
+            addProjectBaseDirectory: "/workspace/",
+            offeredSourceControlProviders: Object.fromEntries(
+              sourceControlClients.definitions.map(({ kind }) => [kind, true]),
+            ),
+          },
+        },
+      }),
+    ),
   }),
   usePrimaryEnvironmentId: () => "local",
   useEnvironmentProviders: () => new Map(),
@@ -92,8 +139,9 @@ vi.mock("../state/queries", async (original) => ({
 }));
 vi.mock("../state/session", async (original) => ({
   ...(await original<typeof import("../state/session")>()),
-  useEnvironmentScope: (_environmentId: unknown, scope: string) => scope !== scopes.denied,
-  readEnvironmentScope: () => true,
+  useEnvironmentScope: (_environmentId: unknown, scope: string) =>
+    state.canOperate && scope !== state.deniedScope,
+  readEnvironmentScope: () => state.canOperate,
 }));
 vi.mock("../state/filesystem", async (original) => ({
   ...(await original<typeof import("../state/filesystem")>()),
@@ -101,7 +149,10 @@ vi.mock("../state/filesystem", async (original) => ({
 }));
 vi.mock("../state/query", async (original) => ({
   ...(await original<typeof import("../state/query")>()),
-  useEnvironmentQuery: () => ({ data: undefined, isLoading: false }),
+  useEnvironmentQuery: (query: unknown) => ({
+    data: query === state.discoveryKey ? state.discovery : undefined,
+    isLoading: false,
+  }),
 }));
 vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [],
@@ -152,7 +203,6 @@ it.each([
     description: /Add.*(Ctrl|⌘) Enter/,
   },
   { step: "repository", source: "Git URL", keys: "", description: /Continue.*Enter/ },
-  { step: "new project", source: "New project", keys: "", description: /Create.*Enter/ },
   {
     step: "permission-blocked folder",
     source: "Local folder",
@@ -194,10 +244,249 @@ it("keeps the caret in place when an edit briefly makes the folder path not a pa
   await expect.element(input()).toHaveValue("/wworkspace/project");
 });
 
+it.each(["", "Design system"])(
+  "confirms a selected folder with the project name %j",
+  async (name) => {
+    setup();
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project" }));
+    await page.getByRole("textbox", { name: "Project name" }).fill(name);
+    await page.getByRole("button", { name: "Local folder", exact: true }).click();
+    await page.getByRole("combobox").fill("/workspace/project");
+    await userEvent.keyboard("{Enter}");
+    await expect
+      .element(page.getByRole("textbox", { name: "Project name" }))
+      .toHaveValue(name || "project");
+    expect(commands.run).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(commands.run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            title: name || "project",
+            workspaceRoot: "/workspace/project",
+          }),
+        }),
+      ),
+    );
+  },
+);
+
+it.each([
+  { name: "", expected: "second" },
+  { name: "My project", expected: "My project" },
+  { name: "first", expected: "first" },
+])("updates inferred names when changing folders: $name", async ({ name, expected }) => {
+  setup();
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByRole("textbox", { name: "Project name" }).fill(name);
+  await page.getByRole("button", { name: "Local folder", exact: true }).click();
+  await page.getByRole("combobox").fill("/workspace/first");
+  await userEvent.keyboard("{Enter}");
+  await userEvent.keyboard("{Tab}{Enter}");
+  await page.getByRole("button", { name: "Local folder", exact: true }).click();
+  await page.getByRole("combobox").fill("/workspace/second");
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByRole("textbox", { name: "Project name" })).toHaveValue(expected);
+});
+
+it.each([true, false])("creates a named project only with permission: %j", async (canOperate) => {
+  setup();
+  state.canOperate = canOperate;
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByRole("textbox", { name: "Project name" }).fill("  Design system  ");
+  await userEvent.keyboard("{Enter}");
+  if (canOperate) {
+    await vi.waitFor(() =>
+      expect(commands.createNew).toHaveBeenCalledWith({
+        environmentId: "local",
+        name: "Design system",
+        publishTo: null,
+      }),
+    );
+  } else {
+    expect(commands.createNew).not.toHaveBeenCalled();
+    await expect
+      .element(page.getByRole("button", { name: "Create project", exact: true }))
+      .toBeDisabled();
+  }
+});
+
+it.each(sourceControlClients.definitions)(
+  "clones from $label with the entered project name",
+  async (definition) => {
+    setup();
+    state.discovery = {
+      versionControlSystems: [],
+      sourceControlProviders: [
+        {
+          kind: definition.kind,
+          label: definition.label,
+          status: "available",
+          version: Option.none(),
+          installHint: "Install the provider",
+          detail: Option.none(),
+          auth: {
+            status: "authenticated",
+            account: Option.none(),
+            host: Option.none(),
+            detail: Option.none(),
+          },
+        },
+      ],
+    };
+    const remoteUrl = "https://scm.example.test/team/repository";
+    commands.query.mockImplementation(async (input) => {
+      const isLookup =
+        typeof input === "object" &&
+        input !== null &&
+        "input" in input &&
+        typeof input.input === "object" &&
+        input.input !== null &&
+        "repository" in input.input;
+      return {
+        _tag: "Success",
+        value: isLookup
+          ? {
+              provider: definition.kind,
+              nameWithOwner: "team/repository",
+              url: remoteUrl,
+              sshUrl: "git@scm.example.test:team/repository.git",
+            }
+          : undefined,
+      };
+    });
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project" }));
+    await page.getByRole("textbox", { name: "Project name" }).fill("Design system");
+    await page
+      .getByRole("button", { name: `${definition.pickerLabel} repository`, exact: true })
+      .click();
+    await page.getByRole("combobox").fill("team/repository");
+    await userEvent.keyboard("{Enter}");
+    await expect.element(page.getByRole("combobox")).toHaveValue("/workspace/repository");
+    expect(commands.query).toHaveBeenCalledWith({
+      environmentId: "local",
+      input: { provider: definition.kind, repository: "team/repository" },
+    });
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(commands.run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          environmentId: "local",
+          input: expect.objectContaining({
+            title: "Design system",
+            destinationPath: "/workspace/repository",
+            remoteUrl:
+              definition.defaultCloneTransport === "https"
+                ? remoteUrl
+                : "git@scm.example.test:team/repository.git",
+          }),
+        }),
+      ),
+    );
+  },
+);
+
+it.each(["", "Design system"])("clones a Git URL with project name %j", async (name) => {
+  setup();
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByRole("textbox", { name: "Project name" }).fill(name);
+  await page.getByRole("button", { name: "Local folder", exact: true }).click();
+  await page.getByRole("combobox").fill("/workspace/first");
+  await userEvent.keyboard("{Enter}");
+  await expect
+    .element(page.getByRole("textbox", { name: "Project name" }))
+    .toHaveValue(name || "first");
+  await userEvent.keyboard("{Tab}{Enter}");
+  await page.getByRole("button", { name: "Git URL", exact: true }).click();
+  await page.getByRole("combobox").fill("https://scm.example.test/team/repository.git");
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByRole("combobox")).toHaveValue("/workspace/repository");
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() =>
+    expect(commands.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          title: name || "repository",
+          destinationPath: "/workspace/repository",
+          remoteUrl: "https://scm.example.test/team/repository.git",
+        }),
+      }),
+    ),
+  );
+});
+
+it("keeps unconfigured integrations disabled and their setup actions reachable", async () => {
+  setup();
+  await using screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  for (const definition of sourceControlClients.definitions) {
+    await expect
+      .element(
+        page.getByRole("button", {
+          name: `${definition.pickerLabel} repository`,
+          exact: true,
+        }),
+      )
+      .toBeDisabled();
+  }
+  await page.getByRole("button", { name: "Setup Required", exact: true }).first().click();
+  await vi.waitFor(() =>
+    expect(screen.router?.state.location.pathname).toBe("/settings/source-control"),
+  );
+  expect(commands.run).not.toHaveBeenCalled();
+});
+
+it.each([
+  { entry: "add-project", name: "" },
+  { entry: "add-project", name: "Keep me" },
+  { entry: "new-project", name: "" },
+  { entry: "new-project", name: "Keep me" },
+])(
+  "returns to machine selection without carrying a folder: $entry $name",
+  async ({ entry, name }) => {
+    setup();
+    state.multipleEnvironments = true;
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() =>
+      openCommandPalette(
+        entry === "add-project" ? { open: "add-project" } : { query: "New project" },
+      ),
+    );
+    if (entry === "new-project") {
+      await page.getByRole("option", { name: /^New project/ }).click();
+    }
+    await page.getByRole("option", { name: /^This device/ }).click();
+    await page.getByRole("textbox", { name: "Project name" }).fill(name);
+    await page.getByRole("button", { name: "Local folder", exact: true }).click();
+    await page.getByRole("combobox").fill("/workspace/project");
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard("{Shift>}{Tab}{Tab}{/Shift}");
+    await expect.element(page.getByRole("button", { name: "Back", exact: true })).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    await page.getByRole("option", { name: /^Remote/ }).click();
+    await expect.element(page.getByRole("textbox", { name: "Project name" })).toHaveValue(name);
+    await page.getByRole("textbox", { name: "Project name" }).fill("Remote project");
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(commands.createNew).toHaveBeenCalledWith({
+        environmentId: "remote",
+        name: "Remote project",
+        publishTo: null,
+      }),
+    );
+    expect(commands.run).not.toHaveBeenCalled();
+  },
+);
+
 it.each([
   { flow: "Git URL", value: "https://github.com/pingdotgg/t3code.git", submit: "Continue (Enter)" },
-  { flow: "New project", value: "demo-tab-order", submit: /^Create \(/ },
 ])("moves focus from the $flow input to its enabled submit button on Tab", async (step) => {
+  setup();
   await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
   await act(() => openCommandPalette({ open: "add-project" }));
   await page.getByText(step.flow, { exact: true }).click();
