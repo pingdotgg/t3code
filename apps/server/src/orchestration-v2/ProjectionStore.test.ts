@@ -5593,6 +5593,18 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         1,
         `getThreadHistoryPage read the whole thread on each of ${historyPages} pages`,
       );
+      // The same holds for the thread's runs and attempts: a page needs only those it spans.
+      const wholeThreadRunReads = history.statements.filter(
+        (statement) =>
+          /FROM orchestration_v2_projection_(runs|run_attempts)\s+WHERE thread_id = \?\s*(ORDER BY|$)/.test(
+            statement,
+          ) && !/\bLIMIT\b/.test(statement),
+      ).length;
+      assert.isAtMost(
+        wholeThreadRunReads,
+        2,
+        `getThreadHistoryPage re-read every run and attempt across ${historyPages} pages`,
+      );
       assert.isAtMost(
         wholeThreadReads(timeline.statements),
         1,
