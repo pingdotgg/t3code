@@ -1,6 +1,7 @@
 import type {
   DesktopBridge,
   DesktopPreviewAnnotationVoiceEvent,
+  DesktopPreviewFindResultEvent,
   DesktopPreviewOpenLinkEvent,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingInputEvent,
@@ -69,6 +70,23 @@ const syncHtmlFullscreen = () => {
 syncHtmlFullscreen();
 document.addEventListener("fullscreenchange", syncHtmlFullscreen);
 
+let primaryPasteEnabled = true;
+try {
+  primaryPasteEnabled =
+    ipcRenderer.sendSync(IpcChannels.GET_PRIMARY_PASTE_ENABLED_CHANNEL) !== false;
+} catch {}
+
+if (!primaryPasteEnabled) {
+  // Blink pastes the PRIMARY selection on a middle-click mouseup unless it is default-prevented.
+  window.addEventListener(
+    "mouseup",
+    (event) => {
+      if (event.button === 1) event.preventDefault();
+    },
+    true,
+  );
+}
+
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
     typeof result === "object" &&
@@ -115,6 +133,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return () => ipcRenderer.removeListener(IpcChannels.TRACKPAD_SCROLL_END_CHANNEL, handler);
   },
   revealWindow: () => ipcRenderer.invoke(IpcChannels.REVEAL_WINDOW_CHANNEL),
+  getPrimaryPasteEnabled: () => primaryPasteEnabled,
   getSystemLocale: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_LOCALE_CHANNEL);
     return typeof result === "string" ? result : null;
@@ -192,6 +211,17 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.on(IpcChannels.SSH_PASSWORD_PROMPT_CHANNEL, wrappedListener);
     return () => {
       ipcRenderer.removeListener(IpcChannels.SSH_PASSWORD_PROMPT_CHANNEL, wrappedListener);
+    };
+  },
+  onSshPasswordPromptSettled: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, requestId: unknown) => {
+      if (typeof requestId !== "string") return;
+      listener(requestId);
+    };
+
+    ipcRenderer.on(IpcChannels.SSH_PASSWORD_PROMPT_SETTLED_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.SSH_PASSWORD_PROMPT_SETTLED_CHANNEL, wrappedListener);
     };
   },
   resolveSshPasswordPrompt: (requestId, password) =>
@@ -369,6 +399,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_COLOR_SCHEME_CHANNEL, { tabId, colorScheme }),
     setAudioMuted: (tabId, audioMuted) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_AUDIO_MUTED_CHANNEL, { tabId, audioMuted }),
+    findInPage: (tabId, text, { forward, newSession }) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_FIND_IN_PAGE_CHANNEL, {
+        tabId,
+        text,
+        forward,
+        newSession,
+      }),
+    stopFindInPage: (tabId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_STOP_FIND_IN_PAGE_CHANNEL, { tabId }),
     setShown: (tabId, shown) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_SHOWN_CHANNEL, { tabId, shown }),
     openDevTools: (tabId) =>
@@ -468,6 +507,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.on(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, wrappedListener);
       return () =>
         ipcRenderer.removeListener(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, wrappedListener);
+    },
+    onFindResult: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, findEvent: unknown) => {
+        if (typeof findEvent !== "object" || findEvent === null) return;
+        listener(findEvent as DesktopPreviewFindResultEvent);
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, wrappedListener);
     },
   },
 } satisfies DesktopBridge);
