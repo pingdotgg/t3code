@@ -132,6 +132,7 @@ export function ThreadDetailsCard({
           }}
           data-density={density}
           data-thread-details-panel="inline"
+          data-sidebar-slide-track="end"
         >
           {card}
         </aside>
