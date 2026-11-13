@@ -1375,6 +1375,8 @@ export const ServerSettings = Schema.Struct({
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
+  /** Holds an OS sleep inhibitor while any run is active; closing a laptop lid still sleeps it. */
+  keepAwakeWhileAgentsWork: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   cloudSpeechCredentials: CloudSpeechCredentials.pipe(
@@ -1826,6 +1828,7 @@ export const ServerSettingsPatch = Schema.Struct({
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
+  keepAwakeWhileAgentsWork: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   cloudSpeechCredentials: Schema.optionalKey(
     Schema.Struct({
