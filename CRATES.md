@@ -10,7 +10,15 @@ crates.io and the source repositories on that date. Cost figures were measured, 
 - **Adopt now, five crates.** `rustix` (process groups), `uuid`, `lexopt`, `tracing` with
   `tracing-subscriber` (fmt only), and `rusqlite` 0.42 in place of 0.37. Together they add
   under 0.15 MB, and they remove our riskiest small hand-written pieces.
-- **Adopt in the tracks that need them.** `rmcp` for `/mcp`, `pty-process` for the
+- **`/mcp`: keep our transport, not `rmcp`.** This review advised `rmcp`; the MCP track then
+  measured both builds serving the same handlers (`crates/conn-mcp/README.md`, "The SDK or
+  our own"). `rmcp` 3.10.0 added 0.94 MB of binary (5.31 → 6.24 MB) and about 0.12 MB per
+  open session (18.8 MB against our 6.5 MB RSS at 100 sessions), because each session runs
+  its own worker task, and it always answers over SSE. Ours is about 300 lines. Revisit when
+  the T3 server moves to a protocol revision we do not serve.
+  The tables below are the review as written: where they say a crate comes free with
+  `rmcp`, or count `rmcp` in the adopt set, that no longer holds.
+- **Adopt in the tracks that need them.** `pty-process` for the
   terminal, `ignore` + `nucleo-matcher` (+ `regex`) for file walking and fuzzy search,
   `tower-http` (`fs`) and axum `multipart` for static files and uploads. `notify` too, but
   only while a client watches.
@@ -94,7 +102,7 @@ Line counts are from `rust/base`, tests included where they sit in the same file
 | Errors | `Result<_, String>` in engine, store and session; `thiserror` 2.0.21 already in the tree (via tungstenite) | **adopt** `thiserror` for the crate interfaces | 0 (already linked) | Typed causes, `source()` | Grows with each track; start with `conn-engine` |
 | Allocator | system (musl mallocng on Linux) | **watch** | `mimalloc` +640 KB idle, `jemalloc` +560 KB idle (macOS) | none at one thread | Measure on Linux musl under load before changing |
 | Tests | `cargo test`, tokio `test-util`, hand registry (`tests/registry`, 2,702 lines), Node replay tools | **adopt later** `insta` (dev only) for event-stream snapshots; `cargo-nextest` in CI | 0 in the binary | Snapshot review instead of hand JSON asserts in `replay_tests.rs`/`engine_tests.rs` | When a test file next changes a lot |
-| `/mcp` server | stub (`routes/mcp.rs`) | **adopt** `rmcp` 3.10 | +1.03 MB, +46 deps, +80 KB idle | Protocol versions 2024-11-05 to 2026-07-28, sessions, SSE, tool schemas | The MCP track builds on it. Pin `~3.10`; 47 releases in a year |
+| `/mcp` server | ours: `conn-mcp` `transport.rs`, `sessions.rs` (about 300 lines) | **keep ours** (was: adopt `rmcp` 3.10) | `rmcp` measured +0.94 MB binary and +0.12 MB per open session | The T3 server answers one protocol revision (2025-06-18) without SSE; ours matches it | Decided by the measurement in `crates/conn-mcp/README.md`; commit `35cfdba72b` keeps the `rmcp` wiring |
 | PTY | stub | **adopt** `pty-process` 0.5.4 `async` | +20 KB | `openpty`, `setsid`, controlling terminal, resize: the `unsafe` we may not write | The terminal track. `AsyncFd`, no reader thread |
 | Git | stub | **keep ours: `git` CLI** | `gix` +1.70 MB/+96 deps; `git2` +659 KB, C build, +3.8 MB RSS | — | The TS server uses the CLI too (`apps/server/src/vcs/GitVcsDriver.ts`), so behaviour matches. `gix` status/diff is still incomplete (`crate-status.md`) |
 | File walking with ignore rules | stub | **adopt** `ignore` 0.4 (serial `WalkBuilder::build`, never `build_parallel`) | in the search set | gitignore, `.git/info/exclude`, global excludes | Files track |
@@ -134,13 +142,13 @@ Line counts are from `rust/base`, tests included where they sit in the same file
    sessions with the grace period `process.rs` already has. Highest value for the least code.
 2. **`tracing` + `tracing-subscriber` (fmt), then `thiserror` at crate edges.** Every track
    adds error paths now. If they all log with `eprintln!` and return `String` errors, the
-   later change touches every file. `tracing` comes with `rmcp` anyway, and `thiserror` is
+   later change touches every file. `thiserror` is
    already linked. Doing it before the tracks merge sets the pattern they copy.
 3. **`rusqlite` 0.42.** The store is our one store of record, and 0.38 to 0.42 fixed two
    use-after-free bugs reachable from safe code and one SQL injection. It saves 3 deps, and
    the API changes are small. Do it on the engine track's branch, which owns `store.rs`.
 4. `uuid` in place of `uuid_v4`, and `lexopt` in place of the hand parser (an hour each).
-5. `rmcp` (MCP track), `pty-process` (terminal track), `ignore` + `nucleo-matcher` + `regex`
+5. `pty-process` (terminal track), `ignore` + `nucleo-matcher` + `regex`
    (files track), `tower-http` + `multipart` (assets), each as its track lands.
 6. Merge the three ISO-8601 formatters into one module in `conn-contract`.
 7. Later, with numbers from Linux: `insta`, `notify` on demand, and an allocator only if a
@@ -280,7 +288,7 @@ monorepo. A separate repo changes that context, so this needs Nick's call.
 - Linux memory for any candidate, and musl mallocng against `mimalloc`/`jemalloc`. All
   memory figures here are macOS.
 - `rmcp` under load, and its open issue #1325: in-flight tool calls are not cancelled when
-  the client disconnects.
+  the client disconnects. (Moot while we keep our transport.)
 - Whether typify's output for the Codex schema compiles, or how long it takes to compile.
 - `notify` on Linux (inotify watches per directory) and on a large repository.
 - Build times are not reliable (see [Method](#method)).
