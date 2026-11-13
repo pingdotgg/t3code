@@ -419,9 +419,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
-  // Routes ahead of the active one may be better, unless their known grant
-  // is strictly narrower than the active one's. With a known active grant that is not
-  // already everything, routes behind it whose grant is unknown may be too.
+  // Routes ahead of the active one may be better, unless their known grant is
+  // strictly narrower than the active one's. With a known active grant that is
+  // not already everything, routes behind it whose grant is unknown may be too.
   const betterRouteCandidates = Effect.fn("EnvironmentSupervisor.betterRouteCandidates")(function* (
     lease: ConnectedLease,
   ) {

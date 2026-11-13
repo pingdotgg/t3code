@@ -287,23 +287,23 @@ export const make = Effect.gen(function* () {
 
   // Like preflight, a saved address must answer as this environment before it
   // receives the route's credential.
-  const routeGrant = (entry: ConnectionCatalogEntry, route: ConnectionRoute) =>
-    (route.target._tag !== "BearerConnectionTarget" && route.target._tag !== "RelayConnectionTarget"
-      ? Effect.succeed<RouteCheck>("silent")
-      : sendsTokenInClear(connectionRoutes(entry), route)
-        ? Effect.succeed<RouteCheck>("silent")
-        : checkRoute(entry, route)
-    ).pipe(
-      Effect.flatMap((check) =>
-        check === "silent"
-          ? Effect.succeedNone
-          : resolver.prepare(routeEntry(entry, route)).pipe(
-              Effect.flatMap(sessionGrant),
-              Effect.orElseSucceed(() => Option.none<RouteGrant>()),
-            ),
-      ),
-      Effect.withSpan("ConnectionDriver.routeGrant"),
+  const routeGrant = Effect.fn("ConnectionDriver.routeGrant")(function* (
+    entry: ConnectionCatalogEntry,
+    route: ConnectionRoute,
+  ) {
+    if (
+      (route.target._tag !== "BearerConnectionTarget" &&
+        route.target._tag !== "RelayConnectionTarget") ||
+      sendsTokenInClear(connectionRoutes(entry), route) ||
+      (yield* checkRoute(entry, route)) === "silent"
+    ) {
+      return Option.none<RouteGrant>();
+    }
+    return yield* resolver.prepare(routeEntry(entry, route)).pipe(
+      Effect.flatMap(sessionGrant),
+      Effect.orElseSucceed(() => Option.none<RouteGrant>()),
     );
+  });
 
   return ConnectionDriver.of({ connect, preflight, checkHost, sessionGrant, routeGrant });
 });
