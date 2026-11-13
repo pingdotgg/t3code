@@ -159,6 +159,47 @@ describe("terminal session reducers", () => {
     }
   });
 
+  it("does not retain the tail of a control sequence whose introducer was trimmed", () => {
+    for (const [history, maxBytes, replayable] of [
+      ["prefix\u001b[31mOK", 6, /^(?:[a-z]*\u001b\[31mOK|O?K?)$/],
+      ["prefix\u001b]0;HIDDEN\u0007OK", 10, /^(?:[a-z]*\u001b\]0;HIDDEN\u0007OK|O?K?)$/],
+      ["prefix\u001b]0;HIDDEN\u0007OK", 4, /^(?:[a-z]*\u001b\]0;HIDDEN\u0007OK|O?K?)$/],
+    ] as const) {
+      const state = applyTerminalAttachStreamEvent(
+        EMPTY_TERMINAL_BUFFER_STATE,
+        { type: "snapshot", snapshot: { ...BASE_SNAPSHOT, history } },
+        maxBytes,
+      );
+      expect(terminalOutputText(state.output)).toBe("OK");
+
+      // The same text as live output: a mounted terminal still receives every byte, while one
+      // that mounts later, even inside the sequence, never prints the rest of it.
+      let live = applyTerminalAttachStreamEvent(
+        EMPTY_TERMINAL_BUFFER_STATE,
+        { type: "snapshot", snapshot: { ...BASE_SNAPSHOT, history: "" } },
+        maxBytes,
+      );
+      const readers = [{ cursor: INITIAL_TERMINAL_OUTPUT_CURSOR, written: "" }];
+      for (const data of history) {
+        live = applyTerminalAttachStreamEvent(
+          live,
+          { type: "output", threadId: TARGET.threadId, terminalId: TARGET.terminalId, data },
+          maxBytes,
+        );
+        readers.push({ cursor: INITIAL_TERMINAL_OUTPUT_CURSOR, written: "" });
+        for (const reader of readers) {
+          const update = readTerminalOutputUpdate(live.output, reader.cursor);
+          if (update.type === "reset") reader.written = update.data;
+          if (update.type === "append") reader.written += update.data;
+          reader.cursor = update.cursor;
+        }
+      }
+      expect(readers[0]!.written).toBe(history);
+      for (const reader of readers) expect(reader.written).toMatch(replayable);
+      expect(terminalOutputText(live.output)).toBe("OK");
+    }
+  });
+
   it("delivers all output when several events arrive before a renderer reads", () => {
     const initial = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
       type: "snapshot",
