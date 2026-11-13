@@ -3685,8 +3685,8 @@ it.effect("ProviderSessionManagerV2 redacts live command output split across chu
     const appended = yield* Queue.unbounded<string>();
     const secrets = makeInjectedSecrets();
     secrets.put("instance", [
-      { name: "SHORT", value: "abc" },
-      { name: "LONG", value: "abcdef" },
+      { name: "SHORT", value: "aaabbbccc" },
+      { name: "LONG", value: "aaabbbcccdddeeefff" },
     ]);
     const effect = Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
@@ -3710,7 +3710,7 @@ it.effect("ProviderSessionManagerV2 redacts live command output split across chu
         itemId: TurnItemId.make("item-provider-session-manager-live-output"),
         chunk,
       });
-      yield* Queue.offerAll(adapterEvents, [delta("x abc"), delta("def y abc")]);
+      yield* Queue.offerAll(adapterEvents, [delta("x aaabbbccc"), delta("dddeeefff y aaabbbccc")]);
       // The stream ends before the command settles, holding a tail that is a whole shorter value.
       yield* Queue.end(adapterEvents);
 

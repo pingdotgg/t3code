@@ -45,6 +45,9 @@ export interface InjectedSecret {
 
 const redactionMarker = (name: string) => `[redacted ${name}]`;
 
+// Shorter values ("1", "true", a region) are config, not credentials, and would rewrite ordinary output.
+const MIN_SECRET_LENGTH = 8;
+
 interface Needle {
   readonly value: string;
   readonly marker: string;
@@ -158,7 +161,7 @@ export function makeInjectedSecrets(): (typeof InjectedSecrets)["Service"] {
     const names = new Map<string, string>();
     for (const secrets of byKey.values()) {
       for (const secret of secrets) {
-        if (secret.value.length > 0) names.set(secret.value, secret.name);
+        if (secret.value.length >= MIN_SECRET_LENGTH) names.set(secret.value, secret.name);
       }
     }
     needles = [...names]

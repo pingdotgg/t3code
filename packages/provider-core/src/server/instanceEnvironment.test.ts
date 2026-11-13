@@ -118,15 +118,21 @@ describe("makeInjectedSecrets", () => {
   it("replaces every exact value once, without rescanning the markers it inserts", () => {
     const secrets = makeInjectedSecrets();
     secrets.put("instance", [
-      { name: "PIN", value: "42" },
+      { name: "PIN", value: "4242-4242" },
       { name: "TOKEN", value: "redacted" },
       { name: "LONG", value: "abc-redacted-xyz" },
+      { name: "CLAUDE_CODE_USE_BEDROCK", value: "1" },
     ]);
 
-    expect(secrets.redactText("pin=42 long=abc-redacted-xyz token=redacted 4 2")).toBe(
+    expect(secrets.redactText("exit code 1\n-  version: 1.2.1")).toBe(
+      "exit code 1\n-  version: 1.2.1",
+    );
+    expect(secrets.redactText("pin=4242-4242 long=abc-redacted-xyz token=redacted 4 2")).toBe(
       "pin=[redacted PIN] long=[redacted LONG] token=[redacted TOKEN] 4 2",
     );
-    const redacted = secrets.redact(JSON.parse('{"42":"redacted","__proto__":{"a":"42"},"n":7}'));
+    const redacted = secrets.redact(
+      JSON.parse('{"4242-4242":"redacted","__proto__":{"a":"4242-4242"},"n":7}'),
+    );
     expect(JSON.stringify(redacted)).toBe(
       '{"[redacted PIN]":"[redacted TOKEN]","__proto__":{"a":"[redacted PIN]"},"n":7}',
     );
@@ -147,27 +153,29 @@ describe("makeInjectedSecrets", () => {
   it("prefers the longest value whether or not it is split across chunks", () => {
     const secrets = makeInjectedSecrets();
     secrets.put("instance", [
-      { name: "SHORT", value: "abc" },
-      { name: "LONG", value: "abcdef" },
-      { name: "TAIL", value: "cdZZ" },
+      { name: "SHORT", value: "aaabbbccc" },
+      { name: "LONG", value: "aaabbbcccdddeeefff" },
+      { name: "TAIL", value: "cccdddZZZZZZ" },
     ]);
 
-    const first = secrets.redactChunk("", "x abc");
-    expect(first).toEqual({ emit: "x ", pending: "abc" });
-    expect(secrets.redactChunk(first.pending, "def")).toEqual({
+    const first = secrets.redactChunk("", "x aaabbbccc");
+    expect(first).toEqual({ emit: "x ", pending: "aaabbbccc" });
+    expect(secrets.redactChunk(first.pending, "dddeeefff")).toEqual({
       emit: "[redacted LONG]",
       pending: "",
     });
-    expect(secrets.redactChunk(first.pending, "dx")).toEqual({
-      emit: "[redacted SHORT]dx",
+    expect(secrets.redactChunk(first.pending, "dddx")).toEqual({
+      emit: "[redacted SHORT]dddx",
       pending: "",
     });
     // A tail held at the end of the stream can itself be a whole shorter value.
     expect(secrets.redactText(first.pending)).toBe("[redacted SHORT]");
     // The leftmost match wins even when a later value begins inside it.
-    const split = secrets.redactChunk("", "abcd");
-    expect(secrets.redactChunk(split.pending, "ZZ").emit).toBe(split.emit + "[redacted SHORT]dZZ");
-    expect(secrets.redactText("abcdZZ")).toBe("[redacted SHORT]dZZ");
+    const split = secrets.redactChunk("", "aaabbbcccddd");
+    expect(secrets.redactChunk(split.pending, "ZZZZZZ").emit).toBe(
+      split.emit + "[redacted SHORT]dddZZZZZZ",
+    );
+    expect(secrets.redactText("aaabbbcccdddZZZZZZ")).toBe("[redacted SHORT]dddZZZZZZ");
   });
 
   it("handles very long values and deeply nested JSON", () => {
@@ -175,12 +183,12 @@ describe("makeInjectedSecrets", () => {
     const long = "a".repeat(48_000) + "b";
     secrets.put("instance", [
       { name: "LONG", value: long },
-      { name: "KEY", value: "secret" },
+      { name: "KEY", value: "secret-value" },
     ]);
     expect(secrets.redactText("hello")).toBe("hello");
     expect(secrets.redactText(`x${long}y`)).toBe("x[redacted LONG]y");
 
-    let nested: unknown = "secret";
+    let nested: unknown = "secret-value";
     for (let depth = 0; depth < 3_000; depth++) nested = depth % 2 === 0 ? [nested] : { k: nested };
     let redacted = secrets.redact(nested);
     for (let depth = 2_999; depth >= 0; depth--) {

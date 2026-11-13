@@ -1002,7 +1002,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
   });
 
   it.effect("redacts the resolved secret while a session is open", () => {
-    const fixture = setup({ [secret.reference]: "sk-live" });
+    const fixture = setup({ [secret.reference]: "sk-live-0123456789" });
     const injected = makeInjectedSecrets();
     return Effect.gen(function* () {
       const { registry } = yield* fixture.make;
@@ -1010,10 +1010,12 @@ describe("ProviderInstanceRegistry secret environment", () => {
       yield* Effect.scoped(
         Effect.gen(function* () {
           yield* instance!.orchestrationAdapter.openSession({} as never);
-          expect(injected.redactText("key=sk-live")).toBe("key=[redacted OPENAI_API_KEY]");
+          expect(injected.redactText("key=sk-live-0123456789")).toBe(
+            "key=[redacted OPENAI_API_KEY]",
+          );
         }),
       );
-      expect(injected.redactText("key=sk-live")).toBe("key=sk-live");
+      expect(injected.redactText("key=sk-live-0123456789")).toBe("key=sk-live-0123456789");
     }).pipe(Effect.provideService(InjectedSecrets, injected), Effect.scoped);
   });
 
