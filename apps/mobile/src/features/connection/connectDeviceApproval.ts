@@ -38,10 +38,11 @@ export function connectDeviceApprovalPrompts(input: {
 
 /**
  * Shows approval prompts one at a time: an Android alert replaces the one on screen, which
- * would drop an unanswered request. A prompt answered with "retry" goes back to the front.
+ * would drop an unanswered request. A prompt answered with "retry" goes back to the front;
+ * "later" puts it back without showing anything until the next offer.
  */
 export function createApprovalPromptQueue<P extends { readonly pairingLinkId: string }>(
-  present: (prompt: P, answer: (outcome: "done" | "retry") => void) => void,
+  present: (prompt: P, answer: (outcome: "done" | "retry" | "later") => void) => void,
 ) {
   const known = new Set<string>();
   const waiting: P[] = [];
@@ -51,10 +52,13 @@ export function createApprovalPromptQueue<P extends { readonly pairingLinkId: st
     const prompt = waiting.shift();
     if (prompt === undefined) return;
     showing = true;
+    let answered = false;
     present(prompt, (outcome) => {
+      if (answered) return;
+      answered = true;
       showing = false;
-      if (outcome === "retry") waiting.unshift(prompt);
-      next();
+      if (outcome !== "done") waiting.unshift(prompt);
+      if (outcome !== "later") next();
     });
   };
   return {
@@ -69,6 +73,7 @@ export function createApprovalPromptQueue<P extends { readonly pairingLinkId: st
       }
     },
     offer(prompts: ReadonlyArray<P>) {
+      // Also re-shows a prompt deferred because another dialog took the screen.
       for (const prompt of prompts) {
         if (known.has(prompt.pairingLinkId)) continue;
         known.add(prompt.pairingLinkId);

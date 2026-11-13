@@ -57,16 +57,22 @@ const approvalPrompts = createApprovalPromptQueue<QueuedApprovalPrompt>((prompt,
         return answer("done");
       }
       if (outcome === "gone") {
-        return Dialog.alert("Request no longer waiting", "It expired or was answered elsewhere.", [
-          { text: "OK", onPress: () => answer("done") },
-        ]);
+        return Dialog.alert(
+          "Request no longer waiting",
+          "It expired or was answered elsewhere.",
+          [{ text: "OK", onPress: () => answer("done") }],
+          { onDismiss: () => answer("done") },
+        );
       }
-      Dialog.alert(failure, "The request is still waiting. Try again.", [
-        {
-          text: "OK",
-          onPress: () => answer(watchedEnvironments.has(prompt.environmentId) ? "retry" : "done"),
-        },
-      ]);
+      const retryIfWatched = () =>
+        answer(watchedEnvironments.has(prompt.environmentId) ? "retry" : "done");
+      Dialog.alert(
+        failure,
+        "The request is still waiting. Try again.",
+        [{ text: "OK", onPress: retryIfWatched }],
+        // Another dialog took the screen; offer the request again on the next update.
+        { onDismiss: () => answer("later") },
+      );
     });
   Dialog.alert(
     prompt.title,
@@ -75,7 +81,8 @@ const approvalPrompts = createApprovalPromptQueue<QueuedApprovalPrompt>((prompt,
       { text: "Deny", onPress: respond(prompt.deny, "Could not deny the device") },
       { text: "Approve", onPress: respond(prompt.approve, "Could not approve the device") },
     ],
-    { cancelable: false },
+    // Another dialog took the screen; offer the request again on the next update.
+    { cancelable: false, onDismiss: () => answer("later") },
   );
 });
 

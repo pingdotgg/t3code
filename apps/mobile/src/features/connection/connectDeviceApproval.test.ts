@@ -40,7 +40,7 @@ describe("connectDeviceApprovalPrompts", () => {
 describe("createApprovalPromptQueue", () => {
   it("shows one prompt at a time and offers a failed one again before the rest", () => {
     const shown: string[] = [];
-    const answers: Array<(outcome: "done" | "retry") => void> = [];
+    const answers: Array<(outcome: "done" | "retry" | "later") => void> = [];
     const queue = createApprovalPromptQueue<{ pairingLinkId: string }>((prompt, answer) => {
       shown.push(prompt.pairingLinkId);
       answers.push(answer);
@@ -56,9 +56,24 @@ describe("createApprovalPromptQueue", () => {
     expect(shown).toEqual(["a", "a", "b"]);
   });
 
+  it("waits for the next offer when another dialog replaced the prompt", () => {
+    const shown: string[] = [];
+    const answers: Array<(outcome: "done" | "retry" | "later") => void> = [];
+    const queue = createApprovalPromptQueue<{ pairingLinkId: string }>((prompt, answer) => {
+      shown.push(prompt.pairingLinkId);
+      answers.push(answer);
+    });
+
+    queue.offer([{ pairingLinkId: "a" }]);
+    answers.at(-1)!("later");
+    expect(shown).toEqual(["a"]);
+    queue.offer([]);
+    expect(shown).toEqual(["a", "a"]);
+  });
+
   it("drops a host's waiting prompts so they cannot hold up other hosts", () => {
     const shown: string[] = [];
-    const answers: Array<(outcome: "done" | "retry") => void> = [];
+    const answers: Array<(outcome: "done" | "retry" | "later") => void> = [];
     const queue = createApprovalPromptQueue<{ pairingLinkId: string; host: string }>(
       (prompt, answer) => {
         shown.push(prompt.pairingLinkId);
