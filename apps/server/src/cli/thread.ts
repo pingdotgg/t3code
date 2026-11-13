@@ -216,11 +216,18 @@ export type ThreadTools = ReturnType<typeof makeThreadTools>;
  * outside agent does, and revokes that session when the command ends.
  */
 export const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
-  flags: { readonly baseDir: Option.Option<string>; readonly clientLabel?: string },
+  flags: {
+    readonly baseDir: Option.Option<string>;
+    readonly clientLabel?: string;
+    /** Keeps logs off stdout, where JSON output goes. */
+    readonly quietLogs?: boolean;
+  },
   run: (tools: ThreadTools) => Effect.Effect<A, E, R>,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
-  const config = yield* resolveCliAuthConfig(flags, logLevel);
+  const config = yield* resolveCliAuthConfig(flags, logLevel, {
+    quietLogs: flags.quietLogs === true,
+  });
   return yield* Effect.gen(function* () {
     const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
     if (Option.isNone(runtimeState)) {
@@ -251,7 +258,9 @@ export const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function*
     Effect.provide(
       EnvironmentAuth.layerRuntime.pipe(
         Layer.provide(ServerConfig.layer(config)),
-        Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
+        Layer.provide(
+          Layer.succeed(References.MinimumLogLevel, flags.quietLogs ? "Error" : config.logLevel),
+        ),
       ),
     ),
   );

@@ -31,6 +31,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { Tool } from "effect/ai";
@@ -55,6 +56,7 @@ import { withInlineContext } from "../../apps/server/src/orchestration-v2/Contex
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { FeedbackToolkit } from "../../apps/server/src/mcp/toolkits/feedback/tools.ts";
+import { FeedbackInput } from "../../apps/server/src/feedback/FeedbackReport.ts";
 import { FeedbackOffError } from "../../apps/server/src/feedback/FeedbackService.ts";
 import { scrubFeedback } from "../../apps/server/src/feedback/scrubFeedback.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
@@ -1661,6 +1663,8 @@ const savedSecretFile = (sample: Sample, result: unknown) => {
   if (isRecord(result) && typeof result.file === "string") sample.secretFiles.push(result.file);
 };
 
+const decodeFeedbackInput = Schema.decodeUnknownResult(FeedbackInput);
+
 /** The result for one tool call. */
 export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* (
   sample: Sample,
@@ -1730,17 +1734,19 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
       sample.agentFeedbackEnabled = feedback.enabled;
   }
   if (isT3Name(call.name) && name === "t3_feedback" && (mock === undefined || mock === "default")) {
+    // T3 decodes the arguments before its handler checks the setting.
+    const decoded = decodeFeedbackInput(input);
+    if (Result.isFailure(decoded)) return failed(decoded.failure.message);
     if (!sample.agentFeedbackEnabled) return failed(new FeedbackOffError({}).message);
-    const text = (key: string) => scrubFeedback(valueText(input[key] ?? ""), []);
+    const report = decoded.success;
     return toolResult(call.id, {
+      ...report,
+      expected: scrubFeedback(report.expected, []),
+      actual: scrubFeedback(report.actual, []),
+      workaround: scrubFeedback(report.workaround, []),
       id: "019a7b3c-0000-7000-8000-000000000001",
       threadId: "thread-1",
       createdAt: `${base.environment.date ?? "2026-01-01"}T12:00:00.000Z`,
-      kind: input.kind,
-      subject: input.subject,
-      expected: text("expected"),
-      actual: text("actual"),
-      workaround: text("workaround"),
       source: "mcp",
       sent: true,
     });

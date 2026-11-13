@@ -15,7 +15,7 @@ const feedbackListCommand = Command.make("list", { ...projectLocationFlags, json
   Command.withDescription("List recent feedback reports saved on this machine, newest first."),
   Command.withHandler((flags) =>
     withThreadTools(
-      { ...flags, clientLabel: FEEDBACK_CLI_CLIENT_LABEL },
+      { ...flags, clientLabel: FEEDBACK_CLI_CLIENT_LABEL, quietLogs: flags.json },
       Effect.fn("cli.feedback.list")(function* (tools) {
         const { reports } = yield* tools.call(
           "t3_feedback_list",
@@ -63,7 +63,7 @@ export const feedbackCommand = Command.make("feedback", {
   ),
   Command.withHandler(({ baseDir, kind, subject, expected, actual, workaround }) =>
     withThreadTools(
-      { baseDir, clientLabel: FEEDBACK_CLI_CLIENT_LABEL },
+      { baseDir, clientLabel: FEEDBACK_CLI_CLIENT_LABEL, quietLogs: true },
       Effect.fn("cli.feedback.submit")(function* (tools) {
         const report = yield* tools.call(
           "t3_feedback",
