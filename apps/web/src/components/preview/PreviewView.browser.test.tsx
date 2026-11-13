@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   idleServerTab: false,
   loading: false,
   nativeServerTab: false,
+  streamedServerTab: false,
   serverEpoch: null as string | null,
   servers: [] as PreviewableServer[],
   recordingTabIds: new Set<string>(),
@@ -73,6 +74,9 @@ vi.mock(import("./previewBridge"), async (original) => ({
       open: mocks.openPictureInPicture,
       close: mocks.closePictureInPicture,
     },
+    findInPage: vi.fn(async () => undefined),
+    stopFindInPage: vi.fn(async () => undefined),
+    onFindResult: vi.fn(() => () => undefined),
   } as never,
 }));
 vi.mock(import("~/browserHistoryStore"), async (original) => ({
@@ -129,7 +133,7 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
             "tab-1": {
               threadId: "thread-1",
               tabId: "tab-1",
-              runtime: mocks.nativeServerTab ? "server" : "desktop",
+              runtime: mocks.nativeServerTab || mocks.streamedServerTab ? "server" : "desktop",
               navStatus: { _tag: "Success", url: "http://example.com/", title: "Example" },
               canGoBack: false,
               canGoForward: false,
@@ -173,6 +177,8 @@ vi.mock(import("~/browser/ServerBrowserSurface"), async (original) => ({
 }));
 
 import { useComposerDraftStore } from "~/composerDraftStore";
+import { commitBrowserViewportChange } from "~/browser/browserViewportActions";
+import { resolveResponsiveBrowserViewportSize } from "~/browser/browserViewportLayout";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
@@ -224,6 +230,7 @@ function setup() {
   mocks.idleServerTab = false;
   mocks.loading = false;
   mocks.nativeServerTab = false;
+  mocks.streamedServerTab = false;
   mocks.serverEpoch = null;
   mocks.servers = [];
   mocks.recordingTabIds = new Set();
@@ -253,6 +260,30 @@ describe("PreviewView", () => {
       await userEvent.click(page.getByRole("button", { name: "Dismiss notification" }));
     },
   );
+
+  it("keeps the address in the bar when Enter commits an IME composition", async () => {
+    setup();
+    await using _screen = await render(view());
+    const input = page.getByPlaceholder("Search or enter URL");
+    await input.fill("https://example.com/pinyin");
+
+    const enter = new KeyboardEvent("keydown", {
+      key: "Enter",
+      code: "Enter",
+      isComposing: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(enter, "keyCode", { value: 229 });
+    act(() => {
+      input.element().dispatchEvent(enter);
+    });
+
+    await expect.element(input).toHaveFocus();
+    await expect.element(input).toHaveValue("https://example.com/pinyin");
+    expect(mocks.navigate).not.toHaveBeenCalled();
+    expect(enter.defaultPrevented).toBe(true);
+  });
 
   it("retains the annotation locally when its own environment loses access during capture", async () => {
     setup();
@@ -332,6 +363,23 @@ describe("PreviewView", () => {
     expect(card.element().contains(hit)).toBe(true);
   });
 
+  it("sizes the first device viewport of a streamed tab to its panel", async () => {
+    setup();
+    mocks.streamedServerTab = true;
+    await using _screen = await render(<ToastProvider timeout={0}>{view()}</ToastProvider>);
+    const surface = page.getByTestId("server-browser-surface");
+    await expect.element(surface).toBeInTheDocument();
+    const rect = surface.element().getBoundingClientRect();
+
+    await userEvent.click(page.getByRole("button", { name: "Preview menu" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Show device toolbar" }));
+
+    expect(commitBrowserViewportChange).toHaveBeenCalledWith(expect.anything(), {
+      _tag: "freeform",
+      ...resolveResponsiveBrowserViewportSize(rect, 1),
+    });
+  });
+
   it("focuses and selects the address from forwarded desktop actions only while visible", async () => {
     setup();
     using stack = new DisposableStack();
@@ -387,5 +435,22 @@ describe("PreviewView", () => {
     await expect.element(address).not.toHaveFocus();
     act(() => dispatchPreviewAction("focus-url"));
     await expect.element(address).toHaveFocus();
+  });
+
+  it("does not reopen find when the user returns to a tab they left with find open", async () => {
+    setup();
+    const tabView = (tabId: string) => (
+      <PreviewView threadRef={TEST_THREAD_REF} tabId={tabId} visible />
+    );
+    await using screen = await render(tabView("tab-1"));
+    const findBar = page.getByRole("search", { name: "Find in page" });
+
+    act(() => dispatchPreviewAction("find"));
+    await expect.element(findBar).toBeInTheDocument();
+
+    await screen.rerender(tabView("tab-2"));
+    await expect.element(findBar).not.toBeInTheDocument();
+    await screen.rerender(tabView("tab-1"));
+    await expect.element(findBar).not.toBeInTheDocument();
   });
 });

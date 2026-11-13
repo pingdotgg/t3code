@@ -44,7 +44,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   viewedFiles: "environment",
   comment: true,
   actions: [...definition.changeRequestActions],
-  mergeMethods: ["merge", "squash", "rebase"],
+  mergeMethods: ["merge", "squash", "rebase", "fast-forward"],
   updateMethods: ["merge", "rebase"],
   search: false,
   reactions: true,
@@ -381,12 +381,12 @@ export const make = Effect.gen(function* () {
             ? "up-to-date"
             : "behind",
         viewerPermissions: permissions(repo, pr, viewer),
-        // Forgejo merges at once or refuses; it has no merge queue.
-        mergeQueue: false,
         mergeCapabilities: {
           merge: repo.allow_merge_commits ?? true,
           squash: repo.allow_squash_merge ?? true,
           rebase: repo.allow_rebase ?? true,
+          // Added in Forgejo 7; older servers cannot fast-forward-only merge.
+          "fast-forward": repo.allow_fast_forward_only_merge ?? false,
         },
       } satisfies ProviderChangeRequestDetail;
     }),
@@ -544,7 +544,13 @@ export const make = Effect.gen(function* () {
               ...input,
               path: `${pullPath(input)}/merge`,
               method: "POST",
-              body: { Do: input.mergeMethod ?? "merge", delete_branch_after_merge: deleteBranch },
+              body: {
+                Do:
+                  input.mergeMethod === "fast-forward"
+                    ? "fast-forward-only"
+                    : (input.mergeMethod ?? "merge"),
+                delete_branch_after_merge: deleteBranch,
+              },
             }).pipe(
               Effect.catchTags({
                 // Forgejo merges before deleting the branch, so a refused deletion still merged.
