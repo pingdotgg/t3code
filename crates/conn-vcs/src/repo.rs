@@ -163,18 +163,54 @@ pub async fn remote_default_branch(cwd: &Path, remote: &str) -> VcsResult<Option
     Ok(head.and_then(|h| h.strip_prefix(&prefix).map(str::to_owned)))
 }
 
+/// The remote names, the primary remote and its default branch: what the default-branch and
+/// base lookups read. One status refresh reads them once and passes them on.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Remotes {
+    pub names: Vec<String>,
+    /// `origin` when it exists, else the first remote.
+    pub primary: Option<String>,
+    /// `refs/remotes/<primary>/HEAD`, without the prefix.
+    pub primary_default: Option<String>,
+}
+
+impl Remotes {
+    /// `git remote`, then `symbolic-ref` for the primary remote's HEAD when there is one: the
+    /// same calls [`primary_remote`] and [`remote_default_branch`] make.
+    pub async fn load(cwd: &Path) -> VcsResult<Self> {
+        let names = remote_names(cwd).await?;
+        let primary = if names.iter().any(|n| n == "origin") {
+            Some("origin".to_owned())
+        } else {
+            names.first().cloned()
+        };
+        let primary_default = match primary.as_deref() {
+            Some(remote) => remote_default_branch(cwd, remote).await?,
+            None => None,
+        };
+        Ok(Self {
+            names,
+            primary,
+            primary_default,
+        })
+    }
+}
+
 /// The repository's default branch name: the primary remote's HEAD, else a local `main` or
 /// `master`.
 pub async fn default_branch(cwd: &Path) -> VcsResult<Option<String>> {
     // Boxed: the nested git calls make a large future.
-    Box::pin(default_branch_inner(cwd)).await
+    Box::pin(async {
+        let remotes = Remotes::load(cwd).await?;
+        default_branch_with(cwd, &remotes).await
+    })
+    .await
 }
 
-async fn default_branch_inner(cwd: &Path) -> VcsResult<Option<String>> {
-    if let Some(remote) = primary_remote(cwd).await?
-        && let Some(branch) = remote_default_branch(cwd, &remote).await?
-    {
-        return Ok(Some(branch));
+/// [`default_branch`] with the remotes already read.
+pub async fn default_branch_with(cwd: &Path, remotes: &Remotes) -> VcsResult<Option<String>> {
+    if let Some(branch) = &remotes.primary_default {
+        return Ok(Some(branch.clone()));
     }
     for name in ["main", "master"] {
         if ref_exists(cwd, &format!("refs/heads/{name}")).await? {
@@ -231,14 +267,25 @@ pub async fn resolve_base(
     branch: Option<&str>,
     explicit: Option<&str>,
 ) -> VcsResult<Option<BaseRef>> {
+    resolve_base_with(cwd, branch, explicit, None).await
+}
+
+/// [`resolve_base`] with the remotes already read, or `None` to read them when needed.
+pub async fn resolve_base_with(
+    cwd: &Path,
+    branch: Option<&str>,
+    explicit: Option<&str>,
+    remotes: Option<&Remotes>,
+) -> VcsResult<Option<BaseRef>> {
     // Boxed: the nested git calls make a large future.
-    Box::pin(resolve_base_inner(cwd, branch, explicit)).await
+    Box::pin(resolve_base_inner(cwd, branch, explicit, remotes)).await
 }
 
 async fn resolve_base_inner(
     cwd: &Path,
     branch: Option<&str>,
     explicit: Option<&str>,
+    remotes: Option<&Remotes>,
 ) -> VcsResult<Option<BaseRef>> {
     if let Some(base) = explicit {
         return resolve_comparison(cwd, base).await.map(Some);
@@ -288,11 +335,16 @@ async fn resolve_base_inner(
         }));
     }
 
-    let primary = primary_remote(cwd).await?;
-    let remote_default = match primary.as_deref() {
-        Some(remote) => remote_default_branch(cwd, remote).await?,
-        None => None,
+    let loaded;
+    let remotes = match remotes {
+        Some(remotes) => remotes,
+        None => {
+            loaded = Remotes::load(cwd).await?;
+            &loaded
+        }
     };
+    let primary = remotes.primary.clone();
+    let remote_default = remotes.primary_default.clone();
     let candidates = [
         configured,
         remote_default,
@@ -375,16 +427,30 @@ pub async fn merge_base(
     branch: Option<&str>,
     explicit: Option<&str>,
 ) -> VcsResult<MergeBase> {
+    merge_base_with(cwd, branch, explicit, None).await
+}
+
+/// [`merge_base`] with the remotes already read, or `None` to read them when needed.
+pub async fn merge_base_with(
+    cwd: &Path,
+    branch: Option<&str>,
+    explicit: Option<&str>,
+    remotes: Option<&Remotes>,
+) -> VcsResult<MergeBase> {
     // Boxed: the nested git calls make a large future.
-    Box::pin(merge_base_inner(cwd, branch, explicit)).await
+    Box::pin(merge_base_inner(cwd, branch, explicit, remotes)).await
 }
 
 async fn merge_base_inner(
     cwd: &Path,
     branch: Option<&str>,
     explicit: Option<&str>,
+    remotes: Option<&Remotes>,
 ) -> VcsResult<MergeBase> {
-    let Some(base) = resolve_base(cwd, branch, explicit).await.unwrap_or(None) else {
+    let Some(base) = resolve_base_with(cwd, branch, explicit, remotes)
+        .await
+        .unwrap_or(None)
+    else {
         return Ok(MergeBase {
             base_ref: None,
             merge_base: "HEAD".into(),
