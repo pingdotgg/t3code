@@ -125,10 +125,9 @@ const CODEX_CATALOG_REFRESH_TIMEOUT_MS = 3_000;
 const CODEX_CONFIG_PROBE_TIMEOUT_MS = 3_000;
 const CODEX_CATALOG_REFRESH_POLL = "100 millis" as const;
 const CODEX_CLIENT_NAME = "T3 Code";
-// Old machines can take ~25s to start app-server and answer initialize.
+// Old machines can take ~25s to start app-server and answer initialize, before
+// account/models/skills discovery runs.
 export const CODEX_APP_SERVER_PROBE_TIMEOUT_MS = 60_000;
-// Account/models/skills requests after initialize can exceed the shared 10s probe budget.
-const CODEX_DISCOVERY_BUDGET_MS = 20_000;
 const CODEX_DISCOVERY_MARGIN_MS = 250;
 // `codex-cli 0.159.0`, `codex-cli 0.160.0-alpha.1` or the npm CLI's bare `0.1.4161006`.
 // Keep a prerelease suffix so compatibility stays unknown for it, as it does for `initialize`.
@@ -536,20 +535,6 @@ const readCodexModelsCacheFetchedAt = Effect.fn("readCodexModelsCacheFetchedAt")
   );
 });
 
-// Discovery gets its own budget from `initialize`, so a slow start still lists models, and must
-// finish before the outer timeout can discard the account result. A raised probe timeout extends it.
-export const codexDiscoveryDeadlineMs = (
-  spawnedAtMs: number,
-  initializedAtMs: number,
-  probeTimeoutMs: number,
-) =>
-  Math.min(
-    spawnedAtMs + probeTimeoutMs,
-    initializedAtMs +
-      CODEX_DISCOVERY_BUDGET_MS +
-      Math.max(0, probeTimeoutMs - CODEX_APP_SERVER_PROBE_TIMEOUT_MS),
-  ) - CODEX_DISCOVERY_MARGIN_MS;
-
 const withCodexDiscoveryDeadline = Effect.fnUntraced(function* <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   deadlineMs: number,
@@ -714,7 +699,6 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 }) {
   const spawnedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
   const { client, initialize } = yield* withCodexAppServerClient(input);
-  const initializedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
 
   const versionMatch = initialize.userAgent.match(/\/([^\s]+)/);
   const version = versionMatch ? versionMatch[1] : undefined;
@@ -729,7 +713,8 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const deadlineMs = codexDiscoveryDeadlineMs(spawnedAtMs, initializedAtMs, input.probeTimeoutMs);
+  // Optional discovery must finish before the outer timeout can discard the account result.
+  const deadlineMs = spawnedAtMs + input.probeTimeoutMs - CODEX_DISCOVERY_MARGIN_MS;
   const [skillsResponse, models, { config, nativeUsage, rateLimits }] = yield* Effect.all(
     [
       withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),

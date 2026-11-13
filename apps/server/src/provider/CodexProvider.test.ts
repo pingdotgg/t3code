@@ -2,24 +2,9 @@ import { assert, it } from "@effect/vitest";
 
 import {
   applyPreferredCodexDefaultModel,
-  codexDiscoveryDeadlineMs,
   codexRoutesSpendNativeQuota,
   mapCodexModelCapabilities,
 } from "./CodexProvider.ts";
-
-it("counts the Codex discovery budget from initialize, capped by the probe timeout (#27230)", () => {
-  // [initialized after spawn, probe timeout, deadline after spawn]
-  const cases = [
-    [500, 60_000, 20_250],
-    [25_000, 60_000, 44_750],
-    [50_000, 60_000, 59_750],
-    // A raised T3CODE_CODEX_PROBE_TIMEOUT_MS also extends discovery.
-    [2_000, 90_000, 51_750],
-  ] as const;
-  for (const [initializedAtMs, probeTimeoutMs, expected] of cases) {
-    assert.strictEqual(codexDiscoveryDeadlineMs(0, initializedAtMs, probeTimeoutMs), expected);
-  }
-});
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
