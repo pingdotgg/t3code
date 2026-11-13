@@ -256,6 +256,7 @@ export class AzureDevOpsCli extends Context.Service<
 
     readonly getDefaultBranch: (input: {
       readonly cwd: string;
+      readonly repository: string;
     }) => Effect.Effect<string | null, AzureDevOpsCliError>;
 
     readonly checkoutPullRequest: (input: {
@@ -356,6 +357,8 @@ const classifyAzFailure = (stderr: string): VcsProcessExitFailureKind | null => 
   if (normalized.includes("az devops login") || /please run '?az login'?/.test(normalized)) {
     return "authentication";
   }
+  // Azure DevOps reports usage-limit throttling as TF400733, often without an HTTP status.
+  if (normalized.includes("tf400733")) return "rate-limited";
   return normalized.includes("pull request") &&
     (normalized.includes("not found") || normalized.includes("does not exist"))
     ? "not-found"
@@ -401,6 +404,11 @@ export const make = Effect.gen(function* () {
   return AzureDevOpsCli.of({
     execute,
     listPullRequests: Effect.fn("AzureDevOpsCli.listPullRequests")(function (input) {
+      const branch = SourceControlProvider.sourceBranch(input);
+      // az checks literal ref prefixes before constructing the request URL.
+      const refPrefix =
+        ["refs/heads/", "refs/pull/", "refs/tags/"].find((prefix) => branch.startsWith(prefix)) ??
+        "";
       return executeJson({
         cwd: input.cwd,
         args: [
@@ -410,7 +418,8 @@ export const make = Effect.gen(function* () {
           "--detect",
           "true",
           "--source-branch",
-          SourceControlProvider.sourceBranch(input),
+          // az puts this in the query string unescaped; a `#` would cut the request.
+          refPrefix + encodeURIComponent(branch.slice(refPrefix.length)),
           "--status",
           toAzureStatus(input.state),
           "--top",
@@ -546,9 +555,18 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.asVoid);
     }),
     getDefaultBranch: Effect.fn("AzureDevOpsCli.getDefaultBranch")(function (input) {
+      const repository = parseRepositorySpecifier(input.repository);
       return executeJson({
         cwd: input.cwd,
-        args: ["repos", "show", "--detect", "true"],
+        args: [
+          "repos",
+          "show",
+          "--detect",
+          "true",
+          // Joined so a name starting with `-` stays the option's value.
+          `--repository=${repository.name}`,
+          ...(repository.project ? ["--project", repository.project] : []),
+        ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
