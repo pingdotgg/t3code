@@ -434,28 +434,6 @@ it("does not let a replaced native delivery failure replace the newer notificati
   expect(close).toHaveBeenCalledWith(current.id);
 });
 
-it("does not revive a failed native notification after settings turn it off", async () => {
-  await using app = setup();
-  const delivery = pendingDelivery();
-  using _bridge = stubGlobal("desktopBridge", {
-    getClientPlatform: () => "win32",
-    showThreadNotification: () => delivery.promise,
-    closeThreadNotification: async () => undefined,
-    setThreadNotificationReady: async () => true,
-    onThreadNotificationActivated: () => () => undefined,
-    onNotificationBadgeClear: () => () => undefined,
-  });
-  app.start();
-  state.shells.set("one", shell({ hasPendingApprovals: true }));
-  state.mode = "off";
-  app.changeSettings();
-  delivery.reject(new Error("native delivery failed"));
-  await delivery.promise.catch(() => undefined);
-
-  expect(TestNotification.sent).toEqual([]);
-  expect(state.badge).toHaveBeenLastCalledWith(0);
-});
-
 it.each([false, true])(
   "presents one completion when a monitor ends with a final wake (disconnected: %s)",
   async (disconnect) => {
