@@ -482,6 +482,49 @@ const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion
   return nonEmptyString(listedEntries?.[0]?.dependencies?.[packageName]?.version);
 });
 
+// npm names the tarball `${name}-${version}.tgz`, dropping a scope's `@` and its `/`.
+function parseNpmPackVersion(stdout: string, packageName: string): string | null {
+  const prefix = `${packageName.replace(/^@/, "").replace("/", "-")}-`;
+  const filename = stdout.trim();
+  if (!filename.startsWith(prefix) || !filename.endsWith(".tgz")) return null;
+  const version = filename.slice(prefix.length, -".tgz".length);
+  return version && !/\s/.test(version) ? version : null;
+}
+
+const decodeVitePlusCurrentEnv = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      node: Schema.Struct({
+        source: Schema.String,
+        bin_path: Schema.String,
+        installed: Schema.Boolean,
+      }),
+    }),
+  ),
+);
+
+// `vp i -g` installs through the npm beside Vite+'s managed Node, even under `vp env off`, and
+// `vp env current` names that Node unless it reports a system one, which install does not use.
+// Pack honours npm's min-release-age and `before`, which `npm view` ignores, and resolves
+// `@latest` the way install does. `--json=false` keeps its output to the tarball name.
+const resolveVitePlusInstallableLatestVersion = Effect.fn(
+  "resolveVitePlusInstallableLatestVersion",
+)(function* (packageName: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform) {
+  const path = yield* Path.Path;
+  const current = yield* runProbe("vp", ["env", "current", "--json"], env);
+  const node = current ? Option.getOrUndefined(decodeVitePlusCurrentEnv(current))?.node : undefined;
+  if (!node?.installed || node.source === "system PATH" || !path.isAbsolute(node.bin_path)) {
+    return null;
+  }
+  const npmPath = path.join(path.dirname(node.bin_path), platform === "win32" ? "npm.cmd" : "npm");
+  const packed = yield* runProbe(
+    npmPath,
+    ["pack", "--dry-run", "--json=false", "--global", `${packageName}@latest`],
+    env,
+  );
+  return packed ? parseNpmPackVersion(packed, packageName) : null;
+});
+
 // `bun outdated` has no JSON output; its `Latest` column is what `@latest` installs
 // under minimumReleaseAge (marked `*`). `Update` is only the global package.json range.
 function parseBunOutdatedLatestVersion(output: string, packageName: string): string | null {
@@ -613,14 +656,6 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
     }
     const args = ["upgrade", miseTool];
     const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
-    // Mise reads its settings from this environment, so each one gets its own cached answer.
-    const envHash = NodeCrypto.createHash("sha256");
-    for (const [name, value] of Object.entries(context.env).toSorted(([a], [b]) =>
-      a < b ? -1 : 1,
-    )) {
-      envHash.update(`${name}\0${value ?? ""}\0`);
-    }
-    const envKey = envHash.digest("hex");
     const capabilities = makeProviderMaintenanceCapabilities({
       ...owner,
       updateExecutable: misePath,
@@ -643,23 +678,78 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
     });
     return {
       ...capabilities,
-      latestVersionCacheKey: ["mise", misePath, miseTool, envKey].join("\0"),
+      latestVersionCacheKey: ["mise", misePath, miseTool, environmentCacheKey(context.env)].join(
+        "\0",
+      ),
     };
   },
 );
+
+const decodeVitePlusConfig = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ shimMode: Schema.optional(Schema.Unknown) })),
+);
+
+/** With `shimMode: "system_first"` (`vp env off`), a Vite+ shim runs the next same-named command on PATH. */
+const followVitePlusSystemFirstShim = Effect.fn("followVitePlusSystemFirstShim")(function* (
+  context: ProviderMaintenanceResolutionContext,
+) {
+  if (!isVitePlusGlobalCommandPath(context.resolvedCommandPath)) return context;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const shimDir = path.dirname(context.resolvedCommandPath);
+  const dataDir = path.dirname(shimDir);
+  // Without VP_HOME, the XDG layout keeps shims in `~/.local/share/vite-plus` and config in `$XDG_CONFIG_HOME/vite-plus`.
+  const home = context.env.VP_HOME
+    ? undefined
+    : /^(.*)\/\.local\/share\/vite-plus$/.exec(dataDir.replaceAll("\\", "/"))?.[1];
+  const configPaths = [
+    ...(home !== undefined
+      ? [path.join(context.env.XDG_CONFIG_HOME || path.join(home, ".config"), "vite-plus")]
+      : []),
+    dataDir,
+  ].map((dir) => path.join(dir, "config.json"));
+  const config = yield* Effect.firstSuccessOf(
+    configPaths.map((configPath) => fileSystem.readFileString(configPath)),
+  ).pipe(Effect.orElseSucceed(() => ""));
+  if (Option.getOrUndefined(decodeVitePlusConfig(config))?.shimMode !== "system_first") {
+    return context;
+  }
+  const delimiter = context.platform === "win32" ? ";" : ":";
+  const dirKey = (dir: string) => normalizeCommandPath(dir).replace(/\/+$/, "");
+  const shimDirKey = dirKey(shimDir);
+  const env = Object.fromEntries(
+    Object.entries(context.env).map(([name, value]) => [
+      name,
+      name.toLowerCase() === "path" && value
+        ? value
+            .split(delimiter)
+            .filter((entry) => dirKey(entry) !== shimDirKey)
+            .join(delimiter)
+        : value,
+    ]),
+  );
+  const command = path.basename(context.resolvedCommandPath).replace(/\.(?:exe|cmd|bat|ps1)$/i, "");
+  const resolvedCommandPath = yield* resolveCommandPath(command, { env });
+  if (!resolvedCommandPath) return context;
+  const realCommandPath = yield* fileSystem
+    .realPath(resolvedCommandPath)
+    .pipe(Effect.orElseSucceed(() => resolvedCommandPath));
+  return { ...context, resolvedCommandPath, realCommandPath };
+});
 
 export const resolvePackageManagedProviderMaintenance = Effect.fn(
   "resolvePackageManagedProviderMaintenance",
 )(function* (
   definition: PackageManagedProviderMaintenanceDefinition,
-  context: ProviderMaintenanceResolutionContext | null,
+  configuredContext: ProviderMaintenanceResolutionContext | null,
 ) {
-  if (!context) {
+  if (!configuredContext) {
     return makeManualOnlyProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName: definition.npmPackageName,
     });
   }
+  const context = yield* followVitePlusSystemFirstShim(configuredContext);
   const manual = makeManualOnlyProviderMaintenanceCapabilities({
     provider: definition.provider,
     packageName: definition.npmPackageName,
@@ -744,14 +834,28 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       ? manual
       : native;
   if (commandPaths.some(isVitePlusGlobalCommandPath)) {
-    return makeProviderMaintenanceCapabilities({
+    const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
+    const capabilities = makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
       updateExecutable: "vp",
       updateArgs: ["i", "-g", packageName],
       updateLockKey: "vite-plus-global",
       env: context.env,
+      lookupLatestVersion: resolveVitePlusInstallableLatestVersion(
+        packageName,
+        context.env,
+        context.platform,
+      ).pipe(Effect.provideContext(services)),
     });
+    return {
+      ...capabilities,
+      latestVersionCacheKey: [
+        "vite-plus-global",
+        packageName,
+        environmentCacheKey(context.env),
+      ].join("\0"),
+    };
   }
   if (commandPaths.some(isBunGlobalCommandPath)) {
     const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
