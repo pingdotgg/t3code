@@ -127,6 +127,11 @@ describe("ssh config", () => {
       const homeDir = yield* makeTempHomeDir();
       const sshDir = path.join(homeDir, ".ssh");
       yield* fs.makeDirectory(path.join(sshDir, "config.d"), { recursive: true });
+      yield* fs.makeDirectory(path.join(sshDir, "teams", "one"), { recursive: true });
+      const blockedDir = path.join(sshDir, "teams", "blocked");
+      yield* fs.makeDirectory(blockedDir);
+      yield* fs.chmod(blockedDir, 0o000);
+      yield* Effect.addFinalizer(() => fs.chmod(blockedDir, 0o755).pipe(Effect.ignore));
       yield* fs.writeFileString(
         path.join(sshDir, "config"),
         [
@@ -135,8 +140,13 @@ describe("ssh config", () => {
           "Host=equalsbox",
           "Host *",
           "Include=config.d/*.conf",
+          "Include teams/*/*.conf",
           "",
         ].join("\n"),
+      );
+      yield* fs.writeFileString(
+        path.join(sshDir, "teams", "one", "hosts.conf"),
+        "Host fixture\n  HostName fixture.example.com\n",
       );
       yield* fs.writeFileString(
         path.join(sshDir, "config.d", "team.conf"),
@@ -186,6 +196,13 @@ describe("ssh config", () => {
         {
           alias: "equalsbox",
           hostname: "equalsbox",
+          username: null,
+          port: null,
+          source: "ssh-config",
+        },
+        {
+          alias: "fixture",
+          hostname: "fixture.example.com",
           username: null,
           port: null,
           source: "ssh-config",
