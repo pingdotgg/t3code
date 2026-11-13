@@ -11496,6 +11496,109 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // Claude 2.1.323 wakes a session per Monitor event with only init, assistant and a
+  // task-notification result; just the Monitor's end sends a task_notification frame.
+  it.effect("tags a Claude Monitor event wake as a monitor update", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      const taskId = "bi5kfx7xp";
+      const toolUseId = "toolu_monitor_events";
+
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-monitor-event"),
+          text: "Watch the mutation run and report each survivor.",
+          attachments: [],
+        }),
+      );
+      for (const frame of [
+        claudeSdkFrame({
+          type: "assistant",
+          message: {
+            model: "claude-sonnet-4-6",
+            id: "msg_monitor_events",
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: toolUseId,
+                name: "Monitor",
+                input: { description: "line monitor", command: "./mutate.sh" },
+              },
+            ],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+          parent_tool_use_id: null,
+          uuid: "00000000-0000-4000-8000-000000000901",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: taskId,
+          tool_use_id: toolUseId,
+          description: "line monitor",
+          is_backgrounded: true,
+          task_type: "local_bash",
+          uuid: "00000000-0000-4000-8000-000000000902",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "user",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: toolUseId,
+                content: `Monitor started (task ${taskId}). You will be notified on each event.`,
+              },
+            ],
+          },
+          parent_tool_use_id: null,
+          uuid: "00000000-0000-4000-8000-000000000903",
+          session_id: WAKE_NATIVE_SESSION,
+          tool_use_result: { taskId, persistent: false },
+        }),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000904", result: "STARTED" }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* harness.awaitTerminal(1);
+
+      yield* harness.offerAndWait(wakeTurnInit);
+      yield* harness.offerAndWait(
+        makeAssistantTextFrame({
+          uuid: "00000000-0000-4000-8000-000000000905",
+          text: "Covered. Waiting for the rest.",
+        }),
+      );
+      yield* harness.awaitContinuation(1);
+
+      const notification = harness.continuationRequests[0]?.notification;
+      assert.deepEqual(
+        { source: notification?.source, outcome: notification?.outcome },
+        { source: { kind: "monitor" }, outcome: "updated" },
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   const scheduleWakeupFrames = (input: {
     readonly toolUseId: string;
     readonly uuids: readonly [string, string];
