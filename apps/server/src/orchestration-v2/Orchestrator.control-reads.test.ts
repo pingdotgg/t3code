@@ -1285,6 +1285,171 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("archiving a parent takes its delegated children out of active listings", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const parentThreadId = ThreadId.make("thread:archived-parent");
+    // Archive refuses a thread whose delegated tasks are still running.
+    const completeTask = Effect.fn(function* (threadId: ThreadId) {
+      const task = (yield* projections.getThreadProjection(threadId)).subagents[0]!;
+      yield* projections.apply({
+        id: EventId.make(`task-completed:${task.id}`),
+        type: "subagent.updated",
+        threadId,
+        occurredAt: task.updatedAt,
+        payload: { ...task, status: "completed", completedAt: task.updatedAt },
+      });
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-archived-parent"),
+      threadId: parentThreadId,
+      projectId: ProjectId.make("project:archived-parent"),
+      title: "Parent to archive",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("start-archived-parent"),
+      threadId: parentThreadId,
+      messageId: MessageId.make("message:archived-parent"),
+      text: "Delegate a review",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const parentRun = (yield* projections.getThreadProjection(parentThreadId)).runs[0]!;
+    yield* orchestrator.dispatch({
+      type: "delegated_task.request",
+      commandId: CommandId.make("delegate-archived-parent"),
+      parentThreadId,
+      parentRunId: parentRun.id,
+      parentNodeId: parentRun.rootNodeId!,
+      task: "Review the changes",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const childThreadId = (yield* projections.getThreadProjection(parentThreadId)).subagents[0]!
+      .childThreadId!;
+    // A native child whose subagent record the provider has not reported yet.
+    const parentThread = yield* projections.getThread(parentThreadId);
+    const nativeChildThreadId = ThreadId.make("thread:archived-parent:native-child");
+    yield* projections.apply({
+      id: EventId.make("native-child-created"),
+      type: "thread.created",
+      threadId: nativeChildThreadId,
+      occurredAt: parentThread.createdAt,
+      payload: {
+        ...parentThread,
+        id: nativeChildThreadId,
+        lineage: {
+          parentThreadId,
+          relationshipToParent: "subagent",
+          rootThreadId: parentThreadId,
+        },
+      },
+    });
+
+    yield* completeTask(parentThreadId);
+    yield* orchestrator.dispatch({
+      type: "thread.archive",
+      commandId: CommandId.make("archive-parent"),
+      threadId: parentThreadId,
+    });
+
+    assert.isNotNull((yield* projections.getThread(parentThreadId)).archivedAt);
+    assert.notInclude(yield* orchestrator.listActiveSubagentThreadIds(), childThreadId);
+    assert.notInclude(yield* orchestrator.listActiveSubagentThreadIds(), nativeChildThreadId);
+    const active = yield* orchestrator.getShellSnapshot({ location: "active" });
+    assert.notInclude(
+      active.threads.map((thread) => thread.id),
+      childThreadId,
+    );
+
+    yield* orchestrator.dispatch({
+      type: "thread.unarchive",
+      commandId: CommandId.make("unarchive-parent"),
+      threadId: parentThreadId,
+    });
+
+    assert.include(yield* orchestrator.listActiveSubagentThreadIds(), childThreadId);
+
+    const childRun = (yield* projections.getThreadProjection(childThreadId)).runs[0]!;
+    yield* orchestrator.dispatch({
+      type: "delegated_task.request",
+      commandId: CommandId.make("delegate-archived-child"),
+      parentThreadId: childThreadId,
+      parentRunId: childRun.id,
+      parentNodeId: childRun.rootNodeId!,
+      task: "Check the tests",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const grandchildThreadId = (yield* projections.getThreadProjection(childThreadId)).subagents[0]!
+      .childThreadId!;
+    // The child still waits on the grandchild, so both stay active while the parent archives.
+    yield* orchestrator.dispatch({
+      type: "thread.archive",
+      commandId: CommandId.make("archive-parent-busy-child"),
+      threadId: parentThreadId,
+    });
+    assert.isNotNull((yield* projections.getThread(parentThreadId)).archivedAt);
+    const busySubagents = yield* orchestrator.listActiveSubagentThreadIds();
+    assert.include(busySubagents, childThreadId);
+    assert.include(busySubagents, grandchildThreadId);
+    yield* orchestrator.dispatch({
+      type: "thread.unarchive",
+      commandId: CommandId.make("unarchive-parent-busy-child"),
+      threadId: parentThreadId,
+    });
+
+    yield* completeTask(childThreadId);
+    yield* orchestrator.dispatch({
+      type: "thread.archive",
+      commandId: CommandId.make("archive-child"),
+      threadId: childThreadId,
+    });
+    yield* TestClock.adjust("1 second");
+    yield* orchestrator.dispatch({
+      type: "thread.unarchive",
+      commandId: CommandId.make("unarchive-grandchild"),
+      threadId: grandchildThreadId,
+    });
+    yield* TestClock.adjust("1 second");
+
+    // The child was archived on its own; archiving the parent still reaches the grandchild.
+    yield* orchestrator.dispatch({
+      type: "thread.archive",
+      commandId: CommandId.make("archive-parent-again"),
+      threadId: parentThreadId,
+    });
+    assert.notInclude(yield* orchestrator.listActiveSubagentThreadIds(), grandchildThreadId);
+
+    yield* orchestrator.dispatch({
+      type: "thread.unarchive",
+      commandId: CommandId.make("unarchive-parent-again"),
+      threadId: parentThreadId,
+    });
+    const activeSubagents = yield* orchestrator.listActiveSubagentThreadIds();
+    assert.include(activeSubagents, grandchildThreadId);
+    assert.notInclude(activeSubagents, childThreadId);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("wakes the parent once when its delegated task asks a question", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
