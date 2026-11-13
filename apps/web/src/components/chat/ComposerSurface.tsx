@@ -68,13 +68,16 @@ function Main({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-/** A row under the card (environment, worktree, branch); page-coloured glass hides the timeline scrolling behind it. */
+/** A row under the card (environment, worktree, branch); the card's glass hides the timeline scrolling behind it. */
 function ContextStrip({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-slot="composer-context-strip"
       className={cn(
-        "group/composer-context surface-glass relative mt-1.5 flex w-full items-center gap-2 overflow-x-clip rounded-xl px-2 py-1 text-muted-foreground",
+        "group/composer-context relative mt-1.5 flex w-full items-center gap-2 overflow-x-clip rounded-xl px-2 py-1 text-muted-foreground shadow-composer dark:shadow-none",
+        "bg-(--chat-composer-glass-surface)/(--glass-opacity) backdrop-blur-(--glass-blur) backdrop-saturate-(--glass-saturation)",
+        "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:bg-(--chat-composer-glass-surface)",
+        outlineClasses,
         className,
       )}
       {...props}
