@@ -373,6 +373,37 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  it.effect("does not re-probe Claude usage on refreshes seconds apart", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: () => ({ status: 200, body: { five_hour: { utilization: 10 } } }),
+      });
+      const api = yield* test.api;
+      yield* api.readAccounts(config);
+      yield* TestClock.adjust("5 seconds");
+      yield* api.readAccounts(config);
+      expect(test.requests.filter((request) => request.body?.url)).toHaveLength(1);
+    }),
+  );
+
+  it.effect("keeps the last Claude reading when a later usage read is rate limited", () =>
+    Effect.gen(function* () {
+      let status = 200;
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: () => ({ status, body: { five_hour: { utilization: 10 } } }),
+      });
+      const api = yield* test.api;
+      yield* api.readAccounts(config);
+      status = 429;
+      yield* TestClock.adjust("2 minutes");
+      const result = yield* api.readAccounts(config);
+      expect(result[0]?.usageLimits.unavailable).toBeUndefined();
+      expect(result[0]?.usageLimits.windows.map((window) => window.usedPercent)).toEqual([10]);
+    }),
+  );
+
   it.effect.each([
     {
       name: "spend budget",
