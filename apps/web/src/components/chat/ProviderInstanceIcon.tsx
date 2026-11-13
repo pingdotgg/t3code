@@ -1,4 +1,5 @@
 import { type CSSProperties, memo } from "react";
+import { RouteIcon } from "lucide-react";
 
 import {
   normalizeProviderAccentColor,
@@ -89,6 +90,8 @@ export function resolveProviderInstanceAcpRegistryIconUrl(input: {
 export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   driverKind: ProviderDriverKind;
   displayName: string;
+  /** The model shown next to the icon; the server-routed `auto` model gets its own icon. */
+  modelSlug?: string | undefined;
   accentColor?: string | undefined;
   acpRegistryAgentId?: string | undefined;
   acpRegistryIconUrl?: string | undefined;
@@ -130,7 +133,9 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       style={accentStyle}
       data-provider-accent-color={accentColor}
     >
-      {isAcpRegistry ? (
+      {props.modelSlug === "auto" ? (
+        <RouteIcon className={cn("size-5 shrink-0 text-primary", iconClassName)} aria-hidden />
+      ) : isAcpRegistry ? (
         <AcpRegistryAgentIcon
           className={cn("size-5 rounded-none bg-transparent", iconClassName)}
           fallbackClassName="size-full"
@@ -172,7 +177,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           {providerInstanceInitials(props.displayName)}
         </span>
       )}
-      {isCustomEndpoint ? null : props.showBadge ? (
+      {isCustomEndpoint || props.modelSlug === "auto" ? null : props.showBadge ? (
         <span
           className={cn(
             "pointer-events-none absolute right-0 bottom-0 z-10 flex h-3.5 min-w-3.5 items-center justify-center rounded-full border px-0.5 text-4xs font-semibold leading-none shadow-sm",

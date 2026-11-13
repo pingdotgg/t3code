@@ -388,6 +388,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                       key={`${selection.instanceId}:${selection.model}`}
                       driverKind={selection.entry.driverKind}
                       displayName={selection.entry.displayName}
+                      modelSlug={selection.model}
                       accentColor={selection.entry.accentColor}
                       acpRegistryAgentId={selection.entry.acpRegistryAgentId}
                       acpRegistryIconUrl={selection.entry.acpRegistryIconUrl}
@@ -408,6 +409,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               <ProviderInstanceIcon
                 driverKind={activeEntry.driverKind}
                 displayName={activeEntry.displayName}
+                modelSlug={props.model}
                 accentColor={activeEntry.accentColor}
                 acpRegistryAgentId={activeEntry.acpRegistryAgentId}
                 acpRegistryIconUrl={activeEntry.acpRegistryIconUrl}

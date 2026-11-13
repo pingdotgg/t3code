@@ -57,6 +57,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
       <ProviderInstanceIcon
         driverKind={props.driverKind}
         displayName={props.providerDisplayName}
+        modelSlug={props.slug}
         accentColor={props.providerAccentColor}
         acpRegistryAgentId={props.acpRegistryAgentId}
         acpRegistryIconUrl={props.acpRegistryIconUrl}
