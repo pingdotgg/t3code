@@ -1,4 +1,9 @@
-import { CommandId, ThreadId, type OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import {
+  CommandId,
+  PullRequestUnavailableError,
+  ThreadId,
+  type OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -51,10 +56,10 @@ export class PullRequestWatchFromSubagentError extends Schema.TaggedError<PullRe
 /** Agents read this refusal at the moment they decide whether to keep waiting on CI. */
 export class PullRequestUnwatchableError extends Schema.TaggedError<PullRequestUnwatchableError>()(
   "PullRequestUnwatchableError",
-  { detail: Schema.String },
+  { cause: PullRequestUnavailableError },
 ) {
   override get message(): string {
-    return `T3 Code cannot watch this pull request: ${this.detail} Wait for its checks with the project's own tools instead; sleeping, loops and background monitors are fine for this wait.`;
+    return `T3 Code cannot watch this pull request: ${this.cause.message} Wait for its checks with the project's own tools instead; sleeping, loops and background monitors are fine for this wait.`;
   }
 }
 
@@ -150,7 +155,7 @@ const make = Effect.gen(function* () {
             // Host and transport errors can recover while the watch is active.
             PullRequestOperationError: () => Effect.void,
             PullRequestUnavailableError: (error) =>
-              Effect.fail(new PullRequestUnwatchableError({ detail: error.message })),
+              Effect.fail(new PullRequestUnwatchableError({ cause: error })),
           }),
         );
     }
