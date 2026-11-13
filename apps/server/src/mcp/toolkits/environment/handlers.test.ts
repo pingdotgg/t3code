@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as Environment from "../../../environment/ServerEnvironment.ts";
@@ -95,3 +96,19 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
     );
   }),
 );
+
+const decodePreferencesUpdate = Schema.decodeSync(
+  EnvironmentToolkit.tools.t3_environment_preferences_update.parametersSchema,
+);
+
+it("lets agents read and turn on agent feedback", () => {
+  expect(
+    EnvironmentHandlers.preferences({
+      ...DEFAULT_SERVER_SETTINGS,
+      agentFeedback: { enabled: true },
+    }).agentFeedback,
+  ).toEqual({ enabled: true });
+  expect(decodePreferencesUpdate({ agentFeedback: { enabled: true } })).toMatchObject({
+    agentFeedback: { enabled: true },
+  });
+});

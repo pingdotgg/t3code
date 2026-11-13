@@ -18,6 +18,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 const PreferenceFields = {
   defaultThreadEnvMode: ServerSettings.fields.defaultThreadEnvMode,
   newWorktreesStartFromOrigin: ServerSettings.fields.newWorktreesStartFromOrigin,
+  agentFeedback: ServerSettings.fields.agentFeedback,
   enableProviderUpdateChecks: ServerSettings.fields.enableProviderUpdateChecks,
   backgroundActivity: Schema.Struct({ profile: BackgroundActivityProfileSelection }),
   sourceControlWritingStyle: Schema.Struct({
@@ -61,6 +62,7 @@ const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update"
     environmentId: OrchestratorMcpEnvironmentTarget,
     defaultThreadEnvMode: ServerSettingsPatch.fields.defaultThreadEnvMode,
     newWorktreesStartFromOrigin: ServerSettingsPatch.fields.newWorktreesStartFromOrigin,
+    agentFeedback: ServerSettingsPatch.fields.agentFeedback,
     enableProviderUpdateChecks: ServerSettingsPatch.fields.enableProviderUpdateChecks,
     backgroundActivity: Schema.optionalKey(Schema.Struct({ profile: BackgroundActivityProfile })),
     sourceControlWritingStyle: ServerSettingsPatch.fields.sourceControlWritingStyle,

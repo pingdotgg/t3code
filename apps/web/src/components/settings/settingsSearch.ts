@@ -921,6 +921,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["logs traces processes resource history failures spans cpu memory"],
   },
   {
+    id: "agent-feedback",
+    title: "Agent feedback",
+    to: "/settings/maintenance",
+    scope: "environment-defaults",
+    searchTerms: ["report bug problem t3 team send feedback agents tools"],
+  },
+  {
     id: "open-source-licenses",
     title: "Open source licenses",
     to: "/settings/about",

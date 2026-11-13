@@ -142,7 +142,7 @@ const isThreadCliError = Schema.is(ThreadCliError);
  * These errors are expected outcomes for a script, so they print as one line
  * on stderr instead of the runtime's logged stack trace.
  */
-const reportThreadErrors = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+export const reportThreadErrors = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.tapError((error) =>
       isThreadCliError(error) ? Console.error(error.message) : Effect.void,
@@ -151,7 +151,7 @@ const reportThreadErrors = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 const decodeFailureText = Schema.decodeUnknownOption(Schema.fromJsonString(OrchestratorMcpFailure));
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-const printJson = (value: unknown) => Console.log(encodeJson(value));
+export const printJson = (value: unknown) => Console.log(encodeJson(value));
 
 const ToolResult = Schema.Struct({
   isError: Schema.optional(Schema.Boolean),
@@ -215,8 +215,8 @@ export type ThreadTools = ReturnType<typeof makeThreadTools>;
  * Signs in as a short-lived MCP client of the running server, the same way an
  * outside agent does, and revokes that session when the command ends.
  */
-const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
-  flags: { readonly baseDir: Option.Option<string> },
+export const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
+  flags: { readonly baseDir: Option.Option<string>; readonly clientLabel?: string },
   run: (tools: ThreadTools) => Effect.Effect<A, E, R>,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
@@ -230,7 +230,7 @@ const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E,
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const issued = yield* Effect.acquireRelease(
       environmentAuth.issueMcpClientSession({
-        label: "t3 thread cli",
+        label: flags.clientLabel ?? "t3 thread cli",
         // The CLI runs as the machine's owner. New threads still start at
         // the project's default mode, never at this ceiling by default.
         access: "full-access",
@@ -715,7 +715,7 @@ const launchWorkspaceStrategy = (input: {
       }),
   });
 
-const jsonFlag = Flag.Boolean("json").pipe(
+export const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Print JSON instead of text."),
   Flag.withDefault(false),
 );

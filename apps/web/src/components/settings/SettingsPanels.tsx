@@ -556,6 +556,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.enableProviderUpdateChecks !== DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
       ? ["Provider update checks"]
       : []),
+    ...(settings.agentFeedback.enabled !== DEFAULT_UNIFIED_SETTINGS.agentFeedback.enabled
+      ? ["Agent feedback"]
+      : []),
     ...(settings.continueThreadsAfterServerUpdate !==
     DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
       ? ["Continue threads after restarts"]
@@ -685,6 +688,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      agentFeedback: DEFAULT_UNIFIED_SETTINGS.agentFeedback,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       keepAwakeWhileAgentsWork: DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork,
@@ -2276,6 +2280,32 @@ export function MaintenanceSettingsPanel() {
             >
               View diagnostics
             </Button>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("agent-feedback")}
+          serverScoped
+          settingKeys={["agentFeedback"]}
+          description="Let agents send short reports about T3 Code problems they hit to the T3 team."
+          resetAction={
+            settings.agentFeedback.enabled !== DEFAULT_UNIFIED_SETTINGS.agentFeedback.enabled ? (
+              <SettingResetButton
+                label="agent feedback"
+                onClick={() =>
+                  updateSettings({ agentFeedback: DEFAULT_UNIFIED_SETTINGS.agentFeedback })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["agentFeedback"]}
+              checked={settings.agentFeedback.enabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ agentFeedback: { enabled: Boolean(checked) } })
+              }
+              aria-label="Agent feedback"
+            />
           }
         />
       </SettingsSection>

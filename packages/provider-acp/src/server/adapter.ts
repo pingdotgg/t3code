@@ -8231,6 +8231,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
           const sessionSetup = yield* Ref.get(activeSessionSetup);
           const runtimeInstructions = buildRuntimeInstructions({
+            agentFeedbackEnabled: turnInput.agentFeedbackEnabled ?? false,
             harness: flavor.runtimeHarness ?? driver,
             model: turnInput.modelSelection.model,
             pullRequestLinking:

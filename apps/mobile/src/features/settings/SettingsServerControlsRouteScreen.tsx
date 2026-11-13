@@ -206,6 +206,14 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   const uniform = <K extends keyof ServerSettings>(key: K) =>
     uniformMobileSetting(displayTargets, key);
   // `uniform` folds a real null into "mixed"; nullable keys need the distinction.
+  // An object setting, so `uniform`'s identity check would call it mixed.
+  const agentFeedbackEnabled =
+    reference !== null &&
+    displayTargets.every(
+      (entry) => entry.settings.agentFeedback.enabled === reference.settings.agentFeedback.enabled,
+    )
+      ? reference.settings.agentFeedback.enabled
+      : null;
   const isMixed = (key: keyof ServerSettings) =>
     reference === null ||
     displayTargets.some((entry) => entry.settings[key] !== reference.settings[key]);
@@ -597,6 +605,21 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ keepAwakeWhileAgentsWork: value })}
                     />
                   </View>
+                </SettingsSection>
+                <SettingsSection title="Diagnostics">
+                  <SettingsSwitchRow
+                    icon="bubble.left"
+                    label="Agent feedback"
+                    subtitle={managedSubtitle(
+                      "agentFeedback",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "Let agents send short reports about T3 Code problems they hit to the T3 team.",
+                    )}
+                    value={agentFeedbackEnabled}
+                    disabled={disabledFor("agentFeedback")}
+                    onValueChange={(enabled) => write({ agentFeedback: { enabled } })}
+                  />
                 </SettingsSection>
               </>
             ) : null}

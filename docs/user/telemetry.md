@@ -10,7 +10,27 @@ available. Child-agent token counts are reported separately from the main agent'
 are sent only when they appear in a provider's public model list.
 
 Product events do not include prompts, responses, file contents, authentication tokens, conversation IDs,
-raw provider events, or child-agent output.
+raw provider events, or child-agent output. The one exception is [agent feedback](#agent-feedback),
+which is off unless you turn it on.
+
+## Agent feedback
+
+Agent feedback lets agents tell the T3 team when T3 Code itself got in their way: a T3 tool or `t3`
+command that did not do what they expected, a confusing instruction, or a missing capability. It is
+off by default. Turn on **Agent feedback** in **Settings > Maintenance**, or ask your agent to send
+feedback about T3 Code and it will turn the setting on. Turn it off in the same place.
+
+While it is on, agents are told to report these problems, and you can send one yourself with
+`t3 feedback --kind bug --subject "t3 thread send" --expected "…" --actual "…"`. Each report has
+the kind of problem, the T3 tool or command it concerns, and up to 300 characters each of expected
+behavior, actual behavior, and workaround, written by the agent. Before anything is saved, T3 Code
+removes your home directory, user name, machine name, workspace paths, project title, branch, git
+remote, and anything that looks like a key, token, email address, or URL with a password. Reports
+from agents also name the provider, and the model when it is from the provider's public model list.
+Thread and project IDs and prompts are never sent.
+
+Reports are saved on your machine first. When product usage data is turned off, they stay there
+and are not sent. `t3 feedback list` shows recent reports and the thread each came from.
 
 ## Relay connection diagnostics
 
