@@ -1,6 +1,7 @@
 // Adapted from opencode (MIT). Copyright (c) 2025 opencode. See LICENSE.opencode.
 import type { SheetInfo } from "@betteroffice/xlsx";
 import type { CellAddr, CellRange, GridMeta, HyperlinkRegion } from "@betteroffice/xlsx/headless";
+import type { WorkbookView } from "../officePreviewProtocol";
 import type { Span } from "./sheet-cells";
 import type { Method } from "./worker-rpc";
 
@@ -70,11 +71,21 @@ export type SheetMethods = {
    * saved on a hidden sheet. Undefined when no sheet is visible.
    */
   readonly open: Method<
-    { readonly bytes: ArrayBuffer },
+    { readonly bytes: ArrayBuffer; readonly view: WorkbookView },
     { readonly tabs: readonly SheetTab[]; readonly layout: SheetLayout } | undefined
   >;
   /** Makes a sheet the active one; rejects, leaving the sheet before it active, when it cannot open. */
   readonly show: Method<{ readonly sheet: number }, SheetLayout>;
+  /** Preview-only size changes in CSS pixels; the source file is never saved. */
+  readonly resize: Method<
+    {
+      readonly sheet: number;
+      readonly axis: "row" | "column";
+      readonly index: number;
+      readonly delta: number;
+    },
+    Pick<SheetLayout, "info" | "chartWidth" | "chartHeight">
+  >;
   /** Paints a frame; undefined when even its smallest tiles cannot be drawn. */
   readonly frame: Method<SheetFrameRequest, SheetFrame | undefined>;
   /** Where a cell starts and where the cell past it starts, to scroll it into view. */
