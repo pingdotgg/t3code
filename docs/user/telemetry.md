@@ -31,7 +31,7 @@ as very short names, so turn agent feedback on knowingly. Reports from agents al
 provider, and the model when it is from the provider's public model list. T3 Code attaches no
 prompts, thread IDs, or project IDs to what is sent. The text is written by the agent, which is
 told not to quote your messages or code, but it can still contain something you wrote if the agent
-quotes it.
+quotes it. Leave private details out of a report you send yourself.
 
 Reports are saved on your machine first. When product usage data is turned off, they stay there
 and are not sent. `t3 feedback list` shows recent reports and the thread each came from.
