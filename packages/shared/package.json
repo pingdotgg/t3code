@@ -367,6 +367,10 @@
       "types": "./src/testing/symlinks.ts",
       "import": "./src/testing/symlinks.ts"
     },
+    "./databaseMigrationLog": {
+      "types": "./src/databaseMigrationLog.ts",
+      "import": "./src/databaseMigrationLog.ts"
+    },
     "./httpReadiness": {
       "types": "./src/httpReadiness.ts",
       "import": "./src/httpReadiness.ts"
