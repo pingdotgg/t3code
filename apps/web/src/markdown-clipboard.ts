@@ -159,16 +159,24 @@ function serializeList(list: Element, ordered: boolean, inTableCell: boolean): s
     .join("\n")}\n\n`;
 }
 
-function serializeBlockquote(quote: Element, inTableCell: boolean): string {
-  const content = outsideCode(serializeChildren(quote, inTableCell), (prose) =>
+function serializeBlockquote(quote: Element, inTableCell: boolean, marker = ""): string {
+  const body = outsideCode(serializeChildren(quote, inTableCell), (prose) =>
     prose.replace(/\n{3,}/g, "\n\n"),
   ).trim();
+  const content = marker && body ? `${marker}\n${body}` : marker || body;
   if (!content) return "";
   const quoted = content
     .split("\n")
     .map((line) => (line.length > 0 ? `> ${line}` : ">"))
     .join("\n");
   return `${quoted}\n\n`;
+}
+
+function serializeInsight(insight: Element, inTableCell: boolean): string {
+  const body = outsideCode(serializeChildren(insight, inTableCell), (prose) =>
+    prose.replace(/\n{3,}/g, "\n\n"),
+  ).trim();
+  return `★ Insight ${"─".repeat(37)}\n${body ? `${body}\n` : ""}${"─".repeat(49)}\n\n`;
 }
 
 function serializeDetails(details: Element): string {
@@ -231,6 +239,9 @@ function serializeNode(node: Node, inTableCell = false): string {
       : escapeTablePipes(markdownCopy, inTableCell);
   }
   if (isSkippedElement(element)) return "";
+  const alert = element.getAttribute("data-markdown-alert");
+  if (alert === "insight") return serializeInsight(element, inTableCell);
+  if (alert !== null) return serializeBlockquote(element, inTableCell, `[!${alert.toUpperCase()}]`);
 
   const headingLevel = /^H([1-6])$/.exec(element.tagName)?.[1];
   if (headingLevel) {
