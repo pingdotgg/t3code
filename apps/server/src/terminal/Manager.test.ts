@@ -1441,6 +1441,19 @@ it.layer(
       }),
   );
 
+  // Ghostty aborts a CSI at a non-ASCII code point and prints it and what follows.
+  it.effect("keeps a CSI interrupted by non-ASCII text in history", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      ptyAdapter.processes[0]!.emitData("A\u001b[界nB");
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      expect(reopened.history.split("\u001b[?1049h")[0]).toBe("A\u001b[界nB");
+    }),
+  );
+
   it.effect.each([
     { name: "OSC", sequence: "\u001b]0;unfinished" },
     { name: "DCS", sequence: "\u001bPunfinished" },
