@@ -2729,8 +2729,10 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
               : joinPrompt(outcome.fiber),
           ),
         ),
+    // A cancel that waits for its prompt holds the dispatch permit, so a next prompt cannot reach
+    // the agent ahead of it and take the cancel meant for the prompt before.
     cancel:
-      options.cancelBehavior === "wait-for-prompt"
+      options.cancelBehavior === "wait-for-prompt" || options.interruptPromptOnCancel === false
         ? promptDispatchSemaphore.withPermit(cancel)
         : cancel,
     ...(options.ownDetachedProcessGroup === true ? { terminateProcessGroup } : {}),
