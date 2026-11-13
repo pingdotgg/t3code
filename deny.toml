@@ -1,0 +1,76 @@
+# cargo-deny: advisories, licences, bans and sources (CRATES.md, "A separate repository").
+# Run: cargo deny --locked check   (tools/check.sh runs it when cargo-deny is installed)
+# A finding is fixed by a crate change in its own commit, not by a quiet exception here. An
+# exception names the crate, the reason and the date.
+
+[graph]
+# The targets we ship: Orbit (Linux musl) and the Mac desktop app.
+targets = [
+  "x86_64-unknown-linux-musl",
+  "aarch64-unknown-linux-musl",
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+]
+all-features = true
+
+[advisories]
+version = 2
+# Vulnerabilities always fail. Unmaintained and unsound crates fail too, for every crate in
+# the graph; `yanked` versions fail.
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+ignore = [
+  # Bundled SQLite < 3.54.0 (libsqlite3-sys 0.35 via rusqlite 0.37). Exposure: opening a
+  # database and `-wal` file that a less trusted party wrote; our store lives in our own state
+  # folder. Fixed by the planned rusqlite 0.42 switch (CRATES.md, switch 3). Remove this entry
+  # in that commit. Added 2026-11-13.
+  { id = "RUSTSEC-2026-0459", reason = "rusqlite 0.42 switch pending (CRATES.md switch 3)" },
+]
+
+[licenses]
+version = 2
+# The allow list from CRATES.md. Add a licence only after reading it.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "MPL-2.0",
+  "CC0-1.0",
+  "Unlicense",
+  "BSD-3-Clause",
+  "Unicode-3.0",
+  "Zlib",
+]
+confidence-threshold = 0.9
+# The list names the licences of the crates CRATES.md plans to adopt, too.
+unused-allowed-license = "allow"
+exceptions = []
+
+[licenses.private]
+# Our own crates are `publish = false`.
+ignore = true
+
+[bans]
+# Two versions of one crate cost binary size; warn, so the list shows in every run.
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+# CRATES.md rejected these for the one-thread runtime or their size; a pull that brings one in
+# fails here instead of in review.
+deny = [
+  { crate = "rayon", reason = "a thread pool of its own (CRATES.md, rule for the tracks)" },
+  { crate = "git2", reason = "C build and +3.8 MB RSS; we use the git CLI (CRATES.md)" },
+  { crate = "gix", reason = "+1.70 MB and +96 crates; we use the git CLI (CRATES.md)" },
+  { crate = "portable-pty", reason = "a blocking reader per PTY; use pty-process (CRATES.md)" },
+  { crate = "openssl-sys", reason = "no C TLS stack in a musl binary" },
+]
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

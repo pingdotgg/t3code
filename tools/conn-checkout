@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# Makes or updates a Conn monorepo checkout at the pinned commit (conn.pin), ready to be
+# CONN_MONOREPO, and prints the line to export.
+#
+#   tools/conn-checkout --source <git dir, checkout or URL> [--dest <dir>] [--commit <sha>]
+#                       [--web] [--no-install]
+#   tools/conn-checkout [--dest <dir>] ...      # update a checkout this tool made before
+#
+# --source  A local Git directory or checkout: the tool adds a detached worktree from its Git
+#           data and never touches its working tree, its branches or its remotes. A URL: the
+#           tool makes a blobless clone. Needed only when --dest does not exist yet.
+# --dest    Default: $CONN_CHECKOUT_DIR, else ${XDG_CACHE_HOME:-~/.cache}/conn-server/conn.
+# --commit  Default: the commit in conn.pin.
+# --web     Also build the web client (apps/web, `vp build`) for fixtures/recorder.
+# --no-install  Skip `vp i`.
+#
+# `vp i` runs when node_modules is missing or the lockfile changed since the last install.
+# The tool refuses a --dest with changes to tracked files. It fetches only in a clone it made
+# from a URL, never in a worktree of a shared Git directory.
+set -euo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+die() {
+  printf 'conn-checkout: %s\n' "$*" >&2
+  exit 1
+}
+say() { printf '%s\n' "$*" >&2; }
+
+source_arg=""
+dest="${CONN_CHECKOUT_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/conn-server/conn}"
+commit=""
+web=false
+install=true
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --source) source_arg="${2:?--source needs a value}"; shift 2 ;;
+    --dest) dest="${2:?--dest needs a value}"; shift 2 ;;
+    --commit) commit="${2:?--commit needs a value}"; shift 2 ;;
+    --web) web=true; shift ;;
+    --no-install) install=false; shift ;;
+    -h | --help) sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown argument: $1 (see --help)" ;;
+  esac
+done
+
+if [ -z "$commit" ]; then
+  [ -f "$repo/conn.pin" ] || die "no conn.pin in $repo"
+  commit="$(head -n 1 "$repo/conn.pin" | tr -d '[:space:]')"
+fi
+case "$commit" in
+  *[!0-9a-f]* | "") die "not a commit SHA: $commit" ;;
+esac
+
+# Prints the common Git directory of a local Git directory or checkout, or nothing.
+git_dir_of() {
+  local candidate="$1"
+  [ -d "$candidate" ] || return 0
+  if git -C "$candidate" rev-parse --git-common-dir >/dev/null 2>&1; then
+    (cd "$candidate" && cd "$(git rev-parse --git-common-dir)" && pwd)
+  elif git --git-dir="$candidate" rev-parse --git-dir >/dev/null 2>&1; then
+    (cd "$candidate" && pwd)
+  fi
+}
+
+has_commit() { git -C "$1" cat-file -e "$2^{commit}" 2>/dev/null; }
+
+lock_stamp() {
+  (cd "$1" && cat pnpm-lock.yaml pnpm-workspace.yaml package.json 2>/dev/null) |
+    { command -v shasum >/dev/null && shasum -a 256 || sha256sum; } | cut -d' ' -f1
+}
+
+if [ -e "$dest" ]; then
+  git -C "$dest" rev-parse --show-toplevel >/dev/null 2>&1 || die "$dest exists and is not a Git checkout"
+  [ "$(cd "$dest" && git rev-parse --show-toplevel)" = "$(cd "$dest" && pwd -P)" ] ||
+    die "$dest is inside a Git checkout but not its root"
+  git -C "$dest" diff --quiet HEAD -- || die "$dest has changes to tracked files; commit or discard them first"
+  if ! has_commit "$dest" "$commit"; then
+    if [ "$(git -C "$dest" rev-parse --git-dir)" = "$(git -C "$dest" rev-parse --git-common-dir)" ] &&
+      git -C "$dest" remote get-url origin >/dev/null 2>&1; then
+      say "fetching $commit into $dest"
+      git -C "$dest" fetch --quiet --filter=blob:none origin "$commit"
+    else
+      die "$commit is not in the Git data of $dest. It is a worktree of a shared repository: fetch the commit there yourself, then run this again."
+    fi
+  fi
+  say "moving $dest to $commit"
+  git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach "$commit"
+else
+  [ -n "$source_arg" ] || die "$dest does not exist: give --source <git dir, checkout or URL>"
+  mkdir -p "$(dirname "$dest")"
+  src_git="$(git_dir_of "$source_arg")"
+  if [ -n "$src_git" ]; then
+    has_commit "$src_git" "$commit" ||
+      die "$commit is not in $src_git; fetch it there first (this tool does not fetch in a shared repository)"
+    say "adding a detached worktree of $src_git at $dest"
+    git --git-dir="$src_git" worktree add --quiet --detach "$dest" "$commit"
+  else
+    say "cloning $source_arg into $dest (blobless)"
+    git clone --quiet --filter=blob:none --no-checkout "$source_arg" "$dest"
+    has_commit "$dest" "$commit" || git -C "$dest" fetch --quiet --filter=blob:none origin "$commit"
+    git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach "$commit"
+  fi
+fi
+
+dest="$(cd "$dest" && pwd -P)"
+[ -f "$dest/packages/contracts/package.json" ] || die "$dest has no packages/contracts: not a Conn checkout"
+
+if $install; then
+  command -v vp >/dev/null || die "vp (Vite+) is not on PATH; install it, or pass --no-install"
+  stamp_file="$dest/node_modules/.conn-checkout-stamp"
+  want="$(lock_stamp "$dest")"
+  have="$(cat "$stamp_file" 2>/dev/null || true)"
+  if [ ! -d "$dest/node_modules" ] || [ "$want" != "$have" ]; then
+    say "running vp i in $dest (several minutes on a fresh checkout)"
+    (cd "$dest" && vp i) >&2
+    printf '%s\n' "$want" >"$stamp_file"
+  else
+    say "node_modules is current for this lockfile"
+  fi
+fi
+
+if $web; then
+  say "building the web client (apps/web)"
+  (cd "$dest/apps/web" && vp build) >&2
+fi
+
+say "Conn checkout ready at $commit"
+printf 'export CONN_MONOREPO=%s\n' "$dest"

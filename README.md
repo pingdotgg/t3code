@@ -5,9 +5,9 @@ the T3 server (`apps/server` in the Conn monorepo, TypeScript on Effect) with a 
 memory footprint. We reproduce behaviour at three boundaries (the client contract, `/mcp`, the
 provider protocols). We do not translate the TypeScript.
 
-**Base:** Conn `origin/main` at `b685417bb6157408d3c3b78544dfd5bbc3e67753` (2026-11-13).
-**Contract:** `packages/contracts` last changed in `415dd488bac9dee7f7d2a869595f3c8f1da26863`
-(the 2026-11-13 upstream sync). `crates/conn-contract/methods.json` records it.
+**Base:** Conn `origin/main` at `b685417bb6157408d3c3b78544dfd5bbc3e67753` (2026-11-13). `conn.pin` holds it.
+**Contract:** `crates/conn-contract/methods.json` records the commit in which `packages/contracts`
+last changed.
 
 ## Run
 
@@ -106,6 +106,16 @@ node fixtures/recorder/record.mjs pairing rust-turn rust-restart rust-vcs rust-f
 ```
 
 See [`fixtures/README.md`](fixtures/README.md) for every scenario and which need a model.
+
+## Upkeep
+
+`conn.pin` is the one place the Conn commit is written. Two commands keep it current; see
+[`docs/upkeep.md`](docs/upkeep.md) for what the nightly bot runs.
+
+- `tools/conn-checkout --source <git dir or URL>` makes a Conn checkout at the pin (or updates
+  one) and prints the `CONN_MONOREPO` line to export.
+- `CONN_MONOREPO=<checkout at the new commit> tools/bump-conn.sh` moves the pin, regenerates,
+  runs `tools/check.sh` and prints what changed. It does not commit.
 
 ## Crates
 
