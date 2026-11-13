@@ -871,6 +871,23 @@ function isQueuedProviderThreadPlaceholder(providerThread: OrchestrationV2Provid
   );
 }
 
+// Retained sessions report after a handoff or fresh start without reclaiming the route.
+function providerThreadUpdateSelectsRoute(
+  thread: OrchestrationV2ThreadProjection["thread"],
+  providerThread: OrchestrationV2ProviderThread,
+  activeProviderThread: OrchestrationV2ProviderThread | undefined,
+): boolean {
+  return (
+    providerThread.appThreadId === thread.id &&
+    !isQueuedProviderThreadPlaceholder(providerThread) &&
+    (thread.activeProviderThreadId === null ||
+      providerThread.id === thread.activeProviderThreadId ||
+      (providerThread.providerInstanceId === thread.providerInstanceId &&
+        (activeProviderThread?.providerInstanceId !== providerThread.providerInstanceId ||
+          (providerThread.firstRunOrdinal ?? -1) >= (activeProviderThread.firstRunOrdinal ?? -1))))
+  );
+}
+
 export function applyToProjection(
   projection: OrchestrationV2ThreadProjection,
   event: OrchestrationV2DomainEvent,
@@ -989,14 +1006,15 @@ export function applyToProjection(
     case "provider-thread.updated":
       return {
         ...base,
-        thread:
-          event.payload.appThreadId === base.thread.id &&
-          !isQueuedProviderThreadPlaceholder(event.payload)
-            ? {
-                ...base.thread,
-                activeProviderThreadId: event.payload.id,
-              }
-            : base.thread,
+        thread: providerThreadUpdateSelectsRoute(
+          base.thread,
+          event.payload,
+          base.providerThreads.find(
+            (candidate) => candidate.id === base.thread.activeProviderThreadId,
+          ),
+        )
+          ? { ...base.thread, activeProviderThreadId: event.payload.id }
+          : base.thread,
         providerThreads: upsertById(base.providerThreads, event.payload),
       };
     case "provider-turn.updated":
@@ -2656,8 +2674,27 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               `;
                 const threadRow = threadRows[0];
-                if (threadRow !== undefined) {
-                  const thread = yield* decodeThreadPayload(threadRow.payload_json);
+                const thread =
+                  threadRow === undefined
+                    ? undefined
+                    : yield* decodeThreadPayload(threadRow.payload_json);
+                const activeRows =
+                  thread?.activeProviderThreadId == null ||
+                  thread.activeProviderThreadId === event.payload.id ||
+                  thread.providerInstanceId !== event.payload.providerInstanceId
+                    ? []
+                    : yield* sql<PayloadRow>`
+                  SELECT payload_json FROM orchestration_v2_projection_provider_threads
+                  WHERE provider_thread_id = ${thread.activeProviderThreadId} LIMIT 1
+                `;
+                const activeProviderThread =
+                  activeRows[0] === undefined
+                    ? undefined
+                    : yield* decodeProviderThreadPayload(activeRows[0].payload_json);
+                if (
+                  thread !== undefined &&
+                  providerThreadUpdateSelectsRoute(thread, event.payload, activeProviderThread)
+                ) {
                   const updatedThread = {
                     ...thread,
                     activeProviderThreadId: event.payload.id,

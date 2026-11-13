@@ -3270,6 +3270,8 @@ export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("message.dispatch"),
     notification: Schema.optional(OrchestrationV2Notification),
+    /** Buffered provider output must drain on the session that produced it. */
+    continuationProviderThreadId: Schema.optional(ProviderThreadId),
     /** Sends this pending guest message; the server uses the guest's text, not `text`. */
     guestMessageId: Schema.optional(GuestMessageId),
     ...OrchestrationV2CreationFields,
