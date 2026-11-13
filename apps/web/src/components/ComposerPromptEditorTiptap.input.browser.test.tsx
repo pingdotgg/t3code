@@ -15,6 +15,8 @@ import { createElement, createRef, useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
+import { useComposerTriggerState } from "./chat/useComposerTriggerState";
+
 import { act, fakeTimers, render } from "../../test/render";
 
 import { flatToMarkdown, pmToFlat, serializeEditorDoc } from "~/composer-rich-text-doc";
@@ -956,4 +958,55 @@ describe("an Arabic line", () => {
       box.left + box.width / 2,
     );
   });
+});
+
+it("continues an active path search through literal paste and keeps Escape dismissed", async () => {
+  function ActiveSearch() {
+    const [prompt, setPrompt] = useState("Inspect @Foreign ");
+    const state = useComposerTriggerState("Inspect @Foreign");
+    return (
+      <ComposerPromptEditor
+        editorRef={createRef<ComposerPromptEditorHandle>()}
+        value={prompt}
+        cursor={prompt.length}
+        skills={[]}
+        disabled={false}
+        placeholder=""
+        contextRecords={new Map()}
+        richTextEnabled={true}
+        isPathQueryActive={() => state.trigger?.kind === "path"}
+        onChange={(value, _cursor, expandedCursor) => {
+          setPrompt(value);
+          state.setTrigger(state.detectTrigger(value, expandedCursor, null));
+        }}
+        onPaste={() => {}}
+        onCommandKeyDown={(key) => {
+          if (key !== "Escape") return false;
+          state.dismissTrigger(state.trigger);
+          return true;
+        }}
+      />
+    );
+  }
+  await using screen = await render(<ActiveSearch />);
+  const editor = editorIn(screen.container);
+  await act(() => {
+    editor.commands.focus("end");
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", "__Subsidiaries__.md");
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("Inspect @Foreign __Subsidiaries__.md");
+  expect(editor.view.dom.querySelector("strong")).toBeNull();
+  await act(() =>
+    editor.view.dom.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+  );
+  await act(() => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", " __ordinary__");
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(
+    "Inspect @Foreign __Subsidiaries__.md **ordinary**",
+  );
 });

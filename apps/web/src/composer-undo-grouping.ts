@@ -9,12 +9,12 @@ export type ComposerChangeKind = "insert" | "delete" | "other";
 
 /** Tag custom paste/cut dispatches; ProseMirror only tags its built-in paths. */
 export function markAsClipboardEdit(tr: Transaction, event: "paste" | "cut"): Transaction {
-  return tr.setMeta("uiEvent", event);
+  return tr.setMeta("composerClipboardEdit", event);
 }
 
 function changeKindOf(tr: Transaction): ComposerChangeKind | null {
   if (!tr.docChanged) return null;
-  const uiEvent = tr.getMeta("uiEvent");
+  const uiEvent = tr.getMeta("composerClipboardEdit") ?? tr.getMeta("uiEvent");
   if (uiEvent === "paste" || uiEvent === "drop" || uiEvent === "cut") return "other";
   // IME input replaces its own range on each keystroke; it is still typing.
   if (tr.getMeta("composition") != null) return "insert";

@@ -1,3 +1,4 @@
+import { isSpacedComposerQueryUnmatched } from "@t3tools/shared/composerTrigger";
 import type { ChatComposerProps } from "./ChatComposer";
 import { type ComposerCommandItem } from "./ComposerCommandMenu";
 import {
@@ -237,7 +238,17 @@ export function composerCommandKeyHandler(input: {
         nudgeComposerMenuHighlight("ArrowUp");
         return true;
       }
-      if ((key === "Enter" || key === "Tab") && selectedItem) {
+      if (
+        (key === "Enter" || key === "Tab") &&
+        selectedItem &&
+        trigger !== null &&
+        !(
+          trigger.kind === "path" &&
+          isSpacedComposerQueryUnmatched(trigger.query, [
+            selectedItem.type === "path" ? selectedItem.path : selectedItem.label,
+          ])
+        )
+      ) {
         onSelectComposerItem(selectedItem);
         return true;
       }

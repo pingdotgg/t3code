@@ -30,6 +30,8 @@ import {
 } from "../../state/use-composer-drafts";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
+  continueComposerPathTrigger,
+  isSpacedComposerQueryUnmatched,
   detectComposerTrigger,
   replaceTextRange,
   serializeComposerFileLink,
@@ -328,23 +330,94 @@ export function useComposerCommandMenu({
     setSelection(nextSelection);
   };
 
-  const trigger = (() => {
-    if (!enabled || selection.start !== selection.end) {
-      return null;
-    }
-    return detectComposerTrigger(draftMessage, selection.end);
-  })();
+  const [previousSearch, setPreviousSearch] = useState(() => ({
+    ownerKey,
+    draftMessage,
+    selection,
+    localSelection,
+    insertedSelection,
+    cursor: selection.end,
+    queryEnd: selection.end,
+    enabled,
+    trigger:
+      enabled && selection.start === selection.end
+        ? detectComposerTrigger(draftMessage, selection.end)
+        : null,
+  }));
+  // Searches for the stored trigger: a change below re-renders before commit, so the committed
+  // render searches the current query while the update can check the previous results.
   const pathSearch = useComposerPathSearch({
     environmentId,
-    cwd: trigger?.kind === "path" ? projectCwd : null,
-    query: trigger?.kind === "path" ? trigger.query : null,
+    cwd: previousSearch.trigger?.kind === "path" ? projectCwd : null,
+    query: previousSearch.trigger?.kind === "path" ? previousSearch.trigger.query : null,
   });
-  // Mounts older settled threads matching the mention, which shells may leave out.
-  useThreadSearch(
-    trigger?.kind === "path" && environmentId ? [environmentId] : [],
-    trigger?.kind === "path" ? trigger.query : "",
+  const threadSearch = useThreadSearch(
+    previousSearch.trigger?.kind === "path" && environmentId ? [environmentId] : [],
+    previousSearch.trigger?.kind === "path" ? previousSearch.trigger.query : "",
     { titlesOnly: true },
   );
+  let trigger = previousSearch.trigger;
+  if (
+    previousSearch.ownerKey !== ownerKey ||
+    previousSearch.draftMessage !== draftMessage ||
+    previousSearch.localSelection !== localSelection ||
+    previousSearch.insertedSelection?.start !== insertedSelection?.start ||
+    previousSearch.insertedSelection?.end !== insertedSelection?.end ||
+    previousSearch.enabled !== enabled
+  ) {
+    // Draft updates can lead selection updates by several edits. Accumulate
+    // those edits from the predicted cursor until selection catches up.
+    const cursor =
+      previousSearch.ownerKey !== ownerKey
+        ? selection.end
+        : previousSearch.localSelection === localSelection &&
+            previousSearch.insertedSelection?.start === insertedSelection?.start &&
+            previousSearch.insertedSelection?.end === insertedSelection?.end
+          ? previousSearch.cursor + draftMessage.length - previousSearch.draftMessage.length
+          : selection.end;
+    const continued = continueComposerPathTrigger(
+      draftMessage,
+      cursor,
+      previousSearch.ownerKey === ownerKey ? previousSearch.trigger : null,
+      previousSearch.draftMessage,
+      previousSearch.queryEnd,
+      pathSearch.isPending || pathSearch.truncated || threadSearch.isPending
+        ? null
+        : [
+            ...pathSearch.entries.map((entry) => entry.path),
+            ...threadShells.map((shell) => shell.title),
+            ...environments
+              .filter((environment) => environment.environmentId !== environmentId)
+              .map((environment) => environment.label),
+            ...(modelOptions && modelProviders
+              ? buildComposerModelItems(
+                  modelOptions,
+                  draftMessage.slice((previousSearch.trigger?.rangeStart ?? 0) + 1, cursor),
+                  modelProviders,
+                ).map((item) => item.label)
+              : []),
+          ],
+    );
+    trigger =
+      enabled && selection.start === selection.end
+        ? (detectComposerTrigger(draftMessage, cursor) ?? continued?.trigger ?? null)
+        : null;
+    const queryEnd =
+      trigger?.kind === "path" && trigger.rangeStart === continued?.trigger.rangeStart
+        ? continued.queryEnd
+        : (trigger?.rangeEnd ?? 0);
+    setPreviousSearch({
+      ownerKey,
+      draftMessage,
+      selection,
+      localSelection,
+      insertedSelection,
+      cursor,
+      queryEnd,
+      enabled,
+      trigger,
+    });
+  }
   const pullRequestSearch = useComposerPullRequestSearch({
     environmentId,
     projectId: pullRequestProjectId,
@@ -535,8 +608,25 @@ export function useComposerCommandMenu({
     return [];
   })();
 
+  if (
+    trigger?.kind === "path" &&
+    !pathSearch.isPending &&
+    !pathSearch.truncated &&
+    !threadSearch.isPending &&
+    isSpacedComposerQueryUnmatched(
+      trigger.query,
+      items.map((item) => (item.type === "path" ? item.path : item.label)),
+    )
+  )
+    trigger = null;
+
   const onSelect = (item: ComposerCommandItem) => {
     if (!trigger) return;
+    if (
+      trigger.kind === "path" &&
+      isSpacedComposerQueryUnmatched(trigger.query, [item.type === "path" ? item.path : item.label])
+    )
+      return;
     if (item.type === "environment") {
       if (!ownerKey || trigger.kind !== "path") return;
       const record = environmentComposerContext(item.environmentId, item.label);
@@ -654,10 +744,12 @@ export function useComposerCommandMenu({
     selection,
     onSelectionChange,
     trigger,
-    items,
+    items: trigger ? items : [],
     skills,
     isLoading:
-      trigger?.kind === "pull-request" ? pullRequestSearch.isPending : pathSearch.isPending,
+      trigger?.kind === "pull-request"
+        ? pullRequestSearch.isPending
+        : pathSearch.isPending || threadSearch.isPending,
     error:
       trigger?.kind === "pull-request"
         ? pullRequestProjectId === null || pullRequestRepository === null

@@ -295,9 +295,10 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
 export function pastedPathQueryLength(
   lineBefore: string,
   pasted: string,
-  pathQueryActive = true,
+  pathQueryActive?: boolean,
 ): number {
-  if (!pathQueryActive) return 0;
+  if (pathQueryActive === true) return /^[^\r\n\t]*/.exec(pasted)![0].length;
+  if (pathQueryActive === false) return 0;
   if (detectComposerTrigger(lineBefore, lineBefore.length)?.kind !== "path") return 0;
   return /^\S*/.exec(pasted)![0].length;
 }

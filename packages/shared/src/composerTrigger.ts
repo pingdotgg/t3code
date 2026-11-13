@@ -45,6 +45,52 @@ function isWhitespace(char: string): boolean {
   return char === " " || char === "\n" || char === "\t" || char === "\r";
 }
 
+/**
+ * A spaced @ query that no result contains literally is prose: the fuzzy search would
+ * otherwise turn a typed sentence into a mention on Enter. `resultTexts` holds the settled
+ * results' paths and labels, or null when they cannot rule a query out (loading or capped).
+ */
+export function isSpacedComposerQueryUnmatched(
+  query: string,
+  resultTexts: readonly string[] | null,
+): boolean {
+  if (!query.includes(" ") || resultTexts === null) return false;
+  const needle = query.toLowerCase();
+  return !resultTexts.some((text) => text.toLowerCase().includes(needle));
+}
+
+/** Continue an already open @ search across spaces without finding old mentions in prose. */
+export function continueComposerPathTrigger(
+  text: string,
+  cursorInput: number,
+  previous: ComposerTrigger | null,
+  previousText: string,
+  previousQueryEnd: number,
+  resultTexts: readonly string[] | null,
+): { trigger: ComposerTrigger & { kind: "path" }; queryEnd: number } | null {
+  if (previous?.kind !== "path") return null;
+  const cursor = clampCursor(text, cursorInput);
+  const start = previous.rangeStart;
+  const queryEnd = previousQueryEnd + text.length - previousText.length;
+  // Only edits within the active query may extend its range. A caret jump must
+  // not absorb the unchanged suffix of the prompt into a mention replacement.
+  if (
+    text[start] !== "@" ||
+    cursor <= start ||
+    cursor > queryEnd ||
+    text.slice(0, start + 1) !== previousText.slice(0, start + 1) ||
+    text.slice(queryEnd) !== previousText.slice(previousQueryEnd)
+  )
+    return null;
+  const query = text.slice(start + 1, cursor);
+  if (/[\r\n\t\uFFFC]/u.test(query)) return null;
+  if (isSpacedComposerQueryUnmatched(query, resultTexts)) return null;
+  return {
+    trigger: { kind: "path", query, rangeStart: start, rangeEnd: cursor },
+    queryEnd,
+  };
+}
+
 /** A second slash or backslash makes the whole word a path, even when the caret precedes it. */
 export function isPathWord(
   text: string,
