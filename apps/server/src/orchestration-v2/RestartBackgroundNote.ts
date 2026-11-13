@@ -137,10 +137,12 @@ export function restartCancelledBackgroundWorkNote(work: ReadonlyArray<Work>): s
 }
 
 /**
- * Delegated tasks a Stop on this thread interrupted, until a turn requested after they ended
- * completes. A run's turn start reads tasks after its request, but can record startedAt later.
+ * Delegated tasks a Stop on this provider thread interrupted, until a turn requested after they
+ * ended completes. A run's turn start reads tasks after its request, but can record startedAt
+ * later. A fresh context starts a new provider thread, so it never inherits the note.
  */
 export function pendingStoppedDelegatedTasks(input: {
+  readonly providerThreadId: OrchestrationV2Run["providerThreadId"];
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>;
   readonly attempts: ReadonlyArray<Attempt>;
@@ -149,7 +151,11 @@ export function pendingStoppedDelegatedTasks(input: {
 }): ReadonlyArray<OrchestrationV2Subagent> {
   const stoppedRunIds = new Set(
     input.runs
-      .filter((run) => run.delegatedCompletion?.disposition === "stopped")
+      .filter(
+        (run) =>
+          run.providerThreadId === input.providerThreadId &&
+          run.delegatedCompletion?.disposition === "stopped",
+      )
       .map((run) => run.id),
   );
   if (stoppedRunIds.size === 0) return [];

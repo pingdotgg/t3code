@@ -789,6 +789,7 @@ export const layer: Layer.Layer<
         !projection.runs.some((source) => source.delegatedCompletion?.disposition === "stopped")
           ? []
           : pendingStoppedDelegatedTasks({
+              providerThreadId: run.providerThreadId,
               runs: projection.runs,
               providerTurns: projection.providerTurns,
               attempts: projection.attempts,

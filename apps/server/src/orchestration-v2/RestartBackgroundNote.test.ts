@@ -285,8 +285,9 @@ it("tells the next completed turn about delegated tasks its Stop interrupted, on
     task("finished", { status: "completed" }),
     task("delivered", { completionDelivery: { state: "delivered", observedByRunId: null } }),
   ];
-  const pending = (runs: ReadonlyArray<OrchestrationV2Run>) =>
+  const pending = (runs: ReadonlyArray<OrchestrationV2Run>, providerThreadId = claudeThread) =>
     pendingStoppedDelegatedTasks({
+      providerThreadId,
       runs,
       providerTurns: runs.map(turnFor),
       attempts: runs.map((source) => ({ id: source.activeAttemptId!, runId: source.id })),
@@ -295,6 +296,8 @@ it("tells the next completed turn about delegated tasks its Stop interrupted, on
     });
 
   assert.deepEqual(pending([spawning]), [stopped]);
+  // A /clear turn starts a fresh provider thread that never saw the stopped tasks.
+  assert.deepEqual(pending([spawning], codexThread), []);
   assert.equal(stoppedDelegatedTasksNote([stopped]).split("\n")[1], "- Build A (task stopped)");
   // Requested while the task was still settling, so its turn start could not see it.
   const racing = run(2, claudeThread, { requestedAt: at(0), startedAt: at(2) });
