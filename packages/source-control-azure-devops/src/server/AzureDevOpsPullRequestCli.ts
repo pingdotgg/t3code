@@ -54,7 +54,23 @@ export class AzureDevOpsViewerUnavailableError extends Schema.TaggedError<AzureD
   },
 ) {
   get detail(): string {
-    return "Azure CLI could not name the signed-in account. Run `az login` and retry.";
+    return "Azure CLI could not name the signed-in account. Run `az devops login` and retry.";
+  }
+
+  override get message(): string {
+    return `Azure CLI failed in getViewer: ${this.detail}`;
+  }
+}
+
+export class AzureDevOpsViewerAnonymousError extends Schema.TaggedError<AzureDevOpsViewerAnonymousError>()(
+  "AzureDevOpsViewerAnonymousError",
+  {
+    command: Schema.Literal("az"),
+    cwd: Schema.String,
+  },
+) {
+  get detail(): string {
+    return "Azure DevOps returned an anonymous identity. Run `az devops login` and retry.";
   }
 
   override get message(): string {
@@ -100,7 +116,8 @@ export type AzureDevOpsPullRequestCliError =
   | AzureDevOpsPullRequestReadError
   | AzureDevOpsPullRequestIncompleteError
   | AzureDevOpsReviewerNameError
-  | AzureDevOpsViewerUnavailableError;
+  | AzureDevOpsViewerUnavailableError
+  | AzureDevOpsViewerAnonymousError;
 
 const REST_API_VERSION = "7.1";
 const PULL_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -446,9 +463,9 @@ export const make = Effect.gen(function* () {
 
   return AzureDevOpsPullRequestCli.of({
     getViewer: Effect.fn("AzureDevOpsPullRequestCli.getViewer")(function (input) {
-      return executeJson({ cwd: input.cwd, args: ["account", "show", "--query", "user"] }).pipe(
+      return azure.execute({ cwd: input.cwd, args: AzureDevOpsCli.connectionDataArgs }).pipe(
         Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
-          const decoded = decodeViewerJson(`{"user":${result.stdout.trim() || "null"}}`);
+          const decoded = decodeViewerJson(result.stdout);
           if (!Result.isSuccess(decoded)) {
             return Effect.fail(
               new AzureDevOpsPullRequestReadError({
@@ -459,13 +476,21 @@ export const make = Effect.gen(function* () {
               }),
             );
           }
-          return decoded.success === null
-            ? Effect.fail(new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }))
-            : Effect.succeed(decoded.success);
+          const viewer = decoded.success;
+          if (viewer._tag === "Anonymous") {
+            return Effect.fail(
+              new AzureDevOpsViewerAnonymousError({ command: "az", cwd: input.cwd }),
+            );
+          }
+          return viewer.account !== null
+            ? Effect.succeed(viewer.account)
+            : Effect.fail(new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }));
         }),
-        // `az account show` cannot identify PAT logins; the extension resolves `--creator me`.
+        // The extension can identify its current actor if connectionData is unavailable.
         Effect.catchIf(
-          (error) => error._tag !== "AzureDevOpsCliUnavailableError",
+          (error) =>
+            error._tag !== "AzureDevOpsCliUnavailableError" &&
+            error._tag !== "AzureDevOpsViewerAnonymousError",
           () =>
             executeJson({
               cwd: input.cwd,

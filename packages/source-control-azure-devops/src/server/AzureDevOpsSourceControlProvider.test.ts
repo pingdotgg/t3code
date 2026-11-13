@@ -3,6 +3,7 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import { processOutput } from "@t3tools/source-control-testing/TestSourceControlHost";
+import { probeSourceControlProvider } from "@t3tools/source-control-core/server/discovery";
 import { assert, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -31,7 +32,61 @@ it("reads the signed-in Azure account and says when az is signed out", () => {
     "unauthenticated",
   );
   assert.strictEqual(parseAuth(processOutput("\n")).status, "unknown");
+  assert.strictEqual(
+    parseAuth(
+      processOutput(
+        JSON.stringify({
+          authenticatedUser: {
+            id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            descriptor: "System:PublicAccess;aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            isActive: true,
+            properties: { Account: { $value: "Anonymous" } },
+          },
+        }),
+      ),
+    ).status,
+    "unauthenticated",
+  );
 });
+
+it.effect("finds a PAT sign-in without letting one organization revoke an Azure login", () =>
+  Effect.gen(function* () {
+    const signedOut = processOutput("", {
+      stderr: "Please run 'az login' to setup account.\n",
+      exitCode: ChildProcessSpawner.ExitCode(1),
+    });
+    const rejected = processOutput("", {
+      stderr: "TF400813: The user is not authorized to access this resource.\n",
+      exitCode: ChildProcessSpawner.ExitCode(1),
+    });
+    const connectionData = processOutput(
+      JSON.stringify({
+        authenticatedUser: { id: "pat-id", properties: { Account: { $value: "pat@acme.dev" } } },
+      }),
+    );
+    for (const [account, devops, expected] of [
+      [signedOut, connectionData, "pat@acme.dev"],
+      [processOutput("aad@acme.dev\n"), rejected, "aad@acme.dev"],
+    ] as const) {
+      const item = yield* probeSourceControlProvider({
+        spec: AzureDevOpsSourceControlProvider.discovery,
+        cwd: "/repo",
+        process: {
+          run: ({ args }) =>
+            Effect.succeed(
+              args[0] === "--version"
+                ? processOutput("azure-cli 2.86.0\n")
+                : args[0] === "account"
+                  ? account
+                  : devops,
+            ),
+        },
+      });
+      assert.strictEqual(item.auth.status, "authenticated");
+      assert.deepStrictEqual(item.auth.account, Option.some(expected));
+    }
+  }),
+);
 
 it.effect("names the remote's repository when reading the default branch", () => {
   const run = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>(() =>

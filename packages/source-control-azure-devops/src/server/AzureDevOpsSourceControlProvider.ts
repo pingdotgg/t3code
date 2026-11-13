@@ -1,8 +1,10 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
+import { decodeViewerJson } from "./azureDevOpsPullRequestJson.ts";
 import type { NormalizedAzureDevOpsPullRequestRecord } from "./azureDevOpsPullRequests.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
@@ -14,17 +16,28 @@ import {
 } from "@t3tools/source-control-core/server/discovery";
 
 function parseAzureAuth(input: SourceControlAuthProbeInput) {
-  const account = input.stdout.trim().split(/\r?\n/)[0]?.trim();
-
   if (input.exitCode !== 0) {
     return providerAuth({
       status: "unauthenticated",
       detail:
-        firstSafeAuthLine(combinedAuthOutput(input)) ?? "Run `az login` to authenticate Azure CLI.",
+        firstSafeAuthLine(combinedAuthOutput(input)) ??
+        "Run `az login` or `az devops login` to authenticate Azure DevOps.",
     });
   }
 
-  if (account !== undefined && account.length > 0) {
+  // `authArgs` prints the account name; the connectionData retry prints JSON.
+  const decoded = decodeViewerJson(input.stdout);
+  const viewer = Result.isSuccess(decoded) ? decoded.success : null;
+  if (viewer?._tag === "Anonymous") {
+    return providerAuth({
+      status: "unauthenticated",
+      host: "dev.azure.com",
+      detail: "Run `az devops login` to authenticate Azure DevOps.",
+    });
+  }
+  const account = viewer === null ? input.stdout.trim().split(/\r?\n/)[0]?.trim() : viewer.account;
+
+  if (account) {
     return providerAuth({
       status: "authenticated",
       account,
@@ -46,6 +59,9 @@ export const discovery = {
   executable: "az",
   versionArgs: ["--version"],
   authArgs: ["account", "show", "--query", "user.name", "-o", "tsv"],
+  // `az account show` cannot see PAT sign-ins (`az devops login`). Discovery runs in the server's
+  // directory, whose organization may not be the project's, so this may only add a sign-in.
+  authRetryArgs: AzureDevOpsCli.connectionDataArgs,
   // `az --version` starts Python and takes ~6s on Windows, exceeding the default probe timeout.
   probeTimeoutMs: 20_000,
   parseAuth: parseAzureAuth,
