@@ -1856,52 +1856,75 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect("imports a Codex prompt whose inline image exceeds the history budget", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
-        yield* TestClock.setTime(nowMs);
-        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
-        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        const workspace = yield* makeTempDir("t3code-workspace-");
-        yield* writeTranscript({
-          filePath: path.join(codexHomePath, "sessions", "2026", "08", "24", "rollout-image.jsonl"),
-          contents: [
-            encodeTranscriptRecord({
-              type: "session_meta",
-              payload: { id: "image-session", cwd: workspace },
-            }),
-            encodeTranscriptRecord({
-              type: "event_msg",
-              payload: {
-                type: "user_message",
-                message: "Describe this screenshot",
-                images: [`data:image/png;base64,${"A".repeat(17 * 1024 * 1024)}`],
-              },
-            }),
-            encodeTranscriptRecord({
-              type: "response_item",
-              payload: {
-                type: "message",
-                role: "assistant",
-                content: [{ type: "output_text", text: "A login form." }],
-              },
-            }),
-          ].join("\n"),
-          mtimeMs: nowMs,
-        });
+    it.effect(
+      "imports an image-only Codex prompt whose inline image exceeds the history budget",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+          yield* TestClock.setTime(nowMs);
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const workspace = yield* makeTempDir("t3code-workspace-");
+          const context = "<environment_context>\n<cwd>/tmp/project</cwd>\n</environment_context>";
+          const image = `data:image/png;base64,${"A".repeat(17 * 1024 * 1024)}`;
+          yield* writeTranscript({
+            filePath: path.join(
+              codexHomePath,
+              "sessions",
+              "2026",
+              "08",
+              "24",
+              "rollout-image.jsonl",
+            ),
+            contents: [
+              encodeTranscriptRecord({
+                type: "session_meta",
+                payload: { id: "image-session", cwd: workspace },
+              }),
+              encodeTranscriptRecord({
+                type: "response_item",
+                payload: {
+                  type: "message",
+                  role: "user",
+                  content: [{ type: "input_text", text: context }],
+                },
+              }),
+              encodeTranscriptRecord({
+                type: "event_msg",
+                payload: { type: "user_message", message: "", images: [image], local_images: [] },
+              }),
+              encodeTranscriptRecord({
+                type: "response_item",
+                payload: {
+                  type: "message",
+                  role: "user",
+                  content: [{ type: "input_image", image_url: image }],
+                },
+              }),
+              encodeTranscriptRecord({
+                type: "response_item",
+                payload: {
+                  type: "message",
+                  role: "assistant",
+                  content: [{ type: "output_text", text: "A login form." }],
+                },
+              }),
+            ].join("\n"),
+            mtimeMs: nowMs,
+          });
 
-        const threads = yield* runRecentThreads({
-          claudeHomePath,
-          codexHomePath,
-          workspaceRoot: workspace,
-        });
+          const threads = yield* runRecentThreads({
+            claudeHomePath,
+            codexHomePath,
+            workspaceRoot: workspace,
+          });
 
-        expect(threads[0]?.messages.map((message) => message.text)).toEqual([
-          "Describe this screenshot",
-          "A login form.",
-        ]);
-      }),
+          expect(threads[0]?.messages.map((message) => message.text)).toEqual([
+            context,
+            "A login form.",
+          ]);
+        }),
     );
 
     it.effect("suppresses duplicate session copies without reporting a skipped import", () =>
@@ -3381,6 +3404,16 @@ describe("parseAgentSessionTranscript", () => {
             item: { type: "UserMessage", content: [{ type: "text", text: "Ship it" }] },
           },
         }),
+        assistant("Shipped."),
+        responseUser("Review the old code"),
+        encodeTranscriptRecord({ type: "event_msg", payload: { type: "turn_aborted" } }),
+        encodeTranscriptRecord({ type: "event_msg", payload: { type: "task_started" } }),
+        encodeTranscriptRecord({
+          type: "event_msg",
+          payload: { type: "user_message", message: "Review the new code" },
+        }),
+        responseUser("Review the new code"),
+        assistant("Done"),
       ].join("\n"),
       source: "codex",
       providerInstanceId: ProviderInstanceId.make("codex"),
@@ -3399,6 +3432,10 @@ describe("parseAgentSessionTranscript", () => {
       "[Image #1]",
       "Nice screenshot.",
       "Ship it",
+      "Shipped.",
+      "Review the old code",
+      "Review the new code",
+      "Done",
     ]);
   });
 

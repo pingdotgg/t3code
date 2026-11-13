@@ -404,6 +404,14 @@ function codexUserText(text: string): string {
     .join("\n\n");
 }
 
+// An interrupted turn ends without an assistant message.
+function isCodexTurnEnd(record: DecodedTranscriptRecord): boolean {
+  return (
+    record.type === "event_msg" &&
+    (record.payload?.type === "turn_aborted" || record.payload?.type === "task_complete")
+  );
+}
+
 // Codex shows a prompt's images as these placeholders; an image-only prompt is only them.
 function codexImagePlaceholders(text: string, imageCount: number): string {
   if (text.trim().length > 0) return text;
@@ -588,8 +596,12 @@ function parseAgentSessionRecords(
       turnHasUserEvent = false;
     };
     for (const record of records) {
-      if (codexUserEventText(record) !== null) {
-        turnHasUserEvent = true;
+      const eventText = codexUserEventText(record);
+      if (eventText !== null) {
+        // An event with nothing to show, like an inline image alone, cannot stand in for its copies.
+        if (eventText.trim().length > 0) turnHasUserEvent = true;
+      } else if (isCodexTurnEnd(record)) {
+        finishTurn();
       } else if (record.type === "response_item" && record.payload?.type === "message") {
         if (record.payload.role === "assistant") finishTurn();
         else if (record.payload.role === "user") turnResponseUsers.push(record);
@@ -713,6 +725,7 @@ function shouldRetainDecodedRecord(
     record.type === "session_meta" ||
     record.type === "turn_context" ||
     codexUserEventText(record) !== null ||
+    isCodexTurnEnd(record) ||
     (record.type === "response_item" &&
       record.payload?.type === "message" &&
       (record.payload.role === "user" || record.payload.role === "assistant"))
