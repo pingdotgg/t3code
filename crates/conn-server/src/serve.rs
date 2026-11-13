@@ -34,6 +34,8 @@ pub struct ServeOptions {
     pub desktop: Option<DesktopBootstrap>,
     /// How long an idle provider session stays open; `None` keeps it open.
     pub session_idle: Option<Duration>,
+    /// `--claude-helper`. Read by `main` when it builds the Claude provider.
+    pub claude_helper: Option<PathBuf>,
 }
 
 impl ServeOptions {
@@ -81,6 +83,7 @@ impl ServeOptions {
             cwd: args.cwd,
             desktop,
             session_idle: args.session_idle,
+            claude_helper: args.claude_helper,
         }
     }
 }
@@ -96,6 +99,7 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
         cwd,
         desktop,
         session_idle,
+        claude_helper: _,
     } = options;
     let _ownership = match home::acquire_ownership(&state_dir) {
         Ok(lock) => lock,

@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use conn_provider::Provider;
-use conn_provider_claude::{ClaudeConfig, ClaudeProvider};
+use conn_provider_claude::{ClaudeConfig, ClaudeProvider, HelperCommand};
 use conn_server::serve::{ServeOptions, serve};
 
 fn main() {
     // Runs and exits for every command but `serve`.
     let options = ServeOptions::from_args();
-    let claude = ClaudeConfig {
+    let mut claude = ClaudeConfig {
         // `conn-files` stores attachments here; the CLI may read them.
         attachments_dir: Some(options.state_dir.join("attachments")),
         // The engine closes idle sessions (`--session-idle-timeout`), one rule for all.
@@ -20,6 +20,9 @@ fn main() {
         )),
         ..ClaudeConfig::default()
     };
+    if let Some(helper) = &options.claude_helper {
+        claude.helper = HelperCommand::from_path(helper);
+    }
     let mut providers: Vec<Arc<dyn Provider>> =
         vec![Arc::new(ClaudeProvider::new("claudeAgent".into(), claude))];
     if let Some(codex) =
