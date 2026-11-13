@@ -1056,6 +1056,8 @@ export class BoundedTerminalHistory {
       }
       const dropped = first.data.slice(0, index);
       this.trimChunk(index, Buffer.byteLength(dropped), dropped.split("\n").length - 1);
+      // The exit can be a non-ASCII code point that aborts the sequence before it is consumed.
+      this.sequenceState = TERMINAL_SEQUENCE_GROUND;
     }
     if (
       this.start === this.chunks.length ||

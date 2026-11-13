@@ -425,12 +425,15 @@ it("bounds long partial lines and joins surrogate pairs across chunk boundaries"
 });
 
 it.each([
-  ["CSI", "prefix\u001b[31mOK", 6],
-  ["OSC", "prefix\u001b]0;HIDDEN\u0007OK", 10],
+  ["CSI", "prefix\u001b[31mOK", 6, "OK"],
+  ["OSC", "prefix\u001b]0;HIDDEN\u0007OK", 10, "OK"],
+  ["non-ASCII-aborted CSI", "prefix\u001b[12🙂OK", 7, "🙂OK"],
 ] as const)(
   "byte eviction never retains the tail of a cut %s sequence",
-  (_kind, text, maxBytes) => {
-    expect(new TerminalManager.BoundedTerminalHistory(5_000, text, maxBytes).value()).toBe("OK");
+  (_kind, text, maxBytes, expected) => {
+    expect(new TerminalManager.BoundedTerminalHistory(5_000, text, maxBytes).value()).toBe(
+      expected,
+    );
   },
 );
 

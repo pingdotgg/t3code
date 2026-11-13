@@ -26,7 +26,7 @@ function nextTerminalSequenceState(state: number, code: number): number {
     case SEQUENCE_STRING:
       return code === 0x07 || code === 0x9c ? TERMINAL_SEQUENCE_GROUND : state;
     case SEQUENCE_CSI:
-      return code >= 0x40 && code <= 0x7e ? TERMINAL_SEQUENCE_GROUND : state;
+      return code >= 0x40 && code !== 0x7f ? TERMINAL_SEQUENCE_GROUND : state;
   }
   if (state === SEQUENCE_ESCAPE) {
     if (code === 0x5b) return SEQUENCE_CSI;
@@ -67,7 +67,12 @@ export function terminalSequenceExit(
 ): { readonly index: number; readonly state: number } {
   for (let index = 0; index < text.length; index += 1) {
     if (state === TERMINAL_SEQUENCE_GROUND) return { index, state };
-    state = nextTerminalSequenceState(state, text.charCodeAt(index));
+    const code = text.charCodeAt(index);
+    // Like Ghostty, non-ASCII aborts a CSI or escape sequence and prints.
+    if (code > 0x7f && state !== SEQUENCE_STRING) {
+      return { index, state: TERMINAL_SEQUENCE_GROUND };
+    }
+    state = nextTerminalSequenceState(state, code);
   }
   return { index: state === TERMINAL_SEQUENCE_GROUND ? text.length : -1, state };
 }

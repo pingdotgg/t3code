@@ -160,27 +160,31 @@ describe("terminal session reducers", () => {
   });
 
   it.each([
-    ["CSI", "prefix\u001b[31mOK", 6],
-    ["OSC", "prefix\u001b]0;HIDDEN\u0007OK", 10],
-  ] as const)("never retains the tail of a cut %s sequence", (_kind, history, maxBytes) => {
-    const fromSnapshot = applyTerminalAttachStreamEvent(
-      EMPTY_TERMINAL_BUFFER_STATE,
-      { type: "snapshot", snapshot: { ...BASE_SNAPSHOT, history } },
-      maxBytes,
-    );
-    const fromOutput = applyTerminalAttachStreamEvent(
-      applyTerminalAttachStreamEvent(
+    ["CSI", "prefix\u001b[31mOK", 6, "OK"],
+    ["OSC", "prefix\u001b]0;HIDDEN\u0007OK", 10, "OK"],
+    ["non-ASCII-aborted CSI", "prefix\u001b[12🙂OK", 7, "🙂OK"],
+  ] as const)(
+    "never retains the tail of a cut %s sequence",
+    (_kind, history, maxBytes, expected) => {
+      const fromSnapshot = applyTerminalAttachStreamEvent(
         EMPTY_TERMINAL_BUFFER_STATE,
-        { type: "snapshot", snapshot: BASE_SNAPSHOT },
+        { type: "snapshot", snapshot: { ...BASE_SNAPSHOT, history } },
         maxBytes,
-      ),
-      { type: "output", threadId: TARGET.threadId, terminalId: TARGET.terminalId, data: history },
-      maxBytes,
-    );
+      );
+      const fromOutput = applyTerminalAttachStreamEvent(
+        applyTerminalAttachStreamEvent(
+          EMPTY_TERMINAL_BUFFER_STATE,
+          { type: "snapshot", snapshot: BASE_SNAPSHOT },
+          maxBytes,
+        ),
+        { type: "output", threadId: TARGET.threadId, terminalId: TARGET.terminalId, data: history },
+        maxBytes,
+      );
 
-    expect(terminalOutputText(fromSnapshot.output)).toBe("OK");
-    expect(terminalOutputText(fromOutput.output)).toBe("OK");
-  });
+      expect(terminalOutputText(fromSnapshot.output)).toBe(expected);
+      expect(terminalOutputText(fromOutput.output)).toBe(expected);
+    },
+  );
 
   it("streams a sequence longer than the buffer to a caught-up renderer without resets", () => {
     const events = [
