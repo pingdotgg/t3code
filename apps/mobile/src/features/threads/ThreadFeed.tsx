@@ -243,7 +243,7 @@ import {
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 import {
   resolveThreadLink,
-  useThreadLinkLabels,
+  useLiveThreadLinkLabels,
   useQuietThreadShell,
   useThreadChipIcons,
 } from "../../state/entities";
@@ -1162,7 +1162,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
   const models = useModelMentions(props.environmentId, props.markdown);
-  const live = useThreadLinkLabels(props.markdown, props.environmentId);
+  const live = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   const liveMarkdown = live.markdown;
   const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
   const linkHandlers: MarkdownLinkHandlers = {
@@ -2387,7 +2387,7 @@ function UserMessageContent(props: UserMessageContentProps) {
   const navigation = useNavigation();
   const openLinkedThread = useOpenLinkedThread();
   const { selectedThread } = useThreadSelection();
-  const live = useThreadLinkLabels(props.text, props.environmentId);
+  const live = useLiveThreadLinkLabels(props.text, props.environmentId);
   const liveText = live.markdown;
   const linkHandlers = withUnavailableThreadLinks(props.linkHandlers, live.unavailable);
   const threadIcons = useThreadChipIcons(props.environmentId, liveText, props.context?.records);

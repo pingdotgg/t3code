@@ -1,8 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { deriveReportedModelSelection } from "@t3tools/client-runtime/state/thread-execution";
 
-import { selectEnvironmentQueryData } from "@t3tools/client-runtime/state/runtime";
-
 import { appAtomRegistry } from "./atom-registry";
 import type {
   EnvironmentProject,
@@ -37,8 +35,7 @@ import { projectFaviconUrlAtom } from "./assets";
 import { orchestrationEnvironment } from "./orchestration";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
-import { environmentShell } from "./shell";
-import { environmentThreadDetails, environmentThreadShells, threadFamilies } from "./threads";
+import { environmentThreadDetails, environmentThreadShells } from "./threads";
 
 const EMPTY_PROJECT_ATOM = Atom.make<EnvironmentProject | null>(null).pipe(
   Atom.withLabel("mobile-project:empty"),
@@ -52,7 +49,7 @@ const EMPTY_SERVER_CONFIG_ATOM = Atom.make<ServerConfig | null>(null).pipe(
 const EMPTY_THREAD_ATOM = Atom.make<EnvironmentThread | null>(null).pipe(
   Atom.withLabel("mobile-thread:empty"),
 );
-const EMPTY_THREAD_LINK_TITLES_ATOM = Atom.make<ReadonlyMap<string, string | null>>(new Map()).pipe(
+const EMPTY_THREAD_LINK_TITLES_ATOM = Atom.make<ReadonlyMap<string, string>>(new Map()).pipe(
   Atom.withLabel("mobile-thread-link-titles:empty"),
 );
 
@@ -64,14 +61,16 @@ const threadTitleAtom = Atom.family((key: string) => {
   const ref = scopeThreadRef(...decodeThreadKey(JSON.parse(key)));
   return Atom.make((get) => {
     const shell = get(environmentThreadShells.threadShellAtom(ref));
-    if (shell) return shell.title;
-    const family = selectEnvironmentQueryData(
-      get(threadFamilies.familyAtom(ref.environmentId, ref.threadId)),
+    if (shell !== null) return shell.title;
+    const titles = get(
+      orchestrationEnvironment.threadLinkMetadata({
+        environmentId: ref.environmentId,
+        input: { threadIds: [ref.threadId] },
+      }),
     );
-    const shellState = get(environmentShell.stateValueAtom(ref.environmentId));
-    if (family === null || (shellState.removedAt.get(ref.threadId) ?? -1) > family.snapshotSequence)
-      return null;
-    return family.threads.find((thread) => thread.id === ref.threadId)?.title ?? null;
+    return AsyncResult.isSuccess(titles)
+      ? (titles.value[ref.threadId]?.title ?? (titles.waiting ? "Thread" : null))
+      : "Thread";
   }).pipe(Atom.withLabel(`mobile-thread-title:${key}`));
 });
 
@@ -80,19 +79,10 @@ const decodeThreadKeys = Schema.decodeUnknownSync(Schema.Array(Schema.String));
 const threadLinkTitlesAtom = Atom.family((key: string) => {
   const refKeys = decodeThreadKeys(JSON.parse(key));
   return Atom.make((get) => {
-    const titles = new Map<string, string | null>();
+    const titles = new Map<string, string>();
     for (const refKey of refKeys) {
       const title = get(threadTitleAtom(refKey));
-      if (title !== null) {
-        titles.set(refKey, title);
-        continue;
-      }
-      const ref = scopeThreadRef(...decodeThreadKey(JSON.parse(refKey)));
-      const family = selectEnvironmentQueryData(
-        get(threadFamilies.familyAtom(ref.environmentId, ref.threadId)),
-      );
-      // Shell omission is not deletion; pending or failed reads keep the link unresolved.
-      if (family === null) titles.set(refKey, null);
+      if (title !== null) titles.set(refKey, title);
     }
     return titles;
   }).pipe(Atom.withLabel(`mobile-thread-link-titles:${key}`));
@@ -239,7 +229,7 @@ export function useSideChats(ref: ScopedThreadRef) {
   return useAtomValue(environmentThreadShells.sideChatsAtom(ref));
 }
 
-export function useThreadLinkLabels(
+export function useLiveThreadLinkLabels(
   markdown: string,
   environmentId: EnvironmentId,
 ): { readonly markdown: string; readonly unavailable: ReadonlySet<string> } {

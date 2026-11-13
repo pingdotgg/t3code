@@ -30,7 +30,7 @@ import {
   resolveFileLinkPath,
   resolveWorkspaceRelativeFilePath,
 } from "../files/filePath";
-import { useThreadLinkLabels } from "../../state/entities";
+import { useLiveThreadLinkLabels } from "../../state/entities";
 import { enrichedThreadLinkCustomization } from "../../native/useEnrichedLinkVariants";
 import {
   isPendingUserInputOptionSelected,
@@ -85,7 +85,7 @@ function QuestionText(props: {
   readonly preserveSoftBreaks?: boolean;
 }) {
   const styles = useMarkdownPreviewStyles();
-  const live = useThreadLinkLabels(props.markdown, props.environmentId);
+  const live = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   const navigation = useNavigation();
   const openPullRequest = useOpenPullRequest();
   const openLink = (href: string) => {
