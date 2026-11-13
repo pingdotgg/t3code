@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  EnvironmentId,
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
@@ -142,6 +143,9 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     credentialKeys: ReadonlyArray<string>;
     geminiApiKey: string | undefined;
     tempDirectory: string | undefined;
+    threadId: string | undefined;
+    mcpNode: string | undefined;
+    mcpEndpoint: string | undefined;
     handle: ChildProcessSpawner.ChildProcessHandle;
   }> = [];
 
@@ -200,6 +204,9 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         geminiApiKey: env("GEMINI_API_KEY"),
         tempDirectory:
           environment.ANTIGRAVITY_HARNESS_PATH === undefined ? undefined : env("TMPDIR"),
+        threadId: env("T3CODE_THREAD_ID"),
+        mcpNode: env("T3_ACP_MCP_NODE"),
+        mcpEndpoint: env("T3_ACP_MCP_ENDPOINT"),
         handle,
       });
       return handle;
@@ -482,6 +489,45 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
       expect(h.releases).toEqual([h.first.version]);
       yield* h.assertClosed;
     }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "the agent process env carries the thread and the T3 tool terminal fallback",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const threadId = ThreadId.make("thread-antigravity-thread-env");
+        const endpoint = "http://127.0.0.1:43123/mcp";
+        yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          environmentId: EnvironmentId.make("environment-antigravity-thread-env"),
+          threadId,
+          providerSessionId: "mcp-session-antigravity-thread-env",
+          providerInstanceId: h.instance.instanceId,
+          endpoint,
+          authorizationHeader: "Bearer thread-env-token",
+          browserToolsAvailable: false,
+        });
+        const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-ag-env-" });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const modelSelection = { instanceId: h.instance.instanceId, model: "gemini-test-low" };
+        const session = yield* h.instance.orchestrationAdapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-thread-env"),
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+        // Antigravity runs shell tools itself rather than through terminal/create, so the
+        // agent process env is the only way those shells reach the acp-mcp-call fallback.
+        const launch = h.launches.at(-1);
+        expect(launch?.threadId).toBe(threadId);
+        expect(launch?.mcpEndpoint).toBe(endpoint);
+        expect(launch?.mcpNode).toBeDefined();
+      }),
   );
 
   it.effect.skipIf(windowsHost)(
