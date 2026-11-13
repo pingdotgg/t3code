@@ -1806,6 +1806,22 @@ it.effect("closing a tab with an unsaved-changes guard still closes it", () =>
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a tab whose renderer crashes stays open instead of vanishing", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      contexts[0]!.page.emit("crash");
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.tabId).toBe(tabId);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("a tab opened to a file the browser cannot show reports the file to download", () =>
   Effect.scoped(
     Effect.gen(function* () {
