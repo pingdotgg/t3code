@@ -163,6 +163,7 @@ PATH=/usr/bin:/bin exec ps "$@"`,
       const state = NodePath.join(home, ".t3/ssh-launch/test-target");
       NodeFS.mkdirSync(state, { recursive: true });
       NodeFS.writeFileSync(NodePath.join(state, "pid"), String(process.pid));
+      NodeFS.writeFileSync(NodePath.join(state, "agent-pid"), String(process.pid));
       NodeFS.writeFileSync(NodePath.join(state, "port"), "5999");
       NodeFS.writeFileSync(NodePath.join(state, "managed"), options.recordedKind);
       const runner = script.split("cat >\"$RUNNER_NEXT\" <<'SH'\n")[1]?.split("\nSH\n")[0];

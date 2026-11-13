@@ -56,7 +56,7 @@ const makeRunningProcess = (onKill: () => void) => {
   let finish: ((exitCode: ChildProcessSpawner.ExitCode) => void) | null = null;
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(123),
-    stdout: Stream.empty,
+    stdout: Stream.make(new TextEncoder().encode(`${SshTunnel.SSH_AGENT_PUBLISHED_MARKER}\n`)),
     stderr: Stream.empty,
     all: Stream.empty,
     exitCode: Effect.callback<ChildProcessSpawner.ExitCode>((resume) => {
@@ -509,7 +509,7 @@ describe("ssh tunnel scripts", () => {
       );
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.succeed(
-          commandArgs(command).includes("-N")
+          commandArgs(command).includes("-L")
             ? {
                 ...makeSuccessfulProcess(""),
                 exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
@@ -556,7 +556,7 @@ describe("ssh tunnel scripts", () => {
       const diagnostic = "Permission denied (publickey)";
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.succeed(
-          commandArgs(command).includes("-N")
+          commandArgs(command).includes("-L")
             ? {
                 ...makeSuccessfulProcess(""),
                 exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(255)),
@@ -619,7 +619,7 @@ describe("ssh tunnel scripts", () => {
           Effect.map((now) => port === LOCAL_PORT && now >= forwardListensAt),
         );
       const spawner = ChildProcessSpawner.make((command) =>
-        commandArgs(command).includes("-N")
+        commandArgs(command).includes("-L")
           ? Effect.gen(function* () {
               forwardListensAt = (yield* Clock.currentTimeMillis) + SSH_CONNECT_MS;
               yield* Deferred.succeed(tunnelSpawned, undefined);
@@ -691,7 +691,7 @@ describe("ssh tunnel scripts", () => {
       let forwards = 0;
       let connected = false;
       const spawner = ChildProcessSpawner.make((command) =>
-        commandArgs(command).includes("-N")
+        commandArgs(command).includes("-L")
           ? Effect.sync(() => ++forwards).pipe(
               Effect.flatMap((count) =>
                 Deferred.succeed(count === 1 ? tunnelSpawned : forwardReplaced, undefined),
@@ -761,7 +761,7 @@ describe("ssh tunnel scripts", () => {
             makeSuccessfulProcess(`hostname 127.0.0.1\nuser developer\nport ${configPort}\n`),
           );
         }
-        if (args.includes("-N")) {
+        if (args.includes("-L")) {
           tunnelPorts.push(args[args.indexOf("-p") + 1]);
           return Effect.succeed(makeRunningProcess(() => undefined));
         }
@@ -798,7 +798,7 @@ describe("ssh tunnel scripts", () => {
       const tunnelSpawned = yield* Deferred.make<void>();
       let tunnelKilled = false;
       const spawner = ChildProcessSpawner.make((command) =>
-        commandArgs(command).includes("-N")
+        commandArgs(command).includes("-L")
           ? Deferred.succeed(tunnelSpawned, undefined).pipe(
               Effect.as(
                 makeRunningProcess(() => {
@@ -958,7 +958,7 @@ describe("ssh tunnel scripts", () => {
               }
               return makeSuccessfulProcess("");
             }
-            if (args.includes("-N")) {
+            if (args.includes("-L")) {
               const tunnel = makeRunningProcess(() => undefined);
               if (isTarget && ++tunnels === 1 && stalledStep === "local tunnel") {
                 return {
@@ -1161,7 +1161,12 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
         return realSpawner.spawn(
           ChildProcess.make("setsid", ["-w", ...remoteArgs], {
             ...command.options,
-            env: { PATH: process.env.PATH ?? "", HOME: home },
+            // sshd gives every session its own forwarded agent socket.
+            env: {
+              PATH: process.env.PATH ?? "",
+              HOME: home,
+              SSH_AUTH_SOCK: `${root}/${command.args.includes("-L") ? "connection" : "launch"}.sock`,
+            },
             extendEnv: false,
           }),
         );
@@ -1180,6 +1185,7 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
       assert.isTrue(Number.isInteger(tid));
       return {
         fs,
+        root,
         home,
         fakeServer,
         holder,
@@ -1233,6 +1239,67 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
         `the launcher kept ${kind} as its running server`,
       );
       assert.isTrue(yield* isRunning(pid));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live("moves a server that kept its launch session's agent socket onto the connection's", () =>
+    Effect.gen(function* () {
+      const { fs, root, fakeServer, sshAsLocalShell, stateDir } = yield* prepare(staleIds[1]);
+      const runner = { nodeScriptPath: fakeServer };
+      const launch = SshTunnel.launchOrReuseRemoteServer(target, undefined, runner);
+      const readPid = fs
+        .readFileString(`${stateDir}/pid`)
+        .pipe(Effect.map((pid) => Number(pid.trim())));
+      const agentSocketOf = (pid: number) =>
+        fs.readFileString(`/proc/${pid}/environ`).pipe(
+          Effect.map((environ) =>
+            environ
+              .split("\0")
+              .find((entry) => entry.startsWith("SSH_AUTH_SOCK="))
+              ?.slice("SSH_AUTH_SOCK=".length),
+          ),
+        );
+      const launchedPids: Array<number> = [];
+      yield* Effect.addFinalizer(() =>
+        Effect.forEach(launchedPids, (pid) =>
+          Effect.sync(() => {
+            try {
+              process.kill(pid, "SIGKILL");
+            } catch {}
+          }),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        yield* launch;
+        const inheritedPid = yield* readPid;
+        launchedPids.push(inheritedPid);
+        // A client from before the agent link started this server and recorded no link for it.
+        yield* fs.remove(`${stateDir}/agent-pid`);
+
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        yield* manager.ensureEnvironment(target);
+        const pid = yield* readPid;
+        launchedPids.push(pid);
+        assert.notEqual(pid, inheritedPid);
+        assert.isFalse(yield* isRunning(inheritedPid));
+        assert.equal(yield* agentSocketOf(pid), `${stateDir}/agent.sock`);
+        assert.equal(yield* fs.readLink(`${stateDir}/agent.sock`), `${root}/connection.sock`);
+
+        yield* launch;
+        assert.equal(yield* readPid, pid);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(HttpClient.HttpClient, testHttpClient),
+            Layer.succeed(NetService.NetService, testNetService),
+            SshAuth.SshPasswordPrompt.disabledLayer,
+            SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(runner) }),
+          ),
+        ),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell),
+        Effect.scoped,
+      );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
