@@ -7904,15 +7904,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 return;
               }
               // A resume may already wait on the pending entry; replacing it would strand that wait.
-              let closing = threadClosings.get(nativeThreadId);
-              if (closing === undefined) {
-                closing = yield* Deferred.make<void>();
-                threadClosings.set(nativeThreadId, closing);
-              }
+              const pending = threadClosings.get(nativeThreadId);
+              const closing = pending ?? (yield* Deferred.make<void>());
+              threadClosings.set(nativeThreadId, closing);
               const { status } = yield* client.request("thread/unsubscribe", {
                 threadId: nativeThreadId,
               });
-              if (!unloadInput.awaitClosed || status !== "unsubscribed" || !closesOnUnsubscribe) {
+              // An earlier unload's close may still be pending; Codex then answers notSubscribed.
+              if (
+                !unloadInput.awaitClosed ||
+                !closesOnUnsubscribe ||
+                (status !== "unsubscribed" && pending === undefined)
+              ) {
                 return;
               }
               // Codex replies first and frees the thread's writer lock when it emits thread/closed.
