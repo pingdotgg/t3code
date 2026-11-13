@@ -251,16 +251,16 @@ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 
 If a provider works in its CLI but T3 Code reports a timeout while checking it,
 allow more time in the T3 server's environment. For example, give Codex and
-Claude readiness checks 60 seconds:
+Claude readiness checks 120 seconds:
 
 ```bash
-T3CODE_CODEX_PROBE_TIMEOUT_MS=60000 T3CODE_CLAUDE_PROBE_TIMEOUT_MS=60000 t3 serve
+T3CODE_CODEX_PROBE_TIMEOUT_MS=120000 T3CODE_CLAUDE_PROBE_TIMEOUT_MS=120000 t3 serve
 ```
 
 For a remote environment, set these on the machine running the T3 server.
 Keep them in your launcher or service configuration to retain them across
 updates, then restart the server. For systemd, add
-`Environment=T3CODE_CODEX_PROBE_TIMEOUT_MS=60000` under `[Service]` in a service
+`Environment=T3CODE_CODEX_PROBE_TIMEOUT_MS=120000` under `[Service]` in a service
 override, reload systemd, and restart the service. Provider instances can also
 set their own overrides in Settings → Providers.
 
