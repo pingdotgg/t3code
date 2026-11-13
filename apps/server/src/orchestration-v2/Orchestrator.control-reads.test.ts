@@ -2468,6 +2468,19 @@ it.effect("queued-message commands read a long thread's history without walking 
       }),
     );
     walks.push(...(yield* historyWalks("queued-message.promote-to-steer")));
+    yield* dispatch("cancelled");
+    const cancelledRun = (yield* projections.getThreadProjection(threadId)).runs.at(-1)!;
+    assert.equal(cancelledRun.status, "queued");
+    statements.splice(0);
+    yield* observed(
+      orchestrator.dispatch({
+        type: "queued-run.cancel",
+        commandId: CommandId.make("cancel:long-history-reads"),
+        threadId,
+        runId: cancelledRun.id,
+      }),
+    );
+    walks.push(...(yield* historyWalks("queued-run.cancel")));
     yield* observed(
       orchestrator.dispatch({
         type: "run.interrupt",
@@ -2481,7 +2494,14 @@ it.effect("queued-message commands read a long thread's history without walking 
     const after = yield* projections.getThreadProjection(threadId);
     assert.deepEqual(
       after.messages.filter((message) => message.role === "user").map((message) => message.text),
-      ["Request 1", "Request 2", "Request 3", "/compact", "Request queued, edited"],
+      [
+        "Request 1",
+        "Request 2",
+        "Request 3",
+        "/compact",
+        "Request cancelled",
+        "Request queued, edited",
+      ],
     );
     assert.deepEqual(
       after.providerThreads.map((providerThread) => providerThread.id),
@@ -2489,4 +2509,104 @@ it.effect("queued-message commands read a long thread's history without walking 
     );
     assert.deepEqual(walks, [], walks.join("\n"));
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a running provider-turn update reads only the thread's queued and running runs", () =>
+  Effect.gen(function* () {
+    const runsReads = yield* Deferred.make<ReturnType<Statement.Statement<unknown>["compile"]>>();
+    let armed = false;
+    // The deferred-steer reactor runs in a fiber forked by the layer, so observe at layer level.
+    const observe: Statement.Transformer = (statement) => {
+      const compiled = statement.compile();
+      return armed && /FROM orchestration_v2_projection_runs\b/.test(compiled[0])
+        ? Deferred.succeed(runsReads, compiled).pipe(Effect.as(statement))
+        : Effect.succeed(statement);
+    };
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread:deferred-steer-reads");
+      const driver = ProviderDriverKind.make("codex");
+      const now = yield* DateTime.now;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-deferred-steer-reads"),
+        threadId,
+        projectId: ProjectId.make("project:deferred-steer-reads"),
+        title: "Deferred steer reads",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("dispatch:deferred-steer-reads"),
+        threadId,
+        messageId: MessageId.make("message:deferred-steer-reads"),
+        text: "Request",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const run = (yield* projections.getThreadProjection(threadId)).runs.at(-1)!;
+      const providerThreadId = ProviderThreadId.make("provider-thread:deferred-steer-reads");
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:deferred-steer-reads:run"),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, providerThreadId, status: "running", queuePosition: null },
+          },
+        ],
+      });
+      armed = true;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:deferred-steer-reads:turn"),
+            type: "provider-turn.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: {
+              id: ProviderTurnId.make("provider-turn:deferred-steer-reads"),
+              providerThreadId,
+              nodeId: run.rootNodeId!,
+              runAttemptId: run.activeAttemptId!,
+              nativeTurnRef: {
+                driver,
+                nativeId: "native:deferred-steer-reads",
+                strength: "strong",
+              },
+              ordinal: 1,
+              status: "running",
+              startedAt: now,
+              completedAt: null,
+            },
+          },
+        ],
+      });
+      const [query, params] = yield* Deferred.await(runsReads);
+      const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, params);
+      // Every run the thread ever had, when only queued steers and the running run matter.
+      assert.isFalse(
+        plan.some(({ detail }) => /^SEARCH .*runs.* \(thread_id=\?\)$/.test(detail)),
+        `${plan.map(({ detail }) => detail).join("\n")}\n  in: ${query.replace(/\s+/g, " ").trim()}`,
+      );
+    }).pipe(
+      Effect.provide(
+        layerTest.pipe(Layer.provide(Layer.succeed(Statement.CurrentTransformer, observe))),
+      ),
+    );
+  }),
 );
