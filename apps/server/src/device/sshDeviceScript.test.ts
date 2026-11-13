@@ -156,6 +156,12 @@ it.each([
     };
     try {
       await NodeFSP.mkdir(state, { recursive: true });
+      const isolated = platform === "win32" && (mode === "start" || mode === "agent-start");
+      if (isolated) {
+        const abandoned = NodePath.join(state, ".bootstrap-abandoned");
+        await NodeFSP.mkdir(abandoned);
+        await NodeFSP.utimes(abandoned, 0, 0);
+      }
       for (const [name, version, entry] of [
         ["expo-device-hub", DEVICE_HUB_VERSION, "dist/server/cli.mjs"],
         ["agent-device", AGENT_DEVICE_VERSION, "bin/agent-device.mjs"],
@@ -189,7 +195,6 @@ it.each([
         }
       }
       await run(remoteDeviceScript(owner, mode), false);
-      const isolated = platform === "win32" && (mode === "start" || mode === "agent-start");
       expect(launches).toBe(isolated ? 1 : 0);
       expect(workers).toBe(isolated && scenario !== "worker exit" ? 1 : 0);
       if (scenario !== "success") {

@@ -252,6 +252,12 @@ async function start() {
   const path = require('node:path');
   const state = path.join(require('node:os').homedir(), '.t3', 'device', 'hosts', ${JSON.stringify(owner)});
   fs.mkdirSync(state, { recursive: true, mode: 0o700 });
+  // A cancelled SSH session skips the cleanup below while its worker finishes; no live start waits this long.
+  for (const name of fs.readdirSync(state)) {
+    if (!name.startsWith('.bootstrap-')) continue;
+    const stale = path.join(state, name);
+    try { if (fs.statSync(stale).mtimeMs < Date.now() - 7200000) fs.rmSync(stale, { recursive: true, force: true }); } catch {}
+  }
   const directory = fs.mkdtempSync(path.join(state, '.bootstrap-'));
   const script = path.join(directory, 'bootstrap.cjs');
   const result = path.join(directory, 'result.json');
