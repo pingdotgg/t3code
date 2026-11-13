@@ -383,7 +383,7 @@ What a real Conn session hits that this server does not do:
   `generateTitle` keeps the client's seed title.
 - **No `/mcp`:** agents cannot reach T3 tools.
 - **Claude only:** no Codex or other providers. Gaps in the Claude provider are listed in
-  `crates/conn-provider-claude/README.md` (subagents, attachments, todo lists, retries).
+  `crates/conn-provider-claude/README.md` (workflow subagents, PDF embedding, disk helpers).
 - **Auth:** bearer and ticket only. No cookie sessions, DPoP or relay (`DROP-IN.md` §4).
 - **Desktop-local backend:** the `--bootstrap-fd` start works; the desktop itself still
   spawns the T3 server (`DROP-IN.md` §2).

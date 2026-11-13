@@ -12,8 +12,9 @@ use std::{path::PathBuf, time::Duration};
 
 use conn_contract::{from_json, to_json};
 use conn_provider::{
-    EnsureThreadInput, InterruptInput, OpenSessionInput, OpenedSession, Provider, ProviderEvent,
-    ResumeThreadInput, RuntimeRequestResponse, Session, TurnInput, TurnMessage,
+    EnsureThreadInput, ForkThreadInput, InterruptInput, McpServer, OpenSessionInput, OpenedSession,
+    Provider, ProviderEvent, ResumeThreadInput, RollbackTarget, RollbackThreadInput,
+    RuntimeRequestResponse, Session, SteerInput, TurnInput, TurnMessage,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -132,7 +133,16 @@ fn turn(
     cwd: &str,
 ) -> TurnInput {
     TurnInput {
-        app_thread: from_json(json!({"id": "thread-live", "title": "Live test"})).unwrap(),
+        app_thread: from_json(json!({
+            "createdBy": "user", "creationSource": "web", "id": "thread-live",
+            "projectId": "project-live", "title": "Live test", "providerInstanceId": "claudeAgent",
+            "modelSelection": model(), "runtimeMode": mode, "interactionMode": "default",
+            "branch": null, "worktreePath": null, "activeProviderThreadId": null,
+            "lineage": {"parentThreadId": null, "relationshipToParent": null, "rootThreadId": "thread-live"},
+            "forkedFrom": null, "createdAt": "2026-11-13T00:00:00.000Z",
+            "updatedAt": "2026-11-13T00:00:00.000Z", "archivedAt": null,
+        }))
+        .unwrap(),
         thread_id: "thread-live".into(),
         run_id: format!("run-{n}").as_str().into(),
         run_ordinal: n,
@@ -363,6 +373,8 @@ async fn live_interrupt_then_continue() {
 #[ignore = "runs the real claude CLI"]
 async fn live_resume_in_a_new_process() {
     let scratch = Scratch::new("resume");
+    // A fresh word each run, so Claude's auto-memory from an earlier run cannot answer.
+    let word = random_word();
     let provider = provider();
     let (session, mut events) = open(&provider, "full-access", &scratch.cwd()).await;
     let thread = new_thread(session.as_ref(), "full-access", &scratch.cwd()).await;
@@ -370,7 +382,7 @@ async fn live_resume_in_a_new_process() {
         .start_turn(turn(
             1,
             &thread,
-            "Remember the word kumquat. Reply only: ok",
+            &format!("Remember the word {word}. Reply only: ok"),
             "full-access",
             &scratch.cwd(),
         ))
@@ -384,6 +396,8 @@ async fn live_resume_in_a_new_process() {
         .unwrap()["providerThread"]
         .clone();
     session.close().await;
+    drop(session);
+    drop(events);
 
     // A new session, as after a server restart: resume the thread by its native id.
     let (session, mut events) = open(&provider, "full-access", &scratch.cwd()).await;
@@ -412,6 +426,432 @@ async fn live_resume_in_a_new_process() {
         .unwrap();
     let seen = until(&mut events, is_terminal).await;
     assert_eq!(seen.last().unwrap()["status"], "completed");
-    assert!(assistant_text(&seen).to_lowercase().contains("kumquat"));
+    assert!(assistant_text(&seen).to_lowercase().contains(&word));
+    session.close().await;
+}
+
+/// A word the model cannot guess: `quokka` plus four random letters.
+fn random_word() -> String {
+    let id = crate::ids::uuid_v4();
+    let letters: String = id
+        .bytes()
+        .filter(u8::is_ascii_hexdigit)
+        .take(4)
+        .map(|b| (b'a' + b % 26) as char)
+        .collect();
+    format!("quokka{letters}")
+}
+
+fn last_of<'a>(events: &'a [Value], kind: &str) -> &'a Value {
+    events.iter().rfind(|e| e["type"] == kind).unwrap()
+}
+
+fn thread_of(events: &[Value]) -> conn_contract::ProviderThread {
+    from_json(last_of(events, "provider_thread.updated")["providerThread"].clone()).unwrap()
+}
+
+fn concrete(config: ClaudeConfig) -> (ClaudeSession, mpsc::Receiver<ProviderEvent>) {
+    let (tx, events) = mpsc::channel(crate::session::EVENT_CAPACITY);
+    (
+        ClaudeSession::open("provider-session-live".into(), config, tx),
+        events,
+    )
+}
+
+async fn run_turn(
+    session: &dyn Session,
+    events: &mut mpsc::Receiver<ProviderEvent>,
+    input: TurnInput,
+) -> Vec<Value> {
+    session.start_turn(input).await.unwrap();
+    let seen = until(events, is_terminal).await;
+    assert_eq!(
+        seen.last().unwrap()["status"],
+        "completed",
+        "{:?}",
+        seen.last()
+    );
+    seen
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "runs the real claude CLI"]
+async fn live_steer_is_taken_into_the_running_turn() {
+    let scratch = Scratch::new("steer");
+    let (session, mut events) = concrete(provider().config().clone());
+    let thread = new_thread(&session, "full-access", &scratch.cwd()).await;
+    session
+        .start_turn(turn(
+            1,
+            &thread,
+            "Run the Bash command `sleep 4; echo first`, then tell me its output.",
+            "full-access",
+            &scratch.cwd(),
+        ))
+        .await
+        .unwrap();
+    let seen = until(&mut events, |e| {
+        e["type"] == "turn_item.updated" && e["turnItem"]["type"] == "command_execution"
+    })
+    .await;
+    let turn_id = last_of(&seen, "provider_turn.updated")["providerTurn"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    session
+        .steer_turn(SteerInput {
+            thread_id: "thread-live".into(),
+            run_id: "run-1".into(),
+            provider_thread: thread.clone(),
+            provider_turn_id: turn_id.as_str().into(),
+            message: TurnMessage {
+                message_id: "message-steer".into(),
+                text: "Also end your reply with the word banana.".into(),
+                attachments: vec![],
+            },
+            model_selection: None,
+        })
+        .await
+        .unwrap();
+    let seen = until(&mut events, is_terminal).await;
+    let steers: Vec<&str> = seen
+        .iter()
+        .filter(|e| e["type"] == "steer.updated")
+        .map(|e| e["status"].as_str().unwrap())
+        .collect();
+    eprintln!("steer statuses: {steers:?}");
+    assert_eq!(seen.last().unwrap()["status"], "completed");
+    assert!(steers.contains(&"completed"), "{steers:?}");
+    assert!(assistant_text(&seen).to_lowercase().contains("banana"));
+    session.close().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "runs the real claude CLI"]
+async fn live_idle_close_then_resume() {
+    let scratch = Scratch::new("idle");
+    let word = random_word();
+    let config = ClaudeConfig {
+        idle_timeout: Some(Duration::from_secs(3)),
+        ..provider().config().clone()
+    };
+    let (session, mut events) = concrete(config);
+    let thread = new_thread(&session, "full-access", &scratch.cwd()).await;
+    let prompt = format!("Remember the word {word}. Reply only: ok");
+    let seen = run_turn(
+        &session,
+        &mut events,
+        turn(1, &thread, &prompt, "full-access", &scratch.cwd()),
+    )
+    .await;
+    let first = session.live_pid().expect("a live process after the turn");
+    // The live test waits on the real idle timer; nothing else can signal it.
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert_eq!(session.live_pid(), None, "the idle child was closed");
+    assert!(!crate::process::pid_alive(first), "the idle child exited");
+    let seen = run_turn(
+        &session,
+        &mut events,
+        turn(
+            2,
+            &thread_of(&seen),
+            "Which word did I ask you to remember? Reply with the word only.",
+            "full-access",
+            &scratch.cwd(),
+        ),
+    )
+    .await;
+    assert!(assistant_text(&seen).to_lowercase().contains(&word));
+    assert_ne!(session.live_pid(), Some(first), "a new process resumed it");
+    session.close().await;
+}
+
+/// A tiny MCP server over Streamable HTTP (JSON answers, no SSE) with one tool,
+/// `magic_number`, which answers 4217 plus `seed`. Records the requests' Authorization headers.
+mod mcp {
+    use std::sync::{Arc, Mutex};
+
+    use serde_json::{Value, json};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpListener;
+
+    pub struct Server {
+        pub url: String,
+        pub calls: Arc<Mutex<Vec<String>>>,
+        pub auth: Arc<Mutex<Vec<String>>>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for Server {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    pub async fn start() -> Server {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let auth = Arc::new(Mutex::new(Vec::new()));
+        let (c, a) = (calls.clone(), auth.clone());
+        let task = tokio::spawn(async move {
+            while let Ok((sock, _)) = listener.accept().await {
+                let (c, a) = (c.clone(), a.clone());
+                tokio::spawn(async move {
+                    let _ = serve(sock, c, a).await;
+                });
+            }
+        });
+        Server {
+            url,
+            calls,
+            auth,
+            task,
+        }
+    }
+
+    async fn serve(
+        sock: tokio::net::TcpStream,
+        calls: Arc<Mutex<Vec<String>>>,
+        auth: Arc<Mutex<Vec<String>>>,
+    ) -> std::io::Result<()> {
+        let (r, mut w) = sock.into_split();
+        let mut r = BufReader::new(r);
+        loop {
+            let mut start = String::new();
+            if r.read_line(&mut start).await? == 0 {
+                return Ok(());
+            }
+            let mut len = 0usize;
+            loop {
+                let mut h = String::new();
+                r.read_line(&mut h).await?;
+                let h = h.trim_end();
+                if h.is_empty() {
+                    break;
+                }
+                if let Some((k, v)) = h.split_once(':') {
+                    if k.eq_ignore_ascii_case("content-length") {
+                        len = v.trim().parse().unwrap_or(0);
+                    }
+                    if k.eq_ignore_ascii_case("authorization") {
+                        auth.lock().unwrap().push(v.trim().to_string());
+                    }
+                }
+            }
+            let mut body = vec![0u8; len];
+            r.read_exact(&mut body).await?;
+            let (status, payload) = if !start.starts_with("POST") {
+                ("405 Method Not Allowed", String::new())
+            } else {
+                let msg: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+                calls
+                    .lock()
+                    .unwrap()
+                    .push(msg["method"].as_str().unwrap_or("?").to_string());
+                match answer(&msg) {
+                    Some(v) => ("200 OK", v.to_string()),
+                    None => ("202 Accepted", String::new()),
+                }
+            };
+            let resp = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{payload}",
+                payload.len()
+            );
+            w.write_all(resp.as_bytes()).await?;
+        }
+    }
+
+    fn answer(msg: &Value) -> Option<Value> {
+        let id = msg.get("id")?.clone();
+        let result = match msg["method"].as_str()? {
+            "initialize" => json!({
+                "protocolVersion": msg["params"]["protocolVersion"].as_str().unwrap_or("2025-06-18"),
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "probe", "version": "0.1.0"}
+            }),
+            "tools/list" => json!({"tools": [{
+                "name": "magic_number",
+                "description": "Returns the magic number for a seed.",
+                "inputSchema": {"type": "object", "properties": {"seed": {"type": "integer"}}, "required": ["seed"]}
+            }]}),
+            "tools/call" => {
+                let seed = msg["params"]["arguments"]["seed"].as_i64().unwrap_or(0);
+                json!({"content": [{"type": "text", "text": format!("magic number = {}", 4217 + seed)}]})
+            }
+            "ping" => json!({}),
+            _ => {
+                return Some(json!({"jsonrpc": "2.0", "id": id,
+                    "error": {"code": -32601, "message": "method not found"}}));
+            }
+        };
+        Some(json!({"jsonrpc": "2.0", "id": id, "result": result}))
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "runs the real claude CLI"]
+async fn live_mcp_server_tool_call() {
+    let scratch = Scratch::new("mcp");
+    let server = mcp::start().await;
+    let (session, mut events) = concrete(provider().config().clone());
+    session
+        .set_mcp_servers(vec![McpServer {
+            name: "probe".into(),
+            url: server.url.clone(),
+            headers: vec![("Authorization".into(), "Bearer live-test".into())],
+        }])
+        .await
+        .unwrap();
+    let thread = new_thread(&session, "full-access", &scratch.cwd()).await;
+    let seen = run_turn(
+        &session,
+        &mut events,
+        turn(
+            1,
+            &thread,
+            "Call the magic_number MCP tool with seed 3. Reply with the number only.",
+            "full-access",
+            &scratch.cwd(),
+        ),
+    )
+    .await;
+    let calls = server.calls.lock().unwrap().clone();
+    eprintln!("MCP requests: {calls:?}");
+    assert!(calls.iter().any(|c| c == "tools/call"), "{calls:?}");
+    assert!(
+        server
+            .auth
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|a| a == "Bearer live-test")
+    );
+    let tool = seen
+        .iter()
+        .rfind(|e| e["type"] == "turn_item.updated" && e["turnItem"]["type"] == "dynamic_tool")
+        .expect("a tool row");
+    assert_eq!(tool["turnItem"]["toolName"], "mcp__probe__magic_number");
+    assert!(assistant_text(&seen).contains("4220"));
+    session.close().await;
+}
+
+/// Turn 1 sets word A, turn 2 word B; a fork (or rollback) at turn 1 must know A but not B.
+async fn two_words(
+    session: &dyn Session,
+    events: &mut mpsc::Receiver<ProviderEvent>,
+    cwd: &str,
+) -> (String, String, conn_contract::ProviderThread, Vec<Value>) {
+    let (a, b) = (random_word(), random_word());
+    let thread = new_thread(session, "full-access", cwd).await;
+    let first = run_turn(
+        session,
+        events,
+        turn(
+            1,
+            &thread,
+            &format!("The first secret word is {a}. Reply only: ok"),
+            "full-access",
+            cwd,
+        ),
+    )
+    .await;
+    let second = run_turn(
+        session,
+        events,
+        turn(
+            2,
+            &thread_of(&first),
+            &format!("The second secret word is {b}. Reply only: ok"),
+            "full-access",
+            cwd,
+        ),
+    )
+    .await;
+    let turns = [&first, &second]
+        .iter()
+        .map(|seen| last_of(seen, "provider_turn.updated")["providerTurn"].clone())
+        .collect();
+    (a, b, thread_of(&second), turns)
+}
+
+const ASK_WORDS: &str = "List every secret word I told you in this conversation, or reply none.";
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "runs the real claude CLI"]
+async fn live_fork_from_a_turn() {
+    let scratch = Scratch::new("fork");
+    let (session, mut events) = concrete(provider().config().clone());
+    let (a, b, source, turns) = two_words(&session, &mut events, &scratch.cwd()).await;
+    let forked = session
+        .fork_thread(ForkThreadInput {
+            source_provider_thread: source.clone(),
+            source_provider_turns: turns
+                .iter()
+                .map(|t| from_json(t.clone()).unwrap())
+                .collect(),
+            provider_turn_id: Some(turns[0]["id"].as_str().unwrap().into()),
+            target_thread_id: "thread-fork".into(),
+            owner_node_id: None,
+        })
+        .await
+        .unwrap();
+    let forked_json = to_json(&forked);
+    assert_ne!(
+        forked_json["nativeThreadRef"]["nativeId"],
+        to_json(&source)["nativeThreadRef"]["nativeId"]
+    );
+    let seen = run_turn(
+        &session,
+        &mut events,
+        turn(1, &forked, ASK_WORDS, "full-access", &scratch.cwd()),
+    )
+    .await;
+    let text = assistant_text(&seen).to_lowercase();
+    eprintln!("fork answer: {text}");
+    assert!(text.contains(&a), "the fork keeps turn 1");
+    assert!(!text.contains(&b), "the fork stops before turn 2");
+    session.close().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "runs the real claude CLI"]
+async fn live_rollback_to_a_turn() {
+    let scratch = Scratch::new("rollback");
+    let (session, mut events) = concrete(provider().config().clone());
+    let (a, b, thread, turns) = two_words(&session, &mut events, &scratch.cwd()).await;
+    let snapshot = session
+        .rollback_thread(RollbackThreadInput {
+            provider_thread: thread,
+            target: RollbackTarget::ProviderTurn {
+                checkpoint_id: "checkpoint-1".into(),
+                app_run_ordinal: 1,
+                provider_turn: from_json(turns[0].clone()).unwrap(),
+            },
+            provider_thread_turns: turns
+                .iter()
+                .map(|t| from_json(t.clone()).unwrap())
+                .collect(),
+        })
+        .await
+        .unwrap();
+    let seen = run_turn(
+        &session,
+        &mut events,
+        turn(
+            3,
+            &snapshot.provider_thread,
+            ASK_WORDS,
+            "full-access",
+            &scratch.cwd(),
+        ),
+    )
+    .await;
+    let text = assistant_text(&seen).to_lowercase();
+    eprintln!("rollback answer: {text}");
+    assert!(text.contains(&a), "turn 1 stays");
+    assert!(!text.contains(&b), "turn 2 is gone");
+    // The head is cleared once a turn ran past it, so a later relaunch does not rewind again.
+    assert!(to_json(&thread_of(&seen))["nativeConversationHeadRef"].is_null());
     session.close().await;
 }

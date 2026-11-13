@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 #[derive(Debug, Clone, PartialEq)]
+#[expect(clippy::large_enum_variant, reason = "one per stdout line, moved once")]
 pub enum Inbound {
     /// Answer to a request we sent.
     ControlResponse {
@@ -30,6 +31,13 @@ pub enum Inbound {
     Assistant(AssistantMsg),
     User(UserMsg),
     Result(ResultMsg),
+    /// `command_lifecycle`: a prompt we wrote was queued, started, completed or cancelled.
+    CommandLifecycle {
+        command_uuid: String,
+        state: String,
+    },
+    /// `rate_limit_event`: the account's usage window.
+    RateLimit(Value),
     /// Swallowed like the SDK does (`keep_alive`, `transcript_mirror`, ...).
     Ignored(String),
     /// Unknown kind or a shape we could not read. `kind` is the `type` field.
@@ -80,8 +88,15 @@ impl Inbound {
                 .map(Inbound::Assistant),
             "user" => Deserialize::deserialize(&value).ok().map(Inbound::User),
             "result" => Deserialize::deserialize(&value).ok().map(Inbound::Result),
-            "keep_alive" | "transcript_mirror" | "rate_limit_event" | "prompt_suggestion"
-            | "active_goal" | "autocompact_state" => Some(Inbound::Ignored(kind.clone())),
+            "command_lifecycle" => Some(Inbound::CommandLifecycle {
+                command_uuid: str_field(&value, "command_uuid"),
+                state: str_field(&value, "state"),
+            }),
+            "rate_limit_event" => Some(Inbound::RateLimit(
+                value.get("rate_limit_info").cloned().unwrap_or(Value::Null),
+            )),
+            "keep_alive" | "transcript_mirror" | "prompt_suggestion" | "active_goal"
+            | "autocompact_state" => Some(Inbound::Ignored(kind.clone())),
             _ => None,
         };
         typed.unwrap_or(Inbound::Other { kind, raw: value })
@@ -239,11 +254,32 @@ pub struct SystemMsg {
     pub max_retries: Option<f64>,
     #[serde(default)]
     pub retry_delay_ms: Option<f64>,
+    #[serde(default)]
+    pub error_status: Option<f64>,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub compact_error: Option<String>,
     /// `informational`.
     #[serde(default)]
     pub level: Option<String>,
     #[serde(default)]
     pub content: Option<Value>,
+    /// `task_started`, `task_progress`, `task_notification`.
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub tool_use_id: Option<String>,
+    #[serde(default)]
+    pub task_type: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub summary: Option<String>,
+    #[serde(default)]
+    pub is_backgrounded: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -352,6 +388,35 @@ pub struct OutputTokensDetails {
 }
 
 impl Usage {
+    /// Field-wise sum, for a turn made of several API segments.
+    pub fn plus(&self, other: &Usage) -> Usage {
+        let add = |a: Option<u64>, b: Option<u64>| match (a, b) {
+            (None, None) => None,
+            (a, b) => Some(a.unwrap_or(0) + b.unwrap_or(0)),
+        };
+        let thinking = |u: &Usage| {
+            u.output_tokens_details
+                .as_ref()
+                .and_then(|d| d.thinking_tokens)
+        };
+        Usage {
+            input_tokens: self.input_tokens + other.input_tokens,
+            output_tokens: self.output_tokens + other.output_tokens,
+            cache_creation_input_tokens: add(
+                self.cache_creation_input_tokens,
+                other.cache_creation_input_tokens,
+            ),
+            cache_read_input_tokens: add(
+                self.cache_read_input_tokens,
+                other.cache_read_input_tokens,
+            ),
+            cache_creation: None,
+            output_tokens_details: Some(OutputTokensDetails {
+                thinking_tokens: add(thinking(self), thinking(other)),
+            }),
+        }
+    }
+
     /// `claudeMessageInputTokens`: fresh + cache-creation + cache-read input.
     pub fn input_total(&self) -> u64 {
         self.input_tokens
@@ -390,6 +455,12 @@ pub struct AssistantMsg {
     /// `authentication_failed`, `rate_limit`, ... on CLI-made `<synthetic>` messages.
     #[serde(default)]
     pub error: Option<String>,
+    /// Carries `rate_limit_info` on a blocked response.
+    #[serde(default)]
+    pub api_error_params: Option<Value>,
+    /// The prompts this frame answers.
+    #[serde(default)]
+    pub user_message_uuids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -465,19 +536,35 @@ pub struct ResultMsg {
     pub api_error_status: Option<u32>,
     #[serde(default)]
     pub num_turns: Option<u32>,
+    #[serde(default, rename = "modelUsage")]
+    pub model_usage: Option<Value>,
+    #[serde(default)]
+    pub user_message_uuids: Option<Vec<String>>,
 }
 
 // ---- Host → CLI ----
 
-/// A user message. Starts a turn, or queues one while a turn runs.
-pub fn user_message(text: &str, uuid: &str) -> String {
-    json!({
+/// How the CLI takes a user message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Delivery {
+    /// Starts a turn.
+    Turn,
+    /// `priority: "now"`: steers the running turn.
+    Steer,
+}
+
+/// A user message. `content` is a string, or blocks when the message carries images.
+pub fn user_message(content: Value, uuid: &str, delivery: Delivery) -> String {
+    let mut message = json!({
         "type": "user",
-        "message": {"role": "user", "content": text},
+        "message": {"role": "user", "content": content},
         "parent_tool_use_id": null,
         "uuid": uuid,
-    })
-    .to_string()
+    });
+    if delivery == Delivery::Steer {
+        message["priority"] = json!("now");
+    }
+    message.to_string()
 }
 
 pub fn control_request(request_id: &str, request: Value) -> String {

@@ -11,7 +11,12 @@ conn-contract.workspace = true
 conn-provider.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2 = { version = "0.10", default-features = false }
 tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt", "macros"] }
+
+[dev-dependencies]
+# The live MCP test serves a tiny HTTP MCP server.
+tokio = { workspace = true, features = ["net"] }
 
 [lints]
 workspace = true

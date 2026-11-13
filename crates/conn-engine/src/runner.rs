@@ -916,5 +916,7 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
             };
             Translated::Terminal(status, failure)
         }
+        // Subagent threads, steers, background work, continuations: the engine track maps these.
+        _ => Translated::Ignore,
     }
 }
