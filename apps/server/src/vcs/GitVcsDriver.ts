@@ -14,6 +14,7 @@ import {
   GitCommandError,
   VcsProcessExitError,
   VcsUnsupportedOperationError,
+  type VcsSetPushRemoteInput,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
@@ -75,6 +76,9 @@ export interface GitStatusDetails {
   isRepo: boolean;
   sourceControlProvider?: VcsStatusResult["sourceControlProvider"];
   hasOriginRemote: boolean;
+  remotes?: VcsStatusResult["remotes"];
+  pushRemote?: VcsStatusResult["pushRemote"];
+  pushRemoteChoices?: VcsStatusResult["pushRemoteChoices"];
   isDefaultBranch: boolean;
   branch: string | null;
   upstreamRef: string | null;
@@ -346,7 +350,11 @@ export class GitVcsDriver extends Context.Service<
     /** Where `pushCurrentBranch` would push the checked-out branch; null with no remote or when Git picks. */
     readonly resolvePushTarget: (
       cwd: string,
-      current: { readonly branch: string; readonly hasUpstream: boolean },
+      current: {
+        readonly branch: string;
+        readonly hasUpstream: boolean;
+        readonly remoteName?: string | undefined;
+      },
     ) => Effect.Effect<GitPushTarget | null, GitCommandError>;
     readonly readRangeContext: (
       cwd: string,
@@ -457,6 +465,7 @@ export class GitVcsDriver extends Context.Service<
     readonly switchRef: (
       input: VcsSwitchRefInput,
     ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;
+    readonly setPushRemote: (input: VcsSetPushRemoteInput) => Effect.Effect<void, GitCommandError>;
     readonly initRepo: (input: VcsInitInput) => Effect.Effect<void, GitCommandError>;
     readonly listLocalBranchNames: (cwd: string) => Effect.Effect<string[], GitCommandError>;
   }

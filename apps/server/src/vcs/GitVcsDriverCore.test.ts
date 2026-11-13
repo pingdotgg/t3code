@@ -403,6 +403,25 @@ const commitInitialRepo = (cwd: string) =>
     yield* git(cwd, ["commit", "-m", "initial commit"]);
   });
 
+/** Remotes `fork` and `upstream` (holding the initial branch), no origin, on `feature/remote`. */
+const makeForkWorkflowRepo = Effect.gen(function* () {
+  const driver = yield* GitVcsDriver.GitVcsDriver;
+  const cwd = yield* makeTmpDir();
+  const forkRemote = yield* makeTmpDir("git-remote-");
+  const upstreamRemote = yield* makeTmpDir("git-remote-");
+  const { initialBranch } = yield* initRepoWithCommit(cwd);
+  yield* git(forkRemote, ["init", "--bare"]);
+  yield* git(upstreamRemote, ["init", "--bare"]);
+  yield* git(cwd, ["remote", "add", "fork", forkRemote]);
+  yield* git(cwd, ["remote", "add", "upstream", upstreamRemote]);
+  yield* git(cwd, ["push", "upstream", initialBranch]);
+  yield* git(cwd, ["checkout", "-b", "feature/remote"]);
+  yield* writeTextFile(cwd, "feature.txt", "feature\n");
+  yield* git(cwd, ["add", "-A"]);
+  yield* driver.commit(cwd, "Add feature", "");
+  return { cwd, initialBranch };
+});
+
 // Most tests start from the same one-commit repository; they copy it instead of spawning git.
 let repoTemplate: string | undefined;
 afterAll(() => {
@@ -7949,6 +7968,112 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           timeoutMs: 10_000,
         });
         assert.notEqual(originMain.exitCode, 0);
+      }),
+    );
+
+    it.effect("asks which remote to push to when several remotes have no origin", () =>
+      Effect.gen(function* () {
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const { cwd } = yield* makeForkWorkflowRepo;
+        // A push remote that was since removed is no choice at all.
+        yield* git(cwd, ["config", "branch.feature/remote.pushRemote", "removed"]);
+
+        const status = yield* driver.statusDetailsLocal(cwd);
+        assert.deepEqual(status.pushRemoteChoices, ["fork", "upstream"]);
+        assert.isUndefined(status.pushRemote);
+        const refused = yield* driver.pushCurrentBranch(cwd, null).pipe(Effect.flip);
+        assert.include(refused.message, "Choose which remote");
+
+        // A push re-reads the cached remotes, so the configured default shows up after it.
+        yield* git(cwd, ["config", "remote.pushDefault", "fork"]);
+        yield* driver.pushCurrentBranch(cwd, null, { remoteName: "upstream" });
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+          "upstream/feature/remote",
+        );
+        assert.isUndefined((yield* driver.statusDetailsLocal(cwd)).pushRemoteChoices);
+      }),
+    );
+
+    it.effect("asks for a push remote while the upstream is only the branch's base", () =>
+      Effect.gen(function* () {
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const { cwd, initialBranch } = yield* makeForkWorkflowRepo;
+        yield* git(cwd, ["branch", "--set-upstream-to", `upstream/${initialBranch}`]);
+
+        const status = yield* driver.statusDetailsLocal(cwd);
+        assert.isTrue(status.hasUpstream);
+        assert.isUndefined(status.pushRemote);
+        const refused = yield* driver.pushCurrentBranch(cwd, null).pipe(Effect.flip);
+        assert.include(refused.message, "Choose which remote");
+        const unknown = yield* driver
+          .pushCurrentBranch(cwd, null, { remoteName: cwd })
+          .pipe(Effect.flip);
+        assert.include(unknown.message, "does not exist");
+
+        yield* driver.pushCurrentBranch(cwd, null, { remoteName: "fork" });
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+          "fork/feature/remote",
+        );
+        assert.equal(
+          yield* git(cwd, ["config", "branch.feature/remote.t3-merge-base-ref"]),
+          `refs/remotes/upstream/${initialBranch}`,
+        );
+      }),
+    );
+
+    it.effect("selecting a push remote moves the branch's tracking to it", () =>
+      Effect.gen(function* () {
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const { cwd } = yield* makeForkWorkflowRepo;
+        const refName = "feature/remote";
+
+        const unset = yield* driver.statusDetailsLocal(cwd);
+        assert.deepEqual(unset.remotes, ["fork", "upstream"]);
+        assert.isUndefined(unset.pushRemote);
+
+        yield* driver.setPushRemote({ cwd, refName, remoteName: "fork" });
+        assert.equal((yield* driver.statusDetailsLocal(cwd)).pushRemote, "fork");
+        yield* driver.pushCurrentBranch(cwd, null);
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+          `fork/${refName}`,
+        );
+
+        // The new remote has no such branch yet: tracking clears, so the branch can publish there.
+        yield* driver.setPushRemote({ cwd, refName, remoteName: "upstream" });
+        const moved = yield* driver.statusDetailsLocal(cwd);
+        assert.equal(moved.pushRemote, "upstream");
+        assert.isFalse(moved.hasUpstream);
+        yield* driver.pushCurrentBranch(cwd, null);
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+          `upstream/${refName}`,
+        );
+
+        // Going back finds the branch already on that remote and tracks it again.
+        yield* driver.setPushRemote({ cwd, refName, remoteName: "fork" });
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+          `fork/${refName}`,
+        );
+        assert.equal((yield* driver.statusDetailsLocal(cwd)).pushRemote, "fork");
+
+        const unknown = yield* driver
+          .setPushRemote({ cwd, refName, remoteName: "missing" })
+          .pipe(Effect.flip);
+        assert.include(unknown.message, "missing");
+        const unknownBranch = yield* driver
+          .setPushRemote({ cwd, refName: "feature/renamed", remoteName: "fork" })
+          .pipe(Effect.flip);
+        assert.include(unknownBranch.message, "does not exist");
+        assert.equal(
+          yield* git(cwd, ["config", "--get-regexp", "^branch\\.feature/renamed\\."]).pipe(
+            Effect.orElseSucceed(() => ""),
+          ),
+          "",
+        );
       }),
     );
   });

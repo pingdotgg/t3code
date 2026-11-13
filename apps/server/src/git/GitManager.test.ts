@@ -56,8 +56,12 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
-import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
+import type {
+  SourceControlProvider,
+  SourceControlProviderContext,
+} from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
@@ -602,6 +606,7 @@ function runStackedAction(
     commitMessage?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
+    pushRemote?: string;
   },
   options?: Parameters<GitManager.GitManager["Service"]["runStackedAction"]>[1],
 ) {
@@ -624,6 +629,10 @@ function preparePullRequestThread(
 function makeManager(input?: {
   providerScenario?: FakeProviderScenario;
   sourceControlProvider?: SourceControlProvider["Service"];
+  /** Served when a caller resolves the provider for a specific remote. */
+  remoteSourceControlProvider?: SourceControlProvider["Service"];
+  /** The checkout-wide context the default provider was resolved from. */
+  sourceControlContext?: SourceControlProviderContext;
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
@@ -721,7 +730,11 @@ function makeManager(input?: {
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           resolveLink: (input) => provider.resolveLink?.(input),
           get: () => Effect.succeed(provider),
-          resolveHandle: () => Effect.succeed({ provider, context: null }),
+          resolveHandle: (request) =>
+            Effect.succeed({
+              provider: (request.context && input?.remoteSourceControlProvider) || provider,
+              context: request.context ?? input?.sourceControlContext ?? null,
+            }),
           resolve: () => Effect.succeed(provider),
           discover: Effect.succeed([]),
         }),
@@ -968,6 +981,146 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         state: "merged",
         updatedAt: "2026-01-02T00:00:00.000Z",
       });
+    }),
+  );
+
+  it.effect.each([
+    { label: "the branch's push remote", key: "branch.feature/status-push-remote-host.pushRemote" },
+    { label: "the repository's default push remote", key: "remote.pushDefault" },
+  ])("status detects the host from $label before the first push", ({ key }) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-push-remote-host"]);
+      yield* runGit(repoDir, ["remote", "add", "hub", "https://github.com/acme/repo.git"]);
+      yield* runGit(repoDir, ["remote", "add", "lab", "https://gitlab.com/acme/repo.git"]);
+      yield* runGit(repoDir, ["config", key, "lab"]);
+
+      const { manager } = yield* makeManager();
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.sourceControlProvider?.kind).toBe("gitlab");
+    }),
+  );
+
+  it.effect("status finds the PR on the host of the remote the branch is pushed to", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-mixed-hosts"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "hub", "https://github.com/acme/repo.git"]);
+      yield* runGit(repoDir, ["remote", "add", "lab", "https://gitlab.com/acme/repo.git"]);
+      yield* runGit(repoDir, ["config", "remote.lab.pushurl", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "lab", "feature/status-mixed-hosts"]);
+
+      const gitlab = createFakeSourceControlProvider({
+        kind: "gitlab",
+        prListSequence: [
+          [
+            {
+              number: 21,
+              title: "Mixed hosts",
+              url: "https://gitlab.com/acme/repo/-/merge_requests/21",
+              baseRefName: "main",
+              headRefName: "feature/status-mixed-hosts",
+              isCrossRepository: true,
+              headRepositoryNameWithOwner: "acme/repo",
+              headRepositoryOwnerLogin: "acme",
+            },
+          ],
+        ],
+      });
+      const { manager } = yield* makeManager({ remoteSourceControlProvider: gitlab.service });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr?.url).toBe("https://gitlab.com/acme/repo/-/merge_requests/21");
+    }),
+  );
+
+  it.effect("create_pr reads the base from the branch remote when only it has that base", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const labDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD:main"]);
+      yield* runGit(repoDir, ["remote", "add", "lab", "https://gitlab.com/acme/repo.git"]);
+      yield* runGit(repoDir, ["config", "remote.lab.pushurl", labDir]);
+      yield* runGit(repoDir, ["update-ref", "refs/remotes/lab/develop", "HEAD"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/lab-base"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "lab.txt"), "lab\n");
+      yield* runGit(repoDir, ["add", "lab.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Lab base"]);
+      yield* runGit(repoDir, ["push", "-u", "lab", "feature/lab-base"]);
+
+      const gitlab = createFakeSourceControlProvider({
+        kind: "gitlab",
+        defaultBranch: "develop",
+        prListSequence: [
+          [],
+          [
+            {
+              number: 8,
+              title: "Lab base",
+              url: "https://gitlab.com/acme/repo/-/merge_requests/8",
+              baseRefName: "develop",
+              headRefName: "feature/lab-base",
+            },
+          ],
+        ],
+      });
+      const { manager } = yield* makeManager({ remoteSourceControlProvider: gitlab.service });
+
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+
+      expect(result.pr.status).toBe("created");
+      expect(created(gitlab.calls).map((call) => call.baseRefName)).toEqual(["develop"]);
+    }),
+  );
+
+  it.effect("status finds the PR on the branch remote's host when both hosts are GitHub", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-mixed-github-hosts"]);
+      const remoteDir = yield* createBareRemote();
+      const originUrl = "https://github.com/acme/repo.git";
+      const originProvider = sourceControlDefinitions.recognizeRemote(originUrl);
+      if (!originProvider) throw new Error("github.com is not recognized");
+      yield* runGit(repoDir, ["remote", "add", "origin", originUrl]);
+      yield* runGit(repoDir, ["remote", "add", "ghe", "https://acme.ghe.com/acme/repo.git"]);
+      yield* runGit(repoDir, ["config", "remote.ghe.pushurl", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "ghe", "feature/status-mixed-github-hosts"]);
+
+      const enterprise = createFakeSourceControlProvider({
+        prListSequence: [
+          [
+            {
+              number: 5,
+              title: "Enterprise host",
+              url: "https://acme.ghe.com/acme/repo/pull/5",
+              baseRefName: "main",
+              headRefName: "feature/status-mixed-github-hosts",
+            },
+          ],
+        ],
+      });
+      const { manager } = yield* makeManager({
+        remoteSourceControlProvider: enterprise.service,
+        sourceControlContext: {
+          provider: originProvider,
+          remoteName: "origin",
+          remoteUrl: originUrl,
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr?.url).toBe("https://acme.ghe.com/acme/repo/pull/5");
     }),
   );
 
@@ -3657,6 +3810,49 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           (call) => call.baseRefName === "master" && call.headSelector === "feature/master-default",
         ),
       ).toBe(true);
+    }),
+  );
+
+  it.effect("commit_push_pr pushes to the chosen remote when none is named origin", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const forkDir = yield* createBareRemote();
+      const upstreamDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
+      yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+      yield* runGit(repoDir, ["push", "upstream", "HEAD:main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/chosen-remote"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "chosen.txt"), "chosen\n");
+
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          prListSequence: [
+            [],
+            [
+              {
+                number: 61,
+                title: "Chosen remote",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/61",
+                baseRefName: "main",
+                headRefName: "feature/chosen-remote",
+              },
+            ],
+          ],
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+        pushRemote: "fork",
+      });
+
+      expect(result.push.status).toBe("pushed");
+      expect(result.pr.status).toBe("created");
+      expect(
+        (yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"])).stdout.trim(),
+      ).toBe("fork/feature/chosen-remote");
     }),
   );
 

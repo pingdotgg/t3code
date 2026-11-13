@@ -5,6 +5,7 @@ import { sourceControlClients } from "../sourceControlClients.ts";
 import {
   buildMenuItems,
   getGitActionDisabledReason,
+  pushRemoteChoicesFor,
   resolveDefaultBranchActionDialogCopy,
   resolveQuickAction,
 } from "./gitActions.ts";
@@ -92,5 +93,27 @@ describe("git action copy", () => {
         terminology: sourceControlClients.get("gitlab").changeRequest,
       }).continueLabel,
     ).toBe("Commit, push & create MR");
+  });
+});
+
+describe("pushRemoteChoicesFor", () => {
+  const choices = ["fork", "upstream"];
+  const unclear = { pushRemoteChoices: choices };
+
+  it("asks before a push when the remote is unclear", () => {
+    expect(pushRemoteChoicesFor({ action: "commit_push_pr" }, unclear)).toEqual(choices);
+    expect(pushRemoteChoicesFor({ action: "commit" }, unclear)).toBeNull();
+    expect(pushRemoteChoicesFor({ action: "push", pushRemote: "fork" }, unclear)).toBeNull();
+    expect(pushRemoteChoicesFor({ action: "push" }, {})).toBeNull();
+    expect(pushRemoteChoicesFor({ action: "push" }, { ...unclear, pushRemote: "fork" })).toBeNull();
+  });
+
+  it("asks for a new feature branch even when the current branch has a push remote", () => {
+    expect(
+      pushRemoteChoicesFor(
+        { action: "commit_push", featureBranch: true },
+        { ...unclear, pushRemote: "fork" },
+      ),
+    ).toEqual(choices);
   });
 });

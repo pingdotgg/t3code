@@ -346,6 +346,9 @@ function toLocalStatusPart(status: VcsStatusResult): VcsStatusLocalResult {
       ? { sourceControlProvider: status.sourceControlProvider }
       : {}),
     hasPrimaryRemote: status.hasPrimaryRemote,
+    ...(status.remotes ? { remotes: status.remotes } : {}),
+    ...(status.pushRemote ? { pushRemote: status.pushRemote } : {}),
+    ...(status.pushRemoteChoices ? { pushRemoteChoices: status.pushRemoteChoices } : {}),
     isDefaultRef: status.isDefaultRef,
     refName: status.refName,
     hasWorkingTreeChanges: status.hasWorkingTreeChanges,

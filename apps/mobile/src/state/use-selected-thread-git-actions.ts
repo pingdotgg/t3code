@@ -1,3 +1,4 @@
+import { useNavigation } from "@react-navigation/native";
 import { useAtomMount } from "@effect/atom-react";
 
 import { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -5,6 +6,7 @@ import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import {
   createVcsStatusRevalidationAtomFamily,
   type GitActionRequestInput,
+  pushRemoteChoicesFor,
   type VcsActionOperation,
   type VcsRef,
 } from "@t3tools/client-runtime/state/vcs";
@@ -53,12 +55,14 @@ const selectedThreadStatusRevalidation = createVcsStatusRevalidationAtomFamily({
 });
 
 export function useSelectedThreadGitActions() {
+  const navigation = useNavigation();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
   const readRefs = useAtomCommand(vcsEnvironment.readRefs, { reportFailure: false });
   const refreshStatus = useAtomCommand(vcsEnvironment.refreshStatus, { reportFailure: false });
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
+  const setPushRemote = useAtomCommand(vcsEnvironment.setPushRemote, { reportFailure: false });
   const createRef = useAtomCommand(vcsEnvironment.createRef, { reportFailure: false });
   const createWorktree = useAtomCommand(vcsEnvironment.createWorktree, { reportFailure: false });
   const pull = useAtomCommand(vcsEnvironment.pull, { reportFailure: false });
@@ -356,9 +360,54 @@ export function useSelectedThreadGitActions() {
     );
   };
 
+  const selectedThreadGitStatus = () =>
+    selectedThread && selectedThreadCwd
+      ? AsyncResult.getOrElse(
+          appAtomRegistry.get(
+            vcsEnvironment.status({
+              environmentId: selectedThread.environmentId,
+              input: { cwd: selectedThreadCwd },
+            }),
+          ),
+          () => null,
+        )
+      : null;
+
+  const onSetSelectedThreadPushRemote = async (remoteName: string) => {
+    const refName = selectedThreadGitStatus()?.refName;
+    if (!refName) return null;
+    return runSelectedThreadGitMutation(
+      "switch_ref",
+      "Changing push remote",
+      async ({ thread, cwd }) => {
+        const result = await setPushRemote({
+          environmentId: thread.environmentId,
+          input: { cwd, refName, remoteName },
+        });
+        if (AsyncResult.isSuccess(result)) {
+          await refreshSelectedThreadGitStatus({ quiet: true, cwd });
+        }
+        return result;
+      },
+    );
+  };
+
   const onRunSelectedThreadGitAction = async (
     input: GitActionRequestInput,
   ): Promise<GitRunStackedActionResult | null> => {
+    // Every entry point lands here, after any default-branch confirmation.
+    const pushRemoteChoices = pushRemoteChoicesFor(input, selectedThreadGitStatus());
+    if (pushRemoteChoices && selectedThread) {
+      navigation.navigate("GitRemote", {
+        environmentId: String(selectedThread.environmentId),
+        threadId: String(selectedThread.id),
+        action: input.action,
+        ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
+        ...(input.featureBranch ? { featureBranch: "true" } : {}),
+        ...(input.filePaths?.length ? { filePaths: JSON.stringify(input.filePaths) } : {}),
+      });
+      return null;
+    }
     const actionId = uuidv4();
     return await runSelectedThreadGitMutation(
       "run_change_request",
@@ -370,6 +419,7 @@ export function useSelectedThreadGitActions() {
           ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
           ...(input.featureBranch ? { featureBranch: input.featureBranch } : {}),
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
+          ...(input.pushRemote ? { pushRemote: input.pushRemote } : {}),
           threadId: thread.id,
         });
         if (AsyncResult.isFailure(result)) {
@@ -412,6 +462,7 @@ export function useSelectedThreadGitActions() {
     onCreateSelectedThreadBranch,
     onCreateSelectedThreadWorktree,
     onPullSelectedThreadBranch,
+    onSetSelectedThreadPushRemote,
     onRunSelectedThreadGitAction,
   };
 }
