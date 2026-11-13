@@ -379,6 +379,32 @@ function useBrowsePathInput(
     return committed;
   };
 
+  // `~` expands on the host, so ask its browser for the absolute directory before matching
+  // registered roots. Resolution trims `~/` to `~` and the browse helper only knows `~/`,
+  // so restore the separator, and accept Windows `~\` the way the host expands it.
+  const resolveHomePath = async (path: string): Promise<string> => {
+    if (
+      !/^~(?:[\\/]|$)/.test(path) ||
+      !environment ||
+      !readEnvironmentScope(environment.environmentId, AuthFilesystemReadScope) ||
+      !canPreloadBrowsePath(environmentRuntime?.connectionState)
+    ) {
+      return path;
+    }
+    const browseQuery =
+      path === "~" || (isWindowsPlatform(environment.platform) && path.startsWith("~\\"))
+        ? `~/${path.slice(2)}`
+        : path;
+    const browsePath = getFilesystemBrowsePath(browseQuery, environment.platform);
+    const result = await loadBrowsePath({
+      environmentId: environment.environmentId,
+      input: { partialPath: browsePath.directoryPath },
+    });
+    return AsyncResult.isSuccess(result) && result.value
+      ? getCloneDestinationPath(result.value.parentPath, browsePath.filterQuery)
+      : path;
+  };
+
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates the browse navigation coordinator on unmount so in-flight browses do not commit
   useEffect(
     () => () => {
@@ -387,7 +413,7 @@ function useBrowsePathInput(
     [browseNavigation],
   );
 
-  return { isBrowseNavigating, pathInput, setPathInput, navigateToBrowsePath };
+  return { isBrowseNavigating, pathInput, setPathInput, navigateToBrowsePath, resolveHomePath };
 }
 
 function useEnvironmentOptions(
@@ -730,16 +756,65 @@ async function draftWithPrompt(
   return draftId;
 }
 
-function useCreateProject(environment: EnvironmentOption | null) {
+function useOpenExistingProject(environment: EnvironmentOption | null) {
   const openNewTaskDraft = useOpenNewTaskDraft();
-  const navigation = useNavigation();
-  const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const updateProject = useAtomCommand(projectEnvironment.update, {
     label: "project unarchive",
   });
   const projects = useProjects();
 
-  return async (workspaceRoot: string, originRoute = getActiveRoute(navigation)) => {
+  return async (
+    path: string,
+    originRoute: ReturnType<typeof getActiveRoute>,
+    prompt?: string | null,
+  ): Promise<boolean> => {
+    if (!environment) return false;
+    const existing = findExistingAddProject({
+      projects,
+      environmentId: environment.environmentId,
+      path,
+    });
+    if (!existing) return false;
+    // Adding an archived project's folder again brings the project back.
+    if (
+      existing.archivedAt != null &&
+      (
+        await updateProject({
+          environmentId: existing.environmentId,
+          input: { projectId: existing.id, archived: false },
+        })
+      )._tag !== "Success"
+    ) {
+      Dialog.alert(
+        "Project already exists",
+        `${existing.title} is still archived. Try again later.`,
+      );
+    }
+    openNewTaskDraft(
+      {
+        environmentId: existing.environmentId,
+        projectId: existing.id,
+        title: existing.title,
+        ...(prompt
+          ? { draftId: await draftWithPrompt(existing.environmentId, existing.id, prompt) }
+          : {}),
+      },
+      originRoute,
+    );
+    return true;
+  };
+}
+
+function useCreateProject(environment: EnvironmentOption | null) {
+  const openNewTaskDraft = useOpenNewTaskDraft();
+  const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
+  const openExistingProject = useOpenExistingProject(environment);
+
+  return async (
+    workspaceRoot: string,
+    lookupPath: string,
+    originRoute: ReturnType<typeof getActiveRoute>,
+  ) => {
     if (
       !environment ||
       !canCreateProjectInEnvironment(environment.connectionState) ||
@@ -752,35 +827,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
       return;
     }
 
-    const existing = findExistingAddProject({
-      projects,
-      environmentId: environment.environmentId,
-      path: workspaceRoot,
-    });
-    if (existing) {
-      // Adding an archived project's folder again brings the project back.
-      const unarchived =
-        existing.archivedAt == null ||
-        (
-          await updateProject({
-            environmentId: existing.environmentId,
-            input: { projectId: existing.id, archived: false },
-          })
-        )._tag === "Success";
-      Dialog.alert(
-        "Project already exists",
-        unarchived ? existing.title : `${existing.title} is still archived. Try again later.`,
-      );
-      openNewTaskDraft(
-        {
-          environmentId: existing.environmentId,
-          projectId: existing.id,
-          title: existing.title,
-        },
-        originRoute,
-      );
-      return;
-    }
+    if (await openExistingProject(lookupPath, originRoute)) return;
 
     const projectId = ProjectId.make(uuidv4());
     const command = buildProjectCreateCommand({
@@ -1313,8 +1360,9 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
     environment?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
+  const navigation = useNavigation();
   const createProject = useCreateProject(environment);
-  const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } =
+  const { isBrowseNavigating, navigateToBrowsePath, pathInput, resolveHomePath, setPathInput } =
     useBrowsePathInput(environment);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1332,8 +1380,13 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
       return;
     }
 
+    const originRoute = getActiveRoute(navigation);
     setIsSubmitting(true);
-    const result = await createProject(resolved.path);
+    const result = await createProject(
+      resolved.path,
+      await resolveHomePath(resolved.path),
+      originRoute,
+    );
     if (result && AsyncResult.isFailure(result)) {
       setError(errorMessage(Cause.squash(result.cause)));
     }
@@ -1404,11 +1457,9 @@ export function AddProjectDestinationScreen(props: {
       ? getCloneDirectoryPath(remoteUrl, true, repositoryName)
       : null;
   const cloneDirectoryName = ghqDirectoryPath?.split("/").at(-1) ?? repositoryName;
-  const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } = useBrowsePathInput(
-    environment,
-    cloneDirectoryName,
-    ghqDirectoryPath ?? repositoryName,
-  );
+  const { isBrowseNavigating, navigateToBrowsePath, pathInput, resolveHomePath, setPathInput } =
+    useBrowsePathInput(environment, cloneDirectoryName, ghqDirectoryPath ?? repositoryName);
+  const openExistingProject = useOpenExistingProject(environment);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1436,6 +1487,16 @@ export function AddProjectDestinationScreen(props: {
 
     const originRoute = getActiveRoute(navigation);
     setIsSubmitting(true);
+    try {
+      if (await openExistingProject(await resolveHomePath(resolved.path), originRoute, prompt)) {
+        setIsSubmitting(false);
+        return;
+      }
+    } catch (cause) {
+      setError(errorMessage(cause));
+      setIsSubmitting(false);
+      return;
+    }
     const title = inferProjectTitleFromPath(resolved.path);
     const startResult = await startProjectClone({
       environmentId: environment.environmentId,

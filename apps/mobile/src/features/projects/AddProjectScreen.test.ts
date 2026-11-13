@@ -6,7 +6,11 @@ import * as NodeModule from "node:module";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { workspaceDetailRouter } from "../layout/workspace/workspace-detail-selection";
 import type { NavigationState } from "@react-navigation/native";
-import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
+import {
+  AuthFilesystemReadScope,
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { act, createElement, isValidElement, type ReactNode } from "react";
@@ -16,7 +20,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const state = vi.hoisted(() => ({
   scopes: new Set<string>(),
   baseDirectory: "",
+  os: "linux",
+  home: "/home/tester",
   projects: [] as string[],
+  cloneDestinations: [] as string[],
   existingProjects: [] as {
     environmentId: string;
     id: string;
@@ -34,6 +41,21 @@ const state = vi.hoisted(() => ({
   navigationState: undefined as NavigationState | undefined,
   environments: [{ environmentId: "environment", environmentLabel: "Environment" }],
 }));
+
+// Stands in for the host's `~` expansion, which filesystem.browse reports as parentPath.
+function browseResult(partialPath: string) {
+  const expanded = /^~(?:[\\/]|$)/.test(partialPath)
+    ? `${state.home}${partialPath.slice(1)}`
+    : partialPath;
+  const normalized = state.os === "windows" ? expanded.replaceAll("/", "\\") : expanded;
+  return {
+    parentPath: normalized.slice(
+      0,
+      Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\")) + 1,
+    ),
+    entries: [],
+  };
+}
 
 function loadRouters() {
   const requireNavigation = NodeModule.createRequire(
@@ -112,7 +134,7 @@ vi.mock("../../state/entities", () => ({
       [
         "environment",
         {
-          environment: { platform: { os: "linux" }, capabilities: {} },
+          environment: { platform: { os: state.os }, capabilities: {} },
           newProjectsRoot: state.newProjectsRoot,
           settings: { addProjectBaseDirectory: state.baseDirectory },
         },
@@ -134,16 +156,27 @@ vi.mock("../../state/use-remote-environment-registry", () => ({
   }),
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
-vi.mock("../../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => () => {} }));
+vi.mock("../../state/use-atom-query-runner", () => ({
+  useAtomQueryRunner:
+    () =>
+    async ({ input }: { input: { partialPath: string } }) =>
+      // filesystem.browse rejects an empty partialPath.
+      input.partialPath === ""
+        ? AsyncResult.failure(Cause.fail(new Error("Invalid filesystem.browse input")))
+        : AsyncResult.success(browseResult(input.partialPath)),
+}));
 vi.mock("../../state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
 vi.mock("../../state/presentation", () => ({
   useEnvironmentPresentation: () => ({ isReady: true, presentation: null }),
 }));
-vi.mock("../../state/filesystem", () => ({ filesystemEnvironment: {} }));
+vi.mock("../../state/filesystem", () => ({
+  filesystemEnvironment: { browse: (target: unknown) => target },
+}));
 vi.mock("../../state/sourceControl", () => ({
   sourceControlEnvironment: {
     discovery: (input: unknown) => input,
     startProjectClone: async ({ input }: { input: { destinationPath: string } }) => {
+      state.cloneDestinations.push(input.destinationPath);
       if (state.startCloneResult) return state.startCloneResult;
       NodeFS.mkdirSync(input.destinationPath);
       return AsyncResult.success(undefined);
@@ -498,14 +531,18 @@ describe("local project navigation", () => {
     state.waitForProject.mockReset();
     const created = Promise.withResolvers<ReturnType<typeof AsyncResult.success<void>>>();
     const projected = Promise.withResolvers<unknown>();
+    const waitingForProject = Promise.withResolvers<void>();
     state.createResult = created.promise;
-    state.waitForProject.mockReturnValue(projected.promise);
+    state.waitForProject.mockImplementation(() => {
+      waitingForProject.resolve();
+      return projected.promise;
+    });
     const submit = findAction(
       renderScreen(() => AddProjectLocalFolderScreen({ environmentId: "environment" })),
       "Add project",
     );
     if (!submit) throw new Error("Add project action missing");
-    return { created, projected, submit };
+    return { created, projected, waitingForProject, submit };
   }
 
   it("keeps navigation in place and explains a project projection timeout", async () => {
@@ -632,12 +669,12 @@ describe("local project navigation", () => {
   ])(
     "waits for projection then selects the draft from $origin",
     async ({ withDraft, withChooser }) => {
-      const { created, projected, submit } = setup();
+      const { created, projected, waitingForProject, submit } = setup();
       const navigation = mountProjectFlow(withDraft, withChooser, true);
       const before = navigation.getState();
       const submission = submit();
       created.resolve(AsyncResult.success(undefined));
-      await created.promise;
+      await waitingForProject.promise;
       expect(state.projects).toEqual(["/tmp/t3-mobile-audit-fixture"]);
       expect(navigation.getState()).toBe(before);
       projected.resolve({ environmentId: "environment", id: "project" });
@@ -754,5 +791,93 @@ describe("local folder path", () => {
     state.connectionStates = {};
     await screen.render();
     expect(screen.path).toBe("~/code/app");
+  });
+});
+
+describe("adding an already registered project", () => {
+  const existing = {
+    environmentId: "environment",
+    id: "existing-project",
+    title: "Bike documents",
+    workspaceRoot: "/home/tester/repro/bike-documents",
+  };
+
+  function setup(input: { baseDirectory: string; os?: string; home?: string; root?: string }) {
+    state.navigationState = undefined;
+    state.scopes = new Set([
+      AuthOrchestrationOperateScope,
+      AuthSourceControlWriteScope,
+      AuthFilesystemReadScope,
+    ]);
+    state.baseDirectory = input.baseDirectory;
+    state.os = input.os ?? "linux";
+    state.home = input.home ?? "/home/tester";
+    state.existingProjects = [{ ...existing, workspaceRoot: input.root ?? existing.workspaceRoot }];
+    state.projects = [];
+    state.cloneDestinations = [];
+    state.createResult = null;
+    state.startCloneResult = null;
+    state.dispatch.mockReset();
+    state.alert.mockReset();
+    return {
+      navigation: mountProjectFlow(false),
+      [Symbol.dispose]: () => {
+        state.os = "linux";
+        state.home = "/home/tester";
+        state.existingProjects = [];
+      },
+    };
+  }
+
+  it.each([
+    { path: "~/repro/bike-documents/" },
+    { path: "~/", root: "/home/tester" },
+    {
+      path: "~\\repro\\bike-documents",
+      os: "windows",
+      home: "C:\\Users\\tester",
+      root: "C:\\Users\\tester\\repro\\bike-documents",
+    },
+  ])("opens the existing project for local folder $path", async ({ path, ...host }) => {
+    using flow = setup({ baseDirectory: path, ...host });
+    const submit = findAction(
+      renderScreen(() => AddProjectLocalFolderScreen({ environmentId: "environment" })),
+      "Add project",
+    );
+    if (!submit) throw new Error("Add project action missing");
+    await submit();
+
+    expect(state.projects).toEqual([]);
+    expect(state.alert).not.toHaveBeenCalled();
+    expect(flow.navigation.getState().routes.at(-1)?.params).toEqual({
+      draft: { environmentId: "environment", projectId: existing.id, title: existing.title },
+    });
+  });
+
+  it("opens the existing project with the prompt instead of cloning into it", async () => {
+    using flow = setup({ baseDirectory: "~/repro" });
+    const submit = findAction(
+      renderScreen(() =>
+        AddProjectDestinationScreen({
+          environmentId: "environment",
+          remoteUrl: "https://example.com/bike-documents.git",
+          repositoryName: "bike-documents",
+          prompt: "Fix the bike",
+        }),
+      ),
+      "Clone project",
+    );
+    if (!submit) throw new Error("Clone action missing");
+    await submit();
+
+    expect(state.cloneDestinations).toEqual([]);
+    expect(flow.navigation.getState().routes.at(-1)?.params).toEqual({
+      draft: {
+        environmentId: "environment",
+        projectId: existing.id,
+        title: existing.title,
+        draftId: "prompt-draft",
+      },
+    });
   });
 });
