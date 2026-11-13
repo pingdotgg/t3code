@@ -1137,6 +1137,12 @@ effectIt.effect(
           upstream: "refs/remotes/origin/feature/restore",
           base: "",
         },
+        "pushed-sole-remote": {
+          tip: threadTip,
+          file: "thread.txt",
+          upstream: "refs/remotes/upstream/feature/restore",
+          base: "",
+        },
         detached: { tip: baseTip, file: null, upstream: null, base: "main" },
         "detached-no-remote": { tip: projectTip, file: "project.txt", upstream: null, base: "" },
       } as const;
@@ -1151,7 +1157,11 @@ effectIt.effect(
           yield* git(workspaceRoot, ["switch", "--detach"]);
           expect(yield* git(workspaceRoot, ["branch", "--show-current"])).toBe("");
         }
+        if (scenario === "pushed-sole-remote") {
+          yield* git(workspaceRoot, ["remote", "rename", "origin", "upstream"]);
+        }
         if (scenario === "detached") {
+          yield* git(workspaceRoot, ["remote", "rename", "upstream", "origin"]);
           yield* git(workspaceRoot, ["push", "origin", "--delete", "feature/restore"]);
         }
         if (scenario === "detached-no-remote") {
