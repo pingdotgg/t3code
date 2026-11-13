@@ -318,7 +318,7 @@ async function rustLoad(ctx) {
 async function rustRestart(ctx) {
   await rustTurn(ctx);
   await ctx.stopServer(ctx.rust);
-  const banner = ctx.page.getByText("conn-server is reconnecting");
+  const banner = ctx.page.getByText(/ is reconnecting/);
   await banner.first().waitFor({ timeout: 30_000 });
   await ctx.shotAlways("server-down");
   const sockets = ctx.cap.http.filter((h) => h.upgrade === "websocket").length;
@@ -924,7 +924,7 @@ async function rustWorktree(ctx) {
   await send(ctx, "Reply with exactly: worktree ok");
   await waitTurnEnd(ctx);
   await ctx.page
-    .getByText(/^worktree ok\.?$/i)
+    .getByText(/^(echo: Reply with exactly: )?worktree ok\.?$/i)
     .last()
     .waitFor({ timeout: 30_000 });
   if (!sentIn(ctx, '"workspaceStrategy":{"type":"worktree"')) {

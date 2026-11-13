@@ -328,26 +328,29 @@ to the socket.
 
 ## Status
 
-**Coverage:** 33 of 235 methods (12 of 32 streams), from the method table at startup. The
-engine's `dispatchCommand` coverage and design notes are in `crates/conn-engine/README.md`.
+**Coverage:** 81 of 235 methods (20 of 32 streams), from the method table at startup. Every
+registered method checks the scope the T3 server requires (`src/scopes.rs`). The engine's
+`dispatchCommand` coverage is in `crates/conn-engine/README.md`; each other area's crate README
+lists what it serves.
 
-| Area          | Methods                                                                                                                                                        |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Connect       | `subscribeServerConfig`, `subscribeServerLifecycle`, `server.probe`, `server.reportClientActivity`                                                             |
-| Config        | `server.getConfig`, `updateSettings`, `upsertKeybinding`, `removeKeybinding`, `refreshProviders`, `getHostResources`, `getProcessDiagnostics`, `signalProcess` |
-| Access        | `subscribeAuthAccess`; HTTP `/api/auth/clients`, `clients/revoke`, `clients/revoke-others`, `pairing-links/revoke`, scoped `pairing-token`                     |
-| Providers     | `provider.auth.subscribe`, `provider.install.subscribe` (idle states)                                                                                          |
-| Threads       | `orchestration.subscribeShell`, `subscribeThread`, `launchThread`, `dispatchCommand`, `getThreadProjection`                                                    |
-| Empty answers | `subscribeTerminalMetadata`, `subscribeProjectClones`, `subscribeDeviceState`, `panels.requests`, `scheduledTasks.subscribe`, `preview.reportProfiles`         |
+| Area            | Served by                                                                                       |
+| --------------- | ----------------------------------------------------------------------------------------------- |
+| Connect, config | `methods/server.rs`: config and lifecycle streams, settings, keybindings, access, diagnostics   |
+| Threads         | `conn-engine`: dispatch (41 of 56 commands), launch, streams, reads, search, families, projects |
+| Agents          | `conn-provider-claude`, `conn-provider-codex`; `/mcp` (`conn-mcp`, 16 tools)                    |
+| Workspace       | `conn-vcs` (status, refs, review, worktrees), `conn-files` (files, search, assets, uploads)     |
+| Terminals       | `conn-terminal`                                                                                 |
 
-`dispatchCommand` handles `thread.create`, `message.dispatch`, `run.interrupt`, `thread.stop`,
-`runtime-request.respond`, `thread.archive`/`unarchive`/`delete`/`visit`,
-`thread.metadata.update`, and the runtime-mode, interaction-mode and model-selection setters.
+The server joins them in `src/host.rs`: each provider session gets a `/mcp` credential, messages
+claim their uploads, a `worktree` launch provisions a worktree, archive and delete close the
+thread's terminals, and a turn's end refreshes VCS status. One idle rule closes provider
+sessions (`--session-idle-timeout`, default 30 minutes, held up to 4 hours by background work).
+SIGTERM and SIGINT stop terminals and close every provider session before the server exits.
 
-**Proven with the real web client** (headless Chromium, Haiku): pairing through Settings ›
-Connections, the project in the sidebar, a new thread with one full answer, an approved Bash
-prompt in Supervised mode, Stop during a tool call, and a server restart on the same state: the
-client reconnects by itself, shows the thread, and runs a second turn.
+**Proven with the real web client** (headless Chromium; `fixtures/README.md`): pairing, a turn,
+a restart with reconnect, an approved prompt, Stop during a tool call, settings and access,
+search, VCS views and the diff, files and uploads, terminals, a launch into a new worktree, and
+a turn that calls `/mcp`. `tools/orbit-flow.mjs` runs Orbit's container flow against a binary.
 
 **Memory on Linux** (x86_64, Ubuntu, kernel 7.0; the Orbit container host). Read with
 `smaps_rollup`, the server process only, in MiB. One client, real Claude Haiku turns from the web
@@ -381,16 +384,16 @@ cross-compiler for bundled SQLite, such as `cargo zigbuild`.
 
 What a real Conn session hits that this server does not do:
 
-- **Not supported (error in that view):** VCS (`subscribeVcsStatus`, `subscribeVcsBranch`,
-  `vcs.listRefs`, `server.discoverSourceControl`), diffs (`review.getDiffPreview`), previews, annotations,
-  discovered local servers, archived and older-settled shell reads, terminals, provider
-  sign-in and install flows, and every other method not listed above.
-- **No checkpoints:** turns are not captured as git refs, so no diff or restore.
-- **No title model wired:** the engine takes a `TitleGenerator`; until one is configured,
-  `generateTitle` keeps the client's seed title.
-- **No `/mcp`:** agents cannot reach T3 tools.
-- **Claude only:** no Codex or other providers. Gaps in the Claude provider are listed in
-  `crates/conn-provider-claude/README.md` (workflow subagents, PDF embedding, disk helpers).
+- **Not supported (error in that view):** previews, annotations, devices, pull requests,
+  scheduled-task edits, provider sign-in and install, peer links, discovered local servers and
+  the other methods the startup coverage line lists as missing.
+- **No checkpoints:** turns are not captured as git refs, so no turn diff or restore.
+- **No title model wired:** `generateTitle` keeps the client's seed title. A generator must call
+  the provider the way the T3 server does.
+- **`/mcp` serves 16 of 84 T3 tools** (`crates/conn-mcp/README.md`).
+- **Worktree launch:** the worktree is made before the thread exists; `prepared-run.*` stays
+  refused and no project setup script runs.
+- **Providers:** Claude and Codex. Their gaps are in each crate's README.
 - **Auth:** bearer and ticket only. No cookie sessions, DPoP or relay (`DROP-IN.md` §4).
 - **Desktop-local backend:** the `--bootstrap-fd` start works; the desktop itself still
   spawns the T3 server (`DROP-IN.md` §2).

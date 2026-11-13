@@ -58,8 +58,8 @@ fallback), usage-limit and provider failures, thread resume after a restart.
 - **Retries:** `error` with `willRetry: true` makes no retry row; the turn keeps running.
 - **Rate limits:** `account/rateLimits/*` is ignored, so usage-limit failures have no `resetAt`.
 - **Attachments:** images and files are not sent.
-- **T3 MCP:** no `mcp_servers.t3-code` and no `additionalContext`; Conn Server has no `/mcp`
-  for Codex yet.
+- **T3 context:** no `additionalContext` (runtime, orchestration and tool text). The
+  `t3-code` MCP servers come through `Session::set_mcp_servers`; not tried with a live turn.
 - **Tool rows:** MCP presentation (titles, icons, surfaces) and MCP apps.
 - **Elicitations:** declined. `item/tool/call` and auth-refresh requests get an error reply.
 - **Image generation**, prompt suggestions, async questions in agent messages, the Orbit MCP

@@ -28,18 +28,19 @@ Line format, as the workspace README fixes it, with two additions:
 
 ## Scenarios
 
-| Scenario     | What happens                                                                                                                    |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `pairing`    | A fresh browser opens `/pair#token=…` on a fresh server and lands in the app                                                    |
-| `reconnect`  | The same browser (session cookie) opens `/` again                                                                               |
-| `turn`       | New thread in the project, Claude Haiku 5.5, one short message, one full turn                                                   |
-| `permission` | New thread in Supervised mode; Claude asks to run `echo conn-recording`; the user approves once                                 |
-| `interrupt`  | New thread; Claude runs `ping -c 30 127.0.0.1` (approved); the user stops the turn while it runs                                |
-| `remote`     | From Settings › Connections, pair a second fresh server as a remote environment                                                 |
-| `terminal`   | On a draft: terminal drawer, `echo`, resize, reload (scrollback returns), 50 MB `yes`, close                                    |
-| `rust-*`     | As `remote`, with the Rust `conn-server` as the remote environment (`--rust <binary>`)                                          |
-| `ts-*`       | The same drivers as `rust-follow-up`, `rust-queue`, `rust-search`, with a paired TypeScript server, for side-by-side comparison |
-| `*-files`    | Favicon, `@` search, image upload, content search, open a file; no model call                                                   |
+| Scenario                                                        | What happens                                                                                                                                            |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pairing`                                                       | A fresh browser opens `/pair#token=…` on a fresh server and lands in the app                                                                            |
+| `reconnect`                                                     | The same browser (session cookie) opens `/` again                                                                                                       |
+| `turn`                                                          | New thread in the project, Claude Haiku 5.5, one short message, one full turn                                                                           |
+| `permission`                                                    | New thread in Supervised mode; Claude asks to run `echo conn-recording`; the user approves once                                                         |
+| `interrupt`                                                     | New thread; Claude runs `ping -c 30 127.0.0.1` (approved); the user stops the turn while it runs                                                        |
+| `remote`                                                        | From Settings › Connections, pair a second fresh server as a remote environment                                                                         |
+| `terminal`                                                      | On a draft: terminal drawer, `echo`, resize, reload (scrollback returns), 50 MB `yes`, close                                                            |
+| `rust-attachment`, `rust-worktree`, `rust-mcp`, `rust-subagent` | Claude names an uploaded image's colour; a launch into a new worktree; Claude calls `t3_thread_list` over `/mcp`; a subagent row opens its child thread |
+| `rust-*`                                                        | As `remote`, with the Rust `conn-server` as the remote environment (`--rust <binary>`)                                                                  |
+| `ts-*`                                                          | The same drivers as `rust-follow-up`, `rust-queue`, `rust-search`, with a paired TypeScript server, for side-by-side comparison                         |
+| `*-files`                                                       | Favicon, `@` search, image upload, content search, open a file; no model call                                                                           |
 
 The server starts with `--auto-bootstrap-project-from-cwd` in a scratch git repo, so it has one
 project and one empty thread before the client arrives. `pairing` therefore lands on that thread,
