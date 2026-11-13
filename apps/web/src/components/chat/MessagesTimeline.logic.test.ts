@@ -2269,6 +2269,262 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  describe.each(["question", "approval"] as const)(
+    "while a pending %s waits on the user",
+    (kind) => {
+      const threadId = ThreadId.make("waiting-request-thread");
+      const runId = RunId.make("waiting-request-run");
+      const requestId = RuntimeRequestId.make("waiting-request");
+      const at = (second: number) =>
+        DateTime.makeUnsafe(new Date(Date.UTC(2026, 9, 17, 12, 0, second)).toISOString());
+      const base = (id: string, ordinal: number, second: number) => ({
+        id: TurnItemId.make(id),
+        threadId,
+        runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        status: "completed" as const,
+        title: null,
+        startedAt: at(second),
+        completedAt: at(second),
+        updatedAt: at(second),
+      });
+      const request = (answeredAt: number | null) => {
+        const item = {
+          ...base("request", 2, 2),
+          ...(answeredAt === null
+            ? { status: "waiting" as const, completedAt: null }
+            : { completedAt: at(answeredAt), updatedAt: at(answeredAt) }),
+        };
+        return kind === "question"
+          ? {
+              ...item,
+              type: "user_input_request" as const,
+              requestId,
+              questions: [],
+              ...(answeredAt === null
+                ? {}
+                : {
+                    questionAnswer: {
+                      requestId,
+                      questionTextById: { color: "Which color?" },
+                      answers: { color: "Blue" },
+                      attachmentsByQuestionId: {},
+                    },
+                  }),
+            }
+          : {
+              ...item,
+              type: "approval_request" as const,
+              requestId,
+              requestKind: "command" as const,
+              prompt: "Allow touch?",
+            };
+      };
+      const timelineEntries = (items: ReadonlyArray<OrchestrationV2TurnItem>, runless = false) =>
+        deriveTimelineEntriesFromVisibleTurnItems({
+          visibleTurnItems: items.map((item, position) => ({
+            position,
+            visibility: "local" as const,
+            sourceThreadId: threadId,
+            sourceItemId: item.id,
+            item: runless ? { ...item, runId: null } : item,
+          })),
+          optimisticMessages: [],
+        });
+      // Provider-native subagent work has no app run.
+      const liveWork = (runless: boolean) =>
+        runless
+          ? { runlessWorkActive: true }
+          : {
+              latestRun: {
+                runId,
+                status: "running" as const,
+                startedAt: DateTime.formatIso(at(0)),
+                completedAt: null,
+              },
+              runningRunId: runId,
+            };
+      const prompt = {
+        ...base("prompt", 0, 0),
+        type: "user_message" as const,
+        messageId: MessageId.make("prompt"),
+        text: "Ask me which color I prefer",
+        attachments: [],
+        inputIntent: "turn_start" as const,
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+      };
+      const command = (id: string, ordinal: number, second: number) => ({
+        ...base(id, ordinal, second),
+        type: "command_execution" as const,
+        input: `touch ${id}`,
+      });
+
+      it("does not count the wait in the finished turn's Worked for", () => {
+        // Two seconds of work, a minute waiting on the user, then three more seconds of work.
+        const rows = deriveMessagesTimelineRows({
+          timelineEntries: timelineEntries([
+            prompt,
+            command("before", 1, 1),
+            request(62),
+            command("after", 3, 63),
+            {
+              ...base("answer", 4, 65),
+              type: "assistant_message" as const,
+              messageId: MessageId.make("answer"),
+              text: "Blue it is",
+              streaming: false,
+            },
+          ]),
+          latestRun: {
+            runId,
+            status: "completed",
+            startedAt: DateTime.formatIso(at(0)),
+            completedAt: DateTime.formatIso(at(65)),
+          },
+          isWorking: false,
+          activeTurnStartedAt: null,
+          turnDiffSummaries: [],
+          supportsConversationRollback: false,
+        });
+
+        expect(rows.find((row) => row.kind === "turn-fold")).toMatchObject({
+          label: "Worked for 5s",
+        });
+      });
+
+      it.each([false, true])(
+        "does not show a working timer counting from the run start (runless: %s)",
+        (runless) => {
+          const rows = deriveMessagesTimelineRows({
+            timelineEntries: timelineEntries(
+              [prompt, command("before", 1, 1), request(null)],
+              runless,
+            ),
+            ...(kind === "approval" ? { pendingApprovalRequestIds: new Set([requestId]) } : {}),
+            ...liveWork(runless),
+            isWorking: true,
+            activeTurnStartedAt: DateTime.formatIso(at(0)),
+            turnDiffSummaries: [],
+            supportsConversationRollback: false,
+          });
+
+          expect(
+            rows.filter(
+              (row) => row.kind === "working" && row.createdAt === DateTime.formatIso(at(0)),
+            ),
+            `the ${kind} is open, yet the working row times the whole run`,
+          ).toEqual([]);
+          expect(rows.find((row) => row.kind === "working")).toMatchObject({
+            waitingOnUser: true,
+          });
+        },
+      );
+
+      it.each([false, true])(
+        "resumes the working timer past the answered wait (runless: %s)",
+        (runless) => {
+          const rows = deriveMessagesTimelineRows({
+            timelineEntries: timelineEntries(
+              [prompt, command("before", 1, 1), request(62)],
+              runless,
+            ),
+            ...liveWork(runless),
+            isWorking: true,
+            activeTurnStartedAt: DateTime.formatIso(at(0)),
+            turnDiffSummaries: [],
+            supportsConversationRollback: false,
+          });
+
+          expect(rows.find((row) => row.kind === "working")).toMatchObject({
+            createdAt: DateTime.formatIso(at(60)),
+          });
+        },
+      );
+
+      it("keeps the answered wait out of a wake run's timer that continues from the run", () => {
+        // A notification wake keeps its predecessor's start, so its timer spans the earlier wait.
+        const wakeRunId = RunId.make("waiting-request-wake-run");
+        const rows = deriveMessagesTimelineRows({
+          timelineEntries: timelineEntries([
+            prompt,
+            command("before", 1, 1),
+            request(62),
+            {
+              ...base("answer", 3, 70),
+              type: "assistant_message" as const,
+              messageId: MessageId.make("answer"),
+              text: "Blue it is",
+              streaming: false,
+            },
+            { ...command("wake", 4, 80), runId: wakeRunId },
+          ]),
+          latestRun: {
+            runId: wakeRunId,
+            status: "running",
+            startedAt: DateTime.formatIso(at(80)),
+            completedAt: null,
+          },
+          runningRunId: wakeRunId,
+          isWorking: true,
+          activeTurnStartedAt: DateTime.formatIso(at(0)),
+          turnDiffSummaries: [],
+          supportsConversationRollback: false,
+        });
+
+        expect(rows.find((row) => row.kind === "working")).toMatchObject({
+          createdAt: DateTime.formatIso(at(60)),
+        });
+      });
+
+      it.runIf(kind === "question")("counts work past a question answered by message", () => {
+        const asyncQuestion = { ...request(null), responseMode: "message" as const };
+        const live = deriveMessagesTimelineRows({
+          timelineEntries: timelineEntries([prompt, asyncQuestion, command("after", 3, 63)]),
+          ...liveWork(false),
+          isWorking: true,
+          activeTurnStartedAt: DateTime.formatIso(at(0)),
+          turnDiffSummaries: [],
+          supportsConversationRollback: false,
+        });
+        expect(live.some((row) => row.kind === "working" && row.waitingOnUser)).toBe(false);
+
+        const finished = deriveMessagesTimelineRows({
+          timelineEntries: timelineEntries([
+            prompt,
+            asyncQuestion,
+            command("after", 3, 63),
+            {
+              ...base("answer", 4, 65),
+              type: "assistant_message" as const,
+              messageId: MessageId.make("answer"),
+              text: "Done; tell me the color when you can",
+              streaming: false,
+            },
+          ]),
+          latestRun: {
+            runId,
+            status: "completed",
+            startedAt: DateTime.formatIso(at(0)),
+            completedAt: DateTime.formatIso(at(65)),
+          },
+          isWorking: false,
+          activeTurnStartedAt: null,
+          turnDiffSummaries: [],
+          supportsConversationRollback: false,
+        });
+        expect(finished.find((row) => row.kind === "turn-fold")).toMatchObject({
+          label: "Worked for 1m 5s",
+        });
+      });
+    },
+  );
+
   it("shows images the agent viewed outside their collapsed tool group", () => {
     const threadId = ThreadId.make("viewed-images-thread");
     const runId = RunId.make("viewed-images-run");

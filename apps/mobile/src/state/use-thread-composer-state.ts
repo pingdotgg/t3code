@@ -43,6 +43,7 @@ import {
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import { activeWorkTimerStartedAt } from "@t3tools/client-runtime/user-wait";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
 import { restoreAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
@@ -413,12 +414,14 @@ export function useThreadComposerState(input: {
     if (!selectedThreadShell) {
       return null;
     }
-    return (
-      resolveThreadWorkingStartedAt({
+    return activeWorkTimerStartedAt({
+      runStartedAt: resolveThreadWorkingStartedAt({
         latestRun: selectedThreadActivityRun,
         runtime: selectedThreadRuntime,
-      }) ?? runlessWorkStartedAt
-    );
+      }),
+      runlessStartedAt: runlessWorkStartedAt,
+      items: selectedThreadVisibleTurnItems.map(({ item }) => item),
+    });
   })();
   const runlessWorkActive = runlessWorkStartedAt !== null;
 

@@ -7,6 +7,7 @@ import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/tu
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
+import { isUserWaitItem, userWaitMs, type UserWaitItem } from "@t3tools/client-runtime/user-wait";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
   turnItemDetailRevision,
@@ -983,10 +984,16 @@ function groupAdjacentActivities(
   return grouped;
 }
 
-function computeElapsedMs(startIso: string, endIso: string): number | null {
+function computeWorkedMs(
+  startIso: string,
+  endIso: string,
+  requests: ReadonlyArray<UserWaitItem>,
+): number | null {
   const start = Date.parse(startIso);
   const end = Date.parse(endIso);
-  return Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : null;
+  return Number.isFinite(start) && Number.isFinite(end)
+    ? Math.max(0, end - start - userWaitMs(requests, start, end))
+    : null;
 }
 
 function maxIsoTimestamp(left: string | null, right: string | null): string | null {
@@ -1148,6 +1155,7 @@ function deriveThreadFeedRunFolds(
       startBoundary: string | null;
       /** Each steer after the run has output starts a segment at this index into `entries`. */
       steerSegments: Array<{ startIndex: number; steer: ThreadFeedEntry }>;
+      userWaits: UserWaitItem[];
     }
   >();
   let runlessKey: RunId | null = null;
@@ -1180,7 +1188,12 @@ function deriveThreadFeedRunFolds(
         : ownRunId;
     let group = groupsByRunId.get(runId);
     if (!group) {
-      group = { entries: [], startBoundary: pendingUserBoundary, steerSegments: [] };
+      group = {
+        entries: [],
+        startBoundary: pendingUserBoundary,
+        steerSegments: [],
+        userWaits: [],
+      };
       pendingUserBoundary = null;
       groupsByRunId.set(runId, group);
     }
@@ -1191,6 +1204,7 @@ function deriveThreadFeedRunFolds(
     if (entry.type !== "activity-group") continue;
     for (const activity of entry.activities) {
       const item = activity.projectedItem.item;
+      if (isUserWaitItem(item)) group.userWaits.push(item);
       if (item.type === "run_interrupt_result") interruptedRunIds.add(runId);
       if (
         runId === runlessKey &&
@@ -1263,13 +1277,14 @@ function deriveThreadFeedRunFolds(
       lastEntry.type === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
     const elapsedMs =
       latestRunMatches && latestRun.startedAt && latestRun.completedAt
-        ? computeElapsedMs(latestRun.startedAt, latestRun.completedAt)
-        : computeElapsedMs(
+        ? computeWorkedMs(latestRun.startedAt, latestRun.completedAt, group.userWaits)
+        : computeWorkedMs(
             group.startBoundary ?? firstEntry.createdAt,
             maxIsoTimestamp(
               terminalEntry?.type === "message" ? terminalEntry.message.updatedAt : null,
               lastEntryEnd,
             ) ?? lastEntryEnd,
+            group.userWaits,
           );
     const duration = elapsedMs === null ? null : formatDuration(elapsedMs);
     const interrupted =
@@ -1291,11 +1306,12 @@ function deriveThreadFeedRunFolds(
       },
       ...group.steerSegments.map(({ startIndex, steer }, index) => {
         const entries = group.entries.slice(startIndex, group.steerSegments[index + 1]?.startIndex);
-        const segmentMs = computeElapsedMs(
+        const segmentMs = computeWorkedMs(
           steer.createdAt,
           entries
             .map((entry) => (entry.type === "message" ? entry.message.updatedAt : entry.createdAt))
             .reduce<string | null>(maxIsoTimestamp, null) ?? steer.createdAt,
+          group.userWaits,
         );
         return {
           runId: steerFoldRunId(runId, steer.id),
