@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   idleServerTab: false,
   loading: false,
   nativeServerTab: false,
+  streamedServerTab: false,
   serverEpoch: null as string | null,
   servers: [] as PreviewableServer[],
   recordingTabIds: new Set<string>(),
@@ -132,7 +133,7 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
             "tab-1": {
               threadId: "thread-1",
               tabId: "tab-1",
-              runtime: mocks.nativeServerTab ? "server" : "desktop",
+              runtime: mocks.nativeServerTab || mocks.streamedServerTab ? "server" : "desktop",
               navStatus: { _tag: "Success", url: "http://example.com/", title: "Example" },
               canGoBack: false,
               canGoForward: false,
@@ -176,6 +177,8 @@ vi.mock(import("~/browser/ServerBrowserSurface"), async (original) => ({
 }));
 
 import { useComposerDraftStore } from "~/composerDraftStore";
+import { commitBrowserViewportChange } from "~/browser/browserViewportActions";
+import { resolveResponsiveBrowserViewportSize } from "~/browser/browserViewportLayout";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
@@ -227,6 +230,7 @@ function setup() {
   mocks.idleServerTab = false;
   mocks.loading = false;
   mocks.nativeServerTab = false;
+  mocks.streamedServerTab = false;
   mocks.serverEpoch = null;
   mocks.servers = [];
   mocks.recordingTabIds = new Set();
@@ -357,6 +361,23 @@ describe("PreviewView", () => {
     const rect = card.element().getBoundingClientRect();
     const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
     expect(card.element().contains(hit)).toBe(true);
+  });
+
+  it("sizes the first device viewport of a streamed tab to its panel", async () => {
+    setup();
+    mocks.streamedServerTab = true;
+    await using _screen = await render(<ToastProvider timeout={0}>{view()}</ToastProvider>);
+    const surface = page.getByTestId("server-browser-surface");
+    await expect.element(surface).toBeInTheDocument();
+    const rect = surface.element().getBoundingClientRect();
+
+    await userEvent.click(page.getByRole("button", { name: "Preview menu" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Show device toolbar" }));
+
+    expect(commitBrowserViewportChange).toHaveBeenCalledWith(expect.anything(), {
+      _tag: "freeform",
+      ...resolveResponsiveBrowserViewportSize(rect, 1),
+    });
   });
 
   it("focuses and selects the address from forwarded desktop actions only while visible", async () => {
