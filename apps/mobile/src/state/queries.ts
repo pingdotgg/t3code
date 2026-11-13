@@ -153,7 +153,7 @@ export function useComposerPullRequestSearch(input: {
       : null,
   );
   const exactEntry = exact.data
-    ? { ...exact.data, ...legacyThreadPullRequestKey(exact.data) }
+    ? { ...exact.data, host: legacyThreadPullRequestKey(exact.data).host }
     : null;
   const entries = (() => {
     if (input.query === null || input.projectId === null || input.repository === null) return [];

@@ -334,7 +334,7 @@ export function useComposerMenuItems({
           ? [
               {
                 ...exactPullRequestLookup.data,
-                ...legacyThreadPullRequestKey(exactPullRequestLookup.data),
+                host: legacyThreadPullRequestKey(exactPullRequestLookup.data).host,
               },
             ]
           : [];
