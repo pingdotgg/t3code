@@ -4,6 +4,7 @@ import {
   compactDynamicToolOutput,
   MAX_TOOL_OUTPUT_IMAGES,
   mcpToolResultOutput,
+  SEND_TO_USER_MAX_LENGTH,
   toolOutputImages,
   toolOutputIndicatesFailure,
 } from "./toolOutput.ts";
@@ -21,6 +22,15 @@ describe("compactDynamicToolOutput", () => {
     ]) {
       expect(compactDynamicToolOutput(value)).toEqual(metadata);
     }
+  });
+
+  it("keeps a send_to_user message up to its limit, even in 3-byte characters", () => {
+    const longest = "界".repeat(SEND_TO_USER_MAX_LENGTH);
+    for (const sentMessage of ["Draft:\n\n> Hi Sam,", longest]) {
+      const json = JSON.stringify({ sentMessage, message: "Shown to the user." });
+      expect(compactDynamicToolOutput([{ type: "text", text: json }])).toEqual({ sentMessage });
+    }
+    expect(compactDynamicToolOutput({ sentMessage: `${longest}界` })).toBeUndefined();
   });
 
   it("keeps nested thread identity and scalar task IDs without result bodies", () => {
