@@ -12,6 +12,7 @@ import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import { ChildProcessSpawner } from "effect/process";
 import * as Scope from "effect/Scope";
 
 import * as ServerConfig from "../config.ts";
@@ -55,7 +56,7 @@ const layerRealGit = GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer));
 
 interface HarnessOptions {
   readonly vcsProcess?: Layer.Layer<VcsProcess.VcsProcess>;
-  readonly git?: Layer.Layer<GitVcsDriver.GitVcsDriver>;
+  readonly git?: typeof layerRealGit;
   readonly projects?: (
     real: ProjectService.ProjectService["Service"],
   ) => ProjectService.ProjectService["Service"];
@@ -306,6 +307,31 @@ it.effect("leaves threads in other projects alone", () =>
   ),
 );
 
+it.effect("still knows No project when its folder is the target of a symlinked Scratch", () =>
+  withScratch(({ baseDir }) =>
+    Effect.gen(function* () {
+      const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const projects = yield* ProjectService.ProjectService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* requireRoot;
+      const target = path.join(baseDir, "visible-chats");
+      yield* fileSystem.makeDirectory(target);
+      yield* fileSystem.symlink(target, root);
+      const { projectId } = yield* scratch.ensureScratchProject;
+      yield* projects.update({
+        commandId: CommandId.make("command:point-at-target"),
+        projectId,
+        workspaceRoot: target,
+      });
+
+      assert.isTrue(yield* scratch.isScratchProject(projectId));
+      assert.equal((yield* scratch.ensureScratchProject).projectId, projectId);
+      assert.deepStrictEqual(yield* scratch.scratchRoot, Option.some(target));
+    }),
+  ),
+);
+
 const GIT_IDENTITY_KEYS = [
   "GIT_AUTHOR_NAME",
   "GIT_AUTHOR_EMAIL",
@@ -447,6 +473,41 @@ it.effect("keeps a named project and reports why when Git cannot commit", () =>
         assert.isTrue(yield* fileSystem.exists(path.join(result.workspaceRoot, ".git")));
       }),
     ),
+  ),
+);
+
+it.effect("says Git is not installed when a named project cannot start Git", () =>
+  withScratch(
+    () =>
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+
+        const failure = yield* Effect.flip(folders.createNamedProject({ name: "T3Code Test" }));
+
+        assert.strictEqual(
+          failure.message,
+          "Git isn't installed on this machine. Install Git to create a project.",
+        );
+      }),
+    {
+      git: GitVcsDriver.layer.pipe(
+        Layer.provide(
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "ChildProcess",
+                  method: "spawn",
+                  syscall: "spawn git",
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    },
   ),
 );
 
