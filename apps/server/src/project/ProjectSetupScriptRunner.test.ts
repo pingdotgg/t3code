@@ -38,6 +38,7 @@ const openSnapshot = (history: string): TerminalSessionSnapshot => ({
 });
 
 const makeHarness = Effect.fn(function* (options: {
+  readonly command?: string;
   readonly history?: string;
   readonly opening?: Deferred.Deferred<void>;
   readonly shell?: string | null;
@@ -62,6 +63,7 @@ const makeHarness = Effect.fn(function* (options: {
       }),
     write: (input) => Queue.offer(writes, input.data).pipe(Effect.asVoid),
     closeIdle: () => Effect.void,
+    closeOnSettle: () => Effect.void,
   });
   const runner = yield* ProjectSetupScriptRunner.make.pipe(
     Effect.provide(
@@ -87,7 +89,7 @@ const makeHarness = Effect.fn(function* (options: {
         {
           id: "setup",
           name: "Setup",
-          command: "vp i",
+          command: options.command ?? "vp i",
           icon: "configure",
           runOnWorktreeCreate: true,
         },
@@ -101,6 +103,7 @@ const makeHarness = Effect.fn(function* (options: {
 
 const setup = Effect.fn(function* (
   options: {
+    readonly command?: string;
     readonly history?: string;
     readonly shell?: string | null;
   } = {},
@@ -119,6 +122,32 @@ describe("ProjectSetupScriptRunner", () => {
         shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
       });
       expect(yield* Queue.take(writes)).toContain("$global:LASTEXITCODE");
+    }),
+  );
+
+  it.effect("types an escaped Nushell wrapper once its line editor starts", () =>
+    Effect.gen(function* () {
+      const command =
+        'print "quoted"; print \'C:\\tools\'; print "$env.PATH"\nexit 7 # comment\r\n\t';
+      const escaped =
+        'print \\"quoted\\"; print \'C:\\\\tools\'; print \\"$env.PATH\\"\\u{a}exit 7 # comment\\u{d}\\u{a}\\u{9}';
+      const { writes, emit } = yield* setup({ shell: "/opt/homebrew/bin/nu", command });
+      yield* TestClock.adjust("1 second");
+      expect(yield* Queue.size(writes)).toBe(0);
+      yield* emit({ ...event, type: "output", data: "> \x1b[?2004h" });
+      const written = yield* Queue.take(writes);
+      const sentinel = written.match(/__T3_SETUP_DONE___[0-9a-f]{32}:/)?.[0];
+      expect(sentinel).toBeDefined();
+      expect(written).toBe(
+        ` ${[
+          "$env.LAST_EXIT_CODE = 0",
+          "let __t3f = try { mktemp --tmpdir-path $env.T3CODE_WORKTREE_PATH --suffix .nu .t3-setup-XXXXXXXX } catch {|e| print -e $e.msg; null }",
+          `if $__t3f == null { $env.LAST_EXIT_CODE = 1 } else { try { [$"rm --permanent ($__t3f | to nuon)" "${escaped}"] | str join (char newline) | save --force --raw $__t3f; ^$nu.current-exe --login --commands $"cd $env.T3CODE_WORKTREE_PATH; source ($__t3f | to nuon)" } catch {|e| if $e != null and $e.exit_code? == null { print -e $e.msg }; if $env.LAST_EXIT_CODE == 0 { $env.LAST_EXIT_CODE = 1 } } }`,
+          "let __t3c = $env.LAST_EXIT_CODE",
+          "try { if $__t3f != null and ($__t3f | path exists) { rm --permanent $__t3f } } catch {|e| print -e $e.msg }",
+          `print $"\\n${sentinel}($__t3c)"`,
+        ].join("; ")}\r`,
+      );
     }),
   );
 

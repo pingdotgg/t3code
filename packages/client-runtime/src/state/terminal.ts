@@ -1,4 +1,5 @@
 import {
+  DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   type EnvironmentId,
   type TerminalAttachInput,
   type TerminalCloseInput,
@@ -67,7 +68,11 @@ export function createTerminalEnvironmentAtoms<R, E>(
         // Retry an unanswered first attach unchanged so it can still open the shell.
         let replied = false;
         return subscribeDynamic(WS_METHODS.terminalAttach, () =>
-          Effect.sync(() => (replied ? { ...input, resume: true } : input)),
+          Effect.sync(() => ({
+            ...input,
+            ...(replied ? { resume: true } : {}),
+            maxHistoryBytes: DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+          })),
         ).pipe(
           Stream.onFirst(() =>
             Effect.sync(() => {

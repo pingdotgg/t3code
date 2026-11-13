@@ -20,14 +20,14 @@ const MAX_RELEASE_NOTE_GROUPS = 6;
 const MAX_RELEASE_NOTE_ITEMS_PER_GROUP = 8;
 const MAX_RELEASE_NOTE_ITEM_LENGTH = 220;
 
-const HTML_ENTITY_REPLACEMENTS: Readonly<Record<string, string>> = {
-  amp: "&",
-  apos: "'",
-  gt: ">",
-  lt: "<",
-  nbsp: " ",
-  quot: '"',
-};
+const HTML_ENTITY_REPLACEMENTS: ReadonlyMap<string, string> = new Map([
+  ["amp", "&"],
+  ["apos", "'"],
+  ["gt", ">"],
+  ["lt", "<"],
+  ["nbsp", " "],
+  ["quot", '"'],
+]);
 
 function decodeCodePoint(codePoint: number, entity: string): string {
   if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
@@ -37,7 +37,7 @@ function decodeCodePoint(codePoint: number, entity: string): string {
 }
 
 function decodeHtmlEntity(entity: string): string {
-  const named = HTML_ENTITY_REPLACEMENTS[entity];
+  const named = HTML_ENTITY_REPLACEMENTS.get(entity);
   if (named) return named;
   if (entity.startsWith("#x")) {
     return decodeCodePoint(Number.parseInt(entity.slice(2), 16), entity);
@@ -169,6 +169,22 @@ function resolveReleasedAt(version: string, offeredVersion: string, releaseDate?
 interface NormalizedDesktopUpdateReleaseNotes {
   readonly releaseNotes: ReadonlyArray<DesktopUpdateReleaseNote>;
   readonly omittedReleaseCount: number;
+}
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Untagged notes come from the feed entry named by releaseName, which is the newest entry when the
+ * offered release is not on the feed's first page. Keep them only when that entry is the offered one.
+ */
+export function releaseNotesOfOfferedVersion(info: {
+  readonly version: string;
+  readonly releaseNotes?: unknown;
+  readonly releaseName?: string | null | undefined;
+}): unknown {
+  if (typeof info.releaseNotes !== "string" || !info.releaseName) return info.releaseNotes;
+  const namesVersion = new RegExp(`(?:^|[^\\w.-])v?${escapeRegExp(info.version)}(?![\\w.-])`);
+  return namesVersion.test(info.releaseName) ? info.releaseNotes : undefined;
 }
 
 /** fullChangelog includes all greater semvers, so preview cuts sort above nightlies of the same base version. */

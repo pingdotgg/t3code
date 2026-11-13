@@ -9,8 +9,10 @@ import { vi } from "vite-plus/test";
 
 import { mcpToolSession, runAcpMcpCliFastPath, runAcpMcpStdioBridge } from "./AcpMcpStdioBridge.ts";
 
-function makeHarness(responder: (request: Request) => Promise<Response> | Response) {
-  const input = new NodeStream.PassThrough();
+function makeHarness(
+  responder: (request: Request) => Promise<Response> | Response,
+  input = new NodeStream.PassThrough(),
+) {
   const written: Array<string> = [];
   const requests: Array<{ readonly headers: Headers; readonly body: string }> = [];
   const bridge = runAcpMcpStdioBridge({
@@ -160,6 +162,36 @@ describe("AcpMcpStdioBridge", () => {
         id: null,
         error: { code: -32700, message: "Parse error" },
       });
+    }),
+  );
+
+  it.effect("keeps U+2028 and U+2029 inside a message instead of splitting it", () =>
+    Effect.gen(function* () {
+      const { input, written, requests, bridge } = makeHarness(
+        () => Response.json({ jsonrpc: "2.0", id: 4, result: { ok: true } }),
+        // Object mode keeps the two writes as separate chunks instead of one buffered read.
+        new NodeStream.PassThrough({ objectMode: true }),
+      );
+      const fiber = yield* Effect.forkChild(bridge);
+      // JSON.stringify leaves both separators unescaped, as MCP stdio clients send them.
+      const message = JSON.stringify({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: { name: "echo", arguments: { text: "a\u2028b\u2029c\u{1f30d}" } },
+      });
+
+      // Split inside the emoji's UTF-8 bytes and leave the last line unterminated, as stdin may.
+      const bytes = Buffer.from(message);
+      const split = bytes.indexOf(Buffer.from("\u{1f30d}")) + 2;
+      input.write(bytes.subarray(0, split));
+      input.end(bytes.subarray(split));
+      yield* Fiber.join(fiber);
+
+      expect(requests.map((request) => request.body)).toEqual([message]);
+      expect(written.map((chunk) => JSON.parse(chunk))).toEqual([
+        { jsonrpc: "2.0", id: 4, result: { ok: true } },
+      ]);
     }),
   );
 
@@ -357,6 +389,41 @@ describe("AcpMcpStdioBridge", () => {
       const signal = yield* Deferred.await(started);
       yield* Fiber.interrupt(fiber);
       expect(signal?.aborted).toBe(true);
+    }),
+  );
+
+  it.effect("answers a server ping that arrives before the tool result on its SSE stream", () =>
+    Effect.gen(function* () {
+      const sent: Array<{ id?: unknown; method?: string; result?: unknown }> = [];
+      const result = yield* mcpToolSession({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        clientName: "t3-code-acp-cli",
+        fetchImplementation: async (_url, init) => {
+          if (init?.method === "DELETE") return new Response(null, { status: 204 });
+          const message = JSON.parse(String(init?.body)) as (typeof sent)[number];
+          sent.push(message);
+          if (message.method === "initialize") {
+            return Response.json(
+              { jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-06-18" } },
+              { headers: { "mcp-session-id": "session-42" } },
+            );
+          }
+          if (message.method !== "tools/call") return new Response(null, { status: 202 });
+          const ping = { jsonrpc: "2.0", id: "server-ping", method: "ping" };
+          const reply = { jsonrpc: "2.0", id: message.id, result: { content: [] } };
+          return new Response(
+            `data: ${JSON.stringify(ping)}\n\ndata: ${JSON.stringify(reply)}\n\n`,
+            { headers: { "content-type": "text/event-stream" } },
+          );
+        },
+      }).pipe(
+        Effect.flatMap((session) => session.call("orchestrator_capabilities", {})),
+        Effect.scoped,
+      );
+
+      expect(result).toEqual({ content: [] });
+      expect(sent).toContainEqual({ jsonrpc: "2.0", id: "server-ping", result: {} });
     }),
   );
 
