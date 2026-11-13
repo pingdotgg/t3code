@@ -2124,6 +2124,16 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               yield* resolveRuntimeRequest(pending.nativeRequestId, "cancelled");
             }
           }
+          // Prompts read the catalog only for variants; a completed turn needs its context window.
+          const parsedModel = OpenCodeRuntime.parseOpenCodeModelSlug(turn.modelSelection.model);
+          if (status === "completed" && turn.usage.lastStep !== null && parsedModel !== null) {
+            yield* OpenCodeRuntime.readOpenCodeCatalogModel(
+              client,
+              parsedModel,
+              undefined,
+              variantCache,
+            );
+          }
           yield* emitProviderTurn(state, turn, status, completedAt);
           const threadDisposition = terminal?.threadDisposition ?? "reusable";
           yield* updateProviderThread(state, {
