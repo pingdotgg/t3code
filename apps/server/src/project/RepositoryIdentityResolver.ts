@@ -87,9 +87,8 @@ function pickMarkedRemote(
   // gh's choice is ambiguous with several marks; GitHubSourceControlProvider ignores them too.
   const [mark, ...others] = marks;
   if (!mark || others.length > 0) return null;
-  const markedUrl = mark.remoteUrl;
-  if (mark.value === "base") return { remoteName: mark.remoteName, remoteUrl: markedUrl };
-  const host = normalizeGitRemoteUrl(markedUrl).split("/")[0];
+  if (mark.value === "base") return { remoteName: mark.remoteName, remoteUrl: mark.remoteUrl };
+  const host = normalizeGitRemoteUrl(mark.remoteUrl).split("/")[0];
   const markedKey = `${host}/${mark.value.toLowerCase()}`;
   const [remoteName, remoteUrl] =
     [...remotes.entries()].find(([, url]) => normalizeGitRemoteUrl(url) === markedKey) ?? [];
