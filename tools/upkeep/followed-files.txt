@@ -1,0 +1,91 @@
+# Files in the Conn monorepo that a part of the Conn Server follows. For each part,
+# tools/bump-report.mjs prints the upstream commits (subject lines) that touched its files
+# between the old and the new pin, and a diff stat for the provider adapters.
+#
+# A line `[<part>]` starts a part: a crate or a file of this repository. Each other line is one
+# Git pathspec in the Conn monorepo (`:(glob)` allowed). Test files are left out of the
+# commit lists. Add a pathspec when a part starts to follow a file.
+#
+# This map is not complete on purpose: upstream adds files every day, so a check that every
+# upstream file is mapped would be red every night. The report lists new upstream files that
+# no part follows, as a short list to read.
+
+[crates/conn-provider-claude]
+apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts
+apps/server/src/orchestration-v2/Adapters/ClaudeTaskOutputTail.ts
+apps/server/src/orchestration-v2/Adapters/claudeWorkflowProgress.ts
+apps/server/src/provider/ClaudeProvider.ts
+apps/server/src/provider/Drivers/ClaudeDriver.ts
+apps/server/src/provider/Drivers/ClaudeExecutable.ts
+apps/server/src/provider/Drivers/ClaudeHome.ts
+
+[crates/conn-provider-codex]
+apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
+apps/server/src/provider/CodexProvider.ts
+apps/server/src/provider/codexLaunchArgs.ts
+apps/server/src/provider/CodexInstallation.ts
+apps/server/src/provider/CodexDeveloperInstructions.ts
+apps/server/src/provider/Drivers/CodexDriver.ts
+apps/server/src/provider/Drivers/CodexHomeLayout.ts
+packages/effect-codex-app-server
+
+[crates/conn-provider-support]
+packages/provider-core/src/server/ProviderAdapter.ts
+packages/provider-core/src/server/orchestrationInstructions.ts
+packages/shared/src/cliArgs.ts
+
+[crates/conn-engine]
+apps/server/src/orchestration-v2
+:(exclude)apps/server/src/orchestration-v2/Adapters
+:(exclude)apps/server/src/orchestration-v2/testkit
+packages/contracts/src/orchestrationV2.ts
+
+[crates/conn-mcp]
+apps/server/src/mcp
+
+[crates/conn-server/src/auth.rs]
+apps/server/src/auth
+packages/contracts/src/auth.ts
+packages/contracts/src/clientRpcPermissions.ts
+
+[crates/conn-server/src/settings.rs]
+apps/server/src/serverSettings.ts
+apps/server/src/settingsSecrets.ts
+packages/contracts/src/settings.ts
+
+[crates/conn-server/src/http.rs]
+apps/server/src/http.ts
+apps/server/src/httpCors.ts
+packages/contracts/src/environmentHttp.ts
+
+[crates/conn-server/src/environment.rs]
+apps/server/src/environment
+apps/server/src/config.ts
+
+[crates/conn-server/src/keybindings.rs]
+apps/server/src/keybindings.ts
+packages/shared/src/keybindings.ts
+packages/contracts/src/keybindings.ts
+
+[crates/conn-vcs]
+apps/server/src/vcs
+apps/server/src/git
+apps/server/src/review
+apps/server/src/sourceControl
+apps/server/src/worktreesDirectory.ts
+
+[crates/conn-files]
+apps/server/src/workspace
+apps/server/src/assets
+apps/server/src/attachmentStore.ts
+apps/server/src/attachmentPaths.ts
+
+[crates/conn-terminal]
+apps/server/src/terminal
+
+[crates/conn-wire]
+apps/server/src/ws.ts
+packages/shared/src/socketFrameParts.ts
+
+[SDK and CLI pins]
+apps/server/package.json

@@ -94,11 +94,7 @@ impl Workspaces {
             // empty list.
             match conn_contract::from_json::<OrchestrationV2ShellSnapshot>(shell) {
                 Ok(snapshot) => {
-                    if snapshot
-                        .projects
-                        .iter()
-                        .any(|p| within(Path::new(&p.workspace_root)))
-                    {
+                    if known_workspace(snapshot, real.clone()).await {
                         return Ok(());
                     }
                 }
@@ -115,6 +111,35 @@ impl Workspaces {
             .expect("valid VcsRepositoryDetectionError"),
         )))
     }
+}
+
+/// Whether `real` (canonical) lies in a project or in a thread's worktree that `git worktree
+/// list` names for its project, as the T3 server's `KnownWorkspaces.contains` decides.
+async fn known_workspace(snapshot: OrchestrationV2ShellSnapshot, real: PathBuf) -> bool {
+    let projects: Vec<String> = snapshot
+        .projects
+        .iter()
+        .map(|p| p.workspace_root.clone())
+        .collect();
+    let worktrees: Vec<(String, String)> = snapshot
+        .threads
+        .iter()
+        .chain(&snapshot.archived_threads)
+        .filter_map(|thread| {
+            let worktree = thread.worktree_path.clone()?;
+            let project = snapshot
+                .projects
+                .iter()
+                .find(|p| p.id == thread.project_id)?;
+            Some((project.workspace_root.clone(), worktree))
+        })
+        .collect();
+    // `KnownWorkspaces` resolves paths and runs `git worktree list`.
+    tokio::task::spawn_blocking(move || {
+        conn_files::KnownWorkspaces::new(&projects, &worktrees).contains(&real)
+    })
+    .await
+    .unwrap_or(false)
 }
 
 pub fn register(table: &mut MethodTable, deps: &Deps) {
@@ -489,6 +514,47 @@ mod tests {
         .await
         .unwrap();
 
+        // A thread worktree outside every root, which `git worktree list` names for the
+        // project, and a thread that claims a folder git does not list.
+        let worktree = root.join("wt");
+        git(
+            &project,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "wt",
+                &worktree.to_string_lossy(),
+            ],
+        );
+        let elsewhere = root.join("elsewhere").to_string_lossy().into_owned();
+        for (thread, path) in [
+            ("t1", worktree.to_string_lossy().into_owned()),
+            ("t2", elsewhere.clone()),
+        ] {
+            let create = json!({
+                "type": "thread.create", "commandId": format!("c-{thread}"), "threadId": thread,
+                "projectId": "p1", "title": "T",
+                "modelSelection": {"instanceId": "claudeAgent", "model": "m"},
+                "runtimeMode": "full-access", "interactionMode": "default",
+                "branch": null, "worktreePath": path, "createdBy": "user", "creationSource": "web",
+            });
+            deps.engine
+                .as_ref()
+                .unwrap()
+                .dispatch(conn_contract::from_json(create).unwrap())
+                .await
+                .unwrap();
+        }
+        let in_worktree = unary(
+            &table,
+            "review.getDiffPreview",
+            json!({ "cwd": worktree.to_string_lossy() }),
+        )
+        .await;
+        assert!(in_worktree.is_ok(), "the thread worktree: {in_worktree:?}");
+
         let calls = [
             ("review.getDiffPreview", json!({ "cwd": cwd })),
             (
@@ -498,7 +564,6 @@ mod tests {
             ),
             ("review.getBranchCommits", json!({ "cwd": cwd })),
         ];
-        let elsewhere = root.join("elsewhere").to_string_lossy().into_owned();
         for (tag, input) in calls {
             let refused = |result: &Result<Value, Failure>| {
                 matches!(result, Err(Failure::Fail(e))
