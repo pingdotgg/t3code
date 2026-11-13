@@ -254,7 +254,8 @@ it("signals linked-thread changes only when a linked answer could change", () =>
       event("thread.pull-request-synced", {
         pullRequests: [{ ...link, watch: { since: "2026-11-12T00:00:00.000Z" } as never }],
       }),
-      event("thread.visited", { pullRequests: [link], title: "Ignored event" }),
+      event("thread.visited", { pullRequests: [link] }),
+      event("thread.pinned", { pullRequests: [link], settledAt: now }),
       { type: "thread.pull-request-link-updated", threadId, payload: link } as never,
       event("thread.metadata-updated", { pullRequests: [link], title: "Renamed" }),
       event("thread.archived", { pullRequests: [link], title: "Renamed", archivedAt: now }),
@@ -265,7 +266,7 @@ it("signals linked-thread changes only when a linked answer could change", () =>
       }),
       event("thread.deleted", { pullRequests: [], deletedAt: now }),
     ].map(changed),
-  ).toEqual([true, true, false, false, false, true, true, true, false]);
+  ).toEqual([true, true, false, false, true, false, true, true, true, false]);
 
   const afterRestart = makeLinkedThreadsChangeDetector();
   expect(afterRestart(event("thread.created", { title: "New" }))).toBe(false);

@@ -89,17 +89,6 @@ function linkedThreadsView(thread: OrchestrationV2AppThread): string | null {
   ]);
 }
 
-const LINKED_VIEW_EVENTS = new Set<OrchestrationV2DomainEvent["type"]>([
-  "thread.created",
-  "thread.archived",
-  "thread.unarchived",
-  "thread.deleted",
-  "thread.settled",
-  "thread.unsettled",
-  "thread.metadata-updated",
-  "thread.pull-request-synced",
-]);
-
 /**
  * Tells whether a domain event changed any `pullRequests.linkedThreads` answer, so readers can
  * refresh on change instead of polling. A thread's first event after a restart counts as a change,
@@ -108,7 +97,7 @@ const LINKED_VIEW_EVENTS = new Set<OrchestrationV2DomainEvent["type"]>([
 export function makeLinkedThreadsChangeDetector() {
   const views = new Map<ThreadId, string | null>();
   return (event: OrchestrationV2DomainEvent): boolean => {
-    if (!LINKED_VIEW_EVENTS.has(event.type) || !("lineage" in event.payload)) return false;
+    if (!event.type.startsWith("thread.") || !("lineage" in event.payload)) return false;
     const view = linkedThreadsView(event.payload);
     const known = views.has(event.threadId) || event.type === "thread.created";
     const previous = views.get(event.threadId) ?? null;
