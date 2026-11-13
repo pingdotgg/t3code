@@ -206,6 +206,16 @@ describe("readDeviceDetail", () => {
     }),
   );
 
+  it.effect.each(["unknown", "unsupported"])("keeps iOS %s readbacks unknown", (sentinel) =>
+    Effect.gen(function* () {
+      const { ready } = makeReady((call) =>
+        call.args[1] === "ui" ? { stdout: `${sentinel}\n` } : { code: 1 },
+      );
+      const detail = yield* readDeviceDetail(ready, "ios", udid);
+      expect(detail.settings).toEqual({});
+    }),
+  );
+
   it.effect("reads Android settings and the focused package", () =>
     Effect.gen(function* () {
       const { ready } = makeReady((call) => {
