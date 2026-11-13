@@ -9,7 +9,6 @@ import { useMemo, useState } from "react";
 import { Platform } from "react-native";
 
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 
 import { useProjects } from "../../state/entities";
 import { steadyNavigationThreadShellsAtom } from "../../state/threads";
@@ -28,7 +27,11 @@ import {
   useAtomValueWhileVisible,
   useHomeRouteVisible,
 } from "./home-route-visibility";
-import { buildHomeProjectScopes, resolveHomeProjectFilterScope } from "./homeThreadList";
+import {
+  buildHomeProjectFilterOptions,
+  buildHomeProjectScopes,
+  resolveHomeProjectFilterScope,
+} from "./homeThreadList";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
@@ -137,12 +140,8 @@ export function HomeRouteScreen() {
     [listOptions.projectGroupingMode, projects, selectedEnvironmentId],
   );
   const projectFilterOptions = useMemo(
-    () =>
-      pickableProjectGroups(projectScopes).map((scope) => ({
-        key: scope.key,
-        label: scope.title,
-      })),
-    [projectScopes],
+    () => buildHomeProjectFilterOptions({ scopes: projectScopes, threads, pendingTasks }),
+    [projectScopes, threads, pendingTasks],
   );
   const selectedProjectKey =
     resolveHomeProjectFilterScope(projectScopes, projects, listOptions)?.key ?? null;
