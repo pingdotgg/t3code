@@ -1997,6 +1997,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         };
         let pendingStopCloseTurn: ActiveAcpTurn | null = null;
         let followsAgentWorkState = false;
+        // A v1 agent asked for input with no prompt open: it runs its own turn
+        // and rejects the next session/prompt until it is cancelled.
+        let agentTurnOutsidePrompt = false;
         let agentWork: Extract<
           EffectAcpSchema.SessionUpdate,
           { sessionUpdate: "state_update" }
@@ -6600,6 +6603,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             readonly scope?: Scope.Scope;
           } = {},
         ) {
+          // Before start/load, so a turn the agent resumes during activation is kept.
+          agentTurnOutsidePrompt = false;
           yield* targetRuntime.getEvents().pipe(
             Stream.runForEach((event) => {
               if (event._tag === "EventStreamBarrier") {
@@ -6690,9 +6695,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const admitted = yield* runRuntimeCallbackAtGeneration(
                 handlerGeneration,
                 Effect.gen(function* () {
-                  const context = followsAgentWorkState
-                    ? yield* Ref.get(activeTurn)
-                    : yield* activeContext;
+                  const context = yield* Ref.get(activeTurn);
+                  if (context === null) agentTurnOutsidePrompt = true;
                   // Kiro sends the tool's kind on its `tool_call` and leaves it
                   // off the permission request for that call; take it from the
                   // tool already seen under the same id so policy can tell a
@@ -6724,10 +6728,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           : ({ outcome: { outcome: "selected", optionId } } as const),
                     };
                   }
+                  if (context === null) {
+                    return {
+                      _tag: "Immediate" as const,
+                      response: { outcome: { outcome: "cancelled" } } as const,
+                    };
+                  }
                   return {
                     _tag: "Pending" as const,
                     pending: yield* beginApprovalRequest(
-                      yield* activeContext,
+                      context,
                       params,
                       handlerGeneration,
                       transportRequestId,
@@ -8565,6 +8575,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 : yield* flavor.watchPromptOutcome(requestedSessionId);
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
             const promptOptions = { dispatched: context.promptDispatched };
+            if (agentTurnOutsidePrompt) {
+              agentTurnOutsidePrompt = false;
+              if (!followsAgentWorkState) yield* runtime.cancel.pipe(Effect.ignore);
+            }
             context.promptSentAt = yield* Clock.currentTimeMillis;
             if (promptInactivityTimeoutMillis !== undefined) {
               context.inactivityWatchdog = yield* watchPromptInactivity(

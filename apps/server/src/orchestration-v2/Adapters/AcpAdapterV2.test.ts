@@ -5640,6 +5640,146 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("answers a permission request the agent sends after its turn settled", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let requestPermission: Parameters<RuntimeService["handleRequestPermission"]>[0] | undefined;
+      const runtimeCalls: Array<"cancel" | "prompt"> = [];
+      const permissionDuringStart: Array<unknown> = [];
+      const instanceId = ProviderInstanceId.make("acp-test-settled-permission");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        continuationRequests: { offer: () => Effect.void },
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          enablePostSettleContinuation: true,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              cancel: Effect.sync(() => runtimeCalls.push("cancel")).pipe(
+                Effect.andThen(runtime.cancel),
+              ),
+              prompt: (payload, options) =>
+                Effect.sync(() => runtimeCalls.push("prompt")).pipe(
+                  Effect.andThen(runtime.prompt(payload, options)),
+                ),
+              // session/load resumes a running agent turn that asks before start returns.
+              start: () =>
+                runtime.start().pipe(
+                  Effect.tap(() =>
+                    requestPermission === undefined
+                      ? Effect.die("ACP runtime must register a permission handler")
+                      : requestPermission(
+                          {
+                            sessionId: "mock-session-1",
+                            toolCall: {
+                              toolCallId: "resumed-tool",
+                              title: "Run restart",
+                              kind: "execute",
+                            },
+                            options: [
+                              { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+                            ],
+                          },
+                          { requestId: "resumed-permission", method: "session/request_permission" },
+                        ).pipe(
+                          Effect.tap((response) =>
+                            Effect.sync(() => permissionDuringStart.push(response)),
+                          ),
+                        ),
+                  ),
+                ),
+              handleRequestPermission: (handler) =>
+                Effect.sync(() => {
+                  requestPermission = handler;
+                }).pipe(Effect.andThen(runtime.handleRequestPermission(handler))),
+            }),
+          }),
+        },
+      });
+      const threadId = ThreadId.make("thread-acp-settled-permission");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-settled-permission"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      if (requestPermission === undefined) {
+        return yield* Effect.die("ACP runtime must register a permission handler");
+      }
+
+      // A background task finished and the agent continues on its own, with no
+      // session/prompt outstanding.
+      const exit = yield* requestPermission(
+        {
+          sessionId: "mock-session-1",
+          toolCall: { toolCallId: "continuation-tool", title: "Run restart", kind: "execute" },
+          options: [
+            { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+            { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+          ],
+        },
+        { requestId: "continuation-permission", method: "session/request_permission" },
+      ).pipe(Effect.exit);
+
+      assert.deepEqual(
+        exit,
+        Exit.succeed({ outcome: { outcome: "selected", optionId: "allow-once" } }),
+      );
+
+      // The agent's own turn is still running; the next prompt must cancel it first.
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          ordinal: 2,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.deepEqual(permissionDuringStart, [
+        { outcome: { outcome: "selected", optionId: "allow-once" } },
+      ]);
+      assert.deepEqual(runtimeCalls, ["cancel", "prompt", "cancel", "prompt"]);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("replaces the ACP session and clears conversation state on rollback", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
