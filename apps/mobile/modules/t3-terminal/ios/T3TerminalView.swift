@@ -709,8 +709,8 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     // Ghostty answers the replay's queries on its io thread after any callback change made here,
     // so drop write output until the fence query fed behind the replay is answered. The fence's
     // ESC would abort a sequence that live output is still to complete, so skip it then.
-    if Self.endsOutsideEscapeSequence(replayed) {
-      isAwaitingReplayFence = true
+    isAwaitingReplayFence = Self.endsOutsideEscapeSequence(replayed)
+    if isAwaitingReplayFence {
       feedData(Self.replayFenceQuery)
     }
   }
@@ -722,9 +722,12 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     switch introducer {
     case UInt8(ascii: "["):
       return tail.dropFirst().contains { (0x40...0x7E).contains($0) }
-    // OSC, DCS, APC, PM and SOS strings end at BEL; an ESC \ terminator is the last ESC itself.
-    case UInt8(ascii: "]"), UInt8(ascii: "P"), UInt8(ascii: "_"), UInt8(ascii: "^"), UInt8(ascii: "X"):
+    // Only OSC also ends at BEL. An ESC \ terminator is the last ESC itself, so a DCS, APC,
+    // PM or SOS introducer that is the last ESC is still open.
+    case UInt8(ascii: "]"):
       return tail.contains(0x07)
+    case UInt8(ascii: "P"), UInt8(ascii: "_"), UInt8(ascii: "^"), UInt8(ascii: "X"):
+      return false
     default:
       return tail.contains { (0x30...0x7E).contains($0) }
     }
