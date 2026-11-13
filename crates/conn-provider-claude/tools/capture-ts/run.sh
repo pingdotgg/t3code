@@ -4,7 +4,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 crate="$(cd "$here/../.." && pwd)"
-repo="${CONN_MONOREPO:-/Users/nckrtl/apps/conn}"
+repo="${CONN_MONOREPO:?set CONN_MONOREPO to a Conn monorepo checkout at conn.pin, after vp i}"
 adapters="$repo/apps/server/src/orchestration-v2/Adapters"
 copy="$adapters/claudeCapture.test.ts"
 

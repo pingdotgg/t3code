@@ -11,7 +11,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 crate="$(cd "$here/../.." && pwd)"
 workspace_root="$(cd "$crate/../.." && pwd)"
-repo="${CONN_MONOREPO:-/Users/nckrtl/.t3/headless/worktrees/conn/conn-server-monorepo}"
+repo="${CONN_MONOREPO:?set CONN_MONOREPO to a Conn monorepo checkout at conn.pin, after vp i}"
 adapters="$repo/apps/server/src/orchestration-v2/Adapters"
 copy="$adapters/claudeConformance.test.ts"
 node_bin="$(dirname "$(command -v node)")"

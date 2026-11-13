@@ -4,7 +4,7 @@
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 crate="$(cd "$here/../.." && pwd)"
-repo="${CONN_MONOREPO:-/Users/nckrtl/.t3/headless/worktrees/conn/conn-server-monorepo}"
+repo="${CONN_MONOREPO:?set CONN_MONOREPO to a Conn monorepo checkout at conn.pin, after vp i}"
 copy="$repo/apps/server/src/claudeCatalogDump.test.ts"
 [ ! -e "$copy" ] || { echo "$copy already exists; refusing to overwrite it" >&2; exit 1; }
 trap 'rm -f "$copy"' EXIT

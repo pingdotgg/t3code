@@ -110,7 +110,7 @@ mapper and compares the events with what `ClaudeAdapterV2` emitted for the same 
 permission turn, a background subagent with its continuation turn, a foreground subagent, a
 steer, and an image. Both live inside this crate; the tests need no monorepo.
 `tools/capture-ts` regenerates `testdata/ts` from a Conn monorepo checkout (`CONN_MONOREPO`,
-default `/Users/nckrtl/apps/conn`); see its README.
+no default); see its README.
 
 Normalized in the comparison:
 

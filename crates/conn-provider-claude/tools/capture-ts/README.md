@@ -5,7 +5,7 @@ writes the events it emits to `testdata/ts/<name>.json` (`{note, offered, events
 The Rust replay tests compare against those files.
 
 ```sh
-CONN_MONOREPO=/path/to/conn ./run.sh     # default: /Users/nckrtl/apps/conn
+CONN_MONOREPO=/path/to/conn ./run.sh     # required; there is no default
 ```
 
 Variables: `CONN_MONOREPO` (monorepo root), `CAPTURE_CLI_DIR` (default `testdata/cli`),
