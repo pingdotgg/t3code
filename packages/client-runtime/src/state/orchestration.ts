@@ -82,6 +82,12 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     });
   };
   return {
+    previousAgents: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:previous-agents",
+      tag: ORCHESTRATION_V2_WS_METHODS.listPreviousAgents,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
     threadTitles: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:thread-titles",
       tag: ORCHESTRATION_V2_WS_METHODS.getThreadTitles,

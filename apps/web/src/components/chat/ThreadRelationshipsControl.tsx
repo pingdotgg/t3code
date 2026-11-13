@@ -35,6 +35,8 @@ import {
   type EnvironmentId,
   type OrchestrationV2DelegatedFrom,
   type OrchestrationV2RemoteTaskChild,
+  type OrchestrationV2PreviousAgent,
+  type OrchestrationV2PreviousAgentsPage,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadShell,
   type ServerProvider,
@@ -56,7 +58,7 @@ import {
   SquareIcon,
   UnplugIcon,
 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -141,10 +143,13 @@ type RemoteSubagent = OrchestrationV2Subagent & {
 };
 
 /** A task delegated to a linked environment has no thread here, so it gets its own row kind. */
-type LineageRow = ThreadRelationshipWalkRow | { readonly remote: RemoteSubagent };
+type LineageRow =
+  | ThreadRelationshipWalkRow
+  | { readonly remote: RemoteSubagent }
+  | { readonly history: OrchestrationV2PreviousAgent };
 
 const lineageRowStatus = (row: LineageRow) =>
-  "remote" in row ? row.remote.status : row.edge.status;
+  "history" in row ? row.history.status : "remote" in row ? row.remote.status : row.edge.status;
 
 const isFinishedAgentStatus = (status: string | null | undefined) =>
   ["completed", "failed", "error", "cancelled", "interrupted", "idle"].includes(status ?? "");
@@ -153,16 +158,27 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
   readonly label: string | null;
   readonly rows: ReadonlyArray<Row>;
   readonly expanded: boolean;
+  /** Rows read from the server's whole history; `rows` is then the loaded prefix. */
+  readonly history?: {
+    readonly total: number;
+    readonly failedCount: number;
+    readonly onShowMore: () => void;
+  };
   readonly children: (rows: ReadonlyArray<Row>) => ReactNode;
 }) {
   const [expanded, setExpanded] = useState(props.expanded);
   const [visibleCount, setVisibleCount] = useState(THREAD_LINEAGE_INITIAL_COUNT);
-  const { visibleRows, hiddenCount } = resolveThreadLineageWindow(props.rows, visibleCount);
-  const failedCount = props.rows.filter((row) => {
-    const status = lineageRowStatus(row);
-    return status === "failed" || status === "error";
-  }).length;
-  if (props.rows.length === 0) return null;
+  const { visibleRows, hiddenCount } = props.history
+    ? { visibleRows: props.rows, hiddenCount: props.history.total - props.rows.length }
+    : resolveThreadLineageWindow(props.rows, visibleCount);
+  const total = props.history?.total ?? props.rows.length;
+  const failedCount =
+    props.history?.failedCount ??
+    props.rows.filter((row) => {
+      const status = lineageRowStatus(row);
+      return status === "failed" || status === "error";
+    }).length;
+  if (total === 0) return null;
   return (
     <div>
       {props.label ? (
@@ -174,7 +190,7 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
           {failedCount > 0 ? <SectionHeaderStatus>{failedCount} failed</SectionHeaderStatus> : null}
           {expanded ? null : (
             <span className="shrink-0 text-xs font-normal tabular-nums text-muted-foreground">
-              {props.rows.length}
+              {total}
             </span>
           )}
           <ChevronDownIcon
@@ -190,7 +206,10 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
       {expanded ? (
         <ThreadLineageRowList
           hiddenCount={hiddenCount}
-          onShowMore={() => setVisibleCount((count) => count + THREAD_LINEAGE_PAGE_COUNT)}
+          onShowMore={
+            props.history?.onShowMore ??
+            (() => setVisibleCount((count) => count + THREAD_LINEAGE_PAGE_COUNT))
+          }
         >
           {props.children(visibleRows)}
         </ThreadLineageRowList>
@@ -261,7 +280,11 @@ function currentSubagent<Agent extends RuntimeSubagent>(
  * the thread there, when this client is connected to that environment.
  */
 function RemoteSubagentRow(props: {
-  readonly agent: RemoteSubagent;
+  readonly agent: {
+    readonly title: string | null;
+    readonly status: string | null;
+    readonly remoteChild: OrchestrationV2RemoteTaskChild;
+  };
   readonly provider: ServerProvider | undefined;
 }) {
   const navigate = useNavigate();
@@ -468,6 +491,62 @@ export function ThreadRelationshipsPanel(props: {
   const mergeErrorToastId = useRef<string | null>(null);
   const detachErrorToastId = useRef<string | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
+  const historyRevision =
+    projection === null && relationshipShells.length === 0
+      ? null
+      : [
+          projection?.subagents.map((agent) => `${agent.id}:${agent.status}`).join(","),
+          relationshipShells
+            .map((thread) => `${thread.id}:${thread.activityRunStatus}:${thread.status}`)
+            .join(","),
+        ].join(";");
+  const historyKey = scopedThreadKey(ref);
+  const historyEnabled = props.showLineage && !hidingAnywhere;
+  const [historyLimit, setHistoryLimit] = useState({
+    key: historyKey,
+    limit: THREAD_LINEAGE_INITIAL_COUNT,
+  });
+  const historyRowLimit =
+    historyLimit.key === historyKey ? historyLimit.limit : THREAD_LINEAGE_INITIAL_COUNT;
+  const previousAgents = useEnvironmentQuery(
+    historyEnabled
+      ? orchestrationEnvironment.previousAgents({
+          environmentId: props.environmentId,
+          input: { threadId: props.threadId, limit: historyRowLimit },
+        })
+      : null,
+  );
+  // A larger limit is a new query; keep the rows on screen until it answers.
+  const [lastHistory, setLastHistory] = useState<{
+    readonly key: string;
+    readonly page: OrchestrationV2PreviousAgentsPage;
+  } | null>(null);
+  if (
+    previousAgents.data !== null &&
+    (lastHistory?.key !== historyKey || lastHistory.page !== previousAgents.data)
+  ) {
+    setLastHistory({ key: historyKey, page: previousAgents.data });
+  }
+  const history = historyEnabled
+    ? (previousAgents.data ?? (lastHistory?.key === historyKey ? lastHistory.page : null))
+    : null;
+  const refreshPreviousAgents = previousAgents.refresh;
+  const historyRequestKey = historyEnabled ? `${historyKey}:${historyRowLimit}` : null;
+  const historyReadUnder = useRef<{ key: string | null; revision: string | null } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Refresh a mounted external query only when its streamed status revision changes.
+  useEffect(() => {
+    const previous = historyReadUnder.current;
+    historyReadUnder.current = { key: historyRequestKey, revision: historyRevision };
+    if (
+      historyRequestKey !== null &&
+      historyRevision !== null &&
+      previous?.key === historyRequestKey &&
+      previous.revision !== null &&
+      previous.revision !== historyRevision
+    ) {
+      refreshPreviousAgents();
+    }
+  }, [historyRequestKey, historyRevision, refreshPreviousAgents]);
   // Derive graphs after hooks to preserve their compiler cache.
   const providers = providersByEnvironment.get(props.environmentId);
   const derivedProviderEntries = deriveProviderInstanceEntries(providers ?? []);
@@ -592,14 +671,31 @@ export function ThreadRelationshipsPanel(props: {
     label: string | null;
     rows: ReadonlyArray<LineageRow>;
     expanded: boolean;
+    history?: NonNullable<Parameters<typeof ThreadLineageGroup>[0]["history"]>;
   }> = [
     { id: "related", label: null, rows: related, expanded: true },
     { id: "active", label: null, rows: [...active, ...remoteActive], expanded: true },
     {
       id: "previous",
       label: "Previous agents",
-      rows: [...previous, ...remotePrevious],
+      rows: history?.agents.map((agent) => ({ history: agent })) ?? [
+        ...previous,
+        ...remotePrevious,
+      ],
       expanded: false,
+      ...(history === null
+        ? {}
+        : {
+            history: {
+              total: history.total,
+              failedCount: history.failedCount,
+              onShowMore: () =>
+                setHistoryLimit({
+                  key: historyKey,
+                  limit: history.agents.length + THREAD_LINEAGE_PAGE_COUNT,
+                }),
+            },
+          }),
     },
   ];
   const runningCount =
@@ -615,6 +711,7 @@ export function ThreadRelationshipsPanel(props: {
     (related.length > 0 ||
       active.length > 0 ||
       previous.length > 0 ||
+      (history?.total ?? 0) > 0 ||
       runningCount > 0 ||
       remoteActive.length > 0 ||
       remotePrevious.length > 0 ||
@@ -967,6 +1064,59 @@ export function ThreadRelationshipsPanel(props: {
     );
   };
 
+  const renderHistoricalAgent = (agent: OrchestrationV2PreviousAgent) => {
+    if (agent.remoteChild !== null) {
+      return (
+        <RemoteSubagentRow
+          key={`${agent.remoteChild.environmentId}:${agent.remoteChild.threadId}`}
+          agent={{ title: agent.title, status: agent.status, remoteChild: agent.remoteChild }}
+          provider={providersByEnvironment
+            .get(agent.remoteChild.environmentId)
+            ?.find((provider) => provider.instanceId === agent.providerInstanceId)}
+        />
+      );
+    }
+    const childThreadId = agent.childThreadId;
+    if (childThreadId === null) return null;
+    const loadedRow = previous.find((row) => row.threadId === childThreadId);
+    if (loadedRow)
+      return renderRelationshipRow({
+        ...loadedRow,
+        edge: { ...loadedRow.edge, status: agent.status },
+      });
+    const title = relationshipThreadTitle({
+      title: agent.title ?? childThreadId,
+      isSubagent: true,
+    });
+    return (
+      <li key={childThreadId} className="group relative flex h-8 items-center rounded-lg">
+        <Tooltip>
+          <TooltipTrigger
+            delay={200}
+            render={
+              <ThreadDetailsControl
+                size="sm"
+                variant="ghost"
+                part="row"
+                onClick={() => openThread(childThreadId)}
+              />
+            }
+          >
+            <ThreadRelationshipIcon fallbackIcon={BotIcon} status={agent.status} />
+            <span className="min-w-0 flex-1 truncate text-left text-sm font-medium leading-4 text-foreground/85">
+              {title}
+            </span>
+            <span className="shrink-0 text-2xs text-muted-foreground">
+              {threadRelationshipStatusLabel(agent.status)}
+            </span>
+          </TooltipTrigger>
+          <TooltipPopup side="left">
+            <LineageTooltipContent title={title} hint="Open subagent in this chat" />
+          </TooltipPopup>
+        </Tooltip>
+      </li>
+    );
+  };
   return (
     <>
       {lineageVisible ? (
@@ -1021,7 +1171,9 @@ export function ThreadRelationshipsPanel(props: {
             <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
               {(visibleRows) =>
                 visibleRows.map((row) =>
-                  "remote" in row ? (
+                  "history" in row ? (
+                    renderHistoricalAgent(row.history)
+                  ) : "remote" in row ? (
                     <RemoteSubagentRow
                       key={row.remote.id}
                       agent={row.remote}

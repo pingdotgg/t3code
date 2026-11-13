@@ -7,6 +7,8 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
 import type {
   OrchestrationV2ThreadLinkMetadata,
+  OrchestrationV2ListPreviousAgentsInput,
+  OrchestrationV2PreviousAgentsPage,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
   OrchestrationV2ThreadHistoryPage,
@@ -48,6 +50,7 @@ import type {
   RunAttemptId,
 } from "@t3tools/contracts";
 import {
+  OrchestrationV2PreviousAgentsPage as PreviousAgentsPageSchema,
   IDLE_COMPACTION_TEXT,
   idleCompactionOf,
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
@@ -611,6 +614,9 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadLinkMetadata: (
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<Record<ThreadId, OrchestrationV2ThreadLinkMetadata>, ProjectionStoreV2Error>;
+  readonly listPreviousAgents: (
+    input: OrchestrationV2ListPreviousAgentsInput,
+  ) => Effect.Effect<OrchestrationV2PreviousAgentsPage, ProjectionStoreV2Error>;
   readonly getThreadTitles: (
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<Record<ThreadId, string>, ProjectionStoreV2Error>;
@@ -1239,6 +1245,9 @@ const decodePullRequestThread = Schema.decodeUnknownEffect(
   Schema.fromJsonString(PullRequestThread),
 );
 
+const decodePreviousAgentsPage = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(PreviousAgentsPageSchema),
+);
 const decodeThreadPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema),
 );
@@ -8788,6 +8797,92 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       );
     }, Effect.mapError(shellSnapshotReadError));
 
+    const listPreviousAgents: ProjectionStoreV2Shape["listPreviousAgents"] = Effect.fn(
+      "ProjectionStore.listPreviousAgents",
+    )(function* ({ threadId, limit }) {
+      const rows = yield* sql<PayloadRow>`
+        WITH tasks AS (
+          SELECT task.child_thread_id, task.subagent_id, task.status, task.updated_at, task.started_at,
+            CASE WHEN child_thread_id IS NULL
+              THEN json_extract(payload_json, '$.remoteChild') END AS remote_child,
+            CASE WHEN child_thread_id IS NULL
+              THEN json_extract(payload_json, '$.title') END AS title,
+            task.provider_instance_id,
+            ROW_NUMBER() OVER (
+              PARTITION BY json_array(child_thread_id,
+                CASE WHEN child_thread_id IS NULL
+                  THEN json_extract(payload_json, '$.remoteChild.environmentId') END,
+                CASE WHEN child_thread_id IS NULL
+                  THEN json_extract(payload_json, '$.remoteChild.threadId') END)
+              ORDER BY status IN ('pending', 'running', 'waiting') DESC,
+                updated_at DESC, subagent_id DESC
+            ) AS rank
+          FROM orchestration_v2_projection_subagents task
+          WHERE thread_id = ${threadId}
+            AND (child_thread_id IS NOT NULL
+              OR json_extract(payload_json, '$.remoteChild.threadId') IS NOT NULL)
+        ), children AS (
+          SELECT task.child_thread_id,
+            task.remote_child,
+            COALESCE(child.title, task.title) AS title,
+            CASE
+              WHEN task.status IN ('pending', 'running', 'waiting') THEN task.status
+              WHEN run.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+                THEN run.status
+              WHEN run.requested_at >= COALESCE(task.started_at, task.updated_at)
+                THEN run.status
+              ELSE task.status
+            END AS status,
+            COALESCE(task.provider_instance_id,
+              json_extract(child.payload_json, '$.providerInstanceId')) AS provider_instance_id,
+            COALESCE(child.created_at, task.started_at, task.updated_at) AS created_at,
+            json_array(task.child_thread_id,
+              json_extract(task.remote_child, '$.environmentId'),
+              json_extract(task.remote_child, '$.threadId')) AS identity
+          FROM tasks task
+          LEFT JOIN orchestration_v2_projection_threads child ON child.thread_id = task.child_thread_id
+          LEFT JOIN orchestration_v2_projection_runs run
+            ON run.run_id = ${presentedShellRunId(sql`task.child_thread_id`)}
+          WHERE task.rank = 1 AND (task.child_thread_id IS NULL OR
+            (child.thread_id IS NOT NULL AND child.deleted_at IS NULL))
+          UNION ALL
+          SELECT child.thread_id, NULL, child.title, COALESCE(run.status, 'idle'),
+            json_extract(child.payload_json, '$.providerInstanceId'), child.created_at,
+            json_array(child.thread_id, NULL, NULL)
+          FROM orchestration_v2_projection_threads child
+          LEFT JOIN orchestration_v2_projection_runs run
+            ON run.run_id = ${presentedShellRunId(sql`child.thread_id`)}
+          WHERE child.deleted_at IS NULL
+            AND CASE WHEN json_valid(child.payload_json)
+              THEN json_extract(child.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+              ELSE 0 END
+            AND json_extract(child.payload_json, '$.lineage.parentThreadId') = ${threadId}
+            AND NOT EXISTS (SELECT 1 FROM tasks WHERE child_thread_id = child.thread_id)
+        ), previous AS (
+          SELECT * FROM children
+          WHERE status NOT IN ('pending', 'preparing', 'queued', 'starting', 'running', 'waiting')
+            AND NOT EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_runs live
+              WHERE live.thread_id = children.child_thread_id
+                AND live.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+                AND NOT (live.status = 'queued'
+                  AND json_extract(live.payload_json, '$.queueHeld') IS 1)
+            )
+        ), page AS (
+          SELECT * FROM previous ORDER BY created_at DESC, identity ASC LIMIT ${limit}
+        )
+        SELECT json_object(
+          'agents', json((SELECT json_group_array(json_object(
+            'childThreadId', child_thread_id, 'remoteChild', json(remote_child),
+            'title', title, 'status', status, 'providerInstanceId', provider_instance_id
+          )) FROM page)),
+          'total', (SELECT COUNT(*) FROM previous),
+          'failedCount', (SELECT COUNT(*) FROM previous WHERE status IN ('failed', 'error'))
+        ) AS payload_json
+      `;
+      return yield* decodePreviousAgentsPage(rows[0]!.payload_json);
+    }, Effect.mapError(shellSnapshotReadError));
+
     const getThreadTitles = Effect.fn("ProjectionStore.getThreadTitles")(function* (
       threadIds: ReadonlyArray<ThreadId>,
     ) {
@@ -8967,6 +9062,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getSettlementCandidates: readOnReader(getSettlementCandidates),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
       getThreadTitles: readOnReader(getThreadTitles),
+      listPreviousAgents: readOnReader(listPreviousAgents),
       getThreadLinkMetadata: readOnReader(getThreadLinkMetadata),
       getThreadWorktreePaths: readOnReader(getThreadWorktreePaths),
       getOpenRemoteDelegatedTasks: getOpenRemoteDelegatedTasks.pipe(NodeSqliteClient.readOnly),

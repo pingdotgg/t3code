@@ -1,11 +1,22 @@
 import * as DateTime from "effect/DateTime";
-import { EnvironmentId, NodeId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  NodeId,
+  ThreadId,
+  type OrchestrationV2PreviousAgentsPage,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
+
+class HistoryQueryFailed extends Schema.TaggedError<HistoryQueryFailed>()("HistoryQueryFailed", {
+  cause: Schema.Defect(),
+}) {}
 
 const state = vi.hoisted(() => ({
   projection: null as unknown,
@@ -13,20 +24,84 @@ const state = vi.hoisted(() => ({
   relatedShells: [] as unknown[],
   threadTitles: {} as Record<string, string>,
   archivedThreads: [] as unknown[],
+  historyQuery: Symbol("history"),
+  refreshHistory: () => {},
+  controlledHistory: false,
+  historyAtoms: new Map<
+    string,
+    Atom.Atom<AsyncResult.AsyncResult<OrchestrationV2PreviousAgentsPage, HistoryQueryFailed>>
+  >(),
+  historyRequests: [] as Array<{
+    key: string;
+    limit: number;
+    resolve: (page: OrchestrationV2PreviousAgentsPage) => void;
+    reject: (error: Error) => void;
+  }>,
 }));
 
-vi.mock(import("../../state/query"), async (original) => ({
-  ...(await original()),
-  useEnvironmentQuery: ((atom: unknown) =>
-    atom === null
-      ? { data: null, isSuccess: false, isPending: false }
-      : { data: state.threadTitles, isSuccess: true, isPending: false }) as never,
-}));
+vi.mock(import("../../state/orchestration"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    orchestrationEnvironment: {
+      ...actual.orchestrationEnvironment,
+      previousAgents: ((target: {
+        environmentId: string;
+        input: { threadId: string; limit: number };
+      }) => {
+        if (!state.controlledHistory) return state.historyQuery;
+        const key = JSON.stringify([
+          target.environmentId,
+          target.input.threadId,
+          target.input.limit,
+        ]);
+        let atom = state.historyAtoms.get(key);
+        if (!atom) {
+          atom = Atom.make(
+            Effect.tryPromise({
+              try: () =>
+                new Promise<OrchestrationV2PreviousAgentsPage>((resolve, reject) => {
+                  state.historyRequests.push({ key, limit: target.input.limit, resolve, reject });
+                }),
+              catch: (cause) => new HistoryQueryFailed({ cause }),
+            }),
+          ).pipe(Atom.setIdleTTL(0));
+          state.historyAtoms.set(key, atom);
+        }
+        return atom;
+      }) as never,
+    },
+  };
+});
 
-vi.mock(import("@effect/atom-react"), async (original) => ({
-  ...(await original()),
-  useAtomValue: (() => false) as never,
-}));
+vi.mock(import("../../state/query"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    useEnvironmentQuery: ((atom: unknown) => {
+      if ([...state.historyAtoms.values()].includes(atom as never))
+        return actual.useEnvironmentQuery(atom as never);
+      return {
+        data: atom === state.historyQuery || atom === null ? null : state.threadTitles,
+        isSuccess: atom !== null && atom !== state.historyQuery,
+        isPending: false,
+        error: null,
+        refresh: state.refreshHistory,
+      };
+    }) as never,
+  };
+});
+
+vi.mock(import("@effect/atom-react"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    useAtomValue: ((atom: unknown) =>
+      [...state.historyAtoms.values()].includes(atom as never)
+        ? actual.useAtomValue(atom as never)
+        : false) as never,
+  };
+});
 
 vi.mock(import("../../state/entities"), () => ({
   useQuietThreadShell: (() => null) as never,
@@ -56,7 +131,7 @@ vi.mock(import("../../state/use-atom-command"), () => ({
       : AsyncResult.failure(Cause.fail(new Error("Connection lost")))) as never,
 }));
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { ToastProvider } from "../ui/toast";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
@@ -65,6 +140,9 @@ const environmentId = EnvironmentId.make("environment");
 const threadId = ThreadId.make("fork");
 
 function setup() {
+  state.controlledHistory = false;
+  state.historyAtoms.clear();
+  state.historyRequests = [];
   state.commandSucceeds = false;
   state.relatedShells = [];
   state.threadTitles = { source: "Source" };
@@ -405,4 +483,78 @@ it("hides a deleted fork and keeps unloaded and archived forks with their curren
   await expect.element(screen.getByText("Unloaded fork", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("Archived fork", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("deleted-fork", { exact: true })).not.toBeInTheDocument();
+});
+
+function previousAgentsPage(limit: number, total = 24): OrchestrationV2PreviousAgentsPage {
+  return {
+    agents: Array.from({ length: Math.min(limit, total) }, (_, index) => ({
+      childThreadId: ThreadId.make(`historical-${index}`),
+      remoteChild: null,
+      title: `Historical agent ${index}`,
+      status: "completed",
+      providerInstanceId: null,
+    })),
+    total,
+    failedCount: 0,
+  };
+}
+
+const renderHistoryPanel = () =>
+  render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats
+    />,
+  );
+
+it("counts and reveals previous agents beyond the loaded transcript", async () => {
+  setup();
+  state.controlledHistory = true;
+  await using screen = await renderHistoryPanel();
+  await vi.waitFor(() => expect(state.historyRequests.at(-1)?.limit).toBe(6));
+  await act(() => state.historyRequests.at(-1)!.resolve(previousAgentsPage(6)));
+  await expect
+    .element(screen.getByRole("button", { name: /Previous agents/ }))
+    .toHaveTextContent("Previous agents24");
+  await screen.getByRole("button", { name: /Previous agents/ }).click();
+  await screen.getByRole("button", { name: "Show 12 more" }).click();
+  await vi.waitFor(() => expect(state.historyRequests.at(-1)?.limit).toBe(18));
+  await expect.element(screen.getByRole("button", { name: /Historical agent 5/ })).toBeVisible();
+  await act(() => state.historyRequests.at(-1)!.resolve(previousAgentsPage(18)));
+  await expect.element(screen.getByRole("button", { name: /Historical agent 17/ })).toBeVisible();
+  await expect.element(screen.getByRole("button", { name: "Show 6 more" })).toBeVisible();
+});
+
+it("refreshes previous agents at the shown limit when a child's status changes", async () => {
+  setup();
+  state.controlledHistory = true;
+  const activeChild = {
+    ...makeThreadProjectionFixture().thread,
+    id: ThreadId.make("active-child"),
+    lineage: { rootThreadId: threadId, parentThreadId: threadId, relationshipToParent: "subagent" },
+    status: "running",
+    activityRunStatus: "running",
+  };
+  state.relatedShells = [activeChild];
+  await using screen = await renderHistoryPanel();
+  await vi.waitFor(() => expect(state.historyRequests).toHaveLength(1));
+  await act(() => state.historyRequests.at(-1)!.resolve(previousAgentsPage(6)));
+  await screen.getByRole("button", { name: /Previous agents/ }).click();
+  await screen.getByRole("button", { name: "Show 12 more" }).click();
+  await vi.waitFor(() => expect(state.historyRequests).toHaveLength(2));
+  await act(() => state.historyRequests.at(-1)!.resolve(previousAgentsPage(18)));
+  state.relatedShells = [{ ...activeChild, status: "idle", activityRunStatus: "completed" }];
+  await screen.rerender(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats
+    />,
+  );
+  await vi.waitFor(() => expect(state.historyRequests).toHaveLength(3));
+  expect(state.historyRequests.at(-1)?.limit).toBe(18);
+  await expect.element(screen.getByRole("button", { name: /Historical agent 17/ })).toBeVisible();
 });

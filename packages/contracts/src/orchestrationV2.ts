@@ -3742,6 +3742,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   getThreadFamily: "orchestration.getThreadFamily",
   getThreadTitles: "orchestration.getThreadTitles",
+  listPreviousAgents: "orchestration.listPreviousAgents",
   getThreadLinkMetadata: "orchestration.getThreadLinkMetadata",
   getWorktreeThreadIds: "orchestration.getWorktreeThreadIds",
   getOlderSettledThreads: "orchestration.getOlderSettledThreads",
@@ -3887,6 +3888,30 @@ export const OrchestrationV2ThreadFamily = Schema.Struct({
   threads: Schema.Array(OrchestrationV2ThreadShell),
 });
 export type OrchestrationV2ThreadFamily = typeof OrchestrationV2ThreadFamily.Type;
+
+export const OrchestrationV2ListPreviousAgentsInput = Schema.Struct({
+  threadId: ThreadId,
+  // Grows by one page per "Show more"; the cap only bounds a single response.
+  limit: PositiveInt.check(Schema.isLessThanOrEqualTo(10_000)),
+});
+export type OrchestrationV2ListPreviousAgentsInput =
+  typeof OrchestrationV2ListPreviousAgentsInput.Type;
+
+export const OrchestrationV2PreviousAgent = Schema.Struct({
+  childThreadId: Schema.NullOr(ThreadId),
+  remoteChild: Schema.NullOr(OrchestrationV2RemoteTaskChild),
+  title: Schema.NullOr(Schema.String),
+  status: Schema.NullOr(Schema.String),
+  providerInstanceId: Schema.NullOr(ProviderInstanceId),
+});
+export type OrchestrationV2PreviousAgent = typeof OrchestrationV2PreviousAgent.Type;
+
+export const OrchestrationV2PreviousAgentsPage = Schema.Struct({
+  agents: Schema.Array(OrchestrationV2PreviousAgent),
+  total: NonNegativeInt,
+  failedCount: NonNegativeInt,
+});
+export type OrchestrationV2PreviousAgentsPage = typeof OrchestrationV2PreviousAgentsPage.Type;
 
 export const OrchestrationV2GetThreadTitlesInput = Schema.Struct({
   threadIds: Schema.Array(ThreadId),
@@ -4422,6 +4447,10 @@ export const OrchestrationV2RpcSchemas = {
   getThreadFamily: {
     input: OrchestrationV2GetThreadFamilyInput,
     output: OrchestrationV2ThreadFamily,
+  },
+  listPreviousAgents: {
+    input: OrchestrationV2ListPreviousAgentsInput,
+    output: OrchestrationV2PreviousAgentsPage,
   },
   getThreadTitles: {
     input: OrchestrationV2GetThreadTitlesInput,
