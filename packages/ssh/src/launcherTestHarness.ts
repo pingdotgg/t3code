@@ -104,6 +104,10 @@ Date.now = () => Number(fs.readFileSync(process.env.HOME + '/clock', 'utf8'));
 case "\${2:-}" in
   */server-runtime.json)
     # A started server publishes its runtime record, which the launch waits for.
+    # The fake nohup runs in the background, so wait for it instead of racing it.
+    if [ -e "$HOME/picked-port" ]; then
+      while [ ! -e "$HOME/started-server" ]; do /bin/sleep 0.01; done
+    fi
     if [ -e "$HOME/started-server" ]; then
       printf 'record %s\\n' "$(cat "$HOME/clock")" >> "$HOME/events"
       printf '%s 5999' "$(cat "$HOME/started-server")"
@@ -121,6 +125,7 @@ case "\${2:-}" in
     else exit 1; fi ;;
   */port)
     printf 'start %s\\n' "$(cat "$HOME/clock")" >> "$HOME/events"
+    touch "$HOME/picked-port"
     printf 5999 ;;
   [0-9]*)
     NOW="$(cat "$HOME/clock")"
