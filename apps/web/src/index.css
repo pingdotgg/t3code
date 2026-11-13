@@ -6426,6 +6426,30 @@ body {
       --foreground: var(--pane-join-fg);
     }
 
+    /* A hovered tab shows the joined tab's outline, without its ears, in a
+       faint pane fill, under the joined shape so it never dents it. */
+    &
+      [data-pane-notch=""]:not([data-pane-notch-unfocused])
+      [data-layout-tab-strip]
+      :is([data-layout-pane-tab], [data-tab-key]):not([data-joined]):is(
+        :hover,
+        .group\/tab:hover > *
+      ) {
+      position: relative;
+      background: none;
+
+      &::before {
+        content: "";
+        position: absolute;
+        z-index: -2;
+        inset: calc(var(--pane-join-rise) * -1) 0 calc(var(--pane-join-drop) * -1);
+        border-start-start-radius: var(--pane-join-radius);
+        border-start-end-radius: var(--pane-join-radius);
+        background: color-mix(in srgb, var(--pane-join-fill) 45%, transparent);
+        pointer-events: none;
+      }
+    }
+
     /* An unfocused pane's tab sits on the bar, in the bar's colors. */
     & [data-pane-notch-unfocused] [data-layout-tab-strip] [data-joined] {
       color: var(--pane-bar-fg);
