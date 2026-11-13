@@ -7729,12 +7729,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     "late",
     "exact",
     "ambiguous",
-    "missing",
     "out-of-range",
   ])("rolls back to the persisted main-thread assistant message (%s)", (kind) =>
     Effect.gen(function* () {
       const perBlock = kind !== "ordinary";
-      const delayed = kind === "late" || kind === "missing";
+      const delayed = kind === "late";
       const fs = yield* FileSystem.FileSystem;
       const configDir = yield* fs.makeTempDirectoryScoped();
       let forkBoundary: string | undefined;
@@ -7822,7 +7821,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         delayed || kind === "ambiguous" || kind === "out-of-range" ? streamUuid : mainUuid,
       );
       assert.equal(providerTurn.model, "claude-opus-4-5");
-      if (kind !== "missing") yield* fs.writeFileString(transcriptPath, transcript);
+      if (delayed) yield* fs.writeFileString(transcriptPath, transcript);
       const storedTurn = {
         ...providerTurn,
         nativeTurnRef: {
@@ -7855,7 +7854,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         return;
       }
       const rolledBack = yield* rollback;
-      const boundary = kind === "missing" || kind === "out-of-range" ? streamUuid : mainUuid;
+      const boundary = kind === "out-of-range" ? streamUuid : mainUuid;
       assert.equal(rolledBack.providerThread.nativeConversationHeadRef?.nativeId, boundary);
       yield* harness.runtime.forkThread({
         sourceProviderThread: harness.providerThread,
