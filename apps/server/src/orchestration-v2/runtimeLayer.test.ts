@@ -4210,6 +4210,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* watch(true, "start");
 
       let failing: Array<string> = [];
+      let pending: Array<string> = [];
+      let checksRead = true;
       let headSha = "ad70160aaa";
       let comments: Array<PullRequestComment> = [];
       const host = Layer.mergeAll(
@@ -4224,9 +4226,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 at: "2026-10-02T12:00:00.000Z",
               }),
               headSha,
-              checks: ["lint", "test", "build"].map((name) => ({
+              checks: (checksRead ? ["lint", "test", "build"] : []).map((name) => ({
                 name,
-                status: failing.includes(name) ? ("failure" as const) : ("success" as const),
+                status: failing.includes(name)
+                  ? ("failure" as const)
+                  : pending.includes(name)
+                    ? ("pending" as const)
+                    : ("success" as const),
                 description: null,
                 url: null,
                 required: true,
@@ -4326,6 +4332,27 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         '- 1 unresolved review thread:\n  - reviewer on src/index.ts:4: "Handle the empty list."',
       );
 
+      // A held failure waits through a read without checks and a rerun still pending.
+      failing = ["lint", "test", "build"];
+      yield* TestClock.adjust("10 minutes");
+      yield* reactor.sweep;
+      failing = ["lint", "test"];
+      checksRead = false;
+      yield* finishRuns(threadId);
+      yield* reactor.sweep;
+      checksRead = true;
+      pending = ["build"];
+      yield* reactor.sweep;
+      assert.lengthOf(yield* wakes, 2);
+      pending = [];
+      yield* reactor.sweep;
+      const rerun = (yield* wakes)[2];
+      assert.strictEqual(rerun?.notification?.summary, "#12: checks failed and passed again");
+      assert.include(
+        rerun?.text ?? "",
+        "- Checks failed on ad70160:\n  - build, passed again since",
+      );
+
       // A failure held on a head the agent has since replaced is not news.
       failing = ["lint", "test", "build"];
       yield* TestClock.adjust("10 minutes");
@@ -4334,12 +4361,122 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       failing = [];
       yield* TestClock.adjust("10 minutes");
       yield* reactor.sweep;
-      assert.lengthOf(yield* wakes, 2);
+      assert.lengthOf(yield* wakes, 3);
       yield* finishRuns(threadId);
       yield* reactor.sweep;
-      const last = (yield* wakes)[2];
+      const last = (yield* wakes)[3];
       assert.strictEqual(last?.notification?.summary, "#12: checks passed");
       assert.notInclude(last?.text ?? "", "failed");
+      yield* watch(false, "end");
+    }),
+  );
+
+  it.effect("takes a new watch's check baseline while its thread works", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-busy-baseline");
+      const projectId = ProjectId.make("pr-watch-busy-baseline-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch busy baseline",
+        workspaceRoot: "/workspace/watch-busy-baseline",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-busy-baseline-create"),
+        threadId,
+        projectId,
+        title: "Watch busy baseline",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const watch = (on: boolean, id: string) =>
+        orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-busy-baseline-${id}`),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 15,
+          watching: on,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/15", source: "agent" },
+        });
+      yield* watch(true, "start");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-busy-baseline-run"),
+        threadId,
+        messageId: MessageId.make("pr-watch-busy-baseline-run"),
+        text: "Keep this run active.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+
+      let status: PullRequestCheck["status"] = "pending";
+      const host = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          detail: () =>
+            Effect.sync(() => ({
+              ...watchedPullRequestDetail({
+                projectId,
+                number: 15,
+                at: "2026-10-02T12:00:00.000Z",
+              }),
+              headSha: "c0ffee0aaa",
+              checks: [{ name: "test", status, description: null, url: null, required: true }],
+            })),
+          activity: () =>
+            Effect.succeed({
+              comments: [
+                {
+                  id: "remark-early",
+                  kind: "issue-comment" as const,
+                  author: { login: "reviewer", name: null, avatarUrl: null },
+                  body: "Thanks, looking now.",
+                  createdAt: "2999-01-01T00:00:00.000Z",
+                  url: null,
+                  path: null,
+                  reviewState: null,
+                },
+              ],
+              commentCount: 1,
+              commentsTruncated: false,
+              reviewThreadsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            }),
+        }),
+      );
+
+      // The first read finds a comment while the thread works; it still sets the check baseline.
+      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      yield* reactor.sweep;
+      status = "failure";
+      yield* TestClock.adjust("10 minutes");
+      yield* reactor.sweep;
+      status = "success";
+      yield* TestClock.adjust("10 minutes");
+      yield* reactor.sweep;
+      yield* finishRuns(threadId);
+      yield* reactor.sweep;
+      const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+      const summaries = messages.flatMap((message) => message.notification?.summary ?? []);
+      assert.isTrue(
+        summaries.some((summary) => summary.includes("checks failed")),
+        summaries.join("; "),
+      );
       yield* watch(false, "end");
     }),
   );

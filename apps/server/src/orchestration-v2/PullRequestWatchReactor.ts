@@ -115,6 +115,7 @@ interface HeldWake {
   readonly endedWatch?: ThreadPullRequestWatch;
   readonly wake: Wake;
   readonly reason?: WatchEndReason;
+  readonly held?: HeldFailures;
 }
 
 const watchKey = ({ thread, watch }: WatchTarget) => `${thread.id} ${watch.startedAt}`;
@@ -451,13 +452,16 @@ export const make = Effect.gen(function* () {
   let held: Array<HeldWake> = [];
   const hold = (wake: HeldWake) => Effect.sync(() => void held.push(wake));
 
-  // Held news is cleared only once it reached the thread, so a failed send keeps it.
-  const clearHeld = (target: WatchTarget) =>
-    Effect.sync(() => void deferred.delete(watchKey(target)));
+  // Held news changes only once it reached the thread, so a failed send keeps it.
+  const settleHeld = (target: WatchTarget, held: HeldFailures | undefined) =>
+    Effect.sync(() => {
+      if (held === undefined) deferred.delete(watchKey(target));
+      else deferred.set(watchKey(target), held);
+    });
 
   const sendOne = (item: HeldWake) =>
     record(item.target, item.next, item.wake, item.endedWatch).pipe(
-      Effect.tap(() => clearHeld(item.target)),
+      Effect.tap(() => settleHeld(item.target, item.held)),
       Effect.tap(() => woke(item.target)),
       Effect.tap(() => (item.reason === undefined ? Effect.void : ended(item.target, item.reason))),
       Effect.catchCause((cause) => {
@@ -505,7 +509,7 @@ export const make = Effect.gen(function* () {
     yield* Effect.forEach(
       items,
       (item) =>
-        clearHeld(item.target).pipe(
+        settleHeld(item.target, item.held).pipe(
           Effect.andThen(woke(item.target)),
           Effect.andThen(item.reason === undefined ? Effect.void : ended(item.target, item.reason)),
         ),
@@ -695,8 +699,9 @@ export const make = Effect.gen(function* () {
     const reportOf = (target: WatchTarget) =>
       evaluatePullRequestWatch(target.watch, detail, remarks, now, deferred.get(watchKey(target)));
     // A wake lists the open review threads, so a pass that skipped them reads them before waking.
-    const wakes = (target: WatchTarget) =>
-      !target.thread.busy && reportOf(target).changes.length > 0;
+    const holds = (target: WatchTarget) =>
+      target.thread.busy && target.watch.awaitingBaseline === undefined;
+    const wakes = (target: WatchTarget) => !holds(target) && reportOf(target).changes.length > 0;
     if (Option.isNone(activity) && group.targets.some(wakes)) {
       activity = yield* pullRequests.activity(reference).pipe(
         Effect.asSome,
@@ -738,8 +743,9 @@ export const make = Effect.gen(function* () {
     });
     yield* eachTarget(group, (target) => {
       const report = reportOf(target);
-      if (report.changes.length > 0 && target.thread.busy) {
-        deferred.set(watchKey(target), holdFailures(deferred.get(watchKey(target)), report));
+      // A pass that sets the check baseline is recorded, or every later read would stay one.
+      if (report.changes.length > 0 && holds(target)) {
+        deferred.set(watchKey(target), holdFailures(report));
         return Effect.void;
       }
       if (report.changes.length > 0) {
@@ -765,12 +771,18 @@ export const make = Effect.gen(function* () {
                 wake,
                 reason: "comment-limit",
               }
-            : { groupKey: group.key, target, next: report.next, wake },
+            : {
+                groupKey: group.key,
+                target,
+                next: report.next,
+                wake,
+                ...(report.held === undefined ? {} : { held: report.held }),
+              },
         );
       }
       return (
         watchesEqual(report.next, target.watch) ? Effect.void : record(target, report.next)
-      ).pipe(Effect.tap(() => clearHeld(target)));
+      ).pipe(Effect.tap(() => settleHeld(target, report.held)));
     });
   });
 
