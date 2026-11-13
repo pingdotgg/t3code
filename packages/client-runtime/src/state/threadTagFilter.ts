@@ -35,6 +35,27 @@ export function visibilityParentKey(
 }
 
 /**
+ * Whether a row above a subagent or side chat, up to its listed ancestor, is not loaded. The tag
+ * filter hides such a thread, so a shell that left an idle ancestor out hides it until its family
+ * read brings that row.
+ */
+export function visibilityAncestorMissing(
+  threads: ReadonlyMap<ThreadId, Pick<FilterableThread, "lineage">>,
+  threadId: ThreadId,
+): boolean {
+  const seen = new Set<ThreadId>();
+  let current = threads.get(threadId);
+  while (current !== undefined && !isListedThreadLineage(current.lineage)) {
+    const parentId = current.lineage.parentThreadId;
+    if (parentId === null || seen.has(parentId)) return false;
+    seen.add(parentId);
+    current = threads.get(parentId);
+    if (current === undefined) return true;
+  }
+  return false;
+}
+
+/**
  * Pull request linked-thread rows the tag filter leaves visible. Loaded threads use the
  * parent-aware hidden set. Rows the shell leaves out carry no lineage, so while any
  * environment hides tags they stay out.

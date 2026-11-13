@@ -1,8 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
-import { type ThreadFamilyRead, visibilityParentKey } from "@t3tools/client-runtime/state/threads";
-import { isListedThreadLineage, type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  type ThreadFamilyRead,
+  visibilityAncestorMissing,
+  visibilityParentKey,
+} from "@t3tools/client-runtime/state/threads";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import { Navigate, useNavigate } from "@tanstack/react-router";
@@ -29,6 +33,17 @@ import {
 } from "../threadRoutes";
 
 const NO_OPEN_FAMILY = Atom.make<ThreadFamilyRead>("settled");
+const NO_ANCESTOR_MISSING = Atom.make(false);
+// A boolean per open thread, so shell updates re-render the route only when it flips.
+const ancestorMissingAtom = Atom.family((key: string) => {
+  const ref = parseThreadKey(key);
+  return Atom.make((get) =>
+    visibilityAncestorMissing(
+      get(environmentThreadShells.environmentThreadIndexAtom(ref.environmentId)),
+      ref.threadId,
+    ),
+  );
+});
 
 /**
  * Keeps the family of an open thread the shell leaves out (an older settled thread, an idle
@@ -118,18 +133,15 @@ export function ThreadRouteView({
     unlistedThreadRef?.environmentId ?? null,
     unlistedThreadRef?.threadId ?? null,
   );
-  // A woken subagent can arrive before the idle parent the shell left out; its family brings it.
-  const parentRef =
-    serverThreadRef === null ||
-    serverThreadShell === null ||
-    serverThreadShell.lineage.parentThreadId === null ||
-    isListedThreadLineage(serverThreadShell.lineage)
-      ? null
-      : { ...serverThreadRef, threadId: serverThreadShell.lineage.parentThreadId };
-  const parentMissing = useQuietThreadShell(parentRef) === null && parentRef !== null;
+  // A woken subagent can arrive before an idle ancestor the shell left out; its family brings it.
+  const ancestorMissing = useAtomValue(
+    serverThreadRef === null
+      ? NO_ANCESTOR_MISSING
+      : ancestorMissingAtom(threadKey(serverThreadRef)),
+  );
   const familyPending = useOpenThreadFamily(
     serverThreadRef,
-    bootstrapComplete && (unlistedThreadRef !== null || parentMissing),
+    bootstrapComplete && (unlistedThreadRef !== null || ancestorMissing),
   );
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
   const unlistedThread = Option.getOrNull(Option.map(unlistedThreadDetail.data, (p) => p.thread));

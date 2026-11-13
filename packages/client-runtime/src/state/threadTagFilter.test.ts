@@ -2,7 +2,12 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { threadKey } from "./entities.ts";
-import { hiddenThreadKeys, NO_HIDDEN_THREADS, visibleLinkedThreads } from "./threadTagFilter.ts";
+import {
+  hiddenThreadKeys,
+  NO_HIDDEN_THREADS,
+  visibilityAncestorMissing,
+  visibleLinkedThreads,
+} from "./threadTagFilter.ts";
 
 const local = EnvironmentId.make("local");
 const linked = EnvironmentId.make("linked");
@@ -123,5 +128,39 @@ describe("hiddenThreadKeys", () => {
       new Set([parentKey]),
     );
     expect([...archived]).toEqual([key(linked, "delegated-from-private")]);
+  });
+});
+
+describe("visibilityAncestorMissing", () => {
+  const row = (
+    id: string,
+    parent: string | null,
+    relationshipToParent: "subagent" | "fork" | null,
+  ) =>
+    [
+      ThreadId.make(id),
+      {
+        lineage: {
+          parentThreadId: parent === null ? null : ThreadId.make(parent),
+          relationshipToParent,
+          rootThreadId: ThreadId.make("root"),
+        },
+      },
+    ] as const;
+
+  it("finds a gap anywhere between a subagent and its listed ancestor", () => {
+    const root = row("root", null, null);
+    const a = row("a", "root", "subagent");
+    const b = row("b", "a", "subagent");
+    const c = row("c", "b", "subagent");
+    const missing = (...rows: ReadonlyArray<typeof root>) =>
+      visibilityAncestorMissing(new Map(rows), ThreadId.make("c"));
+    expect(missing(root, a, b, c)).toBe(false);
+    // The shell left out idle `a`; `b` and `c` woke and arrived without it.
+    expect(missing(root, b, c)).toBe(true);
+    expect(missing(root, a, c)).toBe(true);
+    // A fork is listed by its own tags, so nothing above it decides.
+    expect(missing(row("b", "gone", "fork"), c)).toBe(false);
+    expect(missing(root)).toBe(false);
   });
 });
