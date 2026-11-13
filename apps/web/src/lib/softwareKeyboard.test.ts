@@ -148,10 +148,14 @@ describe("pinning the shell to the keyboard viewport", () => {
       },
     };
     const scrollTo = vi.fn(() => Object.assign(viewport, { offsetTop: 0 }));
+    const document = {
+      documentElement: root,
+      activeElement: { closest: (): object | null => ({}) },
+    };
     const stop = pinShellToKeyboardViewport(
       {
         visualViewport: viewport,
-        document: { documentElement: root },
+        document,
         scrollTo,
       } as unknown as Window,
       desktop,
@@ -160,7 +164,10 @@ describe("pinning the shell to the keyboard viewport", () => {
       Object.assign(viewport, { height, offsetTop, scale });
       viewport.dispatchEvent(new Event(event));
     };
-    return { root, properties, stop, move, scrollTo };
+    const focusOutsideShell = () => {
+      document.activeElement = { closest: () => null };
+    };
+    return { root, properties, stop, move, scrollTo, focusOutsideShell };
   }
 
   // iPad Pro 13-inch Safari: the layout viewport keeps its height under the keyboard.
@@ -187,6 +194,17 @@ describe("pinning the shell to the keyboard viewport", () => {
     stop();
     expect(root.dataset.keyboardViewport).toBeUndefined();
     expect(properties.size).toBe(0);
+  });
+
+  it("leaves Safari's scroll to fields outside the shell, such as dialogs", () => {
+    const { root, move, scrollTo, focusOutsideShell } = pinFixture();
+    move("resize", 887, 0);
+    expect(root.dataset.keyboardViewport).toBe("");
+
+    focusOutsideShell();
+    move("scroll", 887, 403);
+    expect(root.dataset.keyboardViewport).toBeUndefined();
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 
   it("never pins on desktop", () => {

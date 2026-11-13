@@ -86,8 +86,9 @@ type PinWindow = Pick<Window, "visualViewport" | "scrollTo" | "document">;
 
 /**
  * Safari ignores `interactive-widget=resizes-content` and scrolls the page to the focused field.
- * While a keyboard overlays the page, size the shell to the visible area (see index.css) and keep
- * the page unscrolled. `innerHeight` follows the keyboard on iPadOS, so measure `clientHeight`.
+ * While a keyboard overlays the page for a field in the shell, size the shell to the visible area
+ * (see index.css) and keep the page unscrolled. Fields outside it, such as portaled dialogs, keep
+ * Safari's scroll. `innerHeight` follows the keyboard on iPadOS, so measure `clientHeight`.
  */
 export function pinShellToKeyboardViewport(win: PinWindow, isDesktop: boolean): () => void {
   const viewport = win.visualViewport;
@@ -104,7 +105,11 @@ export function pinShellToKeyboardViewport(win: PinWindow, isDesktop: boolean): 
   const update = () => {
     const height = Math.round(viewport.height);
     // Pinch zoom also shrinks the visual viewport, and the page must stay pannable then.
-    if (viewport.scale > 1.01 || root.clientHeight - height <= KEYBOARD_THRESHOLD) {
+    if (
+      viewport.scale > 1.01 ||
+      root.clientHeight - height <= KEYBOARD_THRESHOLD ||
+      !win.document.activeElement?.closest('[data-slot="sidebar-wrapper"]')
+    ) {
       if (pinnedHeight) unpin();
       return;
     }
