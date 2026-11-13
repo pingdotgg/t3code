@@ -20,10 +20,9 @@ export { shouldBundleCliDependency };
 
 const repoEnv = loadRepoEnv();
 const serverManifestPath = NodePath.join(import.meta.dirname, "package.json");
-const buildVersion = resolveTaggedSourceVersion(
-  NodePath.join(import.meta.dirname, "../.."),
-  packageJson.version,
-);
+const buildVersion =
+  process.env.APP_VERSION?.trim() ||
+  resolveTaggedSourceVersion(NodePath.join(import.meta.dirname, "../.."), packageJson.version);
 const cliBuildChannel = /^[^-+]+-(?:nightly|preview)\./.test(buildVersion) ? "nightly" : "latest";
 // Official release workflows set the telemetry channel; local builds and forks use "dev".
 const TELEMETRY_CHANNELS = ["stable", "nightly", "preview", "dev"];
