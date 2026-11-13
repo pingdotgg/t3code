@@ -11,6 +11,7 @@ import type { Ref } from "react";
 
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
+import { useDiffSelectionCopy } from "./useDiffSelectionCopy";
 
 export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 /* A 1fr track's automatic minimum grows with the currently mounted lines. In split
@@ -235,35 +236,38 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
   unsafeCSSExtra,
   ...props
 }: StyledDiffCodeViewProps<LAnnotation>) {
+  const { containerRef, onCopy } = useDiffSelectionCopy();
   return (
     <DiffWorkerPoolProvider>
-      <CodeView<LAnnotation>
-        {...props}
-        {...(viewerRef ? { ref: viewerRef } : {})}
-        className={
-          className
-            ? `diff-render-surface [--code-background:var(--background)] outline-none ${className}`
-            : "diff-render-surface [--code-background:var(--background)] outline-none"
-        }
-        options={{
-          ...options,
-          unsafeCSS: unsafeCSSExtra
-            ? `${DIFF_VIEW_UNSAFE_CSS}\n${unsafeCSSExtra}`
-            : DIFF_VIEW_UNSAFE_CSS,
-          itemMetrics: {
-            diffHeaderHeight: 32,
-            hunkSeparatorHeight: 24,
-            // Zero both spacing and paddingTop; Pierre's expanded-file fallback otherwise adds an 8px header
-            // gap.
-            spacing: 0,
-            paddingTop: 0,
-            // Include Pierre's 8px --diffs-gap-fallback in metrics or each expanded file loses a scrollable
-            // row.
-            paddingBottom: 8,
-          },
-          layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
-        }}
-      />
+      <div ref={containerRef} className="contents" onCopy={onCopy}>
+        <CodeView<LAnnotation>
+          {...props}
+          {...(viewerRef ? { ref: viewerRef } : {})}
+          className={
+            className
+              ? `diff-render-surface [--code-background:var(--background)] outline-none ${className}`
+              : "diff-render-surface [--code-background:var(--background)] outline-none"
+          }
+          options={{
+            ...options,
+            unsafeCSS: unsafeCSSExtra
+              ? `${DIFF_VIEW_UNSAFE_CSS}\n${unsafeCSSExtra}`
+              : DIFF_VIEW_UNSAFE_CSS,
+            itemMetrics: {
+              diffHeaderHeight: 32,
+              hunkSeparatorHeight: 24,
+              // Zero both spacing and paddingTop; Pierre's expanded-file fallback otherwise adds an 8px header
+              // gap.
+              spacing: 0,
+              paddingTop: 0,
+              // Include Pierre's 8px --diffs-gap-fallback in metrics or each expanded file loses a scrollable
+              // row.
+              paddingBottom: 8,
+            },
+            layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
+          }}
+        />
+      </div>
     </DiffWorkerPoolProvider>
   );
 }
