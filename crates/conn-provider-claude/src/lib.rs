@@ -13,6 +13,7 @@
 //! See `README.md` in this crate for the event mapping and its known differences.
 
 pub mod attachments;
+pub mod catalog;
 pub mod helper;
 pub mod launch;
 pub mod mapper;

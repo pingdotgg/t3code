@@ -14,16 +14,16 @@ fn preferred(keys: &[&String]) -> &'static [&'static str] {
         // SDKUserMessage (`claudeUserMessage`)
         &["type", "message", "parent_tool_use_id", "priority", "uuid"]
     } else if has("behavior") {
-        // PermissionResult; the SDK appends toolUseID.
+        // PermissionResult as T3's canUseTool returns it.
         &[
             "behavior",
             "updatedInput",
             "updatedPermissions",
             "message",
             "interrupt",
-            "decisionClassification",
             "result",
             "toolUseID",
+            "decisionClassification",
         ]
     } else if has("role") {
         &["role", "content"]
@@ -34,7 +34,9 @@ fn preferred(keys: &[&String]) -> &'static [&'static str] {
         &["type", "url", "headers", "timeout"]
     } else if has("showThinkingSummaries") || has("alwaysThinkingEnabled") || has("fastMode") {
         // makeClaudeQueryOptions' settings
+        // and claudeLiveSelectionFlagSettings (effortLevel, fastMode, ultracode)
         &[
+            "effortLevel",
             "alwaysThinkingEnabled",
             "fastMode",
             "ultracode",

@@ -25,6 +25,7 @@ use tokio::sync::{mpsc, watch};
 
 use crate::DRIVER;
 use crate::attachments;
+use crate::catalog;
 use crate::helper::{Helper, QueryEnd, QueryEvent, QueryHandle};
 use crate::ids::{self, Env, SystemEnv};
 use crate::launch::{
@@ -71,6 +72,8 @@ struct State {
     mcp_servers: Vec<McpServer>,
     /// Inline attachment bytes sent so far (`claudeAttachmentBudget`).
     attachment_bytes: u64,
+    /// The running turn's prompt effort, for its steers.
+    turn_prompt_effort: Option<String>,
     /// `resolveBypassAvailability`, cached per working directory (T3's `bypassCache`).
     bypass_cache: Option<(Option<String>, BypassAvailability)>,
     closed: bool,
@@ -87,6 +90,9 @@ struct Live {
     policy: QueryPolicy,
     /// The permission mode now in force (a denied ExitPlanMode can leave `plan`).
     permission_mode: String,
+    /// The mode the CLI reported in its first `init` (T3's `openedPermissionMode`).
+    opened_permission_mode: String,
+    received_init: bool,
     model: String,
     effort: Option<String>,
     selection_settings: Map<String, Value>,
@@ -119,6 +125,7 @@ impl ClaudeSession {
                 resumable: HashSet::new(),
                 mcp_servers: Vec::new(),
                 attachment_bytes: 0,
+                turn_prompt_effort: None,
                 bypass_cache: None,
                 closed: false,
                 logged_skips: HashSet::new(),
@@ -314,7 +321,12 @@ async fn drive(
             rx.recv().await
         };
         let message = match event {
-            Some(QueryEvent::Message(value)) => Inbound::from_value(value),
+            Some(QueryEvent::Message(value)) => {
+                if value["type"] == "system" && value["subtype"] == "init" {
+                    note_init(&mut inner.lock(), generation, &value);
+                }
+                Inbound::from_value(value)
+            }
             Some(QueryEvent::Callback { id, kind, args }) => match callback_request(&kind, &args) {
                 Some(request) => Inbound::ControlRequest {
                     request_id: id,
@@ -350,6 +362,20 @@ async fn drive(
         touch(&mut inner.lock(), Some(generation));
         let outs = inner.lock().mapper.handle(message);
         inner.deliver(Some(&query), outs).await;
+    }
+}
+
+/// The first `init` of a query tells the mode the CLI opened in.
+fn note_init(state: &mut State, generation: u64, init: &Value) {
+    if let Some(live) = state
+        .live
+        .as_mut()
+        .filter(|l| l.generation == generation && !l.received_init)
+    {
+        live.received_init = true;
+        if let Some(mode) = init["permissionMode"].as_str() {
+            live.opened_permission_mode = mode.to_string();
+        }
     }
 }
 
@@ -482,36 +508,12 @@ fn end_detail(end: &QueryEnd) -> String {
     format!("The Claude process exited unexpectedly ({exit}).")
 }
 
-/// `compileClaudeModelSelection` without the model catalog: model, effort and the boolean
-/// options the selection sets.
+/// `compileClaudeModelSelection`: API model id, effort, settings and the prompt effort.
 fn model_selection(
     selection: &conn_contract::ModelSelection,
 ) -> (String, Option<String>, Map<String, Value>) {
-    let value = to_json(selection);
-    let model = value["model"].as_str().unwrap_or("default").to_string();
-    let options = value["options"].as_array().cloned().unwrap_or_default();
-    let effort = options
-        .iter()
-        .find(|o| o["id"] == "effort")
-        .and_then(|o| o["value"].as_str())
-        .map(|e| if e == "ultrathink" { "high" } else { e })
-        .filter(|e| matches!(*e, "low" | "medium" | "high" | "xhigh" | "max"))
-        .map(str::to_string);
-    let mut settings = Map::new();
-    for (id, key) in [
-        ("thinking", "alwaysThinkingEnabled"),
-        ("fastMode", "fastMode"),
-        ("ultracode", "ultracode"),
-    ] {
-        if let Some(flag) = options
-            .iter()
-            .find(|o| o["id"] == id)
-            .and_then(|o| o["value"].as_bool())
-        {
-            settings.insert(key.into(), json!(flag));
-        }
-    }
-    (model, effort, settings)
+    let compiled = catalog::compile(&to_json(selection));
+    (compiled.api_model_id, compiled.effort, compiled.settings)
 }
 
 fn policy_input(policy: &RuntimePolicy) -> (String, String) {
@@ -560,6 +562,15 @@ fn failed_err(operation: &'static str, detail: impl Into<String>) -> ProviderErr
         operation,
         detail: detail.into(),
     }
+}
+
+fn same_selection(
+    live: &Live,
+    model: &str,
+    effort: &Option<String>,
+    settings: &Map<String, Value>,
+) -> bool {
+    live.model == model && &live.effort == effort && &live.selection_settings == settings
 }
 
 /// What a turn must do before it offers the prompt.
@@ -738,10 +749,14 @@ impl ClaudeSession {
                     && l.cwd == cwd
                     && l.policy == policy
                     && l.t3_mcp == t3_mcp
-                    // canApplyClaudeSelectionLive
-                    && l.selection_settings.get("alwaysThinkingEnabled")
-                        == selection_settings.get("alwaysThinkingEnabled")
-                    && (effort.is_some() || l.effort.is_none())
+                    && (same_selection(l, &model, &effort, &selection_settings)
+                        // canApplyClaudeSelectionLive, and a model change only when the CLI
+                        // opened in the policy's mode (T3's openedPermissionMode check).
+                        || (l.selection_settings.get("alwaysThinkingEnabled")
+                            == selection_settings.get("alwaysThinkingEnabled")
+                            && (effort.is_some() || l.effort.is_none())
+                            && (l.model == model
+                                || l.opened_permission_mode == policy.permission_mode)))
             });
             if let Some(live) = state.live.as_ref().filter(|_| reusable) {
                 let plan = Plan::Reuse {
@@ -904,9 +919,10 @@ impl ClaudeSession {
             ));
         }
         let policy = self.prepare(&input).await?;
-        let content = self
-            .content(&input.message.text, &input.message.attachments)
-            .await;
+        let effort = catalog::compile(&to_json(&input.model_selection)).prompt_effort;
+        self.inner.lock().turn_prompt_effort = effort.clone();
+        let text = catalog::prompt_text(&input.message.text, effort.as_deref());
+        let content = self.content(&text, &input.message.attachments).await;
         let inner = &self.inner;
         let (outs, query, uuid) = {
             let mut state = inner.lock();
@@ -988,6 +1004,8 @@ impl ClaudeSession {
                 native_thread_id: input.native_thread_id.clone(),
                 cwd: input.cwd.clone(),
                 permission_mode: input.policy.permission_mode.clone(),
+                opened_permission_mode: input.policy.permission_mode.clone(),
+                received_init: false,
                 policy: input.policy.clone(),
                 model: input.model.clone(),
                 effort: input.effort.clone(),
@@ -1194,9 +1212,13 @@ impl Session for ClaudeSession {
             if let Some(selection) = &input.model_selection {
                 self.apply_selection(selection).await?;
             }
-            let content = self
-                .content(&input.message.text, &input.message.attachments)
-                .await;
+            // The steer's own selection, else the running turn's (T3's liveSteerSelection).
+            let effort = match &input.model_selection {
+                Some(selection) => catalog::compile(&to_json(selection)).prompt_effort,
+                None => self.inner.lock().turn_prompt_effort.clone(),
+            };
+            let text = catalog::prompt_text(&input.message.text, effort.as_deref());
+            let content = self.content(&text, &input.message.attachments).await;
             let uuid = SystemEnv.uuid();
             let (query, outs) = {
                 let mut state = self.inner.lock();
