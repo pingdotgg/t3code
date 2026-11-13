@@ -373,6 +373,47 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  it.effect("reads Claude reset grants through the hub", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        // Claude only reports grants for cedar_ember=1 from a current Claude CLI user agent.
+        upstream: (request) => {
+          const url = new URL(request.url!);
+          const eligible =
+            url.searchParams.get("cedar_ember") === "1" &&
+            /^claude-cli\/\S+ \(external, cli\)$/.test(request.header?.["User-Agent"] ?? "");
+          return {
+            status: 200,
+            body: {
+              five_hour: { utilization: 10, resets_at: null },
+              cedar_ember: eligible
+                ? {
+                    eligible: true,
+                    next_grant_id: "grant_a",
+                    grants: [
+                      {
+                        id: "grant_a",
+                        resets_left: 1,
+                        usable_now: true,
+                        ends_at: "2099-01-01T00:00:00Z",
+                        clears: ["five_hour", "seven_day"],
+                      },
+                    ],
+                  }
+                : null,
+            },
+          };
+        },
+      });
+      const result = yield* (yield* test.api).readAccounts(config);
+      expect(result[0]?.usageLimits.resetCredits).toMatchObject({
+        availableCount: 1,
+        nextCreditId: "grant_a",
+      });
+    }),
+  );
+
   it.effect.each([
     {
       name: "spend budget",
