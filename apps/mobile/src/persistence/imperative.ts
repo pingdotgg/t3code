@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 
+import * as CatalogStore from "../connection/catalog-store";
 import { runtime } from "../lib/runtime";
 import * as MobilePreferences from "./mobile-preferences";
 import * as MobileStorage from "./mobile-storage";
@@ -40,6 +41,9 @@ export const saveAgentAwarenessRegistrationRecord = (
 ) => runStorage((storage) => storage.saveAgentAwarenessRegistrationRecord(record));
 export const clearAgentAwarenessRegistrationRecord = () =>
   runStorage((storage) => storage.clearAgentAwarenessRegistrationRecord);
+
+export const loadDisabledEnvironmentIds = () =>
+  runtime.runPromise(CatalogStore.readDisabledEnvironmentIds());
 
 export const loadRecentThreadShortcuts = () =>
   runStorage((storage) => storage.loadRecentThreadShortcuts);

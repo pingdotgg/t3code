@@ -22,6 +22,7 @@ import * as ManagedRelayLayer from "../cloud/managedRelayLayer";
 import {
   clearAgentAwarenessRegistrationRecord,
   loadAgentAwarenessRegistrationRecord,
+  loadDisabledEnvironmentIds,
   loadOrCreateAgentAwarenessDeviceId,
   loadPreferences,
   saveAgentAwarenessRegistrationRecord,
@@ -68,6 +69,14 @@ const backgroundRuntime = vi.hoisted(() => ({
     readonly resolve: (exit: Exit.Exit<unknown, unknown>) => void;
   }>,
 }));
+const catalogMock = vi.hoisted(() => ({
+  listeners: [] as Array<
+    (catalog: {
+      readonly isReady: boolean;
+      readonly entries: ReadonlyMap<string, { readonly enabled: boolean }>;
+    }) => void
+  >,
+}));
 const appStateMock = vi.hoisted(() => ({
   listeners: [] as Array<(state: string) => void>,
 }));
@@ -106,7 +115,17 @@ vi.mock("./agentLiveActivity", () => ({
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
     get: () => environmentConfigsMock.configs,
+    subscribe: (_atom: unknown, listener: (typeof catalogMock.listeners)[number]) => {
+      catalogMock.listeners.push(listener);
+      return () => {
+        catalogMock.listeners.splice(catalogMock.listeners.indexOf(listener), 1);
+      };
+    },
   },
+}));
+
+vi.mock("../../connection/catalog", () => ({
+  environmentCatalog: { catalogValueAtom: Symbol("catalogValueAtom") },
 }));
 
 vi.mock("../../state/server", () => ({
@@ -192,6 +211,7 @@ vi.mock("../../persistence/imperative", () => ({
   loadAgentAwarenessDeviceId: vi.fn(() => Promise.resolve("device-1")),
   loadOrCreateAgentAwarenessDeviceId: vi.fn(() => Promise.resolve("device-1")),
   loadPreferences: vi.fn(() => Promise.resolve({ liveActivitiesEnabled: false })),
+  loadDisabledEnvironmentIds: vi.fn(() => Promise.resolve([])),
   loadAgentAwarenessRegistrationRecord: vi.fn(() =>
     Promise.resolve(registrationRecordStore.current),
   ),
@@ -274,6 +294,8 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     vi.mocked(clearAgentAwarenessRegistrationRecord).mockClear();
     vi.mocked(loadOrCreateAgentAwarenessDeviceId).mockResolvedValue("device-1");
     vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: false });
+    vi.mocked(loadDisabledEnvironmentIds).mockResolvedValue([]);
+    catalogMock.listeners.length = 0;
     widgetMocks.getInstances.mockReset();
     widgetMocks.getInstances.mockReturnValue([]);
     widgetMocks.start.mockClear();
@@ -295,6 +317,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         pushToStartToken: "push-to-start-token",
         notificationsEnabled: true,
         preferences: {},
+        disabledEnvironmentIds: [],
       }).preferences,
     ).toMatchObject({
       liveActivitiesEnabled: false,
@@ -575,6 +598,63 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       ).toMatchObject({ ok: true });
       expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
     }).pipe(Effect.provide(layerRelayTest));
+  });
+
+  it.effect("re-registers with the environments turned off on this phone after a toggle", () => {
+    const registeredPreferences: Array<Promise<{ readonly disabledEnvironmentIds?: unknown }>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((request: RequestInfo | URL, init?: RequestInit) => {
+        const url = request instanceof Request ? request.url : String(request);
+        if (url.endsWith("/v1/mobile/devices")) {
+          registeredPreferences.push(
+            (request instanceof Request ? request.clone() : new Response(init?.body))
+              .json()
+              .then((body) => body.preferences),
+          );
+        }
+        return Promise.resolve(
+          Response.json(
+            url.endsWith("/v1/client/dpop-token")
+              ? {
+                  access_token: "relay-dpop-token",
+                  issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+                  token_type: "DPoP",
+                  expires_in: 300,
+                  scope: "mobile:registration",
+                }
+              : { ok: true },
+          ),
+        );
+      }),
+    );
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
+    const emitCatalog = (enabled: boolean) => {
+      for (const listener of catalogMock.listeners) {
+        listener({ isReady: true, entries: new Map([["environment-b", { enabled }]]) });
+      }
+    };
+
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+    return Effect.gen(function* () {
+      emitCatalog(true);
+      yield* runBackgroundOperations();
+      const registeredBeforeToggle = registeredPreferences.length;
+
+      vi.mocked(loadDisabledEnvironmentIds).mockResolvedValue(["environment-b" as EnvironmentId]);
+      emitCatalog(false);
+      yield* runBackgroundOperations();
+
+      const preferences = yield* Effect.promise(() => Promise.all(registeredPreferences));
+      expect(preferences.map((entry) => entry.disabledEnvironmentIds)).toEqual([
+        ...Array.from({ length: registeredBeforeToggle }, () => undefined),
+        ["environment-b"],
+      ]);
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
   });
 
   it.effect("keeps a registered status when a later refresh fails", () => {

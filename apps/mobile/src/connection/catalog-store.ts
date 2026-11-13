@@ -41,6 +41,18 @@ const encodeCatalog = Effect.fn("mobile.connectionStorage.encodeCatalog")(functi
   );
 });
 
+// Reads storage directly so callers outside the connection runtime see the saved toggle.
+export const readDisabledEnvironmentIds = Effect.fn(
+  "mobile.connectionStorage.readDisabledEnvironmentIds",
+)(function* () {
+  const storage = yield* MobileSecureStorage.MobileSecureStorage;
+  const raw = yield* storage
+    .getItem(CONNECTION_CATALOG_KEY)
+    .pipe(Effect.mapError((cause) => catalogError("load", cause)));
+  if (raw === null || raw.trim() === "") return [];
+  return (yield* decodeCatalog(raw)).disabledEnvironmentIds;
+});
+
 interface CatalogStore {
   readonly read: Effect.Effect<ConnectionCatalogDocumentType, ConnectionTransientError>;
   readonly update: (

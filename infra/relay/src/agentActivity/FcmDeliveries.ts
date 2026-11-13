@@ -198,6 +198,9 @@ const make = Effect.gen(function* () {
       if (!target) return;
       const preferences = decodePreferences(target.preferences_json);
       if (Option.isNone(preferences)) return;
+      const disabledEnvironmentIds = new Set<string>(preferences.value.disabledEnvironmentIds);
+      // Registration already repainted this device without the environment it turned off.
+      if (job.state && disabledEnvironmentIds.has(job.state.environmentId)) return;
 
       // Re-read at consumption to honor current links, tokens, preferences, and thread states.
       const states = preferences.value.liveActivitiesEnabled
@@ -207,6 +210,7 @@ const make = Effect.gen(function* () {
         activeStates: states,
         terminalState: null,
         nowMs: now.epochMilliseconds,
+        disabledEnvironmentIds,
       });
       const previousAggregate = target.last_aggregate_json
         ? Option.getOrNull(decodePreviousActivity(target.last_aggregate_json))

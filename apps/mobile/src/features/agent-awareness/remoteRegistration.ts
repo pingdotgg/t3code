@@ -25,6 +25,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { runtime } from "../../lib/runtime";
+import { environmentCatalog } from "../../connection/catalog";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
 import type { Preferences } from "../../persistence/mobile-preferences";
@@ -32,6 +33,7 @@ import {
   clearAgentAwarenessRegistrationRecord,
   loadAgentAwarenessDeviceId,
   loadAgentAwarenessRegistrationRecord,
+  loadDisabledEnvironmentIds,
   loadOrCreateAgentAwarenessDeviceId,
   loadPreferences,
   saveAgentAwarenessRegistrationRecord,
@@ -58,6 +60,7 @@ const AgentAwarenessOperation = Schema.Literals([
   "read-live-activity-registration-relay-token",
   "load-device-registration-identifier",
   "load-device-registration-preferences",
+  "load-device-registration-disabled-environments",
   "load-device-unregistration-identifier",
   "read-live-activity-push-token",
   "load-live-activity-registration-identifier",
@@ -97,6 +100,7 @@ let widgetSnapshotReads = 0;
 let androidDeviceReplayedAt: number | null = null;
 let pushTokenSubscription: { remove: () => void } | null = null;
 let appStateSubscription: { remove: () => void } | null = null;
+let disabledEnvironmentsSubscription: { remove: () => void } | null = null;
 
 export type AgentAwarenessRegistrationStatus = "unknown" | "pending" | "registered" | "failed";
 let registrationStatus: AgentAwarenessRegistrationStatus = "unknown";
@@ -137,6 +141,7 @@ let pendingDeviceRegistration: {
 
 interface DeviceRegistrationInput {
   readonly observedPushToken?: string;
+  readonly disabledEnvironmentsChanged?: true;
 }
 
 interface RegisterDeviceInput extends DeviceRegistrationInput {
@@ -203,6 +208,8 @@ export function setAgentAwarenessRelayTokenProvider(
     pushTokenSubscription = null;
     appStateSubscription?.remove();
     appStateSubscription = null;
+    disabledEnvironmentsSubscription?.remove();
+    disabledEnvironmentsSubscription = null;
     if (activeLiveActivityRegistrationRetry) {
       clearTimeout(activeLiveActivityRegistrationRetry);
       activeLiveActivityRegistrationRetry = null;
@@ -218,6 +225,7 @@ export function setAgentAwarenessRelayTokenProvider(
   }
   ensurePushTokenListener();
   ensureAppStateListener();
+  ensureDisabledEnvironmentsListener();
   runRegistrationInBackground(
     refreshActiveLiveActivityRemoteRegistration(),
     "active live activity registration after cloud sign-in failed",
@@ -243,6 +251,8 @@ export function releaseAgentAwarenessRelayTokenProvider(): void {
   pushTokenSubscription = null;
   appStateSubscription?.remove();
   appStateSubscription = null;
+  disabledEnvironmentsSubscription?.remove();
+  disabledEnvironmentsSubscription = null;
   if (activeLiveActivityRegistrationRetry) {
     clearTimeout(activeLiveActivityRegistrationRetry);
     activeLiveActivityRegistrationRetry = null;
@@ -354,6 +364,7 @@ function registrationSignature(body: RelayDeviceRegistrationRequest): string {
     body.preferences.notifyOnInput,
     body.preferences.notifyOnCompletion,
     body.preferences.notifyOnFailure,
+    [...(body.preferences.disabledEnvironmentIds ?? [])].sort().join(","),
   ].join("|");
 }
 
@@ -540,8 +551,12 @@ const readAgentActivitySnapshot: () => Effect.Effect<
     if (!token) {
       return null;
     }
+    const deviceId = yield* Effect.promise(() => loadAgentAwarenessDeviceId().catch(() => null));
     const client = yield* ManagedRelay.ManagedRelayClient;
-    return yield* client.getAgentActivitySnapshot({ clerkToken: token });
+    return yield* client.getAgentActivitySnapshot({
+      clerkToken: token,
+      ...(deviceId ? { deviceId } : {}),
+    });
   },
   Effect.catch((error) =>
     Effect.sync(() => {
@@ -598,7 +613,12 @@ function mergeDeviceRegistrationInput(
   next: DeviceRegistrationInput,
 ): DeviceRegistrationInput {
   const observedPushToken = next.observedPushToken ?? current.observedPushToken;
-  return observedPushToken ? { observedPushToken } : {};
+  return {
+    ...(observedPushToken ? { observedPushToken } : {}),
+    ...(current.disabledEnvironmentsChanged || next.disabledEnvironmentsChanged
+      ? { disabledEnvironmentsChanged: true }
+      : {}),
+  };
 }
 
 function registrationAddsInformation(
@@ -606,7 +626,8 @@ function registrationAddsInformation(
   next: DeviceRegistrationInput,
 ): boolean {
   return (
-    next.observedPushToken !== undefined && next.observedPushToken !== current.observedPushToken
+    next.disabledEnvironmentsChanged === true ||
+    (next.observedPushToken !== undefined && next.observedPushToken !== current.observedPushToken)
   );
 }
 
@@ -669,7 +690,7 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
     return;
   }
 
-  const [deviceId, storedPreferences] = yield* Effect.all([
+  const [deviceId, storedPreferences, disabledEnvironmentIds] = yield* Effect.all([
     Effect.tryPromise({
       try: () => loadOrCreateAgentAwarenessDeviceId(),
       catch: (cause) =>
@@ -683,6 +704,14 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
       catch: (cause) =>
         new AgentAwarenessOperationError({
           operation: "load-device-registration-preferences",
+          cause,
+        }),
+    }),
+    Effect.tryPromise({
+      try: () => loadDisabledEnvironmentIds(),
+      catch: (cause) =>
+        new AgentAwarenessOperationError({
+          operation: "load-device-registration-disabled-environments",
           cause,
         }),
     }),
@@ -725,6 +754,7 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
       ...(pushTokenRegistration.pushToken ? { pushToken: pushTokenRegistration.pushToken } : {}),
       notificationsEnabled: pushTokenRegistration.notificationsEnabled,
       preferences,
+      disabledEnvironmentIds,
     }),
     expectedGeneration,
   );
@@ -772,6 +802,38 @@ function ensureAppStateListener(): void {
       "active live activity reconciliation after app foreground failed",
     );
   });
+}
+
+// Turning an environment off must reach the relay, or it keeps notifying this phone.
+function ensureDisabledEnvironmentsListener(): void {
+  if (disabledEnvironmentsSubscription || !canRegisterPushNotifications()) {
+    return;
+  }
+
+  let registered: string | null = null;
+  const remove = appAtomRegistry.subscribe(
+    environmentCatalog.catalogValueAtom,
+    (catalog) => {
+      if (!catalog.isReady) {
+        return;
+      }
+      const disabled = [...catalog.entries]
+        .filter(([, entry]) => !entry.enabled)
+        .map(([environmentId]) => environmentId)
+        .sort()
+        .join(",");
+      // The first ready catalog is what the sign-in registration already read from storage.
+      if (registered !== null && registered !== disabled) {
+        enqueueDeviceRegistration(
+          { disabledEnvironmentsChanged: true },
+          "device registration after environment toggle failed",
+        );
+      }
+      registered = disabled;
+    },
+    { immediate: true },
+  );
+  disabledEnvironmentsSubscription = { remove };
 }
 
 function publishWidget(source: AgentActivityWidgetSource): void {
@@ -845,6 +907,8 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   pushTokenSubscription = null;
   appStateSubscription?.remove();
   appStateSubscription = null;
+  disabledEnvironmentsSubscription?.remove();
+  disabledEnvironmentsSubscription = null;
   if (activeLiveActivityRegistrationRetry) {
     clearTimeout(activeLiveActivityRegistrationRetry);
     activeLiveActivityRegistrationRetry = null;

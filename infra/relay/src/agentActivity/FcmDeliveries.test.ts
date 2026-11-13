@@ -592,6 +592,37 @@ describe("delivery policy regressions", () => {
   });
 });
 
+describe("environments turned off on the device", () => {
+  it.effect("keeps them off the card and silent while other environments still alert", () => {
+    const h = harness();
+    const turnedOff = {
+      ...state,
+      environmentId: EnvironmentId.make("turned-off"),
+      threadId: ThreadId.make("turned-off"),
+      phase: "waiting_for_approval" as const,
+    };
+    h.current.target.preferences_json = encodeJson({
+      ...preferences,
+      disabledEnvironmentIds: [turnedOff.environmentId],
+    });
+    h.current.target.last_aggregate_json = encodeJson(aggregateFor([state]));
+    h.current.otherStates = [turnedOff];
+    return Effect.gen(function* () {
+      const deliveries = yield* FcmDeliveries.FcmDeliveries;
+      yield* deliveries.process({ ...h.job, state: turnedOff });
+      expect(h.sent).toHaveLength(0);
+
+      h.current.state = { ...state, phase: "waiting_for_input" };
+      yield* deliveries.process({ ...h.job, state: h.current.state });
+      expect(h.sent).toHaveLength(1);
+      expect(h.sent[0]?.data).toMatchObject({
+        alert_path: state.deepLink,
+        ...androidActivityData(aggregateFor([h.current.state])),
+      });
+    }).pipe(Effect.provide(h.layer));
+  });
+});
+
 describe("notification-only environments", () => {
   it.effect("alerts independently while another environment has a live card", () => {
     const h = harness();

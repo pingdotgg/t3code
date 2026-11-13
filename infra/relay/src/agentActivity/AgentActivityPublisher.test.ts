@@ -198,6 +198,92 @@ describe("AgentActivityPublisher", () => {
     );
   });
 
+  it.effect("leaves an environment out for the devices that turned it off", () => {
+    const turnedOffState = {
+      ...state,
+      environmentId: "env-off" as RelayAgentActivityState["environmentId"],
+    };
+    const preferencesJson = JSON.stringify({
+      liveActivitiesEnabled: true,
+      notificationsEnabled: true,
+      notifyOnApproval: true,
+      notifyOnInput: true,
+      notifyOnCompletion: true,
+      notifyOnFailure: true,
+      disabledEnvironmentIds: [turnedOffState.environmentId],
+    });
+    const android = {
+      ...target("android"),
+      platform: "android" as const,
+      ios_major_version: null,
+      preferences_json: preferencesJson,
+    };
+    const ios = { ...target("ios"), preferences_json: preferencesJson };
+    const other = target("other");
+    const fcmCalls: Array<Parameters<FcmDeliveries.FcmDeliveries["Service"]["enqueue"]>[0]> = [];
+    const appleCards: Array<readonly [deviceId: string, environmentIds: ReadonlyArray<string>]> =
+      [];
+    return Effect.gen(function* () {
+      const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+      yield* publisher.publish({
+        environmentId: turnedOffState.environmentId,
+        environmentPublicKey: "key",
+        threadId: turnedOffState.threadId,
+        state: turnedOffState,
+      });
+      yield* publisher.replayForLiveActivityRegistration({
+        userId: ios.user_id,
+        deviceId: ios.device_id,
+      });
+      expect(fcmCalls).toEqual([]);
+      expect(appleCards).toEqual([
+        ["other", [state.environmentId, turnedOffState.environmentId]],
+        ["ios", [state.environmentId]],
+      ]);
+    }).pipe(
+      Effect.provide(
+        AgentActivityPublisher.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(
+                AgentActivityRows.AgentActivityRows,
+                makeAgentActivityRows({
+                  listForUser: () => Effect.succeed([state, turnedOffState]),
+                }),
+              ),
+              Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
+              Layer.succeed(
+                LiveActivities.LiveActivities,
+                makeLiveActivities({ listTargets: () => Effect.succeed([android, ios, other]) }),
+              ),
+              Layer.succeed(
+                ApnsDeliveries.ApnsDeliveries,
+                makeApnsDeliveries({
+                  sendForTarget: (input) =>
+                    Effect.sync(() => {
+                      appleCards.push([
+                        input.target.device_id,
+                        input.aggregate?.activities.map((row) => row.environmentId) ?? [],
+                      ]);
+                      return null;
+                    }),
+                }),
+              ),
+              Layer.succeed(FcmDeliveries.FcmDeliveries, {
+                enqueue: (input) =>
+                  Effect.sync(() => {
+                    fcmCalls.push(input);
+                    return null;
+                  }),
+                process: () => Effect.void,
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
   it.effect("replays the latest aggregate when a Live Activity token registers", () => {
     const registeredTarget: LiveActivities.TargetRow = {
       ...target("device-1"),

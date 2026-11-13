@@ -1,4 +1,5 @@
 import {
+  environmentsDisabledOnDevice,
   makeAggregateState,
   TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
 } from "./agentActivityAggregate.ts";
@@ -60,19 +61,13 @@ const make = Effect.gen(function* () {
 
   const publishForDeliveryUser = Effect.fnUntraced(function* (input: {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
+    readonly environmentId: string;
     readonly state: RelayAgentActivityState | null;
     readonly nowMs: number;
   }) {
     const activeStates = input.deliveryUser.liveActivitiesEnabled
       ? yield* rows.listForUser({ userId: input.deliveryUser.userId })
       : [];
-    const liveActivityAggregate = input.deliveryUser.liveActivitiesEnabled
-      ? makeAggregateState({
-          activeStates,
-          terminalState: input.state && isTerminalPhase(input.state) ? input.state : null,
-          nowMs: input.nowMs,
-        })
-      : null;
     const notificationOnlyAggregate =
       input.deliveryUser.notificationsEnabled &&
       !input.deliveryUser.liveActivitiesEnabled &&
@@ -87,9 +82,20 @@ const make = Effect.gen(function* () {
     const deliveriesByTarget = yield* Effect.forEach(
       targets,
       Effect.fnUntraced(function* (target) {
+        const disabledEnvironmentIds = environmentsDisabledOnDevice(target);
+        // Registration already repainted this device without the environment it turned off.
+        if (disabledEnvironmentIds.has(input.environmentId)) return [];
         if (target.platform === "android") {
           return [yield* fcmDeliveries.enqueue({ target, state: input.state })];
         }
+        const liveActivityAggregate = input.deliveryUser.liveActivitiesEnabled
+          ? makeAggregateState({
+              activeStates,
+              terminalState: input.state && isTerminalPhase(input.state) ? input.state : null,
+              nowMs: input.nowMs,
+              disabledEnvironmentIds,
+            })
+          : null;
         return yield* Effect.all(
           [
             apnsDeliveries.sendForTarget({
@@ -139,6 +145,7 @@ const make = Effect.gen(function* () {
         activeStates,
         terminalState: null,
         nowMs: now.epochMilliseconds,
+        disabledEnvironmentIds: environmentsDisabledOnDevice(target),
       });
       return yield* apnsDeliveries.sendForTarget({
         target,
@@ -161,16 +168,19 @@ const make = Effect.gen(function* () {
         ([userId, candidates]) =>
           Effect.gen(function* () {
             const activeStates = yield* rows.listForUser({ userId });
-            const aggregate = makeAggregateState({
-              activeStates,
-              terminalState: null,
-              nowMs: now.epochMilliseconds,
-            });
-            if (aggregate !== null) return;
             const targets = yield* liveActivities.listTargets({ userId });
             const idleDeviceIds = new Set(candidates.map((target) => target.device_id));
             yield* Effect.forEach(
-              targets.filter((target) => idleDeviceIds.has(target.device_id)),
+              targets.filter(
+                (target) =>
+                  idleDeviceIds.has(target.device_id) &&
+                  makeAggregateState({
+                    activeStates,
+                    terminalState: null,
+                    nowMs: now.epochMilliseconds,
+                    disabledEnvironmentIds: environmentsDisabledOnDevice(target),
+                  }) === null,
+              ),
               (target) =>
                 apnsDeliveries
                   .sendForTarget({
@@ -230,6 +240,7 @@ const make = Effect.gen(function* () {
         (deliveryUser) =>
           publishForDeliveryUser({
             deliveryUser,
+            environmentId: input.environmentId,
             state: input.state,
             nowMs: now.epochMilliseconds,
           }),

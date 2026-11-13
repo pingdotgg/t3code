@@ -110,6 +110,11 @@ const disabledPreferences = JSON.stringify({
   notifyOnFailure: true,
 });
 
+const environmentOffPreferences = JSON.stringify({
+  ...JSON.parse(enabledPreferences),
+  disabledEnvironmentIds: [state.environmentId],
+});
+
 const notificationsDisabledPreferences = JSON.stringify({
   liveActivitiesEnabled: false,
   notificationsEnabled: false,
@@ -553,6 +558,7 @@ describe("ApnsDeliveries", () => {
     { phase: "completed", updatedAt: state.updatedAt, disabled: false, sends: false },
     { phase: "completed", updatedAt: "1969-12-31T23:44:00.000Z", disabled: false, sends: true },
     { phase: "running", updatedAt: state.updatedAt, disabled: true, sends: true },
+    { phase: "running", updatedAt: state.updatedAt, disabled: "environment", sends: true },
   ] as const)(
     "rechecks a queued contentless end: $phase at $updatedAt, disabled=$disabled",
     ({ phase, updatedAt, disabled, sends }) => {
@@ -592,7 +598,15 @@ describe("ApnsDeliveries", () => {
             attempts: [],
             config: signingConfig,
             currentTargets: [
-              { ...target, preferences_json: disabled ? disabledPreferences : enabledPreferences },
+              {
+                ...target,
+                preferences_json:
+                  disabled === "environment"
+                    ? environmentOffPreferences
+                    : disabled
+                      ? disabledPreferences
+                      : enabledPreferences,
+              },
             ],
             activityStates: [{ ...state, phase, updatedAt }],
             execute: (request) =>
@@ -841,6 +855,97 @@ describe("ApnsDeliveries", () => {
               updatedAt: "1970-01-01T00:00:02.000Z",
             },
           ],
+          config: signingConfig,
+          execute,
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps a queued alert when another environment on the card was turned off", () => {
+    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+    const markedDeliveries: Array<
+      Parameters<LiveActivities.LiveActivities["Service"]["markDelivery"]>[0]
+    > = [];
+    const sentAlerts: Array<unknown> = [];
+    const approval: RelayAgentActivityState = {
+      ...state,
+      phase: "waiting_for_approval",
+      headline: "Approval",
+      updatedAt: "1970-01-01T00:00:01.000Z",
+    };
+    const turnedOff: RelayAgentActivityState = {
+      ...state,
+      environmentId: "env-off" as RelayAgentActivityState["environmentId"],
+      threadTitle: "Turned off",
+    };
+    const turnedOffRow = { ...aggregate.activities[0]!, environmentId: turnedOff.environmentId };
+    const device = {
+      ...target,
+      preferences_json: JSON.stringify({
+        ...JSON.parse(enabledPreferences),
+        disabledEnvironmentIds: [turnedOff.environmentId],
+      }),
+      last_aggregate_json: JSON.stringify({
+        ...aggregate,
+        activeCount: 2,
+        activities: [aggregate.activities[0]!, turnedOffRow],
+      }),
+    };
+    const signed = signApnsDeliveryJob({
+      secret: config.apnsDeliveryJobSigningSecret,
+      payload: makeApnsDeliveryJobPayload({
+        kind: "live_activity_update",
+        userId: target.user_id,
+        deviceId: target.device_id,
+        token: "activity-token",
+        aggregate: {
+          ...aggregate,
+          activeCount: 2,
+          updatedAt: approval.updatedAt,
+          activities: [
+            {
+              ...aggregate.activities[0]!,
+              phase: approval.phase,
+              status: "Approval",
+              updatedAt: approval.updatedAt,
+            },
+            turnedOffRow,
+          ],
+        },
+        alert: { title: "Thread", body: "Approval: Project" },
+        createdAt: "1970-01-01T00:00:00.000Z",
+        expiresAt: "1970-01-01T00:10:00.000Z",
+        jobId: "job-update-queued-before-turn-off",
+      }),
+    });
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        if (request.body._tag === "Uint8Array") {
+          sentAlerts.push(JSON.parse(new TextDecoder().decode(request.body.body)).aps.alert);
+        }
+        return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+      });
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.processSignedJob(yield* signed);
+
+      expect(result).toMatchObject({ kind: "live_activity_update", ok: true, apnsStatus: 200 });
+      expect(sentAlerts).toMatchObject([{ title: "Thread", body: "Approval: Project" }]);
+      expect(markedDeliveries.map((delivery) => delivery.aggregate)).toMatchObject([
+        {
+          activeCount: 1,
+          activities: [{ environmentId: state.environmentId, phase: "waiting_for_approval" }],
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts,
+          markedDeliveries,
+          currentTargets: [device],
+          activityStates: [approval, turnedOff],
           config: signingConfig,
           execute,
         }),

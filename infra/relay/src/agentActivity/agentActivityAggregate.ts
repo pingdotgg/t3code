@@ -1,9 +1,11 @@
-import type {
-  RelayAgentActivityAggregateState,
-  RelayAgentActivityState,
+import {
+  RelayAgentAwarenessPreferences,
+  type RelayAgentActivityAggregateState,
+  type RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import {
   isExpiredAgentActivityState,
   isTerminalPhase,
@@ -71,20 +73,42 @@ function isRecentTerminalState(state: RelayAgentActivityState, nowMs: number): b
   return nowMs - updatedAtMs <= TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS;
 }
 
+const decodePreferencesJson = Schema.decodeUnknownOption(
+  Schema.fromJsonString(RelayAgentAwarenessPreferences),
+);
+
+export function environmentsDisabledOnDevice(device: {
+  readonly preferences_json: string;
+}): ReadonlySet<string> {
+  return new Set(
+    Option.getOrUndefined(decodePreferencesJson(device.preferences_json))?.disabledEnvironmentIds,
+  );
+}
+
 export function makeAggregateState(input: {
   readonly activeStates: ReadonlyArray<RelayAgentActivityState>;
   readonly terminalState: RelayAgentActivityState | null;
   readonly nowMs: number;
+  readonly disabledEnvironmentIds?: ReadonlySet<string>;
 }): RelayAgentActivityAggregateState | null {
-  const activeStates = input.activeStates.filter(
+  const disabled = input.disabledEnvironmentIds;
+  const visibleStates =
+    disabled === undefined || disabled.size === 0
+      ? input.activeStates
+      : input.activeStates.filter((state) => !disabled.has(state.environmentId));
+  const terminalState =
+    input.terminalState !== null && disabled?.has(input.terminalState.environmentId)
+      ? null
+      : input.terminalState;
+  const activeStates = visibleStates.filter(
     (state) => !isTerminalPhase(state) && !isExpiredAgentActivityState(state, input.nowMs),
   );
   if (activeStates.length === 0) {
-    if (input.terminalState !== null) {
-      return terminalAggregateState(input.terminalState);
+    if (terminalState !== null) {
+      return terminalAggregateState(terminalState);
     }
     // Alerts compare with the delivered aggregate; replays must repaint without buzzing.
-    const recentTerminal = input.activeStates
+    const recentTerminal = visibleStates
       .filter((state) => isRecentTerminalState(state, input.nowMs))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const newest = recentTerminal[0];
@@ -99,7 +123,7 @@ export function makeAggregateState(input: {
       activities: recentTerminal.slice(0, MAX_ACTIVITY_ROWS).map(aggregateRowForState),
     });
   }
-  const recentTerminalStates = input.activeStates
+  const recentTerminalStates = visibleStates
     .filter((state) => isRecentTerminalState(state, input.nowMs))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const displayedStates = [

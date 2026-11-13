@@ -23,7 +23,7 @@ import {
   sanitizeAgentActivityAggregateState,
   sanitizeApnsNotificationPayload,
 } from "./agentActivityPayloads.ts";
-import { makeAggregateState } from "./agentActivityAggregate.ts";
+import { environmentsDisabledOnDevice, makeAggregateState } from "./agentActivityAggregate.ts";
 import * as Apns from "./ApnsClient.ts";
 import {
   ApnsDeliveryJobLiveActivityAggregateMissing,
@@ -89,6 +89,7 @@ export type ApnsDeliveryError =
   | ApnsDeliveryJobVerificationError
   | ApnsDeliveryJobClaimInFlight
   | DeliveryAttempts.DeliveryAttemptRecordPersistenceError
+  | AgentActivityRows.AgentActivityRowListPersistenceError
   | LiveActivities.LiveActivityTargetListPersistenceError
   | LiveActivities.LiveActivityDeliveryMarkPersistenceError;
 
@@ -515,17 +516,19 @@ const make = Effect.gen(function* () {
   const apns = yield* Apns.ApnsClient;
   const activityRows = yield* AgentActivityRows.AgentActivityRows;
 
-  const userHasContentToShow = Effect.fnUntraced(function* (userId: string) {
+  const currentAggregateForDevice = Effect.fnUntraced(function* (target: LiveActivities.TargetRow) {
     const now = yield* DateTime.now;
-    return yield* activityRows.listForUser({ userId }).pipe(
-      Effect.map(
-        (activeStates) =>
-          makeAggregateState({
-            activeStates,
-            terminalState: null,
-            nowMs: now.epochMilliseconds,
-          }) !== null,
-      ),
+    return makeAggregateState({
+      activeStates: yield* activityRows.listForUser({ userId: target.user_id }),
+      terminalState: null,
+      nowMs: now.epochMilliseconds,
+      disabledEnvironmentIds: environmentsDisabledOnDevice(target),
+    });
+  });
+
+  const deviceHasContentToShow = (target: LiveActivities.TargetRow) =>
+    currentAggregateForDevice(target).pipe(
+      Effect.map((aggregate) => aggregate !== null),
       // Keep the card on persistence failures; a later sweep can retry.
       Effect.catch((error) =>
         Effect.logWarning("Content recheck failed; keeping the card", { error }).pipe(
@@ -533,7 +536,6 @@ const make = Effect.gen(function* () {
         ),
       ),
     );
-  });
 
   const stateIdentityIsCurrent = Effect.fnUntraced(function* (input: {
     readonly userId: string;
@@ -647,7 +649,7 @@ const make = Effect.gen(function* () {
     });
     let deliveryTarget = input.target;
     const now = yield* DateTime.now;
-    const aggregate =
+    let aggregate =
       input.aggregate === null ? null : sanitizeAgentActivityAggregateState(input.aggregate);
     let alert = input.alert ?? null;
     const recoverTransportError = (cause: Apns.ApnsError) =>
@@ -687,6 +689,19 @@ const make = Effect.gen(function* () {
       return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
     }
     deliveryTarget = currentTarget;
+    const disabledEnvironmentIds = environmentsDisabledOnDevice(currentTarget);
+    if (aggregate?.activities.some((row) => disabledEnvironmentIds.has(row.environmentId))) {
+      // Queued before the device turned an environment off. Rebuild the card
+      // without it; dropping the job would lose alerts for the rows that stay.
+      aggregate = yield* currentAggregateForDevice(currentTarget);
+      if (aggregate === null && input.kind === "live_activity_update") {
+        yield* attempts.completeSourceJob({
+          sourceJobId: input.sourceJobId,
+          apnsReason: "Stale APNs delivery job skipped.",
+        });
+        return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
+      }
+    }
     if (alert) {
       const preferences = parsePreferences(currentTarget.preferences_json);
       const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
@@ -725,7 +740,7 @@ const make = Effect.gen(function* () {
       input.kind === "live_activity_end" &&
       aggregate === null &&
       parsePreferences(currentTarget.preferences_json)?.liveActivitiesEnabled !== false &&
-      (yield* userHasContentToShow(input.target.user_id))
+      (yield* deviceHasContentToShow(currentTarget))
     ) {
       yield* attempts.completeSourceJob({
         sourceJobId: input.sourceJobId,
@@ -880,7 +895,10 @@ const make = Effect.gen(function* () {
             nowMs: now.epochMilliseconds,
           })
         : preferences?.notificationsEnabled === true;
-    if (!alertAllowed) {
+    if (
+      !alertAllowed ||
+      environmentsDisabledOnDevice(currentTarget).has(notification.environmentId)
+    ) {
       yield* attempts.completeSourceJob({
         sourceJobId: input.sourceJobId,
         apnsReason: "Notification is disabled or no longer fresh.",
