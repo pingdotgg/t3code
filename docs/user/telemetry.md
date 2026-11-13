@@ -10,7 +10,31 @@ available. Child-agent token counts are reported separately from the main agent'
 are sent only when they appear in a provider's public model list.
 
 Product events do not include prompts, responses, file contents, authentication tokens, conversation IDs,
-raw provider events, or child-agent output.
+raw provider events, or child-agent output. The one exception is [agent feedback](#agent-feedback),
+which is off unless you turn it on.
+
+## Agent feedback
+
+Agent feedback lets agents tell the T3 team when T3 Code itself got in their way: a T3 tool or `t3`
+command that did not do what they expected, a confusing instruction, or a missing capability. It is
+off by default. Turn on **Agent feedback** in **Settings > Maintenance**, or ask your agent to send
+feedback about T3 Code and it will turn the setting on. Turn it off in the same place.
+
+While it is on, agents are told to report these problems, and you can send one yourself with
+`t3 feedback --kind bug --subject "t3 thread send" --expected "…" --actual "…"`. Each report has
+the kind of problem, the T3 tool or command it concerns, and up to 300 characters each of expected
+behavior, actual behavior, and workaround, written by the agent. Before anything is saved, T3 Code
+removes file paths (when a report mentions one, the rest of that line goes with it), your user
+name, machine name, project title, branch, and git remote, and anything that looks like a key,
+token, email address, or URL with a password. This is best effort and can miss private text, such
+as very short names, so turn agent feedback on knowingly. Reports from agents also name the
+provider, and the model when it is from the provider's public model list. T3 Code attaches no
+prompts, thread IDs, or project IDs to what is sent. The text is written by the agent, which is
+told not to quote your messages or code, but it can still contain something you wrote if the agent
+quotes it. Leave private details out of a report you send yourself.
+
+Reports are saved on your machine first. When product usage data is turned off, they stay there
+and are not sent. `t3 feedback list` shows recent reports and the thread each came from.
 
 ## Relay connection diagnostics
 

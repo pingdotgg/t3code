@@ -556,6 +556,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.enableProviderUpdateChecks !== DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
       ? ["Provider update checks"]
       : []),
+    ...(settings.agentFeedback.enabled !== DEFAULT_UNIFIED_SETTINGS.agentFeedback.enabled
+      ? ["Agent feedback"]
+      : []),
     ...(settings.continueThreadsAfterServerUpdate !==
     DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
       ? ["Continue threads after restarts"]
@@ -685,6 +688,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      agentFeedback: DEFAULT_UNIFIED_SETTINGS.agentFeedback,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       keepAwakeWhileAgentsWork: DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork,
@@ -2151,6 +2155,12 @@ export function MaintenanceSettingsPanel() {
   const environmentId = environment?.environmentId ?? null;
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
   const hasServerTargets = connectedEnvironments.length > 0;
+  // Older servers drop the setting, so a switch there would do nothing.
+  const supportsAgentFeedback =
+    hasServerTargets &&
+    connectedEnvironments.every(
+      (target) => target.serverConfig?.environment.capabilities.agentFeedback === true,
+    );
 
   return (
     <SettingsPageContainer>
@@ -2278,6 +2288,34 @@ export function MaintenanceSettingsPanel() {
             </Button>
           }
         />
+        {supportsAgentFeedback ? (
+          <SettingsRow
+            {...searchableSetting("agent-feedback")}
+            serverScoped
+            settingKeys={["agentFeedback"]}
+            description="Let agents send short reports about T3 Code problems they hit to the T3 team."
+            resetAction={
+              settings.agentFeedback.enabled !== DEFAULT_UNIFIED_SETTINGS.agentFeedback.enabled ? (
+                <SettingResetButton
+                  label="agent feedback"
+                  onClick={() =>
+                    updateSettings({ agentFeedback: DEFAULT_UNIFIED_SETTINGS.agentFeedback })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <ScopedSwitch
+                settingKeys={["agentFeedback"]}
+                checked={settings.agentFeedback.enabled}
+                onCheckedChange={(checked) =>
+                  updateSettings({ agentFeedback: { enabled: Boolean(checked) } })
+                }
+                aria-label="Agent feedback"
+              />
+            }
+          />
+        ) : null}
       </SettingsSection>
     </SettingsPageContainer>
   );

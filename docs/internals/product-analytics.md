@@ -144,10 +144,17 @@ batch was sent every second for days.
 
 ## Collection boundary
 
-Keep analytics payloads to product metadata and normalized measurements. Do not
-send prompts, authentication material, raw provider payloads, user-assigned device
-names, or conversation identifiers. Client metadata is best effort; invalid values
-must not reject a connection. PostHog person profiles remain disabled.
+Keep analytics payloads to product metadata and normalized measurements. The one
+exception is `agent.feedback`, sent only while the user has turned on agent
+feedback: its `expected`, `actual`, and `workaround` fields are agent-written text,
+which [FeedbackService](../../apps/server/src/feedback/FeedbackService.ts) scrubs of
+file paths, values the server knows are private to the caller, and secret-shaped
+strings, and caps at 300 characters each. The server attaches no prompts,
+authentication material, raw provider payloads, user-assigned device names, or
+conversation identifiers to any event. The feedback text itself is the agent's; the
+tool only tells it not to quote the user's messages or code. Client metadata is
+best effort; invalid values must not reject a connection. PostHog person profiles
+remain disabled.
 
 Dev-runner servers and the CI archive smoke test turn telemetry off, which also
 stops relay tracing, because each would count as a new install. Set
