@@ -569,6 +569,36 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("keeps unused natives out of the Windows x64 app archive", () =>
+    Effect.gen(function* () {
+      const win = yield* createBuildConfig(
+        "win",
+        "nsis",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        "x64",
+      );
+      const files = win.files as string[];
+      const excludes = (file: string) =>
+        files.some((glob) => glob.startsWith("!") && NodePath.matchesGlob(file, glob.slice(1)));
+
+      for (const file of [
+        // The packaged app runs the resource monitor from extraResources only.
+        "apps/desktop/prod-resources/resource-monitor/t3-resource-monitor.exe",
+        "node_modules/@yuuang/ffi-rs-win32-ia32-msvc/ffi-rs.win32-ia32-msvc.node",
+      ]) {
+        assert.isTrue(excludes(file), file);
+      }
+      assert.isFalse(
+        excludes("node_modules/@yuuang/ffi-rs-win32-x64-msvc/ffi-rs.win32-x64-msvc.node"),
+      );
+    }),
+  );
+
   it.effect("declares Calendar access for hosted commands in macOS builds", () =>
     Effect.gen(function* () {
       for (const version of ["0.1.0", "0.1.1-nightly.20261019.1"]) {
@@ -752,8 +782,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           "node_modules/node-pty/prebuilds/win32-arm64/conpty/OpenConsole.exe",
           "node_modules/node-pty/third_party/conpty/1.0.0/win10-x64/OpenConsole.exe",
           "node_modules/node-pty/third_party/conpty/1.0.0/win10-arm64/OpenConsole.exe",
+          "node_modules/node-pty/build/Release/conpty/OpenConsole.exe",
+          "node_modules/node-pty/build/Release/conpty/conpty.dll",
           "node_modules/node-pty/prebuilds/win32-x64/pty.node",
           "node_modules/node-pty/prebuilds/linux-x64/pty.node",
+          "node_modules/@yuuang/ffi-rs-win32-ia32-msvc/ffi-rs.win32-ia32-msvc.node",
         ];
 
         for (const nativeFile of nativeFiles) {
@@ -796,6 +829,18 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           yield* fs.exists(
             path.join(unpackedRoot, "node_modules/node-pty/third_party/conpty/1.0.0/win10-arm64"),
           ),
+        );
+        // node-pty loads the prebuilds copy; third_party only feeds its Windows post-install.
+        assert.isFalse(
+          yield* fs.exists(
+            path.join(unpackedRoot, "node_modules/node-pty/third_party/conpty/1.0.0/win10-x64"),
+          ),
+        );
+        assert.isFalse(
+          yield* fs.exists(path.join(unpackedRoot, "node_modules/node-pty/build/Release/conpty")),
+        );
+        assert.isFalse(
+          yield* fs.exists(path.join(unpackedRoot, "node_modules/@yuuang/ffi-rs-win32-ia32-msvc")),
         );
       }),
     ),

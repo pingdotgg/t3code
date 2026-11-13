@@ -998,6 +998,8 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/browser-secret/**/*",
   "!apps/desktop/prod-resources/windows-server",
   "!apps/desktop/prod-resources/windows-server/**/*",
+  "!apps/desktop/prod-resources/resource-monitor",
+  "!apps/desktop/prod-resources/resource-monitor/**/*",
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
   "!apps/desktop/gnome-extension",
@@ -1012,6 +1014,10 @@ export const MAC_FILE_EXCLUSIONS = [
 export const LINUX_FILE_EXCLUSIONS = [
   ...MAC_FILE_EXCLUSIONS,
   "!**/node_modules/node-pty/prebuilds/darwin-*/**/*",
+] as const;
+// Windows packages target x64 or arm64, so the 32-bit ffi-rs addon never loads.
+export const WINDOWS_FILE_EXCLUSIONS = [
+  "!**/node_modules/@yuuang/ffi-rs-win32-ia32-msvc/**/*",
 ] as const;
 
 // Native packages (node-pty, objc-js) ship prebuilds for both Darwin architectures; only universal
@@ -1045,20 +1051,20 @@ export const WINDOWS_SERVER_ASAR_IGNORE_GLOBS = [
   "**/node_modules/.bin",
   "**/node_modules/.bin/**",
   "**/*.map",
+  // node-pty loads conpty from its prebuilds; its post-install copies third_party into build/Release.
+  "**/node_modules/node-pty/third_party/conpty",
+  "**/node_modules/node-pty/third_party/conpty/**",
+  "**/node_modules/node-pty/build/Release/conpty",
+  "**/node_modules/node-pty/build/Release/conpty/**",
+  "**/node_modules/@yuuang/ffi-rs-win32-ia32-msvc",
+  "**/node_modules/@yuuang/ffi-rs-win32-ia32-msvc/**",
 ] as const;
 
 export function resolveWindowsServerAsarIgnoreGlobs(arch: typeof BuildArch.Type) {
   const unusedArch = arch === "arm64" ? "x64" : "arm64";
   const unusedPrebuild = `**/node_modules/node-pty/prebuilds/win32-${unusedArch}`;
-  const unusedConpty = `**/node_modules/node-pty/third_party/conpty/*/win10-${unusedArch}`;
 
-  return [
-    ...WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
-    unusedPrebuild,
-    `${unusedPrebuild}/**`,
-    unusedConpty,
-    `${unusedConpty}/**`,
-  ];
+  return [...WINDOWS_SERVER_ASAR_IGNORE_GLOBS, unusedPrebuild, `${unusedPrebuild}/**`];
 }
 
 export const WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 80;
@@ -2791,7 +2797,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         ? resolveMacFileExclusions(arch)
         : platform === "linux"
           ? LINUX_FILE_EXCLUSIONS
-          : []),
+          : WINDOWS_FILE_EXCLUSIONS),
     ],
     directories: {
       buildResources: "apps/desktop/resources",
