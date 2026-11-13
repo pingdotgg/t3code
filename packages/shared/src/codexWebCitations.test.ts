@@ -106,6 +106,7 @@ describe("Codex web-search citation markers", () => {
     ["inline code", `Literally \`${CITE}\` here`],
     ["a code fence", `\`\`\`\n${CITE}\n\`\`\``],
     ["an unfinished marker", "Still streaming citeturn0search0"],
+    ["a link destination", `[docs](https://a.dev/${CITE})`],
     ["another private-use marker", "See fileciteturn0file0 here"],
   ])("are kept in %s", (_name, markdown) => {
     expect(hideCodexWebCitations(markdown)).toBe(markdown);

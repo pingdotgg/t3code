@@ -125,8 +125,13 @@ function hideCitations(parent: MarkdownNode, rewrite?: SourceRewrite): void {
       return shown !== "";
     }
 
-    // A bare URL takes a marker that directly follows it into the autolink.
-    if (child.type === "link" && child.url?.includes(CODEX_WEB_CITATION_START)) {
+    // A bare URL takes a marker that directly follows it into the autolink, whose text is the URL.
+    // A destination written out is left alone: the source rewrite edits text only.
+    if (
+      child.url !== undefined &&
+      child.type === "link" &&
+      child.children?.some((label) => label.value?.includes(CODEX_WEB_CITATION_START))
+    ) {
       child.url = child.url.replace(CITATION, "");
     }
     if (!child.children) return true;
