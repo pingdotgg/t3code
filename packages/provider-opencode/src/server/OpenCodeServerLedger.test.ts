@@ -56,7 +56,6 @@ const spawnGroupLeader = (args: ReadonlyArray<string>, script: string) =>
     if (pid === undefined) return yield* Effect.die("spawn failed");
     const grouped = yield* Deferred.make<true | string>();
     const exited = yield* Deferred.make<NodeJS.Signals | null>();
-    const printed = yield* Deferred.make<void>();
     child.once("exit", (_code, signal) => Deferred.doneUnsafe(exited, Effect.succeed(signal)));
     // "close" fires after stdout drains, so a guard line always lands first. It only fires before
     // "grouped" when the shell died without starting the script, such as from a signal.
@@ -77,12 +76,9 @@ const spawnGroupLeader = (args: ReadonlyArray<string>, script: string) =>
           Effect.succeed(`\`ps -o pgid= -p ${pid}\` printed ${JSON.stringify(output)}`),
         );
       }
-      if (line === "ready") Deferred.doneUnsafe(printed, Effect.void);
     });
     const result = yield* Deferred.await(grouped);
-    return result === true
-      ? { pid, exited: Deferred.await(exited), printed: Deferred.await(printed) }
-      : result;
+    return result === true ? { pid, exited: Deferred.await(exited) } : result;
   });
 
 // A pid colliding with a live group id is rare, so a few retries clear it. Repeated failures
