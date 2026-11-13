@@ -1304,14 +1304,30 @@ const make = Effect.gen(function* () {
         providerThread.appThreadId === input.threadId ? [providerThread.id] : [],
       );
       // Settling the target can promote a queued follow-up onto the same session; that run is
-      // not Force stop's to end. An unreadable thread counts as one, so its session is kept.
+      // not Force stop's to end. Sessions are per provider instance and a follow-up may switch
+      // instance, so only a session of the newer run's instance is kept. An unreadable thread
+      // counts as a newer run, so its sessions are kept.
       const throughRunOrdinal = target?.ordinal ?? 0;
-      const laterRunActive = orchestrator.getThreadRecords(input.threadId, ["runs"]).pipe(
-        Effect.map(({ runs }) =>
-          runs.some((run) => run.ordinal > throughRunOrdinal && isActiveRun(run)),
-        ),
-        Effect.orElseSucceed(() => true),
-      );
+      const laterRunActive = (providerSessionId: ProviderSessionId) => {
+        const instanceIds = new Set(
+          records.providerThreads.flatMap((providerThread) =>
+            providerThread.providerSessionId === providerSessionId
+              ? [providerThread.providerInstanceId]
+              : [],
+          ),
+        );
+        return orchestrator.getThreadRecords(input.threadId, ["runs"]).pipe(
+          Effect.map(({ runs }) =>
+            runs.some(
+              (run) =>
+                run.ordinal > throughRunOrdinal &&
+                isActiveRun(run) &&
+                instanceIds.has(run.providerInstanceId),
+            ),
+          ),
+          Effect.orElseSucceed(() => true),
+        );
+      };
       const detach = (providerSessionId: ProviderSessionId) =>
         sessions
           .detach({ providerSessionId, threadId: input.threadId, detail: FORCE_STOP_REASON })
@@ -1351,7 +1367,7 @@ const make = Effect.gen(function* () {
             ownProviderThreadIds,
             throughRunOrdinal,
             // A promoted follow-up may not have marked its turn busy yet.
-            keepIf: laterRunActive,
+            keepIf: laterRunActive(providerSessionId),
             reason: "manual_shutdown",
             detail: FORCE_STOP_REASON,
           })
@@ -1366,7 +1382,7 @@ const make = Effect.gen(function* () {
         );
         if (Option.isNone(released)) {
           releasing = true;
-        } else if (!released.value && !(yield* laterRunActive)) {
+        } else if (!released.value && !(yield* laterRunActive(release.providerSessionId))) {
           shared = true;
           yield* detach(release.providerSessionId);
         }

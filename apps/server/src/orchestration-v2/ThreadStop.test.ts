@@ -1840,25 +1840,34 @@ it.effect.each(["Stop", "Force stop"] as const)(
 );
 
 it.effect.each([
-  { followUp: "started its turn", startedBeforeRelease: true },
-  { followUp: "was promoted", startedBeforeRelease: false },
+  { followUp: "started its turn", startedBeforeRelease: true, switchesInstance: false },
+  { followUp: "was promoted", startedBeforeRelease: false, switchesInstance: false },
+  { followUp: "switched provider instance", startedBeforeRelease: true, switchesInstance: true },
 ])(
-  "Force stop keeps the session of a queued follow-up that $followUp",
-  ({ startedBeforeRelease }) =>
+  "Force stop keeps only the session of a queued follow-up that $followUp",
+  ({ startedBeforeRelease, switchesInstance }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("thread-stop-force-stop-follow-up");
         const driver = adapter.driver;
-        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        const otherInstanceId = ProviderInstanceId.make("codex-other");
+        const eventQueues = new Map([
+          [instanceId, yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>()],
+          [otherInstanceId, yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>()],
+        ]);
         const started: Array<ProviderAdapter.ProviderAdapterV2TurnInput> = [];
         const interrupted: Array<ProviderAdapter.ProviderAdapterV2InterruptInput> = [];
         let opened = 0;
-        const liveAdapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
+        const liveAdapter = (
+          instanceId: ProviderInstanceId,
+        ): ProviderAdapter.ProviderAdapterV2["Service"] => ({
           ...adapter,
+          instanceId,
           openSession: (input) =>
             Effect.gen(function* () {
               opened += 1;
               const now = yield* DateTime.now;
+              const events = eventQueues.get(instanceId)!;
               return {
                 instanceId,
                 driver,
@@ -1878,7 +1887,7 @@ it.effect.each([
                 events: Stream.fromQueue(events),
                 ensureThread: ({ threadId }) =>
                   Effect.succeed({
-                    id: ProviderThreadId.make(`provider-thread:codex:${threadId}`),
+                    id: ProviderThreadId.make(`provider-thread:${instanceId}:${threadId}`),
                     driver,
                     providerInstanceId: instanceId,
                     providerSessionId: input.providerSessionId,
@@ -1926,7 +1935,7 @@ it.effect.each([
                 forkThread: () => Effect.die("unused"),
               };
             }),
-        };
+        });
         // The settlement promotes the follow-up; optionally its turn starts before Force stop releases.
         const layerSessionsStartingFollowUpFirst = Layer.effect(
           ProviderSessionManager.ProviderSessionManagerV2,
@@ -1952,7 +1961,10 @@ it.effect.each([
               EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
               ProviderReplayHarness.layerWithRegistry(
                 { name: "thread-stop-force-stop-follow-up" },
-                ProviderAdapterRegistry.layerFromAdapters([liveAdapter]),
+                ProviderAdapterRegistry.layerFromAdapters([
+                  liveAdapter(instanceId),
+                  liveAdapter(otherInstanceId),
+                ]),
                 { databaseLayer: layerDatabase, runEffectWorker: false },
               ),
             ),
@@ -1994,7 +2006,20 @@ it.effect.each([
           yield* send(threadId, "first", "start_immediately");
           yield* worker.drain();
           yield* Fiber.join(firstRunning);
-          yield* send(threadId, "follow-up", "queue_after_active");
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("send:force-stop-follow-up"),
+            threadId,
+            messageId: MessageId.make("message:force-stop-follow-up"),
+            text: "follow-up",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            ...(switchesInstance
+              ? { modelSelection: { ...modelSelection, instanceId: otherInstanceId } }
+              : {}),
+            createdBy: "user",
+            creationSource: "web",
+          });
 
           const result = yield* threads.forceStopThread({ threadId });
           yield* worker.drain();
@@ -2006,12 +2031,16 @@ it.effect.each([
           );
           assert.equal(
             opened,
-            1,
+            switchesInstance ? 2 : 1,
             "Force stop tore down the session the follow-up was promoted onto",
           );
-          const followUp = started[1]!;
-          const providerSessionId = (yield* orchestrator.getThreadProjection(threadId))
-            .providerThreads[0]!.providerSessionId!;
+          const [stopped, followUp] = [started[0]!, started[1]!];
+          const providerSessionId = followUp.providerThread.providerSessionId!;
+          assert.equal(
+            yield* sessions.isLive(stopped.providerThread.providerSessionId!),
+            !switchesInstance,
+            "Force stop kept the stopped run's session for a follow-up on another instance",
+          );
           assert.isFalse(
             interrupted.some((interrupt) =>
               String(interrupt.providerTurnId).includes(followUp.attemptId),
@@ -2029,7 +2058,7 @@ it.effect.each([
           );
 
           // The first run's provider never confirms the stop; the follow-up's turn ends normally.
-          yield* Queue.offer(events, {
+          yield* Queue.offer(eventQueues.get(followUp.providerThread.providerInstanceId)!, {
             type: "turn.terminal",
             driver,
             providerThreadId: followUp.providerThread.id,
