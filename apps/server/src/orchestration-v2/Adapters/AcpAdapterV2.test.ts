@@ -6312,7 +6312,9 @@ describe("AcpAdapterV2", () => {
     { text: "$deploy ship it", sent: "/deploy ship it", native: true },
     { text: "ship $deploy", sent: "ship $deploy", native: false },
     { text: "$other ship it", sent: "$other ship it", native: false },
-  ])("Grok sends $text with a picked skill as $sent", ({ text, sent, native }) =>
+    // regression: #24667 a skill named in another agent's message ran as the user's command
+    { text: "$deploy ship it", sent: "$deploy ship it", native: false, from: "agent" as const },
+  ])("Grok sends $text with a picked skill as $sent", ({ text, sent, native, from }) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -6366,6 +6368,7 @@ describe("AcpAdapterV2", () => {
           runtimePolicy,
           now: yield* DateTime.now,
           messageText: text,
+          ...(from === undefined ? {} : { messageCreatedBy: from }),
         }),
       );
       const prompt = yield* Stream.fromQueue(protocolEvents).pipe(

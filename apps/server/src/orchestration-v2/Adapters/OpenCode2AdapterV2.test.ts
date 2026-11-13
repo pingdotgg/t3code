@@ -3272,6 +3272,33 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  // regression: #24667 a skill named in another agent's message ran as the user's command
+  it.effect("sends an agent's $skill mention as plain text", () =>
+    Effect.gen(function* () {
+      const prompts: Array<unknown> = [];
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { onPrompt: (input) => prompts.push(input) },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({
+        ...turnInput(thread),
+        message: {
+          ...turnInput(thread).message,
+          text: "the $greet skill reported X",
+          createdBy: "agent",
+          creationSource: "mcp",
+        },
+      });
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      assert.notProperty(prompts[0], "skills");
+    }),
+  );
+
   it.effect("keeps owned work through a stalled reconciliation without releasing its server", () =>
     Effect.gen(function* () {
       const reading = yield* Deferred.make<void>();

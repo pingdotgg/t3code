@@ -4502,7 +4502,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* client.session.command({ sessionID, ...command }).pipe(Effect.asVoid);
         }
       }
-      const mentions = skillMentions(text);
+      const mentions = ProviderAdapter.isAgentWrittenTurnMessage(turnInput.message)
+        ? []
+        : skillMentions(text);
       const skills = mentions.length === 0 ? [] : yield* skillsMentioned(location, mentions);
       const files = yield* promptFiles(turnInput.message.attachments);
       const messageText = yield* promptText(turnInput);
