@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -5,10 +6,11 @@ import type * as Signature from "effect/crypto/Signature";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import type * as CodexUsageHistory from "../../usage/CodexUsageHistory.ts";
@@ -42,6 +44,7 @@ import {
   makeCachedProviderMaintenanceResolution,
   makePackageManagedProviderMaintenanceResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
+  type ProviderMaintenanceCapabilities,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   haveProviderSnapshotSettingsChanged,
@@ -96,6 +99,31 @@ function makeCodexMaintenanceResolver(sharedHomePath: string) {
       }),
     },
   });
+}
+
+// `codex update` installs this channel's release, which can lag npm's latest tag.
+const CODEX_NATIVE_CHANNEL = "https://releases.openai.com/codex/channels/latest";
+const CodexNativeRelease = Schema.Struct({ tag_name: Schema.String });
+
+function withCodexNativeLatestVersion(
+  capabilities: ProviderMaintenanceCapabilities,
+  http: HttpClient.HttpClient,
+): ProviderMaintenanceCapabilities {
+  if (capabilities.update?.lockKey !== `${DRIVER_KIND}-native`) return capabilities;
+  return {
+    ...capabilities,
+    latestVersion: null,
+    latestVersionCacheKey: CODEX_NATIVE_CHANNEL,
+    lookupLatestVersion: http.get(CODEX_NATIVE_CHANNEL).pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap((response) => response.json),
+      Effect.flatMap(Schema.decodeUnknownEffect(CodexNativeRelease)),
+      Effect.map((release) => /^rust-v(\d+\.\d+\.\d+)$/.exec(release.tag_name)?.[1] ?? null),
+      Effect.timeoutOption("4 seconds"),
+      Effect.map(Option.getOrNull),
+      Effect.orElseSucceed(() => null),
+    ),
+  };
 }
 
 export type CodexDriverEnv =
@@ -192,7 +220,7 @@ export const CodexDriver: ProviderDriver<
       binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
       homePath: homeLayout.effectiveHomePath ?? "",
     } satisfies CodexSettings;
-    const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
+    const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(
       resolveProviderMaintenanceCapabilitiesEffect(
         makeCodexMaintenanceResolver(homeLayout.sharedHomePath),
         {
@@ -205,6 +233,10 @@ export const CodexDriver: ProviderDriver<
         Effect.provideService(Path.Path, pathService),
       ),
     );
+    const resolveMaintenance: typeof resolveInstallation = (options) =>
+      resolveInstallation(options).pipe(
+        Effect.map((capabilities) => withCodexNativeLatestVersion(capabilities, httpClient)),
+      );
 
     const orchestrationAdapter = yield* createCodexAdapterV2(
       {
@@ -217,6 +249,9 @@ export const CodexDriver: ProviderDriver<
       },
       {
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+        models: Effect.suspend(() => snapshot.getSnapshot).pipe(
+          Effect.map((value) => value.models),
+        ),
         compatibility: installation.compatibility,
       },
     ).pipe(
@@ -299,7 +334,7 @@ export const CodexDriver: ProviderDriver<
               environment: processEnv,
             }).pipe(
               Effect.scoped,
-              Effect.timeout("20 seconds"),
+              Effect.timeout(resolveProviderProbeTimeoutMs("codex", 20_000, processEnv)),
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             ),
           ]).pipe(
@@ -347,29 +382,23 @@ export const CodexDriver: ProviderDriver<
                 cause,
               }),
           ),
-          // The windows just changed; re-probe so the snapshot says so. A
-          // failed probe republishes the pre-redemption limits rather than
-          // marking them failed, so "confirmed" means `checkedAt` moved past
-          // what was published before the redemption started.
           Effect.tap((outcome) =>
-            Effect.gen(function* () {
-              const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
-              const refreshed = yield* snapshot.refresh;
-              const after = refreshed.usageLimits?.checkedAt;
-              if (
-                outcome === "reset" &&
-                (after === undefined ||
-                  after === before ||
-                  refreshed.usageLimits?.unavailable?.reason === "probeFailed")
-              ) {
-                return yield* new ProviderDriverError({
-                  driver: DRIVER_KIND,
-                  instanceId,
-                  detail:
-                    "The reset was applied, but Codex could not confirm the new limits. Refresh to check.",
-                });
-              }
-            }),
+            ResetCreditCoordinator.refreshAfterRedemption({
+              outcome,
+              getSnapshot: snapshot.getSnapshot,
+              refresh: snapshot.refresh,
+            }).pipe(
+              Effect.filterOrFail(
+                (confirmed) => confirmed,
+                () =>
+                  new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail:
+                      "The reset was applied, but Codex could not confirm the new limits. Refresh to check.",
+                  }),
+              ),
+            ),
           ),
         );
 

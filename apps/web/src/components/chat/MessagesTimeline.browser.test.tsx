@@ -228,9 +228,18 @@ describe("MessagesTimeline work rows", () => {
     const props = baseProps();
     const html = injectHtmlRenderBootstrap(`<div style="height:1400px">Earlier preview content</div>
       <details><summary>More rows</summary><div style="height:900px">More rows</div></details>
-      <script>addEventListener('message', e => { if(e.data === 'toggle') document.querySelector('details').open = !document.querySelector('details').open; });</script>`);
+      <script>addEventListener('message', e => { if(e.data === 'toggle') document.querySelector('details').open = !document.querySelector('details').open; }); parent.postMessage('listening', '*');</script>`);
     const src = URL.createObjectURL(new Blob([html], { type: "text/html" }));
     using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(src) };
+    // The frame loads on its own clock, and a toggle posted before its script runs is lost.
+    const listening = new Promise<void>((resolve) => {
+      const onMessage = (event: MessageEvent) => {
+        if (event.data !== "listening") return;
+        window.removeEventListener("message", onMessage);
+        resolve();
+      };
+      window.addEventListener("message", onMessage);
+    });
     function Preview() {
       const [height, setHeight] = useState(1437);
       return (
@@ -270,6 +279,7 @@ describe("MessagesTimeline work rows", () => {
       expect(viewport.scrollTop).toBeGreaterThan(0);
       expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
     });
+    await listening;
     const top = frame.getBoundingClientRect().top;
     frame.focus();
     frame.contentWindow!.postMessage("toggle", "*");
@@ -751,6 +761,50 @@ describe("MessagesTimeline messages", () => {
     await act(() => vi.advanceTimersByTime(300));
     const turns = turnsInDomOrder();
     expect(turns).toEqual(turns.toSorted((a, b) => a - b));
+  });
+
+  it("steps the minimap's next turn past two adjacent user messages", async () => {
+    const props = baseProps();
+    const reply = (id: string) => message("Reply.\n\n".repeat(120), { role: "assistant" }, id);
+    const userIds = ["turn-0", "turn-1", "turn-2", "pair-a", "pair-b", "turn-3", "turn-4"];
+    const entries = [
+      ...["turn-0", "turn-1", "turn-2"].flatMap((id) => [message(id, {}, id), reply(`${id}-r`)]),
+      message("pair-a", {}, "pair-a"),
+      message("pair-b", {}, "pair-b"),
+      reply("pair-b-r"),
+      ...["turn-3", "turn-4"].flatMap((id) => [message(id, {}, id), reply(`${id}-r`)]),
+    ];
+    const session = cdp();
+    await session.send("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-reduced-motion", value: "reduce" }],
+    });
+    try {
+      await using screen = await renderTimeline(entries, props);
+      const viewport = props.listRef.current!.getScrollableNode()!;
+      const strips = () => [...screen.container.querySelectorAll("[data-minimap-strip]")];
+      const turnAtTop = () =>
+        userIds.find((id) => {
+          const row = screen.container.querySelector(`[data-message-id="${id}"]`);
+          if (!row) return false;
+          const offset = row.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+          return offset >= 0 && offset < 100;
+        });
+      await act(() => {
+        void props.listRef.current!.scrollToIndex({ index: 0, animated: false });
+      });
+      await vi.waitFor(() => expect(strips()[0]?.getAttribute("data-in-view")).toBe("true"));
+
+      // Clicks again while the view has not moved, as a user would.
+      for (const id of userIds.slice(1)) {
+        const from = turnAtTop();
+        await vi.waitFor(async () => {
+          if (turnAtTop() === from) await click(screen.button("Next turn"));
+          expect(turnAtTop(), "turn at the top after Next turn").toBe(id);
+        });
+      }
+    } finally {
+      await session.send("Emulation.setEmulatedMedia", { features: [] });
+    }
   });
 
   it("preserves XML-like tags and comparisons in user messages as text", async () => {
@@ -1283,7 +1337,22 @@ describe("MessagesTimeline agent messages", () => {
     setup();
     const onOpenThread = vi.fn();
     await using screen = await renderTimeline(
-      [message(AGENT_MESSAGE, { createdBy: "agent", senderThreadId: SENDER_THREAD_ID })],
+      [
+        message(AGENT_MESSAGE, { createdBy: "agent", senderThreadId: SENDER_THREAD_ID }),
+        // Sent from a linked environment this client does not reach.
+        message(
+          "Linked review finished",
+          {
+            createdBy: "agent",
+            linkedSender: {
+              environmentId: EnvironmentId.make("environment-linked"),
+              threadId: SENDER_THREAD_ID,
+              title: "Release lead",
+            },
+          },
+          "message-linked",
+        ),
+      ],
       { onOpenThread },
     );
     const row = screen.button(/^Agent/);
@@ -1295,10 +1364,14 @@ describe("MessagesTimeline agent messages", () => {
     await click(row);
     expect(screen.text()).toContain("The migration drops the index before backfilling it.");
     await click(screen.button("Open thread"));
-    expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID);
+    expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID, ENVIRONMENT_ID);
 
     await click(screen.button(/^Agent/));
     expect(screen.text()).not.toContain("drops the index");
+
+    // The linked sender shows the title it sent, and its thread cannot be opened from here.
+    await click(screen.button(/^Release lead/));
+    expect(screen.buttons("Open thread")).toHaveLength(0);
   });
 
   it("leaves messages sent by T3 Code as full bubbles", async () => {
@@ -1771,6 +1844,10 @@ describe("compact reasoning math", () => {
     [
       "line one\r\nline two\r\n\r\nnext  nbsp　wide 😀𝑥 end",
       [["text", "line one line two next nbsp wide 😀𝑥 end"]],
+    ],
+    [
+      `${"x".repeat(THOUGHT_PREVIEW_MAX_LENGTH - 1)}😀 tail`,
+      [["text", "x".repeat(THOUGHT_PREVIEW_MAX_LENGTH - 1)]],
     ],
     ["\\$5 and \\$6, \\*not em\\*", [["text", "$5 and $6, *not em*"]]],
     ["hard  \nbreak\\\nagain", [["text", "hard break again"]]],

@@ -182,6 +182,46 @@ it.effect.skipIf(windowsHost)(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+// A project opened from T3 must not replace the editor's last active window.
+it.effect.skipIf(windowsHost)(
+  "opens a project folder in a new VS Code window and a file in the existing one",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      const project = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-project-" });
+      const codePath = path.join(binDir, "code");
+      yield* fileSystem.writeFileString(codePath, "#!/bin/sh\n");
+      yield* fileSystem.chmod(codePath, 0o755);
+      const file = `${path.join(project, "file.ts")}:3:7`;
+
+      const spawned: ChildProcess.StandardCommand[] = [];
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        yield* launcher.launchEditor({ editor: "vscode", cwd: project });
+        yield* launcher.launchEditor({ editor: "vscode", cwd: file });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "linux",
+            env: { PATH: binDir, DISPLAY: ":0" },
+            onSpawn: (command) => spawned.push(command),
+          }),
+        ),
+        Effect.provideService(HostProcess.Environment, { PATH: binDir, DISPLAY: ":0" }),
+      );
+
+      assert.deepEqual(
+        spawned.map((command) => command.args),
+        [
+          ["--new-window", project],
+          ["--goto", file],
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 // Windows drive letters cannot resolve the POSIX editor stub.
 it.effect.skipIf(windowsHost)(
   "a Linux editor launch without a display takes the desktop session's display from the systemd user manager",
@@ -647,7 +687,11 @@ it.effect.each([
       yield* Effect.gen(function* () {
         const launcher = yield* ExternalLauncher.ExternalLauncher;
         assert.include(yield* launcher.resolveAvailableEditors(), editor);
-        yield* launcher.launchEditor({ editor, cwd: "/workspace with spaces/file.ts:12:4" });
+        yield* launcher.launchEditor({
+          editor,
+          cwd: "/workspace with spaces/file.ts:12:4",
+          projectRoot: "/workspace with spaces",
+        });
       }).pipe(
         Effect.provide(
           layerTest({
@@ -663,6 +707,7 @@ it.effect.each([
       assert.ok(spawned);
       assert.equal(spawned.command, executable);
       assert.deepEqual(spawned.args, [
+        "/workspace with spaces",
         "--line",
         "12",
         "--column",
