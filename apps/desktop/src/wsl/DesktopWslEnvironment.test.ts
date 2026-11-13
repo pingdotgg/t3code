@@ -205,6 +205,20 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     expect(parseResolvedPath(probe.stdout)).toBe("/fixture/bin:/usr/bin:/bin");
   });
 
+  it("keeps the runtime's stderr when the staged entry fails its startup probe", () => {
+    const fixture = createFixture();
+    expect(fixture.install().status).toBe(0);
+    const breakEntry = runShell(
+      `printf '%s' ${sh("#!/bin/sh\necho 'runtime cannot load a required library' >&2\nexit 42\n")} > ${sh(fixture.serverEntry)}`,
+    );
+    expect(breakEntry.status, breakEntry.stderr).toBe(0);
+
+    const probe = probeFixture(fixture);
+
+    expect(probe.status).toBe(42);
+    expect(probe.stderr).toContain("runtime cannot load a required library");
+  });
+
   it("reuses a warm cache without touching the archive", () => {
     const fixture = createFixture();
     expect(fixture.install().status).toBe(0);
