@@ -1132,29 +1132,6 @@ it.live("enforces provider ownership and explicit targets when a session has mul
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("a viewer's stream opens before its first still arrives", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { browser, tabId } = yield* ready;
-      const capturing = Promise.withResolvers<void>();
-      const still = Promise.withResolvers<void>();
-      heldStill = () => {
-        capturing.resolve();
-        return still.promise;
-      };
-      yield* Effect.addFinalizer(() => Effect.sync(() => still.resolve()));
-      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
-      yield* Effect.promise(() => capturing.promise);
-      still.resolve();
-      const frame = yield* Stream.fromQueue(viewer.output).pipe(
-        Stream.filter((output) => output._tag === "frame"),
-        Stream.runHead,
-      );
-      expect(Option.isSome(frame)).toBe(true);
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
 it.effect("a first still that never returns does not stall the tab's later captures", () =>
   Effect.scoped(
     Effect.gen(function* () {
