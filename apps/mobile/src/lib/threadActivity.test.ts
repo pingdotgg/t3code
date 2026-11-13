@@ -604,6 +604,25 @@ describe("buildThreadFeed", () => {
       });
       expect(before[1]).not.toHaveProperty("message.checkpointSummary");
       expect(getReviewSectionIdForCheckpoint(summary)).toBe("turn:2");
+      // A plain folder's own checkpoint is missing every turn; its repositories still changed.
+      const inRepository = {
+        ...summary,
+        status: "missing" as const,
+        files: [],
+        repositories: [
+          {
+            scopeId: CheckpointScopeId.make("scope-api"),
+            name: "api",
+            repositoryPath: "/work/api",
+            cwd: "/work/api",
+            files: summary.files,
+            baselineMissing: false,
+          },
+        ],
+      };
+      expect(buildThreadFeed(rows, { checkpointSummaries: [inRepository] })[1]).toMatchObject({
+        message: { checkpointSummary: inRepository },
+      });
       const fallback = deriveThreadFeedPresentation(
         [after.at(-1)!],
         null,

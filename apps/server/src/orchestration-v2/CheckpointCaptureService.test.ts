@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
@@ -18,22 +19,37 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as CheckpointDiffQuery from "../checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as ServerConfig from "../config.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { VcsProcessTimeoutError } from "@t3tools/contracts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointCaptureService from "./CheckpointCaptureService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 
 const layerProjectionStoreTest = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
   SqlitePersistence.layerMemory,
+);
+
+const layerNoTrackedFolders = Layer.merge(
+  NodeServices.layer,
+  Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+    forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+  }),
 );
 
 const threadId = ThreadId.make("thread:checkpoint-capture-delegated");
@@ -275,6 +291,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
                       Layer.mergeAll(
                         IdAllocator.layer,
                         NodeCrypto.layer,
+                        layerNoTrackedFolders,
                         Layer.mock(CheckpointStore.CheckpointStore)({
                           listAuthoredPaths: () => Effect.succeed(null),
                           isGitRepository: () => Effect.succeed(true),
@@ -293,6 +310,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
                     ),
                   )
                 : Layer.mock(CheckpointService.CheckpointServiceV2)({
+                    repositoryScopes: () => Effect.succeed([]),
                     materializeBaselineCheckpoint: () =>
                       Effect.die(
                         "baseline materialization must be skipped when ordinal 0 is ready",
@@ -449,6 +467,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           Layer.mergeAll(
             IdAllocator.layer,
             Layer.mock(CheckpointService.CheckpointServiceV2)({
+              repositoryScopes: () => Effect.succeed([]),
               materializeBaselineCheckpoint: () => Effect.die("a discarded run has no baseline"),
               capture: () => Effect.die("a discarded run must not be captured"),
             }),
@@ -639,6 +658,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
                   Layer.mergeAll(
                     IdAllocator.layer,
                     NodeCrypto.layer,
+                    layerNoTrackedFolders,
                     Layer.mock(CheckpointStore.CheckpointStore)({
                       isGitRepository: () => Effect.succeed(true),
                       hasCheckpointRef: () => Effect.succeed(true),
@@ -871,6 +891,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           Layer.mergeAll(
             IdAllocator.layer,
             Layer.mock(CheckpointService.CheckpointServiceV2)({
+              repositoryScopes: () => Effect.succeed([]),
               materializeBaselineCheckpoint: () =>
                 Effect.die("baseline materialization must be skipped when ordinal 0 is ready"),
               capture: () => Effect.succeed(captured),
@@ -1084,6 +1105,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
                 Layer.mergeAll(
                   IdAllocator.layer,
                   NodeCrypto.layer,
+                  layerNoTrackedFolders,
                   Layer.mock(CheckpointStore.CheckpointStore)({
                     isGitRepository: gitUnavailable,
                     captureCheckpoint: gitUnavailable,
@@ -1119,5 +1141,472 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       const checkpoint = checkpoints.find((candidate) => candidate.id === runs[0]?.checkpointId);
       assert.equal(checkpoint?.status, "missing");
     }),
+  );
+
+  // A thread on real Git checkouts: `folders` is what the project tracks, read at each turn.
+  const withTrackedRepositories = <A, E, R>(
+    name: string,
+    use: (context: {
+      readonly root: string;
+      readonly folders: Ref.Ref<ReadonlyArray<WorkspaceFolders.ThreadFolder>>;
+      readonly git: (cwd: string, ...args: ReadonlyArray<string>) => Effect.Effect<string>;
+      readonly initRepository: (cwd: string) => Effect.Effect<void>;
+      readonly write: (file: string, contents: string) => Effect.Effect<void>;
+      /** Runs one turn: baseline, the turn's edits, then the capture. Returns what it committed. */
+      readonly turn: (
+        ordinal: number,
+        edits: Effect.Effect<void>,
+      ) => Effect.Effect<
+        ReadonlyArray<{
+          readonly type: string;
+          readonly label: string;
+          readonly ordinal?: number;
+          readonly run?: boolean;
+          readonly status?: string;
+          readonly files?: ReadonlyArray<string>;
+        }>
+      >;
+      readonly capture: (ordinal: number) => Effect.Effect<void>;
+      readonly commits: Ref.Ref<number>;
+      readonly threadId: ThreadId;
+      readonly ids: IdAllocator.IdAllocatorV2["Service"];
+      readonly diffs: CheckpointDiffQuery.CheckpointDiffQuery["Service"];
+    }) => Effect.Effect<A, E, R>,
+  ) =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const repositoryThreadId = ThreadId.make(`thread:${name}`);
+      const repositoryRootScopeId = CheckpointScopeId.make(`scope:${name}:root`);
+      const repositoryProviderThreadId = ProviderThreadId.make(`provider-thread:${name}`);
+      const folders = yield* Ref.make<ReadonlyArray<WorkspaceFolders.ThreadFolder>>([]);
+      const commits = yield* Ref.make(0);
+      const labels = new Map<string, string>([[repositoryRootScopeId, "root"]]);
+      const committed = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
+      const layerNode = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer);
+      const layerVcsProcess = VcsProcess.layer.pipe(Layer.provide(layerNode));
+      const layerCheckpointStore = CheckpointStore.layer.pipe(
+        Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(layerVcsProcess))),
+        Layer.provide(layerNode),
+      );
+      const layerCheckpointService = CheckpointService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            layerNode,
+            layerCheckpointStore,
+            Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+              forThread: () =>
+                Ref.get(folders).pipe(
+                  Effect.map((current) => ({ folders: current, extraRoots: [] })),
+                ),
+            }),
+          ),
+        ),
+      );
+      const layer = Layer.mergeAll(
+        IdAllocator.layer,
+        layerNode,
+        layerVcsProcess,
+        layerCheckpointService,
+        CheckpointCaptureService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              layerCheckpointService,
+              Layer.mock(EventSink.EventSinkV2)({
+                commitCommand: (input) =>
+                  Effect.forEach(input.events, (event) => projectionStore.apply(event)).pipe(
+                    Effect.andThen(Ref.set(committed, input.events)),
+                    Effect.andThen(Ref.update(commits, (count) => count + 1)),
+                    Effect.as({ committed: true } as never),
+                    Effect.orDie,
+                  ),
+              }),
+            ),
+          ),
+        ),
+        CheckpointDiffQuery.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              layerNode,
+              layerCheckpointStore,
+              Layer.mock(ThreadManagement.ThreadManagementService)({
+                getCheckpointContext: (id) =>
+                  projectionStore.getCheckpointContext(id).pipe(Effect.orDie),
+              }),
+            ),
+          ),
+        ),
+      ).pipe(
+        Layer.provide(
+          ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-capture-test-" }),
+        ),
+        Layer.provide(layerNode),
+      );
+
+      return yield* Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const vcsProcess = yield* VcsProcess.VcsProcess;
+        const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+        const capture = yield* CheckpointCaptureService.CheckpointCaptureServiceV2;
+        const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: `${name}-` });
+        const git = (cwd: string, ...args: ReadonlyArray<string>) =>
+          vcsProcess.run({ operation: "test.git", command: "git", cwd, args }).pipe(
+            Effect.map((result) => result.stdout.trim()),
+            Effect.orDie,
+          );
+        const write = (file: string, contents: string) =>
+          fileSystem
+            .makeDirectory(path.dirname(file), { recursive: true })
+            .pipe(Effect.andThen(fileSystem.writeFileString(file, contents)), Effect.orDie);
+        const initRepository = (cwd: string) =>
+          Effect.gen(function* () {
+            yield* write(path.join(cwd, "README.md"), "# start\n");
+            yield* git(cwd, "init");
+            yield* git(cwd, "config", "user.email", "test@test.com");
+            yield* git(cwd, "config", "user.name", "Test");
+            yield* git(cwd, "add", ".");
+            yield* git(cwd, "commit", "-m", "initial commit");
+          });
+        const rootScope = {
+          id: repositoryRootScopeId,
+          threadId: repositoryThreadId,
+          runId: RunId.make(`run:${name}:1`),
+          nodeId: NodeId.make(`node:${name}:1`),
+          parentScopeId: null,
+          providerThreadId: repositoryProviderThreadId,
+          kind: "root_run" as const,
+          ordinalWithinParent: 0,
+          advancesAppRunCount: true,
+          cwd: root,
+          createdAt: now,
+        };
+        const event = { threadId: repositoryThreadId, providerInstanceId, occurredAt: now };
+        yield* Effect.forEach(
+          [
+            {
+              ...event,
+              id: EventId.make(`event:${name}:thread`),
+              type: "thread.created",
+              payload: {
+                createdBy: "user",
+                creationSource: "web",
+                id: repositoryThreadId,
+                projectId,
+                title: name,
+                providerInstanceId,
+                modelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+                activeProviderThreadId: null,
+                lineage: {
+                  parentThreadId: null,
+                  relationshipToParent: null,
+                  rootThreadId: repositoryThreadId,
+                },
+                forkedFrom: null,
+                createdAt: now,
+                updatedAt: now,
+                archivedAt: null,
+                settledOverride: null,
+                settledAt: null,
+                lastVisitedAt: null,
+                deletedAt: null,
+              },
+            },
+            {
+              ...event,
+              id: EventId.make(`event:${name}:provider-thread`),
+              type: "provider-thread.updated",
+              driver,
+              payload: {
+                id: repositoryProviderThreadId,
+                driver,
+                providerInstanceId,
+                providerSessionId: null,
+                appThreadId: repositoryThreadId,
+                ownerNodeId: null,
+                nativeThreadRef: null,
+                nativeConversationHeadRef: null,
+                status: "idle",
+                firstRunOrdinal: 1,
+                lastRunOrdinal: 1,
+                handoffIds: [],
+                forkedFrom: null,
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+            {
+              ...event,
+              id: EventId.make(`event:${name}:scope`),
+              type: "checkpoint-scope.created",
+              payload: rootScope,
+            },
+          ] satisfies ReadonlyArray<OrchestrationV2DomainEvent>,
+          (seed) => projectionStore.apply(seed),
+        );
+        const seedRun = (ordinal: number) =>
+          Effect.forEach(
+            [
+              {
+                ...event,
+                id: EventId.make(`event:${name}:run:${ordinal}`),
+                type: "run.updated",
+                runId: RunId.make(`run:${name}:${ordinal}`),
+                payload: {
+                  id: RunId.make(`run:${name}:${ordinal}`),
+                  threadId: repositoryThreadId,
+                  ordinal,
+                  providerInstanceId,
+                  modelSelection,
+                  providerThreadId: repositoryProviderThreadId,
+                  userMessageId: MessageId.make(`message:${name}:${ordinal}`),
+                  rootNodeId: NodeId.make(`node:${name}:${ordinal}`),
+                  activeAttemptId: null,
+                  status: "waiting",
+                  requestedAt: now,
+                  startedAt: now,
+                  completedAt: null,
+                  checkpointId: null,
+                  contextHandoffId: null,
+                },
+              },
+              {
+                ...event,
+                id: EventId.make(`event:${name}:node:${ordinal}`),
+                type: "node.updated",
+                runId: RunId.make(`run:${name}:${ordinal}`),
+                payload: {
+                  id: NodeId.make(`node:${name}:${ordinal}`),
+                  threadId: repositoryThreadId,
+                  runId: RunId.make(`run:${name}:${ordinal}`),
+                  parentNodeId: null,
+                  rootNodeId: NodeId.make(`node:${name}:${ordinal}`),
+                  kind: "root_turn",
+                  status: "waiting",
+                  countsForRun: true,
+                  providerThreadId: repositoryProviderThreadId,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  runtimeRequestId: null,
+                  checkpointScopeId: repositoryRootScopeId,
+                  startedAt: now,
+                  completedAt: null,
+                },
+              },
+            ] satisfies ReadonlyArray<OrchestrationV2DomainEvent>,
+            (seed) => projectionStore.apply(seed),
+          );
+        const captureRun = (ordinal: number) =>
+          capture
+            .execute({
+              threadId: repositoryThreadId,
+              runId: RunId.make(`run:${name}:${ordinal}`),
+              scopeId: repositoryRootScopeId,
+            })
+            .pipe(Effect.orDie);
+        const turn = (ordinal: number, edits: Effect.Effect<void>) =>
+          Effect.gen(function* () {
+            yield* seedRun(ordinal);
+            yield* checkpoints.captureBaseline({
+              scope: rootScope,
+              ordinalWithinScope: ordinal - 1,
+              thread: { projectId, worktreePath: null },
+            });
+            yield* edits;
+            yield* captureRun(ordinal);
+            return (yield* Ref.get(committed)).flatMap((recorded) => {
+              if (recorded.type === "checkpoint-scope.created") {
+                labels.set(recorded.payload.id, recorded.payload.label ?? "unlabelled");
+                return [{ type: "scope", label: recorded.payload.label ?? "unlabelled" }];
+              }
+              if (recorded.type !== "checkpoint.captured") return [];
+              return [
+                {
+                  type: "checkpoint",
+                  label: labels.get(recorded.payload.scopeId) ?? "unknown",
+                  ordinal: recorded.payload.ordinalWithinScope,
+                  run: recorded.payload.runId !== null,
+                  status: recorded.payload.status,
+                  files: recorded.payload.files.map((file) => file.path),
+                },
+              ];
+            });
+          }).pipe(Effect.orDie);
+        return yield* use({
+          root,
+          folders,
+          git,
+          initRepository,
+          write,
+          turn,
+          capture: captureRun,
+          commits,
+          threadId: repositoryThreadId,
+          ids: yield* IdAllocator.IdAllocatorV2,
+          diffs: yield* CheckpointDiffQuery.CheckpointDiffQuery,
+        });
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
+  it.effect("checkpoints the repositories a folder that is not a repository holds", () =>
+    withTrackedRepositories("capture-wrapper", (thread) =>
+      Effect.gen(function* () {
+        const { root } = thread;
+        const repository = (name: string) => ({
+          name,
+          path: `${root}/${name}`,
+          isGitRepository: true,
+        });
+        yield* Effect.forEach(["api", "web", "docs"], (name) =>
+          thread.initRepository(`${root}/${name}`),
+        );
+        yield* thread.write(`${root}/notes/todo.md`, "plain folder\n");
+        yield* Ref.set(thread.folders, [
+          repository("api"),
+          repository("web"),
+          { name: "notes", path: `${root}/notes`, isGitRepository: false },
+        ]);
+        const ready = (label: string, ordinal: number, files?: ReadonlyArray<string>) => ({
+          type: "checkpoint",
+          label,
+          ordinal,
+          run: files !== undefined,
+          status: "ready",
+          files: files ?? [],
+        });
+        const missingRoot = (ordinal: number, run: boolean) => ({
+          ...ready("root", ordinal, run ? [] : undefined),
+          status: "missing",
+        });
+
+        // Only the repository the turn changed is recorded; `web` and the plain folder are not.
+        assert.deepEqual(
+          yield* thread.turn(1, thread.write(`${root}/api/README.md`, "# first\n")),
+          [
+            { type: "scope", label: "api" },
+            ready("api", 0),
+            ready("api", 1, ["README.md"]),
+            missingRoot(0, false),
+            missingRoot(1, true),
+          ],
+        );
+        // An at-least-once retry of a settled run commits nothing more.
+        yield* thread.capture(1);
+        assert.strictEqual(yield* Ref.get(thread.commits), 1);
+
+        // `docs` joins the project mid-thread and starts from this turn's baseline. `api` keeps
+        // the scope it had, and the checkpoint its first turn recorded is this turn's baseline.
+        yield* Ref.update(thread.folders, (current) => [...current, repository("docs")]);
+        assert.deepEqual(
+          yield* thread.turn(
+            2,
+            // The agent commits its work in `api` and leaves `docs` uncommitted.
+            Effect.gen(function* () {
+              yield* thread.write(`${root}/api/src/main.ts`, "export {};\n");
+              yield* thread.git(`${root}/api`, "add", ".");
+              yield* thread.git(`${root}/api`, "commit", "-m", "the turn's own commit");
+              yield* thread.write(`${root}/docs/README.md`, "# docs\n");
+            }),
+          ),
+          [
+            ready("api", 2, ["src/main.ts"]),
+            { type: "scope", label: "docs" },
+            ready("docs", 1),
+            ready("docs", 2, ["README.md"]),
+            missingRoot(0, false),
+            missingRoot(2, true),
+          ],
+        );
+        const context = yield* ProjectionStore.ProjectionStoreV2.use((store) =>
+          store.getCheckpointContext(thread.threadId),
+        );
+        assert.sameMembers(
+          context.checkpointScopes.flatMap((scope) =>
+            typeof scope.repositoryPath === "string" ? [scope.id] : [],
+          ),
+          yield* Effect.forEach(["api", "docs"], (name) =>
+            thread.ids.allocate.checkpointScope({
+              threadId: thread.threadId,
+              name: `repository:${root}/${name}`,
+            }),
+          ),
+        );
+
+        const lastTurn = yield* thread.diffs.getTurnDiff({
+          threadId: thread.threadId,
+          fromTurnCount: 1,
+          toTurnCount: 2,
+        });
+        assert.strictEqual(lastTurn.diff, "");
+        assert.deepEqual(
+          lastTurn.repositories?.map(({ diff: _diff, ...repository }) => repository),
+          ["api", "docs"].map((name) => ({
+            name,
+            repositoryPath: `${root}/${name}`,
+            relativePath: name,
+          })),
+        );
+        assert.include(lastTurn.repositories?.[0]?.diff, "b/src/main.ts");
+        assert.notInclude(lastTurn.repositories?.[0]?.diff, "README.md");
+        // The whole thread: both of `api`'s turns, and `docs` from the turn it joined.
+        const wholeThread = yield* thread.diffs.getFullThreadDiff({
+          threadId: thread.threadId,
+          toTurnCount: 2,
+        });
+        assert.deepEqual(
+          wholeThread.repositories?.map((repository) => repository.name),
+          ["api", "docs"],
+        );
+        assert.include(wholeThread.repositories?.[0]?.diff, "b/README.md");
+        assert.include(wholeThread.repositories?.[0]?.diff, "b/src/main.ts");
+      }),
+    ),
+  );
+
+  it.effect("keeps a clone inside a Git project folder out of that folder's checkpoint", () =>
+    withTrackedRepositories("capture-nested", (thread) =>
+      Effect.gen(function* () {
+        const { root } = thread;
+        const clone = `${root}/vendor/lib`;
+        yield* thread.initRepository(root);
+        yield* thread.initRepository(clone);
+        yield* Ref.set(thread.folders, [{ name: "lib", path: clone, isGitRepository: true }]);
+
+        const recorded = yield* thread.turn(
+          1,
+          Effect.all([
+            thread.write(`${root}/README.md`, "# project\n"),
+            thread.write(`${clone}/README.md`, "# clone\n"),
+          ]),
+        );
+
+        // The project folder lists its own file, not the clone as a gitlink or an untracked tree.
+        assert.deepEqual(
+          recorded.flatMap((entry) =>
+            entry.run === true ? [{ label: entry.label, files: entry.files }] : [],
+          ),
+          [
+            { label: "lib", files: ["README.md"] },
+            { label: "root", files: ["README.md"] },
+          ],
+        );
+        const turnDiff = yield* thread.diffs.getTurnDiff({
+          threadId: thread.threadId,
+          fromTurnCount: 0,
+          toTurnCount: 1,
+        });
+        assert.notInclude(turnDiff.diff, "vendor/lib");
+        assert.deepEqual(
+          turnDiff.repositories?.map((repository) => repository.relativePath),
+          ["vendor/lib"],
+        );
+      }),
+    ),
   );
 });

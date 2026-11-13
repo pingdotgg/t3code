@@ -63,6 +63,8 @@ function ReviewHeader(
     readonly sectionMenu: ReturnType<typeof buildReviewSectionMenu>;
     readonly showSectionToolbar: boolean;
     readonly showChangedFilesToggle: boolean;
+    readonly selectedRepositoryKey: string | null;
+    readonly onSelectRepository: (key: string | null) => void;
     readonly onSelectSection: (sectionId: string) => void;
     readonly onReturnToThread: () => void;
   },
@@ -129,6 +131,29 @@ function ReviewHeader(
                             selected: section.id === props.selectedSection?.id,
                             onPress: () => props.onSelectSection(section.id),
                           })),
+                        },
+                      ]
+                    : []),
+                  ...(props.selectedSection?.repositoryGroups
+                    ? [
+                        {
+                          id: "repositories",
+                          title: "Repository",
+                          items: [
+                            {
+                              id: "repository:all",
+                              title: "All repositories",
+                              selected: props.selectedRepositoryKey === null,
+                              onPress: () => props.onSelectRepository(null),
+                            },
+                            ...props.selectedSection.repositoryGroups.map((group) => ({
+                              id: `repository:${group.key}`,
+                              title: group.name,
+                              subtitle: group.relativePath || undefined,
+                              selected: group.key === props.selectedRepositoryKey,
+                              onPress: () => props.onSelectRepository(group.key),
+                            })),
+                          ],
                         },
                       ]
                     : []),
@@ -377,6 +402,15 @@ export function ReviewSheet(props: ReviewSheetProps) {
     sections: reviewSections,
     selectedSectionId: selectedSection?.id ?? null,
   });
+  const [repositorySelection, setRepositorySelection] = useState<{
+    readonly sectionId: string;
+    readonly key: string;
+  } | null>(null);
+  const repositoryGroups = selectedSection?.repositoryGroups;
+  const selectedRepository =
+    repositorySelection !== null && repositorySelection.sectionId === selectedSection?.id
+      ? (repositoryGroups?.find((group) => group.key === repositorySelection.key) ?? null)
+      : null;
   const {
     headerDiffSummary,
     nativeReviewDiffData,
@@ -391,6 +425,13 @@ export function ReviewSheet(props: ReviewSheetProps) {
     selectedSection,
     draftMessage,
     draftContext,
+    repositoryFilter:
+      selectedRepository === null || repositoryGroups === undefined
+        ? null
+        : {
+            folder: selectedRepository.relativePath,
+            folders: repositoryGroups.map((group) => group.relativePath).join("\0"),
+          },
   });
   // Expo may return null before registration or in older binaries; use the fallback.
   const NativeReviewDiffView = resolveNativeReviewDiffView();
@@ -432,9 +473,12 @@ export function ReviewSheet(props: ReviewSheetProps) {
     selectedSection,
     nativeReviewDiffData,
   });
+  const reviewContentKey = selectedSection
+    ? `${selectedSection.id}:${selectedRepository?.key ?? ""}`
+    : null;
   const nativeBridge = useNativeReviewDiffBridge({
     threadKey: reviewCache.threadKey,
-    sectionId: selectedSection?.id ?? null,
+    sectionId: reviewContentKey,
     diff: selectedSection?.diff,
     data: nativeReviewDiffData,
     collapsedFileIds,
@@ -459,6 +503,12 @@ export function ReviewSheet(props: ReviewSheetProps) {
     reportShowcaseSceneRendered({ scene: "review", themeId: nativeBridge.themeId });
   };
 
+  const handleSelectRepository = (key: string | null) => {
+    commentSelection.clearSelection();
+    setRepositorySelection(
+      key === null || !selectedSection ? null : { sectionId: selectedSection.id, key },
+    );
+  };
   const handleSelectFile = async (fileId: string | null) => {
     loadVisibleFile(fileId, true);
     commentSelection.clearSelection();
@@ -534,6 +584,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
   };
   const androidHeaderSubtitle = [
     selectedSection?.title,
+    selectedRepository?.name,
     headerDiffSummary.additions,
     headerDiffSummary.deletions,
   ]
@@ -563,6 +614,17 @@ export function ReviewSheet(props: ReviewSheetProps) {
       children.push(<ReviewNotice key="review-notice" notice={parsedDiffNotice} />);
     }
 
+    if (selectedSection?.unlistedRepositories) {
+      children.push(
+        <ContentBand key="review-unlisted-repositories">
+          <Text className="text-xs leading-normal text-foreground-muted">
+            This turn's changes in {selectedSection.unlistedRepositories.join(", ")} cannot be
+            listed.
+          </Text>
+        </ContentBand>,
+      );
+    }
+
     if (children.length === 0) {
       return null;
     }
@@ -570,6 +632,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     return <>{children}</>;
   })();
   const headerSubtitle = [
+    selectedRepository?.name,
     headerDiffSummary.additions,
     headerDiffSummary.deletions,
     pendingReviewCommentCount > 0
@@ -599,6 +662,8 @@ export function ReviewSheet(props: ReviewSheetProps) {
         selectedSection={selectedSection}
         showSectionToolbar={showSectionToolbar}
         showChangedFilesToggle={showChangedFilesToggle}
+        selectedRepositoryKey={selectedRepository?.key ?? null}
+        onSelectRepository={handleSelectRepository}
         onRefresh={handlePullToRefresh}
         onSelectSection={selectSection}
         onReturnToThread={handleReturnToThread}
@@ -646,7 +711,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     appearanceScheme={selectedTheme}
                     collapsedFileIdsJson={nativeBridge.collapsedFileIdsJson}
                     collapsedCommentIdsJson={nativeBridge.collapsedCommentIdsJson}
-                    contentResetKey={`${reviewCache.threadKey}:${selectedSection.id}`}
+                    contentResetKey={`${reviewCache.threadKey}:${reviewContentKey}`}
                     contentWidth={NATIVE_REVIEW_DIFF_CONTENT_WIDTH}
                     contentInsetTop={listHeader ? 0 : topContentInset}
                     contentInsetBottom={bottomContentInset}

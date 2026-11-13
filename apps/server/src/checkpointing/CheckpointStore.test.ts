@@ -698,4 +698,99 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       }),
     );
   });
+
+  describe("captureCheckpoint", () => {
+    it.effect("leaves nested checkouts that have their own checkpoints out of a capture", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        yield* initRepoWithCommit(tmp);
+        yield* writeTextFile(NodePath.join(tmp, ".gitignore"), "ignored-clone/\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "ignore a clone"]);
+        const fileSystem = yield* FileSystem.FileSystem;
+        for (const clone of ["plain-clone", "ignored-clone"]) {
+          yield* fileSystem.makeDirectory(NodePath.join(tmp, clone));
+          yield* initRepoWithCommit(NodePath.join(tmp, clone));
+        }
+        const refs = {
+          fromCheckpointRef: CheckpointRef.make("refs/t3/test/nested/0"),
+          toCheckpointRef: CheckpointRef.make("refs/t3/test/nested/1"),
+        };
+        // Captured before the clone was tracked, so this snapshot holds it as a gitlink.
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: refs.fromCheckpointRef,
+        });
+        const excludePaths = ["plain-clone", "ignored-clone"];
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# changed\n");
+        yield* writeTextFile(NodePath.join(tmp, "plain-clone", "README.md"), "# clone edit\n");
+        yield* git(NodePath.join(tmp, "plain-clone"), ["commit", "-am", "clone commit"]);
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: refs.toCheckpointRef,
+          excludePaths,
+        });
+
+        expect(yield* git(tmp, ["ls-tree", "-r", "--name-only", refs.toCheckpointRef])).toBe(
+          ".gitignore\nREADME.md",
+        );
+        const diff = { cwd: tmp, ...refs, ignoreWhitespace: false, format: "numstat" as const };
+        expect(
+          parseTurnDiffFilesFromNumstat(
+            yield* checkpointStore.diffCheckpoints({ ...diff, excludePaths }),
+          ).map((file) => file.path),
+        ).toEqual(["README.md"]);
+        expect(
+          parseTurnDiffFilesFromNumstat(yield* checkpointStore.diffCheckpoints(diff)).map(
+            (file) => file.path,
+          ),
+        ).toEqual(["plain-clone", "README.md"]);
+      }),
+    );
+
+    it.effect("reads a folder as clean only when nothing in it differs from HEAD", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        yield* initRepoWithCommit(tmp);
+        yield* writeTextFile(NodePath.join(tmp, "pinned.txt"), "committed\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "pinned"]);
+        const head = yield* git(tmp, ["rev-parse", "HEAD"]);
+
+        expect(yield* checkpointStore.resolveCleanHead(tmp)).toBe(head);
+        const checkpointRef = CheckpointRef.make("refs/t3/test/clean/head");
+        yield* checkpointStore.captureHeadCheckpoint({ cwd: tmp, checkpointRef, head, seenAt: 1 });
+        expect(yield* git(tmp, ["ls-tree", "-r", checkpointRef])).toBe(
+          yield* git(tmp, ["ls-tree", "-r", "HEAD"]),
+        );
+        // HEAD is the parent and the date is when the folder was seen, as authored paths expect.
+        expect(yield* git(tmp, ["log", "-1", "--format=%P %ct", checkpointRef])).toBe(`${head} 1`);
+
+        yield* writeTextFile(NodePath.join(tmp, "untracked.txt"), "new\n");
+        expect(yield* checkpointStore.resolveCleanHead(tmp)).toBeNull();
+        yield* git(tmp, ["clean", "-fd"]);
+        expect(yield* checkpointStore.resolveCleanHead(tmp)).toBe(head);
+        // Status does not report an edit behind this flag; a capture would still record it.
+        yield* git(tmp, ["update-index", "--assume-unchanged", "pinned.txt"]);
+        yield* writeTextFile(NodePath.join(tmp, "pinned.txt"), "edited behind the flag\n");
+        expect(yield* checkpointStore.resolveCleanHead(tmp)).toBeNull();
+
+        // A commit after the folder was seen is the turn's own, however early that date is.
+        yield* writeTextFile(NodePath.join(tmp, "later.txt"), "later\n");
+        yield* git(tmp, ["add", "later.txt"]);
+        yield* git(tmp, ["commit", "-m", "later"], { committedAt: "@1000 +0000" });
+        const toCheckpointRef = CheckpointRef.make("refs/t3/test/clean/after");
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: toCheckpointRef });
+        expect(
+          yield* checkpointStore.listAuthoredPaths({
+            cwd: tmp,
+            fromCheckpointRef: checkpointRef,
+            toCheckpointRef,
+          }),
+        ).toContain("later.txt");
+      }),
+    );
+  });
 });

@@ -42,6 +42,7 @@ import {
 } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { turnChanges } from "@t3tools/client-runtime/state/thread-repositories";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
@@ -2380,10 +2381,20 @@ function TurnDiffStat(props: {
   readonly checkpoint: ThreadCheckpointSummary;
   readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
 }) {
-  const { files } = props.checkpoint;
-  const additions = files.reduce((total, file) => total + file.additions, 0);
-  const deletions = files.reduce((total, file) => total + file.deletions, 0);
-  const fileCountLabel = `${files.length} file${files.length === 1 ? "" : "s"} changed`;
+  const { repositories, rootFiles, totals } = turnChanges(props.checkpoint);
+  const { additions, deletions } = totals;
+  const folderCount = repositories.length + (rootFiles.length > 0 ? 1 : 0);
+  const repositoriesLabel =
+    repositories.length === 0
+      ? null
+      : folderCount === 1
+        ? repositories[0]!.name
+        : `${folderCount} repos`;
+  const fileCountLabel = `${totals.count} file${totals.count === 1 ? "" : "s"} changed${
+    repositories.length === 0
+      ? ""
+      : ` in ${repositories.map((repository) => repository.name).join(", ")}`
+  }`;
   return (
     <Pressable
       accessibilityRole="button"
@@ -2391,6 +2402,11 @@ function TurnDiffStat(props: {
       onPress={() => props.onOpenTurnDiff(props.checkpoint)}
       className="min-h-11 shrink-0 flex-row items-center gap-2 px-2 active:bg-subtle"
     >
+      {repositoriesLabel ? (
+        <Text className="max-w-28 text-xs text-foreground-muted" numberOfLines={1}>
+          {repositoriesLabel}
+        </Text>
+      ) : null}
       <Text className="font-t3-medium text-xs tabular-nums text-adaptive-emerald-700-300">
         +{formatDiffCount(additions)}
       </Text>
