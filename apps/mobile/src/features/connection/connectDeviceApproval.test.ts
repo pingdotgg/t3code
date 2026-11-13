@@ -1,0 +1,38 @@
+import type { AuthPairingLink } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import { describe, expect, it } from "vite-plus/test";
+
+import { connectDeviceApprovalPrompts } from "./connectDeviceApproval";
+
+const link = (id: string, createdAtMs: number, request?: AuthPairingLink["connectDeviceRequest"]) =>
+  ({
+    id,
+    scopes: [],
+    subject: "cloud-connect",
+    createdAt: DateTime.makeUnsafe(createdAtMs),
+    expiresAt: DateTime.makeUnsafe(createdAtMs + 600_000),
+    ...(request ? { connectDeviceRequest: request } : {}),
+  }) as unknown as AuthPairingLink;
+
+describe("connectDeviceApprovalPrompts", () => {
+  it("prompts once per waiting device, oldest first, and skips ordinary pairing links", () => {
+    const pairingLinks = [
+      link("newer", 2_000, { verificationCode: "WXYZ-2345" }),
+      link("plain", 500),
+      link("older", 1_000, {
+        verificationCode: "ABCD-EFGH",
+        client: { deviceType: "desktop", browser: "Chrome", os: "macOS" },
+      }),
+    ];
+
+    const prompts = connectDeviceApprovalPrompts({
+      environmentLabel: "Mac mini",
+      pairingLinks,
+      shownIds: new Set(["newer"]),
+    });
+
+    expect(prompts.map((prompt) => prompt.pairingLinkId)).toEqual(["older"]);
+    expect(prompts[0]?.message).toContain("Chrome on macOS wants to connect to Mac mini");
+    expect(prompts[0]?.message).toContain("ABCD-EFGH");
+  });
+});

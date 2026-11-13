@@ -15,6 +15,7 @@ import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as Clock from "effect/Clock";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
@@ -439,6 +440,28 @@ describe("EnvironmentSupervisor", () => {
           message: "Relay connection timed out.",
         },
       });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("checks back on a pending approval every few seconds instead of backing off", () =>
+    Effect.gen(function* () {
+      const pending = new ConnectionTransientError({
+        reason: "approval-pending",
+        detail: "Approve this device on Mac mini. It shows code K7QM-2XFD.",
+      });
+      const harness = yield* makeHarness({ prepare: () => Effect.fail(pending) });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      for (const attempt of [1, 2, 3]) {
+        const waiting = yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "backoff" && state.attempt === attempt,
+        );
+        expect((waiting.retryAt ?? 0) - (yield* Clock.currentTimeMillis)).toBe(4_000);
+        yield* TestClock.adjust("4 seconds");
+      }
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

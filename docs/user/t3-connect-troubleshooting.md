@@ -118,6 +118,10 @@ an active link between your account and the host.
 - **This device is still loading its T3 Connect sign-in.** Wait a moment;
   T3 Code retries on its own. If it keeps waiting, reload or restart T3 Code on
   this device.
+- **The host is waiting for you to approve this device.** The host requires
+  approval for new devices. Approve the code this device shows from a device
+  that is already connected, or run `t3 auth connect-device approve <code>` on
+  the host. See [Approve new devices](./remote-access.md#approve-new-devices).
 - **Your account reached its tunnel limit.** Remove an environment you do not
   use from your T3 account's T3 Connect page, or
   [link a paid T3 Chat account](./remote-access.md#more-machines-with-t3-chat)

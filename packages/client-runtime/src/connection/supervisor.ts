@@ -43,6 +43,8 @@ import {
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
 const SESSION_LOSS_RETRY_DELAY_MS = 250;
+// Someone is approving this device on the host; check back soon rather than climbing the ladder.
+const APPROVAL_PENDING_RETRY_DELAY_MS = 4_000;
 // A cold server with a large database can take longer than 15 seconds to
 // answer, and that is not a reason to drop a working connection.
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
@@ -1212,9 +1214,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       // still counts it, so a host that keeps dropping sessions backs off.
       const firstLoss = outcome.established && failureCount === 0;
       failureCount += 1;
-      const delayMs = firstLoss
-        ? Math.round(SESSION_LOSS_RETRY_DELAY_MS * (0.5 + (yield* Random.next) / 2))
-        : retryDelayMs(failureCount - 1, yield* Random.next);
+      const delayMs =
+        error.reason === "approval-pending"
+          ? APPROVAL_PENDING_RETRY_DELAY_MS
+          : firstLoss
+            ? Math.round(SESSION_LOSS_RETRY_DELAY_MS * (0.5 + (yield* Random.next) / 2))
+            : retryDelayMs(failureCount - 1, yield* Random.next);
       pendingRetry = Option.map(attemptSpan, (previousAttempt) => ({
         previousAttempt,
         failureCount,

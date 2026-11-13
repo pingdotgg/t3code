@@ -9,6 +9,7 @@ import {
 } from "~/environments/primary";
 import {
   type AdvertisedEndpoint,
+  type AuthClientMetadata,
   type AuthClientSession,
   type AuthGrantScope,
   type AuthPairingLink,
@@ -466,4 +467,16 @@ export function resolveAccessEnvironmentId(input: {
     (input.environments.find((environment) => environment.connected) ?? input.environments[0])
       ?.environmentId ?? null
   );
+}
+
+/** How a T3 Connect device describes itself. It can say anything, so the code is what to trust. */
+export function describeConnectDeviceClient({
+  client,
+}: {
+  readonly client?: AuthClientMetadata | undefined;
+}): string {
+  const bits = [client?.label, client?.os, client?.browser, client?.ipAddress].filter(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  );
+  return bits.length > 0 ? [...new Set(bits)].join(" · ") : "Unknown device";
 }
