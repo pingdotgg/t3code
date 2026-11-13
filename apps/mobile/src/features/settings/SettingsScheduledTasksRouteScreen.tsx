@@ -858,10 +858,7 @@ function TaskForm({
           {promptField}
         </SettingsSection>
 
-        <SettingsSection
-          title="Context"
-          footer={draft.threadId !== null ? "Runs use this thread's current model." : undefined}
-        >
+        <SettingsSection title="Context">
           <SelectRow
             label="Project"
             value={
@@ -894,23 +891,23 @@ function TaskForm({
               });
             }}
           />
-          <PickerRow
-            label="Model"
-            borderTop
-            value={
-              modelOptions.find(
-                (option) =>
-                  option.selection.instanceId === draft.modelSelection?.instanceId &&
-                  option.selection.model === draft.modelSelection?.model,
-              )?.label ??
-              draft.modelSelection?.model ??
-              (modelOptions.length ? "Choose model" : "No models available")
-            }
-            onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
-            disabled={
-              saving || dictationPending || environmentUnavailable || draft.threadId !== null
-            }
-          />
+          {draft.threadId === null ? (
+            <PickerRow
+              label="Model"
+              borderTop
+              value={
+                modelOptions.find(
+                  (option) =>
+                    option.selection.instanceId === draft.modelSelection?.instanceId &&
+                    option.selection.model === draft.modelSelection?.model,
+                )?.label ??
+                draft.modelSelection?.model ??
+                (modelOptions.length ? "Choose model" : "No models available")
+              }
+              onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
+              disabled={saving || dictationPending || environmentUnavailable}
+            />
+          ) : null}
         </SettingsSection>
 
         <SettingsSection
@@ -923,7 +920,9 @@ function TaskForm({
                     ? "Runs continue one conversation."
                     : "Runs share one thread, each in a fresh session without earlier runs' context."
                 }${
-                  draft.threadId === null ? " The first run starts the thread." : ""
+                  draft.threadId === null
+                    ? " The first run starts the thread."
+                    : " Runs use the thread's current model."
                 } Deleting it also deletes this task.`
           }
         >
