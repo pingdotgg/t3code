@@ -157,11 +157,6 @@ export const CodexScanState = Schema.Struct({
 });
 export type CodexScanState = typeof CodexScanState.Type;
 
-// Requests without cumulative counters used to move the baseline without dating it.
-export function hasUndatedCodexBaseline(state: CodexScanState) {
-  return state.lastCumulativeUsage !== null && state.latestCumulativeAtMs === undefined;
-}
-
 export function initialCodexScanState(): CodexScanState {
   return {
     model: "",
@@ -391,6 +386,11 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
     if (!restarted && !reconciled) {
       const bridged = unreportedRequests(previous, cumulative, last, pending);
       if (bridged === null) {
+        // A rejected snapshot from before the baseline's time is a replay, not the next baseline.
+        if (latestCumulativeAtMs !== undefined && timestampMs < latestCumulativeAtMs) {
+          state.lastCumulativeUsage = previous;
+          if (pending !== undefined) state.unreportedRequests = pending;
+        }
         state.malformedRecords += 1;
         return [];
       }

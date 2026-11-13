@@ -618,6 +618,18 @@ describe("parseCodexLine", () => {
       skipped: 0,
     },
     {
+      name: "keeps the baseline when it rejects an older snapshot, so the replay that follows is not billed",
+      lines: [
+        at("10:00:00", counted(counters(100, 20), counters(100, 20))),
+        at("10:00:05", counted(counters(20, 4), counters(120, 24))),
+        at("10:00:10", counted(counters(30, 6), counters(150, 30))),
+        at("10:00:05", counted(counters(20, 4), counters(120, 24))),
+        at("10:00:10", counted(counters(30, 6), counters(150, 30))),
+      ],
+      processed: [120, 24, 36, 0, 0],
+      skipped: 1,
+    },
+    {
       name: "does not bill replayed snapshots against a cached baseline of unknown age",
       lines: [
         at("10:00:00", counted(counters(100, 20), counters(100, 20))),

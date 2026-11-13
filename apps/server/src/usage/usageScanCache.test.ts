@@ -291,7 +291,7 @@ describe("scan cache round trip", () => {
     );
   });
 
-  it("restarts a grown Codex entry whose cached baseline has no snapshot time", () => {
+  it("restarts a grown v15 Codex entry, whose baseline time can be older than its totals", () => {
     const request = {
       input_tokens: 100,
       cached_input_tokens: 0,
@@ -300,34 +300,31 @@ describe("scan cache round trip", () => {
       reasoning_output_tokens: 0,
       total_tokens: 120,
     };
-    // What a request without cumulative counters left behind before baseline moves were dated.
-    const undated = {
-      ...initialCodexScanState(),
-      model: "gpt-6-astra",
-      lastUsageSignature: JSON.stringify(request),
-      lastCumulativeUsage: request,
-    };
-    const codex = (state: CachedFile["position"]["state"]): CachedFile => ({
+    const entry: CachedFile = {
       size: 10,
       mtimeMs: 100,
       provider: "codex",
       records: [record({ provider: "codex", model: "gpt-6-astra", dedupeKey: null })],
       tailRecords: [],
       malformedRecords: 0,
-      position: position({ state }),
-    });
-    const dated = { ...undated, latestCumulativeAtMs: 1_786_000_000_000 };
-    const original: ScanCache = new Map([
-      ["/undated.jsonl", codex(undated)],
-      ["/dated.jsonl", codex(dated)],
-    ]);
+      position: position({
+        state: {
+          ...initialCodexScanState(),
+          model: "gpt-6-astra",
+          lastCumulativeUsage: request,
+          latestCumulativeAtMs: 1_786_000_000_000,
+        },
+      }),
+    };
+    const current = parse(makeScanCacheWriter()(new Map([["/codex.jsonl", entry]]), {}));
 
-    const restored = decodeScanCache(parse(makeScanCacheWriter()(original, {})), TEST_FORMAT_MAP);
-    expect(restored.get("/undated.jsonl")).toEqual({
-      ...codex(undated),
+    expect(
+      decodeScanCache({ ...current, version: 15 }, TEST_FORMAT_MAP).get("/codex.jsonl"),
+    ).toEqual({
+      ...entry,
       position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
     });
-    expect(restored.get("/dated.jsonl")).toEqual(codex(dated));
+    expect(decodeScanCache(current, TEST_FORMAT_MAP).get("/codex.jsonl")).toEqual(entry);
   });
 
   it("re-parses a Claude transcript cached before 1-hour cache writes were counted", () => {
