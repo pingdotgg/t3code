@@ -1041,6 +1041,66 @@ it.effect("finds a merged Forgejo pull request whose head branch was deleted", (
 );
 
 it.effect(
+  "shares one repository scan between branch lookups when Forgejo ignores the head filter",
+  () => {
+    const requests: Array<string> = [];
+    const closed = new Set<number>();
+    return Effect.gen(function* () {
+      const provider = yield* ForgejoSourceControlProvider.make;
+      const lookup = (headSelector: string, state: "all" | "open" = "all") =>
+        provider
+          .listChangeRequests({ cwd: "/repo", headSelector, state, limit: 20 })
+          .pipe(Effect.map((found) => found.map((pr) => pr.number)));
+      assert.deepStrictEqual(yield* lookup("feature"), [3, 1]);
+      assert.deepStrictEqual(yield* lookup("other"), [4, 2]);
+      assert.deepStrictEqual(requests, ["feature:1", ":1", ":2", ":3", "other:1"]);
+      assert.deepStrictEqual(yield* lookup("feature", "open"), [3, 1]);
+      closed.add(1);
+      assert.deepStrictEqual(yield* lookup("feature", "open"), [3]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+          TestSourceControlHost.layer({ process: {} }),
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            resolveRepository: () =>
+              Effect.succeed({
+                login: "work",
+                repository: "maria/project",
+                baseUrl: "https://forgejo.test",
+              }),
+            api: (input) => {
+              const repo = { full_name: "maria/project", owner: { login: "maria" } };
+              const pr = (number: number, branch: string) => ({
+                number,
+                title: `PR ${number}`,
+                html_url: `https://forgejo.test/maria/project/pulls/${number}`,
+                state: closed.has(number) ? "closed" : "open",
+                merged: false,
+                base: { ref: "main", label: "main", sha: "base", repo },
+                head: { ref: branch, label: branch, sha: "head", repo },
+              });
+              const query = new URLSearchParams(input.path.split("?")[1]);
+              const page = query.get("page");
+              requests.push(`${query.get("head") ?? ""}:${page}`);
+              const listed =
+                page === "1"
+                  ? [pr(4, "other"), pr(3, "feature")]
+                  : page === "2"
+                    ? [pr(2, "other"), pr(1, "feature")]
+                    : [];
+              return encodeJsonEffect(
+                listed.filter((item) => query.get("state") !== "open" || item.state === "open"),
+              ).pipe(Effect.orDie, Effect.map(processOutput));
+            },
+          }),
+        ),
+      ),
+    );
+  },
+);
+
+it.effect(
   "loads Forgejo reactions on comments, reviews and inline threads and resolves review mutations",
   () => {
     const user = { login: "maria" };
