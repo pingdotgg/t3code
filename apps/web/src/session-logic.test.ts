@@ -1391,7 +1391,7 @@ describe("HTML renders in the timeline", () => {
     ]);
   });
 
-  it("hosts a captured MCP app in place, from any provider's tool", () => {
+  it("hosts a captured MCP app after its tool row, from any provider's tool", () => {
     const mcpApp = {
       attachmentId: "render-thread-app-html",
       server: "weather",
@@ -1403,11 +1403,56 @@ describe("HTML renders in the timeline", () => {
       call.type === "dynamic_tool" ? { ...call, toolName: "weather.get_weather" } : call,
     );
     expect(entries.find((entry) => entry.kind === "mcp-app")).toMatchObject({
-      id: "render",
+      id: "mcp-app:render",
       itemId: "render",
       mcpApp,
     });
     expect(rowsFor(entries, false)).toEqual(["message", "turn-fold", "mcp-app", "message"]);
+  });
+
+  it("keeps an MCP app call's tool row and output beside its app card", () => {
+    const mcpApp = {
+      attachmentId: "render-thread-app-html",
+      server: "repro",
+      tool: "aggregate_rum_events",
+      resourceUri: "ui://repro/dataviz",
+    };
+    const result = { content: [{ type: "text", text: "Notice\nview\tcount\n/home\t42" }] };
+    const call = renderCall("completed", { t3McpApp: mcpApp, result });
+    const entries = turn(
+      call.type === "dynamic_tool" ? { ...call, toolName: "repro.aggregate_rum_events" } : call,
+    );
+    expect(entries.find((entry) => entry.kind === "mcp-app")).toMatchObject({ mcpApp });
+    const toolRows = entries.flatMap((entry) =>
+      entry.kind === "work" && entry.entry.toolTitle === "repro.aggregate_rum_events"
+        ? [entry.entry]
+        : [],
+    );
+    expect(toolRows).toMatchObject([{ toolData: { output: { result } } }]);
+  });
+
+  it("drops an MCP app card when an update removes the call's app", () => {
+    const mcpApp = {
+      attachmentId: "render-thread-app-html",
+      server: "repro",
+      tool: "aggregate_rum_events",
+      resourceUri: "ui://repro/dataviz",
+    };
+    const call = (output: unknown) => ({
+      ...renderCall("completed", output),
+      toolName: "repro.aggregate_rum_events",
+    });
+    const result = { content: [{ type: "text", text: "rows" }] };
+    const input = (output: unknown) => ({
+      visibleTurnItems: [visible(command("before", 1)), visible(call(output))],
+      optimisticMessages: [],
+    });
+    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(
+      input({ t3McpApp: mcpApp, result }),
+    );
+    const nextInput = input({ result });
+    const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(nextInput, previous);
+    expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(nextInput));
   });
 
   it("hosts an MCP app whose call failed, as a form-deferring write does", () => {
