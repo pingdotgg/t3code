@@ -28,7 +28,8 @@ import {
   usageSourceMessages,
 } from "@t3tools/shared/usageFormat";
 import { useRef, useState, type ReactNode } from "react";
-import { RefreshControl, View } from "react-native";
+import { View } from "react-native";
+import { RefreshControl } from "../../components/ui/RefreshControl";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -249,7 +250,7 @@ function UsageScreen(props: {
                 onSelect={setView}
                 size="compact"
                 role="tab"
-                className="w-60"
+                className="flex-1"
               />
             </View>
           ) : (
