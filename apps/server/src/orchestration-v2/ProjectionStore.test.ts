@@ -1260,7 +1260,18 @@ it.effect("a compacted thread reads every run, but records and prompts only for 
     // A prompt that clients do not show cannot anchor a model switch. With the recent ones, and
     // run 4's, folded into async answers, the switch is measured from run 10, so its prompt is
     // read, with run 9's from the same batch.
+    const storedRuns = (yield* store.getThreadRecords(threadId, ["runs"])).runs;
     for (const ordinal of [4, 11, 12, 14, 15]) {
+      yield* store.apply({
+        id: EventId.make(`event:compacted:async-run-${ordinal}`),
+        type: "run.updated",
+        threadId,
+        occurredAt: at(ordinal),
+        payload: {
+          ...storedRuns.find((run) => run.id === runId(ordinal))!,
+          userMessageId: MessageId.make(`async-answer:${ordinal}`),
+        },
+      });
       yield* store.apply({
         id: EventId.make(`event:compacted:async-${ordinal}`),
         type: "turn-item.updated",
