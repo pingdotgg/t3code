@@ -2279,6 +2279,7 @@ export function makeClaudeQueryOptions(input: {
           },
         } as ClaudeSdkSettings);
   const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
+  const agentFeedback = input.mcpServers !== undefined && input.agentFeedbackEnabled === true;
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
     // T3 names threads; a supplied title skips Claude's redundant naming request.
@@ -2334,7 +2335,7 @@ export function makeClaudeQueryOptions(input: {
       append: [
         buildRuntimeInstructions({
           harness: "Claude Code",
-          agentFeedbackEnabled: input.agentFeedbackEnabled ?? false,
+          agentFeedbackEnabled: agentFeedback,
         }) +
           (input.mcpServers === undefined
             ? ""

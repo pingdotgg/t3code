@@ -3485,7 +3485,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               buildRuntimeInstructions({
                 harness: "OpenCode",
                 model: turn.modelSelection.model,
-                agentFeedbackEnabled: turn.agentFeedbackEnabled,
+                agentFeedbackEnabled: hasT3Mcp && turn.agentFeedbackEnabled,
               }),
             ]
               .filter(Boolean)
