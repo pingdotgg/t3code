@@ -6469,6 +6469,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             : undefined,
           "Deploy: Code",
         );
+        const node = harness.events.findLast(
+          (event) => event.type === "node.updated" && event.node.kind === "user_input_request",
+        );
+        assert.equal(
+          node?.type === "node.updated" ? node.node.parentNodeId : undefined,
+          node?.type === "node.updated" ? node.node.rootNodeId : "missing",
+        );
         yield* harness.runtime.respondToRuntimeRequest({
           requestId: request.id,
           answers: { code: "390878" },

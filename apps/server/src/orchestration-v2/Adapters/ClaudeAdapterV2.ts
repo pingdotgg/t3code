@@ -11756,6 +11756,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               context,
               nativeItemId: nativeRequestId,
               nativeRequestId,
+              // No tool node exists for an elicitation control request to hang under.
+              parentNodeId: context.input.rootNodeId,
               requestKind: "user_input",
               questions: form.questions.map((question) => ({
                 ...question,
