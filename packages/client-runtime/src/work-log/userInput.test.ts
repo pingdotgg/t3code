@@ -31,5 +31,9 @@ describe("question answer display", () => {
     expect(history).toBe("See my note: [Review comment: notes.md L2]");
     expect(preview).toContain("See my note:");
     expect(preview).not.toContain("<t3_context");
+
+    const typedXml =
+      'Use this XML literally: <t3_context version="1"><context kind="review-comment" id="example">keep me</context></t3_context>';
+    expect(getQuestionAnswerText(typedXml)).toBe(typedXml);
   });
 });
