@@ -317,14 +317,15 @@ const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError((cause) => fail("not-selected", { cause })));
     });
-    if (theme === undefined) {
-      const known = [...BUILT_IN_THEME_IDS, ...(yield* refresh).themes.map(({ id }) => id)];
-      if (!known.includes(themeId)) return yield* fail("unknown-id", { known });
-      return yield* select;
-    }
-    // One at a time. If the theme cannot be selected, the file it replaced comes back.
+    // One at a time, so a selection never sees a file that a failed publish then takes back.
+    // If the theme cannot be selected, the file it replaced comes back.
     yield* publishSemaphore.withPermits(1)(
       Effect.gen(function* () {
+        if (theme === undefined) {
+          const known = [...BUILT_IN_THEME_IDS, ...(yield* refresh).themes.map(({ id }) => id)];
+          if (!known.includes(themeId)) return yield* fail("unknown-id", { known });
+          return yield* select;
+        }
         const revert = yield* publish(themeId, theme);
         yield* select.pipe(Effect.tapError(() => revert));
       }),
