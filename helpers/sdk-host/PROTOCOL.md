@@ -29,7 +29,7 @@ know.
 
 | `ch`    | `t`       | Fields                                                    | Meaning                                                                    |
 | ------- | --------- | --------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `host`  | `ready`   | `node`                                                    | Started.                                                                   |
+| `host`  | `ready`   | `protocol`, `node`                                        | Started. `protocol` is 1; the server stops a host that speaks another and ends its sessions with the reason. |
 | `sdk`   | `msg`     | `driver`, `instanceId`, `sessionId`, `m`                  | One SDK message, as the SDK yields it.                                     |
 | `sdk`   | `request` | `driver`, `instanceId`, `sessionId`, `id`, `kind`, `args` | The SDK asks the server. `claude` kinds: `canUseTool` (`args` = `{toolName, input, options}`, the SDK's options without `signal`), `elicitation`, `userDialog` (the SDK's request object). `id` is the CLI's request id. |
 | `sdk`   | `cancel`  | `driver`, `instanceId`, `sessionId`, `id`                 | The SDK withdrew a request. No response is needed.                         |
@@ -56,8 +56,15 @@ Write `drivers/<name>.mjs` exporting `createDriver({describeError})`, which retu
   SIGKILL. While the CLI runs, its process tree is recorded every second, and what is still
   alive after it exits is killed (T3's descendant tracker).
 
-## Bounds
+## Bounds and failure rules
 
+- A line may hold at most 16 MiB, both ways. The server drops a longer one; the host drops a
+  longer command, and in place of a longer frame it writes a `log` line (or an error `reply`).
 - At most 64 queued inputs per session, 256 open sessions.
-- Requests wait only while their session is open; an ended session rejects them.
+- `close` cancels the session's open requests at once; an ended session rejects them too.
+- When the host dies, every open session ends (`end` is synthesized by the server with "The
+  SDK host exited"), the turn fails, and each `claude` child loses its fd 3 pipe: its watcher
+  sends SIGTERM to the CLI's group and SIGKILL 5 s later. Jobs that left the group are not
+  caught then (the descendant tracker lived in the host). Tested by
+  `host_death_ends_sessions_and_children` in `conn-provider-claude`.
 - Each `msg` write waits while stdout is full, so a slow server slows the SDK and the CLI.

@@ -12,6 +12,10 @@ import { createInterface } from "node:readline";
 const DRIVER_MODULES = {
   claude: () => import("./drivers/claude.mjs"),
 };
+/** The protocol version in `ready`; the server stops a host that speaks another one. */
+const PROTOCOL_VERSION = 1;
+/** A line longer than this is dropped, both ways (the server uses the same cap). */
+const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 /** Open sessions, all drivers together. */
 const MAX_SESSIONS = 256;
 /** After the input closes, how long open sessions get to end before the host exits. */
@@ -23,7 +27,16 @@ let draining = null;
 
 /** Writes one line. Returns a promise while stdout is full, so producers can wait. */
 function write(value) {
-  const ok = process.stdout.write(`${JSON.stringify(value)}\n`);
+  let line = JSON.stringify(value);
+  if (Buffer.byteLength(line) > MAX_FRAME_BYTES) {
+    // The server would drop it; say what was lost instead.
+    const lost = { ch: "log", level: "warn", text: `sdk-host: dropped a ${line.length}-character ${value.ch}/${value.t ?? ""} frame` };
+    line =
+      value.ch === "reply"
+        ? JSON.stringify({ ch: "reply", id: value.id, ok: false, error: { message: "the reply is larger than a frame" } })
+        : JSON.stringify(lost);
+  }
+  const ok = process.stdout.write(`${line}\n`);
   if (!ok && draining === null) {
     draining = once(process.stdout, "drain").then(() => {
       draining = null;
@@ -125,6 +138,9 @@ function openSession(command) {
 function closeSession(session) {
   // A close that arrives while the driver loads runs right after the open.
   session.closeRequested = true;
+  // Requests still waiting for the server are cancelled now, not when the SDK ends.
+  for (const pending of session.pending.values()) pending.reject(new Error("session closed"));
+  session.pending.clear();
   if (session.impl === undefined) return Promise.resolve();
   return session.impl.close(session);
 }
@@ -234,6 +250,10 @@ process.stdout.on("error", () => process.exit(0));
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
 input.on("line", (line) => {
   if (line.length === 0) return;
+  if (line.length > MAX_FRAME_BYTES) {
+    log("warn", `dropped a ${line.length}-character command`);
+    return;
+  }
   let command;
   try {
     command = JSON.parse(line);
@@ -249,4 +269,4 @@ input.on("line", (line) => {
   }
 });
 input.on("close", shutdown);
-write({ ch: "host", t: "ready", node: process.versions.node });
+write({ ch: "host", t: "ready", protocol: PROTOCOL_VERSION, node: process.versions.node });

@@ -161,6 +161,8 @@ struct State {
     replies: HashMap<u64, oneshot::Sender<Result<Value, String>>>,
     /// Session-file calls in flight; they keep the helper up.
     holds: usize,
+    /// Why the current host was stopped, for the sessions it ends.
+    failure: Option<String>,
 }
 
 struct Running {
@@ -371,14 +373,19 @@ async fn route(inner: Arc<Inner>, generation: u64, mut rx: mpsc::Receiver<ProcEv
                     eprintln!("conn-provider-claude: the SDK host wrote a line that is not JSON");
                     continue;
                 };
+                if line["ch"] == "host" && line["t"] == "ready" {
+                    check_ready(&inner, generation, &line);
+                    continue;
+                }
                 dispatch(&inner, line).await;
             }
             ProcEvent::Line(Line::Oversized(bytes)) => {
-                eprintln!("conn-provider-claude: dropped a {bytes}-byte helper line");
+                eprintln!("conn-provider-claude: dropped a {bytes}-byte SDK host line");
             }
             ProcEvent::Exited(info) => {
-                let (queries, replies) = {
+                let (queries, replies, failure) = {
                     let mut state = inner.lock();
+                    let failure = state.failure.take();
                     if state
                         .running
                         .as_ref()
@@ -403,29 +410,57 @@ async fn route(inner: Arc<Inner>, generation: u64, mut rx: mpsc::Receiver<ProcEv
                     } else {
                         HashMap::new()
                     };
-                    (queries, replies)
+                    (queries, replies, failure)
                 };
                 drop(replies);
                 if !queries.is_empty() {
                     let tail: String = info.stderr_tail.chars().rev().take(300).collect();
                     let tail: String = tail.chars().rev().collect();
                     eprintln!(
-                        "conn-provider-claude: the Claude helper exited ({}): {}",
+                        "conn-provider-claude: the SDK host exited ({}): {}",
                         info.describe(),
                         tail.trim()
                     );
                 }
+                // Every session of this host ends: its turn fails with this text. The host's
+                // `claude` children lose their fd 3 pipe, so their watchers send SIGTERM to each
+                // CLI's process group and SIGKILL 5 s later (`host_death_ends_sessions_and_children`).
+                let detail = failure
+                    .unwrap_or_else(|| format!("The SDK host exited ({}).", info.describe()));
                 for (_, tx) in queries {
                     let _ = tx
-                        .send(QueryEvent::End(QueryEnd::helper_failed(format!(
-                            "The Claude helper exited ({}).",
-                            info.describe()
-                        ))))
+                        .send(QueryEvent::End(QueryEnd::helper_failed(detail.clone())))
                         .await;
                 }
                 return;
             }
         }
+    }
+}
+
+/// The SDK host protocol version this server speaks (`PROTOCOL.md`).
+pub const PROTOCOL_VERSION: u64 = 1;
+
+/// The host's `ready` line: a host that speaks another protocol is stopped, and its sessions
+/// end with the reason.
+fn check_ready(inner: &Inner, generation: u64, line: &Value) {
+    let version = line["protocol"].as_u64();
+    if version == Some(PROTOCOL_VERSION) {
+        return;
+    }
+    let detail = format!(
+        "The SDK host speaks protocol {}, this server {PROTOCOL_VERSION}; rebuild helpers/sdk-host.",
+        version.map_or_else(|| "none".to_string(), |v| v.to_string())
+    );
+    eprintln!("conn-provider-claude: {detail}");
+    let mut state = inner.lock();
+    if let Some(running) = state
+        .running
+        .as_ref()
+        .filter(|r| r.generation == generation)
+    {
+        running.process.kill();
+        state.failure = Some(detail);
     }
 }
 
@@ -456,7 +491,7 @@ async fn dispatch(inner: &Inner, mut line: Value) {
             line["level"].as_str().unwrap_or("info"),
             line["text"].as_str().unwrap_or_default()
         ),
-        // `host` (ready) and channels added later.
+        // Channels added later.
         _ => {}
     }
 }
@@ -627,6 +662,117 @@ mod tests {
         let sea = HelperCommand::from_path("/x/conn-sdk-host");
         assert_eq!(sea.program, PathBuf::from("/x/conn-sdk-host"));
         assert!(sea.args.is_empty());
+    }
+
+    /// The rule when the host dies: every open session ends with a helper error, and each
+    /// `claude` child is stopped by its fd 3 watcher (SIGTERM, SIGKILL 5 s later). Needs `node`
+    /// and `npm ci` in helpers/sdk-host; skipped without them.
+    #[tokio::test(flavor = "current_thread")]
+    async fn host_death_ends_sessions_and_children() {
+        let script = development_script();
+        let modules = script
+            .parent()
+            .map(|d| d.join("node_modules/@anthropic-ai/claude-agent-sdk"));
+        if !modules.is_some_and(|m| m.is_dir()) {
+            eprintln!("skipped: run npm ci in helpers/sdk-host");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("conn-host-death-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A CLI that ignores stdin and SIGTERM: only the watcher's SIGKILL can end it.
+        let stub = dir.join("claude");
+        let pid_file = dir.join("pid");
+        std::fs::write(
+            &stub,
+            format!(
+                "#!/bin/sh\necho $$ > {}\ntrap '' TERM\nwhile :; do sleep 1; done\n",
+                pid_file.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&stub, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let helper = Helper::new(HelperCommand::from_path(&script), "claudeAgent");
+        let mut query = helper
+            .open(
+                json!({"model": "x", "pathToClaudeCodeExecutable": stub, "cwd": dir}),
+                json!({}),
+            )
+            .unwrap();
+        let mut events = query.take_events().unwrap();
+        let mut cli = None;
+        for _ in 0..100 {
+            cli = std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|p| p.trim().parse::<u32>().ok());
+            if cli.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let cli = cli.expect("the CLI started");
+        let host = helper.pid().unwrap();
+        let killed = std::process::Command::new("kill")
+            .args(["-KILL", &host.to_string()])
+            .status()
+            .unwrap();
+        assert!(killed.success());
+        let end = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match events.recv().await {
+                    Some(QueryEvent::End(end)) => return Some(end),
+                    Some(_) => continue,
+                    None => return None,
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            end.and_then(|e| e.helper_error)
+                .is_some_and(|d| d.contains("SDK host exited")),
+            "the session ended with the host's death"
+        );
+        let mut gone = false;
+        for _ in 0..80 {
+            if !conn_provider_support::process::pid_alive(cli) {
+                gone = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(gone, "the CLI was stopped by its watcher");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_host_with_another_protocol_is_stopped() {
+        let dir = std::env::temp_dir().join(format!("conn-host-version-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake = dir.join("host");
+        std::fs::write(
+            &fake,
+            "#!/bin/sh\necho '{\"ch\":\"host\",\"t\":\"ready\",\"protocol\":99}'\nexec sleep 30\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let helper = Helper::new(HelperCommand::from_path(&fake), "claudeAgent");
+        let mut query = helper.open(json!({}), json!({})).unwrap();
+        let mut events = query.take_events().unwrap();
+        let end = tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
+            .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let Some(QueryEvent::End(end)) = end else {
+            panic!("expected the session to end");
+        };
+        assert!(
+            end.helper_error
+                .is_some_and(|d| d.contains("speaks protocol 99"))
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
