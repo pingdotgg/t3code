@@ -6,6 +6,7 @@ import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { DiffThemeName } from "~/lib/diffRendering";
 import { languageOfInfoString } from "~/composer-code-languages";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
+import { highlighterLanguageOf } from "./chat/MarkdownCodeBlock.logic";
 
 interface HighlightedBlock {
   readonly signature: string;
@@ -119,8 +120,9 @@ export function composerCodeBlockHighlight(options: {
               void Promise.allSettled(
                 pending.map(async ({ node }) => {
                   // Stored info includes metadata after the language; Shiki needs only the name.
-                  const language =
-                    languageOfInfoString(String(node.attrs.language ?? "")) || "text";
+                  const language = highlighterLanguageOf(
+                    languageOfInfoString(String(node.attrs.language ?? "")) || "text",
+                  );
                   const signature = blockSignature(node, theme);
                   // Cache failure as plain text to clear retained colors.
                   const highlighter = await getSyntaxHighlighterPromise(language).catch(() => null);

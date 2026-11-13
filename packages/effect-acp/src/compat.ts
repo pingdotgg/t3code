@@ -62,7 +62,11 @@ export type ToolKind = V2.ToolKind;
 export type ClientCapabilities = {
   readonly fs?: { readonly readTextFile?: boolean; readonly writeTextFile?: boolean };
   readonly terminal?: boolean;
-  readonly session?: { readonly list?: Meta; readonly notices?: Meta } | null;
+  readonly session?: {
+    readonly list?: Meta;
+    readonly notices?: Meta;
+    readonly compaction?: Meta;
+  } | null;
   readonly plan?: Meta;
   readonly auth?: { readonly terminal?: boolean };
   readonly elicitation?: V2.ElicitationCapabilities | null;
