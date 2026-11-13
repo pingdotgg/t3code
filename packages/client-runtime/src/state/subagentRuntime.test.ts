@@ -123,6 +123,29 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
     expect(resolveSubagentMetadata({ model: workflow!.model }).modelLabel).toBe("Not reported");
   });
 
+  it("names a native subagent from the one same-driver instance that lists its model", () => {
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const parent = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      driver,
+      models: [
+        { slug: "claude-haiku-5-5", name: "Claude Haiku 5.5", isCustom: false, capabilities: null },
+      ],
+    };
+    const openai = {
+      instanceId: ProviderInstanceId.make("claudeAgent-openai"),
+      driver,
+      models: [{ slug: "gpt-6.1-sol", name: "GPT 6.1 Sol", isCustom: true, capabilities: null }],
+    };
+    const metadata = resolveSubagentMetadata({
+      model: "gpt-6.1-sol",
+      provider: parent,
+      providers: [parent, openai],
+    });
+    expect(metadata.modelLabel).toBe("GPT 6.1 Sol");
+    expect(metadata.providerInstanceId).toBe("claudeAgent-openai");
+  });
+
   it.each(["completed", "cancelled", "failed"] as const)(
     "settles unfinished members when the coordinator is %s",
     (status) => {
