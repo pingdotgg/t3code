@@ -123,16 +123,15 @@ const serveApart = (descriptor: ExecutionEnvironmentDescriptor) =>
   );
 
 it.effect("routes peer reads to readers and sees uncommitted link updates", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const context = yield* layerLinkingEnvironment(
-        laptop,
-        ServerSecretStore.layer,
-        layerReaderDatabase,
-      ).pipe(Layer.build);
-      const links = Context.get(context, PeerLinks.PeerLinks);
-      const sql = Context.get(context, SqlClient.SqlClient);
-      yield* sql`
+  Effect.gen(function* () {
+    const context = yield* layerLinkingEnvironment(
+      laptop,
+      ServerSecretStore.layer,
+      layerReaderDatabase,
+    ).pipe(Layer.build);
+    const links = Context.get(context, PeerLinks.PeerLinks);
+    const sql = Context.get(context, SqlClient.SqlClient);
+    yield* sql`
       INSERT INTO peer_environment_links (
         environment_id, secret_name, label, urls_json, access, linked_at, expires_at, fenced
       ) VALUES (
@@ -140,27 +139,26 @@ it.effect("routes peer reads to readers and sees uncommitted link updates", () =
         '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z', 1
       )
     `;
-      const { queries, trace } = traceSqlRouting();
-      yield* links.list.pipe(trace);
-      expect(Option.getOrThrow(yield* links.get(box.environmentId).pipe(trace)).label).toBe("Box");
-      const reads = queries.filter(({ query }) =>
-        query.includes("SELECT * FROM peer_environment_links"),
-      );
-      expect(reads).toHaveLength(2);
-      expect(reads.map((row) => row.connection)).toEqual(["reader", "reader"]);
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          yield* sql`UPDATE peer_environment_links SET label = 'Uncommitted box'`;
-          expect(Option.getOrThrow(yield* links.get(box.environmentId)).label).toBe(
-            "Uncommitted box",
-          );
-          expect((yield* links.list)[0]?.label).toBe("Uncommitted box");
-        }),
-      );
-      expect(yield* links.unlink(box.environmentId)).toBe(true);
-      expect(yield* links.list).toEqual([]);
-    }),
-  ),
+    const { queries, trace } = traceSqlRouting();
+    yield* links.list.pipe(trace);
+    expect(Option.getOrThrow(yield* links.get(box.environmentId).pipe(trace)).label).toBe("Box");
+    const reads = queries.filter(({ query }) =>
+      query.includes("SELECT * FROM peer_environment_links"),
+    );
+    expect(reads).toHaveLength(2);
+    expect(reads.map((row) => row.connection)).toEqual(["reader", "reader"]);
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`UPDATE peer_environment_links SET label = 'Uncommitted box'`;
+        expect(Option.getOrThrow(yield* links.get(box.environmentId)).label).toBe(
+          "Uncommitted box",
+        );
+        expect((yield* links.list)[0]?.label).toBe("Uncommitted box");
+      }),
+    );
+    expect(yield* links.unlink(box.environmentId)).toBe(true);
+    expect(yield* links.list).toEqual([]);
+  }),
 );
 
 it.effect("links with a pairing code, and the peer holds its agents to the limits they carry", () =>
@@ -565,6 +563,37 @@ it.effect("a linked peer that is renamed shows its new name", () =>
       expect(Option.map(storedAfterList, (link) => link.label)).toEqual(Option.some("Box Studio"));
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "a link forgotten while it resolves says it is not linked, not that it lost its credential",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const b = yield* serveB(box);
+        const beforeGet = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+        const racing = Layer.effect(
+          ServerSecretStore.ServerSecretStore,
+          Effect.map(ServerSecretStore.make, (store) =>
+            ServerSecretStore.ServerSecretStore.of({
+              ...store,
+              get: (name) =>
+                Ref.getAndSet(beforeGet, Effect.void).pipe(
+                  Effect.flatten,
+                  Effect.andThen(store.get(name)),
+                ),
+            }),
+          ),
+        );
+        const a = yield* makeA(laptop, racing);
+        const pairing = yield* b.auth.issuePairingCredential();
+        yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+
+        yield* Ref.set(beforeGet, Effect.orDie(Effect.asVoid(a.links.unlink(box.environmentId))));
+        const forgotten = yield* probe(a).pipe(Effect.flip);
+        expect(forgotten.message).toContain("not linked to");
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("tells the agent to link again once the peer revokes the link or it expires", () =>

@@ -132,9 +132,9 @@ use a partial index for nonterminal background items, including idle items. Late
 reads use an index ordered by update time.
 
 A projection read that orders messages by their first user or assistant turn item groups those
-items by `$.messageId` through a partial index on that expression (migration 89), so it does not
+items by `$.messageId` through a partial index on that expression (migration 90), so it does not
 parse every message item's payload; the index's expression and `WHERE` must stay identical to the
-query's. Migration 89 scans the turn-item table once on first start; a message item whose payload
+query's. Migration 90 scans the turn-item table once on first start; a message item whose payload
 is not valid JSON is left out of the index. Each message-item write re-parses the old and new
 payload for the index, so its cost grows with the payload.
 
