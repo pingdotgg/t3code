@@ -350,7 +350,7 @@ describe("AntigravityAdapterV2 prompt recovery", () => {
           respond("session/new", { result: { sessionId: "replacement-session" } }),
           request("session/resume", {
             sessionId: "antigravity-session",
-            cwd: "<workspace>",
+            cwd: workspace,
             mcpServers: "<any>",
             additionalDirectories: "<any>",
           }),
