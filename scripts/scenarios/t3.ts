@@ -2,11 +2,13 @@
 // app. `t3-mobile.ts` is the same for the iOS app.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { test as base } from "@e2e-dev/web";
+import { expect } from "e2e";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 
 import { APP_DIR, T3_HOME } from "../e2e.config.ts";
 import { run } from "./shell.ts";
@@ -23,12 +25,19 @@ export interface T3State {
     readonly title: string;
     readonly messages: ReadonlyArray<string>;
     readonly model?: string;
-  }) => Promise<void>;
+  }) => Promise<T3Thread>;
+}
+
+export interface T3Thread {
+  readonly threadId: string;
 }
 
 export interface T3 extends T3State {
-  /** Opens the app, signed in, at `path`. */
-  readonly open: (path?: string) => Promise<void>;
+  /**
+   * Opens the app, signed in, at a path or on a thread `t3.thread` returned. Opening the thread
+   * by its link is the reliable way to reach it: a sidebar row covers its own title text.
+   */
+  readonly open: (target?: string | T3Thread) => Promise<void>;
 }
 
 /** e2e's fixtures are promise functions; this is the one place an Effect becomes a promise. */
@@ -99,6 +108,7 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
     const started = yield* turn(["start", input.project, first, "--title", input.title, ...replay]);
     const { threadId } = yield* decodeLaunched(started.stdout);
     for (const message of rest) yield* turn(["send", threadId, message]);
+    return { threadId } satisfies T3Thread;
   });
 
   return {
@@ -122,14 +132,31 @@ const readPairingPath = Effect.gen(function* () {
   return yield* fs.readFileString(path.join(T3_HOME, "pairing-path"));
 });
 
+/** The id every thread link starts with, asked of the server the app talks to. */
+const environmentId = (baseUrl: string) =>
+  HttpClient.get(`${baseUrl}/.well-known/t3/environment`).pipe(
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap(
+      HttpClientResponse.schemaBodyJson(Schema.Struct({ environmentId: Schema.String })),
+    ),
+    Effect.map((environment) => environment.environmentId),
+    Effect.provide(FetchHttpClient.layer),
+  );
+
 export const test = base.extend<{ t3: T3 }>({
-  t3: async ({ app }, use) => {
+  t3: async ({ app, browser }, use) => {
     const { state, cleanup } = makeState(T3_HOME);
     await use({
       ...state,
-      open: async (path = "/") => {
+      open: async (target = "/") => {
         await app.open(await runPromise(readPairingPath));
-        if (path !== "/") await app.open(path);
+        // The pairing page signs in and then leaves itself. Going anywhere before it has done
+        // so cancels the sign-in, and the next page is the pairing page again.
+        await expect(browser).not.toHaveURL(/\/pair(?:[?#]|$)/, { timeout: 60_000 });
+        if (typeof target !== "string") {
+          const environment = await runPromise(environmentId(app.baseUrl ?? ""));
+          await app.open(`/${environment}/${target.threadId}`);
+        } else if (target !== "/") await app.open(target);
       },
     });
     await runPromise(cleanup);

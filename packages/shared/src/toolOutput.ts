@@ -299,10 +299,15 @@ export function mcpToolResultOutput(result: {
   readonly content?: unknown;
   readonly structuredContent?: unknown;
 }): unknown {
-  if (result.structuredContent != null && toolOutputImages(result.content).length > 0) {
-    return { content: result.content, structuredContent: result.structuredContent };
+  const structuredContent =
+    (Array.isArray(result.structuredContent) || Predicate.isObject(result.structuredContent)) &&
+    Object.keys(result.structuredContent).length === 0
+      ? undefined
+      : result.structuredContent;
+  if (structuredContent != null && toolOutputImages(result.content).length > 0) {
+    return { content: result.content, structuredContent };
   }
-  return result.structuredContent ?? result.content;
+  return structuredContent ?? result.content;
 }
 
 export function omitToolOutputImageData(value: unknown): unknown {
