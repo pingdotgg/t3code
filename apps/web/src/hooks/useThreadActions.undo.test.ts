@@ -19,10 +19,20 @@ const commands = vi.hoisted(() => ({
   snooze: vi.fn(),
   unsnooze: vi.fn(),
 }));
-const router = vi.hoisted(() => ({
-  navigate: vi.fn(async () => {}),
-  state: { location: { href: "/" }, matches: [{ params: {} as Record<string, string> }] },
-}));
+const router = vi.hoisted(() => {
+  const listeners = new Set<(event: { action: { type: string } }) => void>();
+  return {
+    navigate: vi.fn(async () => {}),
+    state: { location: { href: "/" }, matches: [{ params: {} as Record<string, string> }] },
+    history: {
+      listeners,
+      subscribe: (listener: (event: { action: { type: string } }) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+  };
+});
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 vi.mock("../state/session", async (original) => ({
   ...(await original<typeof import("../state/session")>()),
@@ -248,6 +258,25 @@ describe("archive navigation", () => {
     expect((await archived)._tag).toBe("Success");
     expect(useThreadUndoNotice.getState().notice).toMatchObject({ action: "Archived" });
     expect(router.state.location.href).toBe(route.expected);
+  });
+});
+
+describe("delete navigation", () => {
+  it.each([
+    { type: "REPLACE", by: "the app's missing-thread redirect", fallsBack: true },
+    { type: "PUSH", by: "the user opening another thread", fallsBack: false },
+  ])("falls back: $fallsBack after $by while deleting", async ({ type, fallsBack }) => {
+    router.state.matches[0]!.params = {
+      environmentId: target.environmentId,
+      threadId: target.threadId,
+    };
+    commands.delete.mockImplementation(async () => {
+      for (const listener of router.history.listeners) listener({ action: { type } });
+      return { _tag: "Success", value: undefined };
+    });
+    expect((await useThreadActions().deleteThread(target))._tag).toBe("Success");
+    expect(router.navigate).toHaveBeenCalledTimes(fallsBack ? 1 : 0);
+    expect(router.history.listeners.size).toBe(0);
   });
 });
 

@@ -788,6 +788,8 @@ it.effect("an agent's clone is not cut off while git is still transferring", () 
       ),
       Layer.provide(
         Layer.mock(GitVcsDriver.GitVcsDriver)({
+          // No LFS filter is configured, so the clone is the only git command.
+          readConfigValue: () => Effect.succeed(null),
           // Like the real driver, the clone fails once it outlives the deadline it was given.
           execute: (input) =>
             Deferred.succeed(started, undefined).pipe(
