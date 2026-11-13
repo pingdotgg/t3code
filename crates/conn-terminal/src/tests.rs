@@ -434,7 +434,15 @@ async fn keeps_scrollback_across_a_restart() {
     };
     let first = TerminalManager::new(with_dir());
     let mut sub = first.attach(attach_input("t7", "term-1"), 1).unwrap();
-    write(&first, "t7", "term-1", "printf 'kept-%s\\033[6n\\n' 1\n").await;
+    // The bold attribute keeps an escape in the history on any shell: dash (Ubuntu's
+    // `/bin/sh`) prints none of its own, and plain history gets no reset.
+    write(
+        &first,
+        "t7",
+        "term-1",
+        "printf 'kept-%s\\033[1m\\033[6n\\n' 1\n",
+    )
+    .await;
     output_contains(&mut sub, "kept-1").await;
     let pid = first.read("t7", "term-1", None).unwrap().pid.unwrap();
     first.shutdown().await;
