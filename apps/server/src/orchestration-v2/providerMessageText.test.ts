@@ -37,6 +37,16 @@ it.each([
     message: { createdBy: "agent", senderThreadId, text: " /git/hello WORLD" },
     expected: " /git/hello WORLD",
   },
+  {
+    label: "a leading skill mention from another thread's agent",
+    message: { createdBy: "agent", senderThreadId, text: "$deploy ship it" },
+    expected: "$deploy ship it\n\n[Sent by the agent in thread thread:child, not by the user.]",
+  },
+  {
+    label: "a dollar amount from another thread's agent",
+    message: { createdBy: "agent", senderThreadId, text: "$25 is the budget." },
+    expected: "[Sent by the agent in thread thread:child, not by the user.]\n\n$25 is the budget.",
+  },
 ] as const)("gives the provider $label with its origin", ({ message, expected }) => {
   expect(providerMessageText(message)).toBe(expected);
 });
