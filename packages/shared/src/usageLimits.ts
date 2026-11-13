@@ -1027,12 +1027,15 @@ export function collectInstanceUsageLimits(
     ...providers.filter((provider) => provider.enabled).map(nativeReport),
     ...sources.flatMap((source) => source.accounts),
   ]);
-  const key = resolveKey(nativeReport(selected));
-  if (key === null) {
+  const selectedReport = nativeReport(selected);
+  if (accountKey(selected.driver, selectedReport.email, selectedReport.usageLimits) === null) {
     const [only, ...others] = report.accounts;
     const unbound = only && others.length === 0 && only.instanceId === undefined;
     return unbound && !limitsNotice(only.limits) ? only.limits : own;
   }
+  // A known login whose workspace is ambiguous must not borrow another account's limits.
+  const key = resolveKey(selectedReport);
+  if (key === null) return own;
   const sameLogin = sources
     .flatMap((source) => source.accounts)
     .filter(

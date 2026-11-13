@@ -1587,6 +1587,19 @@ describe("/usage-limits", () => {
         now,
       ),
     ).toBe(probeFailed);
+    const workspace = (id: string) =>
+      provider({
+        instanceId: ProviderInstanceId.make(`codex-${id}`),
+        auth: { ...selected.auth, workspaceId: id },
+      });
+    expect(
+      collectInstanceUsageLimits(
+        selected.instanceId,
+        [provider({ auth: selected.auth }), workspace("a"), workspace("b")],
+        hub({ id: "other", email: "other@example.com" }),
+        now,
+      ),
+    ).toBeUndefined();
   });
 
   it("surfaces source errors only for sources that carry the selected driver", () => {
