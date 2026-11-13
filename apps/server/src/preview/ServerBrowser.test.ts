@@ -1809,8 +1809,10 @@ it.effect("closing a tab with an unsaved-changes guard still closes it", () =>
 it.effect("a tab whose renderer crashes stays open instead of vanishing", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { broker, tabId } = yield* ready;
-      contexts[0]!.page.emit("crash");
+      const { browser, broker, tabId } = yield* ready;
+      const url = "https://example.com/app";
+      contexts[0]!.page.commit(url);
+      yield* Effect.promise(() => contexts[0]!.page.emitAsync("crash"));
       const status = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
         tabId,
@@ -1818,6 +1820,12 @@ it.effect("a tab whose renderer crashes stays open instead of vanishing", () =>
         input: {},
       });
       expect(status.tabId).toBe(tabId);
+      expect(status.loadError).toEqual({ url, code: -2, description: "Page crashed" });
+      // The crashed page cannot load anything again, so Reload goes to the page that replaced it.
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      yield* viewer.input({ type: "reload" });
+      expect(contexts[1]!.page.goto).toHaveBeenCalledWith(url, expect.anything());
     }),
   ).pipe(Effect.provide(layer)),
 );

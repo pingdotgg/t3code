@@ -99,6 +99,9 @@ export class ServerBrowserContexts {
         "--disable-gpu",
         "--force-device-scale-factor=2",
         "--disable-blink-features=AutomationControlled",
+        // The headless shell binds no BadgeService for service workers and would kill the
+        // renderer of any site whose worker calls navigator.setAppBadge.
+        "--disable-kill-after-bad-ipc",
       ],
       ignoreDefaultArgs: ["--enable-automation"],
       headless: true,
