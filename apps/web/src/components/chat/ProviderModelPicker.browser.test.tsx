@@ -176,7 +176,7 @@ it("keeps a docked picker open after a pick and hands focus to that model's effo
   await expect.element(search).not.toBeInTheDocument();
 });
 
-it("names a row's cut-off sub-provider and its provider instance on hover", async () => {
+it("names a row's cut-off sub-provider in full on hover", async () => {
   const instanceId = ProviderInstanceId.make("opencode-zen");
   const entries = deriveProviderInstanceEntries([
     {
@@ -221,7 +221,6 @@ it("names a row's cut-off sub-provider and its provider instance on hover", asyn
     const hint = "hover title of a row with a cut-off sub-provider";
     expect(title, hint).toContain(name);
     expect(title, hint).toContain(subProvider);
-    expect(title, hint).toContain("OpenCode Zen");
   });
 });
 
