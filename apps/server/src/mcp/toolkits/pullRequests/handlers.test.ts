@@ -641,6 +641,25 @@ describe("listThreadPullRequests", () => {
       ),
     ).toEqual(Array.from({ length: 50 }, (_, index) => index + 51));
   });
+
+  it("filters by state before paging, counting a PR with no known state as open", () => {
+    const merged = (number: number) => {
+      const link = makeLink(number, { headBranch: `feat-${number}` });
+      return { ...link, snapshot: { ...link.snapshot!, state: "merged" as const } };
+    };
+    const thread = {
+      pullRequests: [
+        ...Array.from({ length: 50 }, (_, index) => merged(index + 1)),
+        ...Array.from({ length: 10 }, (_, index) => makeLink(index + 51)),
+      ],
+    };
+    const open = listThreadPullRequests(thread, undefined, ["open"]);
+    expect(open.pullRequests.map((entry) => entry.number)).toEqual(
+      Array.from({ length: 10 }, (_, index) => index + 51),
+    );
+    expect(open.nextCursor).toBeNull();
+    expect(listThreadPullRequests(thread, undefined, ["merged"]).nextCursor).toBeNull();
+  });
 });
 
 describe("pull request guide tools", () => {
