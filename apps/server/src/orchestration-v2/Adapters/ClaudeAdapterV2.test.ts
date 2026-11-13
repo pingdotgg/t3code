@@ -11587,6 +11587,61 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         { source: notification?.source, outcome: notification?.outcome },
         { source: { kind: "monitor" }, outcome: "updated" },
       );
+
+      // A wake buffered behind the queued Monitor continuation must not run under its tag.
+      for (const frame of [
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000906",
+          result: "Covered. Waiting for the rest.",
+          origin: { kind: "task-notification" },
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          uuid: "00000000-0000-4000-8000-000000000907",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeAssistantTextFrame({
+          uuid: "00000000-0000-4000-8000-000000000908",
+          text: "Scheduled answer.",
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000909",
+          result: "Scheduled answer.",
+        }),
+      ]) {
+        yield* harness.offerAndWait(frame);
+      }
+      const assistantTexts = () =>
+        harness.events.flatMap((event) =>
+          event.type === "message.updated" && event.message.role === "assistant"
+            ? [event.message.text]
+            : [],
+        );
+      const startContinuation = (attempt: string, providerTurnOrdinal: number) =>
+        harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(attempt),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+      yield* startContinuation("attempt-claude-monitor-event-2", 2);
+      yield* harness.awaitTerminal(2);
+      assert.notInclude(assistantTexts(), "Scheduled answer.");
+      yield* harness.awaitContinuation(2);
+      assert.isUndefined(harness.continuationRequests[1]?.notification);
+
+      yield* startContinuation("attempt-claude-monitor-event-3", 3);
+      yield* harness.awaitTerminal(3);
+      assert.include(assistantTexts(), "Scheduled answer.");
+      assert.lengthOf(harness.continuationRequests, 2);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
