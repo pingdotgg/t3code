@@ -20,6 +20,7 @@ import {
   toFileViewedBatch,
   toFileViewedStates,
   type FileViewedOverlay,
+  type FileViewedPress,
 } from "./pullRequestFilesViewed.logic";
 
 export interface FilesViewedTarget {
@@ -27,7 +28,11 @@ export interface FilesViewedTarget {
   readonly reference: PullRequestRef;
 }
 
-type FilesViewedBatch = ReadonlyArray<{ readonly path: string; readonly viewed: boolean }>;
+type FilesViewedBatch = ReadonlyArray<{
+  readonly path: string;
+  readonly viewed: boolean;
+  readonly revision?: string;
+}>;
 
 export interface FilesViewedStoreDeps {
   readonly flushDelayMs: number;
@@ -48,7 +53,8 @@ export interface FilesViewedScopeHandle {
   /** Holds the scope open while subscribed; the last reader to leave sends its last presses. */
   readonly subscribe: (listener: () => void) => () => void;
   readonly getSnapshot: () => FileViewedOverlay;
-  readonly setViewed: (path: string, viewed: boolean) => void;
+  /** `revision` is the file's version in the diff the press was made on, when it names one. */
+  readonly setViewed: (path: string, viewed: boolean, revision?: string) => void;
 }
 
 const NO_OVERLAY: FileViewedOverlay = new Map();
@@ -58,7 +64,7 @@ interface FilesViewedScope {
   readonly listeners: Set<() => void>;
   readonly unsubscribeAnswers: () => void;
   overlay: FileViewedOverlay;
-  queued: Map<string, boolean>;
+  queued: Map<string, FileViewedPress>;
   readonly sentBy: Map<string, number>;
   requests: number;
   timer: ReturnType<typeof setTimeout> | null;
@@ -203,10 +209,10 @@ export function createFilesViewedStore(deps: FilesViewedStoreDeps) {
       const handle: FilesViewedScopeHandle = {
         subscribe: (listener) => acquire(key, owned, handle, listener),
         getSnapshot: () => scopes.get(key)?.overlay ?? NO_OVERLAY,
-        setViewed: (path, viewed) => {
+        setViewed: (path, viewed, revision) => {
           const scope = scopes.get(key);
           if (scope === undefined) return;
-          scope.queued.set(path, viewed);
+          scope.queued.set(path, { viewed, revision });
           publish(scope, new Map(scope.overlay).set(path, viewed));
           if (scope.timer !== null) clearTimeout(scope.timer);
           scope.timer = setTimeout(() => flush(key, scope), deps.flushDelayMs);

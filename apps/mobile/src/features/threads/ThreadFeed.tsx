@@ -10,10 +10,10 @@ import {
   withChipIcon,
 } from "../../native/useEnrichedLinkVariants";
 import {
-  enrichedSkillDisplayName,
   enrichedSkillInstructionsPath,
   enrichedSkillReference,
 } from "../../lib/enrichedLinkPresentation";
+import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { ThreadContextDivider } from "./thread-context-divider";
 import {
   ThreadHandoffDivider,
@@ -150,6 +150,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { splitMarkdownDetails } from "../../lib/markdownDetails";
+import { markdownReferenceDefinitions, withReferenceDefinitions } from "../../lib/markdownDocument";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
 import {
   SelectableMarkdownText,
@@ -233,9 +234,10 @@ import { ThreadMcpApp } from "./McpAppWebView";
 import { assetEnvironment, useAssetUrl, useRefreshAssetUrl } from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { readEnvironmentScope, usePreparedConnection } from "../../state/session";
-import { projectEnvironment } from "../../state/projects";
+import { environmentProjects, projectEnvironment } from "../../state/projects";
 import {
   needsWorkspaceBasenameLookup,
+  pickProjectLinkMatch,
   pickWorkspaceLinkMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
   workspaceLinkLookupQuery,
@@ -246,6 +248,7 @@ import {
   useQuietThreadShell,
   useThreadChipIcons,
 } from "../../state/entities";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -259,6 +262,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
 import {
   fileRoutePathSegments,
+  isAbsolutePath,
   resolveFileLinkPath,
   resolveWorkspaceFilePath,
   resolveWorkspaceRelativeFilePath,
@@ -274,6 +278,7 @@ import {
   ThreadMarkdownImageUnavailable,
   ThreadMarkdownImageView,
 } from "./ThreadMarkdownImage";
+import { ZoomableImagePressable } from "./ZoomableImagePressable";
 import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { formatMessageTimestamp } from "./messageTimestamp";
@@ -286,6 +291,7 @@ const WIDE_MARKDOWN_BLOCK_OPTIONS = {
 
 const TURN_FOLD_HEIGHT = 42;
 const FEED_PADDING_TOP = 12;
+const VIEWED_IMAGE_GAP = 8;
 const USER_BUBBLE_HORIZONTAL_PADDING = 3.5 * 3.5;
 const ASSISTANT_ROW_HORIZONTAL_PADDING = 3.5;
 // Virtualization remounts old rows; only newly created content should replay an entrance.
@@ -467,6 +473,8 @@ function MessageImage(props: {
   readonly className: string;
   readonly maxWidth?: number;
   readonly height?: number;
+  readonly accessibilityLabel: string;
+  readonly onPress: () => void;
   readonly onLoad?: () => void;
   readonly onError?: () => void;
 }) {
@@ -481,11 +489,13 @@ function MessageImage(props: {
         })
       : null;
   return (
-    <ExpoImage
-      source={props.source}
-      cachePolicy="memory-disk"
+    <ZoomableImagePressable
+      accessibilityRole="imagebutton"
+      accessibilityLabel={props.accessibilityLabel}
+      onPress={props.onPress}
       style={[
         imageStyle,
+        { overflow: "hidden" },
         props.maxWidth !== undefined
           ? (displaySize ?? {
               width: Math.min(props.maxWidth, MARKDOWN_IMAGE_MAX_WIDTH),
@@ -495,13 +505,19 @@ function MessageImage(props: {
             ? { height: props.height }
             : undefined,
       ]}
-      contentFit={props.maxWidth === undefined ? "cover" : "contain"}
-      onLoad={(event) => {
-        if (props.maxWidth !== undefined) setSize(event.source);
-        props.onLoad?.();
-      }}
-      onError={props.onError}
-    />
+    >
+      <ExpoImage
+        source={props.source}
+        cachePolicy="memory-disk"
+        style={{ width: "100%", height: "100%" }}
+        contentFit={props.maxWidth === undefined ? "cover" : "contain"}
+        onLoad={(event) => {
+          if (props.maxWidth !== undefined) setSize(event.source);
+          props.onLoad?.();
+        }}
+        onError={props.onError}
+      />
+    </ZoomableImagePressable>
   );
 }
 
@@ -546,8 +562,12 @@ function MessageAttachmentImage(props: {
 
   return (
     <PresentationSource identifier={sourceIdentifier}>
-      <Pressable
-        accessibilityRole="imagebutton"
+      <MessageImage
+        key={props.attachmentId}
+        source={assetImageSource(props.environmentId, resource, uri)}
+        className={props.className}
+        maxWidth={props.maxWidth}
+        height={props.height}
         accessibilityLabel={`Open ${props.name}`}
         onPress={() =>
           props.onPressPreview(
@@ -566,22 +586,15 @@ function MessageAttachmentImage(props: {
             }),
           )
         }
-      >
-        <MessageImage
-          source={assetImageSource(props.environmentId, resource, uri)}
-          className={props.className}
-          maxWidth={props.maxWidth}
-          height={props.height}
-          onLoad={() => {
-            retriedImage.current = false;
-          }}
-          onError={() => {
-            if (retriedImage.current) return;
-            retriedImage.current = true;
-            void refreshAssetUrl();
-          }}
-        />
-      </Pressable>
+        onLoad={() => {
+          retriedImage.current = false;
+        }}
+        onError={() => {
+          if (retriedImage.current) return;
+          retriedImage.current = true;
+          void refreshAssetUrl();
+        }}
+      />
     </PresentationSource>
   );
 }
@@ -956,21 +969,18 @@ function PendingMessageMedia(props: {
   if (isImageAttachment(attachment)) {
     const uri = fileBacked ? preview.uri : (attachment.dataUrl ?? attachment.previewUri);
     return (
-      <Pressable
-        accessibilityRole="imagebutton"
+      <MessageImage
+        key={attachment.id}
+        source={uri === null ? undefined : { uri }}
+        className={props.className}
+        maxWidth={props.maxWidth}
+        height={props.height}
         accessibilityLabel={`Open ${attachment.name}`}
         onPress={() => {
           const source = composerImageGallery([attachment])[0];
           if (source) props.onPressPreview(withGallery(source));
         }}
-      >
-        <MessageImage
-          source={uri === null ? undefined : { uri }}
-          className={props.className}
-          maxWidth={props.maxWidth}
-          height={props.height}
-        />
-      </Pressable>
+      />
     );
   }
   if (preview.uri === null) {
@@ -1103,21 +1113,13 @@ function ArtifactTemplateCard(props: {
 }) {
   return (
     <View className="my-2 min-w-0 flex-row items-center gap-3 rounded-2xl border border-border bg-card px-3 py-3">
-      <View className="relative h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-subtle">
+      <View className="h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-subtle">
         <SymbolView
           name={ARTIFACT_TEMPLATE_SYMBOL_BY_KIND[props.template.artifactKind]}
           size={20}
           tintColorClassName="accent-foreground-muted"
           type="monochrome"
         />
-        <View className="absolute -right-1 -bottom-1 h-4 w-4 items-center justify-center rounded-full bg-fuchsia-500">
-          <SymbolView
-            name={{ ios: "sparkles", android: "auto_awesome" }}
-            size={9}
-            tintColor="white"
-            type="monochrome"
-          />
-        </View>
       </View>
       <View className="min-w-0 flex-1">
         <Text className="font-t3-bold text-sm text-foreground" numberOfLines={1}>
@@ -1173,6 +1175,8 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
 // Folds split first, so an artifact card inside a fold stays inside it.
 function AssistantMarkdownBlocks(props: {
   readonly markdown: string;
+  /** The reply's reference definitions, passed down by the enclosing fold. */
+  readonly definitions?: ReadonlyArray<string> | undefined;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
@@ -1180,15 +1184,20 @@ function AssistantMarkdownBlocks(props: {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
   readonly models: ReturnType<typeof useModelMentions>;
 }) {
-  const blocks = useMemo(
-    () =>
-      splitMarkdownDetails(props.markdown).map((block) =>
-        block.kind === "details"
-          ? block
-          : { ...block, segments: splitCodexArtifactTemplateMarkdown(block.markdown) },
-      ),
-    [props.markdown],
-  );
+  const { blocks, definitions } = useMemo(() => {
+    const blocks = splitMarkdownDetails(props.markdown).map((block) =>
+      block.kind === "details"
+        ? block
+        : { ...block, segments: splitCodexArtifactTemplateMarkdown(block.markdown) },
+    );
+    const [first] = blocks;
+    // A reply rendered as one document resolves its own references; skip the extra parse.
+    const whole = blocks.length === 1 && first?.kind === "markdown" && first.segments.length === 1;
+    return {
+      blocks,
+      definitions: props.definitions ?? (whole ? [] : markdownReferenceDefinitions(props.markdown)),
+    };
+  }, [props.markdown, props.definitions]);
   return blocks.map((block) => {
     if (block.kind === "details") {
       return (
@@ -1197,7 +1206,7 @@ function AssistantMarkdownBlocks(props: {
           summary={block.summary}
           initiallyOpen={block.open}
         >
-          <AssistantMarkdownBlocks {...props} markdown={block.body} />
+          <AssistantMarkdownBlocks {...props} markdown={block.body} definitions={definitions} />
         </MarkdownDetailsFold>
       );
     }
@@ -1216,7 +1225,9 @@ function AssistantMarkdownBlocks(props: {
       return (
         <SelectableMarkdownText
           key={`markdown:${offset}`}
-          markdown={renderCodexInlineDirectivesAsMarkdown(segment.markdown)}
+          markdown={renderCodexInlineDirectivesAsMarkdown(
+            withReferenceDefinitions(segment.markdown, definitions),
+          )}
           skills={props.skills}
           models={props.models}
           textStyle={props.markdownStyles.nativeTextStyle}
@@ -1340,6 +1351,8 @@ function useMarkdownStyles(): MarkdownStyleSets {
 function AgentMessageFoldHeader(props: {
   readonly environmentId: EnvironmentId;
   readonly senderThreadId?: ThreadId;
+  /** A linked environment's sender title, for when this client cannot reach it. */
+  readonly senderTitle?: string;
   readonly summary: string;
   readonly expanded: boolean;
   readonly onToggle: () => void;
@@ -1348,7 +1361,7 @@ function AgentMessageFoldHeader(props: {
   const senderShell = useQuietThreadShell(
     props.senderThreadId ? scopeThreadRef(props.environmentId, props.senderThreadId) : null,
   );
-  const label = senderShell?.title.trim() || "Agent";
+  const label = senderShell?.title.trim() || props.senderTitle?.trim() || "Agent";
   return (
     <Pressable
       accessibilityRole="button"
@@ -1391,8 +1404,12 @@ function AgentMessageFoldHeader(props: {
 function OpenSenderThreadButton(props: {
   readonly environmentId: EnvironmentId;
   readonly senderThreadId: ThreadId;
+  /** In a linked environment, shown only when this client is connected to it. */
+  readonly linked?: boolean;
 }) {
   const openLinkedThread = useOpenLinkedThread();
+  const linkedEnvironment = useEnvironmentPresentation(props.linked ? props.environmentId : null);
+  if (props.linked && linkedEnvironment.presentation === null) return null;
   return (
     <Pressable
       accessibilityRole="link"
@@ -1714,6 +1731,7 @@ function renderFeedEntry(
         rowSizing={props.workRowSizing}
         iconSubtleColor={iconSubtleColor}
         label={entry.label}
+        providerStartingLabel={entry.providerStartingLabel}
       />
     );
   }
@@ -1727,6 +1745,37 @@ function renderFeedEntry(
         frameWidth={props.contentWidth}
         iconColor={iconSubtleColor}
       />
+    );
+  }
+
+  if (entry.type === "sent-message") {
+    return (
+      <View className="mb-1 px-1">
+        <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
+          <AssistantMarkdownContent
+            markdown={entry.text}
+            environmentId={props.environmentId}
+            markdownStyles={markdownStyles.assistant}
+            linkHandlers={props.markdownLinkHandlers}
+            onUseArtifactTemplate={props.onUseArtifactTemplate}
+            renderImage={props.renderMarkdownImage}
+            skills={props.skills}
+          />
+        </MarkdownImageAvailableWidthContext>
+      </View>
+    );
+  }
+
+  if (entry.type === "viewed-images") {
+    const thumbnailWidth = Math.floor((props.contentWidth - VIEWED_IMAGE_GAP) / 2);
+    return (
+      <View className="flex-row flex-wrap pb-2" style={{ gap: VIEWED_IMAGE_GAP }}>
+        {entry.paths.map((path) => (
+          <View key={path} style={{ width: thumbnailWidth }}>
+            {props.renderViewedImage({ href: path, alt: null, title: null })}
+          </View>
+        ))}
+      </View>
     );
   }
 
@@ -1910,6 +1959,12 @@ function renderFeedEntry(
     if (isUser) {
       const enterAnimated = isFreshTimestamp(message.createdAt);
       const foldRowId = presentation.attribution === "agent" ? `agent:${message.id}` : null;
+      // A linked environment's agent sent it from a thread there.
+      const senderRef =
+        message.linkedSender ??
+        (message.senderThreadId
+          ? scopeThreadRef(props.environmentId, message.senderThreadId)
+          : null);
       const foldExpanded = foldRowId !== null && (props.expandedWorkRows[foldRowId] ?? false);
       const bubbleBodyVisible = foldRowId === null || foldExpanded;
       const intentBadge = props.userMessageGrouping.continuesSteer
@@ -2030,8 +2085,9 @@ function renderFeedEntry(
               {presentation.attribution === "guest" ? <GuestBubbleTint /> : null}
               {foldRowId !== null ? (
                 <AgentMessageFoldHeader
-                  environmentId={props.environmentId}
-                  senderThreadId={message.senderThreadId}
+                  environmentId={senderRef?.environmentId ?? props.environmentId}
+                  senderThreadId={senderRef?.threadId}
+                  {...(message.linkedSender ? { senderTitle: message.linkedSender.title } : {})}
                   summary={
                     replaceComposerContextReferences(presentation.text, (ref) => ref.label)
                       .split(/\r?\n/)
@@ -2138,10 +2194,11 @@ function renderFeedEntry(
           ) : null}
           {bubbleBodyVisible ? (
             <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
-              {foldRowId !== null && message.senderThreadId ? (
+              {foldRowId !== null && senderRef ? (
                 <OpenSenderThreadButton
-                  environmentId={props.environmentId}
-                  senderThreadId={message.senderThreadId}
+                  environmentId={senderRef.environmentId}
+                  senderThreadId={senderRef.threadId}
+                  linked={message.linkedSender !== undefined}
                 />
               ) : null}
               {intentBadge ? (
@@ -2816,6 +2873,85 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     // A v1 link names no environment, so it falls back to this message's.
     return scopeThreadRef(props.environmentId, link.threadId);
   };
+  // The file a chat link names: in this workspace, else in the one other project that has it.
+  const findFileLinkTarget = async (
+    linkPath: string,
+    path: string,
+    signal: AbortSignal,
+  ): Promise<string> => {
+    const relativePath = resolveWorkspaceRelativeFilePath(props.workspaceRoot, path);
+    if (
+      !props.workspaceRoot ||
+      !relativePath ||
+      /[\\/]$/.test(linkPath) ||
+      workspaceLinkLookupQuery(linkPath, props.workspaceRoot) === null ||
+      !readEnvironmentScope(props.environmentId, AuthFilesystemReadScope)
+    ) {
+      return relativePath ?? path;
+    }
+    const workspaceRoot = props.workspaceRoot;
+    const originalPath = resolveWorkspaceFilePath(workspaceRoot, relativePath);
+    const queryOptions = { signal, reportFailure: false, reportDefect: false };
+    const searchRoot = (root: string) =>
+      executeAtomQuery(
+        appAtomRegistry,
+        projectEnvironment.searchEntries({
+          environmentId: props.environmentId,
+          input: {
+            cwd: root,
+            query: workspaceLinkLookupQuery(relativePath, root) ?? relativePath,
+            kind: "file",
+            limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
+          },
+        }),
+        queryOptions,
+      ).then((result) => ({
+        root,
+        entries: result._tag === "Success" ? result.value.entries : [],
+      }));
+    const lookup = async () => {
+      const own = await searchRoot(workspaceRoot);
+      let match = pickWorkspaceLinkMatch(relativePath, workspaceRoot, own.entries);
+      const otherProject = match === null;
+      if (otherProject) {
+        const threadProjectId = appAtomRegistry.get(
+          environmentThreadShells.threadShellAtom(
+            scopeThreadRef(props.environmentId, props.threadId),
+          ),
+        )?.projectId;
+        const otherRoots = appAtomRegistry
+          .get(environmentProjects.projectsAtom)
+          .flatMap((project) =>
+            project.environmentId === props.environmentId &&
+            project.id !== threadProjectId &&
+            project.workspaceRoot !== workspaceRoot
+              ? [project.workspaceRoot]
+              : [],
+          );
+        match =
+          otherRoots.length === 0
+            ? null
+            : pickProjectLinkMatch(relativePath, await Promise.all(otherRoots.map(searchRoot)));
+      }
+      if (!match || match === relativePath || signal.aborted) return relativePath;
+      const metadata = await executeAtomQuery(
+        appAtomRegistry,
+        projectEnvironment.fileMetadata({
+          environmentId: props.environmentId,
+          input: { path: originalPath },
+        }),
+        queryOptions,
+      );
+      // Another project's file never replaces a thread-local file the search missed.
+      return metadata._tag === "Success" &&
+        (needsWorkspaceBasenameLookup(relativePath) && !otherProject
+          ? metadata.value?.kind !== "directory"
+          : metadata.value === null)
+        ? match
+        : relativePath;
+    };
+    return lookup().catch(() => relativePath);
+  };
   const onMarkdownLinkPress = (href: string, imageEmbed = false) => {
     markdownLinkRequest.current?.abort();
     const request = new AbortController();
@@ -2883,8 +3019,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (presentation.kind === "file") {
       const path = resolveFileLinkPath(props.workspaceRoot, presentation.path);
       if (path === null) return;
-      const relativePath = resolveWorkspaceRelativeFilePath(props.workspaceRoot, path);
-      const openAt = (target: string) => {
+      void findFileLinkTarget(presentation.path, path, request.signal).then((target) => {
         if (request.signal.aborted) return;
         void Haptics.selectionAsync();
         navigation.navigate("ThreadFile", {
@@ -2893,62 +3028,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           path: fileRoutePathSegments(target),
           ...(presentation.line ? { line: String(presentation.line) } : {}),
         });
-      };
-      if (
-        props.workspaceRoot &&
-        relativePath &&
-        !/[\\/]$/.test(presentation.path) &&
-        workspaceLinkLookupQuery(presentation.path, props.workspaceRoot) !== null &&
-        readEnvironmentScope(props.environmentId, AuthFilesystemReadScope)
-      ) {
-        const workspaceRoot = props.workspaceRoot;
-        const originalPath = resolveWorkspaceFilePath(props.workspaceRoot, relativePath);
-        void executeAtomQuery(
-          appAtomRegistry,
-          projectEnvironment.searchEntries({
-            environmentId: props.environmentId,
-            input: {
-              cwd: workspaceRoot,
-              query: workspaceLinkLookupQuery(relativePath, workspaceRoot) ?? relativePath,
-              kind: "file",
-              limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
-            },
-          }),
-          { signal: request.signal, reportFailure: false, reportDefect: false },
-        ).then(
-          (result) => {
-            const match =
-              result._tag === "Success"
-                ? pickWorkspaceLinkMatch(relativePath, workspaceRoot, result.value.entries)
-                : null;
-            if (!match || match === relativePath) {
-              openAt(relativePath);
-              return;
-            }
-            if (request.signal.aborted) return;
-            void executeAtomQuery(
-              appAtomRegistry,
-              projectEnvironment.fileMetadata({
-                environmentId: props.environmentId,
-                input: { path: originalPath },
-              }),
-              { signal: request.signal, reportFailure: false, reportDefect: false },
-            ).then(
-              (metadata) =>
-                openAt(
-                  metadata._tag === "Success" &&
-                    (needsWorkspaceBasenameLookup(relativePath)
-                      ? metadata.value?.kind !== "directory"
-                      : metadata.value === null)
-                    ? match
-                    : relativePath,
-                ),
-              () => openAt(relativePath),
-            );
-          },
-          () => openAt(relativePath),
-        );
-      } else openAt(relativePath ?? path);
+      });
       return;
     }
 
@@ -2986,7 +3066,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       const skill = enrichedSkillReference(href, props.skills);
       if (skill) {
         return {
-          title: enrichedSkillDisplayName(skill),
+          title: formatProviderSkillDisplayName(skill),
           actions: [
             {
               id: "open-skill",
@@ -3030,8 +3110,37 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       switch (actionId) {
         case "copy-full-path":
         case "copy-relative-path": {
-          const clipboardPath = fileChipClipboardPath(target, actionId);
-          if (clipboardPath !== undefined) copyTextWithHaptic(clipboardPath);
+          const presentation = resolveMarkdownLinkPresentation(href);
+          const path =
+            presentation.kind === "file"
+              ? resolveFileLinkPath(props.workspaceRoot, presentation.path)
+              : null;
+          if (presentation.kind !== "file" || path === null) return;
+          markdownLinkRequest.current?.abort();
+          const request = new AbortController();
+          markdownLinkRequest.current = request;
+          void findFileLinkTarget(presentation.path, path, request.signal).then((found) => {
+            if (request.signal.aborted) return;
+            const fullPath =
+              props.workspaceRoot && !isAbsolutePath(found)
+                ? resolveWorkspaceFilePath(props.workspaceRoot, found)
+                : found;
+            const clipboardPath = fileChipClipboardPath(
+              {
+                ...target,
+                ...(target.fullPath ? { fullPath } : {}),
+                ...(target.relativePath
+                  ? {
+                      relativePath:
+                        resolveWorkspaceRelativeFilePath(props.workspaceRoot, fullPath) ??
+                        target.relativePath,
+                    }
+                  : {}),
+              },
+              actionId,
+            );
+            if (clipboardPath !== undefined) copyTextWithHaptic(clipboardPath);
+          });
           return;
         }
         case "open-file":
@@ -3250,7 +3359,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const jumpRunId =
     jumpReady &&
     !presentedFeed.some((entry) => entry.type === "message" && entry.id === jumpToMessageId)
-      ? messageFoldRunId(props.feed, jumpToMessageId)
+      ? messageFoldRunId(props.feed, jumpToMessageId, presentedFeed)
       : null;
   if (jumpRunId && !expandedTurnIds.has(jumpRunId)) {
     setInteractionState((current) => ({

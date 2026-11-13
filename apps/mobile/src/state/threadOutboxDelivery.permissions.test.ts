@@ -41,7 +41,7 @@ const state = vi.hoisted(() => ({
   },
   config: {
     shellThreadFamilies: false,
-    providers: [{ instanceId: "codex", driver: "codex" }],
+    providers: [{ instanceId: "codex", driver: "codex", models: [] }],
     environment: { capabilities: {} },
   },
 }));
@@ -136,6 +136,7 @@ vi.mock("./use-thread-outbox", async () => {
   return {
     editingQueuedMessageIdsAtom: Atom.make({}).pipe(Atom.keepAlive),
     dispatchingQueuedMessageIdAtom: Atom.make<MessageId | null>(null).pipe(Atom.keepAlive),
+    retryingQueuedMessageIdsAtom: Atom.make({}).pipe(Atom.keepAlive),
     threadOutboxShellStatusesAtom: Atom.make(new Map([["secondary", "live"]])),
   };
 });
