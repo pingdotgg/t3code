@@ -6,42 +6,73 @@ client contract, `/mcp`, the provider CLI protocols). We do not translate the Ty
 
 **Base:** Conn `origin/main` at `b685417bb6157408d3c3b78544dfd5bbc3e67753` (2026-11-13).
 **Contract:** `packages/contracts` last changed in `415dd488bac9dee7f7d2a869595f3c8f1da26863`
-(the 2026-11-13 upstream sync). `crates/conn-contract/methods.json` records it, and every track
-works against it.
+(the 2026-11-13 upstream sync). `crates/conn-contract/methods.json` records it.
 
-## Build and test
+## Run
 
 ```sh
 cd native/conn-server
-cargo build
-cargo test
-cargo clippy --all-targets
-cargo run -p conn-server                         # 127.0.0.1, free port; prints the address
-cargo run -p conn-server -- --listen 0.0.0.0:3773
+cargo build --release
+./target/release/conn-server --state-dir /tmp/conn-state --project ~/code/my-repo
 ```
 
-With `vp i` done in the repo root:
+| Flag                           | Default                                    | Meaning                                                      |
+| ------------------------------ | ------------------------------------------ | ------------------------------------------------------------ |
+| `--listen <host:port>`         | `127.0.0.1:0` (free port)                  | Use `0.0.0.0:<port>` to serve other machines                 |
+| `--state-dir <dir>`            | `$CONN_SERVER_HOME`, else `~/.conn-server` | Environment id, sessions, `engine.sqlite`                    |
+| `--project <dir>` (repeatable) | the current folder                         | Folders offered as projects; the first is the server's `cwd` |
+| `--label <name>`               | `$HOSTNAME`, else `conn-server`            | Environment label in clients                                 |
+
+At start it prints the address, the environment id, the method coverage and a `pairingUrl`.
+Turns run the `claude` CLI from `PATH` with the user's own Claude settings, as `apps/server`
+does. Stop the server with SIGTERM. A turn that was running when the server stopped ends as
+failed on the next start, with a message to send it again.
+
+## Pair a client
+
+The server speaks the remote-environment path: bearer token plus WebSocket ticket. In Conn,
+open **Settings › Connections › Add environment › Remote link** and paste the `pairingUrl`
+(`http://<host>:<port>/pair#token=<code>`). The code is single use and valid 24 hours; each
+start prints a new one. Pairings persist in `<state-dir>/sessions.json`, so a paired client
+reconnects after a restart without pairing again. There are no browser cookie sessions, so
+the server's own origin (`/pair` in a browser) does not work; use Connections.
+
+## Tests
+
+From `native/conn-server`:
 
 ```sh
-# Regenerate the method list after a contract change:
-node native/conn-server/crates/conn-contract/tools/dump-methods.mjs
-# Call a running server with Effect's own RpcClient:
-node native/conn-server/crates/conn-server/tools/effect-client.mjs http://127.0.0.1:<port>
+cargo test --workspace            # all crates, offline
+cargo clippy --workspace --all-targets
+cargo fmt --check
+cargo test -p conn-provider-claude live_ -- --ignored --test-threads=1   # real CLI, Haiku
 ```
 
-The stub answers `GET /health` and, on `/ws`, `server.probe` (→ `{}`). Every other method
-returns a `ConnServerNotSupported` defect. The stub has **no auth**: keep it on localhost.
+From the repo root, after `vp i` and `cargo build --release --examples` in this folder:
+
+| Check             | Command                                                                                                                                                                                               | Proves                                                                                               |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Effect client     | `node native/conn-server/crates/conn-server/tools/effect-client.mjs native/conn-server/target/release/conn-server`                                                                                    | Pairing, ticket, connect streams decode in Effect's `RpcClient`                                      |
+| Ack window        | same, with `native/conn-server/target/release/examples/effect_fixture --fixture`                                                                                                                      | Ack window and `Interrupt`                                                                           |
+| Client reducers   | `cargo run -p conn-engine --features fake-provider --example export_turn -- /tmp/x.json` then `node native/conn-server/crates/conn-engine/tools/client-check.mjs /tmp/x.json`                         | Shell and thread streams rebuild the right state in the client's reducers                            |
+| Replay            | `node native/conn-server/crates/conn-server/tools/replay.mjs native/conn-server/target/release/examples/replay_server`                                                                                | Every call in the `remote` and `turn` recordings gets a decodable answer or the not-supported defect |
+| Recordings decode | `cargo test --manifest-path native/conn-server/fixtures/decode-check/Cargo.toml`                                                                                                                      | Every recorded frame decodes with `conn_wire`                                                        |
+| Contract current  | `node native/conn-server/crates/conn-contract/tools/gen-contract.mjs --check`                                                                                                                         | Generated types match `packages/contracts`                                                           |
+| Real web client   | `(cd apps/web && vp build)` then `node native/conn-server/fixtures/recorder/record.mjs pairing rust-turn rust-restart rust-permission rust-stop --rust native/conn-server/target/release/conn-server` | Pair, turn, restart, approval and stop in headless Chromium; see `fixtures/README.md`                |
+
+`replay_server` is `conn-server` with the engine's scripted fake provider, so the replay calls
+no model. The `rust-*` scenarios spend about five Haiku turns.
 
 ## Crates
 
-| Crate                  | Holds                                                        | Owner                                                                          |
-| ---------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------ |
-| `conn-wire`            | Effect RPC frame types and JSON codec                        | track (a)                                                                      |
-| `conn-contract`        | Contract types: method list, ids, placeholders for schemas   | track (b)                                                                      |
-| `conn-engine`          | `Engine` trait; event store, projections, streams            | track (d)                                                                      |
-| `conn-provider`        | `Provider` and `Session` traits, `ProviderEvent`             | fixed (integrator)                                                             |
-| `conn-provider-claude` | The Claude provider                                          | track (c)                                                                      |
-| `conn-server`          | Binary: HTTP, `/ws` session, pairing, method table, handlers | track (a), except `methods/orchestration.rs` (d) and `methods/provider.rs` (c) |
+| Crate                  | Holds                                                                 |
+| ---------------------- | --------------------------------------------------------------------- |
+| `conn-wire`            | Effect RPC frame types and JSON codec                                 |
+| `conn-contract`        | Generated contract types (`tools/gen-contract.mjs`), method list, ids |
+| `conn-engine`          | `Engine` trait; SQLite event store, projections, streams, turn runner |
+| `conn-provider`        | `Provider` and `Session` traits, `ProviderEvent`                      |
+| `conn-provider-claude` | The Claude provider over the `claude` CLI's stdio                     |
+| `conn-server`          | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
 
 Dependencies point one way: `conn-server` → `conn-engine` → `conn-provider` → `conn-contract`;
 `conn-provider-claude` → `conn-provider`; `conn-server` → `conn-wire`. `conn-wire` and
@@ -52,7 +83,7 @@ module lives in `conn-server/src/methods/` anyway, one file per area.
 
 ## The three interfaces
 
-These are fixed. Change one only with the integrator, and say so in your report.
+Change one only on purpose, and list the change in the commit.
 
 ### 1. Provider (`crates/conn-provider/src/lib.rs`)
 
@@ -100,20 +131,25 @@ pub enum EngineError<E> { Rejected(E), Internal(String) }   // → Fail exit / D
 pub trait Engine: Send + Sync {
     fn dispatch(&self, command: Command)
         -> BoxFuture<'_, Result<DispatchCommandResult, EngineError<DispatchCommandError>>>;
-    fn launch_thread(&self, input: ThreadLaunchInput)
-        -> BoxFuture<'_, Result<ThreadLaunchResult, EngineError<ThreadLaunchError>>>;
     fn subscribe_shell(&self, input: SubscribeShellInput)
         -> BoxFuture<'_, Result<Subscription<ShellStreamItem, GetShellSnapshotError>, EngineError<GetShellSnapshotError>>>;
     fn subscribe_thread(&self, input: SubscribeThreadInput)
         -> BoxFuture<'_, Result<Subscription<ThreadStreamItem, GetThreadProjectionError>, EngineError<GetThreadProjectionError>>>;
+    // JSON in and out; each defaults to an Internal error.
+    fn launch_thread(&self, input: Value) -> BoxFuture<'_, Result<Value, EngineError<Value>>>;
+    fn get_thread_projection(&self, thread_id: ThreadId) -> ...;   // getThreadProjection
+    fn shell_snapshot(&self) -> ...;                               // GET /api/orchestration/shell
+    fn thread_snapshot(&self, thread_id: ThreadId) -> ...;         // GET .../threads/:id, None → 404
 }
 ```
 
-These back `orchestration.dispatchCommand`, `orchestration.launchThread`,
-`orchestration.subscribeShell` and `orchestration.subscribeThread`. Clients start every new
-thread from the composer with `launchThread` (thread plus first message), and send later
-messages with `dispatchCommand` `message.dispatch`. An `Err` item ends a stream with a typed failure; a closed
-channel ends it successfully; dropping the receiver unsubscribes.
+These back `orchestration.dispatchCommand`, `launchThread`, `subscribeShell`,
+`subscribeThread`, `getThreadProjection` and the two HTTP snapshot routes. Clients start every
+new thread from the composer with `launchThread` (thread plus first message), and send later
+messages with `dispatchCommand` `message.dispatch`. An `Err` item ends a stream with a typed
+failure; a closed channel ends it successfully; dropping the receiver unsubscribes. The engine
+trusts provider events to be valid contract rows; it fills in `threadId` and `runId` and
+assigns ordinals.
 
 ### 3. Method table (`crates/conn-server/src/table.rs`)
 
@@ -121,7 +157,7 @@ channel ends it successfully; dropping the receiver unsubscribes.
 table.unary("server.probe", |ctx: CallContext, input: I| async { Ok::<O, Failure>(..) });
 table.stream("orchestration.subscribeShell", |ctx, input: I| async { Ok::<ItemStream, Failure>(rx) });
 table.get(tag)        // Option<&Handler>; None → not_supported_exit(tag)
-table.coverage()      // "1 of 235 methods (0 of 32 streams)", plus the missing tags
+table.coverage()      // "15 of 235 methods (9 of 32 streams)", plus the missing tags
 ```
 
 - Registration panics at startup on a tag not in the contract, a duplicate, or a unary handler
@@ -171,79 +207,18 @@ T3 adds on top (`apps/server/src/ws.ts`): the `/ws` URL must carry `orchestratio
 - **axum 0.8** with `default-features = false` (`http1`, `ws`, `json`, `query`, `tokio`). It
   is hyper plus a router and WebSocket upgrade; writing those by hand saves little memory.
 - **serde / serde_json** for all wire and contract values.
-- Release profile as in `native/resource-monitor`: thin LTO, one codegen unit, `panic = "abort"`,
-  stripped. The release stub is 1.1 MB; on macOS arm64 its RSS was 2.6 MB idle and 3.2 MB
-  after two calls. That is total RSS on a Mac, not the container measure the spike must prove.
-- Track (d) will add `rusqlite` with the `bundled` feature. Track (c) uses `tokio::process`.
+- Release profile: `opt-level = "z"`, thin LTO, one codegen unit, `panic = "abort"`,
+  stripped. See [Status](#status) for its memory.
+- **rusqlite** with `bundled` SQLite for the event store; `tokio::process` for the `claude` CLI;
+  `getrandom` and `sha2` for credentials.
 - No `async-trait`, no `futures`: traits return `BoxFuture`, streams are `tokio::sync::mpsc`.
-
-## Tracks
-
-Every track branches from `spike/rust-server`, works in its own worktree, and commits only in
-the folders it owns. Every track keeps `cargo test` and `cargo clippy --all-targets` green.
-
-### (a) Wire and pairing
-
-- **Owns:** `crates/conn-wire`, `crates/conn-server` except `methods/orchestration.rs` and
-  `methods/provider.rs`.
-- **Implements:** the `/ws` session (replace the stub in `src/session.rs`): ack window,
-  `Interrupt`, `Eof`, notifications, `discard`, frame parts, the `orchestrationProtocol` check,
-  per-method scopes; the pairing flow and connect methods listed under
-  [What clients need](#what-clients-need-read-from-the-code), in `methods/server.rs`.
-- **Tests alone:** frame tests in `conn-wire`; session tests against `MethodTable` with fake
-  handlers; `tools/effect-client.mjs` with the real Effect client; then Conn desktop.
-- **Must not touch:** `conn-engine`, `conn-provider*`, `conn-contract`, the two files above.
-
-### (b) Contract types
-
-- **Owns:** `crates/conn-contract`.
-- **Implements:** generated Rust types from `packages/contracts` at the pinned commit. Replace
-  `src/placeholder.rs` with generated types of the same names; keep `src/ids.rs` names. Extend
-  `tools/dump-methods.mjs` (or a sibling script) to emit what you need, such as JSON Schema.
-- **Tests alone:** round-trip real payloads: shell and thread snapshots, domain events and
-  commands from `apps/server` tests and the track (e) recordings.
-- **Must not touch:** other crates. If a name must change, list every call site for the
-  integrator.
-
-### (c) Claude provider
-
-- **Owns:** `crates/conn-provider-claude`, `crates/conn-server/src/methods/provider.rs`.
-- **Implements:** `Provider` and `Session` for the `claude` CLI over stdio. Reference:
-  `ClaudeAdapterV2.ts`, the recordings in `apps/server/src/orchestration-v2/testkit`, and the
-  probe in `~/apps/conn-rust-claude-probe`. T3's MCP tools reach Claude over HTTP
-  (`type: "http"`), not in-process.
-- **Tests alone:** feed recorded CLI output through the session and assert the
-  `ProviderEvent`s; one live turn on the cheapest model.
-- **Must not touch:** `conn-provider` (the trait), the engine, the wire.
-
-### (d) Engine
-
-- **Owns:** `crates/conn-engine`, `crates/conn-server/src/methods/orchestration.rs`.
-- **Implements:** `Engine`: event store on SQLite, shell and thread projections, the streams,
-  `launchThread`, and driving `Provider` sessions from `message.dispatch` and `launchThread`.
-  The stream rules are in the trait docs and below.
-- **Tests alone:** dispatch commands into an in-memory or temp-file store; assert stream items;
-  a fake `Provider` (see the test in `conn-provider`) stands in for Claude.
-- **Must not touch:** `conn-provider` (the trait), `conn-provider-claude`, the wire.
-
-### (e) Session recording
-
-- **Owns:** `native/conn-server/fixtures/`.
-- **Implements:** a recording of a real Conn desktop session against the TS server: connect,
-  shell stream, new thread, one Claude turn. Store one file per session,
-  `fixtures/sessions/<name>.ndjson`, one wire frame per line:
-  `{"dir":"in"|"out","ms":<since connect>,"frame":<frame as sent>}` (`in` = client → server),
-  joined from frame parts. Also note the HTTP calls the client made around it.
-- **Tests alone:** every line decodes with `conn_wire` (`FromClient` for `in`, `FromServer`
-  for `out`).
-- **Must not touch:** any crate.
 
 ## What clients need (read from the code)
 
 Read from `packages/client-runtime` and `apps/web` at the pinned commit. References are to
 `packages/client-runtime/src` unless noted.
 
-### Pairing and connect (track a)
+### Pairing and connect
 
 No DPoP: it is only used on the T3 Connect relay path (`authorization/service.ts`
 `authorizeDpop`). Direct pairing is bearer token + WebSocket ticket.
@@ -295,7 +270,7 @@ without a user action; the rest belong to the credentials, test-login and annota
 absent capability hides its feature, and `shellThreadFamilies` or `shellOlderSettled` make the
 client send `omit*` shell flags and call methods we would then need.
 
-### Streams (track d)
+### Streams
 
 - **Shell:** full `snapshot`, then `synchronized`, then `project.*`/`thread.*` items with an
   increasing `sequence` above `snapshotSequence`. Clients always send
@@ -310,19 +285,76 @@ client send `omit*` shell flags and call methods we would then need.
   no `idTable`, no history cursor. Without a history cursor the client never calls `/history`.
 - **Also emit `thread.updated` on the shell** as a turn runs, so the sidebar status moves.
 
-### HTTP orchestration routes: none needed
+### HTTP orchestration routes
 
-- **`GET /api/orchestration/shell`:** a failure falls back to the socket snapshot
-  (`state/shellSnapshotHttp.ts`).
-- **`GET /api/orchestration/threads/:id/bounded`:** tried on a cold thread open. Any failure
-  except a structured `EnvironmentResourceNotFoundError` falls back to the socket
-  (`state/boundedThreadSnapshotHttp.ts`). That structured error marks the thread deleted, so
-  never send it for an unimplemented route. Axum's plain 404 is safe.
-- **`/history`, `/transcript`:** feature routes only.
-- **Advertising `threadSnapshotPagination: true`** in `ServerConfig` skips the bounded attempt
-  entirely.
+`GET /api/orchestration/shell` and `GET /api/orchestration/threads/:id` are served. Both need
+`x-t3-orchestration-protocol: 2` (else 400) and a bearer with `orchestration:read` (else 401 or
+403). The shell route ignores its query and always sends the full snapshot. An unknown thread
+is a plain 404, never `EnvironmentResourceNotFoundError`, which would make the client mark the
+thread deleted. `/bounded`, `/history` and `/transcript` are not routed; the client falls back
+to the socket.
 
-## Still open
+### Opt-in flags
 
-- **Placeholder switch.** Code that reads placeholder internals (`.0["field"]`) breaks when (b)
-  lands. Build and read contract values through `from_json` / `to_json`.
+- **Thread stream:** the client sends `acceptBoundedSnapshot`, `acceptDeferredWork`,
+  `acceptCompactTurnItems` and `acceptCompactIds` whenever it has an HTTP client and a history
+  controller (`state/threads.ts`), whatever the server advertises. So it sends them to this
+  server too. The engine ignores them: full bodies, plain ids, never an `idTable`.
+- **Shell stream:** `omitIdleSubagents` and `omitOlderSettled` are sent only when the descriptor
+  advertises `shellThreadFamilies` / `shellOlderSettled` (`state/shell.ts`). This server
+  advertises neither, so the client does not send them. If a client sent them anyway, the full
+  snapshot it gets is still valid.
+
+## Status
+
+**Coverage:** 15 of 235 methods (9 of 32 streams), from the method table at startup.
+
+| Area          | Methods                                                                                                                                                |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Connect       | `subscribeServerConfig`, `subscribeServerLifecycle`, `server.probe`, `server.reportClientActivity`                                                     |
+| Threads       | `orchestration.subscribeShell`, `subscribeThread`, `launchThread`, `dispatchCommand`, `getThreadProjection`                                            |
+| Empty answers | `subscribeTerminalMetadata`, `subscribeProjectClones`, `subscribeDeviceState`, `panels.requests`, `scheduledTasks.subscribe`, `preview.reportProfiles` |
+
+`dispatchCommand` handles `thread.create`, `message.dispatch`, `run.interrupt`, `thread.stop`,
+`runtime-request.respond`, `thread.archive`/`unarchive`/`delete`/`visit`,
+`thread.metadata.update`, and the runtime-mode, interaction-mode and model-selection setters.
+
+**Proven with the real web client** (headless Chromium, Haiku): pairing through Settings ›
+Connections, the project in the sidebar, a new thread with one full answer, an approved Bash
+prompt in Supervised mode, Stop during a tool call, and a server restart on the same state: the
+client reconnects by itself, shows the thread, and runs a second turn.
+
+**Memory** (macOS arm64, release, the server process only, one client, one Haiku turn):
+
+| Build                    | Binary  | Idle after connect             | Peak during turn | After turn |
+| ------------------------ | ------- | ------------------------------ | ---------------- | ---------- |
+| `opt-level = 3`          | 7.5 MiB | RSS 6.5 MiB, footprint 2.8 MiB | 9.4 / 3.9        | 9.9 / 4.0  |
+| `opt-level = "z"` (kept) | 4.8 MiB | RSS 5.7 MiB, footprint 2.5 MiB | 7.5 / 3.4        | 7.7 / 3.6  |
+
+That is not the container measure, which runs on Linux.
+
+**Linux:** the Rust code checks clean for `x86_64-unknown-linux-gnu` and `-musl`
+(`rustup target add` only). The full build needs a C cross-compiler for bundled SQLite
+(`libsqlite3-sys`), which this Mac lacks. Build on Linux, or use `cargo zigbuild` with zig
+installed.
+
+## Known gaps
+
+What a real Conn session hits that this server does not do:
+
+- **Not supported (error in that view):** VCS (`subscribeVcsStatus`, `subscribeVcsBranch`,
+  `vcs.listRefs`, `server.discoverSourceControl`), diffs (`review.getDiffPreview`), files
+  (`projects.readFile`, `assets.createUrl`, so no project favicon), previews, annotations,
+  discovered local servers, archived and older-settled shell reads, terminals, provider
+  refresh, settings writes, and every other method not listed above.
+- **No checkpoints:** turns are not captured as git refs, so no diff or restore.
+- **One project set at start:** clients cannot add projects.
+- **Busy thread:** a message sent while a turn runs is refused, not queued or steered.
+- **No title generation:** `generateTitle` is ignored; the title is the first message.
+- **No `/mcp`:** agents cannot reach T3 tools.
+- **Claude only:** no Codex or other providers. Gaps in the Claude provider are listed in
+  `crates/conn-provider-claude/README.md` (subagents, attachments, todo lists, retries).
+- **Auth:** bearer and ticket only. No cookie sessions, DPoP, relay or access management.
+  `pairing-token` issues standard codes only.
+- **Desktop-local backend:** Conn desktop's own `--bootstrap-fd` start is not implemented.
+- **Each start prints a new pairing code**; unspent ones expire after 24 hours.
