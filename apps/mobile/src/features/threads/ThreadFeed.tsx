@@ -2691,6 +2691,13 @@ function DisclosureRow(props: {
 const HTML_RENDER_FIELD_GAP = 16;
 const HTML_RENDER_FIELD_KEYBOARD_WAIT_MS = 1_500;
 
+// isVisible() turns true as the keyboard starts opening; scrolling mid-animation would fight the
+// list's own keyboard scroll.
+function keyboardSettledOpen() {
+  const keyboard = KeyboardController.state();
+  return KeyboardController.isVisible() && Date.now() >= keyboard.timestamp + keyboard.duration;
+}
+
 const THREAD_FEED_MAINTAIN_SCROLL_AT_END = {
   animated: false,
   on: { dataChange: true, itemLayout: true, layout: true },
@@ -3461,7 +3468,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       const list = listRef.current;
       if (cancelled || !list || keyboardHeight <= 0) return;
       const field = await measure();
-      if (cancelled) return;
+      if (cancelled || field === null) return;
       const visibleBottom =
         windowHeight - keyboardHeight - contentInsetEndAdjustment.get() - HTML_RENDER_FIELD_GAP;
       if (field.bottom <= visibleBottom) return;
@@ -3470,7 +3477,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         animated: true,
       });
     };
-    if (KeyboardController.isVisible()) {
+    if (keyboardSettledOpen()) {
       fieldReveal.current = { cancel: () => (cancelled = true) };
       void reveal();
       return;
