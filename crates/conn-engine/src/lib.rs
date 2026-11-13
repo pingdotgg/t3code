@@ -10,16 +10,34 @@
 //! server passes them through without knowing their shape. The engine owns the event store,
 //! the projections, and the providers it drives (`conn-provider`).
 //!
-//! Track (d) implements this trait in this crate. The trait itself is fixed: change it only
-//! with the integrator.
+//! [`SqliteEngine`] implements it on SQLite. The three stream and dispatch signatures are
+//! fixed; the other methods back `orchestration.launchThread`, `getThreadProjection` and the
+//! HTTP snapshots, and use JSON until `conn-contract` has their types.
+
+#![recursion_limit = "256"]
 
 use std::{future::Future, pin::Pin};
 
+mod commands;
+mod engine;
+#[cfg(test)]
+mod engine_tests;
+#[cfg(any(test, feature = "fake-provider"))]
+pub mod fake;
+mod runner;
+mod shell;
+mod store;
+mod streams;
+mod time;
+
+pub use engine::{EngineConfig, ProjectConfig, SqliteEngine};
+
 use conn_contract::{
     Command, DispatchCommandError, DispatchCommandResult, GetShellSnapshotError,
-    GetThreadProjectionError, ShellStreamItem, SubscribeShellInput, SubscribeThreadInput,
+    GetThreadProjectionError, ShellStreamItem, SubscribeShellInput, SubscribeThreadInput, ThreadId,
     ThreadStreamItem,
 };
+use serde_json::Value;
 use tokio::sync::mpsc;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -73,6 +91,45 @@ pub trait Engine: Send + Sync {
             EngineError<GetThreadProjectionError>,
         >,
     >;
+
+    /// `orchestration.launchThread`: creates a thread and sends its first message in one call,
+    /// which is how a client starts a new thread. Input `OrchestrationV2ThreadLaunchInput`,
+    /// result `OrchestrationV2ThreadLaunchResult`, error `OrchestrationV2ThreadLaunchError`.
+    fn launch_thread(&self, _input: Value) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
+        unsupported("orchestration.launchThread")
+    }
+
+    /// `orchestration.getThreadProjection`: `OrchestrationV2ThreadProjection`.
+    fn get_thread_projection(
+        &self,
+        _thread_id: ThreadId,
+    ) -> BoxFuture<'_, Result<Value, EngineError<GetThreadProjectionError>>> {
+        unsupported("orchestration.getThreadProjection")
+    }
+
+    /// `GET /api/orchestration/shell`: `OrchestrationV2ShellSnapshot`.
+    fn shell_snapshot(&self) -> BoxFuture<'_, Result<Value, EngineError<GetShellSnapshotError>>> {
+        unsupported("the shell snapshot")
+    }
+
+    /// `GET /api/orchestration/threads/:threadId`: `OrchestrationV2ThreadDetailSnapshot`, or
+    /// `None` for an unknown thread (404).
+    fn thread_snapshot(
+        &self,
+        _thread_id: ThreadId,
+    ) -> BoxFuture<'_, Result<Option<Value>, EngineError<GetThreadProjectionError>>> {
+        unsupported("the thread snapshot")
+    }
+}
+
+fn unsupported<T: Send + 'static, E: Send + 'static>(
+    what: &'static str,
+) -> BoxFuture<'static, Result<T, EngineError<E>>> {
+    Box::pin(async move {
+        Err(EngineError::Internal(format!(
+            "this engine does not support {what}"
+        )))
+    })
 }
 
 #[cfg(test)]
