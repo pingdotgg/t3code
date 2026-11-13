@@ -21,11 +21,12 @@ import {
   connectionRouteAddress,
   connectionRouteId,
   connectionRouteLabel,
+  connectionRouteMcpUrl,
   connectionRoutes,
   isLearned,
   pendingRouteOrder,
 } from "@t3tools/client-runtime/connection";
-import { GripVerticalIcon, PlusIcon, XIcon } from "lucide-react";
+import { CopyIcon, GripVerticalIcon, PlusIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
@@ -39,10 +40,14 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export function EnvironmentRoutesList({
   environment,
+  relayHttpBaseUrl,
   onAddRoute,
+  onCopyMcpUrl,
 }: {
   readonly environment: EnvironmentPresentation;
+  readonly relayHttpBaseUrl: string | undefined;
   readonly onAddRoute: () => void;
+  readonly onCopyMcpUrl: (url: string) => void;
 }) {
   const saved = connectionRoutes(environment.entry);
   const savedIds = saved.map((route) => connectionRouteId(route.target));
@@ -108,7 +113,9 @@ export function EnvironmentRoutesList({
                 route={route}
                 position={index + 1}
                 inUse={connectionRouteId(route.target) === activeRouteId}
+                mcpUrl={connectionRouteMcpUrl(route, relayHttpBaseUrl)}
                 removable={routes.length > 1 && !isLearned(route)}
+                onCopyMcpUrl={onCopyMcpUrl}
                 onRemove={() => void confirmRemove(route)}
               />
             ))}
@@ -129,13 +136,17 @@ function SortableRouteRow({
   route,
   position,
   inUse,
+  mcpUrl,
   removable,
+  onCopyMcpUrl,
   onRemove,
 }: {
   readonly route: ConnectionRoute;
   readonly position: number;
   readonly inUse: boolean;
+  readonly mcpUrl: string | null;
   readonly removable: boolean;
+  readonly onCopyMcpUrl: (url: string) => void;
   readonly onRemove: () => void;
 }) {
   const id = connectionRouteId(route.target);
@@ -176,6 +187,24 @@ function SortableRouteRow({
           </p>
         ) : null}
       </div>
+      {mcpUrl !== null ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost-muted"
+                size="icon-xs"
+                aria-label={`Copy ${label} MCP URL`}
+                onClick={() => onCopyMcpUrl(mcpUrl)}
+              />
+            }
+          >
+            <CopyIcon className="size-3" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">Copy MCP URL</TooltipPopup>
+        </Tooltip>
+      ) : null}
       <button
         type="button"
         ref={setActivatorNodeRef}

@@ -11,9 +11,14 @@ import {
   BearerConnectionTarget,
   ConnectionTransientError,
   RelayConnectionTarget,
+  SshConnectionTarget,
   type SupervisorConnectionState,
 } from "./model.ts";
-import { environmentMcpUrl, presentConnectionState } from "./presentation.ts";
+import {
+  connectionRouteMcpUrl,
+  environmentMcpUrl,
+  presentConnectionState,
+} from "./presentation.ts";
 
 const TARGET = new BearerConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -112,6 +117,34 @@ describe("connection presentation", () => {
         relayHttpBaseUrl: "https://tunnel.example.test",
       }),
     ).toBe("https://tunnel.example.test/mcp");
+  });
+
+  it("gives each route its own MCP URL, or none when it has no stable address", () => {
+    const bearer: ConnectionRoute = { target: ENTRY.target, profile: ENTRY.profile };
+    const relay: ConnectionRoute = {
+      target: new RelayConnectionTarget({
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+      }),
+      profile: Option.none(),
+    };
+    const ssh: ConnectionRoute = {
+      target: new SshConnectionTarget({
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+        connectionId: "ssh",
+      }),
+      profile: Option.none(),
+    };
+
+    expect(connectionRouteMcpUrl(bearer, "https://tunnel.example.test")).toBe(
+      "https://environment.example.test/mcp",
+    );
+    expect(connectionRouteMcpUrl(relay, "https://tunnel.example.test")).toBe(
+      "https://tunnel.example.test/mcp",
+    );
+    expect(connectionRouteMcpUrl(relay, undefined)).toBeNull();
+    expect(connectionRouteMcpUrl(ssh, "https://tunnel.example.test")).toBeNull();
   });
 
   it("distinguishes initial connection, reconnect, and retry errors", () => {
