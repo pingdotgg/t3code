@@ -593,7 +593,8 @@ export const OrchestratorMcpThreadInterruptInput = Schema.Struct({
   /**
    * Stop the thread as its Stop button does instead: interrupt its running
    * turn whichever run that is, hold its queued messages, end its pull request
-   * watches and stop every task it delegated. `runId` is then not used.
+   * watches and stop every task it delegated. `runId` then only matters for a run
+   * still queued behind another run's live turn: that run is cancelled and nothing else stops.
    */
   stop: Schema.optional(Schema.Boolean),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),

@@ -578,6 +578,7 @@ const make = Effect.gen(function* () {
    * Stops the task's own thread there as its Stop button does: its running turn, queued
    * messages, pull request watches and delegated tasks. `key` names the stop (the follower
    * sends one, each cancel its own), and each is recorded there once however often it is sent.
+   * Named for the task's run, so one still queued behind another task's turn ends alone.
    */
   const stopThere = (
     scope: ThreadScope,
@@ -589,6 +590,7 @@ const make = Effect.gen(function* () {
       .interruptThread(scope, remote.environmentId, {
         threadId: remote.threadId,
         stop: true,
+        ...(remote.runId === undefined ? {} : { runId: remote.runId }),
         ...(reason === undefined ? {} : { reason }),
         clientRequestId: `${key}:${remote.threadId}`,
       })

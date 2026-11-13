@@ -4187,138 +4187,173 @@ describe("OrchestratorMcpService thread stop", () => {
       queued: true,
       stop: { reason: "Make room", message: "Stopped by an agent: Make room" },
     },
-  ])("t3_thread_interrupt stop reports the run it interrupted on $name", ({ queued, stop }) =>
-    Effect.gen(function* () {
-      const cwd = yield* checkpointWorkspace("mcp-thread-stop");
-      const layerAdapters = ProviderAdapterRegistry.layerSingle(liveAdapter(cwd));
-      const layerDatabase = SqlitePersistence.layerMemory;
-      const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
-        { name: "mcp-thread-stop" },
-        layerAdapters,
-        { databaseLayer: layerDatabase, runEffectWorker: false },
-      );
-      const layerThreads = ThreadManagementService.layer.pipe(
-        Layer.provideMerge(layerOrchestrator),
-        Layer.provide(ServerSettings.layerTest()),
-        Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
-      );
-      const layerTest = layerOrchestratorService.pipe(
-        Layer.provideMerge(layerThreads),
-        Layer.provide(
-          Layer.mergeAll(
-            NodeServices.layer,
-            NodeCrypto.layer,
-            layerAdapters,
-            ServerSettings.layerTest(),
-            Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
-            Layer.mock(ProjectService.ProjectService)({}),
-            Layer.mock(SecretRequests.SecretRequests)({}),
-            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+    {
+      name: "a running turn, stopped for its queued run",
+      queued: true,
+      forQueuedRun: true,
+      stop: { reason: undefined, message: "Stopped by an agent" },
+    },
+  ])(
+    "t3_thread_interrupt stop reports the run it interrupted on $name",
+    ({ queued, forQueuedRun, stop }) =>
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("mcp-thread-stop");
+        const layerAdapters = ProviderAdapterRegistry.layerSingle(liveAdapter(cwd));
+        const layerDatabase = SqlitePersistence.layerMemory;
+        const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
+          { name: "mcp-thread-stop" },
+          layerAdapters,
+          { databaseLayer: layerDatabase, runEffectWorker: false },
+        );
+        const layerThreads = ThreadManagementService.layer.pipe(
+          Layer.provideMerge(layerOrchestrator),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+        );
+        const layerTest = layerOrchestratorService.pipe(
+          Layer.provideMerge(layerThreads),
+          Layer.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              NodeCrypto.layer,
+              layerAdapters,
+              ServerSettings.layerTest(),
+              Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+              Layer.mock(ProjectService.ProjectService)({}),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+              Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+              Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+            ),
           ),
-        ),
-      );
-      yield* Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const send = (text: string, type: "start_immediately" | "queue_after_active") =>
-          orchestrator.dispatch({
-            type: "message.dispatch",
-            commandId: CommandId.make(`send:${text}`),
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const send = (text: string, type: "start_immediately" | "queue_after_active") =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`send:${text}`),
+              threadId,
+              messageId: MessageId.make(`message:${text}`),
+              text,
+              attachments: [],
+              dispatchMode: { type },
+              createdBy: "user",
+              creationSource: "web",
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("create"),
             threadId,
-            messageId: MessageId.make(`message:${text}`),
-            text,
-            attachments: [],
-            dispatchMode: { type },
+            projectId: ProjectId.make("project:mcp-stop"),
+            title: "Stop",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
             createdBy: "user",
             creationSource: "web",
           });
-        yield* orchestrator.dispatch({
-          type: "thread.create",
-          commandId: CommandId.make("create"),
-          threadId,
-          projectId: ProjectId.make("project:mcp-stop"),
-          title: "Stop",
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: cwd,
-          createdBy: "user",
-          creationSource: "web",
-        });
-        const running = yield* orchestrator.streamDomainEvents.pipe(
-          Stream.filter(
-            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
-          ),
-          Stream.take(1),
-          Stream.runDrain,
-          Effect.forkScoped,
-        );
-        yield* send("work", "start_immediately");
-        yield* worker.drain();
-        yield* Fiber.join(running);
-        if (queued) yield* send("later", "queue_after_active");
-        const before = yield* orchestrator.getThreadProjection(threadId);
-        const runningRun = before.runs.find((run) => run.status === "running")!;
-        assert.equal(before.runs.filter((run) => run.status === "queued").length, queued ? 1 : 0);
-        // A task the thread delegated, running when the thread is stopped.
-        const childRunning = yield* orchestrator.streamDomainEvents.pipe(
-          Stream.filter(
-            (event) =>
-              event.type === "provider-turn.updated" &&
-              event.threadId !== threadId &&
-              event.payload.status === "running",
-          ),
-          Stream.take(1),
-          Stream.runDrain,
-          Effect.forkScoped,
-        );
-        yield* orchestrator.dispatch({
-          type: "delegated_task.request",
-          commandId: CommandId.make("delegate"),
-          parentThreadId: threadId,
-          parentRunId: runningRun.id,
-          parentNodeId: runningRun.rootNodeId!,
-          task: "child work",
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          completionWake: "always",
-          createdBy: "agent",
-          creationSource: "mcp",
-        });
-        yield* worker.drain();
-        yield* Fiber.join(childRunning);
-        const childThreadId = (yield* orchestrator.getThreadProjection(threadId)).subagents[0]!
-          .childThreadId!;
+          const running = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "provider-turn.updated" && event.payload.status === "running",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          yield* send("work", "start_immediately");
+          yield* worker.drain();
+          yield* Fiber.join(running);
+          if (queued) yield* send("later", "queue_after_active");
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          const runningRun = before.runs.find((run) => run.status === "running")!;
+          assert.equal(before.runs.filter((run) => run.status === "queued").length, queued ? 1 : 0);
+          // A task the thread delegated, running when the thread is stopped.
+          const childRunning = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "provider-turn.updated" &&
+                event.threadId !== threadId &&
+                event.payload.status === "running",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          yield* orchestrator.dispatch({
+            type: "delegated_task.request",
+            commandId: CommandId.make("delegate"),
+            parentThreadId: threadId,
+            parentRunId: runningRun.id,
+            parentNodeId: runningRun.rootNodeId!,
+            task: "child work",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            completionWake: "always",
+            createdBy: "agent",
+            creationSource: "mcp",
+          });
+          yield* worker.drain();
+          yield* Fiber.join(childRunning);
+          const childThreadId = (yield* orchestrator.getThreadProjection(threadId)).subagents[0]!
+            .childThreadId!;
 
-        const stopped = yield* service.interruptThread(client, {
-          threadId,
-          stop: true,
-          clientRequestId: "stop",
-          ...(stop.reason === undefined ? {} : { reason: stop.reason }),
-        });
-        assert.deepEqual(stopped, {
-          threadId,
-          runId: runningRun.id,
-          status: "interrupt_requested",
-        });
-        // An agent's Stop must not read as the user's, on its thread or a task it delegated.
-        const interruptMessages = (id: ThreadId) =>
-          orchestrator
-            .getThreadProjection(id)
-            .pipe(
-              Effect.map(({ turnItems }) =>
-                turnItems.flatMap((item) =>
-                  item.type === "run_interrupt_request" ? [item.message] : [],
-                ),
+          if (forQueuedRun === true) {
+            const queuedRun = before.runs.find((run) => run.status === "queued")!;
+            // Sent twice, as a linked environment's follower repeats a stop.
+            for (const _attempt of [1, 2]) {
+              assert.deepEqual(
+                yield* service.interruptThread(client, {
+                  threadId,
+                  stop: true,
+                  runId: queuedRun.id,
+                  clientRequestId: "stop-queued",
+                }),
+                { threadId, runId: null, status: "no_active_run" },
+              );
+            }
+            const after = yield* orchestrator.getThreadProjection(threadId);
+            assert.deepEqual(
+              after.runs.map((run) => run.status),
+              ["running", "cancelled"],
+            );
+            assert.isTrue(
+              (yield* orchestrator.getThreadProjection(childThreadId)).runs.every(
+                (run) => run.status === "running",
               ),
             );
-        assert.deepEqual(yield* interruptMessages(threadId), [stop.message]);
-        assert.deepEqual(yield* interruptMessages(childThreadId), [stop.message]);
-      }).pipe(Effect.provide(layerTest));
-    }),
+            return;
+          }
+          const stopped = yield* service.interruptThread(client, {
+            threadId,
+            stop: true,
+            clientRequestId: "stop",
+            ...(stop.reason === undefined ? {} : { reason: stop.reason }),
+          });
+          assert.deepEqual(stopped, {
+            threadId,
+            runId: runningRun.id,
+            status: "interrupt_requested",
+          });
+          // An agent's Stop must not read as the user's, on its thread or a task it delegated.
+          const interruptMessages = (id: ThreadId) =>
+            orchestrator
+              .getThreadProjection(id)
+              .pipe(
+                Effect.map(({ turnItems }) =>
+                  turnItems.flatMap((item) =>
+                    item.type === "run_interrupt_request" ? [item.message] : [],
+                  ),
+                ),
+              );
+          assert.deepEqual(yield* interruptMessages(threadId), [stop.message]);
+          assert.deepEqual(yield* interruptMessages(childThreadId), [stop.message]);
+        }).pipe(Effect.provide(layerTest));
+      }),
   );
 });

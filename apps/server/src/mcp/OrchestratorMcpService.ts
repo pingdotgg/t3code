@@ -3382,6 +3382,49 @@ const make = Effect.gen(function* () {
       // A peer from before `stop` drops it when decoding, so it interrupts
       // the run instead, as this call did then.
       if (input.stop === true) {
+        // A linked environment stops a task by its run. One that never started, behind another
+        // run's live turn, has only its queued turn to end; a failed cancel means it started.
+        const runs =
+          input.runId === undefined
+            ? []
+            : (yield* threadManagement
+                .getThreadRecords(input.threadId, ["runs"])
+                .pipe(Effect.mapError(threadManagementFailure))).runs;
+        const unstarted = runs.find(
+          (run) =>
+            run.id === input.runId &&
+            run.startedAt === null &&
+            (run.status === "queued" || run.status === "cancelled"),
+        );
+        if (
+          unstarted !== undefined &&
+          runs.some(
+            (run) =>
+              run.status === "preparing" || run.status === "starting" || run.status === "running",
+          ) &&
+          (unstarted.status === "cancelled" ||
+            (yield* threadManagement
+              .dispatch({
+                type: "queued-run.cancel",
+                commandId: stableCommandId({
+                  scope,
+                  requestKey: key,
+                  operation: "thread-stop-queued-run",
+                }),
+                threadId: input.threadId,
+                runId: unstarted.id,
+              })
+              .pipe(
+                Effect.as(true),
+                Effect.orElseSucceed(() => false),
+              )))
+        ) {
+          return {
+            threadId: input.threadId,
+            runId: null,
+            status: "no_active_run",
+          } satisfies OrchestratorMcpThreadInterruptResult;
+        }
         const commandId = stableCommandId({ scope, requestKey: key, operation: "thread-stop" });
         const reason = agentStopReason(input.reason);
         // The cause goes to the log; the caller learns only that the stop failed.
