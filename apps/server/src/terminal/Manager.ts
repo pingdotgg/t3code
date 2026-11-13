@@ -66,7 +66,10 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import {
+  codexSqliteHomeEnvironment,
+  resolveCodexHomeLayout,
+} from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 import type { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -1539,11 +1542,27 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
   if (instance.driver === "codex") {
     const config = decodeCodexSettings(instance.config ?? {});
     if (Option.isSome(config)) {
-      const layout = yield* resolveCodexHomeLayout(config.value).pipe(
-        Effect.provideService(Path.Path, input.path),
-      );
+      const hostEnvironment = yield* HostProcess.Environment;
+      // A shadow shares the home the instance environment names, as the provider resolves it.
+      const environmentHome = (yield* mergeProviderInstanceEnvironment(
+        instance.environment,
+        hostEnvironment,
+      )).CODEX_HOME;
+      const layout = yield* resolveCodexHomeLayout(
+        config.value.shadowHomePath.trim() &&
+          !config.value.homePath.trim() &&
+          environmentHome?.trim()
+          ? { ...config.value, homePath: environmentHome }
+          : config.value,
+      ).pipe(Effect.provideService(Path.Path, input.path));
       if (layout.effectiveHomePath)
         resolved = { ...resolved, CODEX_HOME: layout.effectiveHomePath };
+      // A terminal's Codex must open the same SQLite home as the provider's.
+      const sqliteHome = codexSqliteHomeEnvironment(layout, {
+        ...hostEnvironment,
+        ...resolved,
+      }).CODEX_SQLITE_HOME;
+      if (layout.mode === "authOverlay") resolved = { ...resolved, CODEX_SQLITE_HOME: sqliteHome };
     }
   } else if (instance.driver === "claudeAgent") {
     const config = decodeClaudeSettings(instance.config ?? {});

@@ -2317,13 +2317,6 @@ it.layer(
       expectedHome: "/configured/codex",
     },
     {
-      name: "Codex shadow home",
-      driver: "codex",
-      variable: "CODEX_HOME",
-      config: { homePath: "/configured/codex", shadowHomePath: "/configured/codex-shadow" },
-      expectedHome: "/configured/codex-shadow",
-    },
-    {
       name: "Claude home",
       driver: "claudeAgent",
       variable: "CLAUDE_CONFIG_DIR",
@@ -2351,6 +2344,41 @@ it.layer(
               driver: ProviderDriverKind.make(driver),
               environment: [{ name: variable, value: "~/.environment-account", sensitive: false }],
               config,
+            },
+          },
+        }),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    { name: "the shared home", host: {}, expectedSqliteHome: "/environment/codex" },
+    {
+      name: "a host override",
+      host: { CODEX_SQLITE_HOME: "/host/sqlite" },
+      expectedSqliteHome: "/host/sqlite",
+    },
+  ])("opens a Codex shadow terminal with SQLite in $name", ({ host, expectedSqliteHome }) =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+        deriveProviderInstanceConfigMap,
+        serverSettings: yield* ServerSettings.ServerSettingsService,
+        path,
+        rawProviderInstanceId: "shadow_home",
+        env: undefined,
+      }).pipe(Effect.provideService(HostProcess.Environment, host));
+
+      expect(environment.CODEX_HOME).toBe(path.resolve("/configured/codex-shadow"));
+      expect(environment.CODEX_SQLITE_HOME).toBe(path.resolve(expectedSqliteHome));
+    }).pipe(
+      Effect.provide(
+        ServerSettings.layerTest({
+          providerInstances: {
+            [ProviderInstanceId.make("shadow_home")]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [{ name: "CODEX_HOME", value: "/environment/codex", sensitive: false }],
+              config: { shadowHomePath: "/configured/codex-shadow" },
             },
           },
         }),

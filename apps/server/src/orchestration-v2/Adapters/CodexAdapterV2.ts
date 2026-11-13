@@ -1781,7 +1781,10 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   const serverConfig = yield* ServerConfig;
   const homeLayout = yield* resolveCodexHomeLayout(config);
 
-  yield* materializeCodexShadowHome(homeLayout).pipe(
+  const processEnvironment = yield* materializeCodexShadowHome(
+    homeLayout,
+    yield* mergeProviderInstanceEnvironment(environment, hostEnvironment),
+  ).pipe(
     Effect.mapError(
       (cause) =>
         new ProviderAdapterDriverCreateError({
@@ -1803,7 +1806,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   return yield* makeCodexAdapterV2({
     instanceId,
     settings,
-    environment: yield* mergeProviderInstanceEnvironment(environment, hostEnvironment),
+    environment: processEnvironment,
     clientFactory,
     digest,
     fileSystem,
