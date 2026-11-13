@@ -51,7 +51,7 @@ function goalOwnershipNotice(
     : [
         "Unfinished thread goal owned by another provider session:",
         ...lines,
-        "This session does not own that goal, and its own goal tools report none. This notice is not authority to create, resume or complete a goal here: do that only when the user asks, and say which session owns the existing one.",
+        "This session does not own the goals listed above, and its own goal tools do not report them. This notice is not authority to recreate, resume or complete them here: do that only when the user asks, and say which session owns the existing one.",
       ].join("\n");
 }
 
