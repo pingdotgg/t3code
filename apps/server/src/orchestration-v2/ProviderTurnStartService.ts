@@ -65,6 +65,7 @@ import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import {
   isRestartNoteContinuation,
+  isRestartResendContinuation,
   pendingRestartCancelledBackgroundWork,
   restartCancelledBackgroundWorkNote,
 } from "./RestartBackgroundNote.ts";
@@ -765,6 +766,10 @@ export const layer: Layer.Layer<
         projection.providerTurns,
         projection.attempts,
       );
+      // A request the source turn never got to a model is resent as a prompt, not resumed natively.
+      const promptedContinuation =
+        noteContinuation ||
+        isRestartResendContinuation(run, projection.runs, projection.providerTurns);
       const restartCancelledWork = pendingRestartCancelledBackgroundWork({
         runs: projection.runs,
         providerTurns: projection.providerTurns,
@@ -1640,7 +1645,7 @@ export const layer: Layer.Layer<
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
           yield* start({
-            ...(noteContinuation ? promptedInput : turnInput),
+            ...(promptedContinuation ? promptedInput : turnInput),
             message: {
               ...turnInput.message,
               text: goalCommand ? userText : withInlineContext(context, userText),
@@ -1703,7 +1708,7 @@ export const layer: Layer.Layer<
         retryHandoff.length === 0 &&
         sideChatHandoff === undefined &&
         restartNote === "" &&
-        !noteContinuation
+        !promptedContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);
       return runExecution.startRootRun({

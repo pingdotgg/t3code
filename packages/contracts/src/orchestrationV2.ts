@@ -1218,6 +1218,11 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   tokenUsage: Schema.optional(OrchestrationV2ProviderTurnTokenUsage),
   turnTokenUsage: Schema.optional(TurnTokenUsage),
+  /**
+   * When the provider confirmed it recorded the turn's user input in its native history. Null while
+   * unconfirmed; absent on turns from servers that did not track it, whose acceptance is unknown.
+   */
+  inputRecordedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   /** The model the provider reported running this turn's root agent, which can differ from the requested one. */
   model: Schema.optional(TrimmedNonEmptyString),
 });
@@ -2492,10 +2497,17 @@ export const OrchestrationV2ContextTransferJson = OrchestrationV2ContextTransfer
 );
 export type OrchestrationV2ContextTransferJson = typeof OrchestrationV2ContextTransferJson.Type;
 
+/** A confirmation survives later updates that omit it or still report the turn as unconfirmed. */
+export const mergeProviderTurnInputRecordedAt = <T>(
+  current: T | null | undefined,
+  next: T | null | undefined,
+): T | null | undefined => next ?? current ?? (next === null ? null : current);
+
 export const OrchestrationV2ProviderTurnJson = OrchestrationV2ProviderTurn.mapFields((fields) => ({
   ...fields,
   startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  inputRecordedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
 }));
 export type OrchestrationV2ProviderTurnJson = typeof OrchestrationV2ProviderTurnJson.Type;
 

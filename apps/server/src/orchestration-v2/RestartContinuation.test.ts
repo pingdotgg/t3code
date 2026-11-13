@@ -120,7 +120,6 @@ it("requires matching saved native state for an unfinished root run", () => {
         },
       ],
     },
-    { ...projection, providerTurns: [] },
     ...[
       "queued",
       "preparing",
@@ -133,6 +132,30 @@ it("requires matching saved native state for an unfinished root run", () => {
     ].map((status) => ({ ...projection, runs: [{ ...projection.runs[0]!, status }] })),
   ])
     assert.isUndefined(restartContinuationRun(invalid as OrchestrationV2ThreadProjection, now));
+});
+
+it("recovers a running Codex request before its first provider turn", () => {
+  const projection = makeProjection();
+  assert.equal(restartContinuationRun({ ...projection, providerTurns: [] }, now)?.id, runId);
+  const claude = ProviderDriverKind.make("claudeAgent");
+  assert.isUndefined(
+    restartContinuationRun(
+      {
+        ...projection,
+        providerTurns: [],
+        providerThreads: projection.providerThreads.map((thread) => ({
+          ...thread,
+          driver: claude,
+          nativeThreadRef: { ...thread.nativeThreadRef!, driver: claude },
+        })),
+        providerSessions: projection.providerSessions.map((session) => ({
+          ...session,
+          driver: claude,
+        })),
+      },
+      now,
+    ),
+  );
 });
 
 it("continues a live turn whose session the adapter never marked running", () => {
@@ -1092,6 +1115,118 @@ it.effect("does not continue a cut /compact or /logout turn", () =>
     } as unknown as OrchestrationV2ThreadProjection);
     assert.lengthOf(texts, 1);
   }),
+);
+
+const cutRequest = {
+  id: MessageId.make("message:user"),
+  text: "find the cheapest return flights",
+  attachments: [
+    {
+      type: "image" as const,
+      id: "attachment:dates",
+      name: "dates.png",
+      mimeType: "image/png",
+      sizeBytes: 1,
+    },
+  ],
+  context: { version: 1 as const, records: [] },
+};
+
+it.effect.each(["codex", "acpRegistry"] as const)(
+  "resends a %s request and its image before the provider accepted it",
+  (driverKind) =>
+    Effect.gen(function* () {
+      const cut = cutMidTurn();
+      const unconfirmed = cut.providerTurns.map((turn) => ({ ...turn, inputRecordedAt: null }));
+      for (const providerTurns of [
+        unconfirmed,
+        // Pre-turn compaction reports usage before Codex records the new request.
+        unconfirmed.map((turn) => ({ ...turn, tokenUsage: { usedTokens: 1 } })),
+      ]) {
+        const dispatches = yield* continuationDispatches({
+          ...cut,
+          messages: [cutRequest],
+          providerTurns,
+          providerThreads: cut.providerThreads.map((thread) => ({
+            ...thread,
+            driver: ProviderDriverKind.make(driverKind),
+          })),
+        } as unknown as OrchestrationV2ThreadProjection);
+        assert.deepEqual(
+          dispatches.map((command) => [command.text, command.attachments, command.context]),
+          [[cutRequest.text, cutRequest.attachments, cutRequest.context]],
+        );
+      }
+    }),
+);
+
+it.effect(
+  "resumes natively once recorded, for turns from before tracking, and for other providers",
+  () =>
+    Effect.gen(function* () {
+      const cut = cutMidTurn();
+      const inputRecordedAt = DateTime.makeUnsafe("2026-10-03T11:59:00.000Z");
+      const recorded = {
+        ...cut,
+        messages: [cutRequest],
+        providerTurns: cut.providerTurns.map((turn) => ({ ...turn, inputRecordedAt })),
+      } as unknown as OrchestrationV2ThreadProjection;
+      const recordedAcp = {
+        ...recorded,
+        providerThreads: recorded.providerThreads.map((thread) => ({
+          ...thread,
+          driver: ProviderDriverKind.make("acpRegistry"),
+        })),
+      };
+      // A goal's first native turn recorded the request; its cut follow-up turn records none.
+      const goalFollowUp = {
+        ...cut,
+        messages: [
+          { ...cutRequest, text: "/goal find the cheapest return flights", attachments: [] },
+        ],
+        providerTurns: [
+          { ...cut.providerTurns[0]!, ordinal: 1, status: "completed", inputRecordedAt },
+          {
+            ...cut.providerTurns[0]!,
+            id: "turn:goal-follow-up",
+            ordinal: 2,
+            inputRecordedAt: null,
+          },
+        ],
+      } as unknown as OrchestrationV2ThreadProjection;
+      // Servers before acceptance tracking left the field off, so the request may already have run.
+      const legacy = {
+        ...cut,
+        messages: [cutRequest],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const legacyAcp = {
+        ...legacy,
+        providerThreads: legacy.providerThreads.map((thread) => ({
+          ...thread,
+          driver: ProviderDriverKind.make("acpRegistry"),
+        })),
+      };
+      const claude = ProviderDriverKind.make("claudeAgent");
+      const otherDriver = {
+        ...cut,
+        messages: [cutRequest],
+        providerThreads: cut.providerThreads.map((thread) => ({ ...thread, driver: claude })),
+      } as unknown as OrchestrationV2ThreadProjection;
+      for (const projection of [
+        recorded,
+        recordedAcp,
+        goalFollowUp,
+        legacy,
+        legacyAcp,
+        otherDriver,
+      ]) {
+        const commands = yield* continuationDispatches(projection);
+        assert.lengthOf(commands, 1);
+        assert.notInclude(commands[0]!.text, cutRequest.text);
+        assert.deepEqual(commands[0]!.attachments, []);
+        assert.isUndefined(commands[0]!.context);
+      }
+    }),
 );
 
 it.effect(

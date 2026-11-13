@@ -2407,6 +2407,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               status: "running",
               startedAt: input.startedAt,
               completedAt: null,
+              inputRecordedAt: null,
             },
           });
           yield* rememberRootProviderThread(input.turnInput.providerThread);
@@ -4834,6 +4835,32 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie),
         );
 
+        const updateRunningProviderTurn = (
+          context: ActiveCodexTurnContext,
+          nativeTurnId: string,
+          update: Pick<OrchestrationV2ProviderTurn, "tokenUsage" | "inputRecordedAt">,
+        ) =>
+          emitProviderEvent({
+            type: "provider_turn.updated",
+            driver: CODEX_PROVIDER,
+            threadId: context.projectionThreadId,
+            providerTurn: {
+              id: context.providerTurnId,
+              providerThreadId: context.providerThread.id,
+              nodeId: context.providerNodeId,
+              runAttemptId: context.subagent === null ? context.input.attemptId : null,
+              nativeTurnRef: {
+                driver: CODEX_PROVIDER,
+                nativeId: nativeTurnId,
+                strength: "strong",
+              },
+              ordinal: context.providerTurnOrdinal,
+              status: "running",
+              startedAt: context.startedAt,
+              completedAt: null,
+              ...update,
+            },
+          });
         // A run's first request can 429 before Codex pushes a codex snapshot.
         const readUsageLimitReset = Effect.gen(function* () {
           const sent = yield* Ref.get(rateLimitSnapshot);
@@ -4866,29 +4893,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
             const now = yield* DateTime.now;
-            yield* emitProviderEvent({
-              type: "provider_turn.updated",
-              driver: CODEX_PROVIDER,
-              threadId: context.projectionThreadId,
-              providerTurn: {
-                id: context.providerTurnId,
-                providerThreadId: context.providerThread.id,
-                nodeId: context.providerNodeId,
-                runAttemptId: context.subagent === null ? context.input.attemptId : null,
-                nativeTurnRef: {
-                  driver: CODEX_PROVIDER,
-                  nativeId: payload.turnId,
-                  strength: "strong",
-                },
-                ordinal: context.providerTurnOrdinal,
-                status: "running",
-                startedAt: context.startedAt,
-                completedAt: null,
-                tokenUsage: codexProviderTurnTokenUsage(
-                  payload.tokenUsage,
-                  DateTime.formatIso(now),
-                ),
-              },
+            yield* updateRunningProviderTurn(context, payload.turnId, {
+              tokenUsage: codexProviderTurnTokenUsage(payload.tokenUsage, DateTime.formatIso(now)),
             });
           }).pipe(Effect.orDie),
         );
@@ -5407,6 +5413,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (payload.item.type === "userMessage") {
               if (yield* emitSubagentUserMessage(context, payload.item)) {
                 return;
+              }
+              // Restart recovery resumes natively only after Codex recorded the turn's input.
+              if (!settled && context.subagent === null) {
+                yield* updateRunningProviderTurn(context, payload.turnId, {
+                  inputRecordedAt: yield* DateTime.now,
+                });
               }
             }
 

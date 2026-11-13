@@ -1,4 +1,5 @@
 import { applyThreadPullRequestLinkUpdate } from "../threadPullRequests.ts";
+import { mergeProviderTurnInputRecordedAt } from "@t3tools/contracts";
 import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2Run,
@@ -377,22 +378,22 @@ export function applyOrchestrationV2ProjectionEvent(
       };
     case "provider-thread.updated":
       return { ...base, providerThreads: upsertEntity(base.providerThreads, event.payload) };
-    case "provider-turn.updated":
+    case "provider-turn.updated": {
+      const current = base.providerTurns.find((turn) => turn.id === event.payload.id);
+      const tokenUsage = event.payload.tokenUsage ?? current?.tokenUsage;
+      const inputRecordedAt = mergeProviderTurnInputRecordedAt(
+        current?.inputRecordedAt,
+        event.payload.inputRecordedAt,
+      );
       return {
         ...base,
         providerTurns: upsertEntity(base.providerTurns, {
           ...event.payload,
-          ...((event.payload.tokenUsage ??
-            base.providerTurns.find((turn) => turn.id === event.payload.id)?.tokenUsage) ===
-          undefined
-            ? {}
-            : {
-                tokenUsage:
-                  event.payload.tokenUsage ??
-                  base.providerTurns.find((turn) => turn.id === event.payload.id)?.tokenUsage,
-              }),
+          ...(tokenUsage === undefined ? {} : { tokenUsage }),
+          ...(inputRecordedAt === undefined ? {} : { inputRecordedAt }),
         }),
       };
+    }
     case "runtime-request.updated":
       return { ...base, runtimeRequests: upsertEntity(base.runtimeRequests, event.payload) };
     case "message.updated":
