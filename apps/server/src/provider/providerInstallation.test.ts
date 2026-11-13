@@ -12,6 +12,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import * as ServerSettings from "../serverSettings.ts";
@@ -65,19 +66,20 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
 ) {
   const calls: string[] = [];
   const refreshed = yield* Deferred.make<void>();
-  const lastRefreshed = yield* Deferred.make<void>();
+  const lastRefreshes = yield* Queue.unbounded<void>();
   const observed = yield* Deferred.make<void>();
   const listening = yield* Deferred.make<void>();
   const installationState = yield* SubscriptionRef.make(state);
   let protectedPaths: ReadonlyArray<string> = [];
   const configured = input.instance ?? instance();
-  const listed = [configured, ...(input.others ?? [])];
+  const all = [configured, ...(input.others ?? [])];
   const refreshedInstances: ProviderInstanceId[] = [];
+  let watches = 0;
   const dependencies = Layer.mergeAll(
     ServerSettings.layerTest(input.settings),
     Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-      getInstance: (id) => Effect.succeed(listed.find((entry) => entry.instanceId === id)),
-      listInstances: Effect.succeed(listed),
+      getInstance: (id) => Effect.succeed(all.find((entry) => entry.instanceId === id)),
+      listInstances: Effect.succeed(all),
     }),
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       refreshInstance: (id) =>
@@ -88,9 +90,7 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
         }).pipe(
           Effect.tap(() => Deferred.succeed(refreshed, undefined)),
           Effect.tap(() =>
-            id === listed.at(-1)?.instanceId
-              ? Deferred.succeed(lastRefreshed, undefined)
-              : Effect.void,
+            id === all.at(-1)?.instanceId ? Queue.offer(lastRefreshes, undefined) : Effect.void,
           ),
         ),
     }),
@@ -127,8 +127,13 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
           return state;
         }),
       state: Effect.succeed(state),
-      changes: input.instance?.refreshModels
+      changes: all.some((entry) => entry.refreshModels)
         ? SubscriptionRef.changes(installationState).pipe(
+            Stream.onStart(
+              Effect.sync(() => {
+                watches++;
+              }),
+            ),
             Stream.tap(() => Deferred.succeed(listening, undefined)),
             Stream.ensuring(Deferred.succeed(observed, undefined)),
           )
@@ -151,7 +156,8 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
     listening,
     calls,
     refreshed,
-    lastRefreshed,
+    lastRefreshes,
+    watches: () => watches,
     observed,
     installationState,
     refreshedInstances,
@@ -262,10 +268,14 @@ describe("provider installation routing", () => {
           installedVersion: "1.5.8",
         });
         yield* Deferred.await(harness.observed);
-        // Instances refresh in list order, so the last one's refresh means the others are done.
-        yield* Deferred.await(harness.lastRefreshed);
+        // Instances refresh in list order, so the last one's refresh ends a watch's pass.
+        yield* Queue.take(harness.lastRefreshes);
+        assert.deepEqual(checked, [work.instanceId, personal.instanceId]);
+        // Let every other watch of this install finish its pass; none may refresh again.
+        yield* Queue.takeN(harness.lastRefreshes, harness.watches() - 1);
         assert.deepEqual(checked, [work.instanceId, personal.instanceId]);
         assert.deepEqual(harness.refreshedInstances, [work.instanceId, personal.instanceId]);
+        assert.strictEqual(harness.watches(), 1);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
