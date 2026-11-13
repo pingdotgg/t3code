@@ -9,6 +9,7 @@ import {
   extractDevinSubagentUpdate,
 } from "./devinAcp.ts";
 import { extractDroidElicitationForm } from "./droidAcp.ts";
+import { minimaxCodeFlavorExtras } from "./minimaxCodeAcp.ts";
 import { extractOmpElicitationForm } from "./ompAcp.ts";
 import { extractOpenCodeElicitationForm } from "./opencodeAcp.ts";
 import {
@@ -245,6 +246,11 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     ...(registryAgentId === "mistral-vibe"
       ? { registerExtensions: registerMistralVibeAcpExtensions }
       : {}),
+    ...minimaxCodeFlavorExtras({
+      registryAgentId,
+      isLocal: options.settings.source === "local",
+      commandPath: options.settings.commandPath,
+    }),
     ...(isClaude
       ? {
           followAgentWorkState: true,

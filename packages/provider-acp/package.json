@@ -27,6 +27,10 @@
       "types": "./src/server/nativeLogging.ts",
       "import": "./src/server/nativeLogging.ts"
     },
+    "./server/promptBusyRetry": {
+      "types": "./src/server/promptBusyRetry.ts",
+      "import": "./src/server/promptBusyRetry.ts"
+    },
     "./server/runtimeModel": {
       "types": "./src/server/runtimeModel.ts",
       "import": "./src/server/runtimeModel.ts"

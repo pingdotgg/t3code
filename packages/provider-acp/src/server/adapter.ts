@@ -111,6 +111,7 @@ import {
   flattenSelectChoices,
 } from "./sessionConfig.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import type { AcpPromptBusyRetryPolicy } from "./promptBusyRetry.ts";
 import {
   t3AcpPromptWithInstructions,
   type T3AcpInstructionState,
@@ -214,6 +215,7 @@ export interface AcpAdapterV2RuntimeInput {
     AcpSessionRuntime.AcpSessionRuntimeOptions["protocolLogging"]
   >;
   readonly onTermination: NonNullable<AcpSessionRuntime.AcpSessionRuntimeOptions["onTermination"]>;
+  readonly promptBusyRetry?: AcpPromptBusyRetryPolicy;
   readonly onOutgoingResponseFailure?: AcpSessionRuntime.AcpSessionRuntimeOptions["onOutgoingResponseFailure"];
   readonly onOutgoingResponse?: AcpSessionRuntime.AcpSessionRuntimeOptions["onOutgoingResponse"];
   readonly onIncomingRequest?: AcpSessionRuntime.AcpSessionRuntimeOptions["onIncomingRequest"];
@@ -350,6 +352,7 @@ export interface AcpAdapterV2Flavor {
       result: EffectAcpSchema.PromptResponse,
     ) => Effect.Effect<OrchestrationV2ProviderFailure | undefined>
   >;
+  readonly promptBusyRetry?: AcpPromptBusyRetryPolicy;
   readonly requiresSignIn?: (cause: unknown) => boolean;
   /**
    * Runs before attachment paths, T3 instructions and native slash-command detection,
@@ -359,6 +362,7 @@ export interface AcpAdapterV2Flavor {
     text: string,
     turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
   ) => Effect.Effect<string, never, ChildProcessSpawner.ChildProcessSpawner>;
+
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly supportsNativeGoals?: Effect.Effect<boolean>;
@@ -2493,6 +2497,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               : { processEnvironment: mcpContext.processEnvironment }),
             ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
             interruptPromptOnCancel: flavor.interruptPromptOnCancel ?? false,
+            ...(flavor.promptBusyRetry === undefined
+              ? {}
+              : { promptBusyRetry: flavor.promptBusyRetry }),
             clientCapabilities: {
               fs: {
                 readTextFile: flavor.clientFileSystem !== undefined,
