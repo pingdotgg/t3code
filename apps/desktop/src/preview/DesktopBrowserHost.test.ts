@@ -989,6 +989,40 @@ describe("DesktopBrowserHost", () => {
     }),
   );
 
+  it.effect("paints a hidden guest the agent drives until its turn ends", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const painting = yield* watchPainting(host);
+      const turn = (active: boolean) =>
+        host.handleCommandLine(encodeJson({ type: "turn", threadId: key.threadId, active }));
+
+      yield* turn(true);
+      // Playwright's actionability check awaits the page's next frame.
+      yield* command(host, 1, "Runtime.callFunctionOn");
+      yield* settle;
+      expect(painting).toEqual([true]);
+
+      debuggee.release();
+      yield* settle;
+      yield* TestClock.adjust("1 minute");
+      expect(painting).toEqual([true]);
+
+      yield* turn(false);
+      expect(painting).toEqual([true, false]);
+
+      // Outside a turn it paints until the agent goes idle.
+      yield* command(host, 2, "Input.dispatchMouseEvent");
+      yield* settle;
+      debuggee.release();
+      yield* settle;
+      expect(painting).toEqual([true, false, true]);
+      yield* TestClock.adjust("1 minute");
+      expect(painting).toEqual([true, false, true, false]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("stops painting for a screenshot Chromium never answers once its document goes", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;

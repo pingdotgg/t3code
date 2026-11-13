@@ -225,20 +225,22 @@ export const make = Effect.gen(function* () {
         // The agent pauses to think between steps; its tab stays focused until the turn ends.
         if (tab.agentUsed && agentTurns.has(tab.key.threadId)) return;
         tab.agentUsed = false;
+        syncPainting(tab);
         if (tabs.get(keyOf(tab.key)) === tab) setFocusEmulation(tab, false);
       }),
     );
   };
 
   /**
-   * Electron composites no offscreen guest, so its screenshot or screencast waits for a frame
-   * that never comes. The client paints the guest behind the app while one is pending; the
-   * capture then finishes on its own, and the guest goes back offscreen once none is.
+   * Electron composites no offscreen guest, so a capture, or agent input that waits on the
+   * next frame, waits forever. The client paints the guest behind the app while one is pending
+   * or the agent drives it, and the guest goes back offscreen once neither holds.
    */
   const syncPainting = (tab: AttachedTab) => {
     const active =
       tabs.get(keyOf(tab.key)) === tab &&
-      (tab.screencasts.size > 0 ||
+      (tab.agentUsed ||
+        tab.screencasts.size > 0 ||
         tab.capturing.size > 0 ||
         tab.waitingScreenshots.some((waiting) => waiting.live()));
     if (tab.painting === active) return;
@@ -356,6 +358,7 @@ export const make = Effect.gen(function* () {
             (owner === undefined || !streamingOwners.has(owner))
           ) {
             tab.agentUsed = true;
+            syncPainting(tab);
           }
           // Waits for focus emulation; insertText and other non-CDP input would not queue behind it.
           const forward = (current?: () => boolean) => {
