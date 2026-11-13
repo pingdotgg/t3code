@@ -1416,7 +1416,7 @@ async fn orchestration_reads_answer_from_the_store() {
     .unwrap();
     assert_eq!(item["item"]["type"], "user_message");
 
-    // Search: a title, a message (FTS for 3+ characters), and a two-letter query (scan).
+    // Search: messages only (titles are the client's), FTS for 3+ characters, a scan for two.
     let found = call(
         &engine,
         "orchestration.searchThreads",
@@ -1424,7 +1424,7 @@ async fn orchestration_reads_answer_from_the_store() {
     )
     .await
     .unwrap();
-    assert_eq!(found["matches"][0]["threadId"], "t1");
+    assert_eq!(found["matches"], json!([]));
     let found = call(
         &engine,
         "orchestration.searchThreads",
@@ -2034,6 +2034,45 @@ async fn the_turn_observer_sees_each_turn_start_and_end() {
             "end run:t1:1 completed".to_owned(),
             format!("start run:t1:2 2 Some(\"{ROOT}\")"),
             "end run:t1:2 interrupted".to_owned(),
+        ]
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_steer_sent_before_the_provider_turn_runs_waits_then_steers() {
+    let db = TempDb::new("steer-deferred");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    // Both commands land before the turn's start effect runs, so the run is still `starting`.
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    dispatch(
+        &engine,
+        message_with(
+            "t1",
+            "c3",
+            "early",
+            json!({"type": "start_immediately"}),
+            Some("steer"),
+        ),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["runs"][1]["status"], "queued");
+    assert_eq!(p["runs"][1]["steerWhenReadyRunId"], "run:t1:1");
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(
+        run_statuses(&p),
+        [
+            ("run:t1:1".into(), "completed".into()),
+            ("run:t1:2".into(), "cancelled".into())
+        ]
+    );
+    assert_eq!(
+        item_texts(&p),
+        [
+            "turn_start hang",
+            "promoted_queued_to_steer early",
+            "assistant_message steered: early"
         ]
     );
 }

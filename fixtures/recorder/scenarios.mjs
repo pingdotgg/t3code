@@ -191,7 +191,14 @@ async function remote(ctx) {
 
 /** Pairs the Rust conn-server from Settings › Connections, as `remote` does. Records only it. */
 async function pairRust(ctx) {
-  const target = await ctx.startRustServer();
+  return pairTarget(ctx, await ctx.startRustServer());
+}
+
+/**
+ * Pairs `target` (a TypeScript or Conn Server started by the recorder) from Settings ›
+ * Connections and records only its traffic.
+ */
+async function pairTarget(ctx, target) {
   await ctx.page.goto(`${ctx.server.origin}/settings/connections`);
   await settle(ctx);
   ctx.cap.only(new URL(target.origin).host);
@@ -213,18 +220,20 @@ async function pairRust(ctx) {
 }
 
 /** On the Rust environment's draft: picks Claude Haiku 5.5 and, if given, a runtime mode. */
-async function rustHaikuDraft(ctx, runtimeLabel) {
-  // "New thread" opens a project picker; the Rust environment's project is `rust-project`.
+async function rustHaikuDraft(ctx, runtimeLabel, projectName = "rust-project") {
+  // "New thread" opens a project picker; each paired environment has its own project name.
   await ctx.page.getByRole("button", { name: "New thread", exact: true }).first().click();
-  await ctx.page.getByRole("dialog").getByText("rust-project", { exact: true }).first().click();
+  await ctx.page.getByRole("dialog").getByText(projectName, { exact: true }).first().click();
   await ctx.page.waitForURL((u) => u.pathname.startsWith("/draft/"), { timeout: 15_000 });
   await ctx.page
-    .getByText(/What should we build in\s*rust-project/)
+    .getByText(new RegExp(`What should we build in\\s*${projectName}`))
     .first()
     // A hidden copy of the heading exists only for the draft's own project.
     .waitFor({ state: "attached", timeout: 15_000 });
+  // The model button names the environment's default model: Claude here, a Codex model on a
+  // TypeScript server whose default provider is Codex.
   await ctx.page
-    .getByRole("button", { name: /^Claude/ })
+    .getByRole("button", { name: /^(Claude|GPT|Codex|\d+ \w+ (Low|Medium|High))/ })
     .first()
     .click();
   await ctx.page.getByPlaceholder("Search models...").fill("Haiku 5.5");
@@ -366,6 +375,69 @@ async function rustStop(ctx) {
   await ctx.shotAlways("stopped");
 }
 
+/**
+ * The same scenario against a paired TypeScript server (`ts-*`) or the Conn Server (`rust-*`),
+ * so the recordings and screenshots of the two compare side by side.
+ */
+function both(run) {
+  return {
+    ts: async (ctx) =>
+      run(ctx, await pairTarget(ctx, await ctx.startServer("ts-project")), "ts-project"),
+    rust: async (ctx) => run(ctx, await pairRust(ctx), "rust-project"),
+  };
+}
+
+/** A message sent while a turn runs: the client's default follow-up (steer, else queue). */
+const followUp = both(async (ctx, _target, projectName) => {
+  await rustHaikuDraft(ctx, null, projectName);
+  await send(ctx, "Count from 1 to 150, one number per line, nothing else.");
+  await stopButton(ctx).first().waitFor({ state: "visible", timeout: 30_000 });
+  const box = ctx.page.locator("[contenteditable=true]").first();
+  await box.click();
+  await ctx.page.keyboard.type("Then reply with exactly: follow-up done");
+  await ctx.page.keyboard.press("Enter");
+  await settle(ctx, 800, 5_000);
+  await ctx.shotAlways("follow-up-sent");
+  await ctx.page
+    .getByText(/^follow-up done\.?$/i)
+    .last()
+    .waitFor({ timeout: 120_000 });
+  await waitTurnEnd(ctx);
+  await ctx.shotAlways("follow-up-done");
+});
+
+/** A message queued explicitly (the composer's alternate send) while a turn runs. */
+const queued = both(async (ctx, _target, projectName) => {
+  await rustHaikuDraft(ctx, null, projectName);
+  await send(ctx, "Count from 1 to 150, one number per line, nothing else.");
+  await stopButton(ctx).first().waitFor({ state: "visible", timeout: 30_000 });
+  const box = ctx.page.locator("[contenteditable=true]").first();
+  await box.click();
+  await ctx.page.keyboard.type("Reply with exactly: queued done");
+  // The alternate modifier flips the follow-up behaviour from steer to queue.
+  await ctx.page.keyboard.press("ControlOrMeta+Enter");
+  await settle(ctx, 800, 5_000);
+  await ctx.shotAlways("queued-while-running");
+  await ctx.page
+    .getByText(/^queued done\.?$/i)
+    .last()
+    .waitFor({ timeout: 120_000 });
+  await waitTurnEnd(ctx);
+  await ctx.shotAlways("queued-done");
+});
+
+/** One turn with a rare word, then the command palette searches for it. */
+const search = both(async (ctx, _target, projectName) => {
+  await rustHaikuDraft(ctx, null, projectName);
+  await send(ctx, "Reply with exactly: periwinkle lighthouse");
+  await waitTurnEnd(ctx);
+  await ctx.page.keyboard.press("Meta+k");
+  await ctx.page.keyboard.type("lighthouse");
+  await settle(ctx, 1500, 15_000);
+  await ctx.shotAlways("search");
+  await ctx.page.keyboard.press("Escape");
+});
+
 export const SCENARIOS = {
   pairing,
   reconnect,
@@ -378,4 +450,10 @@ export const SCENARIOS = {
   "rust-restart": rustRestart,
   "rust-permission": rustPermission,
   "rust-stop": rustStop,
+  "ts-follow-up": followUp.ts,
+  "rust-follow-up": followUp.rust,
+  "ts-queue": queued.ts,
+  "rust-queue": queued.rust,
+  "ts-search": search.ts,
+  "rust-search": search.rust,
 };

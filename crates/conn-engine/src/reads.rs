@@ -273,7 +273,7 @@ impl Store {
     }
 
     /// `searchThreads`: newest messages whose text contains the query (case-insensitive), one
-    /// match per thread, newest first.
+    /// match per thread, newest first. Titles are the client's to match.
     pub(crate) fn search_threads(&self, input: &Value) -> StoreResult<Value> {
         let query = input["query"]
             .as_str()
@@ -295,21 +295,8 @@ impl Store {
         };
         let mut matches: Vec<Value> = Vec::new();
         let mut seen: Vec<String> = Vec::new();
-        // Titles first: a title hit is the strongest signal.
-        for row in &shells {
-            if matches.len() >= limit {
-                break;
-            }
-            let title = row["title"].as_str().unwrap_or_default();
-            if title.to_lowercase().contains(&needle) {
-                let id = row["id"].as_str().unwrap_or_default().to_owned();
-                matches.push(json!({
-                    "threadId": id, "projectId": row["projectId"], "source": "user",
-                    "snippet": snippet(title, &needle), "messageCreatedAt": null, "quality": 1.0,
-                }));
-                seen.push(id);
-            }
-        }
+        // Messages only, as `ThreadSearch.ts`: the client matches titles itself, and
+        // `titlesOnly` asks for no message search at all.
         if input["titlesOnly"] != true {
             let pattern = format!("%{}%", query.replace('%', "\\%").replace('_', "\\_"));
             // Trigram FTS answers LIKE for three or more characters; shorter queries scan the

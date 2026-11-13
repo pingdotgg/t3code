@@ -28,15 +28,16 @@ Line format, as the workspace README fixes it, with two additions:
 
 ## Scenarios
 
-| Scenario     | What happens                                                                                     |
-| ------------ | ------------------------------------------------------------------------------------------------ |
-| `pairing`    | A fresh browser opens `/pair#token=…` on a fresh server and lands in the app                     |
-| `reconnect`  | The same browser (session cookie) opens `/` again                                                |
-| `turn`       | New thread in the project, Claude Haiku 5.5, one short message, one full turn                    |
-| `permission` | New thread in Supervised mode; Claude asks to run `echo conn-recording`; the user approves once  |
-| `interrupt`  | New thread; Claude runs `ping -c 30 127.0.0.1` (approved); the user stops the turn while it runs |
-| `remote`     | From Settings › Connections, pair a second fresh server as a remote environment                  |
-| `rust-*`     | As `remote`, with the Rust `conn-server` as the remote environment (`--rust <binary>`)           |
+| Scenario     | What happens                                                                                                                    |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `pairing`    | A fresh browser opens `/pair#token=…` on a fresh server and lands in the app                                                    |
+| `reconnect`  | The same browser (session cookie) opens `/` again                                                                               |
+| `turn`       | New thread in the project, Claude Haiku 5.5, one short message, one full turn                                                   |
+| `permission` | New thread in Supervised mode; Claude asks to run `echo conn-recording`; the user approves once                                 |
+| `interrupt`  | New thread; Claude runs `ping -c 30 127.0.0.1` (approved); the user stops the turn while it runs                                |
+| `remote`     | From Settings › Connections, pair a second fresh server as a remote environment                                                 |
+| `rust-*`     | As `remote`, with the Rust `conn-server` as the remote environment (`--rust <binary>`)                                          |
+| `ts-*`       | The same drivers as `rust-follow-up`, `rust-queue`, `rust-search`, with a paired TypeScript server, for side-by-side comparison |
 
 The server starts with `--auto-bootstrap-project-from-cwd` in a scratch git repo, so it has one
 project and one empty thread before the client arrives. `pairing` therefore lands on that thread,
@@ -49,6 +50,9 @@ One command, from the repo root, after `vp i`:
 ```sh
 (cd apps/web && vp build) && node native/conn-server/fixtures/recorder/record.mjs
 ```
+
+`CONN_MONOREPO` names the Conn monorepo (web client, TypeScript server) when the recorder runs
+from elsewhere; `CONN_RECORDER_SHOTS=<dir>` keeps the screenshots after the run.
 
 It rewrites every file in `sessions/`. It takes about two minutes and spends four Haiku turns.
 Name scenarios to record only those, in order: `record.mjs pairing turn`. Every scenario after

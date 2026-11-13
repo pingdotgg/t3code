@@ -416,6 +416,18 @@ fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if held {
         run["queueHeld"] = json!(true);
     }
+    // An explicit steer into a turn whose provider turn is not running yet waits as a queued
+    // run and becomes a steer once it runs (`deliverDeferredSteers`).
+    let explicit_steer = c.dispatch_mode.kind == "steer_active"
+        || (c.dispatch_mode.kind == "start_immediately"
+            && c.delivery_intent.as_deref() == Some("steer"));
+    if matches!(delivery, Delivery::Queue { first: false })
+        && explicit_steer
+        && c.steer_follow_up_of_run_id.is_none()
+        && let Some(target) = active_run(tx, &c.thread_id)?
+    {
+        run["steerWhenReadyRunId"] = target["id"].clone();
+    }
     if let Some(source) = &c.restart_continuation_of_run_id {
         run["restartContinuationOfRunId"] = json!(source);
     }

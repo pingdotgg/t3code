@@ -451,11 +451,15 @@ impl Inner {
             match translate(&thread_id, active.as_ref(), event) {
                 Translated::Ignore => {}
                 Translated::ProviderTurn(id, draft) => {
-                    if let Some(active) = live.state.lock().unwrap().active.as_mut() {
+                    if let Some(active) = lock(&live.state).active.as_mut() {
                         active.provider_turn_id = Some(id);
                     }
+                    let running = draft.payload["status"] == "running";
                     self.commit_after(&mut held, &mut deadline, vec![draft])
                         .await;
+                    if running && let Some(run_id) = &run_id {
+                        self.deliver_deferred_steers(&thread_id, run_id).await;
+                    }
                 }
                 Translated::Event(draft) if draft.payload["streaming"] == true => {
                     let key = format!("{}:{}", draft.event_type, draft.payload["id"]);
@@ -563,6 +567,40 @@ impl Inner {
             self.close_session(&thread_id).await;
         }
         self.end_run(&thread_id, &run_id, "interrupted", None).await;
+    }
+
+    /// Turns the messages that waited for this run's provider turn into steers, in queue order.
+    async fn deliver_deferred_steers(self: &Arc<Self>, thread_id: &str, run_id: &str) {
+        let (tid, rid) = (thread_id.to_owned(), run_id.to_owned());
+        let waiting = self
+            .db(move |store| -> Result<Vec<String>, String> {
+                let tx = store.tx()?;
+                let runs = crate::commands::queued_runs(&tx, &tid);
+                tx.rollback();
+                Ok(runs?
+                    .into_iter()
+                    .filter(|r| r["steerWhenReadyRunId"] == rid.as_str())
+                    .filter_map(|r| r["id"].as_str().map(str::to_owned))
+                    .collect())
+            })
+            .await
+            .unwrap_or_default();
+        for queued in waiting {
+            let command = json!({
+                "type": "queued-message.promote-to-steer",
+                "commandId": format!("steer-when-ready:{queued}"),
+                "threadId": thread_id,
+                "queuedRunId": queued,
+                "targetRunId": run_id,
+            });
+            if let Err(
+                crate::engine::DispatchError::Rejected(e)
+                | crate::engine::DispatchError::Internal(e),
+            ) = self.dispatch_value(command).await
+            {
+                eprintln!("conn-engine: a waiting steer stays queued: {e}");
+            }
+        }
     }
 
     /// Delivers a steer to the running provider turn. When the provider declines or the turn
