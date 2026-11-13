@@ -12,12 +12,12 @@ import {
   MinusIcon,
   TerminalIcon,
   XIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
 } from "lucide-react";
-import { ChevronDown, ChevronRight } from "lucide";
 import { useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { Spinner } from "~/components/ui/spinner";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
@@ -201,7 +201,7 @@ function StageRow({
       trailing={
         <>
           {trailing ? (
-            <span className="min-w-0 truncate text-xs text-muted-foreground tabular-nums">
+            <span className="max-w-1/2 min-w-0 truncate text-xs text-muted-foreground tabular-nums">
               {trailing}
             </span>
           ) : null}
@@ -366,7 +366,7 @@ export function WorktreeSetupCard({
           aria-expanded={detailsOpen}
           onClick={() => setDetailsOpen((open) => !open)}
         >
-          <MorphIcon aria-hidden icon={detailsOpen ? ChevronDown : ChevronRight} />
+          {detailsOpen ? <ChevronDownIcon aria-hidden /> : <ChevronRightIcon aria-hidden />}
           Details
         </Button>
         {showTerminal ? (

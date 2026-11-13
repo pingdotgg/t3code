@@ -3,8 +3,9 @@ import { installComposerAttachmentUploads } from "./state/composer-attachment-up
 import { installThreadOutboxDelivery } from "./state/threadOutboxDelivery";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
-import { useEffect } from "react";
-import { StatusBar } from "react-native";
+import { requireNativeModule } from "expo";
+import { useEffect, useRef, useState } from "react";
+import { Platform, StatusBar } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -18,8 +19,9 @@ import {
   type NavigationState,
 } from "@react-navigation/native";
 import { pipe } from "effect/Function";
+import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
 
-import { RegistryContext } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { ProjectChipIconRasterizer } from "./native/ProjectChipIconImages";
 import { ThreadArrangementHost } from "./features/threads/ThreadArrangementSheet";
 import * as Dialog from "./components/ui/Dialog";
@@ -47,8 +49,8 @@ import {
 import { RootStack, rootPathnameFromState, workspaceLocationFromState } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
 import { subscribeComposerDraftModelReconciliation } from "./state/use-composer-drafts";
-import { environmentThreadShells } from "./state/threads";
-import { environmentShell } from "./state/shell";
+import { environmentThreadShells, threadEnvironment } from "./state/threads";
+import { environmentShell, shellCachesReadAtom } from "./state/shell";
 import { OverlayPortalHost } from "./components/ui/OverlayPortal";
 import { shouldHandleAppLink, restoreDraftLinkState } from "./lib/appLinking";
 import { hasCloudPublicConfig } from "./features/cloud/publicConfig";
@@ -75,14 +77,20 @@ import { installUiRuntimeMemoryWarningGc } from "./lib/useUiRuntimeMemoryWarning
 import { SubscriptionUsageCoordinator } from "./widgets/SubscriptionUsageCoordinator";
 import { installSubscriptionUsageRefresh } from "./widgets/useSubscriptionUsage";
 import { GlobalVoiceInputControl } from "./features/voice-input/GlobalVoiceInputControl";
+import {
+  launchSplashHomeRowsPending,
+  settleLaunchSplashHomeRows,
+  splashCanHide,
+  useLaunchSplashHomeRowsPending,
+} from "./features/home/home-launch-splash";
 import { restoreSettingsLinkState } from "./features/settings/settings-navigation";
 import {
   hydrateWorkspaceSelections,
   launchWorkspaceURL,
   recordWorkspaceSelections,
   settingsLinkPage,
-} from "./features/workspace/workspace-selection-store";
-import { workspaceDetailLinkAction } from "./features/workspace/workspace-detail-selection";
+} from "./features/layout/workspace/workspace-selection-store";
+import { workspaceDetailLinkAction } from "./features/layout/workspace/workspace-detail-selection";
 import { NativeLayoutMetricsProvider } from "./native/native-layout-metrics";
 import {
   attachRootNavigation,
@@ -122,7 +130,13 @@ function getAppStateFromPath(path: string, options: Parameters<typeof getStateFr
 }
 
 const appLinking = {
-  prefixes: [Linking.createURL("/"), "t3code://", "t3code-dev://", "t3code-preview://"],
+  prefixes: [
+    Linking.createURL("/"),
+    "t3code://",
+    "t3code-dev://",
+    "t3code-preview://",
+    DEFAULT_HOSTED_APP_URL,
+  ],
   config: { initialRouteName: "Home" },
   filter: (url: string) => shouldHandleAppLink(url, hasCloudPublicConfig()),
   getInitialURL: async () => (await Linking.getInitialURL()) ?? (await launchWorkspaceURL()),
@@ -158,6 +172,8 @@ function handleNavigationStateChange(state: NavigationState | undefined): void {
   resolvePendingNewTaskPromptLink(state);
   resolvePendingThreadPromptLink(state);
   if (!state) return;
+  // A launch that opens another route has no Home rows for the splash to wait for.
+  if (state.routes[state.index]?.name !== "Home") settleLaunchSplashHomeRows();
   setAgentNotificationPathname(workspaceLocationFromState(state).pathname);
   recordAppShortcutNavigationState(state);
   pruneNewTaskFlowStates(state);
@@ -179,6 +195,7 @@ const appServiceDisposers = [
     threadShellAtom: environmentThreadShells.threadShellAtom,
     threadRefsAtom: environmentThreadShells.threadRefsAtom,
     shellStateAtom: environmentShell.stateAtom,
+    pendingThreadIdsAtom: threadEnvironment.pendingThreadIdsAtom,
   }),
   installAppearanceRuntime(),
   installSubscriptionUsageRefresh(),
@@ -195,13 +212,38 @@ disposeOnFoundationReplace(typeof module === "undefined" ? undefined : module.ho
   for (const dispose of appServiceDisposers) dispose();
 });
 
+// Cached shells are local reads that end in a fraction of this time; the limit keeps a failed
+// read, or a list that does not lay out, from holding the splash screen.
+const SPLASH_WAIT_MS = 1_500;
+
 function SplashScreenCoordinator() {
   const { isReady } = useAppearancePreferences();
+  const shellCachesRead = useAtomValue(shellCachesReadAtom);
+  const homeRowsPending = useLaunchSplashHomeRowsPending();
+  const [waitEnded, setWaitEnded] = useState(false);
+  const hidden = useRef(false);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hides the native splash screen once appearance preferences have loaded
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the limit on how long the native splash screen waits for cached shells and their rows
   useEffect(() => {
-    if (isReady) void SplashScreen.hide();
-  }, [isReady]);
+    const timer = setTimeout(() => setWaitEnded(true), SPLASH_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hides the native splash screen once preferences have loaded and the cached rows are laid out
+  useEffect(() => {
+    const canHide = splashCanHide({
+      preferencesReady: isReady,
+      shellCachesRead,
+      // Home holds the splash in a layout effect of the commit that gives it rows. That can be
+      // this commit, after this render read the store.
+      homeRowsPending: homeRowsPending || launchSplashHomeRowsPending(),
+      waitEnded,
+    });
+    if (!canHide || hidden.current) return;
+    hidden.current = true;
+    settleLaunchSplashHomeRows();
+    void SplashScreen.hide();
+  }, [isReady, shellCachesRead, homeRowsPending, waitEnded]);
 
   return null;
 }
@@ -221,6 +263,14 @@ export default function App() {
 function AppContent() {
   const { themeAppearance } = useAppearancePreferences();
   const navigationTheme = useMobileNavigationTheme();
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- matches the Android navigation bar to the app theme, as StatusBar does for the status bar
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    void requireNativeModule<{ setNavigationBarStyle(light: boolean): Promise<void> }>(
+      "T3NativeControls",
+    ).setNavigationBarStyle(themeAppearance === "light");
+  }, [themeAppearance]);
 
   return (
     <>
