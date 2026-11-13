@@ -432,6 +432,46 @@ describe("CloudManagedEndpointRuntime", () => {
     }),
   );
 
+  it.effect("still owns a relay client when activation is interrupted while recording it", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeTransportSpawner();
+      const recording = yield* Deferred.make<void>();
+      const recorded = yield* Deferred.make<void>();
+      const ledger = Layer.succeed(
+        RelayClientLedger.RelayClientLedger,
+        RelayClientLedger.RelayClientLedger.of({
+          track: () =>
+            Deferred.succeed(recording, undefined).pipe(
+              Effect.andThen(Deferred.await(recorded)),
+              Effect.as(Effect.void),
+            ),
+        }),
+      );
+      const context = yield* Layer.build(
+        ManagedEndpointRuntime.layer.pipe(
+          Layer.provide(Layer.merge(runtimeDependencies(fixture.spawner), ledger)),
+        ),
+      );
+      const runtime = yield* Effect.service(
+        ManagedEndpointRuntime.CloudManagedEndpointRuntime,
+      ).pipe(Effect.provide(context));
+
+      const activation = yield* Effect.forkChild(runtime.applyConfig(tunnelConfig));
+      yield* Deferred.await(recording);
+      const interrupting = yield* Effect.forkChild(Fiber.interrupt(activation), {
+        startImmediately: true,
+      });
+      yield* Deferred.succeed(recorded, undefined);
+      yield* Fiber.join(interrupting);
+
+      yield* runtime.applyConfig(null);
+      expect(fixture.killed).toEqual([800]);
+    }).pipe(
+      Effect.provideService(HostProcess.Environment, {}),
+      Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+    ),
+  );
+
   it.effect("preserves an explicit transport choice despite repeated QUIC stalls", () =>
     Effect.gen(function* () {
       const fixture = yield* makeTransportSpawner({ transport: "quic" });

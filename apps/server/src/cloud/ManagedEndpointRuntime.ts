@@ -827,19 +827,25 @@ export const make = Effect.gen(function* () {
     }
 
     if (!("status" in child)) {
-      forgetRelayClient = yield* Effect.uninterruptible(relayClientLedger.track(Number(child.pid)));
-      const connector = {
-        child,
-        executable,
-        scope: connectorScope,
-        configKey: nextConfigKey,
-        config,
-        startedAtMillis: yield* Clock.currentTimeMillis,
-        registered: yield* Deferred.make<void>(),
-        metricsAddress: yield* Deferred.make<string>(),
-        protocol: yield* Ref.make<string | null>(null),
-      } satisfies ActiveConnector;
-      yield* Ref.set(activeRef, connector);
+      // An interrupt before activeRef owns the connector would leave its scope, and the client, open.
+      const connector = yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          forgetRelayClient = yield* relayClientLedger.track(Number(child.pid));
+          const connector = {
+            child,
+            executable,
+            scope: connectorScope,
+            configKey: nextConfigKey,
+            config,
+            startedAtMillis: yield* Clock.currentTimeMillis,
+            registered: yield* Deferred.make<void>(),
+            metricsAddress: yield* Deferred.make<string>(),
+            protocol: yield* Ref.make<string | null>(null),
+          } satisfies ActiveConnector;
+          yield* Ref.set(activeRef, connector);
+          return connector;
+        }),
+      );
       yield* Effect.forkIn(observeConnectorOutput(connector), connectorScope);
       yield* Effect.forkIn(superviseConnector(connector), connectorScope);
       yield* Effect.forkIn(watchConnectorRegistration(connector), connectorScope);
