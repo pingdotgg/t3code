@@ -646,12 +646,19 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     }
   }
 
+  let inheritedWslEnv: string | undefined;
   const parentEnvWithoutT3Home: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(env)) {
-    if (key === "T3CODE_HOME") continue;
+    // ponytail: case-insensitive match for Windows host env keys (T3CODE_HOME isolation & WSLENV forwarding)
+    const upper = key.toUpperCase();
+    if (upper === "T3CODE_HOME") continue;
+    if (upper === "WSLENV") {
+      inheritedWslEnv = value;
+      continue;
+    }
     parentEnvWithoutT3Home[key] = value;
   }
-  const wslEnv = mergeWslEnv(parentEnvWithoutT3Home.WSLENV, forwardedEnvNames);
+  const wslEnv = mergeWslEnv(inheritedWslEnv, forwardedEnvNames);
 
   const baseConfig = {
     executablePath: "wsl.exe",
