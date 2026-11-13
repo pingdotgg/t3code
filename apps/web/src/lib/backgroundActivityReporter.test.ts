@@ -109,7 +109,7 @@ describe("layer", () => {
 
       yield* TestClock.adjust("25 seconds");
       expect(calls).toBe(2);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps reporting after a report never settles", () =>
@@ -134,6 +134,6 @@ describe("layer", () => {
 
       yield* TestClock.adjust("25 seconds");
       expect(calls).toBe(2);
-    }).pipe(Effect.scoped),
+    }),
   );
 });

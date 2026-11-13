@@ -27,6 +27,9 @@ const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
 /** Where the pre-orchestration-v2 server kept refs, keyed by thread id. */
 const LEGACY_CHECKPOINT_REFS_PREFIX = "refs/t3/checkpoints";
 const ROOT_CHECKPOINT_SCOPE_NAME = "root";
+// The provider turn waits on the baseline, so a workspace too slow for this starts without one.
+// It bounds only the snapshot: waiting on the lock lets an in-flight capture finish the same ref.
+const BASELINE_CAPTURE_BUDGET = "5 seconds";
 
 export class CheckpointRootScopePrepareError extends Schema.TaggedError<CheckpointRootScopePrepareError>()(
   "CheckpointRootScopePrepareError",
@@ -315,6 +318,7 @@ export const layer: Layer.Layer<
               checkpointRef,
             })
             .pipe(
+              Effect.timeout(BASELINE_CAPTURE_BUDGET),
               Effect.catchTags({
                 VcsUnsupportedOperationError: () => Effect.void,
               }),
