@@ -97,7 +97,7 @@ export function resolveMarkdownFileLinkMeta(
 }
 
 function buildFileLinkMetaFromTarget(targetPath: string, cwd?: string) {
-  const { path, line, column } = splitFilePathPosition(targetPath);
+  const { path, line, column, endLine } = splitFilePathPosition(targetPath);
   return {
     filePath: path,
     targetPath,
@@ -106,5 +106,6 @@ function buildFileLinkMetaFromTarget(targetPath: string, cwd?: string) {
     basename: fileBasename(path),
     ...(line !== undefined ? { line } : {}),
     ...(column !== undefined ? { column } : {}),
+    ...(endLine !== undefined ? { endLine } : {}),
   };
 }

@@ -62,11 +62,12 @@ interface TargetPathAndPosition {
   readonly path: string;
   readonly line: string;
   readonly column: Option.Option<string>;
+  readonly endLine: Option.Option<string>;
 }
 
 // cmd shims reparse %* after escaping is gone; newlines and quotes can expose shell operators.
 const WINDOWS_SHIM_UNSAFE_ARG_PATTERN = /[\u0000-\u001f\u007f"]/;
-const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
+const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?:-(\d+)|:(\d+))?$/;
 const POWERSHELL_ARGUMENTS_PREFIX = [
   "-NoProfile",
   "-NonInteractive",
@@ -132,7 +133,8 @@ function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAnd
   return Option.some({
     path: match[1],
     line: match[2],
-    column: Option.fromUndefinedOr(match[3]),
+    endLine: Option.fromUndefinedOr(match[3]),
+    column: Option.fromUndefinedOr(match[4]),
   });
 }
 
@@ -143,17 +145,23 @@ function resolveCommandEditorArgs(
   projectRoot: string | undefined,
 ): ReadonlyArray<string> {
   const parsedTarget = parseTargetPathAndPosition(target);
+  // Editors take `file:line` or `file:line:column`. A colon range opens at its start line.
+  const launchTarget =
+    Option.isSome(parsedTarget) && Option.isSome(parsedTarget.value.endLine)
+      ? `${parsedTarget.value.path}:${parsedTarget.value.line}`
+      : target;
+  const parsedLaunchTarget = parseTargetPathAndPosition(launchTarget);
 
   switch (editor.launchStyle) {
     case "direct-path":
-      return [target];
+      return [launchTarget];
     case "goto":
-      if (Option.isSome(parsedTarget)) return ["--goto", target];
+      if (Option.isSome(parsedLaunchTarget)) return ["--goto", launchTarget];
       // Without a window flag, VS Code's window settings may replace the user's last active window.
-      return isDirectory ? ["--new-window", target] : [target];
+      return isDirectory ? ["--new-window", launchTarget] : [launchTarget];
     case "line-column":
-      return Option.match(parsedTarget, {
-        onNone: () => [target],
+      return Option.match(parsedLaunchTarget, {
+        onNone: () => [launchTarget],
         onSome: ({ path, line, column }) => [
           // Only positioned targets get the root: a folder target would open as a second project.
           ...(projectRoot === undefined ? [] : [projectRoot]),
@@ -522,17 +530,23 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* resolveFileManagerRevealLaunch(target, platform, env, command);
   }
 
+  const parsedTarget = parseTargetPathAndPosition(target);
+  const fileManagerTarget =
+    Option.isSome(parsedTarget) && Option.isSome(parsedTarget.value.endLine)
+      ? parsedTarget.value.path
+      : target;
+
   return {
     editor: editorDef.id,
-    target,
+    target: fileManagerTarget,
     command,
     args:
       command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
-        ? [resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME)]
+        ? [resolveWslFileManagerPath(fileManagerTarget, env.WSL_DISTRO_NAME)]
         : platform === "win32"
           ? // Explorer interprets / as a switch and silently opens a fallback folder.
-            [normalizeWindowsFileManagerPath(target)]
-          : [target],
+            [normalizeWindowsFileManagerPath(fileManagerTarget)]
+          : [fileManagerTarget],
   };
 });
 

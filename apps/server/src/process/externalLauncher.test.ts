@@ -182,6 +182,62 @@ it.effect.skipIf(windowsHost)(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect.skipIf(windowsHost)("opens a colon line range at its start line", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    for (const name of ["code", "idea", "zeditor", "xdg-open", "xdg-mime"]) {
+      const commandPath = path.join(binDir, name);
+      yield* fileSystem.writeFileString(commandPath, "#!/bin/sh\n");
+      yield* fileSystem.chmod(commandPath, 0o755);
+    }
+
+    const spawned: ChildProcess.StandardCommand[] = [];
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({ editor: "vscode", cwd: "/workspace/file.py:67-69" });
+      yield* launcher.launchEditor({ editor: "idea", cwd: "/workspace/file.py:67-69" });
+      yield* launcher.launchEditor({ editor: "zed", cwd: "/workspace/file.py:67-69" });
+      yield* launcher.launchEditor({
+        editor: "vscode",
+        cwd: String.raw`C:\workspace\file.py:67-69`,
+      });
+      yield* launcher.launchEditor({ editor: "vscode", cwd: "/workspace/file.ts:12:4" });
+      yield* launcher.launchEditor({ editor: "file-manager", cwd: "/workspace/file.py:67-69" });
+      yield* launcher.launchEditor({ editor: "file-manager", cwd: "/workspace/file.ts:12:4" });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "linux",
+          env: { PATH: binDir, DISPLAY: ":0" },
+          spawnResult: (command) =>
+            command.command === "xdg-mime" ? { stdout: "inode/directory\n" } : undefined,
+          onSpawn: (command) => {
+            if (command.command !== "xdg-mime") {
+              spawned.push(command);
+            }
+          },
+        }),
+      ),
+      Effect.provideService(HostProcess.Environment, { PATH: binDir, DISPLAY: ":0" }),
+    );
+
+    assert.deepEqual(
+      spawned.map((command) => [command.command, command.args]),
+      [
+        ["code", ["--goto", "/workspace/file.py:67"]],
+        ["idea", ["--line", "67", "/workspace/file.py"]],
+        ["zeditor", ["/workspace/file.py:67"]],
+        ["code", ["--goto", String.raw`C:\workspace\file.py:67`]],
+        ["code", ["--goto", "/workspace/file.ts:12:4"]],
+        ["xdg-open", ["/workspace/file.py"]],
+        ["xdg-open", ["/workspace/file.ts:12:4"]],
+      ],
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 // A project opened from T3 must not replace the editor's last active window.
 it.effect.skipIf(windowsHost)(
   "opens a project folder in a new VS Code window and a file in the existing one",
