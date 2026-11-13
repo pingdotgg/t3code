@@ -71,10 +71,10 @@ describe("ApnsDeliveryQueue", () => {
         notification: { ...input.notification, updatedAt: "2026-09-04T13:00:00.000Z" },
       });
       yield* queue.enqueuePushNotification({ ...input, token: "rotated-token" });
-      expect(sent[4]!.payload.jobId).not.toBe(sent[0]!.payload.jobId);
       expect(sent[1]!.payload.jobId).toBe(sent[0]!.payload.jobId);
       expect(sent[2]!.payload.jobId).not.toBe(sent[0]!.payload.jobId);
       expect(sent[3]!.payload.jobId).not.toBe(sent[0]!.payload.jobId);
+      expect(sent[4]!.payload.jobId).not.toBe(sent[0]!.payload.jobId);
       expect(sent[1]!.payload.notification?.title).toBe("Renamed");
     }).pipe(Effect.provide(layer));
   });
