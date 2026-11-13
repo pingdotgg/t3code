@@ -4225,7 +4225,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       const instructions = [
         buildRuntimeInstructions({
-          agentFeedbackEnabled: turnInput.agentFeedbackEnabled ?? false,
+          agentFeedbackEnabled: mcpAvailable && turnInput.agentFeedbackEnabled === true,
           harness: "OpenCode",
           model: turnInput.modelSelection.model,
         }),
