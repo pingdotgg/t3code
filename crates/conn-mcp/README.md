@@ -77,8 +77,8 @@ the capability.
 
 Where they differ, because the engine does not do it yet:
 
-- `t3_thread_send` starts a run on an idle thread; `restart` interrupts and starts. Queue and
-  steer onto a running thread answer `thread_not_sendable`. `freshContext` is refused.
+- `t3_thread_send` maps its modes as `ThreadManagementService` does (`auto` steers a running
+  turn, else starts; `queue`, `steer`, `restart`). `freshContext` is refused.
 - `t3_thread_launch`: `root` and `existing_worktree` only; no `scratch`, no attachments. The thread
   is recorded as `createdBy: user` (the engine's `launch` sets it). Without `modelSelection`
   a client gets the first ready provider's first model.
@@ -86,10 +86,10 @@ Where they differ, because the engine does not do it yet:
   engine ends a run on restart.
 - `t3_thread_update`: `rename` only. `t3_thread_search`: title, branch, project title, then
   message text, no ranking.
-- Delegation: the child is a top-level thread, id derived from parent and task id, so no task
-  table and restarts are safe; the engine has no `lineage` on `thread.create` yet, so clients do
-  not nest it. Async tasks wake the parent with the T3 wake text once the parent is idle; that
-  watcher lives in memory. No `isolation: worktree`, no remote targets, no result acknowledgement.
+- Delegation: `delegate_task` dispatches the engine's `delegated_task.request`, which makes the
+  child (lineage `subagent`) and wakes the parent (`always`; `settled_only` for `mode: wait`,
+  upgraded when the wait gives up). Task ids are `node:delegated-task:<commandId>`. No
+  `isolation: worktree`, no remote targets.
 - `orchestrator_capabilities`: no option descriptors, favourites or model preferences.
 - Results keep the TS keys; serde_json sorts keys, so the `text` copy orders them differently.
 

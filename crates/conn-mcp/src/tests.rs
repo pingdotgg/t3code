@@ -481,24 +481,34 @@ async fn swamp_drives_a_thread_from_outside() {
         "no_active_run"
     );
 
-    // Interrupt a running turn.
+    // Steer needs a running turn.
+    let (code, _) = c
+        .failure(
+            "t3_thread_send",
+            json!({"threadId": thread, "message": "nudge", "mode": "steer"}),
+        )
+        .await;
+    assert_eq!(code, "thread_not_sendable");
+
+    // Interrupt a running turn. A message queued meanwhile waits behind it.
     let hang = c
         .ok(
             "t3_thread_send",
             json!({"threadId": thread, "message": "hang"}),
         )
         .await;
-    let (code, _) = c
-        .failure(
+    let busy = c
+        .ok(
             "t3_thread_send",
-            json!({"threadId": thread, "message": "busy"}),
+            json!({"threadId": thread, "message": "busy", "mode": "queue"}),
         )
         .await;
-    assert_eq!(code, "thread_not_sendable");
+    assert_eq!(busy["delivery"], "queued");
+    assert_eq!(busy["status"], "queued");
     let timed_out = c
         .ok(
             "t3_thread_wait",
-            json!({"threadId": thread, "timeoutMs": 50}),
+            json!({"threadId": thread, "runId": hang["runId"], "timeoutMs": 50}),
         )
         .await;
     assert_eq!(timed_out["timedOut"], true);
@@ -666,37 +676,38 @@ async fn an_agent_delegates_a_task_and_is_woken() {
         .await;
     assert_eq!(code, "thread_credential_required");
 
-    // The parent ends its turn; the finished task wakes it with a message.
-    let mut events = f
+    // The finished task woke the parent with a message queued behind its running turn, in
+    // the transaction that ended the child's run (the engine's `delegated_task` wake).
+    let parent_view = f
         .service
         .config
         .engine
-        .subscribe_thread(conn_contract::from_json(json!({"threadId": parent_id})).unwrap())
+        .get_thread_projection(parent_id.as_str().into())
         .await
         .unwrap();
-    swamp
-        .ok("t3_thread_interrupt", json!({"threadId": parent_id}))
-        .await;
-    let wake = format!("Delegated task {task_id} reached a terminal state");
-    loop {
-        let item = conn_contract::to_json(&events.recv().await.unwrap().unwrap());
-        let event = &item["event"];
-        if event["type"] == "message.updated"
-            && event["payload"]["text"]
-                .as_str()
-                .is_some_and(|t| t.starts_with(&wake))
-        {
-            break;
-        }
-    }
-    drop(events);
-    let woken = swamp
-        .ok(
-            "t3_thread_read",
-            json!({"threadId": parent_id, "afterPosition": -1, "limit": 100}),
-        )
-        .await;
-    assert_eq!(woken["thread"]["runCount"], 2);
+    let wake = format!("Delegated task {task_id}");
+    let woken = parent_view["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["text"].as_str().is_some_and(|t| t.starts_with(&wake)))
+        .expect("a wake message");
+    assert_eq!(woken["createdBy"], "agent");
+    let child_view = f
+        .service
+        .config
+        .engine
+        .get_thread_projection(child.as_str().into())
+        .await
+        .unwrap();
+    assert_eq!(
+        child_view["thread"]["lineage"]["parentThreadId"],
+        parent_id.as_str()
+    );
+    assert_eq!(
+        child_view["thread"]["lineage"]["relationshipToParent"],
+        "subagent"
+    );
     f.service.revoke_thread(&parent_id);
     assert!(f.service.resolve_thread_token(token).is_none());
 }

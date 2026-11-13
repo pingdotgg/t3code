@@ -183,9 +183,23 @@ const { T3_CODE_ORCHESTRATION_INSTRUCTIONS } = await import(
   ).href
 );
 const instructionsOut = NodePath.join(here, "..", "src", "instructions.md");
+// Claude also gets CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS, which the adapter does not export.
+const adapter = NodeFS.readFileSync(
+  NodePath.join(server, "src/orchestration-v2/Adapters/ClaudeAdapterV2.ts"),
+  "utf8",
+);
+const backgroundWait = /const CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS = `((?:[^`\\]|\\.)*)`;/.exec(
+  adapter,
+);
+if (backgroundWait === null) {
+  console.error("ClaudeAdapterV2.ts no longer defines CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS.");
+  process.exit(1);
+}
+const claudeOut = NodePath.join(here, "..", "src", "claude-background-wait.md");
 const outputs = [
   [out, text, `${catalog.length} tools`],
   [instructionsOut, T3_CODE_ORCHESTRATION_INSTRUCTIONS, "agent instructions"],
+  [claudeOut, backgroundWait[1].replace(/\\(.)/g, "$1"), "Claude background-wait text"],
 ];
 if (process.argv.includes("--check")) {
   for (const [file, content, what] of outputs) {

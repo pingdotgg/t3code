@@ -1,34 +1,31 @@
 //! Delegated tasks: `delegate_task`, `task_status`, `task_cancel`.
 //!
-//! A task is a child thread whose id derives from the parent thread and the task id, so no
-//! table keeps tasks and they survive a restart: `task_status` from another thread finds no
-//! child and answers `task_not_found`. The child is an ordinary thread to the engine (no
-//! lineage yet; see README). An async task wakes its parent with a message when it ends,
-//! as TS `ProviderContinuationService` does; that watcher lives in memory only.
+//! `delegate_task` dispatches the engine's `delegated_task.request`, which writes the child
+//! thread (lineage `subagent`), the parent's subagent rows and the child's first run, and
+//! wakes the parent when the child ends. Ids follow from the command id (engine README), so
+//! no table keeps tasks: task `node:delegated-task:<commandId>`, child
+//! `thread:delegated-task:<commandId>`.
 
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 use super::{
-    Args, Cx, ToolError, ToolResult, fail, projects, str_arg,
-    threads::{self, MAX_WAIT_MS, Until},
+    Args, Cx, ToolResult, fail, projects, str_arg,
+    threads::{self, MAX_WAIT_MS},
 };
-use crate::{Caller, McpService, view};
+use crate::{Caller, view};
 
 const DEFAULT_TASK_WAIT_MS: u64 = 4 * 60 * 1000;
-/// How long a watcher follows a child, and then waits for its parent to go idle.
-const WATCH_CHILD: Duration = Duration::from_secs(24 * 60 * 60);
-const WATCH_PARENT: Duration = Duration::from_secs(60 * 60);
 pub const RUNNING_TASK_NEXT: &str =
     "Completion wakes this thread, so end your turn. Do not wait on it or poll it.";
 const TERMINAL: [&str; 4] = ["completed", "failed", "cancelled", "interrupted"];
+const TASK_PREFIX: &str = "node:delegated-task:";
 
-fn child_thread_id(parent: &str, task_id: &str) -> String {
-    let digest = Sha256::digest(format!("{parent}\n{task_id}").as_bytes());
-    let hex: String = digest.iter().take(16).map(|b| format!("{b:02x}")).collect();
-    format!("thread:task:{hex}")
+/// The child thread of a task id, as the engine names it.
+fn child_thread_id(task_id: &str) -> Option<String> {
+    let command_id = task_id.strip_prefix(TASK_PREFIX)?;
+    Some(format!("thread:delegated-task:{command_id}"))
 }
 
 /// TS `taskStatusForRun`.
@@ -42,21 +39,6 @@ fn task_status(run: Option<&Value>) -> &'static str {
         Some("interrupted") => "interrupted",
         _ => "running",
     }
-}
-
-/// TS `threadTitle`: the title, else the prompt, cut to 80 characters.
-fn child_title(parent_title: &str, title: Option<&str>, prompt: &str) -> String {
-    let detail = title
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .unwrap_or(prompt.trim());
-    if detail.is_empty() {
-        return format!("{parent_title} thread 1");
-    }
-    if detail.chars().count() <= 80 {
-        return detail.to_owned();
-    }
-    format!("{}...", detail.chars().take(77).collect::<String>())
 }
 
 fn options_array(options: Option<&Value>) -> Option<Value> {
@@ -160,62 +142,62 @@ pub async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
         str_arg(args, "interactionMode"),
     )?;
 
+    let parent_run = active.cloned().unwrap_or_default();
     let key = Cx::request_key(args);
-    let task_id = cx.hashed_id("task:", &key);
-    let child = child_thread_id(&caller.thread_id, &task_id);
+    let command_id = cx.stable_id("command", "delegate-task", &key);
+    let task_id = format!("{TASK_PREFIX}{command_id}");
+    let child = format!("thread:delegated-task:{command_id}");
     let task = str_arg(args, "task").unwrap_or_default();
     let prompt = match str_arg(args, "role") {
         None | Some("general") => task.to_owned(),
         Some(role) => format!("Act as the {role} sub-agent for this task.\n\n{task}"),
     };
-    let mut strategy = json!({"type": "root"});
-    if let Some(path) = parent_thread["worktreePath"].as_str() {
-        strategy = json!({"type": "existing_worktree", "worktreePath": path, "branch": parent_thread["branch"]});
+    let wait = str_arg(args, "mode") == Some("wait");
+    let mut command = json!({
+        "type": "delegated_task.request",
+        "commandId": command_id,
+        "parentThreadId": caller.thread_id,
+        "parentRunId": parent_run["id"],
+        "parentNodeId": parent_run["rootNodeId"],
+        "task": prompt,
+        "modelSelection": selection,
+        "runtimeMode": runtime_mode,
+        "interactionMode": interaction_mode,
+        // A wait delivers the result through this call; it wakes the parent only after the
+        // wait gives up (below).
+        "completionWake": if wait { "settled_only" } else { "always" },
+        "createdBy": "agent",
+        "creationSource": "mcp",
+    });
+    if let Some(title) = str_arg(args, "title")
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    {
+        command["title"] = json!(title);
     }
-    threads::launch_thread(
-        cx,
-        json!({
-            "commandId": format!("{task_id}:launch"),
-            "threadId": child,
-            "projectId": parent_thread["projectId"],
-            "title": child_title(
-                parent_thread["title"].as_str().unwrap_or_default(),
-                str_arg(args, "title"),
-                task,
-            ),
-            "modelSelection": selection,
-            "runtimeMode": runtime_mode,
-            "interactionMode": interaction_mode,
-            "workspaceStrategy": strategy,
-            "initialMessage": {"messageId": format!("message:{task_id}"), "text": prompt, "attachments": []},
-            "createdBy": "agent",
-            "creationSource": "mcp",
-        }),
-    )
-    .await?;
+    cx.dispatch(command).await?;
 
-    if str_arg(args, "mode") == Some("wait") {
+    if wait {
         let timeout = args
             .get("timeoutMs")
             .and_then(Value::as_f64)
             .map_or(DEFAULT_TASK_WAIT_MS, |ms| {
                 (ms.max(1.0) as u64).min(MAX_WAIT_MS)
             });
-        let (_, timed_out) = threads::wait_for_run(
-            cx,
-            &child,
-            None,
-            Duration::from_millis(timeout),
-            Until::EndedOrWaiting,
-        )
-        .await?;
-        let result = read_task(cx, &caller.thread_id, &task_id, timed_out).await?;
+        let (_, timed_out) =
+            threads::wait_for_run(cx, &child, None, Duration::from_millis(timeout)).await?;
         if timed_out {
-            watch(cx.service.clone(), cx.caller.clone(), task_id);
+            cx.dispatch(json!({
+                "type": "delegated_task.wake-policy",
+                "commandId": format!("{command_id}:wake-always"),
+                "parentThreadId": caller.thread_id,
+                "taskId": task_id,
+                "completionWake": "always",
+            }))
+            .await?;
         }
-        return Ok(result);
+        return read_task(cx, &caller.thread_id, &task_id, timed_out).await;
     }
-    watch(cx.service.clone(), cx.caller.clone(), task_id.clone());
     read_task(cx, &caller.thread_id, &task_id, false).await
 }
 
@@ -257,11 +239,11 @@ async fn read_task(cx: &Cx<'_>, parent: &str, task_id: &str, wait_timed_out: boo
             format!("Delegated task {task_id} does not belong to thread {parent}."),
         )
     };
-    if !task_id.starts_with("task:") {
+    let child_id = child_thread_id(task_id).ok_or_else(not_found)?;
+    let child = cx.projection(&child_id).await.map_err(|_| not_found())?;
+    if child["thread"]["lineage"]["parentThreadId"] != parent {
         return Err(not_found());
     }
-    let child_id = child_thread_id(parent, task_id);
-    let child = cx.projection(&child_id).await.map_err(|_| not_found())?;
     let mut runs: Vec<&Value> = child["runs"]
         .as_array()
         .map(|r| r.iter().collect())
@@ -339,75 +321,4 @@ async fn read_task(cx: &Cx<'_>, parent: &str, task_id: &str, wait_timed_out: boo
         result["next"] = json!(RUNNING_TASK_NEXT);
     }
     Ok(result)
-}
-
-/// Follows a task to its end, then wakes its parent with a message once the parent is idle.
-fn watch(service: Arc<McpService>, caller: Caller, task_id: String) {
-    tokio::spawn(async move {
-        let Caller::Thread(thread) = &caller else {
-            return;
-        };
-        let parent = thread.thread_id.clone();
-        let cx = Cx {
-            service: &service,
-            caller: &caller,
-        };
-        let child = child_thread_id(&parent, &task_id);
-        // A question leaves the child `waiting`; follow it until it ends.
-        let Ok((Some(ended), false)) =
-            threads::wait_for_run(&cx, &child, None, WATCH_CHILD, Until::Ended).await
-        else {
-            return;
-        };
-        let Ok((_, false)) =
-            threads::wait_for_run(&cx, &parent, None, WATCH_PARENT, Until::Ended).await
-        else {
-            return;
-        };
-        let wake = format!(
-            "Delegated task {task_id} reached a terminal state. Use task_status with taskId {task_id} to read the result."
-        );
-        let run = ended["id"].as_str().unwrap_or_default();
-        let result = cx
-            .dispatch(json!({
-                "type": "message.dispatch",
-                "commandId": format!("command:mcp:task-wake:{task_id}:{run}"),
-                "threadId": parent,
-                "messageId": format!("message:task-wake:{task_id}:{run}"),
-                "text": wake,
-                "attachments": [],
-                "dispatchMode": {"type": "start_immediately"},
-                "createdBy": "system",
-                "creationSource": "server",
-            }))
-            .await;
-        if let Err(ToolError::Failure { message, .. }) = result {
-            eprintln!("mcp: could not wake thread {parent} for task {task_id}: {message}");
-        }
-    });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn titles_cut_like_ts() {
-        assert_eq!(child_title("P", None, "  "), "P thread 1");
-        assert_eq!(child_title("P", Some("Fix it"), "long"), "Fix it");
-        let long = "x".repeat(100);
-        assert_eq!(child_title("P", None, &long).chars().count(), 80);
-    }
-
-    #[test]
-    fn a_task_id_names_a_child_only_for_its_parent() {
-        assert_ne!(
-            child_thread_id("a", "task:1"),
-            child_thread_id("b", "task:1")
-        );
-        assert_eq!(
-            child_thread_id("a", "task:1"),
-            child_thread_id("a", "task:1")
-        );
-    }
 }

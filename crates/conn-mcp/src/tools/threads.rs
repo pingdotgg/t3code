@@ -539,38 +539,26 @@ pub async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let key = Cx::request_key(args);
     let message_id = cx.stable_id("message", "thread-send", &key);
     let command_id = cx.stable_id("command", "thread-send", &key);
-    let replay = projection["runs"]
-        .as_array()
-        .and_then(|runs| {
-            runs.iter()
-                .find(|r| r["userMessageId"] == message_id.as_str())
-        })
-        .cloned();
-    let mut delivery = "started";
-    if replay.is_none()
-        && let Some(active) = view::active_run(&projection)
-    {
-        if mode != "restart" {
+    // `ThreadManagementService.sendToThread`: steer and restart need a running turn; auto
+    // steers one if there is one, else starts; queue waits behind the active run.
+    let active = view::active_run(&projection).and_then(|r| r["id"].as_str().map(str::to_owned));
+    let dispatch_mode = match (mode, active) {
+        ("steer" | "restart", None) => {
+            let verb = if mode == "steer" {
+                "steered"
+            } else {
+                "restarted"
+            };
             return Err(fail(
                 "thread_not_sendable",
-                format!(
-                    "Thread {id} is running run {}. Conn Server cannot queue or steer a message yet: wait for the run with t3_thread_wait, then send, or send with mode \"restart\".",
-                    active["id"].as_str().unwrap_or_default()
-                ),
+                format!("Thread {id} has no running turn that can be {verb}."),
             ));
         }
-        let run_id = active["id"].as_str().unwrap_or_default().to_owned();
-        cx.dispatch(json!({
-            "type": "run.interrupt",
-            "commandId": format!("{command_id}:interrupt"),
-            "threadId": id,
-            "runId": run_id,
-            "reason": "Restarted by an agent's message.",
-        }))
-        .await?;
-        wait_for_run(cx, id, Some(&run_id), Duration::from_secs(30), Until::Ended).await?;
-        delivery = "restarted";
-    }
+        ("steer" | "auto", Some(run)) => json!({"type": "steer_active", "targetRunId": run}),
+        ("restart", Some(run)) => json!({"type": "restart_active", "targetRunId": run}),
+        ("queue", _) => json!({"type": "queue_after_active"}),
+        _ => json!({"type": "start_immediately"}),
+    };
     let sender = cx.caller_thread_id().map(str::to_owned);
     let mut command = json!({
         "type": "message.dispatch",
@@ -579,7 +567,7 @@ pub async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
         "messageId": message_id,
         "text": str_arg(args, "message").unwrap_or_default(),
         "attachments": [],
-        "dispatchMode": {"type": "start_immediately"},
+        "dispatchMode": dispatch_mode,
         "createdBy": "agent",
         "creationSource": "mcp",
     });
@@ -588,13 +576,28 @@ pub async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
     }
     cx.dispatch(command).await?;
     let projection = cx.projection(id).await?;
+    let message = projection["messages"]
+        .as_array()
+        .and_then(|messages| messages.iter().find(|m| m["id"] == message_id.as_str()))
+        .ok_or_else(|| internal("message.dispatch made no message"))?;
     let run = projection["runs"]
         .as_array()
-        .and_then(|runs| {
-            runs.iter()
-                .find(|r| r["userMessageId"] == message_id.as_str())
-        })
+        .and_then(|runs| runs.iter().find(|r| r["id"] == message["runId"]))
         .ok_or_else(|| internal("message.dispatch made no run"))?;
+    let intent = projection["turnItems"]
+        .as_array()
+        .and_then(|items| {
+            items.iter().find(|item| {
+                item["type"] == "user_message" && item["messageId"] == message_id.as_str()
+            })
+        })
+        .and_then(|item| item["inputIntent"].as_str().map(str::to_owned));
+    let delivery = match intent.as_deref() {
+        None | Some("queued_turn") => "queued",
+        Some("turn_start") => "started",
+        _ if mode == "restart" => "restarted",
+        _ => "steered",
+    };
     Ok(json!({
         "threadId": id,
         "link": cx.link(id, projection["thread"]["title"].as_str().unwrap_or_default()),
@@ -605,22 +608,14 @@ pub async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
     }))
 }
 
-/// When a wait for a run ends.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Until {
-    Ended,
-    /// Also when it waits on a question or approval: a person must answer.
-    EndedOrWaiting,
-}
-
-/// Waits until a run reaches `until`. No `run_id`: the thread's latest run. Returns the run, `None` for a thread with
-/// no run, and whether the wait timed out.
+/// Waits until a run ends or waits on a question or approval (a person must answer). No
+/// `run_id`: the thread's latest run. Returns the run, `None` for a thread with no run, and
+/// whether the wait timed out.
 pub async fn wait_for_run(
     cx: &Cx<'_>,
     thread: &str,
     run_id: Option<&str>,
     timeout: Duration,
-    until: Until,
 ) -> Result<(Option<Value>, bool), ToolError> {
     let pick = |projection: &Value| -> Result<Option<Value>, ToolError> {
         match run_id {
@@ -637,9 +632,8 @@ pub async fn wait_for_run(
         }
     };
     let settled = |run: &Option<Value>| {
-        run.as_ref().is_none_or(|r| {
-            !view::is_live(r) || (until == Until::EndedOrWaiting && r["status"] == "waiting")
-        })
+        run.as_ref()
+            .is_none_or(|r| !view::is_live(r) || r["status"] == "waiting")
     };
     let deadline = tokio::time::Instant::now() + timeout;
     // The stream starts with a snapshot, then carries each committed event.
@@ -685,7 +679,6 @@ pub async fn wait(cx: &Cx<'_>, args: &Args) -> ToolResult {
         id,
         str_arg(args, "runId"),
         Duration::from_millis(timeout),
-        Until::EndedOrWaiting,
     )
     .await?;
     Ok(json!({

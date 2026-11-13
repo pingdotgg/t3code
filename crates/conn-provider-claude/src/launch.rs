@@ -227,14 +227,15 @@ pub fn initialize_request(
         "promptSuggestions": false,
         "supportedDialogKinds": ["resume_return"],
     });
-    let append: Vec<&str> = config
-        .append_system_prompt
-        .as_deref()
-        .into_iter()
-        .chain(extra)
-        .collect();
+    // T3 appends the MCP text to the runtime instructions with no separator; the text
+    // starts with its own blank lines.
+    let append = format!(
+        "{}{}",
+        config.append_system_prompt.as_deref().unwrap_or_default(),
+        extra.unwrap_or_default()
+    );
     if !append.is_empty() {
-        request["appendSystemPrompt"] = json!(append.join("\n\n"));
+        request["appendSystemPrompt"] = json!(append);
     }
     if let Some(title) = title {
         request["title"] = json!(title);

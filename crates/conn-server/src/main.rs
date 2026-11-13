@@ -12,7 +12,12 @@ fn main() {
         attachments_dir: Some(options.state_dir.join("attachments")),
         // The engine closes idle sessions (`--session-idle-timeout`), one rule for all.
         idle_timeout: None,
-        mcp_instructions: Some(conn_mcp::AGENT_INSTRUCTIONS.to_owned()),
+        // T3's text after the runtime instructions when the session has `t3-code`.
+        mcp_instructions: Some(format!(
+            "{}{}",
+            conn_mcp::AGENT_INSTRUCTIONS,
+            conn_mcp::CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS
+        )),
         ..ClaudeConfig::default()
     };
     let mut providers: Vec<Arc<dyn Provider>> =
