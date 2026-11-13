@@ -1,5 +1,3 @@
-import * as NodeChildProcess from "node:child_process";
-
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Cause from "effect/Cause";
@@ -656,7 +654,12 @@ it.effect("interrupted checkpoint staging leaves no batch object directory behin
     const fifos = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-batch-fifo-" });
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
     const entered = path.join(fifos, "entered");
-    NodeChildProcess.execFileSync("mkfifo", [entered]);
+    yield* (yield* VcsProcess.VcsProcess).run({
+      operation: "test.mkfifo",
+      command: "mkfifo",
+      cwd: fifos,
+      args: [entered],
+    });
     // A clean filter that blocks stands in for a large file Git is still hashing when killed.
     yield* git([
       "config",
@@ -666,6 +669,9 @@ it.effect("interrupted checkpoint staging leaves no batch object directory behin
     yield* fs.writeFileString(path.join(cwd, ".gitattributes"), "z-slow.bin filter=block\n");
     yield* fs.writeFileString(path.join(cwd, "a-new.txt"), "written before the slow file\n");
     yield* fs.writeFileString(path.join(cwd, "z-slow.bin"), "slow\n");
+    // Stands in for another writer's quarantine, which is not this capture's to remove.
+    const foreign = "tmp_objdir-bulk-fsync-foreign";
+    yield* fs.makeDirectory(path.join(cwd, ".git", "objects", foreign));
     const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
       Effect.provideService(HostProcess.Platform, "darwin"),
     );
@@ -677,7 +683,7 @@ it.effect("interrupted checkpoint staging leaves no batch object directory behin
     const objects = yield* fs.readDirectory(path.join(cwd, ".git", "objects"));
     assert.deepEqual(
       objects.filter((entry) => entry.startsWith("tmp_objdir")),
-      [],
+      [foreign],
     );
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );

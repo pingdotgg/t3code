@@ -1,13 +1,17 @@
 import * as NodeBuffer from "node:buffer";
 
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
+import * as Semaphore from "effect/Semaphore";
 import { ChildProcessSpawner } from "effect/process";
 
 import {
@@ -466,6 +470,7 @@ const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const FLAGGED_INDEX_ENTRIES_MAX_BYTES = 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
+const BATCH_QUARANTINE_PREFIX = "tmp_objdir-bulk-fsync-";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
@@ -961,6 +966,73 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       : []),
   ] as const;
 
+  // Git skips its own cleanup when signalled, so a killed batch `add` strands its quarantine.
+  // The names are random: the stranded ones are those that appeared while only our stagers,
+  // overlapping ones included, were writing to this object store and that outlived all of them.
+  const batchStagers = new Map<
+    string,
+    { active: number; killed: boolean; readonly before: ReadonlySet<string> }
+  >();
+  const batchStagersLock = yield* Semaphore.make(1);
+  const listBatchQuarantines = (objectsDir: string) =>
+    fileSystem.readDirectory(objectsDir).pipe(
+      Effect.map((entries) => entries.filter((entry) => entry.startsWith(BATCH_QUARANTINE_PREFIX))),
+      Effect.orElseSucceed((): Array<string> => []),
+    );
+  const removingKilledBatchQuarantines = <A, E, R>(
+    objectsDir: string,
+    stage: Effect.Effect<A, E, R>,
+  ) =>
+    !durableWrite.includes("core.fsyncMethod=batch")
+      ? stage
+      : Effect.acquireUseRelease(
+          batchStagersLock.withPermits(1)(
+            Effect.gen(function* () {
+              const state = batchStagers.get(objectsDir) ?? {
+                active: 0,
+                killed: false,
+                before: new Set(yield* listBatchQuarantines(objectsDir)),
+              };
+              batchStagers.set(objectsDir, state);
+              state.active += 1;
+              return state;
+            }),
+          ),
+          () => stage,
+          (state, exit) =>
+            batchStagersLock
+              .withPermits(1)(
+                Effect.gen(function* () {
+                  state.active -= 1;
+                  // Any other failure is Git exiting by itself, which removes its own quarantine.
+                  state.killed ||=
+                    Exit.isFailure(exit) &&
+                    (Cause.hasInterrupts(exit.cause) ||
+                      Option.exists(
+                        Cause.findErrorOption(exit.cause),
+                        Predicate.isTagged("VcsProcessTimeoutError"),
+                      ));
+                  if (state.active > 0) return [];
+                  batchStagers.delete(objectsDir);
+                  if (!state.killed) return [];
+                  return (yield* listBatchQuarantines(objectsDir)).filter(
+                    (entry) => !state.before.has(entry),
+                  );
+                }),
+              )
+              .pipe(
+                Effect.flatMap(
+                  Effect.forEach(
+                    (entry) =>
+                      fileSystem
+                        .remove(path.join(objectsDir, entry), { recursive: true, force: true })
+                        .pipe(Effect.ignore),
+                    { discard: true },
+                  ),
+                ),
+              ),
+        );
+
   // Checkpoints must handle existing paths beyond Windows MAX_PATH, even when
   // core.longpaths is disabled in the user's Git configuration.
   const longPaths = hostPlatform === "win32" ? ["-c", "core.longpaths=true"] : [];
@@ -1237,26 +1309,29 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         }
 
         const stageFiles = (exclusions: ReadonlyArray<string>) =>
-          execute({
-            operation,
-            cwd: input.cwd,
-            args: [
-              ...indexConfig,
-              ...durableWrite,
-              ...longPaths,
-              // safecrlf=true refuses LF files under CRLF conversion; capture them as Git's default does.
-              "-c",
-              "core.safecrlf=false",
-              "add",
-              ...(sparseCheckout ? ["--sparse"] : []),
-              // add -A rejects ignored directories even when they contain tracked files.
-              workspaceIgnored ? "-u" : "-A",
-              "--",
-              ".",
-              ...exclusions,
-            ],
-            env: commitEnv,
-          });
+          removingKilledBatchQuarantines(
+            path.join(gitCommonDir, "objects"),
+            execute({
+              operation,
+              cwd: input.cwd,
+              args: [
+                ...indexConfig,
+                ...durableWrite,
+                ...longPaths,
+                // safecrlf=true refuses LF files under CRLF conversion; capture them as Git's default does.
+                "-c",
+                "core.safecrlf=false",
+                "add",
+                ...(sparseCheckout ? ["--sparse"] : []),
+                // add -A rejects ignored directories even when they contain tracked files.
+                workspaceIgnored ? "-u" : "-A",
+                "--",
+                ".",
+                ...exclusions,
+              ],
+              env: commitEnv,
+            }),
+          );
         yield* stageFiles([]).pipe(
           Effect.catchTags({
             VcsProcessExitError: (error) =>
