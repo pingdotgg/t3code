@@ -53,6 +53,7 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
     readonly timeoutMs?: number;
   } & ShellSnapshotOptions,
 ) {
+  const headersTimeoutMs = input.timeoutMs ?? SHELL_SNAPSHOT_HEADERS_TIMEOUT_MS;
   const endpoint = {
     query: {
       ...(input.omitIdleSubagents === true ? { omitIdleSubagents: "1" } : {}),
@@ -75,12 +76,12 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
         })
         .pipe(
           Effect.timeoutOrElse({
-            duration: SHELL_SNAPSHOT_HEADERS_TIMEOUT_MS,
+            duration: headersTimeoutMs,
             orElse: () =>
               Effect.fail(
                 new RemoteEnvironmentAuthTimeoutError({
                   requestUrl,
-                  timeoutMs: SHELL_SNAPSHOT_HEADERS_TIMEOUT_MS,
+                  timeoutMs: headersTimeoutMs,
                 }),
               ),
           }),
