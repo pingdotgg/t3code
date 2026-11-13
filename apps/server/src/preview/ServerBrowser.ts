@@ -2177,7 +2177,12 @@ const make = Effect.gen(function* () {
         message: "No server preview tab is open for this thread. Call preview_open first.",
       });
     }
-    if (!READ_OPERATIONS.has(request.operation) && !tab.control.agentMayAct(request.agentSessionId))
+    // Any session of the thread may close its agent tabs: the session id rotates on provider restart.
+    if (
+      request.operation !== "close" &&
+      !READ_OPERATIONS.has(request.operation) &&
+      !tab.control.agentMayAct(request.agentSessionId)
+    )
       throw new BrowserControlInterrupted({
         message:
           "This tab belongs to another agent session. You can read it, but open your own tab to act.",
