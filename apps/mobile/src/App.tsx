@@ -4,7 +4,7 @@ import { installThreadOutboxDelivery } from "./state/threadOutboxDelivery";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
 import { requireNativeModule } from "expo";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Platform, StatusBar } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -77,6 +77,12 @@ import { installUiRuntimeMemoryWarningGc } from "./lib/useUiRuntimeMemoryWarning
 import { SubscriptionUsageCoordinator } from "./widgets/SubscriptionUsageCoordinator";
 import { installSubscriptionUsageRefresh } from "./widgets/useSubscriptionUsage";
 import { GlobalVoiceInputControl } from "./features/voice-input/GlobalVoiceInputControl";
+import {
+  launchSplashHomeRowsPending,
+  settleLaunchSplashHomeRows,
+  splashCanHide,
+  useLaunchSplashHomeRowsPending,
+} from "./features/home/home-launch-splash";
 import { restoreSettingsLinkState } from "./features/settings/settings-navigation";
 import {
   hydrateWorkspaceSelections,
@@ -166,6 +172,8 @@ function handleNavigationStateChange(state: NavigationState | undefined): void {
   resolvePendingNewTaskPromptLink(state);
   resolvePendingThreadPromptLink(state);
   if (!state) return;
+  // A launch that opens another route has no Home rows for the splash to wait for.
+  if (state.routes[state.index]?.name !== "Home") settleLaunchSplashHomeRows();
   setAgentNotificationPathname(workspaceLocationFromState(state).pathname);
   recordAppShortcutNavigationState(state);
   pruneNewTaskFlowStates(state);
@@ -204,28 +212,38 @@ disposeOnFoundationReplace(typeof module === "undefined" ? undefined : module.ho
   for (const dispose of appServiceDisposers) dispose();
 });
 
-// Cached shells are local reads that end in a fraction of this time; the limit only keeps a
-// failed read from holding the splash screen.
-const SPLASH_SHELL_CACHE_WAIT_MS = 1_500;
+// Cached shells are local reads that end in a fraction of this time; the limit keeps a failed
+// read, or a list that does not lay out, from holding the splash screen.
+const SPLASH_WAIT_MS = 1_500;
 
 function SplashScreenCoordinator() {
   const { isReady } = useAppearancePreferences();
   const shellCachesRead = useAtomValue(shellCachesReadAtom);
+  const homeRowsPending = useLaunchSplashHomeRowsPending();
   const [waitEnded, setWaitEnded] = useState(false);
+  const hidden = useRef(false);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the limit on how long the native splash screen waits for cached shells
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the limit on how long the native splash screen waits for cached shells and their rows
   useEffect(() => {
-    const timer = setTimeout(() => setWaitEnded(true), SPLASH_SHELL_CACHE_WAIT_MS);
+    const timer = setTimeout(() => setWaitEnded(true), SPLASH_WAIT_MS);
     return () => clearTimeout(timer);
   }, []);
 
-  // The thread list paints every environment's cached rows at once when the splash hides
-  // after they are read.
-  const canHide = isReady && (shellCachesRead || waitEnded);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hides the native splash screen once preferences and cached shells have loaded
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hides the native splash screen once preferences have loaded and the cached rows are laid out
   useEffect(() => {
-    if (canHide) void SplashScreen.hide();
-  }, [canHide]);
+    const canHide = splashCanHide({
+      preferencesReady: isReady,
+      shellCachesRead,
+      // Home holds the splash in a layout effect of the commit that gives it rows. That can be
+      // this commit, after this render read the store.
+      homeRowsPending: homeRowsPending || launchSplashHomeRowsPending(),
+      waitEnded,
+    });
+    if (!canHide || hidden.current) return;
+    hidden.current = true;
+    settleLaunchSplashHomeRows();
+    void SplashScreen.hide();
+  }, [isReady, shellCachesRead, homeRowsPending, waitEnded]);
 
   return null;
 }

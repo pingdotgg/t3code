@@ -142,6 +142,7 @@ function resolveCommandEditorArgs(
   editor: (typeof EDITORS)[number],
   target: string,
   isDirectory: boolean,
+  projectRoot: string | undefined,
 ): ReadonlyArray<string> {
   const parsedTarget = parseTargetPathAndPosition(target);
   // Editors take `file:line` or `file:line:column`. A colon range opens at its start line.
@@ -162,6 +163,8 @@ function resolveCommandEditorArgs(
       return Option.match(parsedLaunchTarget, {
         onNone: () => [launchTarget],
         onSome: ({ path, line, column }) => [
+          // Only positioned targets get the root: a folder target would open as a second project.
+          ...(projectRoot === undefined ? [] : [projectRoot]),
           "--line",
           line,
           // JetBrains IDEs count `--column` from 0; targets count columns from 1.
@@ -506,7 +509,10 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
       editor: editorDef.id,
       target: input.cwd,
       command,
-      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, input.cwd, isDirectory)],
+      args: [
+        ...baseArgs,
+        ...resolveCommandEditorArgs(editorDef, input.cwd, isDirectory, input.projectRoot),
+      ],
     };
   }
 
