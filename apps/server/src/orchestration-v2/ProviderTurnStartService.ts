@@ -54,6 +54,7 @@ import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDeliv
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { providerMessageText } from "./providerMessageText.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import {
   ContextHandoffBackgroundWorkError,
@@ -748,26 +749,11 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      // Mentions are saved relative to the checkout; an agent in a subdirectory
-      // of it would otherwise read them against its own cwd.
-      const checkoutRoot = projection.thread.worktreePath;
-      const mentionRoot =
-        checkoutRoot !== null &&
-        resolvedRuntimePolicy.cwd !== null &&
-        path.resolve(checkoutRoot) !== path.resolve(resolvedRuntimePolicy.cwd)
-          ? checkoutRoot
-          : null;
-      const userText = projectComposerContextForProvider({
-        text: message.text,
-        records: (message.context?.records ?? []).map((record) =>
-          mentionRoot !== null &&
-          record.kind === "mention" &&
-          "path" in record &&
-          !path.isAbsolute(record.path) &&
-          !/^~(?:[\\/]|$)/.test(record.path)
-            ? { ...record, path: path.join(mentionRoot, record.path) }
-            : record,
-        ),
+      const userText = providerMessageText({
+        path,
+        message,
+        checkoutRoot: projection.thread.worktreePath,
+        agentCwd: resolvedRuntimePolicy.cwd,
       });
       // Native goal commands go verbatim; handoff history waits a turn.
       const goalDriver =
