@@ -336,6 +336,20 @@ it.live.each([
         assert.deepEqual(after.thread.modelSelection, secondAccount);
         assert.equal(after.thread.providerInstanceId, secondAccount.instanceId);
         assert.notInclude(closed, secondAccount.instanceId);
+        // The next send continues on the picked account, not on the session that just replied.
+        const thirdRunning = yield* runStatus("send-3", "running");
+        yield* send(3, secondAccount);
+        yield* worker.drain();
+        yield* Fiber.join(thirdRunning);
+        const next = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.userMessageId === "send-3",
+        );
+        assert.equal(next?.providerInstanceId, secondAccount.instanceId);
+        assert.equal(
+          next?.providerThreadId,
+          after.runs.find((run) => run.userMessageId === "send-2")?.providerThreadId,
+        );
+        assert.lengthOf(second.processes, 1);
         return;
       }
       const waiting = yield* orchestrator.getThreadProjection(threadId);
