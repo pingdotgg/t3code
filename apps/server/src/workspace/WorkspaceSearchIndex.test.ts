@@ -47,7 +47,7 @@ it.effect("filters image searches before applying the result limit", () =>
         ...Array.from({ length: 200 }, (_, index) => fileItem(`src/file-${index}.ts`)),
         fileItem("public/icon.svg"),
       ];
-      const fileSearch = vi.fn(() => ({
+      const fileSearch = vi.fn(async () => ({
         ok: true as const,
         value: {
           items,
@@ -61,7 +61,7 @@ it.effect("filters image searches before applying the result limit", () =>
         waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
         isScanning: () => false,
         watch: () => ({ ok: true as const, value: () => undefined }),
-        fileSearch,
+        fileSearchAsync: fileSearch,
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
@@ -95,7 +95,7 @@ it.effect("fetches past a first page of Git-ignored results", () =>
         fileItem("hidden/c.ts"),
         fileItem("src/a.ts"),
       ];
-      const fileSearch = vi.fn((_query: string, options?: { pageSize?: number }) => ({
+      const fileSearch = vi.fn(async (_query: string, options?: { pageSize?: number }) => ({
         ok: true as const,
         value: {
           items: items.slice(0, options?.pageSize),
@@ -109,7 +109,7 @@ it.effect("fetches past a first page of Git-ignored results", () =>
         waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
         isScanning: () => false,
         watch: () => ({ ok: true as const, value: () => undefined }),
-        fileSearch,
+        fileSearchAsync: fileSearch,
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
@@ -133,7 +133,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
           isScanning: () => false,
           watch: () => ({ ok: true as const, value: () => undefined }),
-          fileSearch: vi.fn(() => ({
+          fileSearchAsync: vi.fn(async () => ({
             ok: true as const,
             value: { items, scores: [], totalMatched: 1, totalFiles: 1 },
           })),
@@ -184,7 +184,7 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
         filteredFileCount: 1,
         nextCursor: cursor,
       });
-      const grep = vi.fn((_query: string, options?: GrepOptions) =>
+      const grep = vi.fn(async (_query: string, options?: GrepOptions) =>
         options?.cursor
           ? { ok: true as const, value: grepResult("needle", [[0, 6]], null) }
           : {
@@ -197,7 +197,7 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
         waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
         isScanning: () => false,
         watch: () => ({ ok: true as const, value: () => undefined }),
-        grep,
+        grepAsync: grep,
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
@@ -241,7 +241,7 @@ function fakeSymlinkFinder(
   let watchFailures = options.watchFailures ?? 0;
   // fff's pageIndex is an offset into the results, not a page number.
   const directorySearch = vi.fn(
-    (_query: string, searchOptions?: { pageIndex?: number; pageSize?: number }) => {
+    async (_query: string, searchOptions?: { pageIndex?: number; pageSize?: number }) => {
       const offset = searchOptions?.pageIndex ?? 0;
       const items = directories.slice(offset, offset + (searchOptions?.pageSize ?? 100));
       return {
@@ -269,12 +269,12 @@ function fakeSymlinkFinder(
       watchers.push(callback);
       return { ok: true as const, value: () => undefined };
     },
-    directorySearch,
-    fileSearch: () => {
+    directorySearchAsync: directorySearch,
+    fileSearchAsync: async () => {
       const items = indexedItems.flatMap((entry) => (entry.type === "file" ? [entry.item] : []));
       return { ok: true as const, value: { items, scores: [], totalMatched: items.length } };
     },
-    mixedSearch: () => ({
+    mixedSearchAsync: async () => ({
       ok: true as const,
       value: { items: indexedItems, totalMatched: indexedItems.length },
     }),

@@ -585,16 +585,17 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     query: string,
     pageSize: number,
     operation: "directorySearch" | "fileSearch" | "grep" | "mixedSearch",
-    execute: () => Result<A>,
+    execute: () => Promise<Result<A>>,
   ): Effect.fn.Return<A, WorkspaceSearchIndexSearchFailed> {
-    const result = yield* Effect.try({
+    // fff's searches wait on its picker lock, which its watcher can hold for minutes.
+    const result = yield* Effect.tryPromise({
       try: execute,
       catch: (cause) =>
         new WorkspaceSearchIndexSearchFailed({
           cwd,
           queryLength: query.length,
           pageSize,
-          reason: `FileFinder.${operation} threw unexpectedly.`,
+          reason: `FileFinder.${operation} rejected unexpectedly.`,
           cause,
         }),
     });
@@ -616,9 +617,12 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       const directories: string[] = [];
       // fff's pageIndex is an offset into the results, not a page number.
       for (let pageIndex = 0; ; pageIndex += SYMLINK_DIRECTORY_PAGE_SIZE) {
-        const result = yield* Effect.sync(() => {
+        const result = yield* Effect.promise(async () => {
           try {
-            return finder.directorySearch("", { pageIndex, pageSize: SYMLINK_DIRECTORY_PAGE_SIZE });
+            return await finder.directorySearchAsync("", {
+              pageIndex,
+              pageSize: SYMLINK_DIRECTORY_PAGE_SIZE,
+            });
           } catch {
             return undefined;
           }
@@ -629,7 +633,6 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           if (directory) directories.push(directory);
         }
         if (result.value.items.length < SYMLINK_DIRECTORY_PAGE_SIZE) return directories;
-        yield* Effect.yieldNow;
       }
     },
   );
@@ -833,7 +836,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     query: string,
     pageSize: number,
     operation: "directorySearch" | "fileSearch" | "mixedSearch",
-    execute: (pageSize: number) => Result<SearchPage<I>>,
+    execute: (pageSize: number) => Promise<Result<SearchPage<I>>>,
     pathOf: (item: I) => string,
   ): Effect.fn.Return<SearchPage<I>, WorkspaceSearchIndexSearchFailed> {
     let size = pageSize;
@@ -900,7 +903,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         "",
         WORKSPACE_INDEX_PAGE_SIZE,
         "mixedSearch",
-        (pageSize) => finder.mixedSearch("", { pageSize }),
+        (pageSize) => finder.mixedSearchAsync("", { pageSize }),
         mixedItemPath,
       );
       const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES, hostIsWindows);
@@ -941,7 +944,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         query,
         pageSize,
         "fileSearch",
-        (size) => finder.fileSearch(query, { pageSize: size }),
+        (size) => finder.fileSearchAsync(query, { pageSize: size }),
         (item) => item.relativePath,
       );
       return merge(mapFileSearchResult(result, indexLimit, hostIsWindows, imageOnly));
@@ -951,7 +954,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         query,
         pageSize,
         "directorySearch",
-        (size) => finder.directorySearch(query, { pageSize: size }),
+        (size) => finder.directorySearchAsync(query, { pageSize: size }),
         (item) => item.relativePath,
       );
       return merge(mapDirectorySearchResult(result, indexLimit, hostIsWindows));
@@ -960,7 +963,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       query,
       pageSize,
       "mixedSearch",
-      (size) => finder.mixedSearch(query, { pageSize: size }),
+      (size) => finder.mixedSearchAsync(query, { pageSize: size }),
       mixedItemPath,
     );
     return merge(mapMixedSearchResult(result, indexLimit, hostIsWindows));
@@ -998,7 +1001,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     do {
       const remainingTimeBudgetMs = Math.max(1, Math.ceil(deadline - performance.now()));
       const result = yield* runSearch(input.query, input.limit, "grep", () =>
-        finder.grep(searchQuery, {
+        finder.grepAsync(searchQuery, {
           mode: regexMode ? "regex" : "plain",
           smartCase: !input.caseSensitive && !regexMode,
           maxMatchesPerFile: Math.min(CONTENT_SEARCH_MAX_MATCHES_PER_FILE, rawPageSize),
