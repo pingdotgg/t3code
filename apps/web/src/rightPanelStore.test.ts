@@ -11,6 +11,7 @@ import {
   pullRequestSurfaceId,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
+  selectAdjacentRightPanelSurface,
   selectThreadPanelVisibility,
   selectThreadRightPanelState,
   useRightPanelStore,
@@ -40,6 +41,26 @@ async function reloadRightPanelStore() {
 }
 
 describe("rightPanelStore", () => {
+  it("steps through the open panel's tabs in tab order, wrapping at both ends", () => {
+    const store = useRightPanelStore.getState();
+    const adjacent = (step: 1 | -1) =>
+      selectAdjacentRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA, step)?.id;
+    store.openFile(refA, "src/app.ts");
+    expect(adjacent(1)).toBeUndefined();
+    store.openSideChat(refA, ThreadId.make("side-1"));
+    store.openSideChat(refA, ThreadId.make("side-2"));
+    const ids = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).surfaces.map((surface) => surface.id);
+    expect(adjacent(1)).toBe(ids[0]);
+    expect(adjacent(-1)).toBe(ids[1]);
+    store.activateSurface(refA, ids[0]!);
+    expect(adjacent(-1)).toBe(ids[2]);
+    store.close(refA);
+    expect(adjacent(1)).toBeUndefined();
+  });
+
   it("opens a hosted side chat's panel actions in its parent's panel until unhosted", () => {
     const store = useRightPanelStore.getState();
     const unhost = hostRightPanel(refB, refA);

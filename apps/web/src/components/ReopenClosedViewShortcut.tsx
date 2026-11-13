@@ -49,6 +49,8 @@ const PREVIEW_FORWARDED_COMMANDS = [
   "sidebar.toggle",
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
+  "rightPanel.nextTab",
+  "rightPanel.previousTab",
   "preview.focusUrl",
   "preview.find",
 ] as const;

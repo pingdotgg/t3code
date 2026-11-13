@@ -1284,6 +1284,19 @@ export function selectActiveRightPanelSurface(
   return selectSelectedRightPanelSurface(byThreadKey, ref);
 }
 
+/** The open panel's tab `step` places from the active one, wrapping; null without another tab. */
+export function selectAdjacentRightPanelSurface(
+  byThreadKey: Record<string, ThreadRightPanelState>,
+  ref: ScopedThreadRef | null | undefined,
+  step: 1 | -1,
+): RightPanelSurface | null {
+  const { surfaces } = selectThreadRightPanelState(byThreadKey, ref);
+  const active = selectActiveRightPanelSurface(byThreadKey, ref);
+  if (active === null || surfaces.length < 2) return null;
+  const index = surfaces.indexOf(active);
+  return surfaces[(index + step + surfaces.length) % surfaces.length] ?? null;
+}
+
 export function selectSelectedRightPanelSurface(
   byThreadKey: Record<string, ThreadRightPanelState>,
   ref: ScopedThreadRef | null | undefined,
