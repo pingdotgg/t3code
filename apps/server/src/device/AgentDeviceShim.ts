@@ -266,7 +266,9 @@ delete env.AGENT_DEVICE_CONFIG;
 if (!selects) for (const key of selectorEnv) delete env[key];
 const held = valueOf("--udid") ?? valueOf("--serial");
 if (!informational && flows.includes(name.toLowerCase()) && held) {
-  const listed = spawnSync(${JSON.stringify(node)}, [entry, "session", "list", "--json", "--config", valueOf("--config")], { env, encoding: "utf8", timeout: 30000 });
+  // Ask the daemon the flow itself would reach.
+  const daemon = ["--config", "--state-dir", "--daemon-base-url", "--daemon-auth-token", "--daemon-transport", "--daemon-server-mode"].flatMap(flag => { const value = valueOf(flag); return value === undefined ? [] : [flag, value]; });
+  const listed = spawnSync(${JSON.stringify(node)}, [entry, "session", "list", "--json", ...daemon], { env, encoding: "utf8", timeout: 30000 });
   let sessions;
   try { sessions = JSON.parse(listed.stdout).data.sessions; } catch {}
   if (!Array.isArray(sessions)) {

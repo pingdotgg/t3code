@@ -304,13 +304,13 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
       const path = yield* Path.Path;
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-claim-" });
       const entryPath = path.join(dir, "cli.mjs");
-      // Lists the sessions in T3_TEST_SESSIONS; otherwise prints its arguments and any selector
-      // agent-device would read from the environment.
+      // Lists the sessions in T3_TEST_SESSIONS (none on another daemon); otherwise prints its
+      // arguments and any selector agent-device would read from the environment.
       yield* fs.writeFileString(
         entryPath,
         [
           "const args = process.argv.slice(2);",
-          'if (args[0] === "session") console.log(JSON.stringify({ data: { sessions: JSON.parse(process.env.T3_TEST_SESSIONS ?? "[]") } }));',
+          'if (args[0] === "session") console.log(JSON.stringify({ data: { sessions: args.includes("--daemon-base-url") ? [] : JSON.parse(process.env.T3_TEST_SESSIONS ?? "[]") } }));',
           "else console.log(JSON.stringify([...args, ...Object.keys(process.env).filter((key) => /^AGENT_DEVICE_(PLATFORM|SERIAL)$/.test(key))]));",
         ].join("\n"),
       );
@@ -372,6 +372,11 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
           yield* Effect.promise(() => launch(flow, { T3_TEST_SESSIONS: held("t3-b") })),
         ).toEqual([...flow, ...selected]);
       }
+      // A flow sent to another daemon is checked against that daemon's sessions.
+      const elsewhere = ["batch", "--steps-file", "/s.json", "--daemon-base-url", "http://b:1"];
+      expect(
+        yield* Effect.promise(() => launch(elsewhere, { T3_TEST_SESSIONS: held("t3-a") })),
+      ).toEqual([...elsewhere, ...selected]);
     }).pipe(
       Effect.scoped,
       Effect.provideService(HostProcess.IsExecutable, false),
