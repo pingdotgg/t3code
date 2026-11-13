@@ -86,6 +86,7 @@ import {
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import {
   resolveNewTaskDraftWorkspace,
+  resolveWorktreeSwitchBranch,
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
@@ -403,6 +404,7 @@ export function NewTaskFlowProvider(
       isGitRepo,
       branches: allBranchRefs,
       projectCwd: selectedProject?.workspaceRoot ?? null,
+      worktreeBaseBranch: projectSettings.settings.newWorktreesBaseBranch,
     });
   const workspaceSelection = resolveWorkspaceSelection(selectedProjectDraft.workspaceSelection);
   const workspaceMode = workspaceSelection.mode;
@@ -421,6 +423,8 @@ export function NewTaskFlowProvider(
   // only the explicit flag is ever written back to the draft, so the resolved
   // value keeps tracking the server setting when the config loads late.
   const draftStartFromOrigin = selectedProjectDraft.workspaceSelection?.startFromOrigin;
+  // Writing the filled worktree base back would pin it, so later setting changes would not apply.
+  const explicitDraftBranch = selectedProjectDraft.workspaceSelection?.branch ?? null;
   const startFromOrigin =
     isGitRepo && (draftStartFromOrigin ?? projectSettings.settings.newWorktreesStartFromOrigin);
   const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
@@ -661,7 +665,17 @@ export function NewTaskFlowProvider(
     updateComposerDraftSettings(selectedProjectDraftKey, {
       workspaceSelection: {
         mode,
-        branch: mode === "local" ? localSelection.branch : selectedBranchName,
+        branch:
+          mode === "local"
+            ? localSelection.branch
+            : workspaceMode === "local"
+              ? resolveWorktreeSwitchBranch({
+                  selectedBranch: selectedBranchName,
+                  worktreeBaseBranch: selectedEnvironmentServerConfig
+                    ? projectSettings.settings.newWorktreesBaseBranch
+                    : null,
+                })
+              : explicitDraftBranch,
         worktreePath: mode === "local" ? localSelection.worktreePath : selectedWorktreePath,
         ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
         // Refs have not named the current branch yet; the selection follows it.
@@ -697,7 +711,7 @@ export function NewTaskFlowProvider(
     updateComposerDraftSettings(selectedProjectDraftKey, {
       workspaceSelection: {
         mode: workspaceMode,
-        branch: selectedBranchName,
+        branch: workspaceMode === "worktree" ? explicitDraftBranch : selectedBranchName,
         worktreePath: selectedWorktreePath,
         startFromOrigin: value,
         ...(selectedBranchName === null && workspaceSelection.followsCurrentCheckout

@@ -1,3 +1,5 @@
+import { useAtomValue } from "@effect/atom-react";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { useRightPanelStore } from "../rightPanelStore";
@@ -33,6 +35,7 @@ import { usePaginatedBranches } from "../state/queries";
 import { readThreadShell, useProject, useQuietThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import { serverEnvironment } from "~/state/server";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
@@ -51,6 +54,7 @@ import {
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
+  resolveWorktreeBaseBranchCandidate,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
@@ -145,6 +149,9 @@ export function BranchToolbarBranchSelector({
       ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
       : null;
   const activeProject = useProject(activeProjectRef);
+  const environmentServerSettings = useAtomValue(
+    serverEnvironment.settingsValueAtom(environmentId),
+  );
 
   const activeThreadId = serverThread?.id ?? (draftThread ? threadId : undefined);
   const activeThreadBranch =
@@ -532,9 +539,19 @@ export function BranchToolbarBranchSelector({
     });
   };
 
-  const worktreeBaseBranchCandidate = isInitialBranchesLoadPending
-    ? null
-    : (defaultBranchName ?? currentGitBranch);
+  // Wait for settings too, so the repository default cannot claim the draft before a configured base arrives.
+  const worktreeBaseBranchCandidate =
+    isInitialBranchesLoadPending || environmentServerSettings === null
+      ? null
+      : resolveWorktreeBaseBranchCandidate({
+          configuredBaseBranch: resolveProjectSettings(
+            environmentServerSettings,
+            activeProject?.id ?? null,
+          ).settings.newWorktreesBaseBranch,
+          isRepo: branchRefState.data?.isRepo ?? branchStatusQuery.data?.isRepo ?? false,
+          defaultBranchName,
+          currentGitBranch,
+        });
 
   // The server sets started threads' branches; defaulting here would detach the agent from its worktree.
   const threadStarted = serverSession !== null;

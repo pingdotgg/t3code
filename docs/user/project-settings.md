@@ -62,6 +62,14 @@ back. On mobile, both are in **Settings → Projects → Organize**.
 
 A project on several machines must have every machine connected to pin or archive it.
 
+## Worktree base branch
+
+New worktrees start from the repository's default branch. If a project's work branches
+from somewhere else, such as `dev`, select the project and pick that branch in
+**Settings → Worktrees → Base branch**. To use a tag or commit, type it in the picker's
+search. Choose **Repository default** to go back. You can still choose a different base
+for any single thread from the branch picker.
+
 ## Worktree branch names
 
 In **Settings → Worktrees → Worktree branch naming**, choose a static prefix,

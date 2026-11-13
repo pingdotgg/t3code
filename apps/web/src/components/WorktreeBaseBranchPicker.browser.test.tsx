@@ -74,4 +74,31 @@ describe("WorktreeBaseBranchPicker", () => {
       expect(onValueChange).toHaveBeenCalledExactlyOnceWith(selected);
     },
   );
+
+  it("selects the default option, or a typed ref that is not listed", async () => {
+    setup();
+    mocks.resolvedQueries.add("v1.2");
+    const onValueChange = vi.fn();
+    const picker = () => (
+      <WorktreeBaseBranchPicker
+        environmentId={EnvironmentId.make("primary")}
+        cwd="/repo"
+        value="develop"
+        onValueChange={onValueChange}
+        startFromOrigin={false}
+        defaultOption={{ label: "Repository default" }}
+        allowCustomRef
+      />
+    );
+    await using screen = await render(picker());
+
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.click(page.getByRole("option", { name: /^Repository default/ }));
+    expect(onValueChange).toHaveBeenLastCalledWith("");
+
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.type(page.getByPlaceholder("Search refs..."), "v1.2");
+    await userEvent.click(page.getByRole("option", { name: 'Use "v1.2"' }));
+    expect(onValueChange).toHaveBeenLastCalledWith("v1.2");
+  });
 });

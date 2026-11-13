@@ -1,6 +1,9 @@
 import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { resolveNewThreadModelSelectionOverride } from "./chatThreadActions";
+import {
+  resolveNewThreadModelSelectionOverride,
+  shouldResetBranchForNewWorktree,
+} from "./chatThreadActions";
 
 const PROJECT_DEFAULT_SELECTION: ModelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -32,5 +35,36 @@ describe("chatThreadActions", () => {
         destinationDraftId: "draft-b",
       }),
     ).toEqual(PROJECT_DEFAULT_SELECTION);
+  });
+});
+
+describe("shouldResetBranchForNewWorktree", () => {
+  const input = {
+    currentEnvMode: "local",
+    nextEnvMode: "worktree",
+    worktreeBaseBranch: "dev",
+  } as const;
+
+  it("starts a new worktree from the configured base instead of the checkout's branch", () => {
+    expect(shouldResetBranchForNewWorktree(input)).toBe(true);
+  });
+
+  it("leaves the branch to fill while settings are still loading", () => {
+    expect(shouldResetBranchForNewWorktree({ ...input, worktreeBaseBranch: null })).toBe(true);
+  });
+
+  it("keeps a base already picked in worktree mode", () => {
+    expect(shouldResetBranchForNewWorktree({ ...input, currentEnvMode: "worktree" })).toBe(false);
+  });
+
+  it("keeps today's behavior without a configured base or when leaving worktree mode", () => {
+    expect(shouldResetBranchForNewWorktree({ ...input, worktreeBaseBranch: "" })).toBe(false);
+    expect(
+      shouldResetBranchForNewWorktree({
+        currentEnvMode: "worktree",
+        nextEnvMode: "local",
+        worktreeBaseBranch: "dev",
+      }),
+    ).toBe(false);
   });
 });

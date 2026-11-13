@@ -9,7 +9,11 @@ import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
 import { resolveBranchTriggerLabel, sanitizeNewRefName } from "./BranchToolbar.logic";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { Button } from "./ui/button";
-import { ComboboxTrigger } from "./ui/combobox";
+import { ComboboxItem, ComboboxTrigger } from "./ui/combobox";
+
+// Refs cannot contain NUL, so these item values never collide with a ref name.
+const DEFAULT_ITEM_VALUE = "\u0000default";
+const CUSTOM_ITEM_PREFIX = "\u0000custom:";
 
 export function WorktreeBaseBranchPicker({
   environmentId,
@@ -18,27 +22,40 @@ export function WorktreeBaseBranchPicker({
   onValueChange,
   startFromOrigin,
   onStartFromOriginChange,
+  defaultOption,
+  allowCustomRef = false,
+  emptyLabel,
   disabled = false,
   id,
+  "aria-label": ariaLabel,
 }: {
-  environmentId: EnvironmentId;
+  environmentId: EnvironmentId | null;
   cwd: string | null;
   value: string;
   onValueChange: (branch: string) => void;
   startFromOrigin: boolean;
-  onStartFromOriginChange: (checked: boolean) => void;
+  /** Omit when the start-from-remote choice is edited elsewhere. */
+  onStartFromOriginChange?: (checked: boolean) => void;
+  /** Lists an item that selects the empty value; its badge names the default ref. */
+  defaultOption?: { label: string };
+  /** Lets a typed name be used as is, for a tag, a commit, or a ref outside the list. */
+  allowCustomRef?: boolean;
+  /** Shows the ref name as is, and this label while the value is empty. */
+  emptyLabel?: string;
   disabled?: boolean;
   id?: string;
+  "aria-label"?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const trimmedQuery = query.trim();
   const branches = usePaginatedBranches({
     environmentId,
     cwd,
-    query: sanitizeNewRefName(query.trim()),
+    query: sanitizeNewRefName(trimmedQuery),
   });
   const selectedRefQuery = useEnvironmentQuery(
-    cwd && value
+    environmentId && cwd && value
       ? vcsEnvironment.listRefs({
           environmentId,
           input: { cwd, query: value, limit: 10 },
@@ -48,66 +65,118 @@ export function WorktreeBaseBranchPicker({
   const selectedRef =
     branches.refs.find((branch) => branch.name === value) ??
     selectedRefQuery.data?.refs.find((branch) => branch.name === value);
-  const label = resolveBranchTriggerLabel({
-    activeWorktreePath: null,
-    effectiveEnvMode: "worktree",
-    resolvedActiveBranch: value || null,
-    resolvedActiveBranchIsRemote: selectedRef ? selectedRef.isRemote === true : null,
-    startFromOrigin,
-  });
+  const label =
+    emptyLabel !== undefined
+      ? value || emptyLabel
+      : resolveBranchTriggerLabel({
+          activeWorktreePath: null,
+          effectiveEnvMode: "worktree",
+          resolvedActiveBranch: value || null,
+          resolvedActiveBranchIsRemote: selectedRef ? selectedRef.isRemote === true : null,
+          startFromOrigin,
+        });
   const branchByName = new Map(branches.refs.map((branch) => [branch.name, branch]));
-  const items = [...branchByName.keys()];
+  const defaultRefName = branches.refs.find((branch) => branch.isDefault)?.name;
+  const customRefItemValue =
+    allowCustomRef && trimmedQuery !== "" && !branchByName.has(trimmedQuery)
+      ? `${CUSTOM_ITEM_PREFIX}${trimmedQuery}`
+      : null;
+  const items = [
+    ...(defaultOption && trimmedQuery === "" ? [DEFAULT_ITEM_VALUE] : []),
+    ...branchByName.keys(),
+    ...(customRefItemValue ? [customRefItemValue] : []),
+  ];
   const hasNextPage = branches.data?.nextCursor != null;
-  const statusText =
-    branches.error ??
-    (branches.isPending && branches.data === null
-      ? "Loading refs..."
-      : branches.isFetchingNextPage
-        ? "Loading more refs..."
-        : hasNextPage
-          ? `Showing ${branches.refs.length} of ${branches.data?.totalCount} refs`
-          : null);
+  const statusText = !cwd
+    ? "Choose a project to list its branches."
+    : (branches.error ??
+      (branches.isPending && branches.data === null
+        ? "Loading refs..."
+        : branches.isFetchingNextPage
+          ? "Loading more refs..."
+          : hasNextPage
+            ? `Showing ${branches.refs.length} of ${branches.data?.totalCount} refs`
+            : null));
   const handleOpenChange = (next: boolean) => {
     setOpen(next);
     if (!next) setQuery("");
+  };
+  const selectItem = (itemValue: string) => {
+    if (itemValue === DEFAULT_ITEM_VALUE) onValueChange("");
+    else if (itemValue.startsWith(CUSTOM_ITEM_PREFIX))
+      onValueChange(itemValue.slice(CUSTOM_ITEM_PREFIX.length));
+    else onValueChange(itemValue);
+    handleOpenChange(false);
   };
   return (
     <BranchPicker
       items={items}
       filteredItems={items}
-      value={value || null}
+      value={value || (defaultOption ? DEFAULT_ITEM_VALUE : null)}
       query={query}
       onQueryChange={setQuery}
       open={open && !disabled}
       onOpenChange={handleOpenChange}
-      onSelectItem={(name) => {
-        onValueChange(name);
-        handleOpenChange(false);
-      }}
+      onSelectItem={selectItem}
       hasNextPage={hasNextPage}
       isFetchingNextPage={branches.isFetchingNextPage}
       onLoadNext={branches.loadNext}
       statusText={statusText}
-      originControl={{ checked: startFromOrigin, onCheckedChange: onStartFromOriginChange }}
+      originControl={
+        onStartFromOriginChange
+          ? { checked: startFromOrigin, onCheckedChange: onStartFromOriginChange }
+          : undefined
+      }
       popupProps={{ align: "start", side: "bottom", className: "flex w-80 flex-col" }}
-      renderItem={(name, index) => {
-        const branch = branchByName.get(name);
+      renderItem={(itemValue, index) => {
+        if (defaultOption && itemValue === DEFAULT_ITEM_VALUE) {
+          return (
+            <ComboboxItem
+              hideIndicator
+              key={itemValue}
+              index={index}
+              value={itemValue}
+              onClick={() => selectItem(itemValue)}
+            >
+              <div className="flex w-full min-w-0 items-center justify-between gap-2">
+                <span className="truncate">{defaultOption.label}</span>
+                {defaultRefName && (
+                  <span className="shrink-0 text-3xs text-muted-foreground/45">
+                    {defaultRefName}
+                  </span>
+                )}
+              </div>
+            </ComboboxItem>
+          );
+        }
+        if (customRefItemValue && itemValue === customRefItemValue) {
+          return (
+            <ComboboxItem
+              hideIndicator
+              key={itemValue}
+              index={index}
+              value={itemValue}
+              onClick={() => selectItem(itemValue)}
+            >
+              <span className="truncate">Use &quot;{trimmedQuery}&quot;</span>
+            </ComboboxItem>
+          );
+        }
+        const branch = branchByName.get(itemValue);
         return branch ? (
           <BranchPickerRefItem
             branch={branch}
             projectCwd={cwd}
             index={index}
-            onClick={() => {
-              onValueChange(branch.name);
-              handleOpenChange(false);
-            }}
+            onClick={() => selectItem(branch.name)}
           />
         ) : null;
       }}
     >
       <ComboboxTrigger
         id={id}
-        disabled={disabled || !cwd}
+        aria-label={ariaLabel}
+        disabled={disabled || (!cwd && !allowCustomRef)}
         render={<Button variant="outline" size="sm" />}
         className="w-full justify-between "
       >

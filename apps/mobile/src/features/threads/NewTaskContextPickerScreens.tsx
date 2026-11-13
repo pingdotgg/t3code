@@ -350,6 +350,11 @@ export function BranchPickerScreen(props: {
     readonly startFromOrigin: boolean;
     readonly onChangeStartFromOrigin: (value: boolean) => void;
   };
+  readonly defaultOption?: {
+    readonly title: string;
+    readonly selected: boolean;
+    readonly onSelect: () => void;
+  };
 }) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -390,20 +395,34 @@ export function BranchPickerScreen(props: {
     />
   );
 
-  const branchListHeader = props.worktree ? (
-    <View
-      className={cn(
-        "mb-3 overflow-hidden",
-        Platform.OS === "android" ? "rounded-[28px]" : "rounded-2xl",
-      )}
-    >
-      <ToggleRow
-        onValueChange={props.worktree.onChangeStartFromOrigin}
-        title="Start from remote"
-        value={props.worktree.startFromOrigin}
-      />
-    </View>
-  ) : null;
+  const branchListHeader =
+    props.worktree || props.defaultOption ? (
+      <View
+        className={cn(
+          "mb-3 overflow-hidden",
+          Platform.OS === "android" ? "rounded-[28px]" : "rounded-2xl",
+        )}
+      >
+        {props.worktree ? (
+          <ToggleRow
+            onValueChange={props.worktree.onChangeStartFromOrigin}
+            title="Start from remote"
+            value={props.worktree.startFromOrigin}
+          />
+        ) : null}
+        {props.defaultOption ? (
+          <SelectionRow
+            icon="arrow.uturn.backward"
+            disabled={props.selectionDisabled ?? false}
+            isFirst
+            isLast
+            onPress={props.defaultOption.onSelect}
+            selected={props.defaultOption.selected}
+            title={props.defaultOption.title}
+          />
+        ) : null}
+      </View>
+    ) : null;
 
   const branchContent =
     props.branches.length === 0 ? (

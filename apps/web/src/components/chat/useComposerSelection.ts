@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { UnifiedSettings } from "@t3tools/contracts";
 import type { Dispatch } from "react";
@@ -17,8 +18,12 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type SetStateAction } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toastManager } from "../ui/toast";
+import { serverEnvironment } from "~/state/server";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection";
-import { resolveNewDraftStartFromOrigin } from "../../lib/chatThreadActions";
+import {
+  resolveNewDraftStartFromOrigin,
+  shouldResetBranchForNewWorktree,
+} from "../../lib/chatThreadActions";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../../composerDraftStore";
 import {
   getStartedThreadModelChangeBlockReason,
@@ -32,7 +37,10 @@ interface ComposerSelectionInput {
   readonly activeThread: EnvironmentThreadShell | undefined;
   readonly activeRuntime: ReturnType<typeof deriveThreadStructureRuntime>;
   readonly activeProjectSettings: {
-    readonly settings: { readonly newWorktreesStartFromOrigin: boolean };
+    readonly settings: {
+      readonly newWorktreesStartFromOrigin: boolean;
+      readonly newWorktreesBaseBranch: string;
+    };
   };
   readonly settings: UnifiedSettings;
   readonly providerStatuses: ReadonlyArray<ServerProvider>;
@@ -42,6 +50,8 @@ interface ComposerSelectionInput {
   readonly runtimeMode: RuntimeMode;
   readonly isLocalDraftThread: boolean;
   readonly canOverrideServerThreadEnvMode: boolean;
+  readonly envMode: DraftThreadEnvMode;
+  readonly setPendingServerThreadBranch: (branch: string | null) => void;
   readonly setPendingServerThreadEnvModeEntry: Dispatch<
     SetStateAction<{ readonly threadId: ThreadId; readonly mode: DraftThreadEnvMode } | null>
   >;
@@ -71,10 +81,16 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     runtimeMode,
     isLocalDraftThread,
     canOverrideServerThreadEnvMode,
+    envMode,
+    setPendingServerThreadBranch,
     setPendingServerThreadEnvModeEntry,
     setPendingServerThreadStartFromOriginByThreadId,
     scheduleComposerFocus,
   } = input;
+  const settingsLoaded = useAtomValue(serverEnvironment.settingsValueAtom(environmentId)) !== null;
+  const worktreeBaseBranch = settingsLoaded
+    ? activeProjectSettings.settings.newWorktreesBaseBranch
+    : null;
   const navigate = useNavigate();
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
@@ -214,6 +230,15 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     if (multipleModelSelections !== null) return;
     if (canOverrideServerThreadEnvMode) {
       if (activeThread) setPendingServerThreadEnvModeEntry({ threadId: activeThread.id, mode });
+      if (
+        shouldResetBranchForNewWorktree({
+          currentEnvMode: envMode,
+          nextEnvMode: mode,
+          worktreeBaseBranch,
+        })
+      ) {
+        setPendingServerThreadBranch(null);
+      }
       scheduleComposerFocus();
       return;
     }
@@ -225,6 +250,13 @@ export function useComposerSelection(input: ComposerSelectionInput) {
           newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
         }),
         ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
+        ...(shouldResetBranchForNewWorktree({
+          currentEnvMode: draftThread?.envMode,
+          nextEnvMode: mode,
+          worktreeBaseBranch,
+        })
+          ? { branch: null }
+          : {}),
       });
     }
     scheduleComposerFocus();

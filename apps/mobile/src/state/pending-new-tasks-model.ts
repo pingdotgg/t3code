@@ -58,6 +58,7 @@ export interface PendingDraftProjectDefaults {
   readonly canChooseWorkspace: boolean;
   readonly defaultMode: "local" | "worktree";
   readonly defaultModeSettled: boolean;
+  readonly worktreeBaseBranch: string;
 }
 
 /**
@@ -88,6 +89,7 @@ export function resolvePendingDraftBranch(input: {
     isGitRepo: input.isGitRepo,
     branches: input.branches,
     projectCwd: input.projectCwd,
+    worktreeBaseBranch: input.defaults.worktreeBaseBranch,
   }).branch;
 }
 

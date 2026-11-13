@@ -427,6 +427,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
     canChooseWorkspace: !projectDefaults.isScratch,
     defaultMode: projectDefaults.defaultWorkspaceMode,
     defaultModeSettled: projectDefaults.defaultWorkspaceModeSettled,
+    worktreeBaseBranch: projectDefaults.projectSettings.settings.newWorktreesBaseBranch,
   };
   const draftBranchRefs = useBranches({
     environmentId: pendingTask.environmentId,

@@ -30,6 +30,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SourceControlSignInSection } from "./components/SourceControlSignInSection";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
+import { WorktreeBaseBranchSetting } from "./components/WorktreeBaseBranchSetting";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { useSettingsWriter } from "./useSettingsWriter";
 import {
@@ -66,6 +67,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
   ],
   "source-control": ["defaultAutoPull", "removeAgentCreditsOnMerge"],
   worktrees: [
+    "newWorktreesBaseBranch",
     "newWorktreesStartFromOrigin",
     "worktreeSubmodules",
     "branchNamingMode",
@@ -475,6 +477,26 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
             {props.page === "worktrees" ? (
               <>
                 <SettingsSection title="New worktrees">
+                  {projectSelected ? (
+                    <SettingsRow
+                      icon="arrow.triangle.branch"
+                      label="Base branch"
+                      value={
+                        isMixed("newWorktreesBaseBranch")
+                          ? "Mixed"
+                          : uniform("newWorktreesBaseBranch") || "Repository default"
+                      }
+                      disabled={disabledFor("newWorktreesBaseBranch")}
+                      onPress={() => navigation.navigate("SettingsWorktreeBaseBranch")}
+                    />
+                  ) : (
+                    <WorktreeBaseBranchSetting
+                      key={targetsKey}
+                      value={uniform("newWorktreesBaseBranch")}
+                      disabled={disabledFor("newWorktreesBaseBranch")}
+                      onChange={write}
+                    />
+                  )}
                   <SettingsSwitchRow
                     icon="arrow.triangle.branch"
                     label="Start from remote"
