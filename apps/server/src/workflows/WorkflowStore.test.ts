@@ -13,6 +13,7 @@ import Migration0102 from "../persistence/Migrations/102_WorkflowRunInput.ts";
 import Migration0103 from "../persistence/Migrations/103_WorkflowStore.ts";
 import Migration0104 from "../persistence/Migrations/104_WorkflowRunParent.ts";
 import Migration0105 from "../persistence/Migrations/105_WorkflowStepResult.ts";
+import Migration0099 from "../persistence/Migrations/099_WorkflowStepSaid.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
 const withStore = <A, E>(use: Effect.Effect<A, E, WorkflowStore.WorkflowStore>) =>
@@ -31,6 +32,7 @@ const withStore = <A, E>(use: Effect.Effect<A, E, WorkflowStore.WorkflowStore>) 
           Migration0103,
           Migration0104,
           Migration0105,
+          Migration0099,
         ],
         { discard: true },
       ),

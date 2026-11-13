@@ -3,14 +3,21 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   allWorkflowRunNodes,
+  buildWorkflowFeed,
   buildWorkflowTimeline,
+  defaultWorkflowListTab,
   defaultWorkflowRunId,
   groupWorkflowRuns,
   readWorkflowQuestion,
-  workflowBeatSpan,
-  workflowResultLines,
+  workflowAgentSummary,
   workflowAnswer,
-  workflowRunActivity,
+  workflowChip,
+  workflowPath,
+  workflowResultLines,
+  workflowRunLists,
+  workflowRunNow,
+  workflowRunState,
+  workflowSaidStart,
   workflowTriggerLine,
 } from "./workflows.logic";
 
@@ -27,6 +34,7 @@ const run = (runId: string, fields: Partial<WorkflowRun> = {}): WorkflowRun => (
   result: null,
   pauses: 0,
   retired: false,
+  resumesAt: null,
   parentRunId: null,
   parentStep: null,
   startedAt: at(0),
@@ -49,6 +57,7 @@ const step = (
   threadId: null,
   environmentId: null,
   result: null,
+  said: null,
   startedAt: from,
   endedAt: to,
   ...fields,
@@ -134,24 +143,117 @@ describe("groupWorkflowRuns", () => {
   });
 });
 
-describe("workflowRunActivity", () => {
-  it("says what a run is doing in a person's words", () => {
-    expect(workflowRunActivity(run("a", { status: "waiting", detail: "agent review" }), 0)).toBe(
-      "Agent working on review",
+describe("the list of runs", () => {
+  const only = (fields: Partial<WorkflowRun>, questions: ReadonlyArray<WorkflowQuestion> = []) =>
+    allWorkflowRunNodes(groupWorkflowRuns([], [run("a", fields)], questions))[0]!;
+
+  it("gives a run the word the thread list would, and says what it is at", () => {
+    const told = (fields: Partial<WorkflowRun>, questions?: ReadonlyArray<WorkflowQuestion>) => {
+      const node = only(fields, questions);
+      return `${workflowRunState(node).word}: ${workflowRunNow(node)}`;
+    };
+    expect(told({ status: "waiting", detail: "agent review" })).toBe("Working: review is working");
+    expect(told({ status: "waiting", detail: "sleep night" })).toBe("Sleeping: Sleeping at night");
+    expect(told({ status: "waiting", detail: "ci" })).toBe("Waiting: Waiting for ci");
+    expect(told({ status: "waiting", detail: "approve" }, [question("a")])).toBe(
+      "Input: Asks: Ship?",
     );
-    expect(workflowRunActivity(run("a", { status: "waiting", detail: "sleep night" }), 0)).toBe(
-      "Sleeping",
+    expect(told({ status: "paused", detail: "build: exit 1\n  at build.ts" })).toBe(
+      "Paused: build: exit 1",
     );
-    expect(workflowRunActivity(run("a", { status: "waiting", detail: "ci" }), 0)).toBe(
-      "Waiting for ci",
+    expect(told({ status: "completed", endedAt: at(1), result: { merged: "ba6ac73" } })).toBe(
+      "Done: merged: ba6ac73",
     );
-    expect(workflowRunActivity(run("a", { status: "waiting", detail: "approve" }), 1)).toBe(
-      "Asks you a question",
+    expect(told({ status: "cancelled", endedAt: at(1), detail: "superseded" })).toBe(
+      "Cancelled: superseded",
     );
-    expect(workflowRunActivity(run("a", { status: "paused", detail: "build: exit 1" }), 0)).toBe(
-      "build: exit 1",
+  });
+
+  it("says of a run that waits on one it invoked what that one waits on", () => {
+    const groups = groupWorkflowRuns(
+      [],
+      [
+        run("child", { parentRunId: "parent", status: "waiting", title: "Check web" }),
+        run("parent", { status: "waiting", detail: "check" }),
+      ],
+      [question("child")],
     );
-    expect(workflowRunActivity(run("a", { status: "completed" }), 0)).toBeNull();
+    const parent = allWorkflowRunNodes(groups)[0]!;
+    expect(workflowRunState(parent).word).toBe("Input");
+    expect(workflowRunNow(parent)).toBe("Check web: Asks: Ship?");
+  });
+
+  it("sorts runs into what waits on a person, what is under way, and everything", () => {
+    const groups = groupWorkflowRuns(
+      [],
+      [
+        run("old", { status: "completed", endedAt: at(1), updatedAt: at(1) }),
+        run("busy", { updatedAt: at(2) }),
+        run("stuck", { status: "paused", updatedAt: at(3) }),
+        run("new", { status: "completed", endedAt: at(4), updatedAt: at(4) }),
+      ],
+      [],
+    );
+    const lists = workflowRunLists(groups);
+    const ids = (nodes: ReadonlyArray<{ readonly run: WorkflowRun }>) =>
+      nodes.map((node) => node.run.runId);
+    expect(ids(lists["needs-you"])).toEqual(["stuck"]);
+    expect(ids(lists.running)).toEqual(["busy"]);
+    expect(ids(lists.all)).toEqual(["stuck", "busy", "new", "old"]);
+    expect(defaultWorkflowListTab(groups)).toBe("needs-you");
+    expect(defaultWorkflowListTab(groupWorkflowRuns([], [run("busy")], []))).toBe("running");
+    expect(
+      defaultWorkflowListTab(
+        groupWorkflowRuns([], [run("old", { status: "completed", endedAt: at(1) })], []),
+      ),
+    ).toBe("all");
+  });
+
+  it("marks a workflow with the same letters and colour every time", () => {
+    expect(workflowChip("nightly-report").letters).toBe("NR");
+    expect(workflowChip("issue").letters).toBe("IS");
+    expect(workflowChip("issue")).toEqual(workflowChip("issue"));
+  });
+});
+
+describe("workflowAgentSummary", () => {
+  it("tells an agent's words apart from the facts of its result", () => {
+    expect(workflowAgentSummary({ result: "Fixed in one line.", said: null })).toEqual({
+      said: "Fixed in one line.",
+      facts: [],
+    });
+    expect(
+      workflowAgentSummary({
+        said: "Reproduced on main.",
+        result: { kind: "bug", reproduced: true, surfaces: ["web", "desktop"], prUrl: null },
+      }),
+    ).toEqual({
+      said: "Reproduced on main.",
+      facts: [
+        { label: "kind", value: "bug" },
+        { label: "reproduced", value: "yes" },
+        { label: "surfaces", value: "web, desktop" },
+      ],
+    });
+  });
+
+  it("lets the longest prose of a result speak when no closing words were kept", () => {
+    const summary =
+      "The draft is stored per thread id, and a reload before the thread exists drops it for good.";
+    expect(workflowAgentSummary({ said: null, result: { verdict: "merge", summary } })).toEqual({
+      said: summary,
+      facts: [{ label: "verdict", value: "merge" }],
+    });
+  });
+});
+
+describe("workflowSaidStart", () => {
+  it("cuts a long reply where a paragraph ends", () => {
+    const said =
+      "It is a real bug.\n\n**Where:** line 5.\n\n**Reproduced:** yes, with 3660 seconds.";
+    expect(workflowSaidStart(said, 200)).toBeNull();
+    expect(workflowSaidStart(said, 40)).toBe("It is a real bug.\n\n**Where:** line 5.");
+    expect(workflowSaidStart(said, 10)).toBe("It is a real bug.");
   });
 });
 
@@ -197,11 +299,24 @@ describe("buildWorkflowTimeline", () => {
     ]);
     const invoked = timeline.rows.find((row) => row.kind === "run");
     expect(invoked?.kind === "run" ? invoked.childRun?.title : null).toBe("Check web");
-    const triage = timeline.rows.find((row) => row.kind === "agent");
-    expect(triage?.kind === "agent" ? workflowBeatSpan(timeline, triage) : null).toEqual({
-      offset: 0,
-      length: 0.3,
-    });
+    // Read as a feed, the two reviews are one row, and the path has a stop per row that matters.
+    const feed = buildWorkflowFeed(timeline);
+    expect(
+      feed.map((row) =>
+        row.kind === "together"
+          ? row.beats.map((beat) => beat.name).join("+")
+          : row.kind === "quick"
+            ? "quick"
+            : row.name,
+      ),
+    ).toEqual(["quick", "triage", "review-a+review-b", "quick", "check", "build", "publish"]);
+    expect(workflowPath(feed).map((node) => `${node.label}:${node.status}`)).toEqual([
+      "triage:done",
+      "review-a + review-b:done",
+      "check:done",
+      "build:done",
+      "publish:failed",
+    ]);
   });
 
   it("measures a step that is under way up to now", () => {
