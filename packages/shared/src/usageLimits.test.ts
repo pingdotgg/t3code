@@ -12,6 +12,7 @@ import {
   type LimitAccount,
   displayLimitWindows,
   cursorUsageWindowDetails,
+  collectInstanceUsageLimits,
   collectProviderUsageLimits,
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -1543,6 +1544,49 @@ describe("/usage-limits", () => {
         now,
       ),
     ).toBeNull();
+  });
+
+  it("gives Thread details a hub account only when it is on the instance's login", () => {
+    const hubLimits = { ...limits, checkedAt: "2026-09-03T11:30:00.000Z" };
+    const hub = (...accounts: Array<{ readonly id: string; readonly email?: string }>) => [
+      {
+        ...sources[0]!,
+        accounts: accounts.map((account) => ({
+          ...account,
+          driver: selected.driver,
+          usageLimits: hubLimits,
+        })),
+      },
+    ];
+    const probeFailed = { ...limits, unavailable: { reason: "probeFailed" as const } };
+    const unknownLogin = provider({ auth: { status: "unknown" } });
+    expect(
+      collectInstanceUsageLimits(selected.instanceId, [unknownLogin], hub({ id: "team" }), now),
+    ).toBe(hubLimits);
+    expect(
+      collectInstanceUsageLimits(
+        selected.instanceId,
+        [unknownLogin],
+        hub({ id: "a" }, { id: "b" }),
+        now,
+      ),
+    ).toBeUndefined();
+    const signedIn = provider({ auth: selected.auth, usageLimits: probeFailed });
+    const signedInHub = hub(
+      { id: "other", email: "other@example.com" },
+      { id: "same", email: "SAME@example.com" },
+    );
+    expect(collectInstanceUsageLimits(selected.instanceId, [signedIn], signedInHub, now)).toBe(
+      hubLimits,
+    );
+    expect(
+      collectInstanceUsageLimits(
+        selected.instanceId,
+        [signedIn],
+        hub({ id: "other", email: "other@example.com" }),
+        now,
+      ),
+    ).toBe(probeFailed);
   });
 
   it("surfaces source errors only for sources that carry the selected driver", () => {
