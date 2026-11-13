@@ -878,11 +878,13 @@ export const fleetProjectCreated: ApplicationProjectEvent = {
 };
 
 export const SHELL_SETTLED_THREADS = 100;
-export const SHELL_IDLE_SUBAGENTS = 40;
+export const SHELL_IDLE_SUBAGENTS = 60;
+const SHELL_NESTED_IDLE_SUBAGENTS = 20;
 
 /**
  * A busy sidebar: settled top-level threads, settled a minute apart, with idle subagent children
- * under the newest ones. Opted-in cold connects skip the children and all but 25 settled threads.
+ * under the newest ones, the newest of which have an idle child of their own. Opted-in cold
+ * connects skip the children, the nested chains and all but 25 settled threads.
  */
 export function shellFleetEvents(
   provider: ProviderDriverKind,
@@ -897,19 +899,21 @@ export function shellFleetEvents(
       settledAt,
       updatedAt: settledAt,
     });
-    if (index < SHELL_SETTLED_THREADS - SHELL_IDLE_SUBAGENTS) return [settled];
+    const fromNewest = SHELL_SETTLED_THREADS - index;
+    if (fromNewest > SHELL_IDLE_SUBAGENTS - SHELL_NESTED_IDLE_SUBAGENTS) return [settled];
+    const subagent = (id: string, title: string, parentThreadId: ThreadId) =>
+      threadCreated(provider, ThreadId.make(id), {
+        title,
+        createdBy: "agent",
+        lineage: { parentThreadId, relationshipToParent: "subagent", rootThreadId: threadId },
+      });
     const childId = ThreadId.make(`transfer-budget-settled-${index}-subagent`);
+    const child = subagent(childId, `Subagent of settled thread ${index}`, threadId);
+    if (fromNewest > SHELL_NESTED_IDLE_SUBAGENTS) return [settled, child];
     return [
       settled,
-      threadCreated(provider, childId, {
-        title: `Subagent of settled thread ${index}`,
-        createdBy: "agent",
-        lineage: {
-          parentThreadId: threadId,
-          relationshipToParent: "subagent",
-          rootThreadId: threadId,
-        },
-      }),
+      child,
+      subagent(`${childId}-nested`, `Nested subagent of settled thread ${index}`, childId),
     ];
   }).flat();
 }

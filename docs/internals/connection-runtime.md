@@ -109,8 +109,14 @@ holds all cached rows.
 Shell snapshots can leave rows out when the client asks. Servers that advertise
 `shellThreadFamilies` leave out idle subagent children: a child stays while it
 has a live or queued run, a pending request or background work, or a subagent
-child of its own, so badge and working walks never meet a gap. Servers that also
-advertise `shellOlderSettled` keep only the 25 newest settled top-level threads
+child of its own, so badge and working walks never meet a gap. It also stays as
+the parent of a task in a linked environment, whose clients nest that task under
+it. A client that sends `omitIdleSubagentParents` (web; mobile views still read
+idle parents from the shell) gets an idle child with a subagent child only above
+a subagent that is live or has a side chat, a fork or such a task. A subagent
+that wakes later then arrives as a delta without the idle rows above it, so the
+shell rows read the family of any subagent or side chat whose parent is missing.
+Servers that also advertise `shellOlderSettled` keep only the 25 newest settled top-level threads
 (and any tied with the 25th, pinned, snoozed, live, or above a kept child); the
 snapshot's `olderSettled` names that cut and counts the rest per project. Left-out
 rows load on demand and merge behind shell rows

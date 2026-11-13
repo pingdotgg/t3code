@@ -93,7 +93,7 @@ import {
   turnEvents,
 } from "./TransferBudgetV2Fixture.integration.ts";
 
-// The opt-ins current web and mobile clients send, as client-runtime's boundedThreadSnapshotHttp.ts,
+// The opt-ins current web and mobile clients send (`omitIdleSubagentParents` only from web), as client-runtime's boundedThreadSnapshotHttp.ts,
 // threadHistoryHttp.ts, shellSnapshotHttp.ts, threads.ts and shell.ts send them. Each is `Required`,
 // so an opt-in added to a contract fails typecheck here until this test sends it. An omitted field
 // differs per request (a cursor, or what the client holds), so each scenario sends its own.
@@ -108,6 +108,7 @@ const CLIENT_HISTORY_OPT_INS = { compactIds: "1", deferWork: "1" } satisfies Req
 >;
 const CLIENT_SHELL_OPT_INS = {
   omitIdleSubagents: "1",
+  omitIdleSubagentParents: "1",
   omitOlderSettled: "1",
 } satisfies Required<Omit<typeof EnvironmentOrchestrationShellSnapshotQuery.Type, "resumeFrom">>;
 const CLIENT_THREAD_SUBSCRIPTION = {
@@ -122,6 +123,7 @@ type ShellResumeField = "afterSequence" | "httpSnapshotFallback" | "knownProject
 const CLIENT_SHELL_SUBSCRIPTION = {
   requestCompletionMarker: true,
   omitIdleSubagents: true,
+  omitIdleSubagentParents: true,
   omitOlderSettled: true,
 } satisfies Required<Omit<OrchestrationV2SubscribeShellInput, ShellResumeField>>;
 const query = (optIns: Readonly<Record<string, string>>) => new URLSearchParams(optIns).toString();

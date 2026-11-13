@@ -21,6 +21,7 @@ export const ShellCacheOrigin = Schema.Struct({
   serverVersion: Schema.String,
   databaseMigration: Schema.NullOr(Schema.Int),
   omitIdleSubagents: Schema.Boolean,
+  omitIdleSubagentParents: Schema.Boolean,
   omitOlderSettled: Schema.Boolean,
   /** Epoch milliseconds of that snapshot; replay does not renew it. */
   snapshotAt: Schema.Number,
@@ -31,7 +32,12 @@ export const StoredOrchestrationShellSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(ORCHESTRATION_CACHE_SCHEMA_VERSION),
   environmentId: EnvironmentId,
   snapshot: OrchestrationV2ShellSnapshotJson,
-  origin: Schema.optionalKey(ShellCacheOrigin),
+  /**
+   * Not `origin`: a client from before `omitIdleSubagentParents` reads that key and ignores flags
+   * it does not know, so it would resume rows that lack the idle parents it expects. It finds no
+   * origin here and loads a fresh snapshot.
+   */
+  originV2: Schema.optionalKey(ShellCacheOrigin),
 });
 
 export const StoredOrchestrationThreadSnapshot = Schema.Struct({

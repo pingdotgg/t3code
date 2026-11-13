@@ -51,6 +51,16 @@ export class AnalyticsDevice extends Context.Reference<{
   defaultValue: () => ({ id: Effect.succeedNone }),
 }) {}
 
+/**
+ * Whether this client asks shells to also leave out idle subagents whose subagents are all left
+ * out (`omitIdleSubagentParents`). Only for a client whose views read such a row from its thread
+ * family when the shell does not hold it.
+ */
+export class OmitIdleSubagentParents extends Context.Reference<boolean>(
+  "@t3tools/client-runtime/platform/capabilities/OmitIdleSubagentParents",
+  { defaultValue: () => false },
+) {}
+
 export class ClientPresentation extends Context.Service<
   ClientPresentation,
   {

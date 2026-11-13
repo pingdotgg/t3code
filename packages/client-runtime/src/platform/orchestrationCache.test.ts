@@ -96,6 +96,41 @@ describe("orchestration cache envelopes", () => {
     expect(decodeStoredShellSnapshotSync(shell).schemaVersion).toBe(3);
   });
 
+  it("gives a client from before `originV2` no origin to resume from", () => {
+    // What that client decodes: it drops keys, and origin flags, that it does not know.
+    const decodeAsOlderClient = Schema.decodeUnknownSync(
+      Schema.Struct({
+        schemaVersion: Schema.Literal(3),
+        origin: Schema.optionalKey(Schema.Struct({ omitIdleSubagents: Schema.Boolean })),
+      }),
+    );
+    const origin = {
+      serverVersion: "1.0.0",
+      databaseMigration: 70,
+      omitIdleSubagents: true,
+      omitIdleSubagentParents: true,
+      omitOlderSettled: true,
+      snapshotAt: 1_800_000_000_000,
+    };
+    const stored = encodeStoredShellSnapshot({
+      schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
+      environmentId,
+      snapshot: v2ShellSnapshot,
+      originV2: origin,
+    });
+
+    expect(decodeStoredShellSnapshotSync(stored).originV2).toEqual(origin);
+    expect(decodeAsOlderClient(stored)).toEqual({ schemaVersion: 3 });
+    // Under `origin` the new flag would not stop it: the flags it knows still match.
+    expect(decodeAsOlderClient({ ...stored, origin })).toEqual({
+      schemaVersion: 3,
+      origin: { omitIdleSubagents: true },
+    });
+    // A cache from that client decodes here without an origin, so it loads fresh once.
+    const { originV2: _originV2, ...fromOlderClient } = { ...stored, origin };
+    expect(decodeStoredShellSnapshotSync(fromOlderClient).originV2).toBeUndefined();
+  });
+
   it.effect("discards V1-versioned cache envelopes after a decode failure", () =>
     Effect.gen(function* () {
       let discardCount = 0;

@@ -28,6 +28,7 @@ import { connectionProjectionPhase, type PreparedConnection } from "../connectio
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
+import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import { subscribeDynamicWithSession } from "../rpc/client.ts";
@@ -108,6 +109,7 @@ interface ShellSubscription {
 function shellIdentity(
   environment: Pick<ExecutionEnvironmentDescriptor, "serverVersion" | "databaseMigration">,
   flags: { readonly shellThreadFamilies?: boolean; readonly shellOlderSettled?: boolean },
+  omitIdleSubagentParents: boolean,
 ): ShellOriginIdentity {
   const omitIdleSubagents = flags.shellThreadFamilies === true;
   return {
@@ -115,6 +117,8 @@ function shellIdentity(
     // Migrations rewrite projections without events, so a migrated server reloads.
     databaseMigration: environment.databaseMigration ?? null,
     omitIdleSubagents,
+    // No capability names this one: a server that does not know it sends the parents.
+    omitIdleSubagentParents: omitIdleSubagents && omitIdleSubagentParents,
     omitOlderSettled: flags.shellOlderSettled === true && omitIdleSubagents,
   };
 }
@@ -127,9 +131,10 @@ function sameConnection(left: PreparedConnection, right: PreparedConnection): bo
 /** Null for a server whose descriptor does not name its shell flags; only its config does. */
 function descriptorShellIdentity(
   descriptor: ExecutionEnvironmentDescriptor | undefined,
+  omitIdleSubagentParents: boolean,
 ): ShellOriginIdentity | null {
   if (descriptor?.capabilities.shellThreadFamilies === undefined) return null;
-  return shellIdentity(descriptor, descriptor.capabilities);
+  return shellIdentity(descriptor, descriptor.capabilities, omitIdleSubagentParents);
 }
 
 function sameShellIdentity(left: ShellOriginIdentity, right: ShellOriginIdentity): boolean {
@@ -137,6 +142,7 @@ function sameShellIdentity(left: ShellOriginIdentity, right: ShellOriginIdentity
     left.serverVersion === right.serverVersion &&
     left.databaseMigration === right.databaseMigration &&
     left.omitIdleSubagents === right.omitIdleSubagents &&
+    left.omitIdleSubagentParents === right.omitIdleSubagentParents &&
     left.omitOlderSettled === right.omitOlderSettled
   );
 }
@@ -176,6 +182,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   const cache = yield* Persistence.EnvironmentCacheStore;
   const snapshotLoader = yield* ShellSnapshotLoader.ShellSnapshotLoader;
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
+  const omitIdleSubagentParents = yield* ClientCapabilities.OmitIdleSubagentParents;
   const environmentId = supervisor.target.environmentId;
   const cached = yield* cache.loadShell(environmentId).pipe(
     Effect.catch((error) =>
@@ -539,6 +546,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     // HTTP and the socket must agree, or omitted children would return through the socket.
     const answer = yield* snapshotLoader.load(prepared, {
       omitIdleSubagents: identity?.omitIdleSubagents === true,
+      omitIdleSubagentParents: identity?.omitIdleSubagentParents === true,
       omitOlderSettled: identity?.omitOlderSettled === true,
       ...(resumeFrom === undefined ? {} : { resumeFrom }),
     });
@@ -568,7 +576,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           return [current.claimed && done ? null : current, next] as const;
         }
         if (current !== null) yield* Fiber.interrupt(current.fiber);
-        const identity = descriptorShellIdentity(prepared?.descriptor);
+        const identity = descriptorShellIdentity(prepared?.descriptor, omitIdleSubagentParents);
         if (prepared === null || identity === null) return [null, null] as const;
         // Items a closed session still has in flight must not land on the rows this loads.
         yield* Ref.set(activeSubscription, null);
@@ -628,11 +636,14 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       ORCHESTRATION_V2_WS_METHODS.subscribeShell,
       Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
         const identity = yield* session.initialConfig.pipe(
-          Effect.map((config) => shellIdentity(config.environment, config)),
+          Effect.map((config) =>
+            shellIdentity(config.environment, config, omitIdleSubagentParents),
+          ),
           Effect.orElseSucceed(() => null),
         );
-        const { omitIdleSubagents, omitOlderSettled } = identity ?? {
+        const omissions = identity ?? {
           omitIdleSubagents: false,
+          omitIdleSubagentParents: false,
           omitOlderSettled: false,
         };
         const early = yield* useEarlyLoad(
@@ -682,8 +693,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
 
         const current = yield* SubscriptionRef.get(state);
         const omission = {
-          ...(omitIdleSubagents ? { omitIdleSubagents: true as const } : {}),
-          ...(omitOlderSettled ? { omitOlderSettled: true as const } : {}),
+          ...(omissions.omitIdleSubagents ? { omitIdleSubagents: true as const } : {}),
+          ...(omissions.omitIdleSubagentParents ? { omitIdleSubagentParents: true as const } : {}),
+          ...(omissions.omitOlderSettled ? { omitOlderSettled: true as const } : {}),
         };
         if (Option.isNone(current.snapshot) || !(resumingHeldRows || loaded?.kind === "snapshot")) {
           return { ...omission, requestCompletionMarker: true as const };

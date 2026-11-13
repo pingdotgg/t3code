@@ -26,6 +26,7 @@ import {
   type PreparedConnection,
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
@@ -872,6 +873,7 @@ describe("environment shell synchronization", () => {
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.provideService(Persistence.EnvironmentCacheStore, cache),
         Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
+        Effect.provideService(ClientCapabilities.OmitIdleSubagentParents, true),
       );
       const stateWhere = (predicate: (state: EnvironmentShellState) => boolean) =>
         SubscriptionRef.changes(shellState).pipe(Stream.filter(predicate), Stream.runHead);
@@ -880,10 +882,11 @@ describe("environment shell synchronization", () => {
       expect(yield* Queue.take(subscribeInputs)).toMatchObject({
         afterSequence: 1,
         omitIdleSubagents: true,
+        omitIdleSubagentParents: true,
         omitOlderSettled: true,
       });
       expect(yield* Ref.get(loadOptions)).toEqual([
-        { omitIdleSubagents: true, omitOlderSettled: true },
+        { omitIdleSubagents: true, omitIdleSubagentParents: true, omitOlderSettled: true },
       ]);
       const loaded = Option.getOrThrow(yield* stateWhere((state) => state.generation > 0));
       expect(loaded.removedAt.size).toBe(0);
@@ -1148,6 +1151,7 @@ describe("environment shell cold start", () => {
     serverVersion: "1.0.0",
     databaseMigration: null,
     omitIdleSubagents: false,
+    omitIdleSubagentParents: false,
     omitOlderSettled: false,
   };
   const RECENT_ORIGIN = { ...CURRENT_ORIGIN, snapshotAt: NOW - HOUR };
@@ -1162,7 +1166,12 @@ describe("environment shell cold start", () => {
     shellOlderSettled: true,
     environment: { serverVersion: "1.0.0" },
   };
-  const FAMILY_FLAGS = { omitIdleSubagents: true, omitOlderSettled: true };
+  // A client that does not ask for idle parents to be left out, as mobile.
+  const FAMILY_FLAGS = {
+    omitIdleSubagents: true,
+    omitIdleSubagentParents: false,
+    omitOlderSettled: true,
+  };
 
   const makeColdStart = Effect.fn("test.makeColdStartShell")(function* (
     origin: Persistence.ShellCacheOrigin | undefined,
@@ -1406,7 +1415,10 @@ describe("environment shell cold start", () => {
       origin: undefined,
       serverResumes: false,
       config: { environment: { serverVersion: "1.0.0" } },
-      loads: [FAMILY_FLAGS, { omitIdleSubagents: false, omitOlderSettled: false }],
+      loads: [
+        FAMILY_FLAGS,
+        { omitIdleSubagents: false, omitIdleSubagentParents: false, omitOlderSettled: false },
+      ],
       subscribes: { afterSequence: HTTP_SEQUENCE + 1, knownProjectIdentities: "identities-2" },
     },
   ])(

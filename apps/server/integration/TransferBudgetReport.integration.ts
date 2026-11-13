@@ -150,7 +150,8 @@ const SOCKET_BUDGETS = {
   staleShellResume: { decodedBytes: 400, messages: 2 },
 };
 
-// About 30% above the observed 42 KB. Without the shell opt-ins it carries all 142 rows (217 KB).
+// About 30% above the observed 42 KB. Without the shell opt-ins it carries all 162 rows (250 KB),
+// and without `omitIdleSubagentParents` the 20 idle subagents that have a child (47 rows, 73 KB).
 const FLEET_SHELL_BUDGET = {
   decodedBytes: 55_000,
   rows: 27,

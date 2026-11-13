@@ -1,9 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
-import { visibilityParentKey } from "@t3tools/client-runtime/state/threads";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import { type ThreadFamilyRead, visibilityParentKey } from "@t3tools/client-runtime/state/threads";
+import { isListedThreadLineage, type ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
 import { Navigate, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
@@ -27,11 +28,14 @@ import {
   type ThreadRouteTarget,
 } from "../threadRoutes";
 
+const NO_OPEN_FAMILY = Atom.make<ThreadFamilyRead>("settled");
+
 /**
- * Keeps the family of an open thread the shell leaves out (an older settled thread) in the shell
- * rows until the route leaves it, so every reader of its shell row finds it.
+ * Keeps the family of an open thread the shell leaves out (an older settled thread, an idle
+ * subagent), or whose parent it leaves out, in the shell rows until the route leaves it, so every
+ * reader of its shell row finds it. Returns whether those rows can still arrive.
  */
-function useOpenThreadFamily(threadRef: ScopedThreadRef | null, missing: boolean) {
+function useOpenThreadFamily(threadRef: ScopedThreadRef | null, missing: boolean): boolean {
   const key = threadRef === null ? null : scopedThreadKey(threadRef);
   // Sticks to the route thread, so the row the family brings in does not release it.
   const [mountedKey, setMountedKey] = useState<string | null>(null);
@@ -43,6 +47,12 @@ function useOpenThreadFamily(threadRef: ScopedThreadRef | null, missing: boolean
     if (ref === null) return;
     return threadFamilies.mount(appAtomRegistry, ref.environmentId, ref.threadId);
   }, [mountedKey]);
+  const read = useAtomValue(
+    threadRef === null
+      ? NO_OPEN_FAMILY
+      : threadFamilies.mountedReadAtom(threadRef.environmentId, threadRef.threadId),
+  );
+  return missing && read === "pending";
 }
 
 /**
@@ -108,7 +118,19 @@ export function ThreadRouteView({
     unlistedThreadRef?.environmentId ?? null,
     unlistedThreadRef?.threadId ?? null,
   );
-  useOpenThreadFamily(serverThreadRef, bootstrapComplete && unlistedThreadRef !== null);
+  // A woken subagent can arrive before the idle parent the shell left out; its family brings it.
+  const parentRef =
+    serverThreadRef === null ||
+    serverThreadShell === null ||
+    serverThreadShell.lineage.parentThreadId === null ||
+    isListedThreadLineage(serverThreadShell.lineage)
+      ? null
+      : { ...serverThreadRef, threadId: serverThreadShell.lineage.parentThreadId };
+  const parentMissing = useQuietThreadShell(parentRef) === null && parentRef !== null;
+  const familyPending = useOpenThreadFamily(
+    serverThreadRef,
+    bootstrapComplete && (unlistedThreadRef !== null || parentMissing),
+  );
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
   const unlistedThread = Option.getOrNull(Option.map(unlistedThreadDetail.data, (p) => p.thread));
   const unlistedParentKey =
@@ -209,10 +231,14 @@ export function ThreadRouteView({
       redirect = <Navigate to="/" replace />;
     }
   } else if (hiddenByTagFilter) {
-    redirect = <Navigate to="/" replace />;
+    // A thread whose parent row has not arrived reads as hidden until its family read settles.
+    if (!familyPending) redirect = <Navigate to="/" replace />;
   } else if (offShellBlocked) {
-    // Before the shell bootstraps, a listed visible thread can still look off-shell.
-    if (bootstrapComplete && unlistedThread !== null) redirect = <Navigate to="/" replace />;
+    // Before the shell bootstraps, a listed visible thread can still look off-shell. So does an
+    // idle subagent until its family read brings in the parent the shell left out.
+    if (bootstrapComplete && unlistedThread !== null && !familyPending) {
+      redirect = <Navigate to="/" replace />;
+    }
   } else if (renderState === "ready" || (renderState === "loading" && serverThreadShell !== null)) {
     view = (
       <ChatView
