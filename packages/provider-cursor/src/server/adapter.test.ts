@@ -25,10 +25,12 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -404,6 +406,118 @@ describe("CursorAdapterV2", () => {
       },
     },
     {
+      reason: "turn-ended when run.wait never resolves",
+      cancelCalls: 1,
+      updates: [
+        { type: "text-delta", text: "Done." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.never,
+      failure: null,
+    },
+    {
+      reason: "turn-ended while a tool is still running until tool-call-completed",
+      updates: [
+        { type: "text-delta", text: "Checking." },
+        {
+          type: "tool-call-started",
+          modelCallId: "native-model-call",
+          callId: "read-file",
+          toolCall: {
+            type: "read",
+            args: { path: "src/env.ts" },
+          },
+        },
+        { type: "turn-ended" },
+        {
+          type: "tool-call-completed",
+          modelCallId: "native-model-call",
+          callId: "read-file",
+          toolCall: {
+            type: "read",
+            args: { path: "src/env.ts" },
+            result: {
+              status: "success",
+              value: { fileSize: 12, content: "ok", totalLines: 1 },
+            },
+          },
+        },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.never,
+      failure: null,
+    },
+    {
+      reason: "a transport failure when run.wait never resolves after turn-ended",
+      updates: [
+        { type: "text-delta", text: "Error: RetriableError: WritableIterable is closed" },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.never,
+      failure: { class: "transport_error", message: "Provider turn failed." },
+    },
+    {
+      reason: "the SDK fallback answer after turn-ended",
+      updates: [{ type: "turn-ended" }] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        status: "finished" as const,
+        result: "The answer.",
+      }),
+      failure: null,
+      answers: ["The answer."],
+      cancelCalls: 0,
+    },
+    {
+      reason: "a cancelled wait released by idle cancellation",
+      updates: [
+        { type: "text-delta", text: "Done." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: null,
+      failure: null,
+      cancelCalls: 1,
+    },
+    {
+      reason: "a stop-hook continuation after turn-ended",
+      updates: [
+        { type: "text-delta", text: "Checking." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      continuation: [
+        { type: "text-delta", text: "Done." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: null,
+      failure: null,
+      cancelCalls: 1,
+      answers: ["Checking.", "Done."],
+    },
+    {
+      reason: "an interruption after idle cancellation timed out with a hung wait",
+      updates: [
+        { type: "text-delta", text: "Done." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.never,
+      failure: null,
+      status: "interrupted",
+      cancelOutcome: "timeout" as const,
+      interrupt: true,
+      cancelCalls: 2,
+    },
+    {
+      reason: "a cancelled wait when idle cancel then fails",
+      updates: [
+        { type: "text-delta", text: "Done." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: null,
+      failure: null,
+      status: "cancelled",
+      cancelCalls: 1,
+      cancelOutcome: "after-wait" as const,
+    },
+    {
       reason: "no answer from a resume after the turn ended that made no progress",
       updates: [{ type: "turn-ended" }] satisfies ReadonlyArray<InteractionUpdate>,
       wait: Effect.succeed({
@@ -418,8 +532,13 @@ describe("CursorAdapterV2", () => {
       failure: null,
       answers: [],
     },
-  ])("ends the turn with $reason", ({ updates = [], wait, failure, answers }) =>
+  ])("ends the turn with $reason", (testCase) =>
     Effect.gen(function* () {
+      const { updates = [], wait, failure, status, cancelCalls } = testCase;
+      const answers = "answers" in testCase ? testCase.answers : undefined;
+      const continuation = "continuation" in testCase ? testCase.continuation : undefined;
+      const interrupt = "interrupt" in testCase && testCase.interrupt;
+      const cancelOutcome = "cancelOutcome" in testCase ? testCase.cancelOutcome : undefined;
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-failure-" });
       const instanceId = ProviderInstanceId.make("cursor");
@@ -430,6 +549,10 @@ describe("CursorAdapterV2", () => {
         interactionMode: "default",
         cwd: workspace,
       });
+      const cancelled = yield* Deferred.make<void>();
+      const waitObserved = yield* Deferred.make<void>();
+      let observedCancelCalls = 0;
+      let onDelta: ((update: InteractionUpdate) => Effect.Effect<void>) | undefined;
       const adapter = yield* makeCursorAdapterV2({
         instanceId,
         environment: { HOME: workspace },
@@ -443,14 +566,35 @@ describe("CursorAdapterV2", () => {
               close: Effect.void,
               send: (input) =>
                 Effect.gen(function* () {
+                  onDelta = (update) => input.onDelta!(update).pipe(Effect.orDie);
                   for (const update of updates) {
                     yield* input.onDelta!(update).pipe(Effect.orDie);
                   }
                   return {
                     agentId: "native-cursor-failure",
                     runId: "native-cursor-run",
-                    wait,
-                    cancel: Effect.void,
+                    wait:
+                      wait ??
+                      Deferred.await(cancelled).pipe(
+                        Effect.andThen(Deferred.succeed(waitObserved, undefined)),
+                        Effect.as({
+                          id: "native-cursor-run",
+                          status: "cancelled" as const,
+                        }),
+                      ),
+                    cancel: Effect.gen(function* () {
+                      observedCancelCalls += 1;
+                      if (observedCancelCalls > 1) return;
+                      yield* Deferred.succeed(cancelled, undefined);
+                      if (cancelOutcome === "after-wait") yield* Deferred.await(waitObserved);
+                      if (cancelOutcome === "timeout") return yield* Effect.never;
+                      if (cancelOutcome !== undefined) {
+                        return yield* new CursorAgentSdk.CursorAgentSdkRunnerError({
+                          method: "run.cancel",
+                          cause: new Error("cancel failed"),
+                        });
+                      }
+                    }),
                   };
                 }),
             }),
@@ -510,18 +654,45 @@ describe("CursorAdapterV2", () => {
           attachments: [],
         },
       });
+      if (continuation !== undefined) {
+        yield* TestClock.adjust("90 seconds");
+        assert.equal(observedCancelCalls, 0);
+        for (const update of continuation) {
+          yield* onDelta!(update);
+        }
+      }
+      yield* TestClock.adjust("2 minutes");
+      if (interrupt) {
+        const started = yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "provider_turn.updated"),
+          Stream.take(1),
+          Stream.runCollect,
+        );
+        const interrupting = yield* runtime
+          .interruptTurn({
+            providerThread,
+            providerTurnId: started[0]!.providerTurn.id,
+          })
+          .pipe(Effect.forkScoped);
+        yield* TestClock.adjust("10 seconds");
+        yield* Fiber.join(interrupting);
+      }
       const events = yield* runtime.events.pipe(
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
       );
       const terminal = events.find((event) => event.type === "turn.terminal");
-      assert.equal(terminal?.status, failure === null ? "completed" : "failed");
+      assert.equal(terminal?.status, status ?? (failure === null ? "completed" : "failed"));
+      if (cancelCalls !== undefined) assert.equal(observedCancelCalls, cancelCalls);
+      if (cancelOutcome !== undefined) assert.equal(terminal?.threadDisposition, "broken");
       assert.equal(terminal?.failure?.class, failure?.class);
       assert.equal(terminal?.failure?.message, failure?.message);
       if (answers !== undefined) {
         assert.deepEqual(
           events.flatMap((event) =>
-            event.type === "message.updated" && event.message.role === "assistant"
+            event.type === "message.updated" &&
+            event.message.role === "assistant" &&
+            !event.message.streaming
               ? [event.message.text]
               : [],
           ),
@@ -2308,6 +2479,7 @@ describe("CursorAdapterV2", () => {
         const steered: string[] = [];
         let cancelled = 0;
         let outcome: "complete_delivered" | "revert_to_followup" = "complete_delivered";
+        const acknowledged = yield* Deferred.make<void>();
         const finished = yield* Deferred.make<{
           readonly id: string;
           readonly requestId: string;
@@ -2334,30 +2506,36 @@ describe("CursorAdapterV2", () => {
                 agentId: "native-cursor-steer",
                 listMessages: Effect.succeed([]),
                 close: Effect.void,
-                send: () =>
-                  Effect.succeed({
-                    agentId: "native-cursor-steer",
-                    runId: "native-cursor-steer-run",
-                    wait: Deferred.await(finished),
-                    cancel: Effect.sync(() => {
-                      cancelled += 1;
-                    }).pipe(
-                      Effect.andThen(
-                        Deferred.succeed(finished, {
-                          id: "native-cursor-steer-run",
-                          requestId: "native-request",
-                          status: "cancelled" as const,
-                          model: { id: "composer-2.5" },
-                          durationMs: 1,
-                        }),
+                send: (input) =>
+                  Effect.gen(function* () {
+                    yield* input.onDelta!({ type: "text-delta", text: "Done." });
+                    yield* input.onDelta!({ type: "turn-ended" });
+                  }).pipe(
+                    Effect.orDie,
+                    Effect.as({
+                      agentId: "native-cursor-steer",
+                      runId: "native-cursor-steer-run",
+                      wait: Deferred.await(finished),
+                      cancel: Effect.sync(() => {
+                        cancelled += 1;
+                      }).pipe(
+                        Effect.andThen(
+                          Deferred.succeed(finished, {
+                            id: "native-cursor-steer-run",
+                            requestId: "native-request",
+                            status: "cancelled" as const,
+                            model: { id: "composer-2.5" },
+                            durationMs: 1,
+                          }),
+                        ),
                       ),
-                    ),
-                    steer: (text) =>
-                      Effect.sync(() => {
-                        steered.push(text);
-                        return outcome;
-                      }),
-                  }),
+                      steer: (text) =>
+                        Effect.sync(() => steered.push(text)).pipe(
+                          Effect.andThen(Deferred.await(acknowledged)),
+                          Effect.as(outcome),
+                        ),
+                    }),
+                  ),
               }),
           }),
           Effect.provide(TestProviderHost.layer({ cwd: workspace })),
@@ -2424,20 +2602,29 @@ describe("CursorAdapterV2", () => {
           nativeTurnId: "native-cursor-steer-run",
         });
         yield* runtime.startTurn(turn);
-        yield* runtime.steerTurn({
-          threadId,
-          runId: turn.runId,
-          providerThread,
-          providerTurnId,
-          message: {
-            messageId: MessageId.make("cursor-steer-follow-up"),
-            createdBy: "user",
-            creationSource: "web",
-            text: "$review Look at the tests instead.",
-            attachments: [],
-          },
-        });
+        const steering = yield* runtime
+          .steerTurn({
+            threadId,
+            runId: turn.runId,
+            providerThread,
+            providerTurnId,
+            message: {
+              messageId: MessageId.make("cursor-steer-follow-up"),
+              createdBy: "user",
+              creationSource: "web",
+              text: "$review Look at the tests instead.",
+              attachments: [],
+            },
+          })
+          .pipe(Effect.forkScoped);
+        // An acknowledgment that outlasts the idle window must not lose the run to idle cancel.
+        yield* TestClock.adjust("2 minutes");
+        assert.equal(cancelled, 0);
+        yield* Deferred.succeed(acknowledged, undefined);
+        yield* Fiber.join(steering);
         assert.deepEqual(steered, ["/review Look at the tests instead."]);
+        // The delivered steer is new work, so the ended turn is not cancelled as idle.
+        yield* TestClock.adjust("2 minutes");
         assert.equal(cancelled, 0);
         yield* runtime.steerTurn({
           threadId,

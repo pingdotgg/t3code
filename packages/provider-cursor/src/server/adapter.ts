@@ -34,6 +34,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -963,6 +964,10 @@ interface ActiveCursorTurn {
   finalized: boolean;
   /** The agent's latest turn ended and no new work has started since. */
   turnEnded: boolean;
+  /** Bumps when new work starts so a pending idle finalize is ignored. */
+  idleFinalizeGeneration: number;
+  idleCancelResult: Deferred.Deferred<boolean> | null;
+  steersInFlight: number;
 }
 
 interface CursorLiveAgent {
@@ -2028,6 +2033,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             update.type === "tool-call-started"
           ) {
             context.turnEnded = false;
+            context.idleFinalizeGeneration += 1;
           }
           switch (update.type) {
             case "text-delta":
@@ -2065,11 +2071,17 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               yield* completeAssistant(context);
               yield* completeReasoning(context);
               yield* handleToolUpdate(context, update);
+              if (update.type === "tool-call-completed") {
+                yield* scheduleIdleTurnFinalize(context);
+              }
               return;
             case "step-completed":
             case "turn-ended":
               yield* completeAssistant(context);
               yield* completeReasoning(context);
+              if (update.type === "turn-ended") {
+                yield* scheduleIdleTurnFinalize(context);
+              }
               return;
             case "shell-output-delta": {
               const toolCallId = update.event.toolCallId;
@@ -2221,6 +2233,79 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
           yield* Deferred.succeed(input.context.completed, undefined);
+        });
+
+        const cursorTurnHasActiveWork = (context: ActiveCursorTurn) =>
+          context.steersInFlight > 0 ||
+          context.tools.size > 0 ||
+          Array.from(context.subagents.values()).some((subagent) =>
+            isOrchestrationV2WorkActive(subagent.task.status),
+          );
+
+        const scheduleIdleTurnFinalize = Effect.fnUntraced(function* (context: ActiveCursorTurn) {
+          if (
+            context.finalized ||
+            !context.turnEnded ||
+            context.assistant.nextSegment === 0 ||
+            context.idleCancelResult !== null ||
+            cursorTurnHasActiveWork(context)
+          ) {
+            return;
+          }
+          const generation = ++context.idleFinalizeGeneration;
+          yield* Effect.forkIn(
+            Effect.gen(function* () {
+              // Stop hooks run after turn-ended (in parallel, 60s default timeout) and a follow-up
+              // continues the run; wait past them before treating a quiet run as hung.
+              yield* Effect.sleep("2 minutes");
+              if (
+                context.finalized ||
+                context.interrupted ||
+                context.idleFinalizeGeneration !== generation ||
+                !context.turnEnded ||
+                cursorTurnHasActiveWork(context)
+              ) {
+                return;
+              }
+              if (context.idleCancelResult !== null) return;
+              const cancelResult = Deferred.makeUnsafe<boolean>();
+              context.idleCancelResult = cancelResult;
+              // Keep ownership if cancellation fails; a terminal wait still reports its own outcome.
+              const released = yield* context.run.cancel.pipe(
+                Effect.timeout("10 seconds"),
+                Effect.as(true),
+                Effect.catch((cause) =>
+                  Effect.logWarning("orchestration-v2.cursor-idle-cancel-failed", {
+                    providerTurnId: context.providerTurnId,
+                    cause,
+                  }).pipe(Effect.as(false)),
+                ),
+              );
+              yield* Deferred.succeed(cancelResult, released);
+              if (!released || context.finalized) return;
+              const transportFailure = context.assistantReply.failure;
+              const status = context.interrupted
+                ? "interrupted"
+                : transportFailure !== undefined
+                  ? "failed"
+                  : context.turnEnded && !cursorTurnHasActiveWork(context)
+                    ? "completed"
+                    : "cancelled";
+              yield* finalizeTurn({
+                context,
+                status,
+                ...(status === "failed"
+                  ? {
+                      failure: makeProviderFailure({
+                        cause: transportFailure,
+                        class: "transport_error",
+                      }),
+                    }
+                  : {}),
+              });
+            }),
+            sessionScope,
+          );
         });
 
         const isResumeFailureAfterTurnEnded = (context: ActiveCursorTurn, result: RunResult) =>
@@ -2538,6 +2623,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               interrupted: false,
               finalized: false,
               turnEnded: false,
+              idleFinalizeGeneration: 0,
+              idleCancelResult: null,
+              steersInFlight: 0,
             };
             yield* Ref.set(activeTurn, context);
             yield* emitProviderEvent({
@@ -2595,12 +2683,28 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     );
                   }
                   if (context !== null) {
+                    const idleCancel =
+                      result.status === "cancelled" && context.idleCancelResult !== null
+                        ? yield* Deferred.await(context.idleCancelResult)
+                        : false;
                     const transportFailure = context.assistantReply.failure;
                     const status =
-                      transportFailure === undefined ? terminalStatus(context, result) : "failed";
+                      transportFailure !== undefined
+                        ? "failed"
+                        : idleCancel &&
+                            !context.interrupted &&
+                            context.turnEnded &&
+                            !cursorTurnHasActiveWork(context)
+                          ? "completed"
+                          : terminalStatus(context, result);
                     yield* finalizeTurn({
                       context,
                       status,
+                      ...(result.status === "cancelled" &&
+                      context.idleCancelResult !== null &&
+                      !idleCancel
+                        ? { threadDisposition: "broken" as const }
+                        : {}),
                       ...(status === "failed"
                         ? {
                             failure:
@@ -2783,26 +2887,43 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   detail: `Cursor provider turn ${turnInput.providerTurnId} is not active.`,
                 });
               }
-              // The live run already has the runtime instructions from startTurn.
-              const text = yield* providerMessageTextWithAttachmentPaths({
-                text: yield* resolveCursorSkillText(
-                  turnInput.message.text,
-                  context.input.runtimePolicy.cwd ?? undefined,
-                ),
-                attachments: turnInput.message.attachments,
-                resolveAttachmentPath: host.resolveAttachmentPath,
-                resolveExtractedTextPath: host.resolveExtractedTextPath,
-              });
-              if (text.trim().length === 0) {
-                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                  driver: CursorAgentSdk.CURSOR_PROVIDER,
-                  detail: "Cursor steer requires non-empty text.",
+              // Hold idle finalize from the moment a steer arrives until the run acknowledges it.
+              context.steersInFlight += 1;
+              context.idleFinalizeGeneration += 1;
+              const outcome = yield* Effect.gen(function* () {
+                // The live run already has the runtime instructions from startTurn.
+                const text = yield* providerMessageTextWithAttachmentPaths({
+                  text: yield* resolveCursorSkillText(
+                    turnInput.message.text,
+                    context.input.runtimePolicy.cwd ?? undefined,
+                  ),
+                  attachments: turnInput.message.attachments,
+                  resolveAttachmentPath: host.resolveAttachmentPath,
+                  resolveExtractedTextPath: host.resolveExtractedTextPath,
                 });
-              }
-              const outcome =
-                context.run.steer === undefined
+                if (text.trim().length === 0) {
+                  return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CursorAgentSdk.CURSOR_PROVIDER,
+                    detail: "Cursor steer requires non-empty text.",
+                  });
+                }
+                // A run being cancelled for idleness cannot take more input.
+                return context.run.steer === undefined || context.idleCancelResult !== null
                   ? "revert_to_followup"
                   : yield* context.run.steer(text);
+              }).pipe(
+                Effect.onExit((exit) =>
+                  Effect.suspend(() => {
+                    context.steersInFlight -= 1;
+                    if (Exit.isSuccess(exit) && exit.value === "complete_delivered") {
+                      context.turnEnded = false;
+                      context.idleFinalizeGeneration += 1;
+                      return Effect.void;
+                    }
+                    return scheduleIdleTurnFinalize(context);
+                  }),
+                ),
+              );
               if (outcome === "complete_delivered") {
                 return;
               }
@@ -2855,7 +2976,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 providerThreadId: turnInput.providerThread.id,
                 providerTurnId: turnInput.providerTurnId,
               });
-              yield* finalizeTurn({ context, status: "interrupted" });
+              yield* finalizeTurn({
+                context,
+                status: "interrupted",
+                ...(context.idleCancelResult !== null
+                  ? { threadDisposition: "broken" as const }
+                  : {}),
+              });
             },
             (effect, turnInput) =>
               effect.pipe(
