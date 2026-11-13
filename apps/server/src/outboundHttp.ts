@@ -10,11 +10,24 @@ const requireUndici = NodeModule.createRequire(import.meta.url);
 export const builtinFetchUsesHttp2 = (bundledUndiciVersion: string | undefined) =>
   Number.parseInt(bundledUndiciVersion ?? "", 10) >= 8;
 
-/** Preserves the EnvHttpProxyAgent installed by --use-env-proxy / NODE_USE_ENV_PROXY. */
-export function installHttp1FetchDispatcher(): void {
+const HTTP_PROXY_ENV_KEYS = ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"] as const;
+const PROXY_PATCH_KEYS = [...HTTP_PROXY_ENV_KEYS, "NO_PROXY", "no_proxy"] as const;
+
+export const hasHttpProxyEnv = (env: NodeJS.ProcessEnv = process.env): boolean =>
+  HTTP_PROXY_ENV_KEYS.some((key) => {
+    const value = env[key]?.trim();
+    return value !== undefined && value.length > 0;
+  });
+
+export const hasProxyPatchKey = (patch: Readonly<Record<string, unknown>>): boolean =>
+  PROXY_PATCH_KEYS.some((key) => patch[key] !== undefined);
+
+/** Preserves the EnvHttpProxyAgent installed by --use-env-proxy / NODE_USE_ENV_PROXY or proxy env vars. */
+export function installHttp1FetchDispatcher(env: NodeJS.ProcessEnv = process.env): void {
   const undici = requireUndici("undici") as typeof Undici;
   // Node's agent comes from its internal undici copy, so `instanceof` against the npm class is false.
-  const usesEnvProxy = undici.getGlobalDispatcher().constructor.name === "EnvHttpProxyAgent";
+  const usesEnvProxy =
+    undici.getGlobalDispatcher().constructor.name === "EnvHttpProxyAgent" || hasHttpProxyEnv(env);
   undici.setGlobalDispatcher(
     usesEnvProxy
       ? new undici.EnvHttpProxyAgent({
@@ -26,9 +39,18 @@ export function installHttp1FetchDispatcher(): void {
   );
 }
 
-/** Avoids uncaught idle-timeout errors on h2 streams (https://github.com/nodejs/undici/issues/5936). */
-export function keepOutboundFetchOnHttp1(): void {
-  if (builtinFetchUsesHttp2(process.versions.undici)) installHttp1FetchDispatcher();
+/** Avoids uncaught idle-timeout errors on h2 streams (https://github.com/nodejs/undici/issues/5936) and honors HTTP(S)_PROXY. */
+export function keepOutboundFetchOnHttp1(env: NodeJS.ProcessEnv = process.env): void {
+  const undici = requireUndici("undici") as typeof Undici;
+  const dispatcherIsEnvProxy =
+    undici.getGlobalDispatcher().constructor.name === "EnvHttpProxyAgent";
+  if (
+    builtinFetchUsesHttp2(process.versions.undici) ||
+    hasHttpProxyEnv(env) ||
+    dispatcherIsEnvProxy
+  ) {
+    installHttp1FetchDispatcher(env);
+  }
 }
 
 // @types/node does not declare setTypeOfService yet.

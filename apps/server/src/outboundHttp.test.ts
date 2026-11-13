@@ -14,8 +14,10 @@ import { afterAll, afterEach, beforeAll, describe, expect } from "vite-plus/test
 
 import {
   builtinFetchUsesHttp2,
+  hasHttpProxyEnv,
   ignoreMacosTypeOfServiceEinval,
   installHttp1FetchDispatcher,
+  keepOutboundFetchOnHttp1,
 } from "./outboundHttp.ts";
 
 // Non-secret, self-signed 127.0.0.1 certificate, valid until 2126; ALPN h2 requires TLS.
@@ -73,16 +75,22 @@ const versionViaBuiltinFetch = () =>
   );
 
 describe("installHttp1FetchDispatcher", () => {
-  it("makes the global dispatcher negotiate HTTP/1.1 and keeps the env proxy agent", async () => {
+  it("makes the global dispatcher negotiate HTTP/1.1 and enables EnvHttpProxyAgent when proxy env vars are set", async () => {
     Undici.setGlobalDispatcher(new Undici.Agent());
     expect(await versionViaGlobalDispatcher()).toBe("2.0");
 
-    installHttp1FetchDispatcher();
+    installHttp1FetchDispatcher({});
     expect(await versionViaGlobalDispatcher()).toBe("1.1");
 
     Undici.setGlobalDispatcher(new Undici.EnvHttpProxyAgent());
-    installHttp1FetchDispatcher();
+    installHttp1FetchDispatcher({});
     expect(Undici.getGlobalDispatcher()).toBeInstanceOf(Undici.EnvHttpProxyAgent);
+
+    Undici.setGlobalDispatcher(new Undici.Agent());
+    keepOutboundFetchOnHttp1({ HTTPS_PROXY: "http://127.0.0.1:7890" });
+    expect(Undici.getGlobalDispatcher()).toBeInstanceOf(Undici.EnvHttpProxyAgent);
+    expect(hasHttpProxyEnv({ http_proxy: "http://127.0.0.1:7890" })).toBe(true);
+    expect(hasHttpProxyEnv({ HTTPS_PROXY: "  " })).toBe(false);
   });
 
   // Only bundled undici 8 (Node 26+) offers fetch h2 and can prove dispatcher replacement.

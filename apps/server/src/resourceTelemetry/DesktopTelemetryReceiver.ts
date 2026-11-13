@@ -36,6 +36,7 @@ import * as Ndjson from "effect/encoding/Ndjson";
 import { eventVersion as messageVersion } from "./NativeTelemetryClient.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { hasProxyPatchKey, keepOutboundFetchOnHttp1 } from "../outboundHttp.ts";
 import { subscribeBeforeSnapshotWithoutMutex } from "../utils/subscribeBeforeSnapshot.ts";
 
 const INITIAL_SAMPLE_DEADLINE_MS = 90_000;
@@ -220,6 +221,7 @@ class DesktopShellCertificatesUpdateFailed extends Schema.TaggedError<DesktopShe
 export function makeApplyDesktopShellEnvironmentSnapshot(
   environment: NodeJS.ProcessEnv,
   platform: NodeJS.Platform,
+  onProxyEnvChanged?: (environment: NodeJS.ProcessEnv) => void,
 ) {
   let baseCertificates: Array<string> | undefined;
   return Effect.fn("resourceTelemetry.desktopTelemetryReceiver.applyShellEnvironment")(function* (
@@ -238,6 +240,9 @@ export function makeApplyDesktopShellEnvironmentSnapshot(
       });
     }
     applyShellEnvironment(environment, message.environment, platform);
+    if (onProxyEnvChanged && hasProxyPatchKey(message.environment)) {
+      onProxyEnvChanged(environment);
+    }
     if (message.environment.NODE_EXTRA_CA_CERTS !== undefined) {
       yield* Effect.gen(function* () {
         const certificates = baseCertificates;
@@ -400,7 +405,11 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
   const config = yield* ServerConfig.ServerConfig;
   const environment = yield* HostProcess.Environment;
   const platform = yield* HostProcess.Platform;
-  const applyShellSnapshot = makeApplyDesktopShellEnvironmentSnapshot(environment, platform);
+  const applyShellSnapshot = makeApplyDesktopShellEnvironmentSnapshot(
+    environment,
+    platform,
+    keepOutboundFetchOnHttp1,
+  );
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const latest = yield* Ref.make(Option.none<DesktopHostTelemetrySnapshot>());
   const receiverStartedAt = yield* DateTime.now;

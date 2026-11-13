@@ -322,6 +322,14 @@ export const ShellEnvironmentPatch = Schema.Struct({
   JAVA_HOME: Schema.optionalKey(Schema.NullOr(Schema.String)),
   FNM_DIR: Schema.optionalKey(Schema.NullOr(Schema.String)),
   FNM_MULTISHELL_PATH: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  HTTP_PROXY: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  HTTPS_PROXY: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  ALL_PROXY: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  NO_PROXY: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  http_proxy: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  https_proxy: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  all_proxy: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  no_proxy: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type ShellEnvironmentPatch = typeof ShellEnvironmentPatch.Type;
 
