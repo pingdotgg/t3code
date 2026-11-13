@@ -128,6 +128,17 @@ const isOutdated = (
 export const make = Effect.gen(function* () {
   const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
+  // Approval and pipeline states are extras, so even a rate limit only leaves them unknown.
+  const listStates = (input: Parameters<typeof cli.getListStates>[0]) =>
+    cli.getListStates(input).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("GitLab merge request approval and pipeline read failed", {
+          repository: input.repository,
+          reason: error._tag,
+        }).pipe(Effect.as<ReadonlyMap<number, GitLabMergeRequestListState>>(new Map())),
+      ),
+    );
+
   // Keyed on the checkout as well: `glab` picks the host and the account to answer as from the
   // checkout's remote and config, so two checkouts may read the same project as different people.
   const mergeRequestDetails = yield* Cache.makeWith(
@@ -139,6 +150,14 @@ export const make = Effect.gen(function* () {
       capacity: READ_CACHE_CAPACITY,
       timeToLive: (exit) => (Exit.isSuccess(exit) ? MERGE_REQUEST_DETAIL_TTL : Duration.zero),
     },
+  );
+  // Apart from the detail so check reads, which ignore approval, skip this query.
+  const mergeRequestStates = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd, repository, number, host] = JSON.parse(key) as [string, string, number, string];
+      return listStates({ cwd, host, repository, numbers: [number] });
+    },
+    { capacity: READ_CACHE_CAPACITY, timeToLive: () => MERGE_REQUEST_DETAIL_TTL },
   );
   const graphqlListSupport = yield* Cache.makeWith(
     (key: string) => {
@@ -199,7 +218,10 @@ export const make = Effect.gen(function* () {
       write: (input: I) => Effect.Effect<A, E>,
     ) =>
     (input: I): Effect.Effect<A, E> => {
-      const invalidate = Cache.invalidate(mergeRequestDetails, detailKey(input));
+      const invalidate = Effect.all([
+        Cache.invalidate(mergeRequestDetails, detailKey(input)),
+        Cache.invalidate(mergeRequestStates, detailKey(input)),
+      ]);
       return invalidate.pipe(Effect.andThen(write(input)), Effect.ensuring(invalidate));
     };
 
@@ -227,17 +249,6 @@ export const make = Effect.gen(function* () {
           ? Effect.fail(error)
           : Effect.succeed(fallback);
       }),
-    );
-
-  // The rows were already read, so even a rate limit only leaves their states unknown.
-  const listStates = (input: Parameters<typeof cli.getListStates>[0]) =>
-    cli.getListStates(input).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("GitLab merge request approval and pipeline read failed", {
-          repository: input.repository,
-          reason: error._tag,
-        }).pipe(Effect.as<ReadonlyMap<number, GitLabMergeRequestListState>>(new Map())),
-      ),
     );
 
   // REST omits line counts; the CLI recovers optional stats failures per batch.
@@ -359,12 +370,13 @@ export const make = Effect.gen(function* () {
             projectMergeCapabilities,
             JSON.stringify([input.cwd, input.repository, input.host]),
           ),
+          Cache.get(mergeRequestStates, detailKey(input)),
         ],
-        { concurrency: 2 },
+        { concurrency: 3 },
       ).pipe(
         Effect.mapError(fail("getChangeRequest")),
-        Effect.map(([mergeRequest, mergeCapabilities]): ProviderChangeRequestDetail => ({
-          ...mergeRequest,
+        Effect.map(([mergeRequest, mergeCapabilities, states]): ProviderChangeRequestDetail => ({
+          ...withListState(mergeRequest, states),
           mergeCapabilities,
           viewerPermissions: gitLabViewerPermissions(mergeRequest),
           // Missing divergence counts mean unknown, not up to date.
@@ -475,23 +487,28 @@ export const make = Effect.gen(function* () {
         .getMergeRequestDetail({ ...input, downstreamChecks: false })
         .pipe(Effect.mapError(fail("getViewerPermissions")), Effect.map(gitLabViewerPermissions)),
 
-    forgetChangeRequestReads: (scope) =>
-      Cache.keys(mergeRequestDetails).pipe(
-        Effect.flatMap((keys) =>
-          Effect.forEach(
-            Array.from(keys).filter((key) => {
-              if (scope === undefined) return true;
-              const [, repository, number] = JSON.parse(key) as [string, string, number];
-              return (
-                repository.toLowerCase() === scope.repository.toLowerCase() &&
-                (scope.number === undefined || number === scope.number)
-              );
-            }),
-            (key) => Cache.invalidate(mergeRequestDetails, key),
-            { discard: true },
+    forgetChangeRequestReads: (scope) => {
+      const forget = <A, E>(cache: Cache.Cache<string, A, E>) =>
+        Cache.keys(cache).pipe(
+          Effect.flatMap((keys) =>
+            Effect.forEach(
+              Array.from(keys).filter((key) => {
+                if (scope === undefined) return true;
+                const [, repository, number] = JSON.parse(key) as [string, string, number];
+                return (
+                  repository.toLowerCase() === scope.repository.toLowerCase() &&
+                  (scope.number === undefined || number === scope.number)
+                );
+              }),
+              (key) => Cache.invalidate(cache, key),
+              { discard: true },
+            ),
           ),
-        ),
-      ),
+        );
+      return Effect.all([forget(mergeRequestDetails), forget(mergeRequestStates)], {
+        discard: true,
+      });
+    },
 
     getDiff: (input) => cli.getMergeRequestDiff(input).pipe(Effect.mapError(fail("getDiff"))),
 
