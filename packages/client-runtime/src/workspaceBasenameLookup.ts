@@ -1,3 +1,4 @@
+import { FILESYSTEM_METADATA_BATCH_LIMIT } from "@t3tools/contracts";
 import {
   isAbsolutePath,
   isWindowsAbsolutePath,
@@ -134,4 +135,35 @@ export function pickProjectLinkMatch(
     return match === null ? [] : [resolveWorkspaceFilePath(match, root)];
   });
   return matches.length === 1 ? (matches[0] ?? null) : null;
+}
+
+// `cd` opening a command or a quoted script, then one operand; each character is read once.
+const CD_OPERAND =
+  /(?:^|[;&|(\n"'])[ \t]*cd[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s;&|()<>"']+)(?=$|[\s;&|)"'])/g;
+
+function literalDirectory(operand: string): string | null {
+  const path = /^["']/.test(operand) ? operand.slice(1, -1) : operand;
+  // The shell would expand these, and only it knows to what.
+  if (!isAbsolutePath(path) || /[$`*?[\]{}]/.test(path)) return null;
+  return path.includes("\\") && !isWindowsAbsolutePath(path) ? null : path;
+}
+
+/**
+ * The folders the commands in `items` changed into, the latest first. A reply cites paths
+ * relative to where the agent worked, which no project has to be rooted at.
+ */
+export function agentWorkingDirectories(
+  items: ReadonlyArray<{ readonly item: { readonly type: string; readonly input?: unknown } }>,
+): ReadonlyArray<string> {
+  const directories = new Set<string>();
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index]?.item;
+    if (item?.type !== "command_execution" || typeof item.input !== "string") continue;
+    for (const match of [...item.input.matchAll(CD_OPERAND)].reverse()) {
+      const directory = literalDirectory(match[1] ?? "");
+      if (directory !== null) directories.add(directory);
+      if (directories.size === FILESYSTEM_METADATA_BATCH_LIMIT) return [...directories];
+    }
+  }
+  return [...directories];
 }

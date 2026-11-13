@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  agentWorkingDirectories,
   claimWorkspaceBasenameLookup,
   pickProjectLinkMatch,
   pickWorkspaceBasenameMatch,
@@ -110,6 +111,35 @@ describe("chat file links into another project", () => {
     expect(
       pickProjectLinkMatch("rules/categories.ts", [appB, { ...appB, root: "/home/user/app-c" }]),
     ).toBeNull();
+  });
+});
+
+// regression: #35337 a path the agent cited inside a checkout no project is rooted at
+describe("agentWorkingDirectories", () => {
+  const directories = (...commands: ReadonlyArray<string>) =>
+    agentWorkingDirectories(
+      commands.map((input) => ({ item: { type: "command_execution", input } })),
+    );
+
+  it("lists the folders commands changed into, the latest first", () => {
+    expect(
+      directories(
+        "cd /work/repo-c && cd /work/repo-b && git diff",
+        "git status",
+        `/bin/zsh -lc "cd '/work/my repo'; ls"`,
+        "cd /work/repo-c\npwd",
+      ),
+    ).toEqual(["/work/repo-c", "/work/my repo", "/work/repo-b"]);
+  });
+
+  it("skips operands only the shell can resolve and words that are not the command", () => {
+    expect(
+      directories(
+        "cd docs && cd ../other && cd ~/repo && cd $ROOT/x && cd /work/*/src",
+        "abcd /work/a; echo cd /work/b; git -C /work/c status; cd /work/d",
+        "cd /work/e\\ f && cd `pwd`/x",
+      ),
+    ).toEqual(["/work/d"]);
   });
 });
 
