@@ -52,11 +52,8 @@ export function ThreadMarkdownVideo(props: {
         // AVKit omits its fullscreen control at inline sizes, so iOS plays in the native fullscreen player.
         onPressPlay={Platform.OS === "ios" ? () => setFullscreen(true) : undefined}
       />
-      {Platform.OS === "ios" ? (
-        <VideoPreviewModal
-          source={fullscreen ? source : null}
-          onRequestClose={() => setFullscreen(false)}
-        />
+      {fullscreen ? (
+        <VideoPreviewModal source={source} onRequestClose={() => setFullscreen(false)} />
       ) : null}
     </>
   );
