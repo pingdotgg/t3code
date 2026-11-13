@@ -164,10 +164,16 @@ export const readCursorRulesAboveWorkspace = Effect.fn("readCursorRulesAboveWork
       if (info.type !== "File") return undefined;
       const size = Number(info.size);
       const handle = yield* fileSystem.open(file);
-      const bytes = Option.getOrElse(
-        yield* handle.readAlloc(Math.min(size, MAX_RULE_BYTES + 1)),
-        () => new Uint8Array(),
-      );
+      // One read may return fewer bytes than asked (e.g. network filesystems).
+      const chunks: Array<Uint8Array> = [];
+      let remaining = Math.min(size, MAX_RULE_BYTES + 1);
+      while (remaining > 0) {
+        const chunk = yield* handle.readAlloc(remaining);
+        if (Option.isNone(chunk)) break;
+        chunks.push(chunk.value);
+        remaining -= chunk.value.length;
+      }
+      const bytes = Buffer.concat(chunks);
       if (size <= MAX_RULE_BYTES) return decoder.decode(bytes).replace(/^\uFEFF/, "");
       let end = MAX_RULE_BYTES;
       while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end -= 1;

@@ -177,6 +177,29 @@ describe("readCursorRulesAboveWorkspace", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("reads a rule whole when the filesystem returns short reads", () =>
+    Effect.gen(function* () {
+      const { fileSystem, write, read } = yield* fixture;
+      yield* write("AGENTS.md", "MARK-START then more text after the first chunk MARK-END");
+      const shortReads: FileSystem.FileSystem = {
+        ...fileSystem,
+        open: (file, options) =>
+          Effect.map(
+            fileSystem.open(file, options),
+            (handle) =>
+              new Proxy(handle, {
+                get: (target, key, receiver) =>
+                  key === "readAlloc"
+                    ? (size: number) => target.readAlloc(Math.min(size, 7))
+                    : Reflect.get(target, key, receiver),
+              }),
+          ),
+      };
+      const output = yield* read.pipe(Effect.provideService(FileSystem.FileSystem, shortReads));
+      assert.isBelow(indexOfMarker(output, "MARK-START"), indexOfMarker(output, "MARK-END"));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("truncates oversized rules at a UTF-8 boundary instead of skipping them", () =>
     Effect.gen(function* () {
       const { write, read } = yield* fixture;
