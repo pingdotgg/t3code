@@ -11447,9 +11447,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect.each([
-    { name: "tags a Claude Monitor's per-line wake as monitor progress", scheduled: false },
-    { name: "keeps a ScheduleWakeup turn untagged while a Monitor runs", scheduled: true },
-  ])("$name", ({ scheduled }) =>
+    { name: "tags a Claude Monitor's per-line wake as monitor progress", wake: "monitor" },
+    { name: "keeps a ScheduleWakeup turn untagged while a Monitor runs", wake: "scheduled" },
+    {
+      name: "keeps a ScheduleWakeup turn queued behind a Monitor wake untagged",
+      wake: "scheduled-after-monitor",
+    },
+  ] as const)("$name", ({ wake }) =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
       const now = yield* DateTime.now;
@@ -11531,31 +11535,58 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }
       yield* harness.awaitTerminal(1);
 
-      // Neither wake has a task_notification. Only a queued prompt's turn opens with a lifecycle.
-      if (scheduled) {
-        yield* Queue.offer(
-          harness.sdkMessages,
-          claudeSdkFrame({
-            type: "command_lifecycle",
-            command_uuid: "00000000-0000-4000-8000-000000000a06",
-            state: "started",
-            wakeup_source: "schedule_wakeup",
-            uuid: "00000000-0000-4000-8000-000000000a07",
-            session_id: WAKE_NATIVE_SESSION,
-          }),
-        );
+      // Neither wake has a task_notification. Only a scheduled prompt's turn opens with a lifecycle.
+      const scheduledLifecycle = claudeSdkFrame({
+        type: "command_lifecycle",
+        command_uuid: "00000000-0000-4000-8000-000000000a06",
+        state: "started",
+        wakeup_source: "schedule_wakeup",
+        uuid: "00000000-0000-4000-8000-000000000a07",
+        session_id: WAKE_NATIVE_SESSION,
+      });
+      if (wake === "scheduled") {
+        yield* Queue.offer(harness.sdkMessages, scheduledLifecycle);
       }
       yield* Queue.offer(harness.sdkMessages, wakeTurnInit);
       yield* Queue.offer(harness.sdkMessages, wakeAssistant);
       yield* harness.awaitContinuation(1);
       const notification = harness.continuationRequests[0]?.notification;
-      if (scheduled) {
+      if (wake === "scheduled") {
         assert.isUndefined(notification);
-      } else {
-        assert.deepEqual(notification?.source, { kind: "monitor" });
-        assert.equal(notification?.outcome, "updated");
-        assert.equal(notification?.summary, `Monitor "${description}" reported new output`);
+        return;
       }
+      assert.deepEqual(notification?.source, { kind: "monitor" });
+      assert.equal(notification?.outcome, "updated");
+      assert.equal(notification?.summary, `Monitor "${description}" reported new output`);
+      if (wake === "monitor") return;
+
+      // The scheduled turn runs while the Monitor wake's continuation is still queued.
+      yield* Queue.offer(harness.sdkMessages, wakeResult);
+      for (const frame of [
+        scheduledLifecycle,
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          uuid: "00000000-0000-4000-8000-000000000a08",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeAssistantTextFrame({
+          uuid: "00000000-0000-4000-8000-000000000a09",
+          text: "Scheduled answer.",
+        }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* harness.offerAndWait(
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000a0a",
+          result: "Scheduled answer.",
+        }),
+      );
+      assert.lengthOf(harness.continuationRequests, 1);
+      yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
+      yield* harness.awaitContinuation(2);
+      assert.isUndefined(harness.continuationRequests[1]?.notification);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

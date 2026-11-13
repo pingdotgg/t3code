@@ -5768,17 +5768,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const scheduledWakeupsByNativeThread = new Map<string, number>();
         // Native threads whose current turn Claude started by itself inside the early-fire margin.
         const possibleEarlyWakeNativeThreads = new Set<string>();
-        // Native threads whose current turn a queued prompt started (ScheduleWakeup, cron, a user
-        // prompt). A Monitor's per-line wake starts its turn without one.
-        const promptStartedNativeThreads = new Set<string>();
+        // Native threads with a ScheduleWakeup or cron turn not yet offered as a continuation. Such
+        // turns open with a lifecycle naming a wakeup_source; a Monitor's per-line wake has none.
+        // Kept past the turn's result: it can be buffered behind a queued continuation.
+        const scheduledTurnNativeThreads = new Set<string>();
         const trackClaudeScheduledWakeup = Effect.fnUntraced(function* (
           nativeThreadId: string,
           message: SDKMessage,
         ) {
-          if (claudePromptLifecycle(message)?.state === "started") {
-            promptStartedNativeThreads.add(nativeThreadId);
-          } else if (message.type === "result") {
-            promptStartedNativeThreads.delete(nativeThreadId);
+          if (
+            claudePromptLifecycle(message)?.state === "started" &&
+            typeof Reflect.get(message, "wakeup_source") === "string"
+          ) {
+            scheduledTurnNativeThreads.add(nativeThreadId);
           }
           if (isClaudeTurnStartMessage(message)) {
             const scheduledFor = scheduledWakeupsByNativeThread.get(nativeThreadId);
@@ -9456,8 +9458,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const reports = [...((yield* takeWakeReports(nativeThreadId))?.values() ?? [])].map(
             (entry) => entry.report,
           );
+          const offersScheduledTurn = scheduledTurnNativeThreads.delete(nativeThreadId);
           // A Monitor's per-line wake carries no task_notification or task id; only a running Monitor explains it.
-          if (reports.length === 0 && !promptStartedNativeThreads.has(nativeThreadId)) {
+          if (reports.length === 0 && !offersScheduledTurn) {
             const [monitor, ...otherMonitors] = [
               ...rosterForNativeThread(
                 yield* Ref.get(pendingBackgroundTasksByNativeThread),
