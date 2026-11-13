@@ -67,7 +67,7 @@ describe("scrubFeedback", () => {
       "unquoted paths with spaces",
       "Opened /home/alice/My Project/secret.txt then C:\\Users\\My Name\\a.ts today",
       [],
-      "Opened [redacted] today",
+      "Opened [redacted]",
     ],
     [
       "a quoted path to its own closing quote",
@@ -79,7 +79,19 @@ describe("scrubFeedback", () => {
       "unquoted folders of several words, to the last separator on the line",
       "Read /home/alice/My Secret Project/secret.txt and C:\\Users\\My Big Folder\\a.ts. Then and/or stays",
       [],
-      "Read [redacted] stays",
+      "Read [redacted]",
+    ],
+    [
+      "a file name with a space at the end of a path",
+      "Read /home/alice/Secret File.txt\nRead ~/Secret File.txt\nRead file:///srv/Secret File.txt\nRead C:\\Users\\Secret File.txt\nRead /home/alice/Secret File.txt",
+      ["/home/alice"],
+      "Read [redacted]\nRead [redacted]\nRead [redacted]\nRead [redacted]\nRead [redacted]",
+    ],
+    [
+      "slash commands and spaced slashes, which a first segment with a space would swallow",
+      "Ran /mcp /compact, then /goal, a / b / c",
+      [],
+      "Ran /mcp /compact, then /goal, a / b / c",
     ],
     [
       "a folder name holding a sentence break",
@@ -91,7 +103,7 @@ describe("scrubFeedback", () => {
       "only the lines that hold a path",
       "Saw /home/a/b today\nand/or https://github.com/org/repo stays\nthen ~/x/y. Done",
       [],
-      "Saw [redacted] today\nand/or https://github.com/org/repo stays\nthen [redacted] Done",
+      "Saw [redacted]\nand/or https://github.com/org/repo stays\nthen [redacted]",
     ],
     ["a 1,200-character adversarial path", `/a/b${" x/".repeat(398)}`, [], "[redacted]"],
   ])("scrubs %s", (_, text, sensitive, expected) => {
