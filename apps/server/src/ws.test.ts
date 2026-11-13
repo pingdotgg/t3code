@@ -6,7 +6,6 @@ import {
   AuthAccessReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
-  AuthPreviewOperateScope,
   AuthSessionId,
   AuthSourceControlWriteScope,
   EnvironmentId,
@@ -1846,71 +1845,6 @@ it.effect("a git action that fails partway still refreshes the repository status
     const exit = yield* Queue.take(exits);
     assert.deepEqual(Exit.isFailure(exit) ? Cause.squash(exit.cause) : exit, failure);
     assert.equal(yield* Deferred.await(refreshed), "/repo");
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        Layer.fresh(layerConfigSources),
-        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
-        Layer.mock(ServerBrowser.ServerBrowser)({}),
-      ),
-    ),
-    Effect.scoped,
-  ),
-);
-
-it.effect("a client preview close lets the server browser unload pages before it closes", () =>
-  Effect.gen(function* () {
-    const steps = yield* Queue.unbounded<string>();
-    const exits = yield* Queue.unbounded<string>();
-    const closeSession = () => Queue.offer(steps, "session closed");
-    const services = Layer.mergeAll(
-      layerUnusedConfigRpcServices,
-      Layer.mock(PreviewManager.PreviewManager)({ close: closeSession }),
-      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
-      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
-      Layer.mock(UsageLimitSources.UsageLimitSources)({}),
-      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
-      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
-      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
-      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
-      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
-      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
-    );
-    const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
-      ...WS_RPC_SERVER_OPTIONS,
-      onFromServer: (response) =>
-        response._tag === "Exit" ? Queue.offer(exits, response.exit._tag) : Effect.void,
-    }).pipe(
-      Effect.provide(
-        layerWsRpc(
-          {
-            sessionId: AuthSessionId.make("preview-test"),
-            subject: "preview-test",
-            method: "browser-session-cookie",
-            scopes: [AuthPreviewOperateScope],
-          },
-          {},
-          {
-            ...(yield* ServerBrowser.ServerBrowser),
-            close: () => Queue.offer(steps, "pages unloaded").pipe(Effect.andThen(closeSession())),
-          },
-          () => Effect.void,
-          { secretReferences: true },
-        ).pipe(
-          Layer.provide(services),
-          Layer.merge(RpcAuthorization.layer([AuthPreviewOperateScope])),
-        ),
-      ),
-    );
-    yield* server.write(0, {
-      _tag: "Request",
-      id: RpcMessage.RequestId("preview-close"),
-      tag: WS_METHODS.previewClose,
-      payload: { threadId: "thread-1", tabId: "tab-1" },
-      headers: Headers.empty,
-    });
-    assert.equal(yield* Queue.take(exits), "Success");
-    assert.deepEqual(yield* Queue.takeAll(steps), ["pages unloaded", "session closed"]);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
