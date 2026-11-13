@@ -460,11 +460,17 @@ it.effect("reports a bare repository's root as a repository on HEAD's branch", (
     const { initialBranch } = yield* initRepoWithCommit(source);
     yield* git(root, ["clone", "--bare", source, ".bare"]);
     yield* writeTextFile(root, ".git", "gitdir: ./.bare\n");
+    yield* git(root, ["config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"]);
+    yield* git(root, ["fetch", "origin"]);
+    yield* git(root, ["branch", "--set-upstream-to", `origin/${initialBranch}`]);
 
     const status = yield* driver.statusDetailsLocal(root);
     assert.isTrue(status.isRepo);
     assert.equal(status.branch, initialBranch);
     assert.isFalse(status.hasWorkingTreeChanges);
+    // Push reads the tracked upstream from here; without it, it would pick a remote itself.
+    assert.equal(status.upstreamRef, `origin/${initialBranch}`);
+    assert.isTrue(status.hasUpstream);
   }).pipe(Effect.provide(layerTest)),
 );
 

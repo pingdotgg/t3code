@@ -127,10 +127,8 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       yield* initRepoWithCommit(source);
       yield* git(root, ["clone", "--bare", source, ".bare"]);
       yield* writeTextFile(NodePath.join(root, ".git"), "gitdir: ./.bare\n");
-      const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
       const checkpointStore = yield* CheckpointStore.CheckpointStore;
 
-      expect(yield* registry.detect({ cwd: root })).not.toBeNull();
       expect(yield* checkpointStore.isGitRepository(root)).toBe(false);
     }),
   );

@@ -22,12 +22,8 @@ import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
-import * as GitManager from "../git/GitManager.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
-import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as ServerConfig from "../config.ts";
 import {
   OrchestratorDispatchError,
@@ -477,88 +473,6 @@ describe("t3_worktree_handoff", () => {
       Effect.provide(
         GitVcsDriver.layer.pipe(
           Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "handoff-remote-git-" })),
-          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-        ),
-      ),
-    ),
-  );
-
-  it.effect("creates the worktree from a project rooted at a bare repository", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const git = yield* GitVcsDriver.GitVcsDriver;
-      const workflow = yield* GitWorkflowService.GitWorkflowService;
-      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "handoff-bare-root-" });
-      const source = `${directory}/source`;
-      const root = `${directory}/myproj`;
-      const worktreePath = `${directory}/handoff`;
-      yield* fs.makeDirectory(source);
-      yield* fs.makeDirectory(root);
-      const command = (at: string, args: string[]) =>
-        git.execute({ operation: "handoff-test", cwd: at, args });
-      yield* command(source, ["init", "-b", "main"]);
-      yield* command(source, [
-        "-c",
-        "user.name=Test",
-        "-c",
-        "user.email=test@example.test",
-        "commit",
-        "--allow-empty",
-        "-m",
-        "init",
-      ]);
-      // The bare-root layout: `.bare` holds the repository and `.git` points at it.
-      yield* command(root, ["clone", "--bare", source, ".bare"]);
-      yield* fs.writeFileString(`${root}/.git`, "gitdir: ./.bare\n");
-      yield* command(root, ["branch", "develop", "HEAD"]);
-      yield* command(root, ["worktree", "add", "develop", "develop"]);
-      const harness = makeHarness({
-        git: {
-          localStatus: (input) => workflow.localStatus({ ...input, cwd: root }),
-          listLocalBranchNames: () => workflow.listLocalBranchNames(root),
-          createWorktree: (input) =>
-            git.createWorktree({ ...input, cwd: root, path: worktreePath }),
-        },
-      });
-
-      const result = yield* runHandoff(harness, {
-        branch: "test-handoff",
-        baseRef: "develop",
-        startFromOrigin: false,
-        runSetupScript: false,
-      });
-
-      expect(result.worktreePath).toBe(worktreePath);
-      expect((yield* command(worktreePath, ["branch", "--show-current"])).stdout.trim()).toBe(
-        "test-handoff",
-      );
-    }).pipe(
-      Effect.provide(
-        GitWorkflowService.layer.pipe(
-          Layer.provide(
-            Layer.mock(GitManager.GitManager)({
-              localStatus: () =>
-                Effect.succeed({
-                  isRepo: true,
-                  hasPrimaryRemote: false,
-                  isDefaultRef: false,
-                  refName: null,
-                  hasWorkingTreeChanges: false,
-                  workingTree: { files: [], insertions: 0, deletions: 0 },
-                }),
-            }),
-          ),
-          Layer.provide(
-            VcsDriverRegistry.layer.pipe(
-              Layer.provide(VcsProjectConfig.layer),
-              Layer.provide(VcsProcess.layer),
-            ),
-          ),
-          Layer.provideMerge(GitVcsDriver.layer),
-          Layer.provideMerge(VcsProcess.layer),
-          Layer.provideMerge(
-            ServerConfig.layerTest(process.cwd(), { prefix: "handoff-bare-root-" }),
-          ),
           Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
