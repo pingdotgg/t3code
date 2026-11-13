@@ -91,11 +91,9 @@ describe("markdownImageCopy", () => {
   it("copies an image whose path has a space as Markdown that is still that image", () => {
     // Raw HTML <img> and <picture> sources reach the copy with the space unencoded.
     const copied = markdownImageCopy("Shot", "/work/my shot.png", undefined);
-    const images = unified()
-      .use(remarkParse)
-      .parse(copied)
-      .children.flatMap((block) => ("children" in block ? block.children : []))
-      .filter((node) => node.type === "image");
+    const [block] = unified().use(remarkParse).parse(copied).children;
+    const images =
+      block?.type === "paragraph" ? block.children.filter((node) => node.type === "image") : [];
     expect(images.map((image) => decodeURI(image.url))).toEqual(["/work/my shot.png"]);
   });
 });
