@@ -4078,6 +4078,15 @@ describe("PiAdapterV2", () => {
             running.turnItem.status === "running" &&
             running.turnItem.input === "echo hello",
         );
+        // Pi resends the whole output so far every 100 ms; each snapshot item is a stored row.
+        for (const text of ["hel", "hello"]) {
+          yield* fake.emit({
+            type: "tool_execution_update",
+            toolCallId: "shell-call",
+            toolName,
+            partialResult: { content: [{ type: "text", text }] },
+          });
+        }
         yield* fake.emit({
           type: "tool_execution_end",
           toolCallId: "shell-call",
