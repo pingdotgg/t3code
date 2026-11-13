@@ -3190,6 +3190,120 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       }),
     );
 
+    it.effect("holds a follow-up open while the child's awaited background command runs", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread:followup-command-parent");
+        const projectId = ProjectId.make("project:followup-command");
+        const parentRunId = RunId.make("run:followup-command-parent");
+        const rootNodeId = NodeId.make("node:followup-command-parent");
+        yield* seedParentWithTerminalTask({
+          threadId: parentThreadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId: NodeId.make("node:followup-command-seed"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId,
+          projectId,
+          parentRunId,
+          rootNodeId,
+          name: "followup-command-child",
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+
+        const followupMessageId = MessageId.make("message:followup-command-send");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId: CommandId.make("command:followup-command-send"),
+          threadId: child.childThreadId,
+          senderThreadId: parentThreadId,
+          messageId: followupMessageId,
+          text: "Start the check in the background, wait on it, and reply when it ends.",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+        });
+        const followupRun = (yield* orchestrator.getThreadProjection(
+          child.childThreadId,
+        )).runs.find((run) => run.userMessageId === followupMessageId)!;
+        const followupTaskId = followupRun.delegatedTaskId!;
+        const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+
+        // The child awaits a background command, replies with an interim note and ends its turn.
+        yield* eventSink.write({
+          commandId: reconcileCommandId("followup-command-turn-ended"),
+          events: [
+            {
+              id: EventId.make("event:followup-command-awaited"),
+              type: "provider-thread.updated",
+              threadId: child.childThreadId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: {
+                ...parent.providerThreads[0]!,
+                id: ProviderThreadId.make("provider-thread:followup-command-child"),
+                appThreadId: child.childThreadId,
+                pendingBackgroundTasks: [
+                  { taskId: "sleep-90", kind: "command" as const, awaited: true as const },
+                ],
+              },
+            },
+            {
+              id: EventId.make("event:followup-command-interim"),
+              type: "message.updated",
+              threadId: child.childThreadId,
+              runId: followupRun.id,
+              occurredAt: now,
+              payload: {
+                id: MessageId.make("message:followup-command-interim"),
+                threadId: child.childThreadId,
+                runId: followupRun.id,
+                nodeId: null,
+                role: "assistant",
+                text: "INTERIM",
+                attachments: [],
+                streaming: false,
+                createdBy: "agent",
+                creationSource: "server",
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+            {
+              id: EventId.make("event:followup-command-run-completed"),
+              type: "run.updated",
+              threadId: child.childThreadId,
+              runId: followupRun.id,
+              occurredAt: now,
+              payload: { ...followupRun, status: "completed", startedAt: now, completedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+
+        const held = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          (task) => task.id === followupTaskId,
+        );
+        assert.isNull(
+          held?.result ?? null,
+          "the follow-up closed with its interim reply while the awaited command still ran",
+        );
+        assert.equal(held?.status, "running");
+      }),
+    );
+
     it.effect("waits for a run the follow-up's child queued on its own thread", () =>
       Effect.gen(function* () {
         const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
