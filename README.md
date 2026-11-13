@@ -367,7 +367,7 @@ What a real Conn session hits that this server does not do:
 - **No title generation:** `generateTitle` is ignored; the title is the first message.
 - **No `/mcp`:** agents cannot reach T3 tools.
 - **Claude only:** no Codex or other providers. Gaps in the Claude provider are listed in
-  `crates/conn-provider-claude/README.md` (subagents, attachments, todo lists, retries).
+  `crates/conn-provider-claude/README.md` (workflow subagents, PDF embedding, disk helpers).
 - **Auth:** bearer and ticket only. No cookie sessions, DPoP, relay or access management.
   `pairing-token` issues standard codes only.
 - **Desktop-local backend:** Conn desktop's own `--bootstrap-fd` start is not implemented.
