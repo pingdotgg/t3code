@@ -86,16 +86,25 @@ function testPdf(boxes: readonly string[]) {
   return new Blob([source], { type: "application/pdf" });
 }
 
-it("settles a print that a newer print replaces, without printing it", async () => {
+it("settles a print replaced while its last PDF page renders, without printing it", async () => {
   using capture = capturePrints();
-  using first = objectUrl(await png(30, 20));
-  using second = objectUrl(await png(20, 30));
+  using image = objectUrl(await png(20, 30));
+  using pdf = objectUrl(testPdf(["0 0 612 792"]));
+  let replacement: Promise<void> | undefined;
+  // The page's PNG export runs after its last cancellation check and before its frame exists.
+  const toBlob = HTMLCanvasElement.prototype.toBlob;
+  using _toBlob = vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(function (
+    this: HTMLCanvasElement,
+    ...args
+  ) {
+    replacement ??= printMedia(image.url, "replacement.png", "image");
+    toBlob.apply(this, args);
+  });
 
-  const replaced = printMedia(first.url, "first.png", "image");
-  await printMedia(second.url, "second.png", "image");
+  await expect(printMedia(pdf.url, "story.pdf", "pdf")).resolves.toBeUndefined();
+  await replacement;
 
-  await expect(replaced).resolves.toBeUndefined();
-  expect(capture.printed.map((print) => print.title)).toEqual(["second.png"]);
+  expect(capture.printed.map((print) => print.title)).toEqual(["replacement.png"]);
   expect(document.querySelectorAll("iframe")).toHaveLength(0);
 });
 

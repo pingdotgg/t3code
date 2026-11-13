@@ -72,6 +72,8 @@ async function printPages(
   job: AbortController,
 ): Promise<void> {
   const { signal } = job;
+  // An aborted signal never fires its listeners, so the cleanup below would never run.
+  signal.throwIfAborted();
   const urls = pages.map((page) => URL.createObjectURL(page));
   const frame = document.createElement("iframe");
   signal.addEventListener(
