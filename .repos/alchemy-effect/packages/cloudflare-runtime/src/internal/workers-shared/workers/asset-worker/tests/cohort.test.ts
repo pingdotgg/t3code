@@ -21,10 +21,7 @@ describe("[Asset Worker] lookupCohort", () => {
       meta: { workersVersion: "test" },
     });
 
-    const result = await lookupCohort(
-      makeEnv({ lookupAccountCohort: lookupMock }) as Env,
-      42,
-    );
+    const result = await lookupCohort(makeEnv({ lookupAccountCohort: lookupMock }) as Env, 42);
 
     expect(result).toBe("ent");
     expect(lookupMock).toHaveBeenCalledWith("42");
@@ -36,9 +33,7 @@ describe("[Asset Worker] lookupCohort", () => {
         lookupAccountCohort: () =>
           Promise.resolve({
             ok: false as const,
-            errors: [
-              { name: "Error", message: "invalid account", code: "ERR" },
-            ],
+            errors: [{ name: "Error", message: "invalid account", code: "ERR" }],
           }),
       }) as Env,
       42,

@@ -13,8 +13,7 @@ export const ComposerContextClipboardFragment = Schema.Struct({
     threadId: Schema.optional(ThreadId),
     messageId: Schema.optional(MessageId),
   }),
-  // The bound applies to the raw input, as in `OrchestrationMessageContext`: forward-compatible
-  // decoding drops unknown records first, so a checked output length never sees the flood.
+  // Bound raw input before forward-compatible decoding drops unknown records.
   records: Schema.Array(Schema.Unknown)
     .check(Schema.isMaxLength(COMPOSER_CONTEXT_MAX_RECORDS))
     .pipe(Schema.decodeTo(ForwardCompatibleArray(ComposerContextRecord))),

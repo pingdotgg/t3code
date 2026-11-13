@@ -219,8 +219,9 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.visibleTurnItems[0]).toBe(visibleTurnItems[0]);
   });
 
-  it("replaces only the updated visible item when membership is unchanged", () => {
-    const first = commandItem("item-first", "first");
+  it("replaces only the updated visible item and retains its deferred work cursor", () => {
+    const deferredWork = { cursor: "remaining-work", itemCount: 100, lastOrdinal: 101 };
+    const first = { ...commandItem("item-first", "first"), deferredWork };
     const second = commandItem("item-second", "second");
     const firstRow = {
       position: 0,
@@ -253,9 +254,10 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     } as OrchestrationV2DomainEvent;
 
     const next = applyOrchestrationV2ProjectionEvent(projection, event);
+    expect(next?.visibleTurnItems[0]?.item.deferredWork).toEqual(deferredWork);
     expect(next?.visibleTurnItems).not.toBe(projection.visibleTurnItems);
     expect(next?.visibleTurnItems[0]).not.toBe(firstRow);
-    expect(next?.visibleTurnItems[0]?.item).toBe(updated);
+    expect(next?.visibleTurnItems[0]?.item).toEqual({ ...updated, deferredWork });
     expect(next?.visibleTurnItems[1]).toBe(secondRow);
   });
 
@@ -481,6 +483,105 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     });
   });
 
+  it("hides a steer that fell back to the queue until its run starts", () => {
+    const queuedRunId = RunId.make("run-requeued-steer");
+    const queuedRun = { ...run, id: queuedRunId, ordinal: 2, status: "queued" } as const;
+    const reply = commandItem("item-reply", "reply", 102);
+    const steer: OrchestrationV2TurnItem = {
+      id: TurnItemId.make("item-steer"),
+      threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 101,
+      status: "completed",
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "user_message",
+      messageId: MessageId.make("message-steer"),
+      inputIntent: "steer",
+      text: "steer",
+      attachments: [],
+      createdBy: "user",
+      creationSource: "web",
+    };
+    const event = (type: "run.updated" | "turn-item.updated", payload: unknown) =>
+      ({
+        id: `event-${type}`,
+        type,
+        threadId,
+        occurredAt: now,
+        payload,
+      }) as OrchestrationV2DomainEvent;
+    const apply = (
+      projection: OrchestrationV2ThreadProjection | null,
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+      options?: Parameters<typeof applyOrchestrationV2ProjectionEvent>[2],
+    ) =>
+      events.reduce(
+        (next, item) => applyOrchestrationV2ProjectionEvent(next, item, options),
+        projection,
+      );
+    const visibleIds = (projection: OrchestrationV2ThreadProjection | null) =>
+      projection?.visibleTurnItems.map((row) => row.item.id);
+
+    const accepted = apply(emptyProjection, [
+      event("run.updated", { ...run, status: "running" }),
+      event("turn-item.updated", steer),
+      event("turn-item.updated", reply),
+    ]);
+    expect(visibleIds(accepted)).toEqual([steer.id, reply.id]);
+
+    const queuedSteer = event("turn-item.updated", {
+      ...steer,
+      runId: queuedRunId,
+      inputIntent: "queued_turn",
+      status: "pending",
+      startedAt: null,
+      completedAt: null,
+    });
+    const requeued = apply(accepted, [event("run.updated", queuedRun), queuedSteer]);
+    expect(visibleIds(requeued)).toEqual([reply.id]);
+
+    // Servers publish the start's user item and run update in either order.
+    const starting = event("run.updated", { ...queuedRun, status: "starting" });
+    const dispatchedSteer = event("turn-item.updated", {
+      ...steer,
+      runId: queuedRunId,
+      inputIntent: "queued_turn",
+    });
+    expect(visibleIds(apply(requeued, [dispatchedSteer, starting]))).toEqual([steer.id, reply.id]);
+    expect(visibleIds(apply(requeued, [starting, dispatchedSteer]))).toEqual([steer.id, reply.id]);
+    const cancelled = event("run.updated", { ...queuedRun, status: "cancelled" });
+    expect(visibleIds(apply(requeued, [cancelled]))).toEqual([reply.id]);
+
+    // A bounded snapshot taken while queued omits the hidden item, and the
+    // newer reply puts it below the watermark.
+    const bounded = {
+      ...requeued!,
+      turnItems: requeued!.turnItems.filter((item) => item.id !== steer.id),
+    };
+    const partial = { partialTimeline: true, latestLocalTurnOrdinal: reply.ordinal };
+    const failed = event("run.updated", { ...queuedRun, status: "failed" });
+    const failedSteer = event("turn-item.updated", {
+      ...steer,
+      runId: queuedRunId,
+      inputIntent: "queued_turn",
+      status: "failed",
+      startedAt: null,
+    });
+    const retained = apply(bounded, [failedSteer], partial);
+    expect(visibleIds(retained)).toEqual([reply.id]);
+    expect(visibleIds(apply(retained, [failed], partial))).toEqual([steer.id, reply.id]);
+    // Leaving the queue never invents an item the client did not receive.
+    expect(visibleIds(apply(bounded, [failed], partial))).toEqual([reply.id]);
+  });
+
   it("removes only hidden local items while preserving inherited rows", () => {
     const inherited = commandItem("item-inherited");
     const local = commandItem("item-local");
@@ -637,4 +738,82 @@ it("rechecks visibility when an existing item changes runs without changing ordi
     [second.id, 1],
   ]);
   expect(projection.visibleTurnItems[0]?.item).toBe(first);
+});
+
+it("restores deduped bodies from the records it already holds, also in a partial timeline", () => {
+  const messageId = MessageId.make("message-deduped");
+  const subagentId = NodeId.make("node-deduped");
+  const reply = {
+    ...commandItem("item-reply", "", 400),
+    type: "assistant_message",
+    messageId,
+    text: "the full reply",
+    streaming: false,
+  } as unknown as OrchestrationV2TurnItem;
+  const subagent = {
+    id: subagentId,
+    threadId,
+    runId,
+    parentNodeId: NodeId.make("node-root"),
+    origin: "app_owned",
+    createdBy: "agent",
+    driver: "codex",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerThreadId: null,
+    childThreadId: null,
+    nativeTaskRef: null,
+    prompt: "the task brief",
+    title: null,
+    model: null,
+    status: "running",
+    result: null,
+    startedAt: now,
+    completedAt: null,
+    updatedAt: now,
+  } as OrchestrationV2ThreadProjection["subagents"][number];
+  const projection = {
+    ...emptyProjection,
+    runs: [run],
+    messages: [
+      {
+        id: messageId,
+        threadId,
+        runId,
+        nodeId: null,
+        role: "assistant",
+        text: "the full reply",
+        attachments: [],
+        streaming: false,
+        createdBy: "agent",
+        creationSource: "provider",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
+    subagents: [subagent],
+  } as OrchestrationV2ThreadProjection;
+  const event = (type: string, payload: unknown) =>
+    ({
+      id: `event-${type}`,
+      type,
+      threadId,
+      runId,
+      occurredAt: now,
+      payload,
+    }) as OrchestrationV2DomainEvent;
+
+  for (const options of [undefined, { partialTimeline: true, latestLocalTurnOrdinal: 300 }]) {
+    const withReply = applyOrchestrationV2ProjectionEvent(
+      projection,
+      event("turn-item.updated", { ...reply, text: "", textOmitted: true }),
+      options,
+    );
+    expect(withReply?.turnItems).toEqual([reply]);
+    expect(withReply?.visibleTurnItems.map((row) => row.item)).toEqual([reply]);
+  }
+  const progressed = applyOrchestrationV2ProjectionEvent(
+    projection,
+    event("subagent.updated", { ...subagent, prompt: "", promptOmitted: true, progress: "step 2" }),
+  );
+  expect(progressed?.subagents).toEqual([{ ...subagent, progress: "step 2" }]);
 });

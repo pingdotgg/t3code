@@ -58,9 +58,7 @@ export function useOpenPanelPullRequestUrl(threadRef: ScopedThreadRef | null) {
     supportsMultiplePullRequests,
     project?.repositoryIdentity,
   );
-  // Everything that reads reference or the project runs before the query hook; a plain
-  // call on either after it would leave reference, and the detail atom it keys, uncached.
-  // The snapshot is already checked against reference, so live detail just wins below.
+  // Keep all reference/project reads before the query hook to preserve caching of reference and its detail atom.
   const cachedDetail =
     reference && environmentId
       ? readPullRequestDetailSnapshot(
@@ -77,7 +75,7 @@ export function useOpenPanelPullRequestUrl(threadRef: ScopedThreadRef | null) {
     reference && environmentId
       ? pullRequestEnvironment.detail({
           environmentId,
-          input: reference,
+          input: { ...reference, allowStale: false },
         })
       : null,
   ).data;

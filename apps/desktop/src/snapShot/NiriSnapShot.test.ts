@@ -67,7 +67,6 @@ beforeEach(async () => {
         send(event, { ScreenshotCaptured: { path: "/another-app.png" } });
         send(event, { ScreenshotCaptured: { path: screenshot.path } });
       }
-      // The event may beat the command reply.
       send(socket, { Ok: "Handled" });
     } else send(socket, { Ok: "Handled" });
   };
