@@ -19,8 +19,11 @@ export type PullRequestWatchChange =
   | {
       readonly kind: "checks-failed";
       readonly failed: ReadonlyArray<PullRequestCheck>;
-      /** Checks that failed while the thread was busy and passed again before it heard. */
-      readonly recovered?: ReadonlyArray<PullRequestCheck>;
+      /** Checks that failed while the thread was busy and are not failing now, with what they say now. */
+      readonly earlier?: ReadonlyArray<{
+        readonly check: PullRequestCheck;
+        readonly now: PullRequestCheck["status"] | null;
+      }>;
     }
   | { readonly kind: "checks-passed"; readonly count: number; readonly required: boolean }
   | { readonly kind: "checks-awaiting-approval"; readonly checks: ReadonlyArray<PullRequestCheck> }
@@ -33,8 +36,6 @@ export interface PullRequestWatchReport {
   readonly changes: ReadonlyArray<PullRequestWatchChange>;
   readonly next: ThreadPullRequestWatch;
   readonly exhausted: boolean;
-  /** Failures held while the thread was busy whose checks this read did not see finish. */
-  readonly held?: HeldFailures;
 }
 
 const isFailedCheck = (check: PullRequestCheck) =>
@@ -81,33 +82,11 @@ export function evaluatePullRequestWatch(
   const checks = detail.checks.filter((check) => check.placeholder !== true);
   const failed = checks.filter(isFailedCheck);
   const awaiting = checks.filter((check) => check.status === "action-required");
-  // A failure held while the thread was busy waits until its check is seen finished again.
-  let stillHeld = held?.headSha === headSha ? held.failed : [];
+  let newlyFailed: Array<PullRequestCheck> = [];
   if (checks.length > 0) {
     // A run awaiting approval waits on a person, like a review, so only running checks count.
     checksPending = checks.some((check) => check.status === "pending");
-    const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
-    const passedAgain = (name: string) => {
-      const matching = checks.filter((check) => check.name === name);
-      return (
-        matching.length > 0 &&
-        matching.every(
-          (check) =>
-            !isFailedCheck(check) &&
-            check.status !== "pending" &&
-            check.status !== "action-required",
-        )
-      );
-    };
-    const recovered = stillHeld.filter((check) => passedAgain(check.name));
-    stillHeld = without(without(stillHeld, recovered), failed);
-    if (!checksBaseline && (newlyFailed.length > 0 || recovered.length > 0)) {
-      changes.push({
-        kind: "checks-failed",
-        failed: newlyFailed,
-        ...(recovered.length === 0 ? {} : { recovered }),
-      });
-    }
+    newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
     if (!approvalAnnounced && awaiting.length > 0) {
       if (!checksBaseline) changes.push({ kind: "checks-awaiting-approval", checks: awaiting });
       approvalAnnounced = true;
@@ -144,6 +123,18 @@ export function evaluatePullRequestWatch(
           (workflowRunOf(key) === key ? !finished.has(key) : nameUnfinished(key)),
       ),
     ];
+  }
+  // A failure seen while the thread was busy is news when it hears, whatever the check says now.
+  const earlier = (held?.headSha === headSha ? without(held.failed, failed) : []).map((check) => ({
+    check,
+    now: checks.find((current) => current.name === check.name)?.status ?? null,
+  }));
+  if (!checksBaseline && (newlyFailed.length > 0 || earlier.length > 0)) {
+    changes.unshift({
+      kind: "checks-failed",
+      failed: newlyFailed,
+      ...(earlier.length === 0 ? {} : { earlier }),
+    });
   }
   const required = checks.filter((check) => check.required === true);
   const gate = required.length > 0 ? required : checks;
@@ -279,7 +270,6 @@ export function evaluatePullRequestWatch(
       checksPending,
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
-    ...(stillHeld.length === 0 ? {} : { held: { headSha, failed: stillHeld } }),
   };
 }
 
@@ -296,12 +286,14 @@ function without(
   return checks.filter((check) => !others.some((other) => other.name === check.name));
 }
 
-/** What a busy pass holds: the failures it found, with those held before on the same head. */
+/** What a busy pass holds: every failure it would tell, those held before on the head included. */
 export function holdFailures(report: PullRequestWatchReport): HeldFailures {
   const failed = report.changes.flatMap((change) =>
-    change.kind === "checks-failed" ? [...change.failed, ...(change.recovered ?? [])] : [],
+    change.kind === "checks-failed"
+      ? [...change.failed, ...(change.earlier ?? []).map(({ check }) => check)]
+      : [],
   );
-  return { headSha: report.next.headSha, failed: [...(report.held?.failed ?? []), ...failed] };
+  return { headSha: report.next.headSha, failed };
 }
 
 function snippet(body: string): string {
@@ -331,9 +323,15 @@ function changeLines(
       return [
         `- Checks failed${context.commit}:`,
         ...listed(
-          [...change.failed, ...(change.recovered ?? [])],
-          (check) =>
-            `  - ${check.name}${check.status === "failure" ? "" : ` (${check.status})`}${change.failed.includes(check) ? "" : ", passed again since"}${check.url ? ` ${check.url}` : ""}`,
+          [
+            ...change.failed.map((check) => ({ check, since: "" })),
+            ...(change.earlier ?? []).map(({ check, now }) => ({
+              check,
+              since: `, failed earlier, now ${now ?? "not reported"}`,
+            })),
+          ],
+          ({ check, since }) =>
+            `  - ${check.name}${check.status === "failure" ? "" : ` (${check.status})`}${since}${check.url ? ` ${check.url}` : ""}`,
         ),
       ];
     case "checks-awaiting-approval":
@@ -518,7 +516,7 @@ export function pullRequestWatchMessage(input: {
   );
   const summary = changes.map((change) =>
     change.kind === "checks-failed" && change.failed.length === 0
-      ? "checks failed and passed again"
+      ? "checks failed earlier"
       : SUMMARY[change.kind],
   );
   if (exhausted) summary.push("stopped watching");

@@ -4321,7 +4321,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ["#12: checks failed", "#12: checks failed, new comments"],
       );
       const text = told[1]?.text ?? "";
-      assert.include(text, "- Checks failed on ad70160:\n  - test\n  - build, passed again since");
+      assert.include(
+        text,
+        "- Checks failed on ad70160:\n  - test\n  - build, failed earlier, now success",
+      );
       assert.include(text, "Please also cover the empty list.");
       assert.include(
         text,
@@ -4332,7 +4335,21 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         '- 1 unresolved review thread:\n  - reviewer on src/index.ts:4: "Handle the empty list."',
       );
 
-      // A held failure waits through a read without checks and a rerun still pending.
+      // A failure seen while the thread worked is told when it hears, whatever the check says now.
+      failing = ["lint", "test", "build"];
+      yield* TestClock.adjust("10 minutes");
+      yield* reactor.sweep;
+      failing = ["lint", "test"];
+      pending = ["build"];
+      yield* finishRuns(threadId);
+      yield* reactor.sweep;
+      const rerun = (yield* wakes)[2];
+      assert.strictEqual(rerun?.notification?.summary, "#12: checks failed earlier");
+      assert.include(
+        rerun?.text ?? "",
+        "- Checks failed on ad70160:\n  - build, failed earlier, now pending",
+      );
+      pending = [];
       failing = ["lint", "test", "build"];
       yield* TestClock.adjust("10 minutes");
       yield* reactor.sweep;
@@ -4341,16 +4358,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* finishRuns(threadId);
       yield* reactor.sweep;
       checksRead = true;
-      pending = ["build"];
-      yield* reactor.sweep;
-      assert.lengthOf(yield* wakes, 2);
-      pending = [];
-      yield* reactor.sweep;
-      const rerun = (yield* wakes)[2];
-      assert.strictEqual(rerun?.notification?.summary, "#12: checks failed and passed again");
       assert.include(
-        rerun?.text ?? "",
-        "- Checks failed on ad70160:\n  - build, passed again since",
+        (yield* wakes)[3]?.text ?? "",
+        "- Checks failed on ad70160:\n  - build, failed earlier, now not reported",
       );
 
       // A failure held on a head the agent has since replaced is not news.
@@ -4361,10 +4371,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       failing = [];
       yield* TestClock.adjust("10 minutes");
       yield* reactor.sweep;
-      assert.lengthOf(yield* wakes, 3);
+      assert.lengthOf(yield* wakes, 4);
       yield* finishRuns(threadId);
       yield* reactor.sweep;
-      const last = (yield* wakes)[3];
+      const last = (yield* wakes)[4];
       assert.strictEqual(last?.notification?.summary, "#12: checks passed");
       assert.notInclude(last?.text ?? "", "failed");
       yield* watch(false, "end");

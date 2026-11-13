@@ -914,7 +914,7 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(recovered.changes[0], {
       kind: "checks-failed",
       failed: [],
-      recovered: [check("lint", "failure")],
+      earlier: [{ check: check("lint", "failure"), now: "success" }],
     });
     assert.isFalse(recovered.exhausted);
     assert.equal(recovered.next.wakes, 0);

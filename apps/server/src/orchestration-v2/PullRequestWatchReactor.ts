@@ -115,7 +115,6 @@ interface HeldWake {
   readonly endedWatch?: ThreadPullRequestWatch;
   readonly wake: Wake;
   readonly reason?: WatchEndReason;
-  readonly held?: HeldFailures;
 }
 
 const watchKey = ({ thread, watch }: WatchTarget) => `${thread.id} ${watch.startedAt}`;
@@ -289,9 +288,9 @@ export const make = Effect.gen(function* () {
 
   const readFailures = new Map<string, number>();
   /**
-   * Watches with news held while their thread was busy. Their state is not recorded, so the
-   * first read after the thread goes idle tells everything since in one wake, with the
-   * failures it saw on the way.
+   * Watches with news held while their thread was busy, with the failures seen meanwhile. Their
+   * state is not recorded, so the first read once the thread is idle tells everything since in
+   * one wake; the entry goes once that wake or a quiet read is recorded.
    */
   const deferred = new Map<string, HeldFailures>();
   /** The last sweep's groups, whose pull requests get host change feeds. */
@@ -452,16 +451,13 @@ export const make = Effect.gen(function* () {
   let held: Array<HeldWake> = [];
   const hold = (wake: HeldWake) => Effect.sync(() => void held.push(wake));
 
-  // Held news changes only once it reached the thread, so a failed send keeps it.
-  const settleHeld = (target: WatchTarget, held: HeldFailures | undefined) =>
-    Effect.sync(() => {
-      if (held === undefined) deferred.delete(watchKey(target));
-      else deferred.set(watchKey(target), held);
-    });
+  // Held news is cleared only once it reached the thread, so a failed send keeps it.
+  const clearHeld = (target: WatchTarget) =>
+    Effect.sync(() => void deferred.delete(watchKey(target)));
 
   const sendOne = (item: HeldWake) =>
     record(item.target, item.next, item.wake, item.endedWatch).pipe(
-      Effect.tap(() => settleHeld(item.target, item.held)),
+      Effect.tap(() => clearHeld(item.target)),
       Effect.tap(() => woke(item.target)),
       Effect.tap(() => (item.reason === undefined ? Effect.void : ended(item.target, item.reason))),
       Effect.catchCause((cause) => {
@@ -509,7 +505,7 @@ export const make = Effect.gen(function* () {
     yield* Effect.forEach(
       items,
       (item) =>
-        settleHeld(item.target, item.held).pipe(
+        clearHeld(item.target).pipe(
           Effect.andThen(woke(item.target)),
           Effect.andThen(item.reason === undefined ? Effect.void : ended(item.target, item.reason)),
         ),
@@ -771,18 +767,12 @@ export const make = Effect.gen(function* () {
                 wake,
                 reason: "comment-limit",
               }
-            : {
-                groupKey: group.key,
-                target,
-                next: report.next,
-                wake,
-                ...(report.held === undefined ? {} : { held: report.held }),
-              },
+            : { groupKey: group.key, target, next: report.next, wake },
         );
       }
       return (
         watchesEqual(report.next, target.watch) ? Effect.void : record(target, report.next)
-      ).pipe(Effect.tap(() => settleHeld(target, report.held)));
+      ).pipe(Effect.tap(() => clearHeld(target)));
     });
   });
 
