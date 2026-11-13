@@ -6104,6 +6104,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         for (const view of ["messages", "activity"] as const) {
           for (const afterPosition of [-1, Math.floor(totalItems / 3), totalItems - 5])
             yield* windowed(timeline({ view, afterPosition, limit: 20 }));
+          for (const beforePosition of [
+            Number.POSITIVE_INFINITY,
+            Math.floor(totalItems / 3),
+            totalItems - 5,
+          ])
+            yield* windowed(timeline({ view, beforePosition, limit: 20 }));
+          yield* windowed(timeline({ view, afterPosition: 3, beforePosition: 40, limit: 20 }));
         }
         for (const itemId of [newest.sourceItemId, ...tiedWithHidden])
           yield* windowed(timeline({ itemId, limit: 1 }));
@@ -9834,6 +9841,23 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       });
       assert.deepEqual(followingPage.items, targetAfterRollback.visibleTurnItems.slice(2));
       assert.isFalse(followingPage.hasMore);
+      assert.isTrue(followingPage.hasEarlier);
+      const newestPage = yield* projectionStore.getTimelinePage(targetThreadId, {
+        view: "activity",
+        limit: 2,
+        beforePosition: Number.POSITIVE_INFINITY,
+      });
+      assert.deepEqual(newestPage.items, targetAfterRollback.visibleTurnItems.slice(-2));
+      assert.isFalse(newestPage.hasMore);
+      assert.isTrue(newestPage.hasEarlier);
+      const earlierPage = yield* projectionStore.getTimelinePage(targetThreadId, {
+        view: "activity",
+        limit: 10,
+        beforePosition: newestPage.items[0]!.position,
+      });
+      assert.deepEqual(earlierPage.items, targetAfterRollback.visibleTurnItems.slice(0, -2));
+      assert.isTrue(earlierPage.hasMore);
+      assert.isFalse(earlierPage.hasEarlier);
       const tracedTimelinePage = (limit: number) =>
         Effect.gen(function* () {
           const { statements, tracer } = traceSqlStatements();
