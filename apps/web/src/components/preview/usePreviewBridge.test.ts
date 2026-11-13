@@ -31,6 +31,27 @@ function state(navStatus: DesktopPreviewTabState["navStatus"]): DesktopPreviewTa
 }
 
 describe("projectDesktopState", () => {
+  it.each([
+    { kind: "Idle" },
+    { kind: "Loading", url: "https://example.com/", title: "" },
+    { kind: "Success", url: "https://example.com/", title: "Example" },
+    {
+      kind: "LoadFailed",
+      url: "https://example.com/",
+      title: "",
+      code: -105,
+      description: "failed",
+    },
+  ] satisfies DesktopPreviewTabState["navStatus"][])(
+    "retains native $kind navigation for the panel",
+    (navStatus) => {
+      const { kind, ...details } = navStatus;
+      expect(projectDesktopState(state(navStatus))).toMatchObject({
+        navStatus: { _tag: kind, ...details },
+      });
+    },
+  );
+
   it("shows a retained icon only while the current document has the captured origin", () => {
     expect(
       projectDesktopState(

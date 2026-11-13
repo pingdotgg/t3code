@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   pictureInPicture: false,
   showEmptyState: false,
   idleServerTab: false,
+  idleDesktopTab: false,
   loading: false,
   nativeServerTab: false,
   streamedServerTab: false,
@@ -103,6 +104,7 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
     desktopByTabId: {
       "tab-1": {
         hasWebContents: true,
+        navStatus: { _tag: "Success", url: "http://example.com/", title: "Example" },
         canGoBack: false,
         canGoForward: false,
         loading: mocks.loading,
@@ -117,12 +119,12 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
     recentlySeenUrls: [],
     sessions: mocks.showEmptyState
       ? {}
-      : mocks.idleServerTab
+      : mocks.idleServerTab || mocks.idleDesktopTab
         ? {
             "tab-1": {
               threadId: "thread-1",
               tabId: "tab-1",
-              runtime: "server",
+              runtime: mocks.idleDesktopTab ? "desktop" : "server",
               navStatus: { _tag: "Idle" },
               canGoBack: false,
               canGoForward: false,
@@ -228,6 +230,7 @@ function setup() {
   mocks.pictureInPicture = false;
   mocks.showEmptyState = false;
   mocks.idleServerTab = false;
+  mocks.idleDesktopTab = false;
   mocks.loading = false;
   mocks.nativeServerTab = false;
   mocks.streamedServerTab = false;
@@ -260,6 +263,17 @@ describe("PreviewView", () => {
       await userEvent.click(page.getByRole("button", { name: "Dismiss notification" }));
     },
   );
+
+  it("shows a desktop navigation before its backend status echo arrives", async () => {
+    setup();
+    mocks.idleDesktopTab = true;
+    await using _screen = await render(view());
+    await expect
+      .element(page.getByPlaceholder("Search or enter URL"))
+      .toHaveValue("http://example.com/");
+    await expect.element(page.getByText("No preview yet")).not.toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Annotate preview" })).toBeVisible();
+  });
 
   it("keeps the address in the bar when Enter commits an IME composition", async () => {
     setup();

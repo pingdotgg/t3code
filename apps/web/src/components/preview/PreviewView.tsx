@@ -81,7 +81,6 @@ import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { isBrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { PreviewFileNotShown, PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
-import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
 import { Badge } from "~/components/ui/badge";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { alternatePreviewRuntime, useRendersServerTabNatively } from "~/browser/previewRuntime";
@@ -234,14 +233,15 @@ export function PreviewView({
   const desktopOverlay =
     tabId && !isServerTab ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const layoutZoomFactor = useBrowserLayoutZoomFactor(desktopOverlay?.zoomFactor ?? 1);
-  const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
+  const navStatus = (!serverOwnsRendering ? desktopOverlay?.navStatus : undefined) ??
+    snapshot?.navStatus ?? { _tag: "Idle" as const };
   const url = navStatus._tag === "Idle" ? "" : navStatus.url;
   const loading = desktopOverlay?.loading ?? navStatus._tag === "Loading";
   const canGoBack = desktopOverlay?.canGoBack ?? snapshot?.canGoBack ?? false;
   const canGoForward = desktopOverlay?.canGoForward ?? snapshot?.canGoForward ?? false;
   const refreshDisabled = navStatus._tag === "Idle";
   const isUnreachable = navStatus._tag === "LoadFailed";
-  const showEmptyState = shouldShowPreviewEmptyState(snapshot);
+  const showEmptyState = navStatus._tag === "Idle";
   const serverStreamPending =
     isServerTab && !showEmptyState && !isUnreachable && serverFrameTabId !== runtimeTabId;
   const controller = desktopOverlay?.controller ?? "none";
