@@ -29,6 +29,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
+import { tailscaleServeFailureMessage } from "@t3tools/contracts";
 import * as KeepAwake from "./background/KeepAwake.ts";
 import * as ServerConfig from "./config.ts";
 import { withUntracedRequests } from "./http.ts";
@@ -221,7 +222,6 @@ import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
   disableTailscaleServe,
-  ensureTailscaleServe,
   readTailscaleServeRootHolder,
   readTailscaleServeRoutesTo,
   readTailscaleStatus,
@@ -953,28 +953,39 @@ const layerMakeServer = Layer.unwrap(
                 );
                 return route;
               }
-              return yield* ensureTailscaleServe({
-                localPort,
-                servePort: config.tailscaleServePort,
-                localHost,
-              }).pipe(
-                Effect.as(route),
-                Effect.tap(() =>
-                  Effect.logInfo("Tailscale Serve configured", {
-                    localPort,
-                    servePort: config.tailscaleServePort,
-                  }),
-                ),
-                Effect.catch((cause) =>
-                  Effect.logWarning(
-                    cause._tag === "TailscaleCommandExitError" &&
-                      cause.stderrDiagnostic === "unsupported-target"
-                      ? `Tailscale Serve left off; this Tailscale install can only proxy to localhost, not ${localHost}. Bind --host 127.0.0.1 or 0.0.0.0 instead`
-                      : "Failed to configure Tailscale Serve",
-                    { cause, localPort, servePort: config.tailscaleServePort },
-                  ).pipe(Effect.as(null)),
-                ),
-              );
+              const directEndpoints = yield* DirectEndpoints.DirectEndpoints;
+              return yield* directEndpoints
+                .configureTailscaleServe({
+                  localPort,
+                  servePort: config.tailscaleServePort,
+                  localHost,
+                })
+                .pipe(
+                  Effect.as(route),
+                  Effect.tap(() =>
+                    Effect.logInfo("Tailscale Serve configured", {
+                      localPort,
+                      servePort: config.tailscaleServePort,
+                    }),
+                  ),
+                  Effect.catch((cause) =>
+                    Effect.gen(function* () {
+                      const message =
+                        cause._tag === "TailscaleCommandExitError" &&
+                        cause.stderrDiagnostic === "unsupported-target"
+                          ? `Tailscale Serve left off; this Tailscale install can only proxy to localhost, not ${localHost}. Bind --host 127.0.0.1 or 0.0.0.0 instead`
+                          : (tailscaleServeFailureMessage(
+                              yield* directEndpoints.tailscaleServeFailure,
+                            ) ?? "Failed to configure Tailscale Serve");
+                      yield* Effect.logWarning(message, {
+                        cause,
+                        localPort,
+                        servePort: config.tailscaleServePort,
+                      });
+                      return null;
+                    }),
+                  ),
+                );
             }),
             (configured) =>
               configured
@@ -1040,11 +1051,14 @@ const layerMakeServer = Layer.unwrap(
                     ),
                     Effect.flatMap((holder) =>
                       holder === "dead"
-                        ? ensureTailscaleServe({
-                            localPort: configured.localPort,
-                            servePort: configured.servePort,
-                            localHost: configured.urlHost,
-                          }).pipe(
+                        ? DirectEndpoints.DirectEndpoints.pipe(
+                            Effect.flatMap((directEndpoints) =>
+                              directEndpoints.configureTailscaleServe({
+                                localPort: configured.localPort,
+                                servePort: configured.servePort,
+                                localHost: configured.urlHost,
+                              }),
+                            ),
                             Effect.andThen(
                               Effect.logInfo("Tailscale Serve repaired", {
                                 localPort: configured.localPort,

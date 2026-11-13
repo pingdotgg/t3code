@@ -32,6 +32,7 @@ import {
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerProvider,
+  type TailscaleServeFailure,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -928,6 +929,7 @@ it.effect.each([
       const finishDirect = yield* Deferred.make<void>();
       const directStopped = yield* Deferred.make<void>();
       const responses = yield* Queue.unbounded<ServerConfigStreamEvent>();
+      const serveFailures = yield* Queue.unbounded<TailscaleServeFailure | null>();
       const configRpcServices = Layer.mergeAll(
         layerUnusedConfigRpcServices,
         Layer.mock(ExternalLauncher.ExternalLauncher)({
@@ -955,6 +957,8 @@ it.effect.each([
             ),
         }),
         Layer.mock(DirectEndpoints.DirectEndpoints)({
+          tailscaleServeFailure: Effect.succeed(null),
+          tailscaleServeFailureChanges: Stream.fromQueue(serveFailures),
           resolveAvailable: () => Effect.succeed(discovery === "direct-cached" ? endpoints : bound),
           resolve: () =>
             direct
@@ -1059,6 +1063,7 @@ it.effect.each([
         snapshot.config.directEndpoints,
         discovery === "direct-cached" ? endpoints : bound,
       );
+      assert.isNull(snapshot.config.tailscaleServeFailure);
       assert.isFalse(snapshot.config.settings.defaultAutoPull);
       assert.deepEqual(snapshot.config.keybindings, initialKeybindings);
       const duringAck = yield* keybindings.upsertKeybindingRule({
@@ -1131,6 +1136,23 @@ it.effect.each([
           yield* settings.updateSettings({ defaultAutoPull: false });
           const event = yield* Queue.take(responses);
           assert.equal(event.type, "settingsUpdated");
+          yield* acknowledge;
+        }
+      }
+      if (discovery === "cached") {
+        for (const failure of ["permission-denied", null] as const) {
+          yield* Queue.offer(serveFailures, failure);
+          const event = yield* Queue.take(responses);
+          assert.equal(event.type, "snapshot");
+          if (event.type !== "snapshot") return yield* Effect.die("Missing Serve failure update");
+          assert.equal(event.config.tailscaleServeFailure, failure);
+          assert.deepEqual(
+            event.config.settings,
+            ServerSettings.redactServerSettingsForClient(latestSettings, {
+              secretReferences: true,
+            }),
+          );
+          assert.deepEqual(event.config.keybindings, latestKeybindings.keybindings);
           yield* acknowledge;
         }
       }
@@ -1336,6 +1358,8 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         resolveTargets: () => Effect.succeed([]),
       }),
       Layer.mock(DirectEndpoints.DirectEndpoints)({
+        tailscaleServeFailure: Effect.succeed(null),
+        tailscaleServeFailureChanges: Stream.empty,
         resolve: () => Effect.succeed([]),
         resolveAvailable: () => Effect.succeed([]),
       }),

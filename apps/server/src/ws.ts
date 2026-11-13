@@ -331,6 +331,7 @@ export const withLateConfigDiscovery = <E, R>(
   launcher: EditorDiscovery,
   remoteOpenTargets: RemoteOpenTargets.RemoteOpenTargets["Service"],
   directEndpoints: Pick<DirectEndpoints.DirectEndpoints["Service"], "resolve">,
+  tailscaleServeFailureChanges: DirectEndpoints.DirectEndpoints["Service"]["tailscaleServeFailureChanges"] = Stream.empty,
 ) => {
   const lateEditorConfig = Stream.fromEffect(launcher.resolveAvailableEditors()).pipe(
     Stream.filter(
@@ -365,7 +366,18 @@ export const withLateConfigDiscovery = <E, R>(
 
   return Stream.merge(
     liveUpdates,
-    Stream.merge(lateEditorConfig, Stream.merge(lateRemoteOpenTargets, lateDirectEndpoints)),
+    Stream.merge(
+      lateEditorConfig,
+      Stream.merge(
+        lateRemoteOpenTargets,
+        Stream.merge(
+          lateDirectEndpoints,
+          tailscaleServeFailureChanges.pipe(
+            Stream.map((failure) => ({ type: "tailscaleServeFailure" as const, failure })),
+          ),
+        ),
+      ),
+    ),
   ).pipe(
     Stream.mapAccum(
       (): ClientServerConfig => config,
@@ -390,6 +402,11 @@ export const withLateConfigDiscovery = <E, R>(
               return [current, []];
             }
             const next = { ...current, directEndpoints: event.endpoints };
+            return [next, [{ version: 1, type: "snapshot", config: next }]];
+          }
+          case "tailscaleServeFailure": {
+            if (current.tailscaleServeFailure === event.failure) return [current, []];
+            const next = { ...current, tailscaleServeFailure: event.failure };
             return [next, [{ version: 1, type: "snapshot", config: next }]];
           }
           case "keybindingsUpdated":
@@ -1836,6 +1853,7 @@ export const layerWsRpc = (
           issues: keybindingsConfig.issues,
           providers,
           ...discovery,
+          tailscaleServeFailure: yield* directEndpoints.tailscaleServeFailure,
           observability: {
             logsDirectoryPath: config.logsDir,
             localTracingEnabled: true,
@@ -3411,6 +3429,7 @@ export const layerWsRpc = (
                   resolveTargets: () => Fiber.join(remoteTargets),
                 },
                 { resolve: () => Fiber.join(directResult) },
+                directEndpoints.tailscaleServeFailureChanges,
               );
               return Stream.concat(
                 rpcInitialItems([
