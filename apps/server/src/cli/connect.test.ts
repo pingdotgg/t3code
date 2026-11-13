@@ -64,7 +64,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
   (it) => {
     const runConnect = (
       recordedPid: number,
-      options?: { readonly portFreed?: boolean; readonly command?: "unlink" | "status" },
+      options?: {
+        readonly portFreed?: boolean;
+        readonly command?: "unlink" | "status";
+        readonly linkMode?: "managed" | "publish_only";
+      },
     ) =>
       Effect.gen(function* () {
         const requests: Array<string> = [];
@@ -105,7 +109,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
           yield* fs.makeDirectory(`${baseDir}/userdata/secrets`, { recursive: true });
           yield* fs.writeFileString(
             `${baseDir}/userdata/secrets/${CLOUD_CLI_DESIRED_LINK_SECRET}.bin`,
-            "managed",
+            options.linkMode ?? "managed",
           );
         }
 
@@ -179,6 +183,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
       }),
     );
 
+    it.effect("status does not report a publish-only link as exposed", () =>
+      Effect.gen(function* () {
+        const { printed } = yield* runConnect(process.pid, {
+          command: "status",
+          linkMode: "publish_only",
+        });
+
+        assert.include(printed, "Exposure: publish-only");
+        assert.notInclude(printed, "Other devices can reach this machine");
+      }),
+    );
+
     it.effect("asks a running server to stop its tunnel", () =>
       Effect.gen(function* () {
         const { requests, printed, warnings } = yield* runConnect(process.pid);
@@ -187,41 +203,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         assert.include(printed, "T3 Connect is disabled locally.");
         assert.notInclude(warnings.join("\n"), "cloudflared process");
       }),
-    );
-  },
-);
-
-it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))(
-  "t3 connect status",
-  (it) => {
-    it.effect("does not report a publish-only link as exposed", () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-connect-status-test-" });
-        const secretsDir = `${baseDir}/userdata/secrets`;
-        yield* fs.makeDirectory(secretsDir, { recursive: true });
-        yield* fs.writeFileString(`${secretsDir}/cloud-cli-desired-link.bin`, "publish_only");
-        yield* fs.writeFileString(`${secretsDir}/cloud-linked-user-id.bin`, "user_test");
-        yield* fs.writeFileString(`${secretsDir}/cloud-relay-url.bin`, "https://relay.example");
-
-        yield* Command.runWith(makeCli({ cloudEnabled: true }), { version: "0.0.0" })([
-          "connect",
-          "status",
-          "--base-dir",
-          baseDir,
-        ]);
-
-        const printed = (yield* TestConsole.logLines).join("\n");
-        assert.include(printed, "Exposure: publish-only");
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(
-            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
-            Layer.fresh(TestConsole.layer),
-          ),
-        ),
-      ),
     );
   },
 );
