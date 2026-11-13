@@ -204,12 +204,15 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
     mainFrame: () => page,
     frames: () => [page],
     url: () => url,
+    commit: (next: string) => {
+      url = next;
+    },
     title: vi.fn(async () => "test page"),
     viewportSize: vi.fn(() => viewport),
     setViewportSize: vi.fn(async (size: typeof viewport) => {
       viewport = size;
     }),
-    goto: vi.fn(async (next: string) => {
+    goto: vi.fn(async (next: string, _options?: { timeout?: number; waitUntil?: string }) => {
       url = next;
       events.emit("load");
       const pending = initialNavigation;
@@ -220,7 +223,7 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
     goForward: vi.fn(async () => {}),
     reload: vi.fn(async () => {}),
     emulateMedia: vi.fn(async () => {}),
-    waitForLoadState: vi.fn(async () => {}),
+    waitForLoadState: vi.fn(async (_state?: string, _options?: { timeout?: number }) => {}),
     evaluate: vi.fn(async () => ({
       url,
       title: "test page",
@@ -689,6 +692,130 @@ it.live("an initial download stays available after preview_open reports the navi
       expect(yield* (yield* FileSystem.FileSystem).readFileString(status.downloads![0]!.path)).toBe(
         "a,b",
       );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect.each([
+  { renderer: "idle", title: "Heavy page" },
+  { renderer: "busy", title: null },
+])(
+  "navigate returns the committed page while its load event is still pending ($renderer renderer)",
+  ({ renderer, title }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        const page = contexts[0]!.page;
+        const titleRequested = Promise.withResolvers<void>();
+        // A busy main thread never answers title(); drive its native deadline explicitly.
+        page.title.mockImplementation(() => {
+          titleRequested.resolve();
+          return renderer === "busy"
+            ? new Promise<string>(() => {})
+            : Promise.resolve("Heavy page");
+        });
+        const heavy = "http://localhost:5173/heavy";
+        const timedOut = (method: string, timeout: number | undefined) =>
+          Object.assign(new Error(`${method}: Timeout ${timeout}ms exceeded.`), {
+            name: "TimeoutError",
+          });
+        // The document commits and parses, but a stalled subresource holds back `load`.
+        page.goto.mockImplementation(async (next, options) => {
+          page.commit(next);
+          page.emit("request", {
+            url: () => next,
+            isNavigationRequest: () => true,
+            frame: () => page,
+          });
+          if (options?.waitUntil === "load") throw timedOut("page.goto", options.timeout);
+        });
+        page.waitForLoadState.mockImplementation(async (state, options) => {
+          if (state === undefined || state === "load") {
+            throw timedOut("page.waitForLoadState", options?.timeout);
+          }
+        });
+
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        const result = yield* broker
+          .invoke<PreviewAutomationStatus>({
+            scope,
+            tabId,
+            operation: "navigate",
+            input: { url: heavy, timeoutMs: 4_000 },
+          })
+          .pipe(Effect.forkScoped);
+        const titleRead = yield* Effect.raceFirst(
+          Effect.promise(() => titleRequested.promise).pipe(Effect.as(true)),
+          Fiber.await(result).pipe(Effect.as(false)),
+        );
+        if (titleRead && renderer === "busy") {
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(250));
+        }
+        const status = yield* Fiber.join(result);
+
+        expect(status).toMatchObject({ url: heavy, title, loading: true });
+      }),
+    ).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())), Effect.provide(layer)),
+);
+
+it.effect("a desktop status answers with the last viewport while the renderer cannot measure", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker } = yield* ready;
+      desktopRendersNext = true;
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { url: "https://example.com/", reuseExistingTab: false, show: false },
+      });
+      const measuring = Promise.withResolvers<void>();
+      desktopSizeAnswer = () => {
+        measuring.resolve();
+        return new Promise(() => {});
+      };
+      // A resize makes the next status measure again.
+      yield* Effect.promise(() =>
+        desktopConnections[0]!.context.sessions[0]!.emitAsync("Page.frameResized"),
+      );
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const result = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          tabId: opened.tabId!,
+          operation: "status",
+          input: {},
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.promise(() => measuring.promise);
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(250));
+      const status = yield* Fiber.join(result);
+
+      expect(status.viewport).toEqual({ width: 1920, height: 1080 });
+    }),
+  ).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())), Effect.provide(layer)),
+);
+
+it.live("navigate fails when the page never commits within its timeout", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      contexts[0]!.page.goto.mockImplementation(async () => {
+        throw Object.assign(new Error("page.goto: Timeout 4000ms exceeded."), {
+          name: "TimeoutError",
+        });
+      });
+
+      const error = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "navigate",
+          input: { url: "http://10.255.255.1/", timeoutMs: 4_000 },
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "PreviewAutomationTimeoutError", timeoutMs: 4_000 });
     }),
   ).pipe(Effect.provide(layer)),
 );
