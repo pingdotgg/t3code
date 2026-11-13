@@ -41,7 +41,7 @@ const mobileEndorsementRows = [
 <Layout
   title={t.title}
   description={t.description}
-  jsonLd={[softwareJsonLd()]}
+  jsonLd={[softwareJsonLd(messagesFor(locale).layout.defaultDescription)]}
   locale={locale}
   localizedPath="/"
 >
