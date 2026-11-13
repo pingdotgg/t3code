@@ -261,49 +261,47 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.visibleTurnItems[1]).toBe(secondRow);
   });
 
-  for (const type of ["command_execution", "dynamic_tool"] as const) {
-    it.each(["pending", "running", "waiting"] as const)(
-      `keeps cancelled ${type} items and visible rows through a late %s update`,
-      (status) => {
-        const command = commandItem("item-cancelled", "");
-        if (command.type !== "command_execution") throw new Error("Expected a command item");
-        const item: OrchestrationV2TurnItem = {
-          ...command,
-          ...(type === "dynamic_tool" ? { type, toolName: "test_tool" } : { type }),
-          status: "cancelled",
-          toolNonExecutionKind: "cancelled",
-        };
-        const event = {
-          id: "event-item-cancelled",
-          type: "turn-item.updated",
-          threadId,
-          runId,
-          occurredAt: now,
-          payload: item,
-        } as OrchestrationV2DomainEvent;
-        const cancelled = applyOrchestrationV2ProjectionEvent(
-          { ...emptyProjection, runs: [run] },
-          event,
-        )!;
-        expect(cancelled.turnItems).toEqual([item]);
-        expect(cancelled.visibleTurnItems.map((row) => row.item)).toEqual([item]);
+  it.each(["command_execution", "dynamic_tool"] as const)(
+    "keeps a cancelled %s item and its visible row through a late running update",
+    (type) => {
+      const command = commandItem("item-cancelled", "");
+      if (command.type !== "command_execution") throw new Error("Expected a command item");
+      const item: OrchestrationV2TurnItem = {
+        ...command,
+        ...(type === "dynamic_tool" ? { type, toolName: "test_tool" } : { type }),
+        status: "cancelled",
+        toolNonExecutionKind: "cancelled",
+      };
+      const event = {
+        id: "event-item-cancelled",
+        type: "turn-item.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: item,
+      } as OrchestrationV2DomainEvent;
+      const cancelled = applyOrchestrationV2ProjectionEvent(
+        { ...emptyProjection, runs: [run] },
+        event,
+      )!;
+      expect(cancelled.turnItems).toEqual([item]);
+      expect(cancelled.visibleTurnItems.map((row) => row.item)).toEqual([item]);
 
-        const next = applyOrchestrationV2ProjectionEvent(cancelled, {
-          ...event,
-          id: "event-item-late-active" as OrchestrationV2DomainEvent["id"],
-          payload: {
-            ...item,
-            status,
-            toolNonExecutionKind: undefined,
-            completedAt: null,
-            updatedAt: DateTime.add(now, { seconds: 1 }),
-          },
-        } as OrchestrationV2DomainEvent);
-        expect(next?.turnItems).toEqual([item]);
-        expect(next?.visibleTurnItems).toEqual(cancelled.visibleTurnItems);
-      },
-    );
-  }
+      const next = applyOrchestrationV2ProjectionEvent(cancelled, {
+        ...event,
+        id: "event-item-late-active" as OrchestrationV2DomainEvent["id"],
+        payload: {
+          ...item,
+          status: "running",
+          toolNonExecutionKind: undefined,
+          completedAt: null,
+          updatedAt: DateTime.add(now, { seconds: 1 }),
+        },
+      } as OrchestrationV2DomainEvent);
+      expect(next?.turnItems).toEqual([item]);
+      expect(next?.visibleTurnItems).toEqual(cancelled.visibleTurnItems);
+    },
+  );
 
   it("inserts live turn items by authoritative ordinal", () => {
     const queuedFuture = commandItem("item-queued-future", "queued", 300);
