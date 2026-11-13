@@ -321,7 +321,8 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     const winner =
       routed !== previousRouted ? (routed ? next : previous) : fresher ? next : previous;
     if (winner === next && routed) routedKeys.add(key);
-    const creditSource = creditSources.get(key);
+    // A routing hub's windows redeem only that hub's credit, so redemption clears what is shown.
+    const creditSource = routedKeys.has(key) ? winner : creditSources.get(key);
     // A hub e-mail names the account better than the driver's default instance name.
     const hubEmail = [previous, next].some(
       (account) => account.environments.length === 0 && account.email,
@@ -338,9 +339,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
-      redeem:
-        hubRedeems.get(key)?.redeem ??
-        (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
+      redeem: routedKeys.has(key)
+        ? winner.redeem
+        : (hubRedeems.get(key)?.redeem ??
+          (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem))),
       limits: {
         ...winner.limits,
         ...(creditSource?.limits.resetCredits
@@ -955,16 +957,47 @@ export function collectProviderUsageLimits(
         (a, b) =>
           Date.parse(b.account.usageLimits.checkedAt) - Date.parse(a.account.usageLimits.checkedAt),
       )[0];
-    const routedUsage = sources
+    const routed = sources
       .filter((source) => source.routesClients === true)
-      .flatMap((source) => source.accounts)
+      .flatMap((source) => source.accounts.map((account) => ({ source, account })))
       .filter(
-        (account) =>
+        ({ account }) =>
           key !== null && resolveKey(account) === key && !limitsNotice(account.usageLimits),
       )
-      .sort((a, b) => Date.parse(b.usageLimits.checkedAt) - Date.parse(a.usageLimits.checkedAt))[0];
-    const shownLimits = routedUsage ? routedUsage.usageLimits : limits;
-    if (routedUsage && key) nativeAccountKeys.add(key);
+      .sort(
+        (a, b) =>
+          Date.parse(b.account.usageLimits.checkedAt) - Date.parse(a.account.usageLimits.checkedAt),
+      )[0];
+    if (routed && key) nativeAccountKeys.add(key);
+    const base = {
+      id: provider.instanceId,
+      driver: provider.driver,
+      label: `${provider.displayName?.trim() || String(provider.driver)} [${provider.instanceId}]`,
+      ...(provider.auth.label ? { plan: provider.auth.label } : {}),
+      instanceId: provider.instanceId,
+      ...(provider.displayName ? { displayName: provider.displayName } : {}),
+      ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
+      ...(provider.auth.email ? { email: provider.auth.email } : {}),
+    };
+    if (routed) {
+      // A routing hub's windows redeem only that hub's credit; without one, clients offer no reset.
+      const { resetCredits, ...windows } = routed.account.usageLimits;
+      const creditId = resetCredits?.nextCreditId;
+      accounts.push({
+        ...base,
+        ...(creditId
+          ? {
+              resetCreditInput: {
+                sourceId: routed.source.id,
+                accountId: routed.account.id,
+                creditId,
+              },
+            }
+          : {}),
+        limits: creditId ? { ...windows, resetCredits } : windows,
+      });
+      continue;
+    }
     const hubCreditId = hubCredits?.account.usageLimits.resetCredits?.nextCreditId;
     const showHubCredits =
       hubCredits &&
@@ -975,11 +1008,7 @@ export function collectProviderUsageLimits(
       ? hubCredits.account.usageLimits.resetCredits
       : credits?.limits.resetCredits;
     accounts.push({
-      id: provider.instanceId,
-      driver: provider.driver,
-      label: `${provider.displayName?.trim() || String(provider.driver)} [${provider.instanceId}]`,
-      ...(provider.auth.label ? { plan: provider.auth.label } : {}),
-      instanceId: provider.instanceId,
+      ...base,
       resetCreditInput:
         hubCreditId && hubCredits
           ? {
@@ -988,10 +1017,7 @@ export function collectProviderUsageLimits(
               creditId: hubCreditId,
             }
           : { instanceId: credits?.provider.instanceId ?? provider.instanceId },
-      ...(provider.displayName ? { displayName: provider.displayName } : {}),
-      ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
-      ...(provider.auth.email ? { email: provider.auth.email } : {}),
-      limits: shownCredits ? { ...shownLimits, resetCredits: shownCredits } : shownLimits,
+      limits: shownCredits ? { ...limits, resetCredits: shownCredits } : limits,
     });
   }
   for (const source of sources) {
