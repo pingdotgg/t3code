@@ -26,6 +26,8 @@ export interface PiBackgroundSubagent<Owner> {
   readonly title: string;
   readonly prompt: string;
   readonly model: string | null;
+  /** When the child itself started, in epoch milliseconds; null until pi-subagents says. */
+  readonly startedAt: number | null;
   readonly status: PiBackgroundSubagentStatus;
 }
 
@@ -51,6 +53,7 @@ const SnapshotNode = Schema.Struct({
   label: Schema.optional(Schema.String),
   agent: Schema.optional(Schema.String),
   model: Schema.optional(Schema.String),
+  startedAt: Schema.optional(Schema.Number),
 });
 const decodeStatusSnapshot = Schema.decodeUnknownOption(
   Schema.fromJsonString(
@@ -131,7 +134,11 @@ export function makePiBackgroundSubagents<Owner>() {
     run: BackgroundRun<Owner>,
     key: string,
     status: PiBackgroundSubagentStatus | undefined,
-    fields: { readonly title?: string | undefined; readonly model?: string | undefined } = {},
+    fields: {
+      readonly title?: string | undefined;
+      readonly model?: string | undefined;
+      readonly startedAt?: number | undefined;
+    } = {},
   ): ReadonlyArray<PiBackgroundSubagent<Owner>> => {
     const previous = run.members.get(key);
     // An outcome is final, and a run asked to stop takes nothing but outcomes.
@@ -150,12 +157,15 @@ export function makePiBackgroundSubagents<Owner>() {
       title,
       prompt: previous?.prompt ?? "",
       model: fields.model ?? previous?.model ?? null,
+      // Later snapshots restate a step's start by a few milliseconds; the first report stands.
+      startedAt: previous?.startedAt ?? fields.startedAt ?? null,
       status: nextStatus,
     };
     if (
       previous !== undefined &&
       previous.title === next.title &&
       previous.model === next.model &&
+      previous.startedAt === next.startedAt &&
       previous.status === next.status
     ) {
       return [];
@@ -212,6 +222,7 @@ export function makePiBackgroundSubagents<Owner>() {
       return update(run, key, status, {
         title: step.agent ?? run.members.get(key)?.title ?? step.label ?? step.id,
         model: step.model,
+        startedAt: step.startedAt,
       });
     });
     const rootStatus = backgroundStatus(node.state);
@@ -310,6 +321,7 @@ export function makePiBackgroundSubagents<Owner>() {
           title: agent,
           prompt: recordString(input.args, "task") ?? "",
           model: recordString(input.args, "model") ?? null,
+          startedAt: null,
           status: "running",
         };
         run.members.set("0", launched);

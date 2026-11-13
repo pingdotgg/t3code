@@ -3345,11 +3345,20 @@ describe("PiAdapterV2", () => {
           id: "wf-1",
           kind: "workflow",
           state: "running",
-          children: [step("alpha", "running"), step("beta", "queued")],
+          children: [
+            { ...step("alpha", "running"), startedAt: 86_400_000 },
+            step("beta", "queued"),
+          ],
         },
       ]);
       const alpha = yield* takeSubagent("scout", "running");
       assert.isTrue(alpha.type === "subagent.updated" && alpha.subagent.runId === launchRunId);
+      // A child starts when pi-subagents says it did, not when the launching call began.
+      assert.isTrue(
+        alpha.type === "subagent.updated" &&
+          alpha.subagent.startedAt !== null &&
+          DateTime.toEpochMillis(alpha.subagent.startedAt) === 86_400_000,
+      );
       yield* takeSubagent("scout", "pending");
 
       yield* notice({

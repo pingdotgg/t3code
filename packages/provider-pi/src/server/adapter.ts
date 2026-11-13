@@ -1323,7 +1323,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             driver: PI_PROVIDER,
             nativeItemId: member.nativeTaskId,
           });
-          const startedAt = turn.toolStartedAt.get(member.toolCallId) ?? emittedAt;
+          // A workflow starts children long after the call that launched it returned.
+          const startedAt =
+            Option.getOrUndefined(DateTime.make(member.startedAt ?? Number.NaN)) ??
+            turn.toolStartedAt.get(member.toolCallId) ??
+            emittedAt;
           const completedAt =
             member.status === "pending" || member.status === "running" ? null : emittedAt;
           yield* emit({
