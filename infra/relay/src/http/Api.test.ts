@@ -1272,6 +1272,33 @@ describe("relay environment unlink", () => {
     );
   });
 
+  it.effect("reports the committed revocation when tunnel cleanup fails afterwards", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* unlinkEnvironmentRecord({
+          userId: "user-1",
+          environmentId: "environment-1",
+        }),
+      ).toBe(true);
+    }).pipe(
+      Effect.provide(
+        layerRelayUnlinkTest({
+          getForUser: () => Effect.succeed(linkedEnvironmentRecord),
+          revokeForUser: () => Effect.succeed(true),
+          deprovision: () =>
+            Effect.fail(
+              new ManagedEndpointProvider.ManagedEndpointDeprovisioningFailed({
+                stage: "delete-tunnel",
+                userId: "user-1",
+                environmentId: "environment-1",
+                cause: new Error("Cannot delete tunnel because it has active connections"),
+              }),
+            ),
+        }),
+      ),
+    ),
+  );
+
   it.effect("retries unlink cleanup when a concurrent tunnel release wins the first claim", () => {
     let lookups = 0;
     const targets: Array<ManagedEndpointProvider.ManagedEndpointDeprovisionTarget | undefined> = [];
