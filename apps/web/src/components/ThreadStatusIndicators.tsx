@@ -116,129 +116,16 @@ export function useLinkedThreadPullRequest(
       };
 }
 
-function linkedPullRequestReference(fallback: ThreadLinkedPullRequest) {
-  const host = sourceControlClients.parseChangeRequestUrl(fallback.url)?.link.host;
-  return { ...fallback, ...(host === undefined ? {} : { host }) };
-}
+import {
+  changeRequestTerminologyForUrl,
+  linkedPullRequestReference,
+  linkedPullRequestSnapshotStatus,
+  resolveThreadPullRequestBadgePresentation,
+} from "./threadPullRequestPresentation.tsx";
 
-function changeRequestTerminologyForUrl(url: string | undefined) {
-  const host = url === undefined ? null : sourceControlClients.findByChangeRequestUrl(url);
-  return (host ?? sourceControlClients.get(undefined)).changeRequest;
-}
-
-export function linkedPullRequestSnapshotStatus(
-  link: ThreadPullRequestLink,
-): LinkedThreadPullRequestStatus | null {
-  const snapshot = link.snapshot;
-  if (snapshot === null) return null;
-  const kind = (
-    sourceControlClients.findByChangeRequestUrl(link.url) ?? sourceControlClients.get(undefined)
-  ).kind;
-  return {
-    pr: {
-      number: link.number,
-      url: link.url,
-      title: snapshot.title,
-      state: snapshot.state,
-      isDraft: snapshot.isDraft,
-      headRef: snapshot.headBranch,
-      baseRef: snapshot.baseBranch,
-      ...(snapshot.updatedAt === null ? {} : { updatedAt: snapshot.updatedAt }),
-    },
-    sourceControlProvider: { kind, name: kind, baseUrl: "" },
-  };
-}
-
-export {
-  resolveThreadPullRequestBadge,
-  type ThreadPullRequestBadge,
-} from "@t3tools/client-runtime/thread-pull-requests";
-
-export interface ThreadPullRequestBadgePresentation {
-  readonly Icon: PullRequestGlyphIcon;
-  readonly toneClassName: string;
-  readonly label: string;
-  readonly text: string | number;
-}
-
-function resolveThreadPullRequestBadgePresentation({
-  badge,
-  number,
-  url,
-  status,
-}: {
-  readonly badge: ThreadPullRequestBadge | null;
-  readonly number?: number | undefined;
-  readonly url?: string | undefined;
-  readonly status: PrStatusIndicator | null;
-}): ThreadPullRequestBadgePresentation | null {
-  const terminology = changeRequestTerminologyForUrl(url);
-  if (badge?.kind === "stack") {
-    const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
-    return {
-      Icon: PullRequestGlyph.stack,
-      toneClassName: aggregate.toneClassName,
-      label: `Stack of ${badge.layers} ${terminology.plural}, ${aggregate.label.toLowerCase()}`,
-      text: badge.layers,
-    };
-  }
-  if (number === undefined || url === undefined) return null;
-
-  const tooltip = status?.tooltip ?? `${terminology.shortLabel} #${number}, status pending`;
-  if (badge?.kind === "pull-request" && badge.others > 0) {
-    const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
-    return {
-      Icon: aggregate.Icon,
-      toneClassName: aggregate.toneClassName,
-      label: `${tooltip}, and ${badge.others} more linked; overall ${aggregate.label.toLowerCase()}`,
-      text: `+${badge.others + 1}`,
-    };
-  }
-  return {
-    Icon: status?.Icon ?? PullRequestGlyph.pullRequest,
-    toneClassName: status?.colorClass ?? "text-muted-foreground",
-    label: tooltip,
-    text: number,
-  };
-}
-
-export function ThreadPullRequestBadgeControl({
-  render,
-  badge,
-  pullRequests,
-  number,
-  url,
-  status,
-  onOpenList,
-  onOpenPullRequest,
-}: {
-  render: ReactElement<{ render?: useRender.RenderProp }>;
-  badge: ThreadPullRequestBadge | null;
-  pullRequests: ReadonlyArray<ThreadPullRequestLink>;
-  number?: number | undefined;
-  url?: string | undefined;
-  status: PrStatusIndicator | null;
-  onOpenList: () => void;
-  onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
-}) {
-  const presentation = resolveThreadPullRequestBadgePresentation({ badge, number, url, status });
-  if (presentation === null) return null;
-  return (
-    <PullRequestBadge
-      render={render}
-      presentation={presentation}
-      opensList={badge !== null && (badge.kind === "stack" || badge.others > 0)}
-      url={url}
-      number={number}
-      status={status}
-      pullRequests={pullRequests}
-      onOpenList={onOpenList}
-      onOpenPullRequest={onOpenPullRequest}
-    />
-  );
-}
-
-function PullRequestBadge({
+export * from "./threadPullRequestPresentation.tsx";
+import type { ThreadPullRequestBadgePresentation } from "./threadPullRequestPresentation.tsx";
+export function PullRequestBadge({
   render,
   presentation,
   opensList,
