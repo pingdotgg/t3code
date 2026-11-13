@@ -524,6 +524,17 @@ impl Inner {
             };
             let Some(event) = event else { break };
             live.touch();
+            // Live command output goes to the hub, not the store.
+            if let ProviderEvent::CommandOutputDelta {
+                thread_id: output_thread,
+                item_id,
+                chunk,
+            } = &event
+            {
+                self.command_output
+                    .append(output_thread.as_str(), item_id.as_str(), chunk);
+                continue;
+            }
             let active = live.active();
             let run_id = active.as_ref().map(|a| a.run_id.clone());
             let mut translated = translate(&thread_id, active.as_ref(), event);
@@ -534,6 +545,21 @@ impl Inner {
                 && draft.payload.is_object()
             {
                 draft.payload["providerInstanceId"] = json!(live.instance);
+            }
+            // A settled command's stored item has its output; its live tail goes.
+            if let Translated::Event(draft) = &translated
+                && draft.event_type == "turn-item.updated"
+                && draft.payload["type"] == "command_execution"
+                && !matches!(
+                    draft.payload["status"].as_str(),
+                    Some("running" | "pending" | "waiting")
+                )
+                && let Some(item_id) = draft.payload["id"].as_str()
+            {
+                self.command_output.finish(&draft.thread_id, item_id);
+            }
+            if matches!(translated, Translated::Terminal(..)) {
+                self.command_output.finish_thread(&thread_id);
             }
             match translated {
                 Translated::Ignore => {}
@@ -1021,6 +1047,7 @@ impl Inner {
     pub(crate) async fn close_session(&self, thread_id: &str) {
         let live = lock(&self.live).remove(thread_id);
         if let Some(live) = live {
+            self.command_output.finish_thread(thread_id);
             self.revoke_tools(live.tools_key.as_deref());
             live.session.close().await;
             // `notify_one` keeps a permit, so a pump not yet waiting still sees it.
@@ -1123,7 +1150,7 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
         ProviderEvent::PlanUpdated { plan } => {
             Translated::Event(scoped("plan.updated", to_json(&plan)))
         }
-        // Live command output goes to `subscribeCommandOutput`, which this engine lacks.
+        // The pump sends live command output to the hub before it translates.
         ProviderEvent::CommandOutputDelta { .. } => Translated::Ignore,
         ProviderEvent::TurnTerminal(terminal) => {
             let status = status_name(terminal.status);

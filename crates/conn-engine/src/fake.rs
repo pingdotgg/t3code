@@ -273,6 +273,23 @@ impl Session for FakeSession {
                     started.push(provider_turn(&turn, "completed"));
                     started.push(terminal(&turn, TurnStatus::Completed, None));
                 }
+                // Live output first, then the running command row; the turn stays open.
+                "command" => {
+                    let item = format!("turn-item:cmd:{}", turn.run_id);
+                    for chunk in ["a\n", "b\n"] {
+                        started.push(event(json!({"type": "command_output.delta",
+                            "threadId": turn.thread_id, "itemId": item, "chunk": chunk})));
+                    }
+                    let now = now_iso();
+                    started.push(event(json!({"type": "turn_item.updated", "turnItem": {
+                        "id": item, "threadId": turn.thread_id, "runId": turn.run_id,
+                        "nodeId": null, "providerThreadId": turn.provider_thread_id,
+                        "providerTurnId": format!("turn:{}", turn.run_id), "nativeItemRef": null,
+                        "parentItemId": null, "ordinal": 0, "status": "running", "title": null,
+                        "startedAt": now, "completedAt": null, "updatedAt": now,
+                        "type": "command_execution", "input": "ls",
+                    }})));
+                }
                 "fail" => started.push(terminal(
                     &turn,
                     TurnStatus::Failed,

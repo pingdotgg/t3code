@@ -2528,3 +2528,56 @@ async fn search_matches_words_and_skips_hidden_threads() {
     .await;
     assert_eq!(search(&engine, "zebra").await, Vec::<String>::new());
 }
+
+/// Codex streams command output as `command_output.delta`. It reaches
+/// `subscribeCommandOutput` live through the bounded hub, and the hub forgets the command when
+/// its run ends.
+#[tokio::test(flavor = "current_thread")]
+async fn live_command_output_reaches_subscribers() {
+    let db = TempDb::new("live-output");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "command")).await;
+    let item_id = "turn-item:cmd:run:t1:1";
+    loop {
+        let item = next(&mut thread).await;
+        if item["event"]["type"] == "turn-item.updated" && item["event"]["payload"]["id"] == item_id
+        {
+            break;
+        }
+    }
+    let mut output = engine
+        .open_stream(
+            "orchestration.subscribeCommandOutput",
+            json!({"threadId": "t1", "itemId": item_id}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        frame(&mut output).await,
+        json!({"kind": "replace", "text": "a\nb\n", "truncated": false, "running": true})
+    );
+    let hub = &engine.inner().command_output;
+    hub.append("t1", item_id, "c\n");
+    assert_eq!(
+        frame(&mut output).await,
+        json!({"kind": "append", "text": "c\n", "truncated": false, "running": true})
+    );
+    assert_eq!(hub.len(), 1);
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "c3", "threadId": "t1"}),
+    )
+    .await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(
+        hub.len(),
+        0,
+        "the hub drops a thread's commands when its run ends"
+    );
+}

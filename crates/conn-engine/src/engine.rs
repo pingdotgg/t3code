@@ -90,6 +90,8 @@ pub(crate) struct Inner {
     pub(crate) observer: Option<Arc<dyn crate::TurnObserver>>,
     pub(crate) host: Option<Arc<dyn crate::EngineHost>>,
     pub(crate) idle_max_hold: Duration,
+    /// Live output of running commands for `subscribeCommandOutput`; bounded, never stored.
+    pub(crate) command_output: crate::output::CommandOutputHub,
 }
 
 /// Stable project id for a folder, so a fresh database gives clients the same ids.
@@ -139,6 +141,7 @@ impl SqliteEngine {
                 notify: watch::Sender::new(high),
                 providers: config.providers,
                 live: Mutex::new(HashMap::new()),
+                command_output: crate::output::CommandOutputHub::default(),
                 stream_flush: config.stream_flush,
                 home,
                 titles: config.title_generator.clone(),
