@@ -2019,8 +2019,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             : flavor.extractSubagentUpdate?.(tool);
         let turnAttached = yield* Deferred.make<boolean>();
         const activeSessionId = yield* Ref.make<string | null>(null);
+        /** Each session's latest reading; null is an explicit clear that outlasts older readings. */
         const contextUsageBySessionId = yield* Ref.make(
-          new Map<string, ThreadTokenUsageSnapshot>(),
+          new Map<string, ThreadTokenUsageSnapshot | null>(),
         );
         const contextUsageModelBySessionId = new Map<string, string>();
         const nativeMetadataBySessionId = yield* Ref.make(
@@ -2052,7 +2053,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
         const pendingLoadedSession = yield* Ref.make<{
           readonly setup: AcpSessionRuntime.AcpSessionRuntimeStartResult;
-          readonly savedUsage: ThreadTokenUsageSnapshot | undefined;
+          readonly savedUsage: ThreadTokenUsageSnapshot | null | undefined;
           /** A live reading that arrived before settlement; it outranks the load, a clear included. */
           readonly liveUsage?: ThreadTokenUsageSnapshot | null;
         } | null>(null);
@@ -2102,13 +2103,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               : cached !== undefined && cached !== pending?.savedUsage
                 ? cached
                 : loaded;
-          if (usage === undefined) return undefined;
-          yield* Ref.update(contextUsageBySessionId, (current) => {
-            const updated = new Map(current);
-            if (usage === null) updated.delete(sessionId);
-            else updated.set(sessionId, usage);
-            return updated;
-          });
+          // A load that reports nothing leaves the session's latest reading, a clear included.
+          if (usage === undefined) return cached;
+          yield* Ref.update(contextUsageBySessionId, (current) =>
+            new Map(current).set(sessionId, usage),
+          );
           contextUsageModelBySessionId.set(sessionId, selection.model);
           yield* Ref.update(providerThreadByNativeSessionId, (current) => {
             const known = current.get(sessionId);
@@ -4302,11 +4301,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             };
             if (status === "completed") {
               context.contextUsage = null;
-              yield* Ref.update(contextUsageBySessionId, (current) => {
-                const updated = new Map(current);
-                updated.delete(context.nativeThreadId);
-                return updated;
-              });
+              yield* Ref.update(contextUsageBySessionId, (current) =>
+                new Map(current).set(context.nativeThreadId, null),
+              );
               // A completion projected at turn end must not swallow the agent's later real one.
               yield* markSessionCompacted(
                 context.nativeThreadId,
@@ -5214,12 +5211,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 });
                 if (contextUsageOverride !== undefined) {
                   const nextContextUsage = contextUsageOverride;
-                  yield* Ref.update(contextUsageBySessionId, (current) => {
-                    const updated = new Map(current);
-                    if (nextContextUsage === null) updated.delete(notification.sessionId);
-                    else updated.set(notification.sessionId, nextContextUsage);
-                    return updated;
-                  });
+                  yield* Ref.update(contextUsageBySessionId, (current) =>
+                    new Map(current).set(notification.sessionId, nextContextUsage),
+                  );
                   contextUsageModelBySessionId.set(notification.sessionId, selection.model);
                   yield* Ref.update(pendingLoadedSession, (current) =>
                     current?.setup.sessionId === notification.sessionId
@@ -5268,14 +5262,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             );
             if (knownProviderThread !== undefined) {
               const now = yield* DateTime.now;
+              const rememberedContextUsage = (yield* Ref.get(contextUsageBySessionId)).get(
+                notification.sessionId,
+              );
               const providerThread: OrchestrationV2ProviderThread = {
                 ...knownProviderThread,
                 contextUsage:
                   contextUsageOverride !== undefined
                     ? contextUsageOverride
-                    : ((yield* Ref.get(contextUsageBySessionId)).get(notification.sessionId) ??
-                      knownProviderThread.contextUsage ??
-                      null),
+                    : rememberedContextUsage !== undefined
+                      ? rememberedContextUsage
+                      : (knownProviderThread.contextUsage ?? null),
                 nativeMetadata:
                   (yield* Ref.get(nativeMetadataBySessionId)).get(notification.sessionId) ??
                   knownProviderThread.nativeMetadata ??
@@ -7968,11 +7965,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             !context.tools.keys().some((id) => id.startsWith("acp-compaction:"))
           ) {
             context.contextUsage = null;
-            yield* Ref.update(contextUsageBySessionId, (current) => {
-              const updated = new Map(current);
-              updated.delete(context.nativeThreadId);
-              return updated;
-            });
+            yield* Ref.update(contextUsageBySessionId, (current) =>
+              new Map(current).set(context.nativeThreadId, null),
+            );
             const nativeItemId = `${context.nativeTurnId}:compaction`;
             yield* emitProviderEvent({
               type: "turn_item.updated",
@@ -8536,7 +8531,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     contextUsage:
                       settledContextUsage !== undefined
                         ? settledContextUsage
-                        : (rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null),
+                        : rememberedContextUsage !== undefined
+                          ? rememberedContextUsage
+                          : (turnInput.providerThread.contextUsage ?? null),
                     nativeMetadata: initialNativeMetadata,
                     tools: new Map(),
                     toolUpdatesSkipped: new Map(),

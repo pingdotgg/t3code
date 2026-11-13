@@ -4920,27 +4920,82 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.live("keeps a live clear that arrives before the load settles", () =>
+  it.live(
+    "keeps a live clear that arrives before the load settles, across later resumes and turns",
+    () =>
+      Effect.gen(function* () {
+        const { runtime, threadId, instanceId, runtimePolicy, selection, providerThread, update } =
+          yield* openContextUsageRuntime({
+            name: "live-clear-before-settle",
+            initialNativeThreadId: "persisted-session",
+            contextUsageFromSession: () => ({ usedTokens: 100, maxTokens: 1_000 }),
+            contextUsageFromSessionUpdate: ({ notification }) =>
+              notification.update.sessionUpdate === "session_info_update" &&
+              notification.update._meta?.clear === true
+                ? null
+                : undefined,
+          });
+        yield* update({
+          sessionId: "persisted-session",
+          update: { sessionUpdate: "session_info_update", _meta: { clear: true } },
+        });
+        const staleThread = {
+          ...providerThread,
+          contextUsage: { usedTokens: 50, maxTokens: 1_000 },
+        };
+        const resume = () =>
+          runtime.resumeThread({
+            providerThread: staleThread,
+            modelSelection: selection("small"),
+            runtimePolicy,
+          });
+        assert.isNull((yield* resume()).contextUsage);
+        assert.isNull((yield* resume()).contextUsage);
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread: staleThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            ordinal: 1,
+            modelSelection: selection("small"),
+          }),
+        );
+        assert.isNull(activeContextUsage(yield* collectUntilTerminal(runtime)));
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("keeps a cleared reading when a later load of the session reports nothing", () =>
     Effect.gen(function* () {
       const { runtime, runtimePolicy, selection, providerThread, update } =
         yield* openContextUsageRuntime({
-          name: "live-clear-before-settle",
-          initialNativeThreadId: "persisted-session",
-          contextUsageFromSession: () => ({ usedTokens: 100, maxTokens: 1_000 }),
+          name: "clear-then-silent-load",
+          contextUsageFromSession: () => undefined,
           contextUsageFromSessionUpdate: ({ notification }) =>
             notification.update.sessionUpdate === "session_info_update" &&
             notification.update._meta?.clear === true
               ? null
               : undefined,
         });
+      const sessionId = "cleared-session";
+      const clearedThread = withNativeSession(providerThread, sessionId);
+      const resume = (thread: OrchestrationV2ProviderThread) =>
+        runtime.resumeThread({
+          providerThread: thread,
+          modelSelection: selection("small"),
+          runtimePolicy,
+        });
+
+      yield* resume(clearedThread);
       yield* update({
-        sessionId: "persisted-session",
+        sessionId,
         update: { sessionUpdate: "session_info_update", _meta: { clear: true } },
       });
-      const resumed = yield* runtime.resumeThread({
-        providerThread: { ...providerThread, contextUsage: { usedTokens: 50, maxTokens: 1_000 } },
-        modelSelection: selection("small"),
-        runtimePolicy,
+      yield* resume(withNativeSession(providerThread, "other-session"));
+      const resumed = yield* resume({
+        ...clearedThread,
+        contextUsage: { usedTokens: 900, maxTokens: 1_000 },
       });
       assert.isNull(resumed.contextUsage);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
