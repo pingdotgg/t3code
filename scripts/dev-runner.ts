@@ -213,11 +213,6 @@ const optionalBooleanConfig = (name: string): Config.Config<boolean | undefined>
     Config.option,
     Config.map((value) => Option.getOrUndefined(value)),
   );
-const optionalPortConfig = (name: string): Config.Config<number | undefined> =>
-  Config.Port(name).pipe(
-    Config.option,
-    Config.map((value) => Option.getOrUndefined(value)),
-  );
 const optionalIntegerConfig = (name: string): Config.Config<number | undefined> =>
   Config.Int(name).pipe(
     Config.option,
@@ -379,12 +374,15 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
     delete output.T3CODE_SINGLE_ORIGIN_DEV;
     delete output.T3CODE_MODE;
     delete output.T3CODE_NO_BROWSER;
-    delete output.T3CODE_HOST;
     delete output.T3CODE_DEV_AUTH_TOKEN;
   }
 
+  // Agent shells inherit the parent T3 server's bind settings; only --host widens the dev server.
+  delete output.T3CODE_LAN;
   if (!isDesktopMode && host !== undefined) {
     output.T3CODE_HOST = host;
+  } else {
+    delete output.T3CODE_HOST;
   }
 
   if (!isDesktopMode) {
@@ -954,13 +952,19 @@ const devRunnerCli = Command.make("dev-runner", {
     Flag.withFallbackConfig(optionalBooleanConfig("T3CODE_LOG_WS_EVENTS")),
   ),
   host: Flag.String("host").pipe(
-    Flag.withDescription("Server host/interface override (forwards to T3CODE_HOST)."),
-    Flag.withFallbackConfig(optionalStringConfig("T3CODE_HOST")),
+    Flag.withDescription(
+      "Server host/interface override (forwards to T3CODE_HOST). Ambient T3CODE_HOST is ignored: agent shells inherit it from the T3 server that spawned them.",
+    ),
+    Flag.optional,
+    Flag.map(Option.getOrUndefined),
   ),
   port: Flag.Int("port").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
-    Flag.withDescription("Server port override (forwards to T3CODE_PORT)."),
-    Flag.withFallbackConfig(optionalPortConfig("T3CODE_PORT")),
+    Flag.withDescription(
+      "Server port override (forwards to T3CODE_PORT). Ambient T3CODE_PORT is ignored: agent shells inherit it from the T3 server that spawned them.",
+    ),
+    Flag.optional,
+    Flag.map(Option.getOrUndefined),
   ),
   devUrl: Flag.String("dev-url").pipe(
     Flag.withSchema(Schema.URLFromString),
