@@ -13,12 +13,33 @@ const scopes = vi.hoisted(() => ({
   draftEnvironment: null as string | null,
   draftProjectId: null as string | null,
   openExtensionCommand: vi.fn(),
+  sourceControl: undefined as unknown,
 }));
-const setup = (deniedScope?: string) => {
+const setup = (deniedScope?: string, sourceControl?: unknown) => {
   scopes.denied = deniedScope;
   scopes.draftEnvironment = null;
   scopes.draftProjectId = null;
   scopes.openExtensionCommand.mockClear();
+  scopes.sourceControl = sourceControl;
+};
+const githubAvailable = {
+  versionControlSystems: [],
+  sourceControlProviders: [
+    {
+      kind: "github",
+      label: "GitHub",
+      status: "available",
+      version: { _tag: "None" },
+      installHint: "Install GitHub CLI",
+      detail: { _tag: "None" },
+      auth: {
+        status: "authenticated",
+        account: { _tag: "Some", value: "demo" },
+        host: { _tag: "None" },
+        detail: { _tag: "None" },
+      },
+    },
+  ],
 };
 
 vi.mock("@effect/atom-react", async (original) => ({
@@ -134,27 +155,26 @@ vi.mock("../state/query", async (original) => ({
   ...(await original<typeof import("../state/query")>()),
   useEnvironmentQuery: (atom: unknown) => ({
     data:
-      atom &&
-      typeof atom === "object" &&
-      "extensionEnvironmentId" in atom &&
-      atom.extensionEnvironmentId === "remote"
-        ? [
-            {
-              status: "running",
-              manifest: {
-                id: "test.remote",
-                name: "Remote extension",
-                commands: [
-                  {
-                    id: "run",
-                    title: "Run remote extension",
-                    description: "Run on the draft host",
-                  },
-                ],
+      atom && typeof atom === "object" && "extensionEnvironmentId" in atom
+        ? atom.extensionEnvironmentId === "remote"
+          ? [
+              {
+                status: "running",
+                manifest: {
+                  id: "test.remote",
+                  name: "Remote extension",
+                  commands: [
+                    {
+                      id: "run",
+                      title: "Run remote extension",
+                      description: "Run on the draft host",
+                    },
+                  ],
+                },
               },
-            },
-          ]
-        : undefined,
+            ]
+          : undefined
+        : scopes.sourceControl,
     isLoading: false,
   }),
 }));
@@ -292,4 +312,16 @@ it.each([
   await expect.element(submit).toBeEnabled();
   await userEvent.keyboard("{Tab}");
   await expect.element(submit).toHaveFocus();
+});
+
+it("tells screen readers whether a new project will be published", async () => {
+  setup(undefined, githubAvailable);
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByText("New project", { exact: true }).click();
+  await page.getByRole("combobox").fill("demo-project");
+  const option = page.getByRole("option", { name: /Create private repository/ });
+  await expect.element(option).toHaveAttribute("aria-checked", "false");
+  await option.click();
+  await expect.element(option).toHaveAttribute("aria-checked", "true");
 });
