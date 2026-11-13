@@ -470,7 +470,7 @@ export function workEntryViewedImagePath(entry: WorkLogPresentationEntry): strin
   if (entry.toolLifecycleStatus === "failed") {
     return null;
   }
-  // The file may not exist until the call finishes, and a failed asset URL stays cached.
+  // The file may not exist until the call runs, and an open row never retries a failed asset URL.
   if (entry.toolLifecycleStatus === "inProgress") return null;
   const viewedImagePath = entry.viewedImagePath?.trim();
   if (
