@@ -8,6 +8,7 @@ import {
   MessageId,
   type ModelSelection,
   type OrchestrationV2Command,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
@@ -18,10 +19,12 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  ScheduledTaskId,
   ThreadId,
   TurnItemId,
   ProviderDriverKind,
 } from "@t3tools/contracts";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -120,6 +123,12 @@ function makeTestAdapter(input: {
   readonly subagentOnlyBackgroundWork?: boolean;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
+  /** A tool call the held turn reports running before it holds. */
+  readonly heldRunningToolCall?: {
+    readonly id: TurnItemId;
+    readonly toolName: string;
+  };
+  readonly backgroundTasksEndWithProcess?: true;
   readonly backgroundWork?: Ref.Ref<boolean>;
   readonly closedSessions?: Ref.Ref<ReadonlyArray<string>>;
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
@@ -157,6 +166,9 @@ function makeTestAdapter(input: {
           providerSessionId: sessionInput.providerSessionId,
           providerSession,
           events: Stream.fromPubSub(events),
+          ...(input.backgroundTasksEndWithProcess === undefined
+            ? {}
+            : { backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess }),
           ...(input.pendingBackgroundWork === undefined
             ? {}
             : {
@@ -280,18 +292,59 @@ function makeTestAdapter(input: {
                     : { nativeThreadHasTurns: turnInput.nativeThreadHasTurns }),
                 },
               ]);
+              const providerTurnId = ProviderTurnId.make(
+                `provider-turn:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}`,
+              );
               if (
                 turnInput.runOrdinal === (input.holdRunOrdinal ?? 1) &&
                 input.holdFirstTurn !== undefined
               ) {
+                if (input.heldRunningToolCall !== undefined) {
+                  const startedAt = yield* DateTime.now;
+                  yield* PubSub.publish(events, {
+                    type: "provider_turn.updated",
+                    driver: input.driver,
+                    providerTurn: {
+                      id: providerTurnId,
+                      providerThreadId: turnInput.providerThread.id,
+                      nodeId: turnInput.rootNodeId,
+                      runAttemptId: turnInput.attemptId,
+                      nativeTurnRef: null,
+                      ordinal: turnInput.runOrdinal,
+                      status: "running",
+                      startedAt,
+                      completedAt: null,
+                    },
+                  });
+                  yield* PubSub.publish(events, {
+                    type: "turn_item.updated",
+                    driver: input.driver,
+                    turnItem: {
+                      id: input.heldRunningToolCall.id,
+                      threadId: turnInput.threadId,
+                      runId: turnInput.runId,
+                      nodeId: turnInput.rootNodeId,
+                      providerThreadId: turnInput.providerThread.id,
+                      providerTurnId,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: turnInput.runOrdinal * 100 + 1,
+                      status: "running",
+                      title: null,
+                      startedAt,
+                      completedAt: null,
+                      updatedAt: startedAt,
+                      type: "dynamic_tool",
+                      toolName: input.heldRunningToolCall.toolName,
+                      input: {},
+                    },
+                  });
+                }
                 yield* Deferred.succeed(input.holdFirstTurn, undefined);
                 if (input.releaseFirstTurn === undefined) return;
                 yield* Deferred.await(input.releaseFirstTurn);
               }
               const eventTime = yield* DateTime.now;
-              const providerTurnId = ProviderTurnId.make(
-                `provider-turn:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}`,
-              );
               const terminalStatus = input.failedRunOrdinals?.has(turnInput.runOrdinal)
                 ? "failed"
                 : input.interruptedRunOrdinals?.has(turnInput.runOrdinal)
@@ -509,7 +562,7 @@ describe("orchestration v2 provider switching", () => {
             capabilities: ClaudeProviderCapabilitiesV2,
             modelSelection: CLAUDE_MODEL_SELECTION,
             responseByRunOrdinal: scenario.includes("target-estimate")
-              ? { 2: "x".repeat(10_000) }
+              ? { 2: "x".repeat(64_000) }
               : {},
             capturedTurns,
             ...(scenario.includes("retry") || scenario.includes("unsent") ? { failStartOnce } : {}),
@@ -1229,6 +1282,106 @@ describe("orchestration v2 provider switching", () => {
       ),
   );
 
+  it.live("keeps a native session whose stored prose is far below an unreported window", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("handoff-estimate-headroom");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const generation = yield* Ref.make(0);
+        // About 112 KB of ordinary English is about 25k tokens: a quarter of a 128k window.
+        const prose = "The quick brown fox jumps over the lazy dog. ".repeat(2_500);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: { 2: "Source work" },
+            capturedTurns,
+          }),
+          // No window and no usage, like an ACP registry agent that sends no usage_update.
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: { 1: prose },
+            capturedTurns,
+            nativeThreadGeneration: generation,
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const dispatch = (ordinal: number, text: string, selection: ModelSelection) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`headroom:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`headroom:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text,
+              attachments: [],
+              modelSelection: selection,
+              dispatchMode: { type: "start_immediately" },
+            });
+          const wait = (ordinal: number) =>
+            orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+              Effect.andThen(worker.drain()),
+            );
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("headroom:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Handoff estimate headroom",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* dispatch(1, "Write the long report", CLAUDE_MODEL_SELECTION);
+          yield* wait(1);
+          yield* dispatch(2, "Continue elsewhere", CODEX_MODEL_SELECTION);
+          yield* wait(2);
+          yield* dispatch(3, "Back to the first provider", CLAUDE_MODEL_SELECTION);
+          yield* wait(3);
+          assert.equal(
+            (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status,
+            "completed",
+          );
+          // A second generation means T3 discarded the native session as full.
+          assert.equal(yield* Ref.get(generation), 1);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "handoff-estimate-headroom",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
   it.live.each(["native", "legacy"] as const)(
     "starts a replacement native thread as new after the resume fallback with %s attempts",
     (attempts) =>
@@ -1335,6 +1488,20 @@ describe("orchestration v2 provider switching", () => {
             assert.isFalse(turns[1]?.nativeThreadHasTurns);
             assert.equal(turns[2]?.nativeThreadId, turns[1]?.nativeThreadId);
             assert.isTrue(turns[2]?.nativeThreadHasTurns);
+
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            const run2 = projection.runs[1]!;
+            const handoff = projection.contextHandoffs.find(
+              (candidate) => candidate.targetRunId === run2.id,
+            );
+            assert.deepEqual(
+              projection.turnItems
+                .filter((item) => item.runId === run2.id)
+                .toSorted((left, right) => left.ordinal - right.ordinal)
+                .slice(0, 2)
+                .map((item) => (item.type === "handoff" ? item.contextHandoffId : item.type)),
+              [handoff?.id, "user_message"],
+            );
           }).pipe(
             Effect.provide(
               ProviderReplayHarness.layerWithRegistry(
@@ -1488,6 +1655,14 @@ describe("orchestration v2 provider switching", () => {
       new ClaudeAgentSdkQueryRunnerError({
         method: "setMcpServers",
         cause: new ClaudeMcpRegistrationTimeoutError(),
+      }),
+    ],
+    // Claude Code ends the query with "No message found with message.uuid" before the prompt.
+    [
+      "a resume point Claude rejects",
+      new ProviderAdapter.ProviderAdapterProtocolError({
+        driver: CLAUDE_DRIVER,
+        detail: "Claude provider query ended before the turn could start.",
       }),
     ],
   ] as const)("keeps the native session after turns refused for %s", ([, refusalCause]) =>
@@ -1768,6 +1943,121 @@ describe("orchestration v2 provider switching", () => {
               layerRegistry,
             ),
           ),
+        );
+      }),
+    ),
+  );
+
+  // regression: #15993 t3_worktree_handoff releases the Claude session that runs it. Nothing
+  // was left to report how the call ended, so it stayed running and the thread stayed Waiting.
+  it.live("interrupts the handoff tool call that releases its own session", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const key = "handoff-cuts-off-tool-call";
+        const worktreePath = yield* checkpointWorkspace(key);
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const started = yield* Deferred.make<void>();
+        const toolCallId = TurnItemId.make(`turn-item:${key}`);
+        const scenarioThreadId = ThreadId.make(`thread:${key}`);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            holdFirstTurn: started,
+            heldRunningToolCall: {
+              id: toolCallId,
+              toolName: "mcp__t3-code__t3_worktree_handoff",
+            },
+            backgroundTasksEndWithProcess: true,
+          }),
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const awaitEvent = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
+            orchestrator.streamDomainEvents.pipe(
+              Stream.filter(predicate),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.forkScoped,
+            );
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:${key}:create`),
+            threadId: scenarioThreadId,
+            projectId: ProjectId.make(`project:${key}`),
+            title: "Tool call releases its session",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          const toolCallRunning = yield* awaitEvent(
+            (event) =>
+              event.type === "turn-item.updated" &&
+              event.payload.id === toolCallId &&
+              event.payload.status === "running",
+          );
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:${key}:message`),
+            threadId: scenarioThreadId,
+            messageId: MessageId.make(`message:${key}`),
+            text: "Release this session",
+            attachments: [],
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* Deferred.await(started);
+          yield* Fiber.join(toolCallRunning);
+
+          const runFailed = yield* awaitEvent(
+            (event) => event.type === "run.updated" && event.payload.status === "failed",
+          );
+          yield* orchestrator.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(`command:${key}:release`),
+            threadId: scenarioThreadId,
+            branch: `t3/${key}`,
+            worktreePath,
+            expectedWorktreePath: null,
+          });
+          yield* worker.drain();
+          yield* Fiber.join(runFailed);
+
+          const projection = yield* orchestrator.getThreadProjection(scenarioThreadId);
+          const toolCall = projection.turnItems.find((item) => item.id === toolCallId);
+          assert.equal(toolCall?.status, "interrupted");
+          assert.isNotNull(toolCall?.completedAt);
+          assert.deepEqual(
+            derivePendingBackgroundWork({
+              latestRun: projection.runs.at(-1),
+              providerThreads: projection.providerThreads,
+              turnItems: projection.turnItems,
+              activeProviderThreadId: projection.thread.activeProviderThreadId,
+              runs: projection.runs,
+            }),
+            [],
+          );
+        }).pipe(
+          Effect.provide(ProviderReplayHarness.layerWithRegistry({ name: key }, layerRegistry)),
         );
       }),
     ),
@@ -2773,6 +3063,131 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
+  // regression: #16000 thread setting changes must not end a Claude session's background work
+  it.live.each([
+    ["runtime mode", "runtime-mode"],
+    ["worktree", "worktree"],
+    ["provider instance", "instance"],
+  ] as const)("keeps background work alive when the %s changes on an idle thread", ([, change]) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace(`settings-background-${change}`);
+        const nextCwd = yield* checkpointWorkspace(`settings-background-${change}-next`);
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const backgroundWork = yield* Ref.make(false);
+        const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
+        const secondSelection: ModelSelection = {
+          ...CLAUDE_MODEL_SELECTION,
+          instanceId: ProviderInstanceId.make("claude-second-account"),
+        };
+        const threadId = ThreadId.make(`thread:settings-background-${change}`);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:settings-background-${change}:create`),
+            threadId,
+            projectId: ProjectId.make(`project:settings-background-${change}`),
+            title: "Settings change with background work",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:settings-background-${change}:send`),
+            threadId,
+            messageId: MessageId.make(`message:settings-background-${change}:send`),
+            text: "Start background work",
+            attachments: [],
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* worker.drain();
+          const afterFirst = yield* waitForIdle(threadId);
+          const session = afterFirst.providerSessions[0];
+          assert.equal(session?.status, "ready");
+          // The turn ended but a background subagent keeps running in the CLI process.
+          yield* Ref.set(backgroundWork, true);
+
+          const commandId = CommandId.make(`command:settings-background-${change}:change`);
+          yield* orchestrator
+            .dispatch(
+              change === "runtime-mode"
+                ? {
+                    type: "thread.runtime-mode.set",
+                    commandId,
+                    threadId,
+                    runtimeMode: "auto-accept-edits",
+                  }
+                : change === "worktree"
+                  ? { type: "thread.metadata.update", commandId, threadId, worktreePath: nextCwd }
+                  : {
+                      type: "thread.model-selection.set",
+                      commandId,
+                      threadId,
+                      modelSelection: secondSelection,
+                    },
+            )
+            .pipe(Effect.ignore);
+          yield* worker.drain();
+
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          // Refusing or deferring are both fine; closing the busy process is not.
+          assert.deepEqual(yield* Ref.get(closedSessions), []);
+          assert.deepEqual(
+            projection.providerSessions.map((candidate) => [candidate.id, candidate.status]),
+            [[session!.id, "ready"]],
+          );
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: `settings-background-${change}`,
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              ProviderAdapterRegistry.layerFromAdapters([
+                makeTestAdapter({
+                  instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+                  driver: CLAUDE_DRIVER,
+                  capabilities: ClaudeProviderCapabilitiesV2,
+                  modelSelection: CLAUDE_MODEL_SELECTION,
+                  responseByRunOrdinal: { 1: "Background work started" },
+                  capturedTurns,
+                  backgroundWork,
+                  closedSessions,
+                }),
+                makeTestAdapter({
+                  instanceId: secondSelection.instanceId,
+                  driver: CLAUDE_DRIVER,
+                  capabilities: ClaudeProviderCapabilitiesV2,
+                  modelSelection: secondSelection,
+                  responseByRunOrdinal: {},
+                  capturedTurns,
+                }),
+              ]),
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
   it.live.each(["immediately", "behind a running turn"] as const)(
     "starts a fresh provider session %s and never hands earlier runs to a later provider",
     (variant) =>
@@ -2933,6 +3348,100 @@ describe("orchestration v2 provider switching", () => {
               ProviderReplayHarness.layerWithRegistry(
                 {
                   name: `fresh-context-${key}`,
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: {
+                      type: "readOnly",
+                      access: { type: "fullAccess" },
+                      networkAccess: false,
+                    },
+                  },
+                },
+                layerRegistry,
+              ),
+            ),
+          );
+        }),
+      ),
+  );
+
+  it.live(
+    "starts a scheduled fresh run while the previous run's session still has background work",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace("scheduled-fresh-background");
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
+          const backgroundWork = yield* Ref.make(false);
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+              driver: CLAUDE_DRIVER,
+              capabilities: ClaudeProviderCapabilitiesV2,
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              responseByRunOrdinal: {},
+              capturedTurns,
+              closedSessions,
+              backgroundWork,
+              nativeThreadGeneration: yield* Ref.make(0),
+            }),
+          ]);
+          const threadId = ThreadId.make("thread:scheduled-fresh-background");
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            // The command ScheduledTaskService sends for a fresh-session schedule.
+            const fire = (name: string) =>
+              orchestrator.dispatch({
+                type: "message.dispatch",
+                createdBy: "user",
+                creationSource: "web",
+                commandId: CommandId.make(`scheduled-task:scheduled-fresh-background:${name}`),
+                threadId,
+                messageId: MessageId.make(`message:scheduled-fresh-background:${name}`),
+                scheduledTaskId: ScheduledTaskId.make("scheduled-fresh-background"),
+                text: `Scheduled ${name}`,
+                attachments: [],
+                modelSelection: CLAUDE_MODEL_SELECTION,
+                freshContext: true,
+                dispatchMode: { type: "queue_after_active" },
+              });
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:scheduled-fresh-background:create"),
+              threadId,
+              projectId: ProjectId.make("project:scheduled-fresh-background"),
+              title: "Scheduled fresh session",
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            yield* fire("first");
+            yield* worker.drain();
+            yield* waitForIdle(threadId);
+            // The first run left a background command running after its turn ended.
+            yield* Ref.set(backgroundWork, true);
+            yield* fire("second");
+            yield* worker.drain();
+            yield* waitForIdle(threadId);
+            const turns = yield* Ref.get(capturedTurns);
+            const turnFor = (name: string) =>
+              turns.find((turn) => turn.text.endsWith(`Scheduled ${name}`));
+            assert.isDefined(turnFor("second"));
+            assert.notEqual(turnFor("second")!.nativeThreadId, turnFor("first")!.nativeThreadId);
+            // Closing the busy session would end its background work.
+            assert.deepEqual(yield* Ref.get(closedSessions), []);
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: "scheduled-fresh-background",
                   runtimePolicyOverride: {
                     cwd,
                     approvalPolicy: "never",
@@ -3429,6 +3938,11 @@ describe("orchestration v2 provider switching", () => {
           );
           assert.equal(queuedItem?.runId, queued.runs[1]?.id);
           assert.equal(queuedItem?.providerThreadId, queued.runs[1]?.providerThreadId);
+          assert.equal(queuedItem?.status, "pending");
+          assert.isNull(queuedItem?.startedAt);
+          assert.isNull(queuedItem?.completedAt);
+          assert.isFalse(queued.visibleTurnItems.some((row) => row.item.id === queuedItem?.id));
+          const queuedSequence = yield* eventSink.latestSequence({ threadId: rejectedThreadId });
           yield* eventSink.write({
             events: [
               {
@@ -3453,6 +3967,40 @@ describe("orchestration v2 provider switching", () => {
             Stream.runHead,
           );
           yield* worker.drain();
+          // Clients whose bounded snapshot omitted the hidden queued item must
+          // receive it while the run is still queued, before it fails.
+          const throughSequence = yield* eventSink.latestSequence({ threadId: rejectedThreadId });
+          const failureEvents = yield* eventSink
+            .stream({ threadId: rejectedThreadId, afterSequence: queuedSequence })
+            .pipe(
+              Stream.takeUntil((stored) => stored.sequence === throughSequence),
+              Stream.map(({ event }) => event),
+              Stream.filter((event) => event.runId === queued.runs[1]!.id),
+              Stream.runCollect,
+            );
+          const republished = failureEvents.findIndex(
+            (event) =>
+              event.type === "turn-item.updated" &&
+              event.payload.type === "user_message" &&
+              event.payload.messageId === rejectedMessageId,
+          );
+          assert.isAtLeast(republished, 0);
+          const restored = failureEvents[republished];
+          assert.equal(restored?.type, "turn-item.updated");
+          if (restored?.type === "turn-item.updated") {
+            assert.deepEqual(restored.payload, {
+              ...queuedItem,
+              status: "failed",
+              completedAt: restored.occurredAt,
+              updatedAt: restored.occurredAt,
+            });
+          }
+          assert.isBelow(
+            republished,
+            failureEvents.findIndex(
+              (event) => event.type === "run.updated" && event.payload.status === "failed",
+            ),
+          );
           return yield* orchestrator.getThreadProjection(rejectedThreadId);
         }).pipe(
           Effect.provide(
@@ -3495,6 +4043,11 @@ describe("orchestration v2 provider switching", () => {
         assert.equal(
           failureItem?.type === "error" ? failureItem.failure.code : null,
           "context_handoff_unsupported",
+        );
+        assert.isTrue(
+          projection.visibleTurnItems.some(
+            ({ item }) => item.type === "user_message" && item.messageId === rejectedMessageId,
+          ),
         );
         assert.deepEqual(
           (yield* Ref.get(capturedTurns)).map((turn) => turn.driver),
