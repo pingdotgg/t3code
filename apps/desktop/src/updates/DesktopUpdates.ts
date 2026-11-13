@@ -1,5 +1,7 @@
 import {
   DESKTOP_UPDATE_RESTART_MARKER_FILE,
+  DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
+  DESKTOP_UPDATE_IN_PROGRESS_TTL_MS,
   DesktopUpdateChannelSchema,
   type DesktopRuntimeInfo,
   type DesktopUpdateActionResult,
@@ -669,6 +671,34 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const updateInProgressMarkerPath = environment.path.join(
+    updateRestartMarkerDir,
+    DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
+  );
+  const encodeUpdateMarker = Schema.encodeEffect(
+    Schema.fromJsonString(Schema.Struct({ startedAt: Schema.Number, expiresAt: Schema.Number })),
+  );
+  const updateInProgressTempPath = `${updateInProgressMarkerPath}.tmp`;
+  const writeUpdateInProgressMarker = Effect.gen(function* () {
+    const startedAt = DateTime.toEpochMillis(yield* DateTime.now);
+    const contents = yield* encodeUpdateMarker({
+      startedAt,
+      expiresAt: startedAt + DESKTOP_UPDATE_IN_PROGRESS_TTL_MS,
+    });
+    yield* fileSystem.writeFileString(updateInProgressTempPath, contents);
+    yield* fileSystem.rename(updateInProgressTempPath, updateInProgressMarkerPath);
+  }).pipe(
+    Effect.ensuring(
+      fileSystem.remove(updateInProgressTempPath, { force: true }).pipe(Effect.ignore),
+    ),
+    Effect.catch((error) =>
+      logUpdaterWarning("Could not write the update-in-progress marker.", { errorTag: error._tag }),
+    ),
+  );
+  const removeUpdateInProgressMarker = fileSystem
+    .remove(updateInProgressMarkerPath, { force: true })
+    .pipe(Effect.ignore);
+
   // Failed or interrupted installs leave no replacement backend; later quits must release the tunnel.
   const removeUpdateRestartMarker = fileSystem
     .remove(updateRestartMarkerPath, { force: true })
@@ -724,6 +754,7 @@ export const make = Effect.gen(function* () {
       Ref.set(desktopState.quitting, false),
       Ref.set(installRunningBackendsRef, []),
       removeUpdateRestartMarker,
+      removeUpdateInProgressMarker,
       removeInstallRecord,
     ],
     { discard: true },
@@ -741,6 +772,7 @@ export const make = Effect.gen(function* () {
 
     yield* Ref.set(desktopState.quitting, false);
     yield* removeUpdateRestartMarker;
+    yield* removeUpdateInProgressMarker;
     yield* removeInstallRecord;
     yield* Effect.gen(function* () {
       const runningInstances = yield* Ref.getAndSet(installRunningBackendsRef, []);
@@ -816,6 +848,7 @@ export const make = Effect.gen(function* () {
 
         return yield* Effect.gen(function* () {
           yield* writeUpdateRestartMarker;
+          yield* writeUpdateInProgressMarker;
           const { downloadedVersion } = yield* Ref.get(updateStateRef);
           if (downloadedVersion !== null) yield* writeInstallRecord(downloadedVersion);
           // Stop pooled backends and SSH tunnels before quitAndInstall can outrun their scope finalizers.
