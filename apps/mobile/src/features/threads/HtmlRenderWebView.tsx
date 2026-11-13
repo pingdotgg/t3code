@@ -73,7 +73,7 @@ const FIELD_FOCUS_MESSAGE_TYPE = "t3-html-render-field-focus";
 const FIELD_REPORT_FUNCTION = "__t3HtmlRenderReportField";
 // An animating page resizes every frame; reporting once it settles keeps feed updates to one.
 const HEIGHT_SETTLE_MS = 80;
-const OVERFLOW_SCRIPT = `(function(){var last;function post(m){window.ReactNativeWebView.postMessage(JSON.stringify(m));}function report(){var d=document.documentElement,b=document.body;var x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,y=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1,h=Math.ceil(d.scrollHeight>d.clientHeight?d.scrollHeight:d.getBoundingClientRect().height),o=x+","+y+","+h+","+window.innerWidth;if(o===last)return;last=o;post({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},x:x,y:y,h:h});}var timer;function settle(){clearTimeout(timer);timer=setTimeout(report,${HEIGHT_SETTLE_MS});}report();if(window.ResizeObserver){var r=new ResizeObserver(settle);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",settle);window.addEventListener("load",report);function isField(t){return !!t&&(t.isContentEditable||t.tagName==="TEXTAREA"||t.tagName==="INPUT"&&/^(text|search|email|url|tel|number|password)$/.test(t.type));}window.${FIELD_REPORT_FUNCTION}=function(){var t=document.activeElement;if(!isField(t)){post({type:${JSON.stringify(FIELD_FOCUS_MESSAGE_TYPE)},blur:true});return;}var f=t.getBoundingClientRect();post({type:${JSON.stringify(FIELD_FOCUS_MESSAGE_TYPE)},top:f.top,bottom:f.bottom});};document.addEventListener("focusin",function(e){if(isField(e.target))window.${FIELD_REPORT_FUNCTION}();},true);document.addEventListener("focusout",function(){post({type:${JSON.stringify(FIELD_FOCUS_MESSAGE_TYPE)},blur:true});},true);})();true;`;
+const OVERFLOW_SCRIPT = `(function(){var last;function post(m){window.ReactNativeWebView.postMessage(JSON.stringify(m));}function report(){var d=document.documentElement,b=document.body;var x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,y=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1,h=Math.ceil(d.scrollHeight>d.clientHeight?d.scrollHeight:d.getBoundingClientRect().height),o=x+","+y+","+h+","+window.innerWidth;if(o===last)return;last=o;post({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},x:x,y:y,h:h});}var timer;function settle(){clearTimeout(timer);timer=setTimeout(report,${HEIGHT_SETTLE_MS});}report();if(window.ResizeObserver){var r=new ResizeObserver(settle);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",settle);window.addEventListener("load",report);function isField(t){return !!t&&(t.isContentEditable||t.tagName==="TEXTAREA"||t.tagName==="INPUT"&&/^(text|search|email|url|tel|number|password)$/.test(t.type));}window.${FIELD_REPORT_FUNCTION}=function(reply){var t=document.activeElement;if(!isField(t)){post({type:${JSON.stringify(FIELD_FOCUS_MESSAGE_TYPE)},blur:true,reply:reply});return;}var f=t.getBoundingClientRect();post({type:${JSON.stringify(FIELD_FOCUS_MESSAGE_TYPE)},top:f.top,bottom:f.bottom,reply:reply});};document.addEventListener("focusin",function(e){if(isField(e.target))window.${FIELD_REPORT_FUNCTION}(false);},true);document.addEventListener("click",function(e){if(isField(e.target)&&e.target===document.activeElement)window.${FIELD_REPORT_FUNCTION}(false);},true);document.addEventListener("focusout",function(){post({type:${JSON.stringify(FIELD_FOCUS_MESSAGE_TYPE)},blur:true,reply:false});},true);})();true;`;
 
 type Overflow = { readonly x: boolean; readonly y: boolean };
 
@@ -109,9 +109,12 @@ function readOverflowMessage(data: string): OverflowReport | null {
   }
 }
 
-function readFieldFocusMessage(
-  data: string,
-): { readonly top: number; readonly bottom: number } | "blur" | null {
+type FieldFocusMessage = {
+  /** True when answering the feed's request to re-read the field, false for a focus change. */
+  readonly reply: boolean;
+} & ({ readonly blur: true } | { readonly top: number; readonly bottom: number });
+
+function readFieldFocusMessage(data: string): FieldFocusMessage | null {
   try {
     const message: unknown = JSON.parse(data);
     if (
@@ -122,14 +125,15 @@ function readFieldFocusMessage(
     ) {
       return null;
     }
-    if ("blur" in message && message.blur === true) return "blur";
+    const reply = "reply" in message && message.reply === true;
+    if ("blur" in message && message.blur === true) return { reply, blur: true };
     return "top" in message &&
       typeof message.top === "number" &&
       Number.isFinite(message.top) &&
       "bottom" in message &&
       typeof message.bottom === "number" &&
       Number.isFinite(message.bottom)
-      ? { top: message.top, bottom: message.bottom }
+      ? { reply, top: message.top, bottom: message.bottom }
       : null;
   } catch {
     return null;
@@ -243,7 +247,7 @@ export function HtmlRenderWebView(props: {
         const start = touchStart.current;
         const end = touchPoint(event);
         if (start !== null && isBallotTap(start, end)) lastTouchAt.current = end.at;
-        if (isBallot) handOverPicks(tapGate.touchEnd(touchPoint(event)));
+        if (isBallot) handOverPicks(tapGate.touchEnd(end));
       }}
       onTouchCancel={isBallot ? () => tapGate.touchCancel() : undefined}
       style={
@@ -313,14 +317,18 @@ export function HtmlRenderWebView(props: {
                 const field = props.nested ? readFieldFocusMessage(event.nativeEvent.data) : null;
                 if (field !== null) {
                   const pending = pendingField.current;
-                  pendingField.current = null;
-                  if (field === "blur") {
+                  if (field.reply || "blur" in field) pendingField.current = null;
+                  if ("blur" in field) {
                     pending?.(null);
-                    props.onFieldFocus?.(null);
-                  } else if (pending) {
-                    frame.current?.measureInWindow((_x, y) =>
-                      pending({ top: y + field.top, bottom: y + field.bottom }),
-                    );
+                    if (!field.reply) props.onFieldFocus?.(null);
+                  } else if (field.reply) {
+                    const view = frame.current;
+                    if (!view) pending?.(null);
+                    else {
+                      view.measureInWindow((_x, y) =>
+                        pending?.({ top: y + field.top, bottom: y + field.bottom }),
+                      );
+                    }
                   } else {
                     props.onFieldFocus?.(
                       () =>
@@ -328,7 +336,7 @@ export function HtmlRenderWebView(props: {
                           pendingField.current?.(null);
                           pendingField.current = resolve;
                           webView.current?.injectJavaScript(
-                            `window.${FIELD_REPORT_FUNCTION}&&window.${FIELD_REPORT_FUNCTION}();true;`,
+                            `window.${FIELD_REPORT_FUNCTION}&&window.${FIELD_REPORT_FUNCTION}(true);true;`,
                           );
                         }),
                     );

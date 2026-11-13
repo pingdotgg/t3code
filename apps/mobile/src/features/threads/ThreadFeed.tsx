@@ -1649,7 +1649,10 @@ function renderFeedEntry(
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
     readonly onToggleTurnFold: (runId: RunId) => void;
     readonly onHtmlRenderResize: (rowKey: string, previousRowHeight: number) => void;
-    readonly onHtmlRenderFieldFocus: (measure: HtmlRenderFieldMeasure | null) => void;
+    readonly onHtmlRenderFieldFocus: (
+      rowKey: string,
+      measure: HtmlRenderFieldMeasure | null,
+    ) => void;
     readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPlaybackStart: () => void;
@@ -1737,7 +1740,7 @@ function renderFeedEntry(
         frameWidth={props.contentWidth}
         iconColor={iconSubtleColor}
         onResize={(previousRowHeight) => props.onHtmlRenderResize(entry.id, previousRowHeight)}
-        onFieldFocus={props.onHtmlRenderFieldFocus}
+        onFieldFocus={(measure) => props.onHtmlRenderFieldFocus(entry.id, measure)}
       />
     );
   }
@@ -2692,10 +2695,11 @@ const HTML_RENDER_FIELD_KEYBOARD_WAIT_MS = 1_500;
 
 // isVisible() turns true as the keyboard starts opening; scrolling mid-animation would fight the
 // list's own keyboard scroll.
-function keyboardSettledOpen() {
-  const keyboard = KeyboardController.state();
-  return KeyboardController.isVisible() && Date.now() >= keyboard.timestamp + keyboard.duration;
-}
+let keyboardOpening = false;
+KeyboardEvents.addListener("keyboardWillShow", () => (keyboardOpening = true));
+KeyboardEvents.addListener("keyboardDidShow", () => (keyboardOpening = false));
+KeyboardEvents.addListener("keyboardDidHide", () => (keyboardOpening = false));
+const keyboardSettledOpen = () => KeyboardController.isVisible() && !keyboardOpening;
 
 const THREAD_FEED_MAINTAIN_SCROLL_AT_END = {
   animated: false,
@@ -3461,9 +3465,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   // The keyboard covers the feed without resizing pages, so a note field in a ballot would sit
   // under it. Once the keyboard is up, scroll just enough to show the field above the composer.
-  const fieldReveal = useRef<{ cancel: () => void } | null>(null);
-  const onHtmlRenderFieldFocus = (measure: HtmlRenderFieldMeasure | null) => {
-    // Only the latest focused field counts; an earlier one may be off screen by now.
+  const fieldReveal = useRef<{ rowKey: string; cancel: () => void } | null>(null);
+  const onHtmlRenderFieldFocus = (rowKey: string, measure: HtmlRenderFieldMeasure | null) => {
+    // Only the latest focused field counts; an earlier one may be off screen by now. A blur
+    // cancels only its own page's reveal, since another page's blur can arrive after a new focus.
+    if (measure === null && fieldReveal.current?.rowKey !== rowKey) return;
     fieldReveal.current?.cancel();
     fieldReveal.current = null;
     if (measure === null) return;
@@ -3483,7 +3489,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       });
     };
     if (keyboardSettledOpen()) {
-      fieldReveal.current = { cancel: () => (cancelled = true) };
+      fieldReveal.current = { rowKey, cancel: () => (cancelled = true) };
       void reveal();
       return;
     }
@@ -3493,6 +3499,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     });
     const expire = setTimeout(() => shown.remove(), HTML_RENDER_FIELD_KEYBOARD_WAIT_MS);
     fieldReveal.current = {
+      rowKey,
       cancel: () => {
         cancelled = true;
         shown.remove();
