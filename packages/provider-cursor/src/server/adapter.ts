@@ -2255,7 +2255,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           const generation = ++context.idleFinalizeGeneration;
           yield* Effect.forkIn(
             Effect.gen(function* () {
-              yield* Effect.sleep("1 second");
+              // Stop hooks run after turn-ended (in parallel, 60s default timeout) and a follow-up
+              // continues the run; wait past them before treating a quiet run as hung.
+              yield* Effect.sleep("2 minutes");
               if (
                 context.finalized ||
                 context.interrupted ||

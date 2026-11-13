@@ -478,7 +478,7 @@ describe("CursorAdapterV2", () => {
       cancelCalls: 1,
     },
     {
-      reason: "a delayed continuation after turn-ended",
+      reason: "a stop-hook continuation after turn-ended",
       updates: [
         { type: "text-delta", text: "Checking." },
         { type: "turn-ended" },
@@ -655,13 +655,13 @@ describe("CursorAdapterV2", () => {
         },
       });
       if (continuation !== undefined) {
-        yield* TestClock.adjust("500 millis");
+        yield* TestClock.adjust("90 seconds");
         assert.equal(observedCancelCalls, 0);
         for (const update of continuation) {
           yield* onDelta!(update);
         }
       }
-      yield* TestClock.adjust("1 second");
+      yield* TestClock.adjust("2 minutes");
       if (interrupt) {
         const started = yield* runtime.events.pipe(
           Stream.filter((event) => event.type === "provider_turn.updated"),
@@ -2618,13 +2618,13 @@ describe("CursorAdapterV2", () => {
           })
           .pipe(Effect.forkScoped);
         // An acknowledgment that outlasts the idle window must not lose the run to idle cancel.
-        yield* TestClock.adjust("1 second");
+        yield* TestClock.adjust("2 minutes");
         assert.equal(cancelled, 0);
         yield* Deferred.succeed(acknowledged, undefined);
         yield* Fiber.join(steering);
         assert.deepEqual(steered, ["/review Look at the tests instead."]);
         // The delivered steer is new work, so the ended turn is not cancelled as idle.
-        yield* TestClock.adjust("1 second");
+        yield* TestClock.adjust("2 minutes");
         assert.equal(cancelled, 0);
         yield* runtime.steerTurn({
           threadId,
