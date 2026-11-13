@@ -19,7 +19,8 @@ const binary = NodePath.resolve(process.argv[2] ?? "");
 const freePort = () =>
   new Promise((resolve) => {
     const probe = NodeNet.createServer();
-    probe.listen(0, "127.0.0.1", () => {
+    // The server binds 0.0.0.0, so probe the same address.
+    probe.listen(0, "0.0.0.0", () => {
       const { port } = probe.address();
       probe.close(() => resolve(port));
     });
@@ -105,15 +106,19 @@ const server = NodeChildProcess.spawn(
 let output = "";
 server.stdout.on("data", (d) => (output += d));
 server.stderr.on("data", (d) => (output += d));
+let stopped = false;
 const exited = new Promise((resolve) =>
-  server.on("exit", (code, signal) => resolve({ code, signal })),
+  server.on("exit", (code, signal) => {
+    stopped = true;
+    resolve({ code, signal });
+  }),
 );
 ok(`pid ${server.pid}`);
 
 try {
   step("readiness: GET /.well-known/t3/environment once a second, up to 30 s");
   let descriptor = null;
-  for (let i = 0; i < 30 && descriptor === null; i++) {
+  for (let i = 0; i < 30 && descriptor === null && !stopped; i++) {
     descriptor = await fetch(`${origin}/.well-known/t3/environment`, {
       signal: AbortSignal.timeout(2000),
     })
