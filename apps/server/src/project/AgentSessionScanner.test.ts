@@ -5,6 +5,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodeSqlite from "node:sqlite";
+import * as NodeZlib from "node:zlib";
 import { describe, expect, it } from "@effect/vitest";
 import {
   AgentSessionImportSource,
@@ -174,6 +175,21 @@ const writeTranscript = Effect.fn("AgentSessionScanner.test.writeTranscript")(fu
   yield* fileSystem.utimes(input.filePath, seconds, seconds);
 });
 
+const writeCompressedTranscript = Effect.fn("AgentSessionScanner.test.writeCompressedTranscript")(
+  function* (input: {
+    readonly filePath: string;
+    readonly contents: string;
+    readonly mtimeMs: number;
+  }) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fileSystem.makeDirectory(path.dirname(input.filePath), { recursive: true });
+    yield* fileSystem.writeFile(input.filePath, NodeZlib.zstdCompressSync(input.contents));
+    const seconds = input.mtimeMs / 1000;
+    yield* fileSystem.utimes(input.filePath, seconds, seconds);
+  },
+);
+
 const claudeSessionLine = (cwd: string) =>
   `${JSON.stringify({ type: "user", cwd, sessionId: "s1" })}\n${JSON.stringify({ type: "assistant" })}\n`;
 
@@ -325,6 +341,30 @@ const awaitGateReader = (gatePath: string) =>
     Effect.promise(() => NodeFS.promises.open(gatePath, NodeFS.constants.O_WRONLY)),
     (handle) => Effect.promise(() => handle.close()),
   );
+
+/**
+ * Offers each of `filePaths` to `finished` once its `cat` child has exited. A
+ * deadline fires for every read still in flight, so a test must wait for the
+ * unblocked reads before it moves the clock.
+ */
+const layerReportingProcessRunner = (
+  filePaths: ReadonlySet<string>,
+  finished: Queue.Queue<string>,
+) =>
+  Layer.effect(
+    ProcessRunner.ProcessRunner,
+    Effect.gen(function* () {
+      const runner = yield* ProcessRunner.ProcessRunner;
+      return ProcessRunner.ProcessRunner.of({
+        run: (input) => {
+          const filePath = input.args.at(-1) ?? "";
+          return filePaths.has(filePath)
+            ? runner.run(input).pipe(Effect.ensuring(Queue.offer(finished, filePath)))
+            : runner.run(input);
+        },
+      });
+    }),
+  ).pipe(Layer.provide(ProcessRunner.layer), Layer.provide(NodeServices.layer));
 
 it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
   describe("scan", () => {
@@ -1225,9 +1265,95 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         ]);
       }),
     );
+    it.effect("discovers projects whose Codex rollouts are zstd-compressed", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        yield* writeCompressedTranscript({
+          filePath: path.join(
+            codexHomePath,
+            "sessions",
+            "2026",
+            "05",
+            "03",
+            "rollout-2026-05-03T00-00-00-019a5f00-0000-7000-8000-00000000000b.jsonl.zst",
+          ),
+          contents: codexRolloutLine(workspace),
+          mtimeMs: Date.parse("2026-05-03T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(result.candidates.map(({ path, threadCount }) => ({ path, threadCount }))).toEqual([
+          { path: workspace, threadCount: 1 },
+        ]);
+      }),
+    );
   });
 
   describe("recentThreads", () => {
+    it.effect("imports Codex conversations stored only as zstd-compressed rollouts", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        yield* writeCompressedTranscript({
+          filePath: path.join(
+            codexHomePath,
+            "sessions",
+            "2026",
+            "08",
+            "20",
+            "rollout-2026-08-20T10-00-00-019a5f00-0000-7000-8000-00000000000c.jsonl.zst",
+          ),
+          contents: [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: "019a5f00-0000-7000-8000-00000000000c", cwd: workspace },
+            }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              timestamp: "2026-08-20T10:00:00.000Z",
+              payload: { type: "user_message", message: "Compressed prompt" },
+            }),
+            encodeTranscriptRecord({
+              type: "response_item",
+              timestamp: "2026-08-20T10:01:00.000Z",
+              payload: {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "Compressed answer" }],
+              },
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs - 4 * 24 * 60 * 60 * 1000,
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(
+          threads.map((thread) => ({
+            id: thread.providerSessionId,
+            messages: thread.messages.map((message) => message.text),
+          })),
+        ).toEqual([
+          {
+            id: "019a5f00-0000-7000-8000-00000000000c",
+            messages: ["Compressed prompt", "Compressed answer"],
+          },
+        ]);
+      }),
+    );
+
     it.effect("imports recent Claude, Codex, and Pi sessions for the selected project only", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -2557,28 +2683,11 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           });
         }
 
-        // The deadline fires for every read still in flight, so on a slow runner the
-        // neighbours' `cat` children must have exited before the clock moves.
-        const neighbourConfigs = new Set(
-          [repos[0], repos[2]].map((repo) => path.join(repo, ".git", "config")),
-        );
         const finishedNeighbourReads = yield* Queue.unbounded<string>();
-        const processRunner = Layer.effect(
-          ProcessRunner.ProcessRunner,
-          Effect.gen(function* () {
-            const runner = yield* ProcessRunner.ProcessRunner;
-            return ProcessRunner.ProcessRunner.of({
-              run: (input) => {
-                const filePath = input.args.at(-1) ?? "";
-                return neighbourConfigs.has(filePath)
-                  ? runner
-                      .run(input)
-                      .pipe(Effect.ensuring(Queue.offer(finishedNeighbourReads, filePath)))
-                  : runner.run(input);
-              },
-            });
-          }),
-        ).pipe(Layer.provide(ProcessRunner.layer), Layer.provide(NodeServices.layer));
+        const processRunner = layerReportingProcessRunner(
+          new Set([repos[0], repos[2]].map((repo) => path.join(repo, ".git", "config"))),
+          finishedNeighbourReads,
+        );
 
         for (let attempt = 1; attempt <= 2; attempt++) {
           const scan = yield* Effect.forkChild(
@@ -2687,6 +2796,12 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           });
         }
 
+        const finishedPointerReads = yield* Queue.unbounded<string>();
+        const processRunner = layerReportingProcessRunner(
+          new Set([path.join(worktree, ".git")]),
+          finishedPointerReads,
+        );
+
         // One scanner across scans: later scans skip the files that blocked.
         yield* Effect.gen(function* () {
           const scanner = yield* AgentSessionScanner.AgentSessionScanner;
@@ -2695,22 +2810,24 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           );
           const first = yield* Effect.forkChild(scanPaths);
           // Pointer files are read first, then the commondir files they lead to.
-          for (const gatePath of [
-            path.join(pointerCheckout, ".git"),
-            path.join(worktreeGitDir, "commondir"),
-          ]) {
-            yield* Effect.scoped(
-              Effect.gen(function* () {
-                yield* awaitGateReader(gatePath);
-                yield* TestClock.adjust("2 seconds");
-              }),
-            );
-          }
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              yield* awaitGateReader(path.join(pointerCheckout, ".git"));
+              yield* Queue.take(finishedPointerReads);
+              yield* TestClock.adjust("2 seconds");
+            }),
+          );
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              yield* awaitGateReader(path.join(worktreeGitDir, "commondir"));
+              yield* TestClock.adjust("2 seconds");
+            }),
+          );
           expect(yield* Fiber.join(first)).toEqual([pointerCheckout]);
           for (let attempt = 2; attempt <= LIBUV_POOL_SIZE + 1; attempt++) {
             expect(yield* scanPaths, `scan ${attempt}`).toEqual([pointerCheckout]);
           }
-        }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
+        }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath, processRunner })));
         // Hangs if the scans left libuv pool threads stuck in open().
         yield* fileSystem.readFileString(path.join(worktree, ".git"));
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

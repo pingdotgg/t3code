@@ -49,6 +49,8 @@ export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 export const ServerProviderUsageLimits = Schema.Struct({
   checkedAt: IsoDateTime,
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
+  /** A $0 monthly spend cap has no percentage, so it cannot be a window. */
+  zeroSpendCap: Schema.optional(Schema.Boolean),
   /** Limits with the same group id pool and scope together under this label. */
   group: Schema.optional(
     Schema.Struct({

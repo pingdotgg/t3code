@@ -39,7 +39,7 @@ it.effect("detects Safari access becoming available without reading or importing
     assert.isTrue(yield* Effect.promise(check));
     yield* fs.remove(jar);
     assert.isFalse(yield* Effect.promise(check));
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("recognizes access when cookies exist only in a named Safari profile", () =>
@@ -55,5 +55,5 @@ it.effect("recognizes access when cookies exist only in a named Safari profile",
     yield* fs.makeDirectory(directory, { recursive: true });
     yield* fs.writeFileString(`${directory}/Cookies.binarycookies`, "not parsed");
     assert.isTrue(yield* Effect.promise(check));
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
