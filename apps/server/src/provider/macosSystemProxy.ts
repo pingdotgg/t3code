@@ -21,28 +21,30 @@ const HOST_NAME = /^[a-z0-9._-]+$/i;
 function readScutilProxy(output: string) {
   const fields = new Map<string, string>();
   const exceptions: Array<string> = [];
+  let hasDomainProxies = false;
   let depth = 0;
-  let inExceptions = false;
+  let block = "";
   for (const line of output.split("\n")) {
     const text = line.trim();
     if (text === "}") {
       depth -= 1;
-      inExceptions = false;
+      if (depth <= 1) block = "";
       continue;
     }
+    hasDomainProxies ||= block === "__SUPPLEMENTAL__";
     const separator = text.indexOf(" : ");
     const key = separator === -1 ? "" : text.slice(0, separator);
     const value = separator === -1 ? "" : text.slice(separator + 3).trim();
     if (text.endsWith("{")) {
-      inExceptions = depth === 1 && key === "ExceptionsList";
+      if (depth === 1) block = key;
       depth += 1;
     } else if (depth === 1 && key) {
       fields.set(key, value);
-    } else if (inExceptions && value) {
+    } else if (block === "ExceptionsList" && value) {
       exceptions.push(value);
     }
   }
-  return { fields, exceptions };
+  return { fields, exceptions, hasDomainProxies };
 }
 
 function proxyUrl(fields: ReadonlyMap<string, string>, scheme: "HTTP" | "HTTPS"): string | null {
@@ -71,14 +73,14 @@ function noProxyEntries(exception: string): ReadonlyArray<string> | null {
 }
 
 /**
- * Maps `scutil --proxy` output to proxy env vars, or to nothing when the env vars would proxy a
+ * Maps `scutil -d --proxy` output to proxy env vars, or to nothing when the env vars would proxy a
  * request macOS sends directly. SOCKS is not used.
  */
 export function macosSystemProxyEnv(
   scutilOutput: string,
   existingNoProxy: ReadonlyArray<string> = [],
 ): Record<string, string> {
-  const { fields, exceptions } = readScutilProxy(scutilOutput);
+  const { fields, exceptions, hasDomainProxies } = readScutilProxy(scutilOutput);
   const proxy = proxyUrl(fields, "HTTP");
   const exceptionEntries = exceptions.map(noProxyEntries);
   if (
@@ -87,6 +89,8 @@ export function macosSystemProxyEnv(
     proxy !== proxyUrl(fields, "HTTPS") ||
     fields.get("ProxyAutoConfigEnable") === "1" ||
     fields.get("ProxyAutoDiscoveryEnable") === "1" ||
+    // A VPN's per-domain proxies; one set of variables cannot route by domain.
+    hasDomainProxies ||
     // No NO_PROXY entry matches every dotless host.
     fields.get("ExcludeSimpleHostnames") === "1" ||
     exceptionEntries.includes(null)
@@ -133,7 +137,11 @@ export const readMacosSystemProxyEnv = Effect.fn("MacosSystemProxy.readEnv")(fun
   }
   const output = yield* spawner
     .string(
-      ChildProcess.make("/usr/sbin/scutil", ["--proxy"], { stdin: "ignore", stderr: "ignore" }),
+      // Without -d, scutil leaves the per-domain proxies out.
+      ChildProcess.make("/usr/sbin/scutil", ["-d", "--proxy"], {
+        stdin: "ignore",
+        stderr: "ignore",
+      }),
     )
     .pipe(
       Effect.timeout("2 seconds"),
