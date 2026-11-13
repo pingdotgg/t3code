@@ -14,41 +14,50 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use crate::engine::Inner;
+use crate::engine::{Inner, contract_error, rejected};
 use crate::{EngineError, Subscription};
 
 /// `THREAD_RESUME_MAX_REPLAY_EVENTS` in `ThreadStream.ts`: a longer gap gets a snapshot.
 const MAX_REPLAY_EVENTS: usize = 128;
 const LIVE_READ_BATCH: usize = 256;
 
-fn shell_error(message: impl Into<String>) -> GetShellSnapshotError {
-    from_json(json!({"_tag": "OrchestrationV2GetShellSnapshotError", "message": message.into()}))
-        .expect("error shape")
+fn shell_error(message: impl Into<String>) -> Result<GetShellSnapshotError, String> {
+    contract_error(
+        json!({"_tag": "OrchestrationV2GetShellSnapshotError", "message": message.into()}),
+    )
 }
 
-fn thread_error(thread_id: &str, message: impl Into<String>) -> GetThreadProjectionError {
-    from_json(json!({
+fn thread_error(
+    thread_id: &str,
+    message: impl Into<String>,
+) -> Result<GetThreadProjectionError, String> {
+    contract_error(json!({
         "_tag": "OrchestrationV2GetThreadProjectionError",
         "threadId": thread_id,
         "message": message.into(),
     }))
-    .expect("error shape")
+}
+
+/// Ends a stream with an error. An error the contract no longer accepts ends it without one.
+async fn fail<T, E>(tx: &mpsc::Sender<Result<T, E>>, error: Result<E, String>) {
+    match error {
+        Ok(error) => {
+            let _ = tx.send(Err(error)).await;
+        }
+        Err(reason) => eprintln!("conn-engine: {reason}"),
+    }
 }
 
 /// Sends one item. False when the subscriber is gone or the item does not fit the contract.
 async fn send<T: DeserializeOwned, E>(
     tx: &mpsc::Sender<Result<T, E>>,
     item: Value,
-    error: impl Fn(String) -> E,
+    error: impl Fn(String) -> Result<E, String>,
 ) -> bool {
     match from_json::<T>(item) {
         Ok(item) => tx.send(Ok(item)).await.is_ok(),
         Err(e) => {
-            let _ = tx
-                .send(Err(error(format!(
-                    "conn-engine built an invalid item: {e}"
-                ))))
-                .await;
+            fail(tx, error(format!("conn-engine built an invalid item: {e}"))).await;
             false
         }
     }
@@ -117,7 +126,7 @@ pub(crate) async fn subscribe_shell(
             {
                 Ok(items) => items,
                 Err(e) => {
-                    let _ = tx.send(Err(shell_error(e))).await;
+                    fail(&tx, shell_error(e)).await;
                     return;
                 }
             };
@@ -173,7 +182,7 @@ pub(crate) async fn subscribe_thread(
         .await
         .map_err(EngineError::Internal)?;
     let Some((first, mut cursor)) = first else {
-        return Err(EngineError::Rejected(thread_error(
+        return Err(rejected(thread_error(
             &thread_id,
             format!("Thread {thread_id} does not exist."),
         )));
@@ -203,7 +212,7 @@ pub(crate) async fn subscribe_thread(
                 {
                     Ok(events) => events,
                     Err(e) => {
-                        let _ = tx.send(Err(error(e))).await;
+                        fail(&tx, error(e)).await;
                         return;
                     }
                 };
