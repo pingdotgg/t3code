@@ -119,7 +119,7 @@ export function usePullRequestDetail(
   const sharedSummary = newestDisplayedPullRequestSummary(
     resolvedCoreDetail,
     liveDetail === null,
-    newestPullRequestSummary(observedSummary, listSummary),
+    newestPullRequestSummary(listSummary, observedSummary),
   );
   const coreDetail =
     resolvedCoreDetail === null || sharedSummary === null || sharedSummary === resolvedCoreDetail

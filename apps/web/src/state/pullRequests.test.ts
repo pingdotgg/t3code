@@ -130,7 +130,7 @@ describe("pull request summary cache", () => {
     expect(newestPullRequestSummary(older, reopened)).toBe(reopened);
     expect(newestPullRequestSummary(reopened, older)).toBe(reopened);
     const edited = summary({ title: "Accepted title" });
-    expect(newestPullRequestSummary(edited, summary())).toBe(edited);
+    expect(newestPullRequestSummary(summary(), edited)).toBe(edited);
     const loaded = summary();
     expect(newestDisplayedPullRequestSummary(loaded, false, edited)).toBe(loaded);
     expect(newestDisplayedPullRequestSummary(summary(), true, edited)).toBe(edited);

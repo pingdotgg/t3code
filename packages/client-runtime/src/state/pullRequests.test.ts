@@ -44,7 +44,10 @@ import {
   applyPullRequestSummaryEdits,
   createLinkedPullRequestSummaryAtomFamily,
   createPullRequestEnvironmentAtoms,
+  editHeldPullRequestListEntries,
+  pullRequestHostAnswer,
   pullRequestPendingEditsAtom,
+  pullRequestPendingEditsFor,
 } from "./pullRequests.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 import { executeAtomQuery, queryPersistenceKey } from "./runtime.ts";
@@ -2412,6 +2415,14 @@ it.effect("puts readers back when the host refuses an action, and saves nothing 
       ).pipe(Effect.forkScoped);
       yield* Deferred.await(sent);
       expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).state).toBe("closed");
+      const held = Option.getOrThrow(
+        AsyncResult.value(registry.get(pullRequestHostAnswer(list))),
+      ).entries;
+      const shownHeld = () =>
+        editHeldPullRequestListEntries({ state: "open" }, held, () =>
+          registry.get(pullRequestPendingEditsFor(target.environmentId, actionReference)),
+        );
+      expect(shownHeld()).toEqual([]);
       yield* Deferred.succeed(release, undefined);
       expect((yield* Fiber.join(acting))._tag).toBe("Failure");
 
@@ -2419,6 +2430,7 @@ it.effect("puts readers back when the host refuses an action, and saves nothing 
       expect(Option.getOrThrow(AsyncResult.value(registry.get(list))).entries).toMatchObject([
         { state: "open" },
       ]);
+      expect(shownHeld()).toMatchObject([{ state: "open" }]);
       expect([...saved.values()].some((payload) => payload.includes('"closed"'))).toBe(false);
     }),
   ),
@@ -2473,11 +2485,15 @@ it.effect(
     ),
 );
 
-it.effect("shows a queued close before the action ahead of it answers", () =>
+it.effect.each([
+  ["with", { ...actionReply, state: "closed" as const }],
+  ["without", undefined],
+] as const)("shows a queued close before the action ahead of it answers, %s a reply", ([, reply]) =>
   Effect.scoped(
     Effect.gen(function* () {
       const firstSent = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
+      const releaseReopen = yield* Deferred.make<void>();
       const rows = [1, 2].map((number) => ({
         ...actionReference,
         number,
@@ -2487,11 +2503,22 @@ it.effect("shows a queued close before the action ahead of it answers", () =>
       }));
       const client = actionReplyClient({
         [WS_METHODS.pullRequestsList]: () => Effect.succeed(listResult(rows)),
-        [WS_METHODS.pullRequestsRunAction]: (input: { readonly number: number }) =>
+        [WS_METHODS.pullRequestsRunAction]: (input: {
+          readonly number: number;
+          readonly action: string;
+        }) =>
           Effect.gen(function* () {
+            if (input.action === "reopen") {
+              yield* Deferred.await(releaseReopen);
+              return yield* new PullRequestOperationError({
+                operation: "runAction",
+                detail: "reopen refused",
+              });
+            }
             if (input.number === 1) {
               yield* Deferred.succeed(firstSent, undefined);
               yield* Deferred.await(release);
+              return reply;
             }
             return undefined;
           }),
@@ -2519,7 +2546,13 @@ it.effect("shows a queued close before the action ahead of it answers", () =>
         Option.getOrThrow(AsyncResult.value(registry.get(list))).entries.map((row) => row.number),
       ).toEqual([1]);
       yield* Deferred.succeed(release, undefined);
-      yield* Effect.promise(() => Promise.all([...closes, reopen]));
+      yield* Effect.promise(() => Promise.all(closes));
+      expect(
+        Option.getOrThrow(AsyncResult.value(registry.get(list))).entries.map((row) => row.number),
+      ).toEqual([1]);
+      yield* Deferred.succeed(releaseReopen, undefined);
+      expect((yield* Effect.promise(() => reopen))._tag).toBe("Failure");
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(list))).entries).toEqual([]);
     }),
   ),
 );

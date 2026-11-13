@@ -1,3 +1,8 @@
+import {
+  editHeldPullRequestListEntries,
+  pullRequestHostAnswer,
+  pullRequestPendingEditsFor,
+} from "@t3tools/client-runtime/state/pull-requests";
 import { RegistryContext, useAtomMount, useAtomSubscribe, useAtomValue } from "@effect/atom-react";
 import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestDiffStat, PullRequestListInput } from "@t3tools/contracts";
@@ -31,7 +36,10 @@ type Read = <A>(atom: Atom.Atom<A>) => A;
 
 /** The head the list query holds now, cached or answered. */
 function currentHead(read: Read, target: ListTarget) {
-  return AsyncResult.getOrElse(read(composerPullRequests.list(target)), () => null);
+  return AsyncResult.getOrElse(
+    read(pullRequestHostAnswer(composerPullRequests.list(target))),
+    () => null,
+  );
 }
 
 function currentPages(read: Read, target: ListTarget): PullRequestListPages | null {
@@ -44,12 +52,23 @@ function currentPages(read: Read, target: ListTarget): PullRequestListPages | nu
 const sourcesFamily = Atom.family((key: string) => {
   const targets: readonly ListTarget[] = JSON.parse(key);
   return Atom.make((get) =>
-    targets.map((target) => ({
-      target,
-      result: get(composerPullRequests.list(target)),
-      pages: currentPages(get, target),
-      stats: get(pullRequestListStatsFamily(target.environmentId)),
-    })),
+    targets.map((target) => {
+      const pages = currentPages(get, target);
+      return {
+        target,
+        result: get(composerPullRequests.list(target)),
+        pages:
+          pages === null
+            ? null
+            : {
+                ...pages,
+                entries: editHeldPullRequestListEntries(target.input, pages.entries, (entry) =>
+                  get(pullRequestPendingEditsFor(target.environmentId, entry)),
+                ),
+              },
+        stats: get(pullRequestListStatsFamily(target.environmentId)),
+      };
+    }),
   );
 });
 
@@ -71,7 +90,7 @@ async function loadNextPages(
     continuations(registry, targets).map(async ({ target, pages, input }) => {
       const response = await executeAtomQuery(
         registry,
-        composerPullRequests.list({ ...target, input }),
+        pullRequestHostAnswer(composerPullRequests.list({ ...target, input })),
         {
           signal,
           refresh: retry,
@@ -113,11 +132,15 @@ async function refreshHeads(
         input: {},
       });
       if (signal.aborted) return;
-      const response = await executeAtomQuery(registry, composerPullRequests.list(target), {
-        refresh: true,
-        signal,
-        reportFailure: false,
-      });
+      const response = await executeAtomQuery(
+        registry,
+        pullRequestHostAnswer(composerPullRequests.list(target)),
+        {
+          refresh: true,
+          signal,
+          reportFailure: false,
+        },
+      );
       if (signal.aborted) return;
       if (response._tag === "Failure") throw squashAtomCommandFailure(response);
       registry.set(

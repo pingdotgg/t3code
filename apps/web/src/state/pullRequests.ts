@@ -5,7 +5,8 @@ import {
   createLinkedPullRequestSummaryAtomFamily,
   createPullRequestEnvironmentAtoms,
   createPullRequestStackAtomFamily,
-  pullRequestPendingEditsAtom,
+  pullRequestPendingEditsFor,
+  pullRequestHostAnswer,
 } from "@t3tools/client-runtime/state/pull-requests";
 import {
   PullRequestListResult,
@@ -67,7 +68,7 @@ export function newestPullRequestSummary(
 ): PullRequestSummary | null {
   if (current === null) return observed;
   if (observed === null) return current;
-  return compareSummaries(current, observed) > 0 ? observed : current;
+  return compareSummaries(current, observed) >= 0 ? observed : current;
 }
 
 /** A stored snapshot carries no edit, so a shared summary dated the same wins over it. */
@@ -77,8 +78,8 @@ export function newestDisplayedPullRequestSummary(
   shared: PullRequestSummary | null,
 ): PullRequestSummary | null {
   return fromSnapshot
-    ? newestPullRequestSummary(shared, detail)
-    : newestPullRequestSummary(detail, shared);
+    ? newestPullRequestSummary(detail, shared)
+    : newestPullRequestSummary(shared, detail);
 }
 
 export function pullRequestListEntryToSummary(entry: PullRequestListEntry): PullRequestSummary {
@@ -392,7 +393,7 @@ export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connecti
       recordObservation(registry, pullRequestSummaryKey(environmentId, input), (current) => {
         const summary = applyPullRequestSummaryEdits(
           input,
-          newestPullRequestSummary(observedPullRequestSummary(current), saved),
+          newestPullRequestSummary(saved, observedPullRequestSummary(current)),
           [edit],
         );
         return summary === null ? current : { ...current, metadata: { summary, observedAt } };
@@ -533,7 +534,7 @@ export function useSharedPullRequestSummary(
       ? "none"
       : pullRequestSummaryKey(environmentId, reference);
   const observations = useAtomValue(pullRequestObservationsAtom(key));
-  const edits = useAtomValue(pullRequestPendingEditsAtom(environmentId));
+  const edits = useAtomValue(pullRequestPendingEditsFor(environmentId, reference));
   const saved = useAtomValue(
     savedPullRequestSummaryAtom(
       environmentId === null || reference === null
@@ -543,7 +544,7 @@ export function useSharedPullRequestSummary(
   );
   return applyPullRequestSummaryEdits(
     reference,
-    newestPullRequestSummary(observedPullRequestSummary(observations), saved),
+    newestPullRequestSummary(saved, observedPullRequestSummary(observations)),
     edits,
   );
 }
@@ -651,6 +652,13 @@ function createMergedEnvironmentQuery<Input, A>(
   };
 }
 
+const usePullRequestHostListsQuery = createMergedEnvironmentQuery(
+  "web-pull-requests:host-list",
+  (target: EnvironmentQueryTarget<PullRequestListInput>) =>
+    pullRequestHostAnswer(pullRequestEnvironment.list(target)),
+  observeFailedPullRequestList,
+);
+
 const usePullRequestListsQuery = createMergedEnvironmentQuery(
   "web-pull-requests:list",
   pullRequestEnvironment.list,
@@ -697,7 +705,18 @@ export interface MergedPullRequestListView {
 export function usePullRequestList(
   targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>>,
 ): MergedPullRequestListView {
-  const query = usePullRequestListsQuery(targets);
+  return mergedPullRequestListView(usePullRequestListsQuery(targets));
+}
+
+export function usePullRequestHostList(
+  targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>>,
+): MergedPullRequestListView {
+  return mergedPullRequestListView(usePullRequestHostListsQuery(targets));
+}
+
+function mergedPullRequestListView(
+  query: ReturnType<typeof usePullRequestListsQuery>,
+): MergedPullRequestListView {
   const data = mergePullRequestLists(query.values);
   return {
     data,

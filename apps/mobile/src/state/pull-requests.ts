@@ -2,6 +2,7 @@ import {
   createPullRequestEnvironmentAtoms,
   createPullRequestStackAtomFamily,
   patchPullRequestListEntries,
+  pullRequestPendingEditsAtom,
 } from "@t3tools/client-runtime/state/pull-requests";
 import type { EnvironmentId, PullRequestListInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -56,6 +57,7 @@ export const composerPullRequests = createPullRequestEnvironmentAtoms(connection
             pages.entries,
             target.input,
             reply,
+            registry.get(pullRequestPendingEditsAtom(target.environmentId)),
           );
           return entries === "refresh" || entries === pages.entries ? pages : { ...pages, entries };
         });

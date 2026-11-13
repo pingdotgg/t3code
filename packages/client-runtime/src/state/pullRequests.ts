@@ -168,7 +168,11 @@ type EditedField = "state" | "isDraft" | "autoMergeEnabled" | "title" | "body";
 interface EditableReader {
   readonly environmentId: EnvironmentId;
   readonly concerns: (reference: PullRequestRef) => boolean;
-  readonly edit: (value: never, edits: ReadonlyArray<PullRequestPendingEdit>) => unknown;
+  readonly edit: (
+    value: never,
+    edits: ReadonlyArray<PullRequestPendingEdit>,
+    pending?: ReadonlyArray<PullRequestPendingEdit>,
+  ) => unknown;
 }
 
 // Module-wide like the reply patches, so separately built readers see the same writes.
@@ -178,6 +182,34 @@ export const pullRequestPendingEditsAtom = Atom.family((_environmentId: Environm
 const editableReaders = new WeakMap<object, EditableReader>();
 const editedReaders = new WeakMap<object, object>();
 const uneditedReaders = new WeakMap<object, object>();
+
+const pendingEditsByPullRequest = Atom.family((key: string) => {
+  const [environmentId, reference] = JSON.parse(key) as [EnvironmentId, PullRequestRef];
+  return Atom.make((get) =>
+    get(pullRequestPendingEditsAtom(environmentId)).filter((edit) =>
+      samePullRequest(reference, edit.reference),
+    ),
+  ).pipe(
+    Atom.withEquality(
+      (previous: ReadonlyArray<PullRequestPendingEdit>, next) =>
+        previous.length === next.length && previous.every((edit, index) => edit === next[index]),
+    ),
+  );
+});
+const noPendingEdits = Atom.make<ReadonlyArray<PullRequestPendingEdit>>([]);
+
+export function pullRequestPendingEditsFor(
+  environmentId: EnvironmentId | null,
+  reference: PullRequestRef | null,
+): Atom.Atom<ReadonlyArray<PullRequestPendingEdit>> {
+  return environmentId === null || reference === null
+    ? noPendingEdits
+    : pendingEditsByPullRequest(JSON.stringify([environmentId, pullRequestReference(reference)]));
+}
+
+export function pullRequestHostAnswer<A>(reader: Atom.Atom<A>): Atom.Atom<A> {
+  return (uneditedReaders.get(reader) ?? reader) as Atom.Atom<A>;
+}
 
 function loadedValue<A>(registry: AtomRegistry.AtomRegistry, atom: Atom.Atom<unknown>) {
   return Option.flatMap(registry.getNodes().get(atom)?.valueOption() ?? Option.none(), (result) =>
@@ -244,7 +276,11 @@ function withLabelCandidateEdit(
 function editedQuery<A, E>(
   inner: Atom.Writable<AsyncResult.AsyncResult<A, E>>,
   reader: Omit<EditableReader, "edit"> & {
-    readonly edit: (value: A, edits: ReadonlyArray<PullRequestPendingEdit>) => A;
+    readonly edit: (
+      value: A,
+      edits: ReadonlyArray<PullRequestPendingEdit>,
+      pending?: ReadonlyArray<PullRequestPendingEdit>,
+    ) => A;
   },
   idleTtlMs = 5 * 60_000,
 ): Atom.Writable<AsyncResult.AsyncResult<A, E>> {
@@ -257,7 +293,7 @@ function editedQuery<A, E>(
         reader.concerns(edit.reference),
       );
       const value = AsyncResult.value(result);
-      if (edits.length === 0 || Option.isNone(value)) return result;
+      if (Option.isNone(value)) return result;
       const next = reader.edit(value.value, edits);
       return next === value.value ? result : AsyncResult.map(result, () => next);
     },
@@ -299,19 +335,21 @@ function settleEdit(
   readsAfterWrite = false,
 ) {
   if (edit === null) return;
+  const pending = registry.get(pullRequestPendingEditsAtom(environmentId));
   for (const atom of registry.getNodes().keys()) {
     const reader = typeof atom === "string" ? undefined : editableReaders.get(atom);
     if (reader?.environmentId !== environmentId || !reader.concerns(edit.reference)) continue;
     const shown = loadedValue<never>(registry, atom as Atom.Atom<unknown>);
     const writable = atom as Atom.Writable<AsyncResult.AsyncResult<never, unknown>>;
-    const unchanged = Option.isSome(shown) && reader.edit(shown.value, [edit]) === shown.value;
+    const unchanged =
+      Option.isSome(shown) && reader.edit(shown.value, [edit], pending) === shown.value;
     if (unchanged) continue;
     // A read still waiting may predate the write, unless the caller started it after the commit.
     if (!readsAfterWrite && registry.get(writable).waiting) registry.refresh(writable);
     if (Option.isNone(shown)) continue;
     registry.update(
       writable,
-      AsyncResult.map((value) => reader.edit(value, [edit]) as never),
+      AsyncResult.map((value) => reader.edit(value, [edit], pending) as never),
     );
   }
 }
@@ -402,6 +440,22 @@ function listAccepts(input: PullRequestListInput, state: string, isDraft: boolea
   );
 }
 
+function listKeeps(
+  input: PullRequestListInput,
+  entry: PullRequestListEntry,
+  pending: ReadonlyArray<PullRequestPendingEdit>,
+) {
+  if (listAccepts(input, entry.state, entry.isDraft)) return true;
+  const edited = pending.reduce(
+    (current, edit) =>
+      samePullRequest(entry, edit.reference)
+        ? withEdit(current, edit, ["state", "isDraft"])
+        : current,
+    entry,
+  );
+  return edited !== entry && listAccepts(input, edited.state, edited.isDraft);
+}
+
 /**
  * Listing rows with an action's reply applied, the same array when it changes none, and `refresh`
  * when the reply adds the pull request to a listing, which only a read can place.
@@ -411,6 +465,7 @@ export function patchPullRequestListEntries<Entry extends PullRequestListEntry>(
   entries: ReadonlyArray<Entry>,
   reference: PullRequestRef,
   reply: PullRequestSummary,
+  pending: ReadonlyArray<PullRequestPendingEdit> = [],
 ): ReadonlyArray<Entry> | "refresh" {
   let found = false;
   let changed = false;
@@ -433,7 +488,7 @@ export function patchPullRequestListEntries<Entry extends PullRequestListEntry>(
         "updatedAt",
       ]),
     };
-    return listAccepts(input, next.state, next.isDraft) ? [next] : [];
+    return listKeeps(input, next, pending) ? [next] : [];
   });
   if (!found) {
     return input.cursors === undefined && listAccepts(input, reply.state, reply.isDraft)
@@ -445,10 +500,11 @@ export function patchPullRequestListEntries<Entry extends PullRequestListEntry>(
     : entries;
 }
 
-function editListEntries<Entry extends PullRequestListEntry>(
+function editPullRequestListEntries<Entry extends PullRequestListEntry>(
   input: PullRequestListInput,
   entries: ReadonlyArray<Entry>,
   edits: ReadonlyArray<PullRequestPendingEdit>,
+  pending = edits,
 ): ReadonlyArray<Entry> {
   let changed = false;
   const edited = entries.flatMap((entry): Entry[] => {
@@ -459,11 +515,26 @@ function editListEntries<Entry extends PullRequestListEntry>(
           : current,
       entry,
     );
-    if (next === entry) return [entry];
+    if (next === entry && listAccepts(input, next.state, next.isDraft)) return [entry];
     changed = true;
-    return listAccepts(input, next.state, next.isDraft) ? [next] : [];
+    return listKeeps(input, next, pending) ? [next] : [];
   });
   return changed ? edited : entries;
+}
+
+export function editHeldPullRequestListEntries<Entry extends PullRequestListEntry>(
+  input: PullRequestListInput,
+  entries: ReadonlyArray<Entry>,
+  editsOf: (entry: Entry) => ReadonlyArray<PullRequestPendingEdit>,
+): ReadonlyArray<Entry> {
+  let changed = false;
+  const shown = entries.flatMap((entry) => {
+    const edits = editsOf(entry);
+    const next = editPullRequestListEntries(input, [entry], edits);
+    if (next[0] !== entry) changed = true;
+    return next;
+  });
+  return changed ? shown : entries;
 }
 
 function patchListWithReply(
@@ -471,8 +542,9 @@ function patchListWithReply(
   value: PullRequestListResult,
   reference: PullRequestRef,
   reply: PullRequestSummary,
+  pending: ReadonlyArray<PullRequestPendingEdit>,
 ): PullRequestListResult | "refresh" {
-  const entries = patchPullRequestListEntries(input, value.entries, reference, reply);
+  const entries = patchPullRequestListEntries(input, value.entries, reference, reply, pending);
   if (entries === "refresh") return entries;
   return entries === value.entries ? value : { ...value, entries };
 }
@@ -497,6 +569,7 @@ function actionPatchedQuery<Input, A, E>(
       value: A,
       reference: PullRequestRef,
       reply: PullRequestSummary,
+      pending: ReadonlyArray<PullRequestPendingEdit>,
     ) => A | "refresh";
     /** Fields the reply lacks also changed, so the patched value shows while a read fetches them. */
     readonly rereads?: (value: A, reply: PullRequestSummary) => boolean;
@@ -505,7 +578,12 @@ function actionPatchedQuery<Input, A, E>(
     /** False for reads the refresh stream does not restart; defaults to true. */
     readonly refreshedByServer?: (input: Input) => boolean;
     /** Shows a write in flight; absent where the reader holds nothing such a write changes. */
-    readonly edit?: (input: Input, value: A, edits: ReadonlyArray<PullRequestPendingEdit>) => A;
+    readonly edit?: (
+      input: Input,
+      value: A,
+      edits: ReadonlyArray<PullRequestPendingEdit>,
+      pending?: ReadonlyArray<PullRequestPendingEdit>,
+    ) => A;
   },
 ) {
   const writable = Atom.family((atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>) =>
@@ -523,7 +601,7 @@ function actionPatchedQuery<Input, A, E>(
             {
               environmentId: target.environmentId,
               concerns: (reference) => options.concerns(target.input, reference),
-              edit: (value, pending) => edit(target.input, value, pending),
+              edit: (value, edits, pending) => edit(target.input, value, edits, pending),
             },
             options.idleTtlMs,
           );
@@ -556,7 +634,13 @@ function actionPatchedQuery<Input, A, E>(
             (current: AsyncResult.AsyncResult<A, E>) => AsyncResult.value(current),
           );
           if (Option.isNone(shown)) return reread();
-          const patched = options.patch(target.input, shown.value, reference, reply);
+          const patched = options.patch(
+            target.input,
+            shown.value,
+            reference,
+            reply,
+            registry.get(pullRequestPendingEditsAtom(environmentId)),
+          );
           if (patched === "refresh") return reread();
           const lacking = options.rereads?.(shown.value, reply) === true;
           const next = reuseUnchanged(shown.value, patched);
@@ -1083,8 +1167,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
             input.host.toLowerCase() === reference.host.toLowerCase()),
         refreshedByServer: (input) => input.cursors === undefined,
         patch: patchListWithReply,
-        edit: (input, value, edit) => {
-          const entries = editListEntries(input, value.entries, edit);
+        edit: (input, value, edits, pending) => {
+          const entries = editPullRequestListEntries(input, value.entries, edits, pending);
           return entries === value.entries ? value : { ...value, entries };
         },
       },
