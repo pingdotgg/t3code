@@ -3070,7 +3070,7 @@ const make = Effect.gen(function* () {
       // Client callers (the CLI, older linked environments) page forward from a cursorless read.
       const newestFirst =
         input.beforePosition !== undefined ||
-        (input.afterPosition === undefined && (input.latest ?? scope.thread !== undefined));
+        (input.afterPosition === undefined && scope.thread !== undefined);
       const timeline = yield* threadManagement
         .getTimelinePage(input.threadId, {
           ...(input.afterPosition === undefined ? {} : { afterPosition: input.afterPosition }),
