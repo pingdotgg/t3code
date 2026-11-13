@@ -1,10 +1,13 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import type { RepositoryIdentity } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
@@ -49,6 +52,7 @@ const layer = (
 ) =>
   Layer.effect(ProjectEnrichment.ProjectEnrichmentService, ProjectEnrichment.make(options)).pipe(
     Layer.provide(metadataLayer),
+    Layer.provide(NodeServices.layer),
   );
 
 it.effect("publishes repository completion while favicon enrichment is still pending", () =>
@@ -387,4 +391,37 @@ it.effect("keeps a lookup's identity when another root is invalidated mid-flight
       assert.equal(expired.repositoryIdentity?.canonicalKey, "example.test/v1/widgets");
     }).pipe(Effect.provide(layer(layerMetadata)));
   }),
+);
+
+it.effect.each([
+  ["without a remote", Effect.succeed(null)],
+  ["whose identity lookup fails", Effect.die("git is unavailable")],
+] as const)("reports the checkout containing a subdirectory project %s", ([, identity]) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const repoRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: "enrichment-root-" });
+    const projectRoot = path.join(repoRoot, "ios");
+    yield* fileSystem.makeDirectory(path.join(repoRoot, ".git"));
+    yield* fileSystem.makeDirectory(projectRoot);
+    const layerMetadata = Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: () => identity,
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
+        resolvePath: () => Effect.succeed(null),
+      }),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+      const changes = yield* service.subscribeChanges;
+      yield* service.request(projectRoot);
+      const resolved = yield* PubSub.take(changes);
+      assert.isNull(resolved.enrichment.repositoryIdentity);
+      assert.equal(resolved.enrichment.repositoryRoot, repoRoot);
+      assert.equal((yield* service.peek(projectRoot)).repositoryRoot, repoRoot);
+    }).pipe(Effect.provide(layer(layerMetadata)));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

@@ -67,6 +67,24 @@ export function resolveFileLinkPath(
   return isAbsolutePath(targetPath) ? targetPath : normalizeRelativePath(targetPath);
 }
 
+/**
+ * `resolveFileLinkPath` for a link in an agent's reply. A relative one is
+ * relative to the agent's cwd, which a project in a repository subdirectory
+ * places below the thread's `workspaceRoot`; the result is relative to that root.
+ */
+export function resolveAgentFileLinkPath(
+  agentCwd: string | null | undefined,
+  workspaceRoot: string | null | undefined,
+  targetPath: string,
+): string | null {
+  const subdirectory =
+    agentCwd && workspaceRoot ? resolveWorkspaceRelativeFilePath(workspaceRoot, agentCwd) : null;
+  if (subdirectory === null || isAbsolutePath(targetPath) || targetPath.startsWith("~")) {
+    return resolveFileLinkPath(workspaceRoot, targetPath);
+  }
+  return normalizeRelativePath(`${subdirectory}/${targetPath}`);
+}
+
 export function resolveWorkspaceRelativeFilePath(
   workspaceRoot: string | null | undefined,
   targetPath: string,

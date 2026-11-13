@@ -246,6 +246,7 @@ export function useComposerCommandMenu({
   linkedEnvironments = NO_LINKED_ENVIRONMENTS,
   currentThreadId = null,
   projectCwd,
+  agentCwd = projectCwd,
   pullRequestProjectId = null,
   pullRequestRepository = null,
   threadPullRequests,
@@ -270,6 +271,7 @@ export function useComposerCommandMenu({
   readonly linkedEnvironments?: ReadonlyMap<EnvironmentId, string>;
   readonly currentThreadId?: ThreadId | null;
   readonly projectCwd: string | null;
+  readonly agentCwd?: string | null;
   readonly pullRequestProjectId?: ProjectId | null;
   readonly pullRequestRepository?: string | null;
   readonly threadPullRequests?: ReadonlyArray<ThreadPullRequestLink>;
@@ -303,15 +305,15 @@ export function useComposerCommandMenu({
     setLocalSelection({ ownerKey, start: next.start, end: next.end });
 
   const skills = selectedProviderStatus
-    ? resolveProviderSkillsForCwd(selectedProviderStatus, projectCwd)
+    ? resolveProviderSkillsForCwd(selectedProviderStatus, agentCwd)
     : [];
   const selectedProviderInstanceId = selectedProviderStatus?.instanceId;
   const refreshWorkspaceSnapshot = useAtomRefresh(
-    environmentId && projectCwd && selectedProviderInstanceId
+    environmentId && agentCwd && selectedProviderInstanceId
       ? providerWorkspaceSnapshotRefresh({
           environmentId,
           instanceId: selectedProviderInstanceId,
-          cwd: projectCwd,
+          cwd: agentCwd,
         })
       : idleWorkspaceSnapshotRefreshAtom,
   );
@@ -394,7 +396,7 @@ export function useComposerCommandMenu({
           ? {
               ...selectedProviderStatus,
               slashCommands: getProviderSlashCommandsForSlashMenu(
-                resolveProviderSlashCommandsForCwd(selectedProviderStatus, projectCwd),
+                resolveProviderSlashCommandsForCwd(selectedProviderStatus, agentCwd),
                 visibleSkills,
               ),
             }

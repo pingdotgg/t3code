@@ -226,6 +226,8 @@ export interface ThreadComposerProps {
   readonly canStopThread: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
+  // Where the agent works, which its skills, commands and models come from.
+  readonly agentCwd: string | null;
   readonly sendBlockedReason?: string | null;
   readonly interactionLocked?: boolean;
   readonly draftKey?: string;
@@ -558,6 +560,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     linkedEnvironments: useLinkedEnvironments(props.environmentId),
     currentThreadId: props.selectedThread.id,
     projectCwd: props.projectCwd,
+    agentCwd: props.agentCwd,
     pullRequestProjectId: props.serverConfig ? (project?.id ?? null) : null,
     pullRequestRepository: project?.repositoryIdentity?.displayName ?? null,
     threadPullRequests: props.selectedThread.pullRequests,
@@ -716,7 +719,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     ? undefined
     : currentModelSelection.instanceId;
   const modelOptions = buildModelOptions(
-    serverConfigForCwd(props.serverConfig, props.projectCwd),
+    serverConfigForCwd(props.serverConfig, props.agentCwd),
     currentModelSelection,
     lockedProviderInstanceId,
     props.selectedThread.projectId,

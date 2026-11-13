@@ -434,6 +434,8 @@ export interface ChatComposerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
   gitCwd: string | null;
+  // Where the agent works, which its skills and commands come from.
+  agentCwd: string | null;
   pullRequestProjectId: ProjectId | null;
   pullRequestRepository: string | null;
   threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
@@ -551,6 +553,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     keybindings,
     terminalOpen,
     gitCwd,
+    agentCwd,
     pullRequestProjectId,
     pullRequestRepository,
     threadPullRequests,
@@ -932,15 +935,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isSendDisabled = sendDisabledReason !== null;
   const selectedProviderStatus = selectedProviderEntry?.snapshot ?? null;
   const selectedProviderSkills = selectedProviderStatus
-    ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
+    ? resolveProviderSkillsForCwd(selectedProviderStatus, agentCwd)
     : NO_PROVIDER_SKILLS;
   const selectedProviderSlashCommands = selectedProviderStatus
-    ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
+    ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, agentCwd)
     : NO_PROVIDER_SLASH_COMMANDS;
   const { refresh: refreshWorkspaceSnapshotOnTyping, scanning: workspaceSkillsScanning } =
     useProviderWorkspaceSnapshotRefresh({
       environmentId,
-      gitCwd,
+      gitCwd: agentCwd,
       instanceId: selectedProviderEntry?.instanceId,
     });
 

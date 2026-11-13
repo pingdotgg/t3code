@@ -5,8 +5,10 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -14,6 +16,7 @@ import type * as Scope from "effect/Scope";
 
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
+import { findRepositoryRoot } from "./repositoryRoot.ts";
 
 const DEFAULT_CACHE_CAPACITY = 512;
 const DEFAULT_MAX_PENDING = 512;
@@ -25,6 +28,9 @@ const DEFAULT_FAILURE_TTL = Duration.seconds(5);
 
 export interface ProjectEnrichment {
   readonly repositoryIdentity: RepositoryIdentity | null;
+  // The checkout containing the project, found without a remote, so clients can
+  // place a subdirectory project inside a thread's worktree.
+  readonly repositoryRoot: string | null;
   readonly faviconPath: string | null;
   readonly repositoryIdentityResolved: boolean;
 }
@@ -110,6 +116,8 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
     lastRepositoryIdentities.set(workspaceRoot, repositoryIdentity);
   };
 
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const repositoryIdentityCache = yield* Cache.makeWith(
     (workspaceRoot: string) =>
       Effect.suspend(() => {
@@ -148,6 +156,14 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
         onSuccess: (result) => (Exit.isSuccess(result) ? DEFAULT_FAVICON_TTL : DEFAULT_FAILURE_TTL),
       }),
     },
+  );
+  const repositoryRootCache = yield* Cache.makeWith(
+    (workspaceRoot: string) =>
+      findRepositoryRoot(workspaceRoot).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      ),
+    { capacity: cacheCapacity, timeToLive: () => DEFAULT_SUCCESS_TTL },
   );
   const makeWorkLane = Effect.gen(function* () {
     const pendingRoots = yield* Ref.make<ReadonlySet<string>>(new Set());
@@ -197,6 +213,7 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
   const resolveRepositoryIdentity = Effect.fn("ProjectEnrichmentService.resolveRepositoryIdentity")(
     function* (workspaceRoot: string) {
       const repositoryIdentity = yield* Cache.get(repositoryIdentityCache, workspaceRoot);
+      const repositoryRoot = yield* Cache.get(repositoryRootCache, workspaceRoot);
       yield* logFailure(workspaceRoot, "repositoryIdentity", repositoryIdentity);
       const faviconPath = yield* Cache.getSuccess(faviconCache, workspaceRoot);
       const repositoryIdentityResolved = Exit.isSuccess(repositoryIdentity);
@@ -205,6 +222,7 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
         repositoryIdentityResolved,
         enrichment: {
           repositoryIdentity: availableValue(Option.some(repositoryIdentity)),
+          repositoryRoot,
           faviconPath: availableValue(faviconPath),
           repositoryIdentityResolved,
         },
@@ -269,9 +287,10 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
   // peek/request/getAvailable run per project on every shell read, inside the caller's span; own spans were ~0ms noise.
   const peek: ProjectEnrichmentService["Service"]["peek"] = Effect.fnUntraced(
     function* (workspaceRoot) {
-      const [repositoryIdentity, faviconPath] = yield* Effect.all(
+      const [repositoryIdentity, repositoryRoot, faviconPath] = yield* Effect.all(
         [
           Cache.getSuccess(repositoryIdentityCache, workspaceRoot),
+          Cache.getSuccess(repositoryRootCache, workspaceRoot),
           Cache.getSuccess(faviconCache, workspaceRoot),
         ] as const,
         { concurrency: "unbounded" },
@@ -281,6 +300,7 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
         repositoryIdentity: repositoryIdentityResolved
           ? availableValue(repositoryIdentity)
           : (lastRepositoryIdentities.get(workspaceRoot) ?? null),
+        repositoryRoot: Option.getOrNull(repositoryRoot),
         faviconPath: availableValue(faviconPath),
         repositoryIdentityResolved,
       };
@@ -289,10 +309,15 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
 
   const request: ProjectEnrichmentService["Service"]["request"] = Effect.fnUntraced(
     function* (workspaceRoot) {
-      const [hasRepositoryIdentity, hasFaviconPath] = yield* Effect.all(
-        [Cache.has(repositoryIdentityCache, workspaceRoot), Cache.has(faviconCache, workspaceRoot)],
+      const [hasIdentity, hasRepositoryRoot, hasFaviconPath] = yield* Effect.all(
+        [
+          Cache.has(repositoryIdentityCache, workspaceRoot),
+          Cache.has(repositoryRootCache, workspaceRoot),
+          Cache.has(faviconCache, workspaceRoot),
+        ],
         { concurrency: "unbounded" },
       );
+      const hasRepositoryIdentity = hasIdentity && hasRepositoryRoot;
       yield* Effect.all(
         [
           hasRepositoryIdentity
@@ -328,6 +353,7 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
         Effect.all(
           [
             Cache.invalidate(repositoryIdentityCache, workspaceRoot),
+            Cache.invalidate(repositoryRootCache, workspaceRoot),
             Effect.sync(() => {
               lookupsInFlight.delete(workspaceRoot);
               lastRepositoryIdentities.delete(workspaceRoot);

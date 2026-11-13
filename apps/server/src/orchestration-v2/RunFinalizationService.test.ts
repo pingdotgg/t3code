@@ -277,6 +277,7 @@ const layerIdentityRefresh = <R>(
           Layer.provide(
             Layer.mergeAll(
               resolver,
+              NodeServices.layer,
               Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
                 invalidate: () => Effect.void,
                 resolvePath: () => Effect.succeed(null),

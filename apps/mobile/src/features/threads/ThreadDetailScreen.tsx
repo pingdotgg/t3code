@@ -282,6 +282,8 @@ export interface ThreadDetailScreenProps {
   readonly environmentId: EnvironmentId;
   readonly projectWorkspaceRoot: string | null;
   readonly threadCwd: string | null;
+  // Where the agent works, which its skills come from and its links start at.
+  readonly agentCwd: string | null;
   readonly selectedThreadQueueCount: number;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
@@ -1256,9 +1258,7 @@ function ThreadDetailBody(
     const provider = props.serverConfig?.providers.find(
       (candidate) => candidate.instanceId === selectedInstanceId,
     );
-    return provider
-      ? resolveProviderSkillsForCwd(provider, props.threadCwd ?? props.projectWorkspaceRoot)
-      : [];
+    return provider ? resolveProviderSkillsForCwd(provider, props.agentCwd) : [];
   })();
 
   const currentPendingApprovals = () =>
@@ -1482,6 +1482,7 @@ function ThreadDetailBody(
                   threadId={props.selectedThread.id}
                   detailRef={props.selectedThreadDetailRef}
                   workspaceRoot={props.threadCwd}
+                  agentCwd={props.agentCwd}
                   feed={props.selectedThreadFeed}
                   pendingHandoff={props.pendingHandoff}
                   worktreeSetup={props.worktreeSetup}
@@ -1904,6 +1905,7 @@ function ThreadDetailBody(
                         canStopThread={props.canStopThread}
                         environmentId={props.environmentId}
                         projectCwd={props.threadCwd ?? props.projectWorkspaceRoot}
+                        agentCwd={props.agentCwd}
                         // Keep follow-ups in the draft until server creation succeeds, or rejection strands them in the outbox.
                         sendBlockedReason={
                           props.draftMode

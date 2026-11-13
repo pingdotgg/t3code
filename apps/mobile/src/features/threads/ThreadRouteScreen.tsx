@@ -41,6 +41,7 @@ import {
 } from "@t3tools/shared/projectScripts";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useConnectionsReady } from "../../state/workspace";
+import { useThreadAgentCwd } from "./useThreadAgentCwd";
 import { useEnvironmentShellReadiness } from "../../state/shell";
 import { restoredNewTaskDraftKey } from "../../state/new-task-draft-key";
 import { clearPendingThreadCreationOutcome } from "../../state/pending-thread-creation";
@@ -373,7 +374,12 @@ function ThreadRouteContent(
   );
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const agentCwd = useThreadAgentCwd(
+    selectedThread?.environmentId ?? null,
+    selectedThreadProject ?? null,
+    selectedThreadWorktreePath,
+  );
   const startSideChat = useStartSideChat();
   const composer = useThreadComposerState({ startSideChat });
   const gitState = useSelectedThreadGitState();
@@ -1053,6 +1059,7 @@ function ThreadRouteContent(
           environmentId={selectedThread.environmentId}
           projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
           threadCwd={selectedThreadCwd}
+          agentCwd={agentCwd}
           selectedThreadQueueCount={composer.selectedThreadQueueCount}
           queuedMessages={
             selectedThreadCreation && selectedThreadCreation.outcome?.kind !== "delivered"

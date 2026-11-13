@@ -262,6 +262,7 @@ import { useV2ItemSupport } from "../../state/v2-item-support";
 import {
   fileRoutePathSegments,
   isAbsolutePath,
+  resolveAgentFileLinkPath,
   resolveFileLinkPath,
   resolveWorkspaceFilePath,
   resolveWorkspaceRelativeFilePath,
@@ -322,6 +323,8 @@ export interface ThreadFeedProps {
   readonly detailRef: ScopedThreadRef | null;
   readonly threadTitle: string;
   readonly workspaceRoot?: string | null;
+  // Where the agent works, when that is below workspaceRoot; its relative links start there.
+  readonly agentCwd?: string | null;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly pendingHandoff?: HandoffEndpoints | null;
   readonly contentPresentation: ThreadContentPresentation;
@@ -1073,6 +1076,8 @@ function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
 
 interface MarkdownLinkHandlers {
   readonly onLinkPress: (href: string) => void;
+  // Mention paths are relative to the workspace root, not the agent's cwd.
+  readonly onMentionPress?: (path: string) => void;
   readonly fileContextMenu: (href: string) => MarkdownFileContextMenu | undefined;
   readonly onFileContextMenuAction: (href: string, actionId: string) => void;
   readonly onImagePress?: (href: string) => void;
@@ -2385,7 +2390,7 @@ function UserMessageContent(props: UserMessageContentProps) {
       (record) => record.contextId === reference.contextId,
     );
     if (record?.kind === "mention" && "path" in record) {
-      props.linkHandlers.onLinkPress?.(record.path);
+      (props.linkHandlers.onMentionPress ?? props.linkHandlers.onLinkPress)?.(record.path);
       return;
     }
     if (record?.kind === "thread" && "threadId" in record) {
@@ -2924,7 +2929,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     };
     return lookup().catch(() => relativePath);
   };
-  const onMarkdownLinkPress = (href: string, imageEmbed = false) => {
+  const onMarkdownLinkPress = (href: string, imageEmbed = false, fromAgent = true) => {
     markdownLinkRequest.current?.abort();
     const request = new AbortController();
     markdownLinkRequest.current = request;
@@ -2989,7 +2994,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
     const presentation = resolveMarkdownLinkPresentation(href);
     if (presentation.kind === "file") {
-      const path = resolveFileLinkPath(props.workspaceRoot, presentation.path);
+      const path = resolveAgentFileLinkPath(
+        fromAgent ? props.agentCwd : null,
+        props.workspaceRoot,
+        presentation.path,
+      );
       if (path === null) return;
       void findFileLinkTarget(presentation.path, path, request.signal).then((target) => {
         if (request.signal.aborted) return;
@@ -3031,6 +3040,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         standalone,
       ),
     onLinkPress: onMarkdownLinkPress,
+    onMentionPress: (path) => onMarkdownLinkPress(path, false, false),
     linkCustomization: enrichedThreadLinkCustomization,
     onImagePress: (href) => onMarkdownLinkPress(href, true),
     resolveImageSource,
