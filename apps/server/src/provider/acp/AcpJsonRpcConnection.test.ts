@@ -50,12 +50,20 @@ const setProcessEnv = (name: string, value: string) => {
 const isPromptStarted = (event: AcpSessionRuntime.AcpSessionRequestLogEvent) =>
   event.method === "session/prompt" && event.status === "started";
 
-const isOutgoingPrompt = (event: EffectAcpProtocol.AcpProtocolLogEvent) =>
+const isOutgoing = (tag: string) => (event: EffectAcpProtocol.AcpProtocolLogEvent) =>
   event.direction === "outgoing" &&
   event.stage === "decoded" &&
   typeof event.payload === "object" &&
   event.payload !== null &&
-  Reflect.get(event.payload, "tag") === "session/prompt";
+  Reflect.get(event.payload, "tag") === tag;
+
+// The methods the mock agent read, in order, keeping only the given ones.
+const readReceived = (requestLogPath: string, methods: ReadonlyArray<string>) =>
+  NodeFS.readFileSync(requestLogPath, "utf8")
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => (JSON.parse(line) as { readonly method?: string }).method)
+    .filter((method) => method !== undefined && methods.includes(method));
 
 // Prompts, then cancels while the prompt is held on its way out: in its started request record,
 // in its outgoing protocol log record, or by its fiber yielding every few operations. The cancel
@@ -107,7 +115,7 @@ const promptThenCancel = (input: {
       interruptPromptOnCancel: false,
       protocolLogging: {
         logOutgoing: holdPrompt.in === "protocol-log",
-        logger: (event) => (isOutgoingPrompt(event) ? hold : Effect.void),
+        logger: (event) => (isOutgoing("session/prompt")(event) ? hold : Effect.void),
       },
       requestLogger: (event) =>
         holdPrompt.in === "request-log" && isPromptStarted(event) ? hold : Effect.void,
@@ -162,16 +170,11 @@ const promptThenCancel = (input: {
     yield* runtime.request("_test/finish-cancel", {});
     // The agent answers it only after reading every earlier line.
     yield* roundTrip;
-    const received = NodeFS.readFileSync(requestLogPath, "utf8")
-      .split("\n")
-      .filter((line) => line.length > 0)
-      .map((line) => (JSON.parse(line) as { readonly method?: string }).method)
-      .filter(
-        (method) =>
-          method === "session/prompt" ||
-          method === "session/cancel" ||
-          method === "_test/finish-cancel",
-      );
+    const received = readReceived(requestLogPath, [
+      "session/prompt",
+      "session/cancel",
+      "_test/finish-cancel",
+    ]);
     const promptExit = yield* Fiber.await(prompt);
     yield* Fiber.join(cancel);
     return { received, promptExit };
@@ -1417,5 +1420,63 @@ describe("AcpSessionRuntime", () => {
       yield* TestClock.adjust("5 seconds");
       yield* Fiber.join(cancel);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect(
+    "sends a cancel before the next prompt when the prompt it waited for never went out",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "acp-runtime-"));
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true })),
+        );
+        const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+        let promptsStarted = 0;
+        const runtime = yield* AcpSessionRuntime.make({
+          ...mockRuntimeOptions,
+          spawn: { ...mockRuntimeOptions.spawn, env: { T3_ACP_REQUEST_LOG_PATH: requestLogPath } },
+          interruptPromptOnCancel: false,
+          // The cancel spends a test-clock second in its outgoing record, the window in which the
+          // next prompt could overtake it.
+          protocolLogging: {
+            logOutgoing: true,
+            logger: (event) =>
+              isOutgoing("session/cancel")(event) ? Effect.sleep("1 second") : Effect.void,
+          },
+          requestLogger: (event) =>
+            isPromptStarted(event) && promptsStarted++ === 0 ? Effect.never : Effect.void,
+        });
+        yield* runtime.getEvents().pipe(
+          Stream.runForEach((event) =>
+            event._tag === "EventStreamBarrier"
+              ? Deferred.succeed(event.acknowledge, undefined)
+              : Effect.void,
+          ),
+          Effect.forkChild,
+        );
+        yield* runtime.start();
+        const dispatched = yield* Deferred.make<void>();
+        const first = yield* runtime
+          .prompt({ prompt: [{ type: "text", text: "first" }] }, { dispatched })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(dispatched);
+        const cancel = yield* runtime.cancel.pipe(Effect.forkChild({ startImmediately: true }));
+        const next = yield* runtime
+          .prompt({ prompt: [{ type: "text", text: "next" }] })
+          .pipe(Effect.forkChild);
+        // The first prompt ends before it is queued, which releases the cancel's wait.
+        yield* Effect.sleep("1 second").pipe(
+          Effect.andThen(Fiber.interrupt(first)),
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("1 second");
+        yield* TestClock.adjust("1 second");
+        yield* Fiber.join(cancel);
+        yield* Fiber.join(next);
+        expect(readReceived(requestLogPath, ["session/prompt", "session/cancel"])).toEqual([
+          "session/cancel",
+          "session/prompt",
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
