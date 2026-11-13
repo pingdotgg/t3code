@@ -20,9 +20,9 @@ use crate::{
     settings::SettingsStore,
 };
 
-/// The `apps/server` version at the pinned contract commit. Clients compare it with their
-/// own version; a lower one shows a "server is behind" hint.
-pub const CONTRACT_SERVER_VERSION: &str = "0.1.9";
+/// The `apps/server` version at the pinned Conn commit (generated into `conn-contract`).
+/// Clients compare it with their own version; a lower one shows a "server is behind" hint.
+pub const CONTRACT_SERVER_VERSION: &str = conn_contract::T3_SERVER_VERSION;
 
 pub struct Environment {
     /// `ExecutionEnvironmentDescriptor`, served at `/.well-known/t3/environment` and inside

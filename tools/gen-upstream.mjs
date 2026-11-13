@@ -14,6 +14,9 @@
 // - tools/upkeep/http-routes.json: every (method, path) of the T3 server's HTTP API
 //   (`EnvironmentHttpApi` in packages/contracts/src/environmentHttp.ts), by reflection.
 //   tools/bump-report.mjs compares it with the routes this server serves.
+// - crates/conn-contract/src/upstream.rs: `T3_SERVER_VERSION`, the `version` of
+//   apps/server/package.json. Clients compare it with their own; the Codex provider sends it
+//   as its client version. Every crate reads it as `conn_contract::T3_SERVER_VERSION`.
 //
 // Prints notes for what it cannot generate: scope checks that sit inside a handler
 // (`requiredScopeFor*` functions), which the hand code must follow.
@@ -161,11 +164,30 @@ const routesJson = [
   "",
 ].join("\n");
 
+// ---- Server version ----------------------------------------------------------------------
+
+const serverPackage = JSON.parse(NodeFS.readFileSync(inMonorepo("apps/server/package.json"), "utf8"));
+if (typeof serverPackage.version !== "string" || serverPackage.version === "") {
+  throw new Error("apps/server/package.json has no version");
+}
+const upstreamRs = rustfmt(
+  [
+    ...HEADER,
+    "",
+    "/// The `version` of `apps/server/package.json` at the pinned Conn commit: the T3 server",
+    "/// version this server stands in for. Clients compare it with their own version; the Codex",
+    "/// provider sends it as its client version, as the T3 server does.",
+    `pub const T3_SERVER_VERSION: &str = ${str(serverPackage.version)};`,
+    "",
+  ].join("\n"),
+);
+
 // ---- Write or check ----------------------------------------------------------------------
 
 const outputs = {
   "crates/conn-server/src/scopes/generated.rs": scopesRs,
   "tools/upkeep/http-routes.json": routesJson,
+  "crates/conn-contract/src/upstream.rs": upstreamRs,
 };
 
 let stale = false;
@@ -186,7 +208,7 @@ for (const [rel, content] of Object.entries(outputs)) {
 console.log(
   `scopes: ${scopes.length} methods, ${payloadRules.length} payload rules, ${providerKeys.length} provider settings keys`,
 );
-console.log(`http routes: ${routes.length}`);
+console.log(`http routes: ${routes.length}; T3 server version ${serverPackage.version}`);
 for (const name of inHandler) {
   console.log(`note: ${AUTH_FILE} checks a scope inside a handler: ${name}`);
 }

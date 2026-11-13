@@ -110,6 +110,16 @@ if (oldMethods && newMethods && oldMethods.commit !== newMethods.commit) {
   line(`Contract commit: ${short(newMethods.commit)} (unchanged)`);
 }
 
+const serverVersion = (root) =>
+  /T3_SERVER_VERSION: &str = "([^"]+)"/.exec(readText(root, "crates/conn-contract/src/upstream.rs") ?? "")?.[1];
+const oldVersion = serverVersion(before);
+const newVersion = serverVersion(repoRoot);
+line(
+  oldVersion !== newVersion
+    ? `T3 server version: ${oldVersion ?? "?"} → ${newVersion ?? "?"} (conn_contract::T3_SERVER_VERSION; clients and the Codex provider see it)`
+    : `T3 server version: ${newVersion ?? "?"} (unchanged)`,
+);
+
 const checksFile = option("--checks");
 let failedChecks = [];
 if (checksFile && NodeFS.existsSync(checksFile)) {

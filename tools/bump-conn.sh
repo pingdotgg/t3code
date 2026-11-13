@@ -73,6 +73,7 @@ generated=(
   crates/conn-server/keybindings.resolved.json
   crates/conn-server/src/scopes/generated.rs
   tools/upkeep/http-routes.json
+  crates/conn-contract/src/upstream.rs
   tools/upkeep/mcp-tools.json
 )
 for rel in "${generated[@]}"; do
