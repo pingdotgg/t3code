@@ -343,17 +343,21 @@ describe("AgentScope service", () => {
       ({ scope, units, calls, stateDir, manager }) =>
         Effect.gen(function* () {
           const timedOut = yield* Deferred.make<void>();
-          manager.timeout = Deferred.await(timedOut);
+          const stalledProbe = yield* Deferred.make<void>();
+          manager.timeout = Deferred.succeed(stalledProbe, undefined).pipe(
+            Effect.andThen(Deferred.await(timedOut)),
+          );
           const launch = (threadId: string) =>
             scope.wrap({ command: "agent", args: [], name: "t", threadId });
           // Both launches share the stalled probe. The first one launches again,
           // and finds systemd answering, before the second sees the failure.
+          const second = yield* launch("b").pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(stalledProbe);
           const first = yield* launch("a").pipe(
             Effect.andThen(Effect.sync(() => (manager.stalled = false))),
             Effect.andThen(launch("a")),
             Effect.forkChild({ startImmediately: true }),
           );
-          const second = yield* launch("b").pipe(Effect.forkChild({ startImmediately: true }));
           yield* Deferred.succeed(timedOut, undefined);
           expect(sliceOf(yield* Fiber.join(first))).toBe(ownedAgentSlice(stateDir));
           expect(unitOf(yield* Fiber.join(second))).toBe("");
