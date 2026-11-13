@@ -222,6 +222,14 @@ function fileContentVersion(file: FileDiffMetadata): number {
   return version;
 }
 
+function parseKeyedSlice(slice: DiffSlice, keyPrefix: string, ignoreWhitespace: boolean) {
+  let hash = patchHashes.get(slice);
+  if (hash === undefined) patchHashes.set(slice, (hash = fnv1a32(slice.patch)));
+  // The cache key carries the theme, which the tokenizer caches against, and the patch's
+  // hash: a refreshed page reuses its cursor, so position alone would return a stale parse.
+  return parseSlice(slice, `${keyPrefix}:${slice.cursor ?? "first"}:${hash}`, ignoreWhitespace);
+}
+
 // Hashing, ordering and counting every file of a huge pull request costs a second, and the tab
 // renders far more often than its slices change, so the model is kept per slice list.
 function diffModel(
@@ -234,13 +242,7 @@ function diffModel(
   if (models === undefined) diffModels.set(slices, (models = new Map()));
   const cached = models.get(keyPrefix);
   if (cached !== undefined) return cached;
-  const parsedSlices = slices.map((slice) => {
-    let hash = patchHashes.get(slice);
-    if (hash === undefined) patchHashes.set(slice, (hash = fnv1a32(slice.patch)));
-    // The cache key carries the theme, which the tokenizer caches against, and the patch's
-    // hash: a refreshed page reuses its cursor, so position alone would return a stale parse.
-    return parseSlice(slice, `${keyPrefix}:${slice.cursor ?? "first"}:${hash}`, ignoreWhitespace);
-  });
+  const parsedSlices = slices.map((slice) => parseKeyedSlice(slice, keyPrefix, ignoreWhitespace));
   const loadedFiles = orderDiffFilesLikeTree(
     parsedSlices.flatMap((parsed) =>
       parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
@@ -522,9 +524,23 @@ function PullRequestCodeTab({
           nextCursor: data.nextCursor,
           omittedFileStats: data.omittedFileStats ?? [],
         };
-  // Shows the pages a refresh re-read, or reads the next one that was loaded.
+  const diffKeyPrefix = `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}`;
+  // Shows the pages a refresh re-read, or reads the next one the reader's place needs.
   const continueRevalidation = (from: DiffRevalidation<DiffSlice>, read: DiffSlice) => {
-    const step = revalidateDiffPage(from, read);
+    // The file the reader last scrolled to; with none saved they are at the top, on page one.
+    const readersPath = usePullRequestReviewStore.getState().codePositions[viewKey]?.path;
+    const step = revalidateDiffPage(
+      from,
+      read,
+      readersPath === undefined ||
+        [...from.fresh, read].some((slice) => {
+          const parsed = parseKeyedSlice(slice, diffKeyPrefix, ignoreWhitespace);
+          return (
+            parsed?.kind === "files" &&
+            parsed.files.some((file) => resolveFileDiffPath(file) === readersPath)
+          );
+        }),
+    );
     setAppliedPage({ data: read.source, cursor, scopeKey });
     if ("pages" in step) {
       setRevalidation(null);
@@ -687,7 +703,7 @@ function PullRequestCodeTab({
   const { parsedSlices, loadedFiles, fileIds, sourceFileStats } = diffModel(
     loadedSlices,
     scopeKey,
-    `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}`,
+    diffKeyPrefix,
     ignoreWhitespace,
   );
   const linkAnchor = parsePullRequestAnchor(revealUrl);

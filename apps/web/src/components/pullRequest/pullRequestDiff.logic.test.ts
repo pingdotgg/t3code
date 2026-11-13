@@ -95,21 +95,37 @@ describe("revalidateDiffPage", () => {
     omittedFileStats: [],
   });
   it("re-reads every loaded page from fresh cursors before replacing any of them", () => {
-    const first = revalidateDiffPage({ fresh: [], depth: 3 }, page(null, "one changed", "2b"));
+    const first = revalidateDiffPage(
+      { fresh: [], depth: 3 },
+      page(null, "one changed", "2b"),
+      true,
+    );
     // The pages after the changed one stay on screen until all three are read again.
     if (!("revalidation" in first)) throw new Error("expected the refresh to continue");
     expect(first.cursor).toBe("2b");
-    const second = revalidateDiffPage(first.revalidation, page("2b", "two", "3b"));
+    const second = revalidateDiffPage(first.revalidation, page("2b", "two", "3b"), true);
     if (!("revalidation" in second)) throw new Error("expected the refresh to continue");
-    const third = revalidateDiffPage(second.revalidation, page("3b", "three", "4b"));
+    const third = revalidateDiffPage(second.revalidation, page("3b", "three", "4b"), true);
     expect(third).toEqual({
       pages: [page(null, "one changed", "2b"), page("2b", "two", "3b"), page("3b", "three", "4b")],
     });
   });
 
   it("ends where the refreshed diff does", () => {
-    expect(revalidateDiffPage({ fresh: [], depth: 3 }, page(null, "all", null))).toEqual({
+    expect(revalidateDiffPage({ fresh: [], depth: 3 }, page(null, "all", null), false)).toEqual({
       pages: [page(null, "all", null)],
+    });
+  });
+
+  it("reads past the loaded depth while the reader's file has not come back", () => {
+    // A file added above pushed the reader's file from the second page onto the third.
+    const first = revalidateDiffPage({ fresh: [], depth: 2 }, page(null, "one", "2b"), false);
+    if (!("revalidation" in first)) throw new Error("expected the refresh to continue");
+    const second = revalidateDiffPage(first.revalidation, page("2b", "two", "3b"), false);
+    if (!("revalidation" in second)) throw new Error("expected the refresh to continue");
+    expect(second.cursor).toBe("3b");
+    expect(revalidateDiffPage(second.revalidation, page("3b", "three", "4b"), true)).toEqual({
+      pages: [page(null, "one", "2b"), page("2b", "two", "3b"), page("3b", "three", "4b")],
     });
   });
 });

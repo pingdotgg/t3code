@@ -298,28 +298,57 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
 });
 
 // regression: #22886 a push that adds a file above the reader must not move them. A host hands
-// out new continuation cursors for the new revision, and a page's patch changes with any file on it.
+// out new continuation cursors for the new revision, a page's patch changes with any file on it,
+// and fixed-size pages push the reader's file onto a page later than any that was loaded.
 it.for([
-  ["on a later page that comes back unchanged under a fresh cursor", "late.test.ts", 41],
-  // The second page is not loaded yet, so the count is of the first.
-  ["on the page that changed", "early-39.ts", 40],
-] as const)("keeps the reader's file in place across a refresh when it is %s", async (row) => {
-  const [, path, loaded] = row;
-  const count = (files: number) => (path === "late.test.ts" ? `${files} files` : `${files} files+`);
+  {
+    name: "on a later page that comes back unchanged under a fresh cursor",
+    path: "late.test.ts",
+    counts: ["41 files", "42 files"],
+    refreshed: (): Record<string, PullRequestDiffResult> => ({
+      first: {
+        ...pages.first!,
+        patch: filePatch("added.ts") + pages.first!.patch,
+        nextCursor: "page-2b",
+      },
+      "page-2b": { ...pages["page-2"]! },
+    }),
+  },
+  {
+    name: "pushed onto a page past the ones that were loaded",
+    path: "late.test.ts",
+    counts: ["41 files", "42 files"],
+    refreshed: (): Record<string, PullRequestDiffResult> => ({
+      first: { ...pages.first!, nextCursor: "page-2b" },
+      "page-2b": { patch: filePatch("added.ts"), truncated: false, nextCursor: "page-3b" },
+      "page-3b": { ...pages["page-2"]! },
+    }),
+  },
+  {
+    name: "on the page that changed",
+    path: "early-39.ts",
+    // The second page is not loaded yet, so the count is of the first.
+    counts: ["40 files+", "41 files+"],
+    refreshed: (): Record<string, PullRequestDiffResult> => ({
+      first: { ...pages.first!, patch: filePatch("added.ts") + pages.first!.patch },
+    }),
+  },
+])("keeps the reader's file in place across a refresh when it is $name", async (row) => {
+  const { path, counts, refreshed } = row;
   setup({ paged: true });
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
-  const first = pages.first!;
+  const original = { ...pages };
   using _restore = {
     [Symbol.dispose]() {
-      pages.first = first;
-      delete pages["page-2b"];
+      for (const cursor of Object.keys(pages)) delete pages[cursor];
+      Object.assign(pages, original);
       __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
     },
   };
   const container = pagedContainer();
   await using screen = await render(tab(0, { path, nonce: 1 }), { container });
   await expectFileHeaderShown(screen, container, path);
-  await expect.element(screen.getByText(count(loaded), { exact: true })).toBeVisible();
+  await expect.element(screen.getByText(counts[0]!, { exact: true })).toBeVisible();
   const scroller = container.querySelector<HTMLElement>(".diff-render-surface")!;
   // The reader takes over from the reveal, as any scroll of their own does.
   scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
@@ -328,11 +357,10 @@ it.for([
     screen.getByText(path, { exact: true }).first().element().getBoundingClientRect().top;
   const before = headerTop();
 
-  pages.first = { ...first, patch: filePatch("added.ts") + first.patch, nextCursor: "page-2b" };
-  pages["page-2b"] = { ...pages["page-2"]! };
+  Object.assign(pages, refreshed());
   await screen.rerender(tab(1));
 
-  await expect.element(screen.getByText(count(loaded + 1), { exact: true })).toBeVisible();
+  await expect.element(screen.getByText(counts[1]!, { exact: true })).toBeVisible();
   await vi.waitFor(() => expect(headerTop()).toBeCloseTo(before, 0));
 });
 

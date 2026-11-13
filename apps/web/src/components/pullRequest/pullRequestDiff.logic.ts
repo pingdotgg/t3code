@@ -91,18 +91,20 @@ export interface DiffRevalidation<Page> {
 }
 
 /**
- * A refresh re-reads every loaded page in order, each from the cursor the page before it just
- * returned, and shows them together. Replacing one page alone would leave later pages on cursors
- * of the old diff, and dropping those would shorten the view under a reader further down.
- * Files keep their own ids across the swap, so the viewer holds the reader's file in place.
+ * A refresh re-reads the loaded pages in order, each from the cursor the page before it just
+ * returned, and shows them together: old cursors can belong to the old diff. It reads on past
+ * the loaded depth until it has the reader's file, which a file added above can push a page on.
  */
 export function revalidateDiffPage<Page extends DiffPage>(
   revalidation: DiffRevalidation<Page>,
   page: Page,
+  holdsReadersFile: boolean,
 ):
   | { readonly pages: ReadonlyArray<Page> }
   | { readonly revalidation: DiffRevalidation<Page>; readonly cursor: string } {
   const fresh = [...revalidation.fresh, page];
-  if (page.nextCursor === null || fresh.length >= revalidation.depth) return { pages: fresh };
+  if (page.nextCursor === null || (fresh.length >= revalidation.depth && holdsReadersFile)) {
+    return { pages: fresh };
+  }
   return { revalidation: { fresh, depth: revalidation.depth }, cursor: page.nextCursor };
 }
