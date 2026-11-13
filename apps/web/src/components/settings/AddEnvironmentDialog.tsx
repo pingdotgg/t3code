@@ -74,6 +74,7 @@ const sshHostSuggestionValue = (target: DesktopDiscoveredSshHost) =>
 export function AddEnvironmentDialog({
   open,
   routeTarget,
+  initialHost = null,
   error,
   savedEnvironments,
   onOpenChange,
@@ -81,6 +82,8 @@ export function AddEnvironmentDialog({
 }: {
   readonly open: boolean;
   readonly routeTarget: EnvironmentPresentation | null;
+  /** The address to pair with when the dialog mounts open. */
+  readonly initialHost?: string | null;
   readonly error: string | null;
   readonly savedEnvironments: ReadonlyArray<EnvironmentPresentation>;
   readonly onOpenChange: (open: boolean) => void;
@@ -114,7 +117,7 @@ export function AddEnvironmentDialog({
     return keys;
   })();
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
-  const [savedBackendHost, setSavedBackendHost] = useState("");
+  const [savedBackendHost, setSavedBackendHost] = useState(open ? (initialHost ?? "") : "");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
   const [savedBackendSshUsername, setSavedBackendSshUsername] = useState("");

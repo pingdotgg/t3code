@@ -370,6 +370,11 @@ conversation, and this thread stays as it is. If the thread's folder has
 uncommitted changes, you choose whether to transfer them too. An agent can ask
 for the same with `workFiles: "transfer"` on `delegate_task`.
 
+The app opens the new thread when this window is connected to that machine too.
+If the machine is saved here but switched off, the confirmation offers to turn
+it on. If this window has never connected to it, the confirmation offers to
+connect it at the address the link uses, with a pairing code from that machine.
+
 - In a git checkout, the changed, staged, deleted and untracked files go,
   secrets such as an untracked `.env` file included. Git-ignored files stay on
   this machine, and the other machine's checkout must be on the same commit.

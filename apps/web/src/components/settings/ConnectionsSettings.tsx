@@ -330,7 +330,15 @@ function ConnectionsSettingsContent({
     string | null
   >(null);
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
-  const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
+  // A link that names an address to pair with opens Add environment on it. The settings
+  // layout remounts this page when the link changes.
+  const connectHost = useSearch({
+    strict: false,
+    select: (search) => (typeof search.connect === "string" ? search.connect : null),
+  });
+  const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(
+    view === "environments" && connectHost !== null,
+  );
   const [routeTarget, setRouteTarget] = useState<EnvironmentPresentation | null>(null);
   const [savedBackendError, setSavedBackendError] = useState<string | null>(null);
   const handleAddBackendDialogOpenChange = (open: boolean) => {
@@ -1606,6 +1614,7 @@ function ConnectionsSettingsContent({
             <AddEnvironmentDialog
               open={addBackendDialogOpen}
               routeTarget={routeTarget}
+              initialHost={view === "environments" ? connectHost : null}
               error={savedBackendError}
               savedEnvironments={savedEnvironments}
               onOpenChange={handleAddBackendDialogOpenChange}

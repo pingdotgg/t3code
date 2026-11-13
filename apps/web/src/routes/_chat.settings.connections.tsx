@@ -6,5 +6,8 @@ function SettingsConnectionsRoute() {
 }
 
 export const Route = createFileRoute("/_chat/settings/connections")({
+  // `connect` opens Add environment at that address, as "Continue on another machine" does.
+  validateSearch: (raw: Record<string, unknown>) =>
+    typeof raw.connect === "string" && raw.connect.trim() ? { connect: raw.connect.trim() } : {},
   component: SettingsConnectionsRoute,
 });
