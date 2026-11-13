@@ -473,6 +473,7 @@ function makeMockRuntime(input: {
     | ((runtimeOrdinal: number) => Readonly<Record<string, string>>);
   readonly protocolEvents?: Queue.Queue<EffectAcpProtocol.AcpProtocolLogEvent>;
   readonly cancelBehavior?: AcpSessionRuntime.AcpSessionRuntimeOptions["cancelBehavior"];
+  readonly sessionLoadReplayIdleGap?: Duration.Input;
   readonly ownDescendantProcessGroups?: boolean;
   readonly ownDetachedProcessGroup?: boolean;
   readonly processGroupPlatform?: NodeJS.Platform;
@@ -513,6 +514,9 @@ function makeMockRuntime(input: {
         AcpSessionRuntime.layer({
           ...runtimeInput,
           ...(input.cancelBehavior === undefined ? {} : { cancelBehavior: input.cancelBehavior }),
+          ...(input.sessionLoadReplayIdleGap === undefined
+            ? {}
+            : { sessionLoadReplayIdleGap: input.sessionLoadReplayIdleGap }),
           ...(input.ownDetachedProcessGroup === undefined
             ? {}
             : { ownDetachedProcessGroup: input.ownDetachedProcessGroup }),
@@ -4328,6 +4332,180 @@ describe("AcpAdapterV2", () => {
           }),
         );
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  // Opens a resumed session whose `session/load` response is held past replay idle.
+  const openSessionWithHeldLoadResponse = Effect.fnUntraced(function* (input: {
+    readonly name: string;
+    readonly interactionMode: "default" | "plan";
+    /** Deliver the response before the adapter first configures the session. */
+    readonly releaseBeforeConfiguration?: boolean;
+  }) {
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+    const adopted = yield* Deferred.make<void>();
+    const publishedCatalogs: Array<ReadonlyArray<EffectAcpSchema.SessionConfigOption>> = [];
+    let native: AcpSessionRuntime.AcpSessionRuntime["Service"] | undefined;
+    let drains = 0;
+    const releaseLoadResponse = Effect.suspend(() => native!.request("_test/finish-load", {})).pipe(
+      Effect.orDie,
+    );
+    const instanceId = ProviderInstanceId.make(`acp-late-load-${input.name}`);
+    const threadId = ThreadId.make(`thread-acp-late-load-${input.name}`);
+    const adapter = yield* makeAcpAdapterV2({
+      instanceId,
+      flavor: {
+        driver: ACP_TEST_DRIVER,
+        capabilities: AcpProviderCapabilitiesV2,
+        onSessionEvent: (event) =>
+          event._tag === "SessionSetupAdopted"
+            ? Deferred.succeed(adopted, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        onSessionConfigurationUpdate: (configOptions) =>
+          Effect.sync(() => {
+            publishedCatalogs.push(configOptions);
+          }),
+        makeRuntime: makeMockRuntime({
+          childProcessSpawner,
+          mockAgentPath: yield* bundledMockAgentPath,
+          protocolEvents,
+          environment: { T3_ACP_HOLD_LOAD_SESSION_RESPONSE: "1" },
+          sessionLoadReplayIdleGap: 0,
+          wrapRuntime: (runtime) => {
+            native = runtime;
+            return {
+              ...runtime,
+              // The adapter drains once between starting the session and configuring it.
+              drainEvents:
+                input.releaseBeforeConfiguration === true
+                  ? Effect.suspend(() =>
+                      drains++ === 0
+                        ? releaseLoadResponse.pipe(
+                            Effect.andThen(Deferred.await(adopted)),
+                            Effect.andThen(runtime.drainEvents),
+                          )
+                        : runtime.drainEvents,
+                    )
+                  : runtime.drainEvents,
+            };
+          },
+        }),
+      },
+      selfInvocation: yield* resolveSelfInvocation(),
+    });
+    const policy = (interactionMode: "default" | "plan") =>
+      ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode,
+        cwd: process.cwd(),
+      });
+    const modelSelection = { instanceId, model: "default" } as const;
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make(`provider-session-acp-late-load-${input.name}`),
+      modelSelection,
+      runtimePolicy: policy(input.interactionMode),
+      initialNativeThreadId: "mock-session-1",
+    });
+    const providerThread = yield* runtime.ensureThread({
+      threadId,
+      modelSelection,
+      runtimePolicy: policy(input.interactionMode),
+    });
+    const now = yield* DateTime.now;
+    return {
+      runtime,
+      publishedCatalogs,
+      releaseLoadResponse,
+      adopted: Deferred.await(adopted).pipe(
+        Effect.andThen(Effect.suspend(() => native!.drainEvents)),
+      ),
+      /** Runs a turn and returns the config values T3 wrote since the previous prompt. */
+      runTurn: Effect.fnUntraced(function* (ordinal: number, interactionMode: "default" | "plan") {
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy: policy(interactionMode),
+            now,
+            ordinal,
+          }),
+        );
+        const written: Array<unknown> = [];
+        while (true) {
+          const event = yield* Queue.take(protocolEvents);
+          if (event.direction !== "outgoing") continue;
+          const request = rawProtocolRequest(event);
+          if (request?.method === "session/prompt") break;
+          if (request?.method === "session/set_config_option") {
+            written.push((request.params as { readonly value?: unknown }).value);
+          }
+        }
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runDrain,
+        );
+        return written;
+      }),
+    };
+  });
+
+  it.live("enables model switching when session/load answers after replay idle", () =>
+    Effect.gen(function* () {
+      const session = yield* openSessionWithHeldLoadResponse({
+        name: "capability",
+        interactionMode: "default",
+      });
+      assert.isFalse(
+        session.runtime.providerSession.capabilities.sessions.supportsModelSwitchInSession,
+      );
+
+      yield* session.releaseLoadResponse;
+      const updated = yield* session.runtime.events.pipe(
+        Stream.filter((event) => event.type === "provider_session.updated"),
+        Stream.runHead,
+      );
+
+      assert.isTrue(
+        Option.isSome(updated) &&
+          updated.value.type === "provider_session.updated" &&
+          updated.value.providerSession.capabilities.sessions.supportsModelSwitchInSession,
+      );
+      assert.isTrue(
+        session.runtime.providerSession.capabilities.sessions.supportsModelSwitchInSession,
+      );
+      assert.isTrue(
+        session.publishedCatalogs.at(-1)?.some((option) => option.category === "model"),
+        "the late response's model option must reach the flavor's catalog",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live.each([
+    { name: "after-open", releaseBeforeConfiguration: false },
+    { name: "before-configuration", releaseBeforeConfiguration: true },
+  ])(
+    "restores the native mode after Plan when session/load answers late ($name)",
+    ({ name, releaseBeforeConfiguration }) =>
+      Effect.gen(function* () {
+        const session = yield* openSessionWithHeldLoadResponse({
+          name,
+          interactionMode: "plan",
+          releaseBeforeConfiguration,
+        });
+        if (!releaseBeforeConfiguration) {
+          yield* session.releaseLoadResponse;
+        }
+        yield* session.adopted;
+
+        const planWrites = yield* session.runTurn(0, "plan");
+        const buildWrites = yield* session.runTurn(1, "default");
+
+        // Plan is written while opening when the response is already there, else on the Plan turn.
+        assert.deepEqual(planWrites, ["architect"]);
+        assert.deepEqual(buildWrites, ["ask"]);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live("creates a fresh ACP identity when recovering an exhausted target", () =>

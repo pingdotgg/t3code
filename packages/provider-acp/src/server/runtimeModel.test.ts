@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import {
+  mergeLateSessionLoadResponse,
   decideToolCallUpdateEmission,
   applyAcpAgentTerminalUpdate,
   acpContentBlockDisplayText,
@@ -116,6 +117,56 @@ describe("AcpRuntimeModel", () => {
         "session-loading",
       ),
     ).toBe(true);
+  });
+
+  it("fills in a late session/load response without undoing what the session already has", () => {
+    const select = (
+      id: string,
+      category: "mode" | "model",
+      currentValue: string,
+      values: ReadonlyArray<string>,
+    ): EffectAcpSchema.SessionConfigOption => ({
+      id,
+      name: id,
+      category,
+      type: "select",
+      currentValue,
+      options: values.map((value) => ({ value, name: value })),
+    });
+    const response = {
+      configOptions: [
+        select("mode", "mode", "ask", ["ask", "architect"]),
+        select("model", "model", "default", ["default", "fast"]),
+      ],
+    } satisfies EffectAcpSchema.LoadSessionResponse;
+
+    // Nothing live: the response is the session's configuration.
+    const empty = mergeLateSessionLoadResponse({
+      response,
+      configOptions: [],
+      modeState: undefined,
+    });
+    expect(empty.configOptions).toEqual(response.configOptions);
+    expect(empty.modeState?.currentModeId).toBe("ask");
+
+    // A model written since readiness and a mode set through session/set_mode both stay.
+    const liveModel = select("model", "model", "fast", ["default", "fast"]);
+    const merged = mergeLateSessionLoadResponse({
+      response,
+      configOptions: [liveModel],
+      modeState: {
+        currentModeId: "architect",
+        availableModes: [
+          { id: "ask", name: "ask" },
+          { id: "architect", name: "architect" },
+        ],
+      },
+    });
+    expect(merged.configOptions).toEqual([
+      select("mode", "mode", "architect", ["ask", "architect"]),
+      liveModel,
+    ]);
+    expect(merged.modeState?.currentModeId).toBe("architect");
   });
 
   it("ignores malformed initialize mode state in synthetic load responses", () => {
