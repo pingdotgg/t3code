@@ -219,7 +219,6 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
   private var lastReportedGrid: (cols: Int, rows: Int)?
   private var lastAppliedBuffer = ""
   private var streamedOutput: TerminalOutputBuffer?
-  private var unfedOutputCount = 0
   private var pendingVerticalScrollPoints: CGFloat = 0
   private var menuText: String?
   private var sentInput = ""
@@ -286,7 +285,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     didSet {
       guard oldValue != fontSize else { return }
       inputField.font = UIFont.monospacedSystemFont(ofSize: max(fontSize, 13), weight: .regular)
-      resetSurface()
+      applyConfigInPlace()
     }
   }
 
@@ -322,14 +321,14 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     didSet {
       guard oldValue != appearanceScheme else { return }
       appearance = TerminalAppearanceScheme(value: appearanceScheme)
-      resetSurface()
+      applyConfigInPlace()
     }
   }
 
   var themeConfig: String = "" {
     didSet {
       guard oldValue != themeConfig else { return }
-      resetSurface()
+      applyConfigInPlace()
     }
   }
 
@@ -692,21 +691,13 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     surface = createdSurface
     ghostty_app_set_color_scheme(createdApp, appearance.ghosttyColorScheme)
     ghostty_surface_set_color_scheme(createdSurface, appearance.ghosttyColorScheme)
+    setupWriteCallback()
     resizeSurface()
     if let streamedOutput {
-      let data = streamedOutput.data
-      let live = min(unfedOutputCount, data.count)
-      // Replay history before attaching the writer, or its queries get answered to the PTY again.
-      feedData(data.dropLast(live))
-      setupWriteCallback()
-      feedData(data.suffix(live))
-    } else {
-      if !hasPendingBuffer {
-        feedBuffer(initialBuffer)
-      }
-      setupWriteCallback()
+      feedData(streamedOutput.data)
+    } else if !hasPendingBuffer {
+      feedBuffer(initialBuffer)
     }
-    unfedOutputCount = 0
   }
 
   private func resetSurface() {
@@ -716,6 +707,24 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     lastContentScale = 0
     lastReportedGrid = nil
     surfaceCreationFailed = false
+    setNeedsLayout()
+  }
+
+  // Font and theme change in place: a new surface would replay output and re-answer its queries.
+  private func applyConfigInPlace() {
+    guard let app, let surface else {
+      resetSurface()
+      return
+    }
+    guard let config = ghostty_config_new() else { return }
+    defer { ghostty_config_free(config) }
+    loadThemeConfig(into: config)
+    ghostty_config_finalize(config)
+    ghostty_app_set_color_scheme(app, appearance.ghosttyColorScheme)
+    ghostty_surface_set_color_scheme(surface, appearance.ghosttyColorScheme)
+    tickApp()
+    ghostty_surface_update_config(surface, config)
+    resizeSurface()
     setNeedsLayout()
   }
 
@@ -781,10 +790,8 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     output.write(bytes, reset: reset)
     streamedOutput = output
     if reset {
-      unfedOutputCount = bytes.count
       resetSurface()
     } else if surface == nil {
-      unfedOutputCount += bytes.count
       createSurfaceIfPossible()
     } else {
       feedData(bytes)
@@ -952,8 +959,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
   }
 
   private func writeThemeConfigFile() -> String? {
-    guard !themeConfig.isEmpty else { return nil }
-    let configContents = themeConfig
+    let configContents = "\(themeConfig)\nfont-size = \(String(format: "%g", Double(fontSize)))\n"
     let url = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("t3-terminal-theme-\(appearance.rawValue).ghostty")
 
