@@ -1307,6 +1307,20 @@ class RecordingPromptQueue implements AsyncIterable<SDKUserMessage> {
   }
 }
 
+/** Keeps what replays read; drops headers, env, URL paths and queries, and error text. */
+function mcpServerStatusForReplay(status: McpServerStatus): McpServerStatus {
+  const { config, error: _error, ...rest } = status;
+  if (config === undefined || !("url" in config) || !URL.canParse(config.url)) return rest;
+  const url = new URL(config.url).origin;
+  switch (config.type) {
+    case "http":
+    case "sse":
+      return { ...rest, config: { type: config.type, url } };
+    case "claudeai-proxy":
+      return { ...rest, config: { type: config.type, url, id: config.id } };
+  }
+}
+
 async function recordMessagesUntilTurnResult(input: {
   readonly iterator: AsyncIterator<SDKMessage>;
   readonly entries: Array<ProviderReplayEntry>;
@@ -1344,7 +1358,10 @@ async function recordMessagesUntilTurnResult(input: {
       input.entries.push({
         type: "emit_inbound",
         label: "mcp_server_status",
-        frame: { type: "mcp_server_status", statuses: await status.read() },
+        frame: {
+          type: "mcp_server_status",
+          statuses: (await status.read()).map(mcpServerStatusForReplay),
+        },
       });
       for (const toolName of unread) status.readToolNames.add(toolName);
     }

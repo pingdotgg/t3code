@@ -7628,6 +7628,72 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  const mcpToolItem = (status: "inProgress" | "completed") => {
+    const { mcpAppResourceUri: _resourceUri, ...item } = mcpAppToolItem(status);
+    return item;
+  };
+  const lateStatusEntries = mcpAppTranscript.entries.filter(
+    (entry) => entry.type === "runtime_exit" || entry.label !== "mcpServer/resource/read",
+  );
+  const lateStatusResponse = lateStatusEntries.find(
+    (entry) => entry.type === "emit_inbound" && entry.label === "mcpServerStatus/list",
+  )!;
+  const lateStatusTranscript = makeCodexReplayTranscript({
+    scenario: "codex-mcp-late-server-status",
+    entries: lateStatusEntries.flatMap((entry) => {
+      if (entry === lateStatusResponse) return [];
+      if (entry.type !== "emit_inbound" || !entry.label?.endsWith("/app-tool")) return [entry];
+      const frame = entry.frame as { readonly params: Record<string, unknown> };
+      const completed = entry.label === "item/completed/app-tool";
+      const toolEntry = {
+        ...entry,
+        frame: {
+          ...frame,
+          params: { ...frame.params, item: mcpToolItem(completed ? "completed" : "inProgress") },
+        },
+      };
+      return completed ? [toolEntry, lateStatusResponse] : [toolEntry];
+    }),
+  });
+
+  it.effect(
+    "gives a completed MCP tool row its server icon when the status read lands after it",
+    () =>
+      Effect.gen(function* () {
+        const completedRow = yield* Deferred.make<OrchestrationV2TurnItem>();
+        const harness = yield* makeCodexReplayHarness(lateStatusTranscript, (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "dynamic_tool" &&
+          event.turnItem.status === "completed"
+            ? Deferred.succeed(completedRow, event.turnItem)
+            : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-mcp-late-status"),
+            text: MCP_APP_PROMPT,
+          }),
+        );
+        const item = yield* Deferred.await(completedRow);
+        assert.deepEqual(item.type === "dynamic_tool" ? item.toolSource?.icon : undefined, {
+          _tag: "themed-logo",
+          logoUrl: "https://weather.test/icon.svg",
+        });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   const ORPHAN_WAIT_SCENARIO = "codex-orphaned-dynamic-tool";
   const ORPHAN_WAIT_NATIVE_THREAD = "native-codex-orphan-wait-thread";
   const ORPHAN_WAIT_NATIVE_TURN = "native-codex-orphan-wait-turn";

@@ -521,7 +521,8 @@ function codexMcpToolOutput(
 
 // A hung MCP resource read must not hold run ingestion open.
 const MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
-const MCP_SERVER_STATUS_TIMEOUT = "20 seconds";
+// A completed row waiting on this read holds its turn open, so keep it short.
+const MCP_SERVER_STATUS_TIMEOUT = "5 seconds";
 
 function codexMcpAppResourceUri(item: CodexDynamicToolItem): string | undefined {
   if (item.type !== "mcpToolCall") return undefined;
@@ -4094,6 +4095,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             readonly toolIcons: ReadonlyMap<string, unknown>;
           } | null
         >();
+        // Servers whose first status read is still in flight.
+        const mcpServerStatusReads = new Map<string, Deferred.Deferred<void>>();
         // Off the notification reader, whose fiber must stay free to read the response.
         const readMcpServerStatus = Effect.fn("CodexAdapterV2.readMcpServerStatus")(
           function* (context: ActiveCodexTurnContext, server: string) {
@@ -4129,7 +4132,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }),
           ),
         );
-        /** A row projected before its server's first status read lands goes without an icon. */
+        /** A running row projected before its server's first status read lands goes without an icon. */
         const codexMcpServerPresentation = Effect.fn("CodexAdapterV2.mcpServerPresentation")(
           function* (context: ActiveCodexTurnContext, item: CodexDynamicToolItem) {
             if (
@@ -4140,7 +4143,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             if (!mcpServerStatuses.has(item.server)) {
               mcpServerStatuses.set(item.server, null);
+              const read = yield* Deferred.make<void>();
+              mcpServerStatusReads.set(item.server, read);
               yield* readMcpServerStatus(context, item.server).pipe(
+                Effect.ensuring(
+                  Effect.suspend(() => {
+                    mcpServerStatusReads.delete(item.server);
+                    return Deferred.succeed(read, undefined);
+                  }),
+                ),
                 Effect.forkIn(scope, { startImmediately: true }),
               );
               return undefined;
@@ -4261,13 +4272,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         /**
          * The item stays running until then, which keeps the run's event
          * ingestion open past turn/completed; it runs off the notification
-         * reader so a slow server cannot stall other events.
+         * reader so a slow server cannot stall other events. Without an app,
+         * it only waits for the server's first status read so the row gets its icon.
          */
         const captureMcpApp = Effect.fn("CodexAdapterV2.captureMcpApp")(function* (
           context: ActiveCodexTurnContext,
           nativeTurnId: string,
           item: Extract<CodexDynamicToolItem, { readonly type: "mcpToolCall" }>,
-          resourceUri: string,
+          resourceUri: string | undefined,
         ) {
           // Registered before it can run, so a turn ending right away sees it.
           const started = yield* Deferred.make<void>();
@@ -4290,13 +4302,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           context: ActiveCodexTurnContext,
           nativeTurnId: string,
           item: Extract<CodexDynamicToolItem, { readonly type: "mcpToolCall" }>,
-          resourceUri: string,
+          resourceUri: string | undefined,
         ) =>
           // Only reads and storage are cancellable; remove partial writes. Once stored, attach the app or delete it if the item settled.
           Effect.uninterruptibleMask((restore) =>
             Effect.gen(function* () {
               const reference =
-                item.result != null && item.error == null
+                resourceUri !== undefined && item.result != null && item.error == null
                   ? yield* restore(
                       getNativeThreadId(context.providerThread).pipe(
                         Effect.flatMap((threadId) =>
@@ -4331,6 +4343,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       ),
                     )
                   : undefined;
+              const statusRead = mcpServerStatusReads.get(item.server);
+              if (statusRead !== undefined) yield* restore(Deferred.await(statusRead));
               const artifacts = yield* buildDynamicToolArtifacts(context, item);
               // Clear before emitting; ingestion rechecks pending work after each event.
               if (!(yield* takePendingMcpAppCapture(nativeTurnId, item.id))) {
@@ -5553,7 +5567,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (payload.item.type === "mcpToolCall" || payload.item.type === "dynamicToolCall") {
               yield* clearRunningDynamicTool(payload.turnId, payload.item.id);
               const appResourceUri = codexMcpAppResourceUri(payload.item);
-              if (appResourceUri !== undefined && payload.item.type === "mcpToolCall") {
+              if (
+                payload.item.type === "mcpToolCall" &&
+                (appResourceUri !== undefined || mcpServerStatusReads.has(payload.item.server))
+              ) {
                 yield* captureMcpApp(context, payload.turnId, payload.item, appResourceUri);
                 return;
               }
