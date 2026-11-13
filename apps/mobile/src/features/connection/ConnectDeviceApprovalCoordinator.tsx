@@ -57,7 +57,6 @@ function EnvironmentApprovalWatcher(props: {
       Dialog.alert(prompt.title, prompt.message, [
         {
           text: "Deny",
-          style: "destructive",
           onPress: () =>
             void deny({ environmentId: props.environmentId, input: { id: prompt.pairingLinkId } }),
         },

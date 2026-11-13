@@ -7,16 +7,13 @@ import * as DateTime from "effect/DateTime";
 import { useState } from "react";
 
 import type { ServerPairingLinkRecord } from "~/environments/primary";
-import { useUpdateEnvironmentSettings } from "~/hooks/useSettings";
 import { authEnvironment } from "~/state/auth";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
-import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { describeConnectDeviceClient, formatAccessTimestamp } from "./ConnectionsSettings.logic";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { SettingsSection } from "./settingsLayout";
 
 function reportFailure(title: string, result: Parameters<typeof isAtomCommandInterrupted>[0]) {
   if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
@@ -32,23 +29,19 @@ function reportFailure(title: string, result: Parameters<typeof isAtomCommandInt
 
 export function ConnectDeviceApprovalSettings({
   environmentId,
-  requireApproval,
   requests,
   devices,
   canWrite,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly requireApproval: boolean;
   readonly requests: ReadonlyArray<ServerPairingLinkRecord>;
   readonly devices: ReadonlyArray<AuthConnectDevice>;
   readonly canWrite: boolean;
 }) {
-  const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const approve = useAtomCommand(authEnvironment.approveConnectDevice, { reportFailure: false });
   const deny = useAtomCommand(authEnvironment.revokePairingLink, { reportFailure: false });
   const revoke = useAtomCommand(authEnvironment.revokeConnectDevice, { reportFailure: false });
   const [busyId, setBusyId] = useState<string | null>(null);
-  const setting = searchableSetting("connect-device-approval");
 
   const run = async (id: string, action: () => Promise<void>) => {
     setBusyId(id);
@@ -57,21 +50,7 @@ export function ConnectDeviceApprovalSettings({
   };
 
   return (
-    <SettingsSection id={setting.id} title="T3 Connect devices">
-      <SettingsRow
-        title={setting.title}
-        description="Devices that sign in to your T3 Connect account wait until someone already connected here approves them."
-        control={
-          <Switch
-            aria-label={setting.title}
-            checked={requireApproval}
-            disabled={!canWrite}
-            onCheckedChange={(enabled) =>
-              updateSettings({ requireConnectDeviceApproval: Boolean(enabled) })
-            }
-          />
-        }
-      />
+    <SettingsSection id="connect-devices" title="T3 Connect devices">
       {requests.map((request) => {
         const connectRequest = request.connectDeviceRequest;
         if (!connectRequest) return null;

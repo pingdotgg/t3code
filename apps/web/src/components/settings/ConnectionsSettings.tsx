@@ -1253,6 +1253,14 @@ function ConnectionsSettingsContent({
                 environmentId={accessEnvironmentId}
                 canReadRelay={canReadRelay}
                 canManageRelay={canManageRelay}
+                connectDeviceApproval={
+                  accessServerConfig?.settings.requireConnectDeviceApproval === undefined
+                    ? null
+                    : {
+                        required: accessServerConfig.settings.requireConnectDeviceApproval,
+                        canManage: canWriteAccess,
+                      }
+                }
               />
             ) : null}
             {accessEnvironment ? (
@@ -1320,15 +1328,11 @@ function ConnectionsSettingsContent({
               </ScrollArea>
             </FoldedSettingsSection>
           ) : null}
-          {/* A host linked from its CLI is still managed from clients without T3 Connect. */}
           {canReadAccess &&
           connectDevices !== null &&
-          (hasCloudPublicConfig() ||
-            accessServerConfig?.settings.requireConnectDeviceApproval === true ||
-            connectDevices.length > 0) ? (
+          (connectDeviceRequests.length > 0 || connectDevices.length > 0) ? (
             <ConnectDeviceApprovalSettings
               environmentId={accessEnvironmentId}
-              requireApproval={accessServerConfig?.settings.requireConnectDeviceApproval ?? false}
               requests={connectDeviceRequests}
               devices={connectDevices}
               canWrite={canWriteAccess}
