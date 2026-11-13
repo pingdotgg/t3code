@@ -5842,11 +5842,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const windowEdges = round === 4;
         // One run of each kind in a random order, then an active run. Every other thread has
         // one user turn and then only wake turns.
-        // The fourth thread is a long run that a late notification wakes, then enough one-row
-        // runs that a page stops at the raw turn limit only if it counts that wake as a turn.
+        // The fourth thread is a turn, many rolled-back rows, a late notification of that turn,
+        // then 149 one-row turns. A page stops at that notification only if it counts as a turn.
         const kinds =
           round === 3
-            ? ["late wake", ...Array.from({ length: 148 }, () => "one row")]
+            ? ["rolled back", "late wake", ...Array.from({ length: 149 }, () => "one row")]
             : windowEdges
               ? ["short", "cancelled queued turn", "folds work", "long fold", "stopped"]
               : [
@@ -5870,7 +5870,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const attempts: Array<unknown> = [];
         const items: Array<unknown> = [];
         const tiedWithHidden: Array<TurnItemId> = [];
-        const repliesInStoppedRuns: Array<string> = [];
+        const pageEnds: Array<string> = [];
         let ordinal = 0;
         for (const [index, kind] of [...kinds, "active"].entries()) {
           const run = index + 1;
@@ -5967,6 +5967,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
               : windowEdges
                 ? ["folds work", "long fold", "stopped"].includes(kind)
                 : kind !== "late wake" && (agentDriven ? run > 1 : chance(0.2));
+          if (round === 3 && kind === "active")
+            pageEnds.push(`turn-item:window-equivalence:${round}:${items.length}`);
           if (wakes) notification();
           else
             userMessage(
@@ -5988,9 +5990,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
                       ? 0
                       : Math.floor(random() * 30);
           for (let row = 0; row < work; row += 1) {
-            // The first rows of a long fold belong to the run before it.
+            // The first rows of a long fold and the work of a late wake belong to the run before.
             const owner =
-              kind === "long fold" && row < 140
+              (kind === "long fold" && row < 140) || kind === "late wake"
                 ? {
                     runId: `run:window-equivalence:${round}:${run - 1}`,
                     nodeId: `node:window-equivalence:${round}:${run - 1}`,
@@ -6002,17 +6004,20 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             // A reply deep in a stopped run: a page that ends on it has enough work below it
             // to fold, and only the stop request above it says that it does not.
             const reply = kind === "stopped" && row === 200;
-            if (reply)
-              repliesInStoppedRuns.push(`turn-item:window-equivalence:${round}:${items.length}`);
-            // With these replies, the part of a long fold in one window is too small to fold.
-            if (reply || (kind === "long fold" && row % 5 === 0) || chance(0.02))
+            if (reply) pageEnds.push(`turn-item:window-equivalence:${round}:${items.length}`);
+            // With these replies, the part of a long fold in one window is too small to fold,
+            // and a shown row lies below the notification of a late wake.
+            const replies = kind === "long fold" || kind === "late wake";
+            if (reply || (replies && row % 5 === 0) || chance(0.02))
               add("assistant_message", {
                 messageId: `message:window-equivalence:${round}:${items.length}`,
                 text: "Reply",
                 streaming: false,
               });
-            if (chance(0.01)) notification();
-            if (chance(0.004) && !agentDriven && !windowEdges) userMessage("steer");
+            // A late wake has no other input above its turn start.
+            if (chance(0.01) && kind !== "late wake") notification();
+            if (chance(0.004) && !agentDriven && !windowEdges && kind !== "late wake")
+              userMessage("steer");
           }
           if (kind === "late wake") notification();
           if (kind === "stopped") add("run_interrupt_request", { message: "Stop" });
@@ -6107,7 +6112,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             cursor = page.nextCursor;
           }
         }
-        for (const sourceItemId of repliesInStoppedRuns) {
+        for (const sourceItemId of pageEnds) {
           const cursor = encodeThreadHistoryCursor({
             snapshotSequence: 0,
             sourceThreadId: threadId,
