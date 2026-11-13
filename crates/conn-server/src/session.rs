@@ -6,7 +6,16 @@
 //! stalls producers instead of buffering. Streams also wait for the client's `Ack`s
 //! ([`Window`]): a slow client holds at most a window of chunks, never a growing queue.
 
-use std::{collections::HashMap, collections::VecDeque, future::Future, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    collections::VecDeque,
+    future::Future,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use conn_wire::{
@@ -134,8 +143,19 @@ impl Drop for Calls {
     }
 }
 
-/// Runs one connection until the client leaves, ends with `Eof`, or goes idle.
+/// The id of the next connection. Starts at 1 so zero stays "no session".
+fn next_connection_id() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Runs one connection until the client leaves, ends with `Eof`, or goes idle. Every call
+/// gets `options.context` with this connection's id.
 pub async fn run<T: Transport>(mut socket: T, table: Arc<MethodTable>, options: SessionOptions) {
+    let context = CallContext {
+        connection_id: next_connection_id(),
+        ..options.context.clone()
+    };
     let (outbox, mut out) = mpsc::channel::<Out>(OUTBOX);
     let mut calls = Calls::default();
     let mut joiner = frame_parts::Joiner::new(options.max_message_bytes);
@@ -217,7 +237,7 @@ pub async fn run<T: Transport>(mut socket: T, table: Arc<MethodTable>, options: 
                         // Effect ignores requests after `Eof` and duplicates of a live id.
                         FromClient::Request(request) if ended || calls.0.contains_key(&request.id) => None,
                         FromClient::Request(request) => {
-                            start(request, &table, &options.context, &outbox, &mut calls)
+                            start(request, &table, &context, &outbox, &mut calls)
                         }
                     };
                     if let Some(reply) = reply

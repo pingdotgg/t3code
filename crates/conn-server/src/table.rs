@@ -15,9 +15,14 @@ use tokio::sync::mpsc;
 
 use conn_engine::BoxFuture;
 
+use crate::scopes;
+
 /// What a handler knows about its call. Grows with auth (track a) without changing handlers.
 #[derive(Clone, Debug, Default)]
 pub struct CallContext {
+    /// Names the WebSocket connection the call came on, unique per process. `session::run`
+    /// sets it; it is zero for a call made outside a session (tests, fixtures).
+    pub connection_id: u64,
     /// The request headers merged with the WebSocket upgrade headers, as Effect does.
     pub headers: Vec<(String, String)>,
     /// The session that authenticated the WebSocket upgrade.
@@ -97,6 +102,7 @@ impl MethodTable {
             move |ctx: CallContext, payload: Value| -> BoxFuture<'static, Result<Value, Failure>> {
                 let handler = handler.clone();
                 Box::pin(async move {
+                    scopes::check(tag, &ctx, &payload)?;
                     let input = decode::<I>(tag, payload)?;
                     handler(ctx, input).await.map(|output| to_json(&output))
                 })
@@ -117,7 +123,10 @@ impl MethodTable {
                          payload: Value|
               -> BoxFuture<'static, Result<ItemStream, Failure>> {
             let handler = handler.clone();
-            Box::pin(async move { handler(ctx, decode::<I>(tag, payload)?).await })
+            Box::pin(async move {
+                scopes::check(tag, &ctx, &payload)?;
+                handler(ctx, decode::<I>(tag, payload)?).await
+            })
         };
         self.handlers.insert(tag, Handler::Stream(Arc::new(call)));
     }
@@ -126,6 +135,10 @@ impl MethodTable {
         let Some(info) = conn_contract::method(tag) else {
             panic!("`{tag}` is not a method of the client contract");
         };
+        assert!(
+            scopes::is_declared(tag),
+            "`{tag}` has no entry in the scope table (scopes.rs)"
+        );
         assert_eq!(
             info.stream,
             stream,

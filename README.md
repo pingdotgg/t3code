@@ -180,6 +180,9 @@ table.coverage()      // "15 of 235 methods (9 of 32 streams)", plus the missing
 
 - Registration panics at startup on a tag not in the contract, a duplicate, or a unary handler
   for a stream method (or the reverse).
+- Registration also panics on a tag with no entry in `scopes.rs`. That table holds the auth
+  scope T3 requires per method (T3 leaves none unguarded); the table checks it before the
+  handler runs and fails with `EnvironmentAuthorizationError`. Handlers do not check scopes.
 - A payload that does not decode into `I` ends the call with a defect, as Effect does.
 - `Failure::Fail(value)` is a typed contract error; `Failure::Die(value)` is a defect.
 - An unsupported method answers at once with

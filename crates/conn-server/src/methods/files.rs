@@ -5,11 +5,11 @@
 use std::sync::Arc;
 
 use conn_contract::{
-    AssetCreateUrlInput, AssetResource, AttachmentDeleteInput, AuthEnvironmentScope,
-    EnvironmentAuthorizationError, ExternalLauncherCommandNotFoundError, FilesystemBrowseInput,
-    FilesystemGetMetadataInput, LaunchEditorInput, PersistChatAttachmentsInput,
-    PersistChatAttachmentsResult, ProjectListEntriesInput, ProjectReadFileInput,
-    ProjectSearchContentsInput, ProjectSearchEntriesInput, ProjectWriteFileInput, ThreadId, lit,
+    AssetCreateUrlInput, AssetResource, AttachmentDeleteInput,
+    ExternalLauncherCommandNotFoundError, FilesystemBrowseInput, FilesystemGetMetadataInput,
+    LaunchEditorInput, PersistChatAttachmentsInput, PersistChatAttachmentsResult,
+    ProjectListEntriesInput, ProjectReadFileInput, ProjectSearchContentsInput,
+    ProjectSearchEntriesInput, ProjectWriteFileInput, ThreadId, lit,
 };
 use conn_engine::Engine;
 use conn_files::{AssetContext, KnownWorkspaces, assets, attachments, entries, search, workspace};
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::Deps;
-use crate::table::{CallContext, Failure, MethodTable};
+use crate::table::{Failure, MethodTable};
 
 /// Runs blocking file work off the async thread.
 async fn blocking<T: Send + 'static>(
@@ -26,24 +26,6 @@ async fn blocking<T: Send + 'static>(
     tokio::task::spawn_blocking(work)
         .await
         .map_err(|_| Failure::die("file work stopped unexpectedly"))
-}
-
-/// The scope check `RpcScopeAuthorization` makes before a handler runs. A call without a
-/// principal (tests, internal callers) is allowed.
-fn require(ctx: &CallContext, scope: AuthEnvironmentScope) -> Result<(), Failure> {
-    let name = conn_contract::to_json(&scope);
-    let name = name.as_str().unwrap_or_default();
-    match &ctx.principal {
-        Some(principal) if !principal.has_scope(name) => {
-            Err(Failure::fail(&EnvironmentAuthorizationError {
-                tag: lit::EnvironmentAuthorizationError,
-                message: format!("The authenticated token is missing required scope: {name}."),
-                required_scope: scope,
-                required_permission: None,
-            }))
-        }
-        _ => Ok(()),
-    }
 }
 
 fn fail<E: Serialize>(error: E) -> Failure {
@@ -164,17 +146,13 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         return;
     };
     let engine = deps.engine.clone();
-    use AuthEnvironmentScope::{
-        FilesystemRead, FilesystemWrite, OrchestrationOperate, OrchestrationRead,
-    };
 
     let f = files.clone();
     table.unary(
         "projects.readFile",
-        move |ctx, input: ProjectReadFileInput| {
+        move |_, input: ProjectReadFileInput| {
             let f = f.clone();
             async move {
-                require(&ctx, FilesystemRead)?;
                 blocking(move || {
                     workspace::read_file(&input, f.home.as_deref(), &f.internal)
                         .map_err(|e| fail(e.into_read_error(&input.cwd, &input.relative_path)))
@@ -187,10 +165,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     let e = engine.clone();
     table.unary(
         "projects.writeFile",
-        move |ctx, input: ProjectWriteFileInput| {
+        move |_, input: ProjectWriteFileInput| {
             let e = e.clone();
             async move {
-                require(&ctx, FilesystemWrite)?;
                 let layout = Layout::load(e.as_ref()).await;
                 let (projects, worktrees) = layout.known_workspaces();
                 blocking(move || {
@@ -206,10 +183,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     let f = files.clone();
     table.unary(
         "projects.listEntries",
-        move |ctx, input: ProjectListEntriesInput| {
+        move |_, input: ProjectListEntriesInput| {
             let f = f.clone();
             async move {
-                require(&ctx, FilesystemRead)?;
                 blocking(move || {
                     let root = entries::normalize_root(&input.cwd, f.home.as_deref())
                         .map_err(|e| fail(e.into_list_error(&input.cwd)))?;
@@ -227,10 +203,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     let f = files.clone();
     table.unary(
         "projects.listIgnoredFiles",
-        move |ctx, input: ListIgnoredInput| {
+        move |_, input: ListIgnoredInput| {
             let f = f.clone();
             async move {
-                require(&ctx, FilesystemRead)?;
                 blocking(move || {
                     let root = entries::normalize_root(&input.cwd, f.home.as_deref())
                         .map_err(|e| fail(e.into_list_error(&input.cwd)))?;
@@ -244,10 +219,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     let f = files.clone();
     table.unary(
         "projects.searchEntries",
-        move |ctx, input: ProjectSearchEntriesInput| {
+        move |_, input: ProjectSearchEntriesInput| {
             let f = f.clone();
             async move {
-                require(&ctx, FilesystemRead)?;
                 // A contract limit the generated types do not check.
                 if input.query.encode_utf16().count() > 256 {
                     return Err(Failure::die("query must be at most 256 characters"));
@@ -267,10 +241,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     let f = files.clone();
     table.unary(
         "projects.searchContents",
-        move |ctx, input: ProjectSearchContentsInput| {
+        move |_, input: ProjectSearchContentsInput| {
             let f = f.clone();
             async move {
-                require(&ctx, FilesystemRead)?;
                 // A contract limit the generated types do not check.
                 if input.query.is_empty() || input.query.encode_utf16().count() > 256 {
                     return Err(Failure::die("query must be 1 to 256 characters"));
@@ -290,10 +263,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     let f = files.clone();
     table.unary(
         "filesystem.getMetadata",
-        move |ctx, input: FilesystemGetMetadataInput| {
+        move |_, input: FilesystemGetMetadataInput| {
             let f = f.clone();
             async move {
-                require(&ctx, FilesystemRead)?;
                 if input.paths.is_empty() || input.paths.len() > 64 {
                     return Err(Failure::die("paths must hold 1 to 64 entries"));
                 }
@@ -308,10 +280,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     let f = files.clone();
     table.unary(
         "filesystem.browse",
-        move |ctx, input: FilesystemBrowseInput| {
+        move |_, input: FilesystemBrowseInput| {
             let f = f.clone();
             async move {
-                require(&ctx, FilesystemRead)?;
                 blocking(move || workspace::browse(&input, f.home.as_deref()).map_err(fail)).await?
             }
         },
@@ -321,8 +292,7 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     // clients do not offer it. A call anyway gets the "command not found" answer.
     table.unary(
         "shell.openInEditor",
-        |ctx, input: LaunchEditorInput| async move {
-            require(&ctx, OrchestrationOperate)?;
+        |_, input: LaunchEditorInput| async move {
             let command = conn_contract::to_json(&input.editor)
                 .as_str()
                 .unwrap_or("editor")
@@ -336,17 +306,10 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     );
 
     let (f, e) = (files.clone(), engine.clone());
-    table.unary("assets.createUrl", move |ctx, input: AssetCreateUrlInput| {
+    table.unary("assets.createUrl", move |_, input: AssetCreateUrlInput| {
         let (f, e) = (f.clone(), e.clone());
         async move {
             let resource = input.resource;
-            let host_file = matches!(
-                &resource,
-                AssetResource::WorkspaceFile(_)
-                    | AssetResource::MediaFile(_)
-                    | AssetResource::DraftWorkspaceFile(_)
-            );
-            require(&ctx, if host_file { FilesystemRead } else { OrchestrationRead })?;
             if matches!(resource, AssetResource::GithubMedia(_)) {
                 return Err(Failure::die(
                     "Conn Server does not fetch source control media yet",
@@ -387,10 +350,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     let f = files.clone();
     table.unary(
         "assets.persistChatAttachments",
-        move |ctx, input: PersistChatAttachmentsInput| {
+        move |_, input: PersistChatAttachmentsInput| {
             let f = f.clone();
             async move {
-                require(&ctx, OrchestrationOperate)?;
                 blocking(move || {
                     f.attachments
                         .persist_data_urls(&input)
@@ -405,10 +367,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     let f = files.clone();
     table.unary(
         "attachments.createUploadUrl",
-        move |ctx, input: attachments::UploadRequest| {
+        move |_, input: attachments::UploadRequest| {
             let f = f.clone();
             async move {
-                require(&ctx, OrchestrationOperate)?;
                 input.validate().map_err(Failure::die)?;
                 blocking(move || {
                     f.attachments
@@ -422,10 +383,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     let f = files;
     table.unary(
         "attachments.delete",
-        move |ctx, input: AttachmentDeleteInput| {
+        move |_, input: AttachmentDeleteInput| {
             let f = f.clone();
             async move {
-                require(&ctx, OrchestrationOperate)?;
                 blocking(move || f.attachments.delete_pending(&input.attachment_id)).await
             }
         },

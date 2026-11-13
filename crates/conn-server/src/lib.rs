@@ -9,6 +9,7 @@ pub mod http;
 pub mod keybindings;
 pub mod methods;
 pub mod routes;
+pub mod scopes;
 pub mod serve;
 pub mod session;
 pub mod settings;

@@ -7,7 +7,7 @@
 //! that has no terminals, devices, clones or panels: empty, and streams stay open, because
 //! Conn resubscribes or reconnects when one of these streams ends.
 //!
-//! Scopes follow `apps/server/src/auth/RpcAuthorization.ts`.
+//! Scopes: `scopes.rs`.
 
 use std::sync::Arc;
 
@@ -20,7 +20,7 @@ use crate::{
     auth::{self, AccessChange, iso8601},
     diagnostics,
     environment::Environment,
-    table::{CallContext, Failure, ItemStream, MethodTable},
+    table::{Failure, ItemStream, MethodTable},
 };
 
 pub fn register(table: &mut MethodTable, deps: &Deps) {
@@ -59,72 +59,48 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         Ok(open_stream(vec![json!({ "tasks": [] })]))
     });
 
-    table.unary("server.getHostResources", |ctx, _: Value| async move {
-        require(&ctx, "orchestration:read")?;
+    table.unary("server.getHostResources", |_, _: Value| async move {
         Ok(diagnostics::host_resources())
     });
-    table.unary("server.getProcessDiagnostics", |ctx, _: Value| async move {
-        require(&ctx, "diagnostics:read")?;
+    table.unary("server.getProcessDiagnostics", |_, _: Value| async move {
         blocking(diagnostics::process_diagnostics).await
     });
-    table.unary(
-        "server.signalProcess",
-        |ctx, input: SignalInput| async move {
-            require(&ctx, "environment:maintain")?;
-            blocking(move || {
-                diagnostics::signal_process(input.pid, input.start_time_ms, &input.signal)
-            })
+    table.unary("server.signalProcess", |_, input: SignalInput| async move {
+        blocking(move || diagnostics::signal_process(input.pid, input.start_time_ms, &input.signal))
             .await
-        },
-    );
+    });
 
     let Some(environment) = deps.environment.clone() else {
         return;
     };
 
     let (env, providers) = (environment.clone(), deps.clone());
-    table.unary("server.getConfig", move |ctx, _: Value| {
+    table.unary("server.getConfig", move |_, _: Value| {
         let config = server_config(&env, current_providers(&providers));
-        async move {
-            require(&ctx, "orchestration:read")?;
-            Ok(config)
-        }
+        async move { Ok(config) }
     });
     let providers = deps.clone();
-    table.unary("server.refreshProviders", move |ctx, _: Value| {
+    table.unary("server.refreshProviders", move |_, _: Value| {
         let list = current_providers(&providers);
-        async move {
-            require(&ctx, "orchestration:read")?;
-            Ok(json!({ "providers": list }))
-        }
+        async move { Ok(json!({ "providers": list })) }
     });
 
     let env = environment.clone();
-    table.unary(
-        "server.updateSettings",
-        move |ctx, input: UpdateSettings| {
-            let env = env.clone();
-            async move {
-                require(&ctx, "settings:write")?;
-                let touches_providers = input.provider_instance_mutation.is_some()
-                    || input.patch.get("providerInstances").is_some();
-                if touches_providers {
-                    require(&ctx, "providers:manage")?;
-                }
-                blocking(move || {
-                    env.settings
-                        .update(input.patch, input.provider_instance_mutation)
-                        .map_err(|e| Failure::Fail(e.to_contract()))
-                })
-                .await?
-            }
-        },
-    );
-    let env = environment.clone();
-    table.unary("server.upsertKeybinding", move |ctx, input: Value| {
+    table.unary("server.updateSettings", move |_, input: UpdateSettings| {
         let env = env.clone();
         async move {
-            require(&ctx, "settings:write")?;
+            blocking(move || {
+                env.settings
+                    .update(input.patch, input.provider_instance_mutation)
+                    .map_err(|e| Failure::Fail(e.to_contract()))
+            })
+            .await?
+        }
+    });
+    let env = environment.clone();
+    table.unary("server.upsertKeybinding", move |_, input: Value| {
+        let env = env.clone();
+        async move {
             blocking(move || {
                 env.keybindings
                     .upsert(input)
@@ -135,10 +111,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         }
     });
     let env = environment.clone();
-    table.unary("server.removeKeybinding", move |ctx, input: Value| {
+    table.unary("server.removeKeybinding", move |_, input: Value| {
         let env = env.clone();
         async move {
-            require(&ctx, "settings:write")?;
             blocking(move || {
                 env.keybindings
                     .remove(input)
@@ -159,7 +134,6 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     table.stream("subscribeAuthAccess", move |ctx, _: Value| {
         let env = env.clone();
         async move {
-            require(&ctx, "access:read")?;
             let current = ctx.principal.as_ref().map(|p| p.session_id.clone());
             Ok(access_stream(env, current))
         }
@@ -184,20 +158,6 @@ struct SignalInput {
     pid: i64,
     start_time_ms: i64,
     signal: String,
-}
-
-/// Fails the call with `EnvironmentAuthorizationError` unless the socket's session holds
-/// `scope`. A call without a session (tests, fixtures) passes.
-pub fn require(ctx: &CallContext, scope: &str) -> Result<(), Failure> {
-    match &ctx.principal {
-        Some(principal) if !principal.has_scope(scope) => Err(Failure::Fail(json!({
-            "_tag": "EnvironmentAuthorizationError",
-            "message": format!("The authenticated token is missing required scope: {scope}."),
-            "requiredScope": auth::legacy_parent(scope),
-            "requiredPermission": scope,
-        }))),
-        _ => Ok(()),
-    }
 }
 
 /// Runs file or process work off the event loop.
@@ -372,24 +332,12 @@ fn open_stream(first: Vec<Value>) -> ItemStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::{ClientInfo, PAIRING_CODE_TTL_MS, Principal};
+    use crate::auth::{ClientInfo, PAIRING_CODE_TTL_MS};
 
     fn environment() -> (Arc<Environment>, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("conn-server-cfg-{}", auth::random_hex(6)));
         let env = Environment::load(&dir, Some("Test".into()), dir.clone()).unwrap();
         (Arc::new(env), dir)
-    }
-
-    fn ctx(scopes: &[&str]) -> CallContext {
-        CallContext {
-            headers: Vec::new(),
-            principal: Some(Arc::new(Principal {
-                session_id: "me".into(),
-                subject: "test".into(),
-                scopes: scopes.iter().map(|s| s.to_string()).collect(),
-                expires_at_ms: u64::MAX,
-            })),
-        }
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -456,17 +404,5 @@ mod tests {
         assert_eq!(removed["type"], "clientRemoved");
         assert_eq!(removed["revision"], 5);
         std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn scopes_are_checked_with_the_legacy_parent() {
-        assert!(require(&ctx(&["settings:write"]), "settings:write").is_ok());
-        let Err(Failure::Fail(error)) = require(&ctx(&["orchestration:read"]), "settings:write")
-        else {
-            panic!("expected a typed failure");
-        };
-        assert_eq!(error["requiredScope"], "orchestration:operate");
-        assert_eq!(error["requiredPermission"], "settings:write");
-        assert!(require(&CallContext::default(), "access:write").is_ok());
     }
 }
