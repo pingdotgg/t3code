@@ -28,7 +28,7 @@ const imageProps = {
   title={t.title}
   description={t.description}
   jsonLd={[
-    softwareJsonLd(),
+    softwareJsonLd(messagesFor(locale).layout.defaultDescription),
     breadcrumbJsonLd([
       { name: "T3 Code", path: localizedHref(locale, "/") },
       { name: t.breadcrumb, path: localizedHref(locale, "/download") },
