@@ -161,8 +161,16 @@ it.each([
 it.each([
   { name: "untitled dialog", title: "", bounds: { x: 300, y: 200, width: 400, height: 240 } },
   { name: "titled palette", title: "Palette", bounds: { x: 0, y: 0, width: 800, height: 50 } },
-  { name: "small titled palette", title: "Timer", bounds: { x: 200, y: 0, width: 80, height: 60 } },
-  { name: "short titled bar", title: "Find", bounds: { x: 0, y: 0, width: 400, height: 24 } },
+  {
+    name: "indicator-sized titled palette",
+    title: "Mini timer",
+    bounds: { x: 200, y: 200, width: 80, height: 24 },
+  },
+  {
+    name: "larger window with the indicator's title",
+    title: "Window",
+    bounds: { x: 200, y: 200, width: 400, height: 300 },
+  },
   { name: "offset untitled strip", title: "", bounds: { x: 100, y: 100, width: 800, height: 50 } },
   { name: "tall untitled window", title: "", bounds: { x: 0, y: 0, width: 800, height: 900 } },
   {
@@ -211,7 +219,7 @@ it.each([
 
 it("selects an indicator-sized window when the app shows nothing else", async () => {
   stubMacLookup(
-    macLookup([{ id: 1, title: "Mini", bounds: { x: 10, y: 10, width: 66, height: 20 } }]),
+    macLookup([{ id: 1, title: "Window", bounds: { x: 10, y: 10, width: 66, height: 20 } }]),
   );
 
   const window = await activeWindow("darwin");
