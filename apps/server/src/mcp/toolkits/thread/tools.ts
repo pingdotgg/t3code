@@ -154,7 +154,7 @@ const threadConfiguration = Schema.Struct({
 const ThreadConfigureTool = Tool.make("t3_thread_configure", {
   ...commandTool,
   description:
-    "Read a thread's provider, model, and modes, or set its provider, model, and options with `modelSelection`. Omit `threadId` for this thread. Permission modes stay. Values from `orchestrator_capabilities`.",
+    "Read a thread's provider, model, and modes, or set its provider, model, and options with `modelSelection`: `{instanceId, model, options:[{id, value}]}`, all three. Omit `threadId` for this thread. On a delegate's `childThreadId`, running or resumed, it changes model or effort and keeps the delegate's work; the change applies by its next turn. Permission modes stay. Values from `orchestrator_capabilities`.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),

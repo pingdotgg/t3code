@@ -3403,6 +3403,8 @@ describe("OrchestratorMcpService provider resolution", () => {
             assert.equal(result.model, selection.model);
             assert.deepEqual(result.options, selection.options);
             assert.equal(result.executedModel, executedModel);
+            // A run reports what it started with; a reconfigured thread shows beside it.
+            assert.deepEqual(result.configured, hasRun ? threadSelection : undefined);
             hasRun = false;
           }
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
