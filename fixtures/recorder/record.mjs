@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Records real web-client sessions against the TypeScript server at this checkout.
-// Usage: node native/conn-server/fixtures/recorder/record.mjs [scenario ...] [--explore]
-//   [--rust <conn-server binary>]   (rust-* scenarios: that binary is the remote environment)
+// Usage: record.mjs [scenario ...] [--explore] [--rust <binary> | --rust-url <pairingUrl>]
+//   [--rust-sample <command>]. rust-* scenarios pair the Rust server as a remote environment.
 // See ../README.md.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeModule from "node:module";
@@ -23,6 +23,12 @@ const args = process.argv.slice(2);
 const explore = args.includes("--explore");
 const rustAt = args.indexOf("--rust");
 const rustBinary = rustAt === -1 ? null : NodePath.resolve(args.splice(rustAt, 2)[1]);
+const takeOption = (flag) => {
+  const at = args.indexOf(flag);
+  return at === -1 ? null : args.splice(at, 2)[1];
+};
+const rustUrl = takeOption("--rust-url");
+const rustSample = takeOption("--rust-sample");
 const wanted = args.filter((a) => !a.startsWith("--"));
 const order = Object.keys(SCENARIOS);
 const selected =
@@ -67,6 +73,16 @@ function scratchProject(root, name = "project") {
  * same state directory and port.
  */
 async function startRustServer(previous) {
+  if (rustUrl !== null && previous === undefined) {
+    const url = new URL(rustUrl);
+    addSecret(url.hash.replace("#token=", ""));
+    return {
+      origin: url.origin,
+      token: url.hash.replace("#token=", ""),
+      rust: true,
+      external: true,
+    };
+  }
   if (rustBinary === null) throw new Error("rust-* scenarios need --rust <conn-server binary>");
   const root = previous?.root ?? NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-rust-"));
   const project = previous?.project ?? scratchProject(root, "rust-project");
@@ -176,6 +192,25 @@ async function startServer() {
   addSecret(token);
   log(`server pid ${child.pid} on ${port}, root ${root}`);
   return { root, base, project, port, token, child, origin: `http://127.0.0.1:${port}` };
+}
+
+/** RSS and macOS `footprint` of a server this run started, in KB. Only the server, no children. */
+function localMemory(s) {
+  const rss = Number(
+    NodeChildProcess.execFileSync("ps", ["-o", "rss=", "-p", String(s.child.pid)], {
+      encoding: "utf8",
+    }).trim(),
+  );
+  let footprint = null;
+  try {
+    // macOS only; elsewhere the tool is missing and RSS stands alone.
+    const out = NodeChildProcess.execFileSync("footprint", [String(s.child.pid)], {
+      encoding: "utf8",
+    });
+    const m = /Footprint: ([\d.]+) (KB|MB)/.exec(out);
+    if (m) footprint = Number(m[1]) * (m[2] === "MB" ? 1024 : 1);
+  } catch {}
+  return { rss, footprint };
 }
 
 const STATIC = /\/assets\/|\.(png|ico|svg|webmanifest|woff2?|css|js)(\?|$)|third-party-licenses/;
@@ -341,27 +376,22 @@ try {
       },
       stopServer: (s) =>
         new Promise((r) => {
+          if (s.external) throw new Error("cannot stop a server this run did not start");
           if (s.child.exitCode !== null) return r();
           s.child.once("exit", () => r());
           s.child.kill("SIGTERM");
         }),
-      /** RSS and macOS `footprint` of one server process, in KB. Only the server, no children. */
-      memory: (s) => {
-        const rss = Number(
-          NodeChildProcess.execFileSync("ps", ["-o", "rss=", "-p", String(s.child.pid)], {
-            encoding: "utf8",
-          }).trim(),
-        );
-        let footprint = null;
-        try {
-          // macOS only; elsewhere the tool is missing and RSS stands alone.
-          const out = NodeChildProcess.execFileSync("footprint", [String(s.child.pid)], {
-            encoding: "utf8",
-          });
-          const m = /Footprint: ([\d.]+) (KB|MB)/.exec(out);
-          if (m) footprint = Number(m[1]) * (m[2] === "MB" ? 1024 : 1);
-        } catch {}
-        return { rss, footprint };
+      /**
+       * Memory of one server process in KB: `--rust-sample` output for a running server, else RSS
+       * and macOS `footprint` of the child. Logged with `label` either way.
+       */
+      memory: (s, label = "") => {
+        if (rustSample !== null && s.rust) {
+          const out = NodeChildProcess.execSync(`${rustSample} ${label}`, { encoding: "utf8" });
+          log(name, `sample ${out.trim()}`);
+          return JSON.parse(out).server;
+        }
+        return localMemory(s);
       },
       shotAlways: async (label) => {
         const file = NodePath.join(shots, `${label}.png`);
@@ -389,6 +419,7 @@ try {
 } finally {
   await browser.close();
   for (const s of [server, ...extraServers]) {
+    if (s.external) continue;
     s.child.kill("SIGTERM");
     await new Promise((r) => {
       if (s.child.exitCode !== null) return r();

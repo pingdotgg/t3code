@@ -66,7 +66,12 @@ The `rust-*` scenarios (`rust-turn`, `rust-restart`, `rust-permission`, `rust-st
 when named, after `pairing`, with `--rust native/conn-server/target/release/conn-server`. They
 record only the Rust server's traffic and always write a screenshot per checkpoint.
 `rust-restart` stops and restarts the Rust server on the same state and waits for the client to
-reconnect without a reload.
+reconnect without a reload. `rust-load` runs 11 turns in three threads, then idles two minutes.
+
+`--rust-url <pairingUrl>` uses a Rust server that already runs (for example on another host,
+through `ssh -L` on the same port) instead of starting one. `--rust-sample <command>` measures
+it: the recorder runs `<command> <label>` at each checkpoint and expects one JSON line with a
+`server` object of numbers. `rust-restart` needs `--rust`, since it must stop the server.
 
 Ids, timings and Claude's wording change on every run, so every file changes. Read the
 redaction checklist below before you commit.

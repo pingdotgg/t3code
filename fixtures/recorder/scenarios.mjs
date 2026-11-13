@@ -214,12 +214,15 @@ async function pairRust(ctx) {
 
 /** On the Rust environment's draft: picks Claude Haiku 5.5 and, if given, a runtime mode. */
 async function rustHaikuDraft(ctx, runtimeLabel) {
-  await ctx.page
-    .getByRole("button", { name: "New thread in rust-project" })
-    .first()
-    .click()
-    .catch(() => {});
+  // "New thread" opens a project picker; the Rust environment's project is `rust-project`.
+  await ctx.page.getByRole("button", { name: "New thread", exact: true }).first().click();
+  await ctx.page.getByRole("dialog").getByText("rust-project", { exact: true }).first().click();
   await ctx.page.waitForURL((u) => u.pathname.startsWith("/draft/"), { timeout: 15_000 });
+  await ctx.page
+    .getByText(/What should we build in\s*rust-project/)
+    .first()
+    // A hidden copy of the heading exists only for the draft's own project.
+    .waitFor({ state: "attached", timeout: 15_000 });
   await ctx.page
     .getByRole("button", { name: /^Claude/ })
     .first()
@@ -238,9 +241,23 @@ async function rustHaikuDraft(ctx, runtimeLabel) {
   await dump(ctx, "draft");
 }
 
+/** Field-wise maximum of two memory samples. */
+const peak = (a, b) =>
+  Object.fromEntries(Object.keys(b).map((k) => [k, Math.max(a[k] ?? 0, b[k] ?? 0)]));
+
+/** Sends one message in the open thread and waits until `reply` shows. */
+async function rustMessage(ctx, reply) {
+  await send(ctx, `Reply with exactly: ${reply}`);
+  await waitTurnEnd(ctx);
+  // Whole text only, so the user's bubble never matches; models may change case or add a period.
+  // The fake provider answers "echo: <message>".
+  const whole = new RegExp(`^(echo: Reply with exactly: )?${reply}\\.?$`, "i");
+  await ctx.page.getByText(whole).last().waitFor({ timeout: 30_000 });
+}
+
 async function rustTurn(ctx) {
   const target = await pairRust(ctx);
-  const memory = { idle: ctx.memory(target), during: { rss: 0, footprint: 0 } };
+  const memory = { idle: ctx.memory(target, "connected"), during: {} };
   await rustHaikuDraft(ctx, null);
   await send(ctx, "Reply with exactly: hello from haiku");
   // Peak while the stop button shows: the turn is running.
@@ -249,17 +266,35 @@ async function rustTurn(ctx) {
     .waitFor({ state: "visible", timeout: 30_000 })
     .catch(() => {});
   while (await stopButton(ctx).first().isVisible()) {
-    const now = ctx.memory(target);
-    memory.during.rss = Math.max(memory.during.rss, now.rss);
-    memory.during.footprint = Math.max(memory.during.footprint, now.footprint ?? 0);
+    memory.during = peak(memory.during, ctx.memory(target, "during-turn"));
     await ctx.page.waitForTimeout(100);
   }
   await waitTurnEnd(ctx);
   await ctx.page.getByText("hello from haiku").last().waitFor({ timeout: 30_000 });
-  memory.after = ctx.memory(target);
+  memory.after = ctx.memory(target, "after-turn");
   ctx.log(`memory KB ${JSON.stringify(memory)}`);
   await ctx.shotAlways("turn");
   ctx.rust = target;
+}
+
+/**
+ * rust-turn, then ten more turns in three threads (three more here, four and three in two new
+ * threads), then two idle minutes. Samples memory after the turns and after the idle time.
+ */
+async function rustLoad(ctx) {
+  await rustTurn(ctx);
+  for (let i = 1; i <= 3; i++) await rustMessage(ctx, `first thread ${i}`);
+  for (const [thread, turns] of [
+    ["second", 4],
+    ["third", 3],
+  ]) {
+    await rustHaikuDraft(ctx, null);
+    for (let i = 1; i <= turns; i++) await rustMessage(ctx, `${thread} thread ${i}`);
+  }
+  await ctx.shotAlways("load");
+  ctx.memory(ctx.rust, "after-11-turns");
+  await ctx.page.waitForTimeout(120_000);
+  ctx.memory(ctx.rust, "idle-2min");
 }
 
 /**
@@ -339,6 +374,7 @@ export const SCENARIOS = {
   interrupt,
   remote,
   "rust-turn": rustTurn,
+  "rust-load": rustLoad,
   "rust-restart": rustRestart,
   "rust-permission": rustPermission,
   "rust-stop": rustStop,

@@ -324,19 +324,33 @@ Connections, the project in the sidebar, a new thread with one full answer, an a
 prompt in Supervised mode, Stop during a tool call, and a server restart on the same state: the
 client reconnects by itself, shows the thread, and runs a second turn.
 
-**Memory** (macOS arm64, release, the server process only, one client, one Haiku turn):
+**Memory on Linux** (x86_64, Ubuntu, kernel 7.0; the Orbit container host). Read with
+`smaps_rollup`, the server process only, in MiB. One client, real Claude Haiku turns from the web
+client; binary on ext4 (on tmpfs the binary would count as `Pss_Shmem` and dirty pages).
 
-| Build                    | Binary  | Idle after connect             | Peak during turn | After turn |
-| ------------------------ | ------- | ------------------------------ | ---------------- | ---------- |
-| `opt-level = 3`          | 7.5 MiB | RSS 6.5 MiB, footprint 2.8 MiB | 9.4 / 3.9        | 9.9 / 4.0  |
-| `opt-level = "z"` (kept) | 4.8 MiB | RSS 5.7 MiB, footprint 2.5 MiB | 7.5 / 3.4        | 7.7 / 3.6  |
+| Sample (musl build)         | Rss | Pss | Pss_Anon | Pss_File | Private_Dirty |
+| --------------------------- | --- | --- | -------- | -------- | ------------- |
+| Just after start            | 4.2 | 4.2 | 0.5      | 3.7      | 0.6           |
+| Connected, streams open     | 5.2 | 5.2 | 0.8      | 4.3      | 0.9           |
+| Peak during the first turn  | 6.3 | 6.3 | 1.2      | 5.1      | 1.3           |
+| After the first turn        | 6.4 | 6.4 | 1.3      | 5.1      | 1.3           |
+| After 11 turns in 3 threads | 7.7 | 7.7 | 2.6      | 5.1      | 2.6           |
+| After 2 idle minutes        | 7.7 | 7.7 | 2.6      | 5.1      | 2.6           |
 
-That is not the container measure, which runs on Linux.
+At the same moments the 55 container T3 servers had `Pss_Anon` mean 302 MiB (min 284, max 360) and RSS mean 335 MiB: about 115 times the Rust server's anonymous memory after 11 turns.
+The glibc build used slightly more (`Pss_Anon` 3.0 MiB and RSS 10.6 MiB after 11 turns), so
+build for `x86_64-unknown-linux-musl`. Each open thread keeps its `claude` child (about
+140 MiB `Pss_Anon`) and the MCP helpers from the user's Claude settings; those are separate
+processes and not counted above, as they are not in the T3 figures.
 
-**Linux:** the Rust code checks clean for `x86_64-unknown-linux-gnu` and `-musl`
-(`rustup target add` only). The full build needs a C cross-compiler for bundled SQLite
-(`libsqlite3-sys`), which this Mac lacks. Build on Linux, or use `cargo zigbuild` with zig
-installed.
+On macOS arm64 (release, `ps` RSS / `footprint`, one Haiku turn): `opt-level = "z"` gave a
+4.8 MiB binary and 5.7 / 2.5 MiB idle, 7.5 / 3.4 MiB peak; `opt-level = 3` gave 7.5 MiB and
+6.5 / 2.8, 9.4 / 3.9. The release profile keeps `"z"`.
+
+**Linux build:** on a Linux host, `cargo build --release -p conn-server` takes under a minute
+from clean with 4 jobs (7.1 MB binary); add `--target x86_64-unknown-linux-musl` (with
+`musl-gcc` installed) for a static binary of 7.2 MB. From macOS the build needs a C
+cross-compiler for bundled SQLite, such as `cargo zigbuild`.
 
 ## Known gaps
 
