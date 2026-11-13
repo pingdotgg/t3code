@@ -67,8 +67,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   private var streamedOutput: TerminalOutputBuffer? = null
   private var cols = 0
   private var rows = 0
-  private var cellWidth = 0
-  private var cellHeight = 0
+  private var cellSize = 0 to 0
   private var measuredCols = 0
   private var measuredRows = 0
   private var clearingInput = false
@@ -364,26 +363,18 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     val shared = sharedGrid.takeIf { it.size == 2 && it[0] > 0 && it[1] > 0 }
     val nextCols = shared?.get(0)?.coerceAtMost(measuredCols) ?: measuredCols
     val nextRows = shared?.get(1)?.coerceAtMost(measuredRows) ?: measuredRows
-    val nextCellWidth = terminalCanvas.cellWidthPx.toInt()
-    val nextCellHeight = terminalCanvas.cellHeightPx.toInt()
-    if (
-      nextCols == cols &&
-      nextRows == rows &&
-      nextCellWidth == cellWidth &&
-      nextCellHeight == cellHeight &&
-      terminalHandle != 0L
-    ) {
+    val nextCellSize = terminalCanvas.cellWidthPx.toInt() to terminalCanvas.cellHeightPx.toInt()
+    if (nextCols == cols && nextRows == rows && nextCellSize == cellSize && terminalHandle != 0L) {
       return
     }
     cols = nextCols
     rows = nextRows
-    cellWidth = nextCellWidth
-    cellHeight = nextCellHeight
+    cellSize = nextCellSize
     val response = if (terminalHandle == 0L) {
       createTerminal()
       ByteArray(0)
     } else {
-      GhosttyBridge.nativeResize(terminalHandle, cols, rows, cellWidth, cellHeight)
+      GhosttyBridge.nativeResize(terminalHandle, cols, rows, cellSize.first, cellSize.second)
     }
     emitResponse(response)
     if (!hasPendingBuffer) feedPendingBuffer()
@@ -396,8 +387,8 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     terminalHandle = GhosttyBridge.nativeCreate(
       cols,
       rows,
-      cellWidth,
-      cellHeight,
+      cellSize.first,
+      cellSize.second,
       foregroundColorValue,
       backgroundColorValue,
       cursorColorValue,
