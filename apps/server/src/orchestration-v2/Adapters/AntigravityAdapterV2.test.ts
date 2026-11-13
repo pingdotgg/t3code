@@ -82,6 +82,28 @@ describe("AntigravityAdapterV2 flavor", () => {
       ),
       "ask",
     );
+    const edit = {
+      ...permissionRequest("outside-edit", [
+        { optionId: "allow", name: "Allow", kind: "allow_once" },
+      ]),
+      toolCall: {
+        toolCallId: "outside-edit",
+        kind: "edit" as const,
+        locations: [{ path: "/outside-workspace/file.txt" }],
+      },
+    };
+    for (const sandboxPolicy of [
+      { type: "readOnly" },
+      { type: "workspaceWrite", writableRoots: [] },
+    ]) {
+      assert.strictEqual(
+        flavor.permissionDisposition?.(
+          ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({ ...policy, sandboxPolicy }),
+          edit,
+        ),
+        "deny",
+      );
+    }
   });
 
   it("keeps a successful subagent launch running until the parent turn becomes idle", () => {
