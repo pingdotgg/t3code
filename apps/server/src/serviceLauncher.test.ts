@@ -1586,6 +1586,56 @@ process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: paths.dat
     }),
   );
 
+  it.effect("starts no trial when stopped during the pre-update backup", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-backup-stop-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const childSource = "setInterval(() => {}, 1000);\n";
+      for (const version of ["1.0.0", "1.1.0"]) {
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", version),
+          childSource,
+        );
+      }
+      const dbPath = path.join(root, "userdata", "state.sqlite");
+      yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
+      yield* fs.writeFileString(dbPath, "database");
+      const pending = {
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: "1.0.0",
+        update: {
+          id: "update-1",
+          fromVersion: "1.0.0",
+          targetVersion: "1.1.0",
+          dbPath,
+          status: "pending",
+        },
+      } as const;
+      yield* Effect.promise(() => writeServiceState(statePath, pending));
+      const childCount = spawnedChildren.length;
+      const launcher = new Launcher(root, pending);
+
+      // Recovery is already queued, so this stop lands while the backup runs.
+      const running = launcher.run();
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
+
+      // A trial started here arms its 30-minute prepared timer, which keeps the stopped launcher alive.
+      assert.deepEqual(
+        spawnedChildren.slice(childCount).map((child) => child.spawnargs.join(" ")),
+        [],
+      );
+      assert.deepEqual(yield* Effect.promise(() => readServiceState(statePath)), pending);
+      const backupDir = path.join(root, "runtime", "db-backup", "update-1");
+      assert.isFalse(yield* fs.exists(backupDir));
+      assert.isFalse(yield* fs.exists(`${backupDir}.staging`));
+    }),
+  );
+
   it.effect("records no update when the server exits during the backup check", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
