@@ -7,6 +7,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import type { WindowsTcpListener } from "../process/windowsTcpListeners.ts";
+
 export class WindowsTcpProbeError extends Schema.TaggedError<WindowsTcpProbeError>()(
   "WindowsTcpProbeError",
   { operation: Schema.Literals(["load", "listeners", "process-name"]), cause: Schema.Defect() },
@@ -20,10 +22,7 @@ export class WindowsTcpProbeError extends Schema.TaggedError<WindowsTcpProbeErro
 export class WindowsTcpListeners extends Context.Service<
   WindowsTcpListeners,
   {
-    readonly scan: Effect.Effect<
-      ReadonlyArray<{ readonly port: number; readonly pid: number | null }>,
-      WindowsTcpProbeError
-    >;
+    readonly scan: Effect.Effect<ReadonlyArray<WindowsTcpListener>, WindowsTcpProbeError>;
     readonly processName: (pid: number) => Effect.Effect<string | null, WindowsTcpProbeError>;
   }
 >()("t3/preview/WindowsTcpListeners") {}
@@ -68,7 +67,7 @@ const loadApi = () => {
       const stride = family === 2 ? 24 : 56;
       const count = buffer.readUInt32LE();
       if (count > Math.floor((buffer.length - 4) / stride)) throw new Error("Truncated TCP table");
-      const rows: Array<{ port: number; pid: number | null }> = [];
+      const rows: Array<WindowsTcpListener> = [];
       for (let index = 0; index < count; index += 1) {
         const offset = 4 + index * stride;
         const addressOffset = offset + (family === 2 ? 4 : 0);
