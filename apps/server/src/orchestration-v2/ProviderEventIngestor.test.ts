@@ -23,6 +23,7 @@ import {
   RunAttemptId,
   RunId,
   RuntimeRequestId,
+  type ServerProvider,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -45,6 +46,7 @@ import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { UsageLimitResetFallback } from "../usage/UsageLimitSources.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
@@ -261,14 +263,17 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
       },
       snapshot: {
         refreshUsage: Deferred.succeed(refreshed, undefined).pipe(Effect.asVoid),
-        getSnapshot: Effect.die("unused"),
+        getSnapshot: Effect.sync(() => own as ServerProvider),
         refresh: Effect.die("unused"),
         resolveMaintenance: () => Effect.die("unused"),
         applyUsageLimits: () => Effect.die("unused"),
         streamChanges: Stream.empty,
       },
     };
+    let own: Partial<ServerProvider> | undefined;
     const lookups: ProviderInstanceId[] = [];
+    const hubLookups: string[] = [];
+    const hubResetAt = "2033-05-19T07:20:00.000Z";
     const instances = Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
       getInstance: (id) =>
         Effect.sync(() => {
@@ -282,7 +287,36 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
       const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const threadEvent = yield* threadCreatedEvent(now);
-      yield* eventSink.write({ events: [threadEvent] });
+      // The run started on an earlier model than the thread's current selection.
+      const runId = RunId.make("run:usage-limit");
+      yield* eventSink.write({
+        events: [
+          threadEvent,
+          {
+            id: yield* idAllocator.allocate.event({ threadId: threadEvent.threadId }),
+            type: "run.created",
+            threadId: threadEvent.threadId,
+            occurredAt: now,
+            payload: {
+              id: runId,
+              threadId: threadEvent.threadId,
+              ordinal: 1,
+              providerInstanceId: modelSelection.instanceId,
+              modelSelection: { ...modelSelection, model: "gpt-run-model" },
+              providerThreadId: null,
+              userMessageId: MessageId.make("message:usage-limit"),
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "running",
+              requestedAt: now,
+              startedAt: now,
+              completedAt: null,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          },
+        ],
+      });
       const input = {
         providerSessionId: yield* idAllocator.allocate.providerSession({
           providerInstanceId: instance.instanceId,
@@ -291,9 +325,33 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
         providerInstanceId: instance.instanceId,
         threadId: threadEvent.threadId,
       };
-      for (const failureClass of ["validation_error", "usage_limit"] as const) {
+      const unread = { checkedAt: now.toString(), windows: [] };
+      const cases = [
+        { failureClass: "validation_error", provider: undefined, resetAt: undefined },
+        {
+          failureClass: "usage_limit",
+          provider: {
+            auth: { status: "authenticated", endpoint: "http://hub:8317" },
+            usageLimits: { ...unread, unavailable: { reason: "unsupported" } },
+          },
+          resetAt: hubResetAt,
+          runId,
+        },
+        // regression: #30778 an instance with no hub endpoint gets no hub reset
+        {
+          failureClass: "usage_limit",
+          provider: {
+            auth: { status: "authenticated" },
+            usageLimits: { ...unread, unavailable: { reason: "unsupported" } },
+          },
+          resetAt: undefined,
+        },
+      ] as const;
+      for (const [index, { failureClass, provider, resetAt, ...run }] of cases.entries()) {
+        own = provider;
         const stored = yield* ingestor.ingestNormalized({
           ...input,
+          ...run,
           event: {
             type: "turn.terminal",
             driver: instance.driverKind,
@@ -303,7 +361,7 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
             }),
             providerTurnId: idAllocator.derive.providerTurn({
               driver: instance.driverKind,
-              nativeTurnId: failureClass,
+              nativeTurnId: String(index),
             }),
             runOrdinal: 1,
             failureItemOrdinal: 1,
@@ -317,10 +375,28 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
         });
         assert.equal(stored.length, 1);
         if (failureClass === "validation_error") assert.deepEqual(lookups, []);
+        // regression: #26574 a proxied CLI drops the reset, so the hub's pool refill fills it
+        const item = stored[0]?.event;
+        assert.equal(
+          item?.type === "turn-item.updated" && item.payload.type === "error"
+            ? item.payload.failure.resetAt
+            : undefined,
+          resetAt,
+        );
       }
-      assert.deepEqual(lookups, [instance.instanceId]);
+      assert.deepEqual(lookups, Array(4).fill(instance.instanceId));
+      assert.deepEqual(hubLookups, [`${instance.driverKind}:http://hub:8317:gpt-run-model`]);
       yield* Deferred.await(refreshed);
-    }).pipe(Effect.provide(makeLayerTest(layerTestEventSink, instances)));
+    }).pipe(
+      Effect.provide(makeLayerTest(layerTestEventSink, instances)),
+      Effect.provideService(UsageLimitResetFallback, {
+        resetAt: (driver, endpoint, model) =>
+          Effect.sync(() => {
+            hubLookups.push(`${driver}:${endpoint}:${model}`);
+            return hubResetAt;
+          }),
+      }),
+    );
   }),
 );
 

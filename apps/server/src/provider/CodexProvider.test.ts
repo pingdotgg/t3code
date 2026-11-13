@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 
 import {
   applyPreferredCodexDefaultModel,
+  codexCustomEndpoint,
   codexRoutesSpendNativeQuota,
   mapCodexModelCapabilities,
 } from "./CodexProvider.ts";
@@ -191,5 +192,13 @@ it("reports native quota only for an OpenAI login on a native route", () => {
       expected,
       name,
     );
+  }
+  assert.strictEqual(codexCustomEndpoint(hub), "https://hub.example.com");
+  assert.strictEqual(
+    codexCustomEndpoint({ openai_base_url: "http://127.0.0.1:8317/v1" }),
+    "http://127.0.0.1:8317",
+  );
+  for (const native of [{}, { openai_base_url: "https://chatgpt.com/x" }, null]) {
+    assert.strictEqual(codexCustomEndpoint(native), undefined);
   }
 });

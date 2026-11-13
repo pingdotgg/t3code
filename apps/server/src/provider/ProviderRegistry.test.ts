@@ -594,12 +594,16 @@ it.layer(
                 account: null,
                 requiresOpenaiAuth: false,
               },
+              endpoint: "http://127.0.0.1:8317",
             }),
           ),
         );
 
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.auth.status, "unknown");
+        assert.strictEqual(status.auth.endpoint, "http://127.0.0.1:8317");
+        // regression: #11873 a custom provider has no subscription to read, which is not a failure
+        assert.deepStrictEqual(status.usageLimits?.unavailable, { reason: "unsupported" });
       }),
     );
 
@@ -4121,6 +4125,12 @@ it.layer(
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.auth.type, type);
           assert.strictEqual(status.auth.label, label);
+          assert.strictEqual(
+            status.auth.endpoint,
+            type === "customEndpoint"
+              ? new URL(settings.env?.ANTHROPIC_BASE_URL ?? baseUrl).origin
+              : undefined,
+          );
         }).pipe(
           Effect.provide(
             layerMockSpawner((args) => {

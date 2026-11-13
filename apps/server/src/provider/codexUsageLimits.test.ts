@@ -1,6 +1,7 @@
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
 import * as CodexErrors from "effect-codex-app-server/errors";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -297,7 +298,7 @@ describe("mergeCodexRateLimits", () => {
   });
 });
 
-import { codexUsageLimitResetAt } from "./codexUsageLimits.ts";
+import { codexMessageResetAt, codexUsageLimitResetAt } from "./codexUsageLimits.ts";
 
 describe("codexUsageLimitResetAt", () => {
   it("waits for every exhausted window and never invents an unknown reset", () => {
@@ -310,6 +311,56 @@ describe("codexUsageLimitResetAt", () => {
     expect(codexUsageLimitResetAt({ primary: { usedPercent: 100 } })).toBeNull();
     expect(
       codexUsageLimitResetAt({ primary: { usedPercent: 50, resetsAt: 2000000000 } }),
+    ).toBeNull();
+  });
+});
+
+describe("codexMessageResetAt", () => {
+  const local = (wallClock: string) =>
+    DateTime.makeZonedUnsafe(wallClock, {
+      timeZone: DateTime.zoneMakeLocal(),
+      adjustForTimeZone: true,
+    });
+  const now = DateTime.toUtc(local("2026-11-06T09:00:00"));
+  it.each([
+    [
+      "Plus",
+      "You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 3:37 PM.",
+      "2026-11-11T15:38:00",
+    ],
+    ["today", "You’ve hit your usage limit. Try again at 12:05 PM.", "2026-11-06T12:06:00"],
+    [
+      "midnight",
+      "You’ve hit your usage limit. Try again at Dec 1st, 2026 12:00 AM.",
+      "2026-12-01T00:01:00",
+    ],
+  ])("reads the local reset Codex words for %s, waiting out its minute", (_, message, expected) => {
+    expect(codexMessageResetAt(message, now, undefined)).toBe(DateTime.formatIso(local(expected)));
+  });
+
+  it("reads the wall time in the Codex process zone and never resolves a repeated hour early", () => {
+    const fallBack = DateTime.makeUnsafe("2026-11-01T05:10:00Z");
+    const message = "You’ve hit your usage limit. Try again at 1:30 AM.";
+    expect(codexMessageResetAt(message, fallBack, "America/New_York")).toBe(
+      "2026-11-01T06:31:00.000Z",
+    );
+    expect(codexMessageResetAt(message, fallBack, ":UTC")).toBeNull();
+    expect(codexMessageResetAt(message, fallBack, "")).toBeNull();
+  });
+
+  it("ignores messages without a future reset", () => {
+    expect(
+      codexMessageResetAt("You’ve hit your usage limit. Try again later.", now, undefined),
+    ).toBeNull();
+    expect(
+      codexMessageResetAt(
+        "exceeded retry limit, last status: 429 Too Many Requests",
+        now,
+        undefined,
+      ),
+    ).toBeNull();
+    expect(
+      codexMessageResetAt("You’ve hit your usage limit. Try again at 8:15 AM.", now, undefined),
     ).toBeNull();
   });
 });

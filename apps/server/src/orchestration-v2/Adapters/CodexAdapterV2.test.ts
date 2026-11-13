@@ -6679,6 +6679,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       expectedClass: "usage_limit",
     },
     { name: "retry", code: "usageLimitExceeded", notification: true, expectedClass: "usage_limit" },
+    // regression: #26574 a proxy strips the rate-limit snapshot, so the reset is only in the text
+    {
+      name: "message-reset",
+      code: "usageLimitExceeded",
+      message: "You’ve hit your usage limit. Try again at May 19th, 2033 7:20 AM.",
+      notification: false,
+      expectedClass: "usage_limit",
+      expectedResetAt: DateTime.formatIso(
+        DateTime.makeZonedUnsafe("2033-05-19T07:21:00", {
+          timeZone: DateTime.zoneMakeLocal(),
+          adjustForTimeZone: true,
+        }),
+      ),
+    },
     {
       name: "exhausted-429",
       code: "responseTooManyFailedAttempts",
@@ -7003,6 +7017,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(terminal.failure.resetAt, resetAt);
       if (scenario.name === "newer-reset-during-read")
         assert.equal(terminal.failure.resetAt, "2033-05-20T11:06:40.000Z");
+      if ("expectedResetAt" in scenario)
+        assert.equal(terminal.failure.resetAt, scenario.expectedResetAt);
       if (scenario.name === "matching-details")
         assert.equal(terminal.failure.message, "Detailed provider allowance explanation.");
       if ("resetAfter" in scenario) {
