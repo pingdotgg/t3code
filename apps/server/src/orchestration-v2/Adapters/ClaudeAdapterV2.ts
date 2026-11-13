@@ -9445,10 +9445,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (!shouldOffer) {
             return;
           }
-          const reports = yield* takeWakeReports(nativeThreadId);
-          const notification = backgroundWorkNotification(
-            [...(reports?.values() ?? [])].map((entry) => entry.report),
+          const reports = [...((yield* takeWakeReports(nativeThreadId))?.values() ?? [])].map(
+            (entry) => entry.report,
           );
+          // A Monitor's per-line wake carries no task_notification or task id; only a running Monitor explains it.
+          if (reports.length === 0) {
+            const [monitor, ...otherMonitors] = [
+              ...rosterForNativeThread(
+                yield* Ref.get(pendingBackgroundTasksByNativeThread),
+                nativeThreadId,
+              ).values(),
+            ].filter((task) => task.kind === "monitor");
+            if (monitor !== undefined) {
+              reports.push({
+                kind: "monitor",
+                label: otherMonitors.length === 0 ? monitor.description : undefined,
+                outcome: "updated",
+              });
+            }
+          }
+          const notification = backgroundWorkNotification(reports);
           yield* Effect.logInfo("orchestration-v2.claude-wake-turn-detected", {
             providerSessionId: input.providerSessionId,
             threadId: route.threadId,

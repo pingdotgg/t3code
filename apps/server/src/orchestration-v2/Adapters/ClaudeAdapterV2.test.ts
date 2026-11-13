@@ -11446,6 +11446,108 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("tags a Claude Monitor's per-line wake as monitor progress", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      const taskId = "monitor-lines";
+      const toolUseId = "toolu_monitor_lines";
+      const description = "Deploy log";
+
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-monitor-lines"),
+          text: "Watch the deploy log.",
+          attachments: [],
+        }),
+      );
+      for (const frame of [
+        claudeSdkFrame({
+          type: "assistant",
+          message: {
+            model: "claude-sonnet-4-6",
+            id: "msg_monitor_lines",
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: toolUseId,
+                name: "Monitor",
+                input: { description, command: "tail -f deploy.log" },
+              },
+            ],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+          parent_tool_use_id: null,
+          uuid: "00000000-0000-4000-8000-000000000a01",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: taskId,
+          tool_use_id: toolUseId,
+          description,
+          task_type: "local_bash",
+          uuid: "00000000-0000-4000-8000-000000000a02",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "user",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: toolUseId,
+                content: `Monitor started (task ${taskId}).`,
+              },
+            ],
+          },
+          parent_tool_use_id: null,
+          uuid: "00000000-0000-4000-8000-000000000a03",
+          session_id: WAKE_NATIVE_SESSION,
+          tool_use_result: { taskId, persistent: false },
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [{ task_id: taskId, task_type: "local_bash", description }],
+          uuid: "00000000-0000-4000-8000-000000000a04",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000a05", result: "Watching." }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* harness.awaitTerminal(1);
+
+      // Claude sends no task_notification for an output line, only the turn it starts.
+      yield* Queue.offer(harness.sdkMessages, wakeTurnInit);
+      yield* Queue.offer(harness.sdkMessages, wakeAssistant);
+      yield* harness.awaitContinuation(1);
+      const notification = harness.continuationRequests[0]?.notification;
+      assert.deepEqual(notification?.source, { kind: "monitor" });
+      assert.equal(notification?.outcome, "updated");
+      assert.equal(notification?.summary, `Monitor "${description}" reported new output`);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   const scheduleWakeupFrames = (input: {
     readonly toolUseId: string;
     readonly uuids: readonly [string, string];
