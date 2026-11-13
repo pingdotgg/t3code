@@ -1,5 +1,9 @@
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
-import { DEFAULT_READ_ALOUD_SETTINGS, EnvironmentId } from "@t3tools/contracts";
+import {
+  DEFAULT_READ_ALOUD_SETTINGS,
+  EMPTY_SPEECH_SYNTHESIS_CATALOG,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -284,13 +288,24 @@ it("waits for the read-aloud key lookup before allowing a save", async () => {
         if (url.pathname === "/api/voice/cloud/xai/key")
           return Promise.resolve(new Response(null, { status: 204 }));
         if (url.pathname === "/api/voice/synthesis/xai/models")
-          return Promise.resolve(Response.json({ models: [] }));
+          return Promise.resolve(
+            Response.json({
+              ...EMPTY_SPEECH_SYNTHESIS_CATALOG,
+              apiKeyProvider: "xai",
+              defaultModel: "server-default",
+              supportsModelSelection: true,
+              models: [{ id: "server-default", name: "Server default", voices: [] }],
+            }),
+          );
         return null;
       },
       async (screen) => {
         await screen.getByRole("textbox", { name: "Read-aloud API key" }).fill("test-speech-key");
         const save = screen.getByRole("button", { name: "Save", exact: true });
         await expect.element(save).toBeDisabled();
+        await expect
+          .element(screen.getByRole("combobox", { name: "Read-aloud model" }))
+          .toHaveTextContent("Server default");
         resolveKeys(Response.json({ openai: false, xai: false, openrouter: false }));
         await expect.element(save).toBeEnabled();
         await save.click();

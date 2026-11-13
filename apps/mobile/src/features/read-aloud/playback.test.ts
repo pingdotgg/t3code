@@ -1,3 +1,4 @@
+import { synthesizeSpeech } from "@t3tools/client-runtime/voice-input";
 import { DEFAULT_READ_ALOUD_SETTINGS, EnvironmentId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import * as Speech from "expo-speech";
@@ -49,10 +50,26 @@ vi.mock("../../state/atom-registry", async () => {
 vi.mock("../../state/session", () => ({
   environmentSession: { preparedConnectionValueAtom: () => null },
 }));
-vi.mock("@t3tools/client-runtime/voice-input", () => ({ synthesizeSpeech: vi.fn() }));
-vi.mock("../voice-input/voiceDestination", () => ({
-  runSpeech: async () => Uint8Array.of(73, 68, 51, 1),
+vi.mock("@t3tools/client-runtime/voice-input", () => ({
+  synthesizeSpeech: vi.fn(() => ({ kind: "audio" })),
+  getSpeechSynthesisModels: vi.fn((_prepared: unknown, provider: string) => ({
+    kind: "catalog",
+    provider,
+  })),
 }));
+vi.mock("../voice-input/voiceDestination", async () => {
+  const { EMPTY_SPEECH_SYNTHESIS_CATALOG } = await import("@t3tools/contracts");
+  return {
+    runSpeech: async (operation: { kind: string; provider?: string }) =>
+      operation.kind === "catalog"
+        ? {
+            ...EMPTY_SPEECH_SYNTHESIS_CATALOG,
+            defaultModel: "server-model",
+            speedAppliedByProvider: operation.provider !== "openrouter",
+          }
+        : Uint8Array.of(73, 68, 51, 1),
+  };
+});
 
 it("falls back from a removed system voice and completes playback", async () => {
   vi.mocked(Speech.getAvailableVoicesAsync).mockResolvedValue([]);
@@ -106,6 +123,11 @@ it("removes lock-screen playback when recording takes audio focus", async () => 
   await started.promise;
   await playing.promise;
   expect(player.setPlaybackRate).toHaveBeenCalledWith(1.25);
+  expect(synthesizeSpeech).toHaveBeenLastCalledWith(
+    expect.anything(),
+    "openrouter",
+    expect.objectContaining({ model: "server-model", speed: 1.25 }),
+  );
   const statusChanged = player.addListener.mock.calls[0]![1];
   statusChanged({
     currentTime: 1,

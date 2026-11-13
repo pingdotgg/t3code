@@ -1,5 +1,6 @@
+import type { SpeechSynthesisCatalog } from "@t3tools/contracts";
 import { createReadAloudController, type SpeechPlayback } from "@t3tools/client-runtime/read-aloud";
-import { synthesizeSpeech } from "@t3tools/client-runtime/voice-input";
+import { getSpeechSynthesisModels, synthesizeSpeech } from "@t3tools/client-runtime/voice-input";
 import { speechAudioMimeType } from "@t3tools/shared/read-aloud";
 import { readPreparedConnection } from "../state/session";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
@@ -38,16 +39,28 @@ function systemPlayback(text: string, voice: string, speed: number): SpeechPlayb
   };
 }
 
+const catalogs = new WeakMap<AbortSignal, Promise<SpeechSynthesisCatalog>>();
+
 export const readAloudController = createReadAloudController(async (text, settings, signal) => {
   if (settings.provider === "system") return systemPlayback(text, settings.voice, settings.speed);
   if (settings.provider === "off") throw new Error("Enable read aloud in Settings → Voice.");
   const prepared = settings.environmentId ? readPreparedConnection(settings.environmentId) : null;
   if (!prepared)
     throw new Error("Connect to the read-aloud environment selected in Settings → Voice.");
+  let pendingCatalog = catalogs.get(signal);
+  if (!pendingCatalog) {
+    pendingCatalog = runEnvironmentSpeech(getSpeechSynthesisModels(prepared, settings.provider), {
+      signal,
+    });
+    catalogs.set(signal, pendingCatalog);
+  }
+  const catalog = await pendingCatalog;
+  signal.throwIfAborted();
+  if (catalog.error) throw new Error(catalog.error);
   const bytes = await runEnvironmentSpeech(
     synthesizeSpeech(prepared, settings.provider, {
       text,
-      model: settings.model,
+      model: settings.model || catalog.defaultModel,
       voice: settings.voice,
       speed: settings.speed,
       language: settings.language,
@@ -59,8 +72,7 @@ export const readAloudController = createReadAloudController(async (text, settin
     new Blob([new Uint8Array(bytes)], { type: speechAudioMimeType(bytes) }),
   );
   const audio = new Audio(url);
-  if (settings.provider === "chatgpt" || settings.provider === "openrouter")
-    audio.playbackRate = settings.speed;
+  if (!catalog.speedAppliedByProvider) audio.playbackRate = settings.speed;
   let done: () => void = () => {};
   const finished = new Promise<void>((resolve, reject) => {
     done = resolve;

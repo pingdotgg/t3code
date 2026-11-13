@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
+import { DEFAULT_READ_ALOUD_SETTINGS } from "./readAloud.ts";
 import { type CommandId, ProjectId } from "./baseSchemas.ts";
 import {
   ProviderDriverKind,
@@ -529,4 +530,23 @@ describe("server model preferences", () => {
     expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
     expect(decodeServerSettingsPatch(input)).toEqual(input);
   });
+});
+
+it("disables retired subscription speech without resetting other preferences", () => {
+  const settings = decodeClientSettings({
+    speechCorrectionWord: "correct",
+    readAloud: {
+      ...DEFAULT_READ_ALOUD_SETTINGS,
+      provider: "chatgpt",
+      speed: 1.25,
+      backgroundPlayback: false,
+    },
+  });
+  expect(settings.readAloud).toEqual({
+    ...DEFAULT_READ_ALOUD_SETTINGS,
+    provider: "off",
+    speed: 1.25,
+    backgroundPlayback: false,
+  });
+  expect(settings.speechCorrectionWord).toBe("correct");
 });

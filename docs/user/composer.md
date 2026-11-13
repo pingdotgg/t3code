@@ -202,13 +202,8 @@ Choose a speech provider in **Settings → Voice → Read aloud**, then use **Re
 beside a completed assistant reply. Select it again to stop playback. Leaving the
 thread stops it. Code blocks are skipped by default.
 
-System voices run on your device. **ChatGPT Subscription** uses the native Codex CLI
-login on your selected environment. Sign in to Codex with ChatGPT there first.
-This experimental option uses the desktop app's read-aloud service and its default
-voice. If the native login expires, sign in to Codex again.
-
-Grok TTS and OpenRouter send the reply text through your selected environment and
-use API billing. They share the API keys saved for dictation. Choose a model and
+System voices run on your device. OpenAI, Grok TTS, and OpenRouter send the reply text
+through your selected environment and use API billing. They share the API keys saved for dictation. Choose a model and
 voice, then use the preview to try it.
 
 On mobile, **Background playback** allows speech to continue while the app is in the background.

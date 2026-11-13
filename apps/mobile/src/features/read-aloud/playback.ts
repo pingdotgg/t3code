@@ -1,13 +1,13 @@
 import { uuidv4 } from "../../lib/uuid";
 import { createReadAloudController, type SpeechPlayback } from "@t3tools/client-runtime/read-aloud";
-import { synthesizeSpeech } from "@t3tools/client-runtime/voice-input";
+import { getSpeechSynthesisModels, synthesizeSpeech } from "@t3tools/client-runtime/voice-input";
 import { speechAudioMimeType } from "@t3tools/shared/read-aloud";
 import { createAudioPlayer } from "expo-audio";
 import { File, Paths } from "expo-file-system";
 import * as Speech from "expo-speech";
 import * as Option from "effect/Option";
 import { AppState, Platform } from "react-native";
-import type { ReadAloudSettings } from "@t3tools/contracts";
+import type { ReadAloudSettings, SpeechSynthesisCatalog } from "@t3tools/contracts";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentSession } from "../../state/session";
 import { createAudioPlaybackSession, disposeAudioPlayer } from "../../lib/audioSession";
@@ -97,6 +97,8 @@ function systemPlayback(text: string, settings: ReadAloudSettings): SpeechPlayba
   };
 }
 
+const catalogs = new WeakMap<AbortSignal, Promise<SpeechSynthesisCatalog>>();
+
 export const readAloudController = createReadAloudController(async (text, settings, signal) => {
   if (settings.provider === "system") {
     const voices =
@@ -115,10 +117,18 @@ export const readAloudController = createReadAloudController(async (text, settin
     : null;
   if (!prepared)
     throw new Error("Connect to the read-aloud environment selected in Settings → Voice.");
+  let pendingCatalog = catalogs.get(signal);
+  if (!pendingCatalog) {
+    pendingCatalog = runSpeech(getSpeechSynthesisModels(prepared, settings.provider), signal);
+    catalogs.set(signal, pendingCatalog);
+  }
+  const catalog = await pendingCatalog;
+  signal.throwIfAborted();
+  if (catalog.error) throw new Error(catalog.error);
   const bytes = await runSpeech(
     synthesizeSpeech(prepared, settings.provider, {
       text,
-      model: settings.model,
+      model: settings.model || catalog.defaultModel,
       voice: settings.voice,
       speed: settings.speed,
       language: settings.language,
@@ -135,8 +145,7 @@ export const readAloudController = createReadAloudController(async (text, settin
   try {
     file.write(bytes);
     player = createAudioPlayer(file.uri, { updateInterval: 500 });
-    if (settings.provider === "chatgpt" || settings.provider === "openrouter")
-      player.setPlaybackRate(settings.speed);
+    if (!catalog.speedAppliedByProvider) player.setPlaybackRate(settings.speed);
   } catch {
     if (file.exists) file.delete();
     throw new Error("Could not prepare the generated speech for playback.");
