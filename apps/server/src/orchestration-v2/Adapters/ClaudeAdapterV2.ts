@@ -270,6 +270,11 @@ function claudePromptCacheTtlMs(
 // getContextUsage reports a 150,000 window as a 117,000 threshold, for every catalog model.
 const CLAUDE_AUTO_COMPACT_RESERVE_TOKENS = 33_000;
 
+// Claude Code's isEnvTruthy.
+function isClaudeEnvTruthy(value: string | undefined): boolean {
+  return value !== undefined && ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}
+
 function claudeAutoCompactThreshold(autoCompactWindow: string, maxTokens: number | null) {
   const windowTokens = Number(autoCompactWindow);
   return windowTokens > 0 && (maxTokens === null || windowTokens < maxTokens)
@@ -3260,6 +3265,7 @@ const decodeClaudeSubagentCacheSettings = Schema.decodeUnknownEffect(
 const decodeClaudeCompactSettings = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Struct({
+      autoCompactEnabled: Schema.optionalKey(Schema.Unknown),
       autoCompactWindow: Schema.optionalKey(Schema.Unknown),
       modelSettings: Schema.optionalKey(Schema.Unknown),
     }),
@@ -5473,6 +5479,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     modelSelection: ModelSelection,
     launchArgSettings: ClaudeSdkSettings | undefined,
   ) {
+    // With auto-compaction off Claude never compacts, so there is no threshold to report.
+    for (const name of ["DISABLE_COMPACT", "DISABLE_AUTO_COMPACT"]) {
+      const value = yield* resolveClaudeEnv(cwd, launchArgSettings, name);
+      if (isClaudeEnvTruthy(value)) return "";
+    }
+    const launchEnabled = launchArgSettings?.autoCompactEnabled;
+    let autoCompactEnabled = typeof launchEnabled === "boolean" ? launchEnabled : undefined;
+    for (const settingsFile of yield* settingsFilesByPrecedence(cwd)) {
+      if (autoCompactEnabled !== undefined) break;
+      const settings = yield* fileSystem.readFileString(settingsFile).pipe(
+        Effect.flatMap(decodeClaudeCompactSettings),
+        Effect.orElseSucceed(() => undefined),
+      );
+      if (typeof settings?.autoCompactEnabled === "boolean") {
+        autoCompactEnabled = settings.autoCompactEnabled;
+      }
+    }
+    if (autoCompactEnabled === false) return "";
     if (adapterOptions.settings.autoCompactWindow !== "")
       return adapterOptions.settings.autoCompactWindow;
     const validWindow = (value: unknown) => {
