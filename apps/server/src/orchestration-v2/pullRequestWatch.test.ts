@@ -757,6 +757,8 @@ describe("evaluatePullRequestWatch", () => {
       reviewThreads: { threads: [reviewThread("done", true, 9)], truncated: false },
     });
     assert.include(settled, "- No checks have reported.\n- No unresolved review threads.");
+    // Some hosts return no checks when their read fails, so the agent may still read them.
+    assert.include(settled, "do not read review threads again");
     assert.include(
       message({
         checks,
@@ -904,12 +906,10 @@ describe("evaluatePullRequestWatch", () => {
     assert.equal(result.next.wakes, 0);
 
     // A failure held while the thread was busy is check news too, even after it passed again.
-    const recovered = evaluate(
-      tired,
+    const recovered = evaluatePullRequestWatch(
+      { ...tired, heldFailures: { headSha: "aaaaaaaaaa", checks: [check("lint", "failure")] } },
       detail({ checks: [check("lint", "success")] }),
       [remark("reviewer", "2026-10-02T12:10:00Z")],
-      0,
-      { headSha: "aaaaaaaaaa", failed: [check("lint", "failure")] },
     );
     assert.deepEqual(recovered.changes[0], {
       kind: "checks-failed",

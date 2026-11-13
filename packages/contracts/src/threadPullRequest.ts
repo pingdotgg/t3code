@@ -10,6 +10,7 @@ import {
 } from "./baseSchemas.ts";
 import {
   PullRequestActor,
+  PullRequestCheck,
   PullRequestChecksState,
   PullRequestMergeability,
   PullRequestReviewDecision,
@@ -116,6 +117,13 @@ export const ThreadPullRequestWatch = Schema.Struct({
    * watch keep its thread waiting; absent on watches not read since it existed.
    */
   checksPending: Schema.optional(Schema.Boolean),
+  /** Failures seen while the thread was busy, on the head they failed on, told once it is idle. */
+  heldFailures: Schema.optional(
+    Schema.Struct({
+      headSha: Schema.NullOr(TrimmedNonEmptyString),
+      checks: Schema.Array(PullRequestCheck),
+    }),
+  ),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 

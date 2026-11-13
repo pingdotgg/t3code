@@ -59,7 +59,6 @@ export function evaluatePullRequestWatch(
   >,
   remarks: ReadonlyArray<PullRequestComment> | null,
   now: number,
-  held?: HeldFailures,
 ): PullRequestWatchReport {
   const changes: Array<PullRequestWatchChange> = [];
   // A read without a head says nothing about pushes, so it keeps the last known one.
@@ -125,7 +124,8 @@ export function evaluatePullRequestWatch(
     ];
   }
   // A failure seen while the thread was busy is news when it hears, whatever the check says now.
-  const earlier = (held?.headSha === headSha ? without(held.failed, failed) : []).map((check) => ({
+  const held = watch.heldFailures;
+  const earlier = (held?.headSha === headSha ? without(held.checks, failed) : []).map((check) => ({
     check,
     now: checks.find((current) => current.name === check.name)?.status ?? null,
   }));
@@ -273,12 +273,6 @@ export function evaluatePullRequestWatch(
   };
 }
 
-/** Check failures a watch saw while its thread was busy, on the head they failed on. */
-export interface HeldFailures {
-  readonly headSha: string | null;
-  readonly failed: ReadonlyArray<PullRequestCheck>;
-}
-
 function without(
   checks: ReadonlyArray<PullRequestCheck>,
   others: ReadonlyArray<PullRequestCheck>,
@@ -286,14 +280,23 @@ function without(
   return checks.filter((check) => !others.some((other) => other.name === check.name));
 }
 
-/** What a busy pass holds: every failure it would tell, those held before on the head included. */
-export function holdFailures(report: PullRequestWatchReport): HeldFailures {
-  const failed = report.changes.flatMap((change) =>
+/**
+ * The watch a busy pass records: unchanged but for every failure it would tell, those held before
+ * on the head included, so a restart before the thread hears still tells them.
+ */
+export function holdFailures(
+  watch: ThreadPullRequestWatch,
+  report: PullRequestWatchReport,
+): ThreadPullRequestWatch {
+  const checks = report.changes.flatMap((change) =>
     change.kind === "checks-failed"
       ? [...change.failed, ...(change.earlier ?? []).map(({ check }) => check)]
       : [],
   );
-  return { headSha: report.next.headSha, failed };
+  const { heldFailures: _held, ...rest } = watch;
+  return checks.length === 0
+    ? rest
+    : { ...rest, heldFailures: { headSha: report.next.headSha, checks } };
 }
 
 function snippet(body: string): string {
@@ -475,7 +478,10 @@ export function combinePullRequestWatchWakes(
 /** Tells the agent not to read again what the wake already says in full. */
 function rereadAdvice(state: PullRequestWatchState): Array<string> {
   const complete = [
-    ...(state.checks.some((check) => check.placeholder === true) ? [] : ["the checks"]),
+    // Some hosts return no checks when the read fails, so an empty list is not a complete one.
+    ...(state.checks.length === 0 || state.checks.some((check) => check.placeholder === true)
+      ? []
+      : ["the checks"]),
     ...(state.reviewThreads === null || state.reviewThreads.truncated ? [] : ["review threads"]),
   ];
   return complete.length === 0

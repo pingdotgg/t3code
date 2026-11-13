@@ -40,7 +40,6 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import {
   combinePullRequestWatchWakes,
   evaluatePullRequestWatch,
-  type HeldFailures,
   holdFailures,
   PULL_REQUEST_WATCH_NO_CHECKS_MS,
   pullRequestWatchMessage,
@@ -212,6 +211,7 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     (left.owedChecks ?? []).join("\n") === (right.owedChecks ?? []).join("\n") &&
     (left.awaitingApproval ?? []).join("\n") === (right.awaitingApproval ?? []).join("\n") &&
     (left.approvalAnnounced ?? false) === (right.approvalAnnounced ?? false) &&
+    JSON.stringify(left.heldFailures ?? null) === JSON.stringify(right.heldFailures ?? null) &&
     left.remarksThrough === right.remarksThrough &&
     left.remarkIds.join("\n") === right.remarkIds.join("\n") &&
     left.conflicting === right.conflicting &&
@@ -288,11 +288,11 @@ export const make = Effect.gen(function* () {
 
   const readFailures = new Map<string, number>();
   /**
-   * Watches with news held while their thread was busy, with the failures seen meanwhile. Their
-   * state is not recorded, so the first read once the thread is idle tells everything since in
+   * Watches with news held while their thread was busy. Their state is recorded only with the
+   * failures seen meanwhile, so the first read once the thread is idle tells everything since in
    * one wake; the entry goes once that wake or a quiet read is recorded.
    */
-  const deferred = new Map<string, HeldFailures>();
+  const deferred = new Set<string>();
   /** The last sweep's groups, whose pull requests get host change feeds. */
   let currentGroups: ReadonlyArray<WatchGroup> = [];
   // A pass reads watches and records new ones, so passes must not overlap.
@@ -693,7 +693,7 @@ export const make = Effect.gen(function* () {
       );
     let remarks = Option.isSome(activity) ? yield* remarksOf(activity.value) : null;
     const reportOf = (target: WatchTarget) =>
-      evaluatePullRequestWatch(target.watch, detail, remarks, now, deferred.get(watchKey(target)));
+      evaluatePullRequestWatch(target.watch, detail, remarks, now);
     // A wake lists the open review threads, so a pass that skipped them reads them before waking.
     const holds = (target: WatchTarget) =>
       target.thread.busy && target.watch.awaitingBaseline === undefined;
@@ -741,8 +741,9 @@ export const make = Effect.gen(function* () {
       const report = reportOf(target);
       // A pass that sets the check baseline is recorded, or every later read would stay one.
       if (report.changes.length > 0 && holds(target)) {
-        deferred.set(watchKey(target), holdFailures(report));
-        return Effect.void;
+        deferred.add(watchKey(target));
+        const held = holdFailures(target.watch, report);
+        return watchesEqual(held, target.watch) ? Effect.void : record(target, held);
       }
       if (report.changes.length > 0) {
         const wake = {

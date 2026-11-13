@@ -4281,7 +4281,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ({ messages }) => messages.filter((message) => message.notification !== undefined),
       );
 
-      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      let reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
       yield* reactor.sweep;
       failing = ["lint"];
       yield* TestClock.adjust("10 minutes");
@@ -4363,6 +4363,19 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         "- Checks failed on ad70160:\n  - build, failed earlier, now not reported",
       );
 
+      // A failure that passes again while the thread works survives a restart before it hears.
+      failing = ["lint", "test", "build"];
+      yield* TestClock.adjust("10 minutes");
+      yield* reactor.sweep;
+      failing = ["lint", "test"];
+      reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      yield* finishRuns(threadId);
+      yield* reactor.sweep;
+      assert.include(
+        (yield* wakes)[4]?.text ?? "",
+        "- Checks failed on ad70160:\n  - build, failed earlier, now success",
+      );
+
       // A failure held on a head the agent has since replaced is not news.
       failing = ["lint", "test", "build"];
       yield* TestClock.adjust("10 minutes");
@@ -4371,10 +4384,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       failing = [];
       yield* TestClock.adjust("10 minutes");
       yield* reactor.sweep;
-      assert.lengthOf(yield* wakes, 4);
+      assert.lengthOf(yield* wakes, 5);
       yield* finishRuns(threadId);
       yield* reactor.sweep;
-      const last = (yield* wakes)[4];
+      const last = (yield* wakes)[5];
       assert.strictEqual(last?.notification?.summary, "#12: checks passed");
       assert.notInclude(last?.text ?? "", "failed");
       yield* watch(false, "end");
