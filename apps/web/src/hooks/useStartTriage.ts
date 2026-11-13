@@ -17,7 +17,7 @@ import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { writeTextToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
-import { useScratchProject } from "./useScratchProject";
+import { scratchBlockedCopy, useScratchProject } from "./useScratchProject";
 
 export const TRIAGE_CLI_COMMAND = "npx t3 triage";
 
@@ -41,16 +41,18 @@ const copyTriageCliCommand = () =>
  */
 export function useStartTriage() {
   const router = useRouter();
-  const { scratchWorkspaceRootFor } = useScratchProject();
+  const { scratchWorkspaceRootFor, scratchBlockedFor, openScratchBlockedHelp } =
+    useScratchProject();
   const handleNewThread = useNewThreadHandler();
   const prepare = useAtomCommand(serverEnvironment.prepareTriage, { reportFailure: false });
   const openScratch = useAtomCommand(projectEnvironment.openScratch, { reportFailure: false });
 
   // With no draft to show, a toast is the only place to point at the CLI.
-  const fail = (description: string) =>
+  const fail = (description: string, blocked = false) =>
     toastManager.add(
       stackedThreadToast({
-        type: "error",
+        // Nothing failed when the server turned this off on purpose; a warning shows the reason in full.
+        type: blocked ? "warning" : "error",
         title: m(msg("Could not start triage")),
         description: m(
           msg("{description} Run {command} in a terminal on that machine instead.", {
@@ -64,7 +66,17 @@ export function useStartTriage() {
           onClick: () => void copyTriageCliCommand(),
         },
         // "Copy command" is the copy that helps here, not the error text.
-        data: { hideCopyButton: true },
+        data: {
+          hideCopyButton: true,
+          ...(blocked
+            ? {
+                secondaryActionProps: {
+                  children: m(msg("How to fix")),
+                  onClick: openScratchBlockedHelp,
+                },
+              }
+            : {}),
+        },
       }),
     );
   const failWith = (
@@ -94,7 +106,9 @@ export function useStartTriage() {
 
   return async (environmentId: EnvironmentId) => {
     if (scratchWorkspaceRootFor(environmentId) === null) {
-      fail(m(msg("This machine cannot start threads without a project.")));
+      const blocked = scratchBlockedFor(environmentId);
+      if (blocked === null) fail(m(msg("This machine cannot start threads without a project.")));
+      else fail(scratchBlockedCopy(blocked), true);
       return;
     }
     const requestingRouteHref = router.state.location.href;

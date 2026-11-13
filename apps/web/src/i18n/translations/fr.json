@@ -12460,5 +12460,9 @@
   "b7df38b7d8792d78": "Ouvrir le guide",
   "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue",
   "d8aaf932f90429c4": "Placer cette commande en tête de la file d’attente ({shortcut})",
-  "425ab15036aec8a4": "Placer cette commande en tête de la file d’attente"
+  "425ab15036aec8a4": "Placer cette commande en tête de la file d’attente",
+  "c4370cc5c4ac8b97": "T3 Code conserve les fils sans projet dans {baseDir}, qui se trouve dans le dépôt Git {repositoryRoot}. Pour protéger ce dépôt, ces fils sont désactivés sur cette machine.",
+  "89ad9ed9e0c8ee31": "Impossible de démarrer un fil sans projet",
+  "0df8611d9ab52b03": "Comment corriger",
+  "cdd62cfda13b358c": "Comment corriger"
 }

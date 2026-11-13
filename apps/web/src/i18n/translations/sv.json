@@ -12467,5 +12467,9 @@
   "b7df38b7d8792d78": "Öppna guiden",
   "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
   "d8aaf932f90429c4": "Flytta det här kommandot först i kön ({shortcut})",
-  "425ab15036aec8a4": "Flytta det här kommandot först i kön"
+  "425ab15036aec8a4": "Flytta det här kommandot först i kön",
+  "c4370cc5c4ac8b97": "T3 Code sparar trådar utan projekt i {baseDir}, som ligger i Git-repot på {repositoryRoot}. För att skydda det repot är de här trådarna inaktiverade på den här datorn.",
+  "89ad9ed9e0c8ee31": "Det går inte att starta en tråd utan ett projekt",
+  "0df8611d9ab52b03": "Så åtgärdar du det",
+  "cdd62cfda13b358c": "Så åtgärdar du det"
 }

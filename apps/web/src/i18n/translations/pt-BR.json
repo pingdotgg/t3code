@@ -12460,5 +12460,9 @@
   "b7df38b7d8792d78": "Abrir guia",
   "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão",
   "d8aaf932f90429c4": "Mover este comando para o início da fila ({shortcut})",
-  "425ab15036aec8a4": "Mover este comando para o início da fila"
+  "425ab15036aec8a4": "Mover este comando para o início da fila",
+  "c4370cc5c4ac8b97": "O T3 Code guarda threads sem projeto em {baseDir}, que fica dentro do repositório Git em {repositoryRoot}. Para proteger esse repositório, essas threads estão desativadas nesta máquina.",
+  "89ad9ed9e0c8ee31": "Não é possível iniciar uma thread sem projeto",
+  "0df8611d9ab52b03": "Como corrigir",
+  "cdd62cfda13b358c": "Como corrigir"
 }
