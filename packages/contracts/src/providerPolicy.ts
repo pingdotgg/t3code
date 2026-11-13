@@ -76,6 +76,46 @@ export const ProviderApprovalOption = Schema.Struct({
 });
 export type ProviderApprovalOption = typeof ProviderApprovalOption.Type;
 
+const ProviderPermissionSpecialPath = Schema.Union([
+  Schema.Struct({ kind: Schema.Literals(["root", "minimal", "tmpdir", "slash_tmp"]) }),
+  Schema.Struct({
+    kind: Schema.Literal("project_roots"),
+    subpath: Schema.optionalKey(Schema.String),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("unknown"),
+    path: Schema.String,
+    subpath: Schema.optionalKey(Schema.String),
+  }),
+]);
+
+const ProviderPermissionFileSystemEntry = Schema.Struct({
+  access: Schema.Literals(["read", "write", "deny"]),
+  path: Schema.Union([
+    Schema.Struct({ type: Schema.Literal("path"), path: Schema.String }),
+    Schema.Struct({ type: Schema.Literal("glob_pattern"), pattern: Schema.String }),
+    Schema.Struct({ type: Schema.Literal("special"), value: ProviderPermissionSpecialPath }),
+  ]),
+});
+
+/**
+ * The grant an approval hands the provider, kept as the provider sent it so a
+ * reconnecting client sees the same request the decision answers. `read` and
+ * `write` are Codex's legacy path lists, which it sends next to `entries`.
+ */
+export const ProviderApprovalPermissions = Schema.Struct({
+  network: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
+  fileSystem: Schema.optionalKey(
+    Schema.Struct({
+      entries: Schema.optionalKey(Schema.Array(ProviderPermissionFileSystemEntry)),
+      globScanMaxDepth: Schema.optionalKey(Schema.Number),
+      read: Schema.optionalKey(Schema.Array(Schema.String)),
+      write: Schema.optionalKey(Schema.Array(Schema.String)),
+    }),
+  ),
+});
+export type ProviderApprovalPermissions = typeof ProviderApprovalPermissions.Type;
+
 export const ProviderUserInputAnswers = Schema.Record(Schema.String, Schema.Unknown);
 export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 

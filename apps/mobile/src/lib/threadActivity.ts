@@ -9,6 +9,7 @@ import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subage
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
+  approvalRequestDetail,
   turnItemDetailRevision,
   turnItemHasDetail,
   turnItemNeedsDetailFetch,
@@ -773,7 +774,7 @@ function toWorkLogEntry(
     case "approval_request":
       return {
         ...common,
-        ...(item.prompt ? { detail: item.prompt } : {}),
+        ...(item.prompt ? { detail: approvalRequestDetail(item) } : {}),
         requestKind: item.requestKind,
         toolData: item,
       };

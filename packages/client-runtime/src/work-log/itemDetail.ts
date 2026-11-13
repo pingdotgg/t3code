@@ -248,6 +248,18 @@ export function turnItemOutputImages(
   }));
 }
 
+/**
+ * History text of an approval. A request carrying a structured grant lists the
+ * grant in `prompt`, so its explanation is only in `reason` and is kept here.
+ */
+export function approvalRequestDetail(
+  item: Extract<OrchestrationV2TurnItem, { readonly type: "approval_request" }>,
+): string | undefined {
+  return item.permissions !== undefined && item.prompt && item.reason
+    ? `${item.prompt}\n\n${item.reason}`
+    : item.prompt;
+}
+
 export function turnItemHasDetail(item: OrchestrationV2TurnItem): boolean {
   switch (item.type) {
     case "reasoning":

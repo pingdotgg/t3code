@@ -20,6 +20,7 @@ import {
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
+  OrchestrationV2TurnItemJson,
   ProjectId,
   type ProviderApprovalDecision,
   ProviderInstanceId,
@@ -10771,43 +10772,52 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
+    const permissionRequest = (
+      id: number,
+      itemId: string,
+      permissions: CodexSchema.PermissionsRequestApprovalParams["permissions"],
+      reason?: string,
+    ): Array<CodexReplay.CodexAppServerReplayEntry> => [
+      {
+        type: "emit_inbound",
+        label: `permissions ${itemId}`,
+        frame: {
+          id,
+          method: "item/permissions/requestApproval",
+          params: {
+            threadId: nativeThreadId,
+            turnId: nativeTurnId,
+            itemId,
+            cwd: "/w",
+            startedAtMs: 2,
+            permissions,
+            ...(reason === undefined ? {} : { reason }),
+          },
+        },
+      },
+      {
+        type: "expect_outbound",
+        label: `permissions ${itemId}`,
+        frame: { id, result: { permissions, scope: "turn" } },
+      },
+    ];
+
     it.effect("classifies permission requests that only list sandbox entries", () =>
       Effect.gen(function* () {
-        const permissionRequest = (
-          id: number,
-          itemId: string,
-          entries: CodexSchema.PermissionsRequestApprovalParams__AdditionalFileSystemPermissions["entries"],
-        ): Array<CodexReplay.CodexAppServerReplayEntry> => [
-          {
-            type: "emit_inbound",
-            label: `permissions ${itemId}`,
-            frame: {
-              id,
-              method: "item/permissions/requestApproval",
-              params: {
-                threadId: nativeThreadId,
-                turnId: nativeTurnId,
-                itemId,
-                cwd: "/w",
-                startedAtMs: 2,
-                permissions: { fileSystem: { entries } },
-              },
-            },
-          },
-          {
-            type: "expect_outbound",
-            label: `permissions ${itemId}`,
-            frame: { id, result: { permissions: { fileSystem: { entries } }, scope: "turn" } },
-          },
-        ];
         const { harness, answerNext } = yield* startApprovalTurn("permission-entries", [
-          ...permissionRequest(0, "write-glob", [
-            { access: "read", path: { type: "path", path: "/w/src" } },
-            { access: "write", path: { type: "glob_pattern", pattern: "/w/out/**" } },
-          ]),
-          ...permissionRequest(1, "read-glob", [
-            { access: "read", path: { type: "glob_pattern", pattern: "/w/docs/**" } },
-          ]),
+          ...permissionRequest(0, "write-glob", {
+            fileSystem: {
+              entries: [
+                { access: "read", path: { type: "path", path: "/w/src" } },
+                { access: "write", path: { type: "glob_pattern", pattern: "/w/out/**" } },
+              ],
+            },
+          }),
+          ...permissionRequest(1, "read-glob", {
+            fileSystem: {
+              entries: [{ access: "read", path: { type: "glob_pattern", pattern: "/w/docs/**" } }],
+            },
+          }),
           turnCompleted(nativeTurnId),
         ]);
         const write = yield* answerNext;
@@ -10824,6 +10834,79 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ["file-read", "file-read"],
           ],
         );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect("shows the grant a permission request asks for and keeps it whole", () =>
+      Effect.gen(function* () {
+        const grant = (globScanMaxDepth: number) =>
+          ({
+            network: { enabled: true },
+            fileSystem: {
+              globScanMaxDepth,
+              read: ["/w/docs"],
+              entries: [
+                { access: "read", path: { type: "path", path: "/w/docs" } },
+                {
+                  access: "read",
+                  path: { type: "special", value: { kind: "project_roots", subpath: "src" } },
+                },
+                { access: "write", path: { type: "glob_pattern", pattern: "/w/out/**" } },
+                { access: "deny", path: { type: "path", path: "/w/a\nNetwork access" } },
+              ],
+            },
+          }) satisfies CodexSchema.PermissionsRequestApprovalParams["permissions"];
+        const { harness, answerNext } = yield* startApprovalTurn("permission-grants", [
+          ...permissionRequest(0, "shallow", grant(1), "  Need to check the docs "),
+          ...permissionRequest(1, "deep", grant(9)),
+          ...permissionRequest(2, "nothing", { network: { enabled: false } }, "Just asking"),
+          turnCompleted(nativeTurnId),
+        ]);
+        const shallow = approvalItem(harness.events, yield* answerNext);
+        const deep = approvalItem(harness.events, yield* answerNext);
+        const nothing = approvalItem(harness.events, yield* answerNext);
+        yield* harness.firstTerminal;
+
+        assert.equal(
+          shallow?.prompt,
+          [
+            "Network access",
+            "read /w/docs",
+            "read project roots/src",
+            "write glob /w/out/**",
+            "deny /w/a\\nNetwork access",
+            "glob scan depth 1",
+          ].join("\n"),
+        );
+        assert.equal(shallow?.reason, "Need to check the docs");
+        assert.isUndefined(deep?.reason);
+        assert.deepEqual([nothing?.prompt, nothing?.reason], ["Just asking", undefined]);
+
+        // The stored grant is the one the answer hands back to Codex, at any scan depth.
+        const payload = Schema.fromJsonString(OrchestrationV2TurnItemJson);
+        for (const [item, depth] of [
+          [shallow, 1],
+          [deep, 9],
+        ] as const) {
+          assert.isDefined(item);
+          const reloaded = yield* Schema.encodeEffect(payload)(item).pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(payload)),
+          );
+          assert.deepEqual(
+            reloaded.type === "approval_request" ? reloaded.permissions : undefined,
+            grant(depth),
+          );
+        }
       }).pipe(
         Effect.scoped,
         Effect.provide(

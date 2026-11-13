@@ -2,6 +2,7 @@ import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 import {
   isJsonToolText,
+  approvalRequestDetail,
   toolCallLines,
   turnItemDetailRevision,
   turnItemNeedsDetailFetch,
@@ -386,7 +387,9 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         />
       ) : null}
 
-      {item.type === "approval_request" ? <StructuredValue value={item.prompt} /> : null}
+      {item.type === "approval_request" ? (
+        <StructuredValue value={approvalRequestDetail(item)} />
+      ) : null}
       {item.type === "user_input_request" ? (
         <StructuredValue
           value={item.questions

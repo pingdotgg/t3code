@@ -74,6 +74,7 @@ import type {
   ProviderUserInputAnswers,
   ProviderApprovalDecision,
   ProviderApprovalOption,
+  ProviderApprovalPermissions,
   ProviderRequestKind,
   ProviderThreadId,
   ProviderTurnId,
@@ -634,6 +635,103 @@ function providerRequestKindFromPermissions(
     return "file-read";
   }
   return "command";
+}
+
+type PermissionPath = NonNullable<
+  NonNullable<ProviderApprovalPermissions["fileSystem"]>["entries"]
+>[number]["path"];
+
+function codexPermissionPath(
+  path: CodexSchema.PermissionsRequestApprovalParams__FileSystemPath,
+): PermissionPath {
+  if (path.type !== "special") return path;
+  const { value } = path;
+  const subpath =
+    "subpath" in value && typeof value.subpath === "string" ? { subpath: value.subpath } : {};
+  switch (value.kind) {
+    case "project_roots":
+      return { type: "special", value: { kind: value.kind, ...subpath } };
+    case "unknown":
+      return { type: "special", value: { kind: value.kind, path: value.path, ...subpath } };
+    default:
+      return { type: "special", value: { kind: value.kind } };
+  }
+}
+
+/** The request as Codex sent it, with only its `null`s dropped: the approval answers exactly this. */
+function codexApprovalPermissions(
+  permissions: CodexSchema.PermissionsRequestApprovalParams["permissions"],
+): ProviderApprovalPermissions {
+  const { fileSystem, network } = permissions;
+  return {
+    ...(network
+      ? { network: typeof network.enabled === "boolean" ? { enabled: network.enabled } : {} }
+      : {}),
+    ...(fileSystem
+      ? {
+          fileSystem: {
+            ...(fileSystem.entries
+              ? {
+                  entries: fileSystem.entries.map((entry) => ({
+                    access: entry.access,
+                    path: codexPermissionPath(entry.path),
+                  })),
+                }
+              : {}),
+            ...(typeof fileSystem.globScanMaxDepth === "number"
+              ? { globScanMaxDepth: fileSystem.globScanMaxDepth }
+              : {}),
+            ...(fileSystem.read ? { read: fileSystem.read } : {}),
+            ...(fileSystem.write ? { write: fileSystem.write } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+// Paths are agent-supplied: a raw line break would read as a second grant.
+const permissionText = (value: string) =>
+  value.replace(/[\r\n]/g, (char) => (char === "\n" ? "\\n" : "\\r"));
+
+function permissionPathLabel(path: PermissionPath): string {
+  if (path.type === "path") return permissionText(path.path);
+  if (path.type === "glob_pattern") return `glob ${permissionText(path.pattern)}`;
+  const special = path.value;
+  const under = (base: string, subpath: string | undefined) =>
+    subpath === undefined ? base : `${base}/${permissionText(subpath)}`;
+  switch (special.kind) {
+    case "root":
+      return "entire filesystem (/)";
+    case "minimal":
+      return "minimal system paths";
+    case "tmpdir":
+      return "$TMPDIR";
+    case "slash_tmp":
+      return "/tmp";
+    case "project_roots":
+      return under("project roots", special.subpath);
+    case "unknown":
+      return under(permissionText(special.path), special.subpath);
+  }
+}
+
+/** One line per grant, every grant listed: approving hands over all of them. */
+function codexApprovalPermissionsPrompt(
+  permissions: ProviderApprovalPermissions,
+): string | undefined {
+  const { fileSystem, network } = permissions;
+  const lines = new Set<string>();
+  if (network?.enabled === true) lines.add("Network access");
+  for (const path of fileSystem?.read ?? []) lines.add(`read ${permissionText(path)}`);
+  for (const path of fileSystem?.write ?? []) lines.add(`write ${permissionText(path)}`);
+  for (const entry of fileSystem?.entries ?? []) {
+    lines.add(`${entry.access} ${permissionPathLabel(entry.path)}`);
+  }
+  if (lines.size === 0) return undefined;
+  if (fileSystem?.globScanMaxDepth !== undefined) {
+    lines.add(`glob scan depth ${fileSystem.globScanMaxDepth}`);
+  }
+  return [...lines].join("\n");
 }
 
 function permissionsResponseFromDecision(input: {
@@ -4516,6 +4614,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly nativeRequestId: string;
           readonly requestKind: ProviderRequestKind;
           readonly prompt?: string | null;
+          readonly reason?: string;
+          readonly permissions?: ProviderApprovalPermissions;
           readonly appName?: string;
           readonly options?: ReadonlyArray<ProviderApprovalOption>;
         }) {
@@ -4599,6 +4699,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ...(input.prompt === null || input.prompt === undefined
               ? {}
               : { prompt: input.prompt }),
+            ...(input.reason === undefined ? {} : { reason: input.reason }),
+            ...(input.permissions === undefined ? {} : { permissions: input.permissions }),
             ...(input.appName === undefined ? {} : { appName: input.appName }),
             ...(input.options === undefined ? {} : { options: input.options }),
           };
@@ -5861,12 +5963,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             const requestKind = providerRequestKindFromPermissions(payload.permissions);
+            const permissions = codexApprovalPermissions(payload.permissions);
+            const grants = codexApprovalPermissionsPrompt(permissions);
+            const reason = payload.reason?.trim();
             const artifacts = yield* buildApprovalRequestArtifacts({
               context,
               nativeItemId: payload.itemId,
               nativeRequestId: payload.itemId,
               requestKind,
-              ...(payload.reason === undefined ? {} : { prompt: payload.reason }),
+              permissions,
+              ...(grants === undefined
+                ? { prompt: payload.reason ?? null }
+                : { prompt: grants, ...(reason ? { reason } : {}) }),
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
