@@ -28,16 +28,16 @@ Line format, as the workspace README fixes it, with two additions:
 
 ## Scenarios
 
-| Scenario     | What happens                                                                                                                                                |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pairing`    | A fresh browser opens `/pair#token=…` on a fresh server and lands in the app                                                                                |
-| `reconnect`  | The same browser (session cookie) opens `/` again                                                                                                           |
-| `turn`       | New thread in the project, Claude Haiku 5.5, one short message, one full turn                                                                               |
-| `permission` | New thread in Supervised mode; Claude asks to run `echo conn-recording`; the user approves once                                                             |
-| `interrupt`  | New thread; Claude runs `ping -c 30 127.0.0.1` (approved); the user stops the turn while it runs                                                            |
-| `remote`     | From Settings › Connections, pair a second fresh server as a remote environment                                                                             |
-| `terminal`   | On a draft: open the terminal drawer, `echo`, resize, reload (scrollback returns), a 50 MB `yes`, close; the flood's output frames are left out of the file |
-| `rust-*`     | As `remote`, with the Rust `conn-server` as the remote environment (`--rust <binary>`)                                                                      |
+| Scenario     | What happens                                                                                     |
+| ------------ | ------------------------------------------------------------------------------------------------ |
+| `pairing`    | A fresh browser opens `/pair#token=…` on a fresh server and lands in the app                     |
+| `reconnect`  | The same browser (session cookie) opens `/` again                                                |
+| `turn`       | New thread in the project, Claude Haiku 5.5, one short message, one full turn                    |
+| `permission` | New thread in Supervised mode; Claude asks to run `echo conn-recording`; the user approves once  |
+| `interrupt`  | New thread; Claude runs `ping -c 30 127.0.0.1` (approved); the user stops the turn while it runs |
+| `remote`     | From Settings › Connections, pair a second fresh server as a remote environment                  |
+| `terminal`   | On a draft: terminal drawer, `echo`, resize, reload (scrollback returns), 50 MB `yes`, close     |
+| `rust-*`     | As `remote`, with the Rust `conn-server` as the remote environment (`--rust <binary>`)           |
 
 The server starts with `--auto-bootstrap-project-from-cwd` in a scratch git repo, so it has one
 project and one empty thread before the client arrives. `pairing` therefore lands on that thread,
@@ -66,10 +66,9 @@ git diff --stat native/conn-server/fixtures/sessions
 The `rust-*` scenarios (`rust-turn`, `rust-restart`, `rust-permission`, `rust-stop`) run only
 when named, after `pairing`, with `--rust native/conn-server/target/release/conn-server`. They
 record only the Rust server's traffic and always write a screenshot per checkpoint.
-`rust-terminal` runs the `terminal` steps against the Conn Server;
-`node recorder/compare-terminal.mjs sessions/terminal.ndjson` (and the same for
-`rust-terminal`) prints both as comparable timelines. `CONN_MONOREPO` points the recorder at a
-Conn checkout other than the one it sits in. `rust-restart` stops and restarts the Rust server on the same state and waits for the client to
+`rust-terminal` runs the `terminal` steps on the Conn Server; `recorder/compare-terminal.mjs
+<recording>` prints either as a timeline. `CONN_MONOREPO` sets the Conn checkout to use.
+`rust-restart` stops and restarts the Rust server on the same state and waits for the client to
 reconnect without a reload. `rust-load` runs 11 turns in three threads, then idles two minutes.
 
 `--rust-url <pairingUrl>` uses a Rust server that already runs (for example on another host,
