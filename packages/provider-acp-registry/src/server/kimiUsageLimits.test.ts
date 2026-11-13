@@ -1,12 +1,19 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as ByteSize from "effect/ByteSize";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Effect from "effect/Effect";
-import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { kimiOAuthKey, kimiUsageResponseToLimits, readKimiUsageLimits } from "./kimiUsageLimits.ts";
@@ -621,9 +628,10 @@ describe("readKimiUsageLimits", () => {
     },
   );
 
-  // TestClock would freeze the lock's bounded retry sleeps forever, so the
-  // held-lock case runs against the real clock outside the shared layer block.
-  it.live("completes the lookup when the credential lock is already held", () =>
+  // Outside the shared layer block because that block excludes test services:
+  // here `it.effect` still provides the TestClock that drives the lock's
+  // bounded retry sleeps deterministically.
+  it.effect("completes the lookup when the credential lock is already held", () =>
     Effect.gen(function* () {
       const usagesBody = JSON.stringify({
         limits: [
@@ -646,19 +654,74 @@ describe("readKimiUsageLimits", () => {
               }
             : { status: 200, body: usagesBody },
       });
-      yield* kimi.fileSystem.makeDirectory(kimi.path.join(kimi.homeDirectory, "credentials"), {
-        recursive: true,
-      });
+      const credentialsDirectory = kimi.path.join(kimi.homeDirectory, "credentials");
+      yield* kimi.fileSystem.makeDirectory(credentialsDirectory, { recursive: true });
       yield* kimi.writeCredential(JSON.stringify(STALE_CREDENTIAL));
       // Another process (the CLI) holds the lock and never releases it.
       yield* kimi.fileSystem.writeFileString(
-        kimi.path.join(kimi.homeDirectory, "credentials", "kimi-code.lock"),
+        kimi.path.join(credentialsDirectory, "kimi-code.lock"),
         "held-by-cli",
       );
-      const limits = yield* readKimiUsageLimits({
+      // The TestClock's virtual time sits at the epoch, ages before the real
+      // lock file's mtime, so `now - mtime` is negative and the stale-lock
+      // branch (which breaks the lock once and retries) never fires; this
+      // test exercises only the bounded-retry-exhausted path below.
+      const firstProbeSeen = yield* Deferred.make<void>();
+      const holderLockInfo: FileSystem.File.Info = {
+        type: "File",
+        mtime: Option.some(DateTime.toDateUtc(DateTime.makeUnsafe("2026-11-13T11:59:59.000Z"))),
+        atime: Option.none(),
+        birthtime: Option.none(),
+        dev: 0n,
+        ino: Option.none(),
+        mode: 0o600,
+        nlink: Option.none(),
+        uid: Option.none(),
+        gid: Option.none(),
+        rdev: Option.none(),
+        size: ByteSize.fromInputUnsafe("held-by-cli".length),
+        blksize: Option.none(),
+        blocks: Option.none(),
+      };
+      // The CLI holds the lock forever: every exclusive-create probe fails with
+      // AlreadyExists; the first probe signals the deferred only once the wake
+      // loop has registered its retry sleep. `stat` stays synchronous so each
+      // wake chain ends within one clock adjustment.
+      const neverAcquired = FileSystem.make({
+        ...kimi.fileSystem,
+        stat: (path) =>
+          path.endsWith(".lock") ? Effect.succeed(holderLockInfo) : kimi.fileSystem.stat(path),
+        // `FileSystem.make` derives `writeFileString` from this `writeFile`
+        // (encode then delegate, flag included), so the probe is intercepted
+        // here.
+        writeFile: (path, data, options) =>
+          path.endsWith(".lock") && options?.flag === "wx"
+            ? Deferred.succeed(firstProbeSeen, void undefined).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "AlreadyExists",
+                      module: "FileSystem",
+                      method: "writeFile",
+                      pathOrDescriptor: path,
+                    }),
+                  ),
+                ),
+              )
+            : kimi.fileSystem.writeFile(path, data, options),
+      });
+      const lookup = yield* readKimiUsageLimits({
         environment: { KIMI_CODE_HOME: kimi.homeDirectory } as NodeJS.ProcessEnv,
         nowMs: Date.parse("2026-11-13T12:00:00.000Z"),
-      }).pipe(Effect.provideService(HttpClient.HttpClient, kimi.client));
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, neverAcquired),
+        Effect.provideService(HttpClient.HttpClient, kimi.client),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(firstProbeSeen);
+      // Drives all five bounded retries (5 x 20ms) in one adjustment.
+      yield* TestClock.adjust("250 millis");
+      const limits = yield* Fiber.join(lookup);
       // The bounded wait expires and the lookup proceeds without the lock.
       expect(limits).toMatchObject({
         windows: [{ id: "session", usedPercent: 19 }],
@@ -666,7 +729,7 @@ describe("readKimiUsageLimits", () => {
       // Proceeding without the lock still wrote back a consistent credential.
       const persisted = JSON.parse(
         yield* kimi.fileSystem.readFileString(
-          kimi.path.join(kimi.homeDirectory, "credentials", "kimi-code.json"),
+          kimi.path.join(credentialsDirectory, "kimi-code.json"),
         ),
       );
       expect(persisted).toMatchObject({
@@ -674,10 +737,10 @@ describe("readKimiUsageLimits", () => {
         refresh_token: "rotated-refresh",
       });
       // The holder's lock file is left in place: this reader released nothing.
-      const lockHeld = yield* kimi.fileSystem.exists(
-        kimi.path.join(kimi.homeDirectory, "credentials", "kimi-code.lock"),
+      const lockFileExists = yield* kimi.fileSystem.exists(
+        kimi.path.join(credentialsDirectory, "kimi-code.lock"),
       );
-      expect(lockHeld).toBe(true);
+      expect(lockFileExists).toBe(true);
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });

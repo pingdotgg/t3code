@@ -45,7 +45,9 @@ const SESSION_MINS = 5 * 60;
 const CREDENTIAL_LOCK_RETRY_COUNT = 5;
 const CREDENTIAL_LOCK_RETRY_DELAY = "20 millis";
 // A lock older than this belongs to a dead process; break it once and retry.
-const CREDENTIAL_LOCK_STALE_MS = 2 * 1_000;
+// The guarded refresh holds a live lock for up to REQUEST_TIMEOUT, so this
+// sits well above the longest legitimate hold.
+const CREDENTIAL_LOCK_STALE_MS = 15 * 1_000;
 
 const KimiStoredCredential = Schema.Struct({
   access_token: Schema.String,
