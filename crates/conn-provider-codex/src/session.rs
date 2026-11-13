@@ -103,6 +103,15 @@ impl Inner {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Fails once the session closed; checked after each await of a multi-step call.
+    fn check_open(&self) -> ProviderResult<()> {
+        if self.lock().closed {
+            Err(ProviderError::SessionStopped)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Sends events and replies in order. Holds no lock across a send.
     async fn deliver(&self, outs: Vec<Out>) {
         if outs.is_empty() {
@@ -129,7 +138,16 @@ impl Inner {
                 }
                 Out::Skipped(kind) => {
                     let key: String = kind.chars().take(80).collect();
-                    if self.lock().logged.insert(key) {
+                    // At most 64 kinds are remembered, as in the Claude crate; past that a
+                    // kind may be logged again.
+                    let first = {
+                        let mut state = self.lock();
+                        if state.logged.len() >= 64 {
+                            state.logged.clear();
+                        }
+                        state.logged.insert(key)
+                    };
+                    if first {
                         eprintln!("conn-provider-codex: skipped {kind}");
                     }
                 }
@@ -525,6 +543,7 @@ impl Session for CodexSession {
             let native = inner
                 .loaded_thread(Some(&input.runtime_policy), Some(&model))
                 .await?;
+            inner.check_open()?;
             if inner.lock().mapper.thread_busy(&native) {
                 return Err(failed("start_turn", "the previous turn is still running"));
             }
@@ -541,6 +560,7 @@ impl Session for CodexSession {
                         .as_str()
                         .map(str::to_owned)
                 });
+            inner.check_open()?;
             let codex_input = launch::user_input(
                 &input.message.text,
                 &input.message.attachments,

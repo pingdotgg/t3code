@@ -77,6 +77,8 @@ struct State {
     sessions: HashMap<String, mpsc::Sender<SessionMsg>>,
     /// Set from the `initialize` answer.
     version: Option<String>,
+    /// Deltas dropped because a session's inbox was full (logged once).
+    dropped_deltas: u64,
     /// Native threads loaded on a process (started, resumed or forked there), by generation.
     loaded: HashMap<String, u64>,
 }
@@ -175,6 +177,11 @@ impl AppServer {
     /// The running process's generation, starting and initializing one when none runs.
     pub async fn ensure_started(self: &Arc<Self>) -> Result<u64, CallError> {
         let _guard = self.starting.lock().await;
+        // A call that outlived its session (Stop during a turn start) must not start a
+        // process that no session owns and nothing would stop.
+        if self.lock().sessions.is_empty() {
+            return Err(CallError::Stopped);
+        }
         if let Some(live) = &self.lock().live
             && live.initialized
             && !live.process.has_exited()
@@ -366,7 +373,28 @@ impl AppServer {
         };
         match (target, inbound) {
             (Some(inbox), inbound) => {
-                let _ = inbox.send(SessionMsg::Frame(inbound)).await;
+                // One reader serves every session: a session whose inbox is full must not
+                // hold back the others' frames and responses. Streamed deltas are dropped
+                // then (the item's completion carries the whole text, and command output
+                // deltas are not persisted); every other frame waits for room.
+                match inbox.try_send(SessionMsg::Frame(inbound)) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(SessionMsg::Frame(frame)))
+                        if is_delta(&frame) =>
+                    {
+                        let mut state = self.lock();
+                        state.dropped_deltas = state.dropped_deltas.saturating_add(1);
+                        if state.dropped_deltas == 1 {
+                            eprintln!(
+                                "conn-provider-codex: a session's inbox is full; dropping streamed deltas for it"
+                            );
+                        }
+                    }
+                    Err(mpsc::error::TrySendError::Full(msg)) => {
+                        let _ = inbox.send(msg).await;
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {}
+                }
             }
             (None, Inbound::Request { id, method, .. }) => {
                 let line = reply_error(
@@ -402,6 +430,21 @@ impl AppServer {
             let _ = inbox.send(SessionMsg::Exited(detail.clone())).await;
         }
     }
+}
+
+/// Pure streaming notifications whose content the item's `item/completed` repeats.
+fn is_delta(frame: &Inbound) -> bool {
+    matches!(
+        frame,
+        Inbound::Notification { method, .. } if matches!(
+            method.as_str(),
+            "item/agentMessage/delta"
+                | "item/reasoning/summaryTextDelta"
+                | "item/reasoning/textDelta"
+                | "item/plan/delta"
+                | "item/commandExecution/outputDelta"
+        )
+    )
 }
 
 /// Whether `version` has a higher major or minor than `tested`.
@@ -480,6 +523,49 @@ read never
             panic!("expected an exit notice")
         };
         assert!(detail.contains("exit code 7"), "{detail}");
+    }
+
+    /// A session that does not read its inbox must not stall responses: streamed deltas
+    /// for it are dropped once its inbox is full.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_full_inbox_does_not_stall_responses() {
+        let mut script =
+            String::from(r#"read init; echo '{"id":1,"result":{}}'; read initialized; read req; "#);
+        for _ in 0..(SESSION_INBOX + 50) {
+            script.push_str(r#"echo '{"method":"item/agentMessage/delta","params":{"threadId":"slow","turnId":"t","itemId":"i","delta":"x"}}'; "#);
+        }
+        script.push_str(r#"echo '{"id":2,"result":{"ok":true}}'; read never"#);
+        let server = AppServer::new(fake(&script));
+        let (slow_tx, mut slow_rx) = mpsc::channel(SESSION_INBOX);
+        server.add_session("slow", slow_tx.clone());
+        server.route("slow", slow_tx);
+        let generation = server.ensure_started().await.unwrap();
+        let answer = tokio::time::timeout(
+            Duration::from_secs(5),
+            server.request_on(generation, "turn/interrupt", json!({})),
+        )
+        .await;
+        assert_eq!(
+            answer,
+            Ok(Ok(json!({"ok": true}))),
+            "the response waited on a full inbox"
+        );
+        let mut deltas = 0;
+        while slow_rx.try_recv().is_ok() {
+            deltas += 1;
+        }
+        assert_eq!(
+            deltas, SESSION_INBOX,
+            "the overflow was dropped, not queued"
+        );
+        server.remove_session("slow").await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn no_process_starts_without_a_session() {
+        let server = AppServer::new(fake("read never"));
+        assert_eq!(server.ensure_started().await, Err(CallError::Stopped));
+        assert!(server.pid().is_none());
     }
 
     #[test]

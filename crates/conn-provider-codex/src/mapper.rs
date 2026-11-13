@@ -14,6 +14,7 @@ const ENDED_TURNS_KEPT: usize = 64;
 use conn_contract::{from_json, to_json};
 use conn_provider::{ProviderError, ProviderEvent, RuntimeRequestResponse, TurnInput};
 use conn_provider_support::ids::{self, Env, iso_from_ms};
+use conn_provider_support::redact;
 use serde_json::{Map, Value, json};
 
 use crate::protocol::{Inbound, reply, reply_error};
@@ -289,6 +290,32 @@ impl<E: Env> Mapper<E> {
             ended_unfinished: HashSet::new(),
             ended: VecDeque::new(),
         }
+    }
+
+    /// Sizes of every collection the mapper keeps, for the boundedness test.
+    #[cfg(test)]
+    pub(crate) fn state_sizes(&self) -> Vec<(&'static str, usize)> {
+        vec![
+            ("turns", self.turns.len()),
+            ("pending_turns", self.pending_turns.len()),
+            ("requests", self.requests.len()),
+            ("plan_ids", self.plan_ids.len()),
+            ("bufs", self.bufs.len()),
+            ("reasoning_parts", self.reasoning_parts.len()),
+            ("thread_models", self.thread_models.len()),
+            ("rerouted_turn_models", self.rerouted_turn_models.len()),
+            ("rerouted_threads", self.rerouted_threads.len()),
+            ("usage", self.usage.len()),
+            (
+                "usage_turns",
+                self.usage.values().map(|u| u.acc.len()).sum::<usize>(),
+            ),
+            ("allowances", self.allowances.len()),
+            ("mcp_failures", self.mcp_failures.len()),
+            ("interrupting", self.interrupting.len()),
+            ("ended_unfinished", self.ended_unfinished.len()),
+            ("ended", self.ended.len()),
+        ]
     }
 
     // ---- turn lifecycle -------------------------------------------------------------------
@@ -584,6 +611,14 @@ impl<E: Env> Mapper<E> {
                 self.rerouted_threads.insert(thread);
             }
             "mcpServer/startupStatus/updated" => self.mcp_status(p, out),
+            // Codex settled the request itself (its turn ended): forget it, so no late answer
+            // goes out. TS drops the waiting handler the same way (`releaseResolvedRequest`).
+            "serverRequest/resolved" => {
+                let thread = p["threadId"].as_str().unwrap_or_default();
+                let id = &p["requestId"];
+                self.requests
+                    .retain(|_, r| !(r.native_id == *id && r.native_thread_id == thread));
+            }
             "error" => self.error(turn_id, p, out),
             "thread/started"
             | "thread/status/changed"
@@ -594,7 +629,6 @@ impl<E: Env> Mapper<E> {
             | "configWarning"
             | "warning"
             | "deprecationNotice"
-            | "serverRequest/resolved"
             | "item/reasoning/summaryPartAdded"
             | "thread/name/updated"
             | "thread/readState/changed"
@@ -2364,14 +2398,17 @@ fn usage_limit(code: Option<&str>, info: &Value) -> bool {
         || info["responseTooManyFailedAttempts"]["httpStatusCode"] == 429
 }
 
+/// `makeProviderFailure`: message and code with secrets removed and the length capped.
 fn failure_json(class: &str, message: &str, code: Option<&str>, retryable: Option<bool>) -> Value {
-    let message = if message.trim().is_empty() {
-        "Provider turn failed."
+    let message = redact::bounded(message, redact::MAX_MESSAGE_LENGTH);
+    let message = if message.is_empty() {
+        "Provider turn failed.".to_owned()
     } else {
         message
     };
-    let message: String = message.chars().take(4096).collect();
-    let code: Option<String> = code.map(|c| c.chars().take(128).collect());
+    let code = code
+        .map(|c| redact::bounded(c, redact::MAX_CODE_LENGTH))
+        .filter(|c| !c.is_empty());
     json!({"class": class, "message": message, "code": code, "retryable": retryable})
 }
 
