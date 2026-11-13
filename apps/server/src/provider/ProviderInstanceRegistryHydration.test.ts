@@ -11,6 +11,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vite-plus/test";
@@ -221,6 +222,7 @@ describe("layerClaudeTokenWatcher", () => {
   effectIt.effect("hands instances the token a desktop shell snapshot changed", () =>
     Effect.gen(function* () {
       const applied = yield* Queue.unbounded<void>();
+      const registryChanges = yield* PubSub.unbounded<void>();
       const handed = yield* Queue.unbounded<readonly [string | undefined, string | undefined]>();
       // The snapshot landed while the registry was being built, so the first check must catch it.
       const liveEnvironment: NodeJS.ProcessEnv = { CLAUDE_CODE_OAUTH_TOKEN: "profile" };
@@ -240,6 +242,7 @@ describe("layerClaudeTokenWatcher", () => {
           Layer.provide(
             Layer.mock(ProviderInstanceRegistry)({
               listInstances: Effect.succeed([instance, {} as ProviderInstance]),
+              subscribeChanges: PubSub.subscribe(registryChanges),
             }),
           ),
           Layer.provide(
@@ -251,9 +254,10 @@ describe("layerClaudeTokenWatcher", () => {
       );
       expect(yield* Queue.take(handed)).toEqual(["profile", "profile"]);
 
-      // A snapshot that leaves the token alone, such as a PATH change, hands nothing over: the
-      // next thing handed is the rotated token, once.
-      yield* Queue.offer(applied, undefined);
+      // An instance published after the handover may have been built before the token arrived.
+      yield* PubSub.publish(registryChanges, undefined);
+      expect(yield* Queue.take(handed)).toEqual(["profile", "profile"]);
+
       liveEnvironment.CLAUDE_CODE_OAUTH_TOKEN = "rotated";
       yield* Queue.offer(applied, undefined);
       expect(yield* Queue.take(handed)).toEqual(["rotated", "rotated"]);

@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -100,7 +101,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
-  const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+  const path = yield* Path.Path;
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
   );
@@ -211,6 +212,10 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
               )
           : cwd;
       const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
+      // Resolved per launch: the host can deliver a credential after this was built.
+      const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment).pipe(
+        Effect.provideService(Path.Path, path),
+      );
       const spawnCommand = yield* resolveSpawnCommand(
         claudeSettings.binaryPath || "claude",
         [

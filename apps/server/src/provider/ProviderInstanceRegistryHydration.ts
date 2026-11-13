@@ -192,21 +192,36 @@ export const layerClaudeTokenWatcher = (input: {
       const receiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
       // Subscribe before the first check so a snapshot applied in between is not missed.
       const applied = yield* receiver.subscribeShellEnvironment;
+      const registryChanges = yield* registry.subscribeChanges;
       let built = input.builtWithToken;
+      let changed = false;
       const sync = Effect.gen(function* () {
         const token = input.liveEnvironment[CLAUDE_TOKEN];
-        if (token === built) return;
-        built = token;
-        // Instances built from here on start with the token.
-        if (token === undefined) delete input.driverEnvironment[CLAUDE_TOKEN];
-        else input.driverEnvironment[CLAUDE_TOKEN] = token;
+        if (token !== built) {
+          built = token;
+          changed = true;
+          // Instances built from here on start with the token.
+          if (token === undefined) delete input.driverEnvironment[CLAUDE_TOKEN];
+          else input.driverEnvironment[CLAUDE_TOKEN] = token;
+        }
+        // An instance being built while the token changed can hold the old one, so every registry
+        // change hands the token over again. Instances that already have it do nothing.
+        if (!changed) return;
         yield* Effect.forEach(
           yield* registry.listInstances,
           (instance) => instance.applyHostVariable?.(CLAUDE_TOKEN, token) ?? Effect.void,
           { concurrency: "unbounded", discard: true },
         );
       });
-      yield* sync.pipe(Effect.andThen(Stream.runForEach(applied, () => sync)), Effect.forkScoped);
+      yield* sync.pipe(
+        Effect.andThen(
+          Stream.runForEach(
+            Stream.merge(applied, Stream.fromSubscription(registryChanges)),
+            () => sync,
+          ),
+        ),
+        Effect.forkScoped,
+      );
     }),
   );
 

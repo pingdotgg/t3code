@@ -386,7 +386,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
       // Running sessions keep the environment they started with; a value the instance sets wins.
       applyHostVariable: (name, value) =>
-        environment.some((variable) => variable.name === name)
+        environment.some((variable) => variable.name === name) ||
+        launchEnvironments.every((launchEnvironment) => launchEnvironment[name] === value)
           ? Effect.void
           : Effect.sync(() => {
               for (const launchEnvironment of launchEnvironments) {
