@@ -244,6 +244,37 @@ export const make = Effect.gen(function* () {
         ),
       );
 
+  // Launch and clients read these from settings overrides once legacy project fields are folded.
+  const writeProjectSettingsOverrides = (
+    command: Exclude<ProjectCommand, { readonly type: "project.delete" }>,
+  ) => {
+    const changes = {
+      defaultProjectScripts: command.scripts,
+      ...(command.type === "project.meta.update"
+        ? {
+            defaultModelSelection: command.defaultModelSelection,
+            defaultThreadEnvMode: command.defaultThreadEnvMode,
+            defaultAutoPull: command.autoPull,
+          }
+        : {}),
+    };
+    if (Object.values(changes).every((value) => value === undefined)) return Effect.void;
+    return serverSettings.updateSettings((settings) => {
+      const entry: Record<string, unknown> = {
+        ...settings.projectSettingsOverrides[command.projectId],
+      };
+      for (const [key, value] of Object.entries(changes)) {
+        if (value === null) delete entry[key];
+        else if (value !== undefined) entry[key] = value;
+      }
+      return {
+        projectSettingsOverrides: {
+          [command.projectId]: Object.keys(entry).length === 0 ? null : entry,
+        },
+      };
+    });
+  };
+
   const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
     const { projectId } = command;
     const dispatchError = (cause: unknown) =>
@@ -270,13 +301,17 @@ export const make = Effect.gen(function* () {
         now,
       });
       if (Result.isSuccess(planned)) {
-        const { receipt } = yield* eventSink.commitProjectCommand({
+        const { receipt, committed } = yield* eventSink.commitProjectCommand({
           commandId: command.commandId,
           projectId,
           commandType: command.type,
           acceptedAt: now,
           event: planned.success,
         });
+        // Under the project lock and only on first commit, so retries cannot undo newer commands.
+        if (committed && command.type !== "project.delete") {
+          yield* writeProjectSettingsOverrides(command);
+        }
         return receipt;
       }
       return yield* eventSink.commitRejectedProjectCommand({

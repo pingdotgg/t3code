@@ -36,6 +36,8 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as ProjectService from "./ProjectService.ts";
+import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
 
@@ -98,13 +100,14 @@ const layerTestFor = (
     | ProjectFaviconResolver.ProjectFaviconResolver
     | RepositoryIdentityResolver.RepositoryIdentityResolver
   >,
+  settings?: Parameters<typeof ServerSettings.layerTest>[0],
 ) =>
   RuntimeLayer.layerProjectService.pipe(
     Layer.provideMerge(ProjectEnrichmentService.layer),
     Layer.provideMerge(layerWorkspacePaths),
     Layer.provideMerge(projectMetadataLayer),
     Layer.provideMerge(SqlitePersistence.layerMemory),
-    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provideMerge(ServerSettings.layerTest(settings)),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-test-" })),
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(layerEnrichmentCompletions),
@@ -629,6 +632,63 @@ it.layer(layerTest)("ProjectService", (it) => {
     }),
   );
 });
+
+it.effect("an update on folded settings reaches the actions and defaults new threads use", () =>
+  Effect.gen(function* () {
+    const service = yield* ProjectService.ProjectService;
+    const projectId = ProjectId.make("project:folded");
+    const setup = {
+      id: "setup",
+      name: "Setup",
+      command: "vp install",
+      icon: "configure",
+      runOnWorktreeCreate: true,
+    } as const;
+    yield* service.create({
+      commandId: CommandId.make("command:project:folded-create"),
+      projectId,
+      title: "Folded",
+      workspaceRoot: "/work/folded",
+    });
+
+    const updated = yield* service.update({
+      commandId: CommandId.make("command:project:folded-update"),
+      projectId,
+      scripts: [setup],
+      defaultThreadEnvMode: "worktree",
+    });
+
+    const settingsService = yield* ServerSettings.ServerSettingsService;
+    const settings = yield* settingsService.getSettings;
+    assert.deepEqual(resolveProjectScripts(settings, updated), [setup]);
+    assert.equal(
+      resolveProjectSettings(settings, projectId, updated).settings.defaultThreadEnvMode,
+      "worktree",
+    );
+
+    yield* service.update({
+      commandId: CommandId.make("command:project:folded-update-local"),
+      projectId,
+      defaultThreadEnvMode: "local",
+    });
+    // A late retry of the first command must not reapply its superseded value.
+    const retried = yield* service.update({
+      commandId: CommandId.make("command:project:folded-update"),
+      projectId,
+      scripts: [setup],
+      defaultThreadEnvMode: "worktree",
+    });
+    assert.equal(
+      resolveProjectSettings(yield* settingsService.getSettings, projectId, retried).settings
+        .defaultThreadEnvMode,
+      "local",
+    );
+  }).pipe(
+    Effect.provide(
+      layerTestFor(layerMetadata, { projectSettingsFolded: true, defaultThreadEnvMode: "local" }),
+    ),
+  ),
+);
 
 it.effect("keeps project snapshots available when optional metadata enrichment fails", () =>
   Effect.gen(function* () {

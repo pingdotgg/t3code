@@ -313,15 +313,18 @@ const fixture = Effect.fn("fixture")(function* (
         start: Effect.void,
         ready: Effect.void,
         getSettings: Ref.get(settings),
-        updateSettings: (patch) =>
-          Ref.updateAndGet(settings, (current) => ({
-            ...current,
-            enableDeviceSupport: patch.enableDeviceSupport ?? current.enableDeviceSupport,
-            enableAgentDeviceAccess:
-              patch.enableAgentDeviceAccess ?? current.enableAgentDeviceAccess,
-            deviceOnboardingCompleted:
-              patch.deviceOnboardingCompleted ?? current.deviceOnboardingCompleted,
-          })),
+        updateSettings: (update) =>
+          Ref.updateAndGet(settings, (current) => {
+            const patch = ServerSettings.resolveServerSettingsPatch(current, update);
+            return {
+              ...current,
+              enableDeviceSupport: patch.enableDeviceSupport ?? current.enableDeviceSupport,
+              enableAgentDeviceAccess:
+                patch.enableAgentDeviceAccess ?? current.enableAgentDeviceAccess,
+              deviceOnboardingCompleted:
+                patch.deviceOnboardingCompleted ?? current.deviceOnboardingCompleted,
+            };
+          }),
         streamChanges: Stream.empty,
         subscribeChanges: Effect.succeed(Stream.empty),
       }),

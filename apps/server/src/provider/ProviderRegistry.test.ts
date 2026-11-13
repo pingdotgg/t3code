@@ -296,10 +296,13 @@ function makeMutableServerSettingsService(
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(settingsRef),
-      updateSettings: (patch) =>
+      updateSettings: (update) =>
         Effect.gen(function* () {
           const current = yield* Ref.get(settingsRef);
-          const next = applyServerSettingsPatch(current, patch);
+          const next = applyServerSettingsPatch(
+            current,
+            ServerSettingsModule.resolveServerSettingsPatch(current, update),
+          );
           encodeServerSettings(next);
           yield* Ref.set(settingsRef, next);
           yield* PubSub.publish(changes, next);
