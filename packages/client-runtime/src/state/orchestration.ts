@@ -38,10 +38,13 @@ import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
 export function createOrchestrationEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | HttpClient.HttpClient | R, E>,
   options: {
-    /** Re-checks `threadTitles` when one of their threads leaves the shell. */
+    /**
+     * Re-checks `threadTitles` when one of their threads leaves the shell, and the archived
+     * snapshot when any thread does or a new authoritative shell snapshot arrives.
+     */
     readonly shellState?: (
       environmentId: EnvironmentId,
-    ) => Atom.Atom<Pick<EnvironmentShellState, "removedAt">>;
+    ) => Atom.Atom<Pick<EnvironmentShellState, "generation" | "removedAt">>;
     /** Runs on each turn-range and full-thread diff the server answers. */
     readonly onCheckpointDiffAnswer?: QueryAnswerHandler<
       { readonly ignoreWhitespace?: boolean },
@@ -239,6 +242,16 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     archivedShellSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:archived-shell-snapshot",
       tag: ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
+      // An archive from an agent or another client only reaches this client as a shell removal,
+      // or, after a reconnect, as its absence from the next authoritative snapshot.
+      refreshTrigger: ({ environmentId }) => {
+        if (shellState === undefined) return undefined;
+        const state = shellState(environmentId);
+        return Atom.make((get) => {
+          const { generation, removedAt } = get(state);
+          return `${generation}:${Math.max(-1, ...removedAt.values())}`;
+        });
+      },
     }),
     threadFamily: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:thread-family-for-delete",
