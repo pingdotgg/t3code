@@ -1298,6 +1298,41 @@ describe("DesktopBrowserHost", () => {
     }),
   );
 
+  it.effect("stops crediting the agent once a person acts through a viewer", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
+      const raw = (message: Record<string, unknown>) =>
+        host.handleCommandLine(encodeJson({ type: "cdp", ...key, message: encodeJson(message) }));
+      const viewer = (id: number, method: string, type: string) =>
+        raw({ id, method, params: { type }, sessionId: "t3-preview-page-1" });
+      const led = () => host.agentLedPage(debuggee.tab.webContents);
+
+      yield* command(host, 1, "DOM.getDocument");
+      expect(led()).toBe(false);
+      yield* raw({ id: 2, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      expect(yield* Queue.take(replies)).toBe(2);
+      yield* raw({ id: 3, method: "Page.startScreencast", sessionId: "t3-preview-page-1" });
+
+      for (const [method, type] of [
+        ["Input.dispatchKeyEvent", "rawKeyDown"],
+        ["Input.dispatchMouseEvent", "mousePressed"],
+        ["Input.dispatchTouchEvent", "touchStart"],
+      ] as const) {
+        yield* command(host, 4, "Runtime.evaluate");
+        expect(led()).toBe(true);
+        // The viewer's pointer only passes over the page the agent drives.
+        yield* viewer(5, "Input.dispatchMouseEvent", "mouseMoved");
+        yield* viewer(6, "Input.dispatchMouseEvent", "mouseWheel");
+        expect(led()).toBe(true);
+        yield* viewer(7, method, type);
+        expect(led()).toBe(false);
+      }
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("detaches only the tab whose CDP event is too large to relay", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
