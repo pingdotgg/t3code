@@ -1035,6 +1035,10 @@ it.layer(
           groupingIdentity: null,
         });
         assert.isNull(cleared.groupingIdentity);
+        assert.deepEqual(
+          yield* sql`SELECT title, has_custom_title FROM projection_projects WHERE project_id = ${projectId}`,
+          [{ title: "Renamed", has_custom_title: 1 }],
+        );
         assert.equal(cleared.id, created.id);
         assert.equal(cleared.workspaceRoot, created.workspaceRoot);
         assert.equal(cleared.createdAt, created.createdAt);
