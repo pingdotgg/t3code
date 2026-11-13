@@ -50,7 +50,7 @@ const claudeModels = [
 describe("describeAutoRoute", () => {
   it("names the Claude model and account Auto would use", () => {
     const entries = deriveProviderInstanceEntries([
-      provider("claudeAuto", "Auto", "claudeAgent", claudeModels, 70),
+      provider("claudeAuto", "Auto", "claudeAgent", claudeModels, 95),
       provider("claudeAutoB", "Auto B", "claudeAgent", claudeModels, 10),
     ]);
     const medium = describeAutoRoute({ entries, now });
