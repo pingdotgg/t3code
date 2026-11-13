@@ -271,8 +271,8 @@ pub(crate) async fn prepare_untracked(
     let source = PathBuf::from(real_index);
     let copied = tokio::task::spawn_blocking(move || copy_index(&source, &copy_target))
         .await
-        .map_err(|e| prepare_error(cwd, e.to_string()))?
-        .map_err(|e| prepare_error(cwd, e.to_string()))?;
+        .map_err(|_| prepare_error(cwd))?
+        .map_err(|_| prepare_error(cwd))?;
     let index_env = temp.0.clone().into_os_string();
     if !copied {
         git(
@@ -330,8 +330,7 @@ pub(crate) async fn prepare_untracked(
     Ok(Untracked::Index(temp))
 }
 
-fn prepare_error(cwd: &Path, detail: String) -> VcsError {
-    let _ = detail;
+fn prepare_error(cwd: &Path) -> VcsError {
     VcsError::invalid(
         "GitVcsDriver.prepareReviewIndex",
         &cwd.to_string_lossy(),
@@ -892,29 +891,41 @@ async fn show_file(cwd: &Path, revision: &str, path: &str) -> VcsResult<String> 
 async fn read_working_file(cwd: &str, root: PathBuf, path: String) -> VcsResult<String> {
     let cwd = cwd.to_owned();
     tokio::task::spawn_blocking(move || {
-        let fail = |stage: &'static str, detail: String| {
-            let _ = stage;
-            VcsError::invalid(
-                "GitVcsDriver.getReviewDiffFileContents.workingTree",
-                &cwd,
-                detail,
-            )
-        };
+        let fail =
+            |operation: &'static str, detail: String| VcsError::invalid(operation, &cwd, detail);
         let outside = format!("Diff file '{path}' resolves outside the review workspace.");
         let requested = root.join(&path);
         if !normalize(&requested).starts_with(normalize(&root)) {
-            return Err(fail("path.resolve", outside));
+            return Err(fail(
+                "GitVcsDriver.getReviewDiffFileContents.workingTree.path.resolve",
+                outside,
+            ));
         }
         let unresolved = || format!("Could not resolve diff file '{path}'.");
-        let real_root =
-            std::fs::canonicalize(&root).map_err(|_| fail("fs.realPath", unresolved()))?;
-        let real =
-            std::fs::canonicalize(&requested).map_err(|_| fail("fs.realPath", unresolved()))?;
+        let real_root = std::fs::canonicalize(&root).map_err(|_| {
+            fail(
+                "GitVcsDriver.getReviewDiffFileContents.workingTree.fs.realPath",
+                unresolved(),
+            )
+        })?;
+        let real = std::fs::canonicalize(&requested).map_err(|_| {
+            fail(
+                "GitVcsDriver.getReviewDiffFileContents.workingTree.fs.realPath",
+                unresolved(),
+            )
+        })?;
         if !real.starts_with(&real_root) {
-            return Err(fail("fs.realPath", outside));
+            return Err(fail(
+                "GitVcsDriver.getReviewDiffFileContents.workingTree.fs.realPath",
+                outside,
+            ));
         }
-        let meta = std::fs::metadata(&real)
-            .map_err(|_| fail("fs.stat", format!("Could not inspect diff file '{path}'.")))?;
+        let meta = std::fs::metadata(&real).map_err(|_| {
+            fail(
+                "GitVcsDriver.getReviewDiffFileContents.workingTree.fs.stat",
+                format!("Could not inspect diff file '{path}'."),
+            )
+        })?;
         if !meta.is_file() {
             return Err(fail(
                 "fs.stat",
@@ -927,8 +938,12 @@ async fn read_working_file(cwd: &str, root: PathBuf, path: String) -> VcsResult<
                 format!("Diff file '{path}' exceeds the 1 MB expansion limit."),
             ));
         }
-        let bytes = std::fs::read(&real)
-            .map_err(|_| fail("fs.readFile", format!("Could not read diff file '{path}'.")))?;
+        let bytes = std::fs::read(&real).map_err(|_| {
+            fail(
+                "GitVcsDriver.getReviewDiffFileContents.workingTree.fs.readFile",
+                format!("Could not read diff file '{path}'."),
+            )
+        })?;
         if bytes.contains(&0) {
             return Err(fail(
                 "fs.readFile",
@@ -1010,11 +1025,17 @@ pub async fn branch_commits(
     if !out.stdout_truncated && !text.is_empty() && !text.ends_with('\0') {
         return Err(unreadable());
     }
+    // Records are `sha NUL subject NUL date NUL`; a cut-off last record is dropped.
     let fields: Vec<&str> = text.split('\0').collect();
+    let complete = fields.len().saturating_sub(1);
     let mut commits = Vec::new();
-    let mut index = 0;
-    while index + 2 < fields.len().saturating_sub(1) && commits.len() <= BRANCH_COMMIT_LIMIT {
-        let (sha, subject, committed_at) = (fields[index], fields[index + 1], fields[index + 2]);
+    for record in fields[..complete]
+        .chunks_exact(3)
+        .take(BRANCH_COMMIT_LIMIT + 1)
+    {
+        let [sha, subject, committed_at] = record else {
+            continue;
+        };
         // `git log -z` separates records with NUL too, so a record may start with a newline.
         let sha = sha.trim_start_matches('\n');
         if !is_object_id(sha) || committed_at.is_empty() {
@@ -1023,9 +1044,8 @@ pub async fn branch_commits(
         commits.push(ReviewBranchCommitsResultCommitsItem {
             sha: sha.to_owned(),
             subject: subject.chars().take(SUBJECT_LIMIT).collect(),
-            committed_at: committed_at.to_owned(),
+            committed_at: (*committed_at).to_owned(),
         });
-        index += 3;
     }
     if out.stdout_truncated && commits.is_empty() {
         return Err(invalid_commit(

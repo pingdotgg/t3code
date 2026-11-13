@@ -31,7 +31,7 @@ use crate::{
     clock,
     error::{VcsError, VcsResult},
     repo::{self, git},
-    worktree::{self, CreateWorktree},
+    worktree::{self, CreateWorktree, Removal},
 };
 
 pub const FINISHED_RETENTION: Duration = Duration::from_secs(30);
@@ -378,8 +378,8 @@ pub async fn provision(
     if let Err(error) = &result {
         if let Some((path, branch)) = created {
             let root = request.project_root.as_path();
-            let _ = worktree::remove_worktree(root, &path, true).await;
-            let _ = worktree::delete_branch(root, &branch, true).await;
+            let _ = worktree::remove_worktree(root, &path, Removal::Force).await;
+            let _ = worktree::delete_branch(root, &branch, Removal::Force).await;
         }
         match error {
             ProvisionError::Cancelled => setups.finish(thread, Phase::Cancelled, None),
@@ -672,6 +672,14 @@ fn strip_ansi(text: &str) -> String {
         }
     }
     out
+}
+
+impl std::fmt::Debug for WorktreeSetups {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorktreeSetups")
+            .field("entries", &self.len())
+            .finish()
+    }
 }
 
 #[cfg(test)]

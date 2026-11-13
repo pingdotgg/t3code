@@ -259,9 +259,18 @@ async fn resolve_branch_base(cwd: &Path, base: &str) -> Option<(String, String)>
     Some((branch, full))
 }
 
+/// Whether git may discard local changes (and, for a branch, unmerged commits).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Removal {
+    /// Refuse when something would be lost.
+    Safe,
+    /// Remove anyway (`--force`, `branch -D`).
+    Force,
+}
+
 /// Removes a worktree. Never removes a locked one. A worktree git no longer knows and whose
 /// folder is gone counts as removed (after `git worktree prune`). The branch is kept.
-pub async fn remove_worktree(cwd: &Path, path: &Path, force: bool) -> VcsResult<()> {
+pub async fn remove_worktree(cwd: &Path, path: &Path, removal: Removal) -> VcsResult<()> {
     let target = if path.is_absolute() {
         path.to_owned()
     } else {
@@ -273,7 +282,7 @@ pub async fn remove_worktree(cwd: &Path, path: &Path, force: bool) -> VcsResult<
         "worktree".into(),
         "remove".into(),
     ];
-    if force {
+    if removal == Removal::Force {
         args.push("--force".into());
     }
     args.push("--".into());
@@ -301,11 +310,20 @@ pub async fn remove_worktree(cwd: &Path, path: &Path, force: bool) -> VcsResult<
 }
 
 /// Deletes a local branch (`git branch -d`, or `-D` with `force`).
-pub async fn delete_branch(cwd: &Path, branch: &str, force: bool) -> VcsResult<()> {
+pub async fn delete_branch(cwd: &Path, branch: &str, removal: Removal) -> VcsResult<()> {
     git(
         "GitVcsDriver.deleteLocalBranch",
         cwd,
-        ["branch", if force { "-D" } else { "-d" }, "--", branch],
+        [
+            "branch",
+            if removal == Removal::Force {
+                "-D"
+            } else {
+                "-d"
+            },
+            "--",
+            branch,
+        ],
     )
     .timeout(Duration::from_secs(10))
     .run()

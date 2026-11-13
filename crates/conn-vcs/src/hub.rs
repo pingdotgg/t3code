@@ -123,6 +123,15 @@ struct State {
     last_fetch: HashMap<PathBuf, Instant>,
 }
 
+/// How much remote status a caller wants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Remote {
+    /// Read it: fetch and poll while subscribed.
+    Read,
+    /// Only what is cached; no fetch, no poll.
+    Cached,
+}
+
 #[derive(Clone, Default)]
 pub struct VcsHub {
     state: Arc<Mutex<State>>,
@@ -177,11 +186,11 @@ impl VcsHub {
     }
 
     /// Starts a status stream: sends the snapshot, then `localUpdated` / `remoteUpdated` as
-    /// they change. `include_remote: false` gets cached remote status without polling.
+    /// they change. [`Remote::Cached`] gets cached remote status without polling.
     pub async fn subscribe_status(
         &self,
         cwd: &str,
-        include_remote: bool,
+        wanted: Remote,
         sink: Box<dyn Sink<VcsStatusStreamEvent>>,
     ) -> VcsResult<()> {
         let cwd = normalize(cwd);
@@ -212,7 +221,7 @@ impl VcsHub {
                 is_repo: Some(local.is_repo),
             });
             let remote = entry.remote.as_ref().and_then(|r| r.value.clone());
-            if include_remote && entry.remote.is_none() {
+            if wanted == Remote::Read && entry.remote.is_none() {
                 entry.next_remote = Some(Instant::now());
             }
             let event = VcsStatusStreamEvent::Snapshot(VcsStatusStreamEventSnapshot {
@@ -223,7 +232,7 @@ impl VcsHub {
             if sink.send(event) {
                 entry.status_subs.push(StatusSub {
                     sink,
-                    remote: include_remote,
+                    remote: wanted == Remote::Read,
                 });
             }
             remote
@@ -342,12 +351,12 @@ impl VcsHub {
         Ok(branch)
     }
 
-    /// `vcs.refreshStatus`: local status, and unless `local_only`, a fetch (waited on for at
+    /// `vcs.refreshStatus`: local status, and with [`Remote::Read`] a fetch (waited on for at
     /// most 5 s) and remote status. Publishes both.
-    pub async fn refresh_status(&self, cwd: &str, local_only: bool) -> VcsResult<VcsStatusResult> {
+    pub async fn refresh_status(&self, cwd: &str, remote: Remote) -> VcsResult<VcsStatusResult> {
         let cwd = normalize(cwd);
         let local = self.refresh_local_at(&cwd).await?;
-        if local_only || !local.is_repo {
+        if remote == Remote::Cached || !local.is_repo {
             let remote = self.with(|s| {
                 s.entries
                     .get(&cwd)
@@ -525,5 +534,13 @@ impl VcsHub {
                 }
             }
         });
+    }
+}
+
+impl std::fmt::Debug for VcsHub {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VcsHub")
+            .field("watched_folders", &self.watched_folders())
+            .finish()
     }
 }

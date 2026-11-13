@@ -14,7 +14,8 @@ import { redactText, redactValue, addSecret } from "./redact.mjs";
 import { SCENARIOS } from "./scenarios.mjs";
 
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-const repo = NodePath.resolve(here, "../../../..");
+// The Conn monorepo (web client, T3 server). `CONN_MONOREPO` overrides the in-tree default.
+const repo = NodePath.resolve(process.env.CONN_MONOREPO ?? NodePath.resolve(here, "../../../.."));
 const sessionsDir = NodePath.resolve(here, "../sessions");
 const require = NodeModule.createRequire(NodePath.join(repo, "apps/server/package.json"));
 const { chromium } = require("playwright-core");
@@ -72,7 +73,7 @@ function scratchProject(root, name = "project") {
  * Starts the Rust conn-server on a scratch project. Pass an earlier result to restart it on the
  * same state directory and port.
  */
-async function startRustServer(previous) {
+async function startRustServer(previous, prepare) {
   if (rustUrl !== null && previous === undefined) {
     const url = new URL(rustUrl);
     addSecret(url.hash.replace("#token=", ""));
@@ -86,6 +87,7 @@ async function startRustServer(previous) {
   if (rustBinary === null) throw new Error("rust-* scenarios need --rust <conn-server binary>");
   const root = previous?.root ?? NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-rust-"));
   const project = previous?.project ?? scratchProject(root, "rust-project");
+  if (previous === undefined) prepare?.(project);
   const port = previous?.port ?? (await freePort());
   const child = NodeChildProcess.spawn(
     rustBinary,
@@ -119,7 +121,7 @@ async function startRustServer(previous) {
   return { root, project, port, token, child, origin: `http://127.0.0.1:${port}`, rust: true };
 }
 
-async function startServer() {
+async function startServer(name = "project", prepare) {
   if (!NodeFS.existsSync(NodePath.join(repo, "apps/web/dist/index.html"))) {
     log("building apps/web (no dist yet)");
     NodeChildProcess.execFileSync("vp", ["build"], {
@@ -130,7 +132,8 @@ async function startServer() {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-rec-"));
   const base = NodePath.join(root, "base");
   NodeFS.mkdirSync(base);
-  const project = scratchProject(root);
+  const project = scratchProject(root, name);
+  prepare?.(project);
 
   const port = await freePort();
   // env -i: the service launcher IPC channel of an outer T3 must not leak in.
@@ -363,13 +366,13 @@ try {
         log(name, "shot", file);
       },
       cap,
-      startServer: async () => {
-        const extra = await startServer();
+      startServer: async (name, prepare) => {
+        const extra = await startServer(name, prepare);
         extraServers.push(extra);
         return extra;
       },
-      startRustServer: async (previous) => {
-        const extra = await startRustServer(previous);
+      startRustServer: async (previous, prepare) => {
+        const extra = await startRustServer(previous, prepare);
         if (previous) extraServers[extraServers.indexOf(previous)] = extra;
         else extraServers.push(extra);
         return extra;

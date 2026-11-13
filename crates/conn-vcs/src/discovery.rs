@@ -9,9 +9,9 @@ use std::{path::Path, process::Stdio, time::Duration};
 
 use conn_contract::{
     ServerProviderAuthStatus, SourceControlDiscoveryResult, SourceControlDiscoveryStatus,
-    SourceControlProviderAuth, SourceControlProviderDiscoveryItem, VcsDiscoveryItem,
-    VcsDiscoveryItemDetail, VcsDiscoveryItemDetailNone, VcsDiscoveryItemDetailSome, VcsDriverKind,
-    lit,
+    SourceControlProviderAuth, SourceControlProviderAuthAccountsItem,
+    SourceControlProviderDiscoveryItem, VcsDiscoveryItem, VcsDiscoveryItemDetail,
+    VcsDiscoveryItemDetailNone, VcsDiscoveryItemDetailSome, VcsDriverKind, lit,
 };
 use tokio::io::AsyncReadExt;
 
@@ -175,6 +175,12 @@ async fn cli_auth(
     if !available {
         return auth(ServerProviderAuthStatus::Unknown, None, Some(hint.into()));
     }
+    if exe == "gh"
+        && let Ok(p) = probe(cwd, exe, &["auth", "status", "--json", "hosts"]).await
+        && let Some(parsed) = github_auth(&p.stdout)
+    {
+        return parsed;
+    }
     match probe(cwd, exe, &["auth", "status"]).await {
         Ok(p) if p.code == Some(0) => auth(
             ServerProviderAuthStatus::Authenticated,
@@ -193,6 +199,61 @@ async fn cli_auth(
             auth(ServerProviderAuthStatus::Unknown, None, Some(detail))
         }
     }
+}
+
+/// Reads `gh auth status --json hosts`: every account per host, and the active, logged-in
+/// one (github.com first) as the account in use. `None` when the output is not that shape.
+pub fn github_auth(json: &str) -> Option<SourceControlProviderAuth> {
+    #[derive(serde::Deserialize)]
+    struct Status {
+        hosts: std::collections::BTreeMap<String, Vec<Entry>>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Entry {
+        #[serde(default)]
+        login: String,
+        #[serde(default)]
+        active: bool,
+        #[serde(default)]
+        state: String,
+    }
+    let status: Status = serde_json::from_str(json).ok()?;
+    let accounts: Vec<SourceControlProviderAuthAccountsItem> = status
+        .hosts
+        .iter()
+        .flat_map(|(host, entries)| {
+            entries
+                .iter()
+                .map(move |e| SourceControlProviderAuthAccountsItem {
+                    host: host.clone(),
+                    account: e.login.clone(),
+                    active: e.active,
+                    authenticated: e.state == "success",
+                    error: None,
+                    environment_variable: None,
+                })
+        })
+        .collect();
+    let chosen = accounts
+        .iter()
+        .filter(|a| a.active && a.authenticated)
+        .min_by_key(|a| a.host != "github.com");
+    Some(match chosen {
+        Some(account) => SourceControlProviderAuth {
+            status: ServerProviderAuthStatus::Authenticated,
+            account: some(account.account.clone()),
+            host: some(account.host.clone()),
+            detail: none(),
+            accounts: Some(accounts.clone()),
+        },
+        None => SourceControlProviderAuth {
+            status: ServerProviderAuthStatus::Unauthenticated,
+            account: none(),
+            host: none(),
+            detail: some("Run `gh auth login` on the server."),
+            accounts: Some(accounts),
+        },
+    })
 }
 
 async fn provider_item(
@@ -256,5 +317,26 @@ pub async fn discover(cwd: &Path) -> SourceControlDiscoveryResult {
     SourceControlDiscoveryResult {
         version_control_systems: vec![git, jj],
         source_control_providers: vec![github, gitlab],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_github_accounts() {
+        let json = r#"{"hosts":{"ghe.example.com":[{"state":"success","active":true,"host":"ghe.example.com","login":"a"}],
+            "github.com":[{"state":"error","active":false,"login":"b"},{"state":"success","active":true,"login":"c"}]}}"#;
+        let auth = github_auth(json).expect("parses");
+        assert_eq!(auth.status, ServerProviderAuthStatus::Authenticated);
+        assert_eq!(auth.account, some("c"), "github.com wins over another host");
+        assert_eq!(auth.accounts.as_ref().map(Vec::len), Some(3));
+        let none_logged_in = github_auth(r#"{"hosts":{}}"#).expect("parses");
+        assert_eq!(
+            none_logged_in.status,
+            ServerProviderAuthStatus::Unauthenticated
+        );
+        assert!(github_auth("not json").is_none());
     }
 }

@@ -14,7 +14,7 @@ use conn_contract::{
 };
 use conn_vcs::{
     refs, review, status,
-    worktree::{self, CreateWorktree},
+    worktree::{self, CreateWorktree, Removal},
 };
 use support::{Fixture, TempDir, commit_all, git, write};
 
@@ -337,20 +337,20 @@ async fn worktrees_are_created_listed_and_removed() {
 
     write(&path, "dirty.txt", "x\n");
     assert!(
-        worktree::remove_worktree(&fx.work, &path, false)
+        worktree::remove_worktree(&fx.work, &path, Removal::Safe)
             .await
             .is_err()
     );
-    worktree::remove_worktree(&fx.work, &path, true)
+    worktree::remove_worktree(&fx.work, &path, Removal::Force)
         .await
         .unwrap();
     assert!(!path.exists());
     // A folder git does not know and that is gone counts as removed, as in the TypeScript server.
     let ghost: PathBuf = dir.join("work").join("gone");
-    worktree::remove_worktree(&fx.work, &ghost, true)
+    worktree::remove_worktree(&fx.work, &ghost, Removal::Force)
         .await
         .unwrap();
-    worktree::delete_branch(&fx.work, "t3/abcd1234", true)
+    worktree::delete_branch(&fx.work, "t3/abcd1234", Removal::Force)
         .await
         .unwrap();
 }

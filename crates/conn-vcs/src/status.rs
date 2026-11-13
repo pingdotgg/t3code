@@ -78,10 +78,10 @@ fn parse_porcelain(output: &str) -> PorcelainStatus {
             continue;
         }
         status.changed = true;
-        let skip = match record.as_bytes()[0] {
-            b'1' => 8,
-            b'2' => 9,
-            b'u' => 10,
+        let skip = match record.as_bytes().first() {
+            Some(b'1') => 8,
+            Some(b'2') => 9,
+            Some(b'u') => 10,
             _ => 1,
         };
         let path = record.splitn(skip + 1, ' ').nth(skip).unwrap_or_default();

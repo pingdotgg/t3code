@@ -18,7 +18,11 @@ use conn_contract::{
     VcsRefreshStatusPayload, VcsRemoveWorktreeInput, VcsStatusStreamEvent,
     VcsStatusSubscriptionInput, VcsSwitchRefInput, WorktreeSetupCancelResult, to_json,
 };
-use conn_vcs::{VcsError, VcsHub, WorktreeSetups, discovery, hub::Sink, refs, review, worktree};
+use conn_vcs::{
+    VcsError, VcsHub, WorktreeSetups, discovery,
+    hub::{Remote, Sink},
+    refs, review, worktree,
+};
 use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -136,9 +140,17 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             async move {
                 let (tx, rx) = mpsc::channel(STREAM_BUFFER);
                 let sink: Box<dyn Sink<VcsStatusStreamEvent>> = Box::new(JsonSink(tx));
-                hub.subscribe_status(&input.cwd, input.include_remote != Some(false), sink)
-                    .await
-                    .map_err(|e| status_failure(&e))?;
+                hub.subscribe_status(
+                    &input.cwd,
+                    if input.include_remote == Some(false) {
+                        Remote::Cached
+                    } else {
+                        Remote::Read
+                    },
+                    sink,
+                )
+                .await
+                .map_err(|e| status_failure(&e))?;
                 Ok::<ItemStream, Failure>(rx)
             }
         },
@@ -161,9 +173,16 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         move |_, input: VcsRefreshStatusPayload| {
             let hub = hub.clone();
             async move {
-                hub.refresh_status(&input.cwd, input.local_only == Some(true))
-                    .await
-                    .map_err(|e| status_failure(&e))
+                hub.refresh_status(
+                    &input.cwd,
+                    if input.local_only == Some(true) {
+                        Remote::Cached
+                    } else {
+                        Remote::Read
+                    },
+                )
+                .await
+                .map_err(|e| status_failure(&e))
             }
         },
     );
@@ -209,7 +228,7 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             let result = refs::pull(Path::new(&input.cwd))
                 .await
                 .map_err(|e| git_failure(&e))?;
-            let _ = hub.refresh_status(&input.cwd, true).await;
+            let _ = hub.refresh_status(&input.cwd, Remote::Cached).await;
             Ok(result)
         }
     });
@@ -262,7 +281,11 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
                 worktree::remove_worktree(
                     Path::new(&input.cwd),
                     Path::new(&input.path),
-                    input.force == Some(true),
+                    if input.force == Some(true) {
+                        worktree::Removal::Force
+                    } else {
+                        worktree::Removal::Safe
+                    },
                 )
                 .await
                 .map_err(|e| git_failure(&e))?;
