@@ -27,6 +27,8 @@ import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
+  gitLfsDownloadProgressLine,
+  isGitFilterProgressLine,
   parseGitCloneProgressLine,
   type GitCloneProgressLine,
 } from "../project/gitCloneProgress.ts";
@@ -83,6 +85,8 @@ const CLONE_ENV = {
   // English progress without overriding LC_CTYPE, which a global post-checkout hook inherits.
   LANGUAGE: "C",
 } satisfies NodeJS.ProcessEnv;
+// Well inside the tracker's stall window, at about the pace git itself reports.
+const LFS_DOWNLOAD_POLL_INTERVAL = Duration.seconds(2);
 
 function mapRepositoryError(operation: string, provider: SourceControlProviderKind) {
   return Effect.mapError((cause: unknown) =>
@@ -328,6 +332,36 @@ export const make = Effect.gen(function* () {
     } satisfies SourceControlPreparedClone;
   });
 
+  // Git and git-lfs print nothing while one object downloads, so a healthy transfer reads as a
+  // stall. Its partial files growing are the only sign of life a plain clone gives.
+  const watchLfsDownload = (
+    destinationPath: string,
+    onChange: (partialBytes: number) => Effect.Effect<void>,
+  ) => {
+    const incomplete = path.join(destinationPath, ".git", "lfs", "incomplete");
+    const partialBytes = fileSystem.readDirectory(incomplete).pipe(
+      Effect.flatMap(
+        Effect.forEach((name) =>
+          fileSystem
+            .stat(path.join(incomplete, name))
+            .pipe(Effect.map((info) => Number(info.size))),
+        ),
+      ),
+      Effect.map((sizes) => sizes.reduce((total, size) => total + size, 0)),
+      // No directory means no LFS download; a part that landed mid-read counts on the next poll.
+      Effect.orElseSucceed(() => 0),
+    );
+    return Effect.gen(function* () {
+      let previous = 0;
+      while (true) {
+        yield* Effect.sleep(LFS_DOWNLOAD_POLL_INTERVAL);
+        const current = yield* partialBytes;
+        if (current > 0 && current !== previous) yield* onChange(current);
+        previous = current;
+      }
+    });
+  };
+
   const runClone = Effect.fn("SourceControlRepositoryService.runClone")(function* (
     input: SourceControlCloneRepositoryInput,
     destinationPath: string,
@@ -337,8 +371,10 @@ export const make = Effect.gen(function* () {
     const onProgress = options?.onProgress;
     // Git mixes progress and diagnostics on stderr; retain non-progress tail lines for failure details.
     const stderrTail: Array<string> = [];
+    let filterPercent: number | null = null;
     const onStderrLine = (line: string) => {
       const parsed = parseGitCloneProgressLine(line);
+      if (parsed && isGitFilterProgressLine(line)) filterPercent = parsed.percent;
       if (parsed) return onProgress ? onProgress(parsed) : Effect.void;
       return Effect.sync(() => {
         const trimmed = line.trim();
@@ -380,9 +416,18 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-    if (timeoutMs === null) return yield* clone;
+    const watchedClone = onProgress
+      ? clone.pipe(
+          Effect.raceFirst(
+            watchLfsDownload(destinationPath, (partialBytes) =>
+              onProgress(gitLfsDownloadProgressLine(partialBytes, filterPercent)),
+            ),
+          ),
+        )
+      : clone;
+    if (timeoutMs === null) return yield* watchedClone;
     // Interrupting the clone closes the scope that owns git, which kills it.
-    return yield* clone.pipe(
+    return yield* watchedClone.pipe(
       Effect.timeoutOrElse({
         duration: timeoutMs,
         orElse: () =>

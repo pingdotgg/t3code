@@ -361,6 +361,9 @@ describe("parseGitCloneProgressLine", () => {
       percent: 78,
       detail: null,
     });
+    expect(
+      parseGitCloneProgressLine("Filtering content:  66% (2/3), 11.92 MiB | 1009.00 KiB/s"),
+    ).toEqual({ stage: "checkout", percent: 66, detail: "11.92 MiB | 1009.00 KiB/s" });
     expect(parseGitCloneProgressLine("remote: Enumerating objects: 10, done.")).toEqual({
       stage: "counting",
       percent: null,
