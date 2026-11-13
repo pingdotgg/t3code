@@ -42,12 +42,22 @@ does not forward a local `OPENCODE_SERVER_PASSWORD`. If connection or version ch
 fail, check the URL, credentials, and OpenCode version, then refresh provider status.
 
 When **Server URL** points to a locally running server (such as `127.0.0.1`),
-the update button upgrades its installed CLI without terminating the running server.
-The server can still report the previous version until you restart it. T3 Code
-shows that restart requirement instead of treating the CLI update as a failure.
-Restart the server when active sessions can safely be interrupted.
+the update button upgrades its installed CLI. If that server is this machine's
+OpenCode background service, T3 Code then restarts it on the new version. The URL
+must use the service's own protocol, host, and port. For a service listening on
+`0.0.0.0` use `127.0.0.1`, and for `[::]` use `[::1]`.
 
-After a lost connection, send another prompt to reconnect to the same OpenCode
+Restarting interrupts running turns, and the service then runs with T3 Code's
+environment. Set any variables it needs with `opencode service set env <name> <value>`.
+
+T3 Code does not restart any other server, including the background service
+reached through `localhost`. That server can still report the previous version
+until you restart it. For a loopback URL, T3 Code shows that restart requirement
+instead of treating the CLI update as a failure.
+
+T3 Code waits for a local server it started to recover after a lost connection.
+You can stop the turn while it reconnects. If the server exits or an external
+connection cannot be restored, send another prompt to resume the same OpenCode
 session.
 
 ## Approvals
@@ -74,6 +84,10 @@ cached while the local helper is running. Let it sit for 30 seconds without mode
 refreshes or text-generation work, then refresh again to reload the files. Repeated
 refreshes keep the helper alive. An external server may need its own reload or
 restart before T3 Code can see configuration changes.
+
+Models defined in a project's own `opencode.json` appear only in that project's
+model picker, after T3 Code reads the project's catalog the first time the picker
+opens there.
 
 Existing threads keep their selected model and options even when it disappears
 from the catalog. If OpenCode rejects that model, select an available one and retry.
