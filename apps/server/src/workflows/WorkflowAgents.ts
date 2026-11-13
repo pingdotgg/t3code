@@ -1,5 +1,6 @@
 import type { ModelSelection } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import type * as Duration from "effect/Duration";
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -26,6 +27,8 @@ export const AgentTurn = Schema.Struct({
   environment: Schema.optional(Schema.String),
   /** When the step's first turn started, which its time limit counts from. */
   startedAt: Schema.optional(Schema.Number),
+  /** Why no turn was started, for a step that takes that as an answer. The ids are then empty. */
+  failed: Schema.optional(Schema.String),
 });
 export type AgentTurn = typeof AgentTurn.Type;
 
@@ -65,8 +68,16 @@ export class WorkflowAgents extends Context.Service<
       /** Continue this thread instead of starting one. */
       readonly thread: string | undefined;
     }) => Effect.Effect<AgentTurn, WorkflowAgentError>;
-    /** Wait for the turn to end and return what it produced. */
-    readonly result: (turn: AgentTurn) => Effect.Effect<AgentResult, WorkflowAgentError>;
+    /**
+     * Wait for the turn to end and return what it produced. With `quiet`, a turn that ended
+     * without the output it owes is waited past: its agent may be waiting to be woken, and
+     * submits from a later turn. Only once the thread has done nothing for `quiet` is the turn
+     * returned without output.
+     */
+    readonly result: (
+      turn: AgentTurn,
+      options?: { readonly quiet?: Duration.Duration | undefined },
+    ) => Effect.Effect<AgentResult, WorkflowAgentError>;
     /** Stop whatever the thread is doing, when its run is cancelled. */
     readonly interrupt: (thread: {
       readonly threadId: string;

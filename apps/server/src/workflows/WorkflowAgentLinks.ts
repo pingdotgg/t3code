@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import type * as Schema from "effect/Schema";
@@ -210,7 +211,39 @@ export const make = Effect.gen(function* () {
   const result = Effect.fn("WorkflowAgentLinks.result")(function* (
     turn: AgentTurn,
     environment: string,
+    options?: { readonly quiet?: Duration.Duration | undefined },
   ): Effect.fn.Return<AgentResult, WorkflowAgentError> {
+    const ended = new Set(["completed", "failed", "interrupted", "cancelled", "rolled_back"]);
+    /** The result a later turn submits, or nothing once the thread has been quiet. */
+    const owed = Effect.fn("WorkflowAgentLinks.owed")(function* (quiet: Duration.Duration) {
+      let left = Duration.toMillis(quiet);
+      // The newest turn already seen to end without the result, so quiet is not restarted by it.
+      let counted = turn.turnId;
+      while (true) {
+        const piece = Math.min(left, Duration.toMillis(WAIT_PIECE));
+        const waited = yield* call(environment, "t3_thread_wait", OrchestratorMcpThreadWaitResult, {
+          threadId: turn.threadId,
+          runId: turn.turnId,
+          untilOutput: true,
+          timeoutMs: piece,
+        });
+        if (waited.output !== undefined) return Option.some(waited.output);
+        // An environment that does not know `untilOutput` answers at once: nothing to wait on.
+        if (!waited.timedOut) return Option.none<Schema.Json>();
+        left -= piece;
+        if (left > 0) continue;
+        const read = yield* call(environment, "t3_thread_read", OrchestratorMcpThreadReadResult, {
+          threadId: turn.threadId,
+          limit: 1,
+          runLimit: 1,
+        });
+        const latest = read.recentRuns[0];
+        if (latest === undefined || latest.runId === counted) return Option.none<Schema.Json>();
+        // Quiet is counted from the thread's last turn: one under way, or one not yet counted.
+        if (ended.has(latest.status)) counted = latest.runId;
+        left = Duration.toMillis(quiet);
+      }
+    });
     while (true) {
       const waited = yield* call(environment, "t3_thread_wait", OrchestratorMcpThreadWaitResult, {
         threadId: turn.threadId,
@@ -230,11 +263,15 @@ export const make = Effect.gen(function* () {
         });
       }
       if (status === "completed") {
+        const output =
+          waited.output !== undefined || options?.quiet === undefined
+            ? Option.fromUndefinedOr(waited.output)
+            : yield* owed(options.quiet);
         return {
           ending: "completed",
           detail: "",
           reply: yield* reply(turn, environment),
-          ...(waited.output === undefined ? {} : { output: waited.output }),
+          ...(Option.isNone(output) ? {} : { output: output.value }),
         };
       }
       if (

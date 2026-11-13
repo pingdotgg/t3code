@@ -1,5 +1,6 @@
 import { EnvironmentId, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -198,5 +199,62 @@ it.effect("a turn someone stopped there is stopped, and a refused link fails at 
     ).pipe(Effect.flip);
     assert.match(error.reason, /link revoked/);
     assert.equal(revoked.calls.length, 1);
+  }),
+);
+
+it.effect("a turn that ended without its result is waited past until a later turn gives it", () =>
+  Effect.gen(function* () {
+    const there = peer({
+      t3_thread_wait: [
+        // The turn ended. The agent is waiting to be woken, and has submitted nothing.
+        { ...waited, timedOut: false },
+        // Quiet for five minutes, in pieces. A turn that woke in between is under way...
+        ...Array.from({ length: 6 }, () => ({ ...waited, timedOut: true })),
+        // ...so the wait starts over, and that turn submits.
+        { ...waited, timedOut: false, output: { head: "abc" } },
+      ],
+      t3_thread_read: [
+        run("completed"),
+        { recentRuns: [{ runId: "turn-2", status: "running" }], items: [] },
+        { recentRuns: [], hasMore: false, nextPosition: null, items: [] },
+      ],
+    });
+    const result = yield* Effect.provide(
+      Effect.flatMap(WorkflowAgentLinks.make, (links) =>
+        links.result({ threadId: "thread-1", turnId: "turn-1" }, "env-b", {
+          quiet: Duration.minutes(5),
+        }),
+      ),
+      there.layer,
+    ).pipe(Effect.raceFirst(Effect.forever(TestClock.adjust("1 second"))));
+    assert.deepStrictEqual(result.output, { head: "abc" });
+    const waits = there.calls.filter((call) => call.tool === "t3_thread_wait");
+    assert.isTrue(waits.slice(1).every((call) => call.arguments.untilOutput === true));
+  }),
+);
+
+it.effect("a thread that stays quiet gives the turn back without a result", () =>
+  Effect.gen(function* () {
+    const there = peer({
+      t3_thread_wait: [
+        { ...waited, timedOut: false },
+        ...Array.from({ length: 6 }, () => ({ ...waited, timedOut: true })),
+      ],
+      t3_thread_read: [
+        run("completed"),
+        // Nothing has run since the turn the step knows.
+        run("completed"),
+        { recentRuns: [], hasMore: false, nextPosition: null, items: [] },
+      ],
+    });
+    const result = yield* Effect.provide(
+      Effect.flatMap(WorkflowAgentLinks.make, (links) =>
+        links.result({ threadId: "thread-1", turnId: "turn-1" }, "env-b", {
+          quiet: Duration.minutes(5),
+        }),
+      ),
+      there.layer,
+    ).pipe(Effect.raceFirst(Effect.forever(TestClock.adjust("1 second"))));
+    assert.deepStrictEqual(result, { ending: "completed", detail: "", reply: "" });
   }),
 );

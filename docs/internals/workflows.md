@@ -48,9 +48,21 @@ one run with one parent, so invoking under a key something else started is refus
 waiting for a signal that would never come.
 
 **The store is for inside a step.** Its values change between replays, so the body must not read
-it; `step` and `onEnd` hand their code the store, a way to signal and a way to start runs, and nothing else may use
-them. A step's signals are numbered from the step's name, so a retried step sends the same
+it; `step` and `onEnd` hand their code the store, a way to signal, and a way to start, find and
+cancel runs, and nothing else may use them. A step's signals are numbered from the step's name, so a retried step sends the same
 signals again instead of new ones.
+
+**A thread owes its result across turns.** An agent that waits for something ends its turn and is
+woken later, in a turn nobody asked a result of. A submission from such a turn goes to the newest
+turn that was asked and has not answered, so the result lands on the turn the step started, and a
+wait with `untilOutput` holds past that turn's end for it. The `quiet` option of an agent step is
+that wait with a limit: quiet is counted from the thread's last turn, and when it passes the
+step asks for the result as it would have at once without the option.
+
+**A failed agent is an answer only when the workflow asks for that.** `agent.try` journals the same
+turns as `agent` and differs at the end: it marks the step failed and returns, where `agent`
+fails the step and pauses the run. A start that failed is journaled as a turn without ids, so a
+replay does not try the start again.
 
 **`onEnd` gets the payload and the run's id, not the body's values.** A cancelled run's body is
 gone, so its cleanup runs outside the engine and has only what the run was started with. Inside
@@ -86,3 +98,8 @@ stops the agent's thread, which is what makes a long agent step return.
 **One signal wakes one wait.** A wait is taken by the first signal for it; a second signal on the
 same key is for the next run that waits on that key, and is kept until one does. A signal's id is
 remembered once delivered, so a sender's retry is not a second signal.
+
+**`signalAll` keeps nothing.** It wakes the waits open on a key now and is not kept for one that
+opens later: a kept broadcast would wake whichever single run waited next, days on. A run that
+holds for a condition therefore reads the condition in a step and waits with a timeout, so one
+that began to wait just after the broadcast looks again.

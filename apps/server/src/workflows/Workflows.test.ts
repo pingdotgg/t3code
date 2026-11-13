@@ -15,7 +15,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
-import { signal, start, store } from "./stepServices.ts";
+import { cancel, runs, signal, signalAll, start, store } from "./stepServices.ts";
 import { invoke, sleep, step, stop, title, wait, workflow } from "./workflow.ts";
 import { type AgentResult, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
 import Migration0092 from "../persistence/Migrations/092_Workflows.ts";
@@ -273,6 +273,62 @@ const fix = workflow(
     }),
 );
 
+/** Waits at a gate with others, until whoever keeps it lets everyone through. */
+const gate = workflow(
+  "gate",
+  { version: 1, payload: Schema.Struct({ gate: Schema.String }), returns: Schema.String },
+  (payload) =>
+    Effect.map(
+      wait("through", { returns: Schema.String, key: payload.gate }),
+      Option.getOrElse(() => "never"),
+    ),
+);
+const control = [
+  gate,
+  /** Looks at the runs at the gates, lets one gate's through, or sends one run away. */
+  workflow(
+    "keeper",
+    {
+      version: 1,
+      payload: Schema.Struct({ act: Schema.Literals(["look", "open", "dismiss", "leave"]) }),
+      returns: Schema.Json,
+    },
+    (payload, run) =>
+      step(
+        "act",
+        { returns: Schema.Json, ...once },
+        Effect.gen(function* () {
+          const waiting = yield* runs({ workflow: gate, keyPrefix: "visit/" });
+          if (payload.act === "open") return yield* signalAll({ key: "north" }, "go on");
+          if (payload.act === "leave") return yield* Effect.as(cancel(run.id, "done here"), null);
+          if (payload.act === "dismiss") {
+            const last = waiting.find((visit) => visit.key === "visit/3");
+            return yield* Effect.as(cancel(last?.id ?? "", "the gate is closed"), null);
+          }
+          return waiting.map((visit) => `${visit.key} ${visit.status}`).toSorted();
+        }),
+      ),
+  ),
+  /** Gives the job to a second agent when the first one fails, and says how it went. */
+  workflow(
+    "fallback",
+    { version: 1, payload: Schema.Struct({ project: Schema.String }), returns: Schema.String },
+    (payload) =>
+      Effect.gen(function* () {
+        const output = Schema.Struct({ head: Schema.String });
+        const first = yield* agent.try("first", {
+          brief: "Fix it.",
+          project: payload.project,
+          output,
+        });
+        if (first.outcome === "done") return first.value.head;
+        const second = yield* agent.try("second", { brief: "Fix it.", project: "p1", output });
+        if (second.outcome === "failed") return yield* stop(second.reason);
+        return `${second.value.head} after: ${first.reason}`;
+      }),
+  ),
+];
+
 type Started = Parameters<WorkflowAgents["Service"]["start"]>[0];
 
 /** Agents the test plays: it sees each turn start and decides how that turn ends. */
@@ -303,6 +359,9 @@ const fakeAgents = () => {
           // The engine's own setting for reading integers must not reach what a step calls.
           if (yield* SqlClient.SafeIntegers) {
             return yield* new WorkflowAgentError({ reason: "SafeIntegers leaked into a step" });
+          }
+          if (input.project === "nowhere") {
+            return yield* new WorkflowAgentError({ reason: "No project is registered there." });
           }
           yield* Deferred.succeed(turn(input.key).started, input);
           return {
@@ -382,6 +441,7 @@ const harness = Effect.gen(function* () {
     ...triggered,
     ...stored,
     ...family,
+    ...control,
   ]).pipe(
     Layer.provide(Layer.succeed(WorkflowAgents, agents.service)),
     Layer.provide(database),
@@ -1137,6 +1197,100 @@ it.effect("a request to a hook starts a run, its retry is the same run, and a ba
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
         assert.isTrue((yield* workflows.hooks)[0]?.path.endsWith(`/${token}`));
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a step finds runs by their key, wakes everyone at a key, and cancels another run", () =>
+  Effect.gen(function* () {
+    const { boot } = yield* harness;
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const visit = (key: string, at: string) =>
+          workflows.start("gate", { gate: at }, { idempotencyKey: key });
+        const keeper = Effect.fn(function* (act: "look" | "open" | "dismiss" | "leave") {
+          const run = yield* workflows.start("keeper", { act }, { idempotencyKey: act });
+          return yield* workflows.waitFor(run.runId, status("completed", "paused"));
+        });
+        const [one, two, three] = yield* Effect.all([
+          visit("visit/1", "north"),
+          visit("visit/2", "north"),
+          visit("visit/3", "south"),
+        ]);
+        // Not at a gate, and not started as a visit: none of the keeper's business.
+        yield* workflows.start("review", { change: "north" }, { idempotencyKey: "other" });
+        for (const run of [one, two, three]) yield* workflows.waitFor(run.runId, status("waiting"));
+
+        assert.deepStrictEqual((yield* keeper("look")).result, [
+          "visit/1 waiting",
+          "visit/2 waiting",
+          "visit/3 waiting",
+        ]);
+        // Both at the north gate go through on one signal; the one at the south gate stays.
+        assert.equal((yield* keeper("open")).result, 2);
+        for (const run of [one, two]) {
+          assert.equal((yield* workflows.waitFor(run.runId, status("completed"))).result, "go on");
+        }
+        assert.equal((yield* workflows.get(three.runId)).run.status, "waiting");
+
+        yield* keeper("dismiss");
+        const dismissed = (yield* workflows.get(three.runId)).run;
+        assert.deepStrictEqual(
+          [dismissed.status, dismissed.detail],
+          ["cancelled", "the gate is closed"],
+        );
+        // A run ends itself with `stop`; cancelling itself would cut the cancel short.
+        const left = yield* keeper("leave");
+        assert.equal(left.status, "paused");
+        assert.include(left.detail ?? "", "cannot cancel itself");
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a workflow can take an agent's failure as an answer and go on", () =>
+  Effect.gen(function* () {
+    const { boot, agents } = yield* harness;
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        // The first agent's turn dies, and so does the one more try it gets.
+        const died = yield* workflows.start("fallback", { project: "p1" }, { idempotencyKey: "d" });
+        yield* agents.started(died.runId, "first/0");
+        yield* agents.end(died.runId, "first/0", { ending: "failed", detail: "failed" });
+        yield* agents.started(died.runId, "first/1");
+        yield* agents.end(died.runId, "first/1", { ending: "failed", detail: "failed" });
+        yield* agents.started(died.runId, "second/0");
+        yield* agents.end(died.runId, "second/0", { output: { head: "abc" } });
+        const done = yield* workflows.waitFor(died.runId, status("completed", "paused"));
+        assert.deepStrictEqual(
+          [done.status, done.pauses, done.result],
+          ["completed", 0, "abc after: the agent's turn was cut short: failed"],
+        );
+        const { steps } = yield* workflows.get(died.runId);
+        assert.deepStrictEqual(
+          steps.map((step) => [step.name, step.status]),
+          [
+            ["first", "failed"],
+            ["second", "completed"],
+          ],
+        );
+
+        // An agent that cannot be started at all is an answer too.
+        const lost = yield* workflows.start(
+          "fallback",
+          { project: "nowhere" },
+          { idempotencyKey: "n" },
+        );
+        yield* agents.started(lost.runId, "second/0");
+        yield* agents.end(lost.runId, "second/0", { output: { head: "def" } });
+        const found = yield* workflows.waitFor(lost.runId, status("completed", "paused"));
+        assert.equal(
+          found.result,
+          "def after: the agent could not be started: No project is registered there.",
+        );
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

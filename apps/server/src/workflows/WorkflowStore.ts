@@ -29,6 +29,7 @@ export interface RunParent {
 export interface RunRow {
   readonly run_id: string;
   readonly workflow: string;
+  readonly idempotency_key: string;
   readonly version: number | bigint;
   readonly engine_tag: string;
   readonly title: string;
@@ -159,6 +160,11 @@ export class WorkflowStore extends Context.Service<
       runId: string,
     ) => Effect.Effect<ReadonlyArray<{ readonly threadId: string; readonly environment?: string }>>;
     readonly waitAt: (address: SignalAddress) => Effect.Effect<WaitRow | undefined>;
+    /** Every open wait on `key`, in one workflow or in all of them. */
+    readonly waitsOn: (
+      key: string,
+      workflow: string | undefined,
+    ) => Effect.Effect<ReadonlyArray<WaitRow>>;
     readonly waitsPastDeadline: Effect.Effect<ReadonlyArray<WaitRow>>;
     readonly requests: Effect.Effect<ReadonlyArray<WaitRow>>;
     /** The thread of the run's latest agent step, if it has had one. */
@@ -190,6 +196,12 @@ export class WorkflowStore extends Context.Service<
     readonly mailExpire: Effect.Effect<void>;
     readonly run: (runId: string) => Effect.Effect<RunRow | undefined>;
     readonly runs: (status: WorkflowRunStatus | undefined) => Effect.Effect<ReadonlyArray<RunRow>>;
+    /** Runs by what they are a run of and what they were started as, newest first. */
+    readonly runsWhere: (filter: {
+      readonly workflow?: string | undefined;
+      readonly status?: WorkflowRunStatus | undefined;
+      readonly keyPrefix?: string | undefined;
+    }) => Effect.Effect<ReadonlyArray<RunRow>>;
     readonly triggerNext: (triggerId: string) => Effect.Effect<string | undefined>;
     readonly triggerSet: (triggerId: string, nextAt: string) => Effect.Effect<void>;
     /** The hook's token: the one kept for it, or `fresh` from now on. */
@@ -441,6 +453,14 @@ const make = Effect.gen(function* () {
       ).pipe(Effect.orDie);
       return rows[0];
     }),
+    waitsOn: Effect.fn("WorkflowStore.waitsOn")(function* (key, workflow) {
+      return yield* sql<WaitRow>`
+        SELECT ${waitColumns} FROM workflow_waits
+        WHERE key = ${key} AND signalled_at IS NULL
+          AND (${workflow ?? null} IS NULL OR workflow = ${workflow ?? null})
+        ORDER BY opened_at
+      `.pipe(Effect.orDie);
+    }),
     waitsPastDeadline: Effect.flatMap(now, (at) =>
       sql<WaitRow>`
         SELECT ${waitColumns} FROM workflow_waits
@@ -531,6 +551,19 @@ const make = Effect.gen(function* () {
         Effect.orDie,
       );
       return rows[0];
+    }),
+    runsWhere: Effect.fn("WorkflowStore.runsWhere")(function* (filter) {
+      const prefix = filter.keyPrefix ?? null;
+      // A range, not LIKE, which would read `%` and `_` in a key as patterns.
+      return yield* sql<RunRow>`
+        SELECT * FROM workflow_runs
+        WHERE (${filter.workflow ?? null} IS NULL OR workflow = ${filter.workflow ?? null})
+          AND (${filter.status ?? null} IS NULL OR status = ${filter.status ?? null})
+          AND (${prefix} IS NULL OR (
+            idempotency_key >= ${prefix} AND idempotency_key < ${`${prefix ?? ""}\u{10FFFF}`}
+          ))
+        ORDER BY started_at DESC, rowid DESC LIMIT 500
+      `.pipe(Effect.orDie);
     }),
     runs: Effect.fn("WorkflowStore.runs")(function* (status) {
       return yield* (

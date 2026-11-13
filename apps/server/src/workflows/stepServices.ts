@@ -11,7 +11,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import type { WorkflowDefinition } from "./workflow.ts";
 import type { WorkflowError, WorkflowInputError } from "./Workflows.ts";
-import type { RunParent, SignalAddress } from "./WorkflowStore.ts";
+import type { RunParent, SignalAddress, WorkflowRunStatus } from "./WorkflowStore.ts";
 
 /** The shared store as rows of JSON text. `store` puts schemas on top. */
 export class KeyValues extends Context.Service<
@@ -33,10 +33,35 @@ export type SendSignal = (
   options: { readonly id: string; readonly ttl?: Duration.Input },
 ) => Effect.Effect<"delivered" | "buffered", WorkflowInputError>;
 
+/** Everyone who waits on a key, in one workflow or in all of them. */
+export interface EveryoneAt {
+  readonly key: string;
+  readonly workflow?: string | undefined;
+}
+export type SendSignalToAll = (address: EveryoneAt, value: Schema.Json) => Effect.Effect<number>;
+
+/** A run as a step of another run sees it. `key` is what it was started with. */
+export interface RunSummary {
+  readonly id: string;
+  readonly workflow: string;
+  readonly key: string;
+  readonly title: string;
+  readonly status: WorkflowRunStatus;
+  readonly detail: string | null;
+  readonly startedAt: string;
+  readonly endedAt: string | null;
+}
+export interface RunFilter {
+  readonly workflow?: string | undefined;
+  readonly status?: WorkflowRunStatus | undefined;
+  readonly keyPrefix?: string | undefined;
+}
+
 /** Signals from the step that is running. Its signals are numbered, so a retry sends the same ones. */
 export class Signals extends Context.Service<
   Signals,
   {
+    readonly sendAll: SendSignalToAll;
     readonly send: (
       address: SignalAddress,
       value: Schema.Json,
@@ -51,10 +76,14 @@ export type StartRun = (
   options: { readonly idempotencyKey: string; readonly parent?: RunParent },
 ) => Effect.Effect<{ readonly runId: string }, WorkflowError>;
 
-/** Starting other runs from the step that is running. */
-export class Runs extends Context.Service<Runs, { readonly start: StartRun }>()(
-  "t3/workflows/stepServices/Runs",
-) {}
+export type CancelRun = (runId: string, reason: string) => Effect.Effect<void, WorkflowError>;
+export type ListRuns = (filter: RunFilter) => Effect.Effect<ReadonlyArray<RunSummary>>;
+
+/** Other runs, from the step that is running: starting, finding and cancelling them. */
+export class Runs extends Context.Service<
+  Runs,
+  { readonly start: StartRun; readonly cancel: CancelRun; readonly list: ListRuns }
+>()("t3/workflows/stepServices/Runs") {}
 
 export type InStep = KeyValues | Signals | Runs;
 
@@ -68,7 +97,10 @@ export class EngineLink extends Context.Service<
     current:
       | {
           readonly signal: SendSignal;
+          readonly signalAll: SendSignalToAll;
           readonly start: StartRun;
+          readonly cancel: CancelRun;
+          readonly list: ListRuns;
           /** Tell the run that invoked `runId`, if one did, how it ended. */
           readonly ended: (runId: string) => Effect.Effect<void>;
         }
@@ -82,12 +114,14 @@ const engineOf = (link: EngineLink["Service"]) =>
     ? Effect.die(new Error("The workflow engine is not up."))
     : Effect.succeed(link.current);
 
-/** The services for one step. `owner` names it, and each signal it sends is `owner` and a number. */
+/** The services for the step `name` of `runId`. Each signal it sends is the two and a number. */
 export const forStep = (
   keyValues: KeyValues["Service"],
   link: EngineLink["Service"],
-  owner: string,
+  runId: string,
+  name: string,
 ): Context.Context<InStep> => {
+  const owner = `${runId}/${name}`;
   let sent = 0;
   return Context.make(KeyValues, keyValues).pipe(
     Context.add(
@@ -100,6 +134,10 @@ export const forStep = (
             ...(options?.ttl === undefined ? {} : { ttl: options.ttl }),
           });
         }),
+        sendAll: Effect.fn("Signals.sendAll")(function* (address, value) {
+          const engine = yield* engineOf(link);
+          return yield* engine.signalAll(address, value);
+        }),
       }),
     ),
     Context.add(
@@ -108,6 +146,21 @@ export const forStep = (
         start: Effect.fn("Runs.start")(function* (workflow, input, options) {
           const engine = yield* engineOf(link);
           return yield* engine.start(workflow, input, options);
+        }),
+        cancel: Effect.fn("Runs.cancel")(function* (target, reason) {
+          // Cancelling interrupts the run, and this step is the run: it would cut itself off
+          // halfway through the cancel.
+          if (target === runId) {
+            return yield* Effect.die(
+              new Error("A run cannot cancel itself. End it from its body with `stop`."),
+            );
+          }
+          const engine = yield* engineOf(link);
+          return yield* engine.cancel(target, reason);
+        }),
+        list: Effect.fn("Runs.list")(function* (filter) {
+          const engine = yield* engineOf(link);
+          return yield* engine.list(filter);
         }),
       }),
     ),
@@ -253,4 +306,43 @@ export const start = <P>(
 ) =>
   Effect.flatMap(Runs, (runs) =>
     runs.start(workflow.name, payload, { idempotencyKey: options.key }),
+  );
+
+/**
+ * Wake every run that waits on `key`, in one workflow or, without `workflow`, in all of them.
+ * Returns how many it woke. Nothing is kept for a wait that opens later, so a run that waits on
+ * a condition checks the condition in a step first, and gives its wait a timeout to check again.
+ * Inside `step` or `onEnd` only.
+ */
+export const signalAll = (
+  address: { readonly key: string; readonly workflow?: Pick<WorkflowDefinition, "name"> },
+  value: Schema.Json,
+) =>
+  Effect.flatMap(Signals, (signals) =>
+    signals.sendAll({ key: address.key, workflow: address.workflow?.name }, value),
+  );
+
+/**
+ * Cancel another run, as a person would: its agents are stopped, its questions withdrawn, what
+ * it invoked is cancelled, and its `onEnd` runs. A run that has ended is left alone. Inside
+ * `step` or `onEnd` only.
+ */
+export const cancel = (runId: string, reason: string) =>
+  Effect.flatMap(Runs, (runs) => runs.cancel(runId, reason));
+
+/**
+ * Find runs: of one workflow, in one status, or started with a key that begins with `keyPrefix`.
+ * Newest first, 500 at most. Inside `step` or `onEnd` only: the answer changes over time.
+ */
+export const runs = (filter?: {
+  readonly workflow?: Pick<WorkflowDefinition, "name">;
+  readonly status?: WorkflowRunStatus;
+  readonly keyPrefix?: string;
+}) =>
+  Effect.flatMap(Runs, (all) =>
+    all.list({
+      workflow: filter?.workflow?.name,
+      status: filter?.status,
+      keyPrefix: filter?.keyPrefix,
+    }),
   );

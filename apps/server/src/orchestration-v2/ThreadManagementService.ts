@@ -189,6 +189,11 @@ export interface ThreadManagementWaitInput {
    * completion delivery will wake it again, as a delegated task's result does.
    */
   readonly untilDelegatedWorkSettled?: boolean;
+  /**
+   * Also wait until the run has the result it was asked for. A turn may end without one while
+   * its agent waits to be woken, and submit it from a later turn.
+   */
+  readonly untilOutput?: boolean;
 }
 
 export interface ThreadManagementWaitResult {
@@ -1023,8 +1028,14 @@ const make = Effect.gen(function* () {
     "ThreadManagementService.submitRunOutput",
   )(function* (input) {
     const records = yield* orchestrator.getThreadRecords(input.threadId, ["runs"]);
-    const run = latestActiveRun(records);
-    if (run?.outputSchema === undefined) {
+    const active = latestActiveRun(records);
+    // A turn that ended without its result still owes it: the agent may have ended it to wait
+    // for something, and answer from the turn that woke it.
+    const asked = records.runs
+      .filter((candidate) => candidate.outputSchema !== undefined)
+      .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+    const run = active?.outputSchema !== undefined || asked?.output !== undefined ? active : asked;
+    if (active === undefined || run?.outputSchema === undefined) {
       return yield* new ThreadManagementRunOutputRejectedError({
         threadId: input.threadId,
         problem: "This turn was not asked for a result. Reply in your message instead.",
@@ -1089,7 +1100,9 @@ const make = Effect.gen(function* () {
       const run = latestRestartContinuation(runs, current);
       const pending =
         isTerminalRunStatus(run.status) && (yield* orchestrator.restartContinuationPending(run));
-      return { run, pending, settled: isTerminalRunStatus(run.status) && !pending };
+      const owesOutput =
+        input.untilOutput === true && run.status === "completed" && run.output === undefined;
+      return { run, pending, settled: isTerminalRunStatus(run.status) && !pending && !owesOutput };
     });
     const untilDelegatedWorkSettled = input.untilDelegatedWorkSettled === true;
     const delegatedWorkResult = Effect.gen(function* () {
@@ -1139,6 +1152,7 @@ const make = Effect.gen(function* () {
           [
             "run.updated",
             "thread.deleted",
+            ...(input.untilOutput === true ? (["run.output-submitted"] as const) : []),
             // What delegated work reads besides runs: tasks and their
             // deliveries, and a provider thread's background tasks.
             ...(untilDelegatedWorkSettled

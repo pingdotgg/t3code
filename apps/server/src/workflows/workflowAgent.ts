@@ -2,6 +2,7 @@
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import { identity } from "effect/Function";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -26,26 +27,36 @@ export interface AgentThread {
 
 const CORRECTIONS = 2;
 
-/**
- * An agent doing one job in a thread a person can open. With `output` it returns data the server
- * checked against that schema; without, its last message. It starts a thread in `project`, or
- * continues `thread`. `environment` names a linked environment to start it in; a continued thread
- * stays where it is. With `timeout`, an agent that is not done by then is stopped. A turn that dies is tried once more, then the run pauses at this step.
- */
-export const agent = Effect.fn("workflow.agent")(function* <A = string, I = string>(
+export interface AgentOptions<A, I> {
+  readonly brief: string;
+  readonly output?: Schema.Codec<A, I>;
+  readonly model?: AgentModel;
+  readonly project?: string;
+  readonly environment?: string;
+  readonly thread?: AgentThread;
+  /** How long the agent has. Past it the thread is stopped and the step has failed. */
+  readonly timeout?: Duration.Input;
+  /**
+   * Let the agent end a turn without its `output` and answer from a later one, as an agent does
+   * that waits to be woken: by a pull request it watches, by work it left running. Only when
+   * its thread has done nothing for this long is it asked for the result. Without it, a turn
+   * that ends without the result is asked at once.
+   */
+  readonly quiet?: Duration.Input;
+}
+
+type Attempt<A> =
+  | { readonly outcome: "done"; readonly value: A; readonly thread: AgentThread }
+  | { readonly outcome: "failed"; readonly reason: string; readonly thread?: AgentThread };
+
+const attempt = Effect.fn("workflow.agent")(function* <A, I>(
   name: string,
-  options: {
-    readonly brief: string;
-    readonly output?: Schema.Codec<A, I>;
-    readonly model?: AgentModel;
-    readonly project?: string;
-    readonly environment?: string;
-    readonly thread?: AgentThread;
-    /** How long the agent has. Past it the thread is stopped and the run pauses at this step. */
-    readonly timeout?: Duration.Input;
-  },
-): Effect.fn.Return<{ readonly value: A; readonly thread: AgentThread }, StepFailed, InRun> {
+  options: AgentOptions<A, I>,
+  /** What a failure does: pause the run at this step, or come back as the step's answer. */
+  onFailure: "pause" | "return",
+): Effect.fn.Return<Attempt<A>, StepFailed, InRun> {
   const run = yield* claim(name);
+  const quiet = options.quiet === undefined ? undefined : Duration.fromInputUnsafe(options.quiet);
   const agents = yield* WorkflowAgents;
   const outputSchema = options.output === undefined ? undefined : jsonSchemaOf(options.output);
   const outputCodec = options.output === undefined ? undefined : Schema.toCodecJson(options.output);
@@ -72,20 +83,36 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
           run.store.stepThread(run.runId, name, turn.threadId, turn.environment ?? null),
         ),
         Effect.flatMap((turn) =>
-          Effect.map(Clock.currentTimeMillis, (startedAt) => ({ ...turn, startedAt })),
+          Effect.map(Clock.currentTimeMillis, (startedAt): AgentTurn => ({ ...turn, startedAt })),
         ),
+        // No machine, no project, no link: for a step that takes failure as an answer, that is one.
+        onFailure === "pause"
+          ? identity
+          : Effect.catch((error) =>
+              Effect.succeed<AgentTurn>({ threadId: "", turnId: "", failed: text(error) }),
+            ),
+      );
+  const resultOf = (turn: AgentTurn) =>
+    agents
+      .result(turn, { quiet })
+      .pipe(
+        onFailure === "pause"
+          ? identity
+          : Effect.catch((error) =>
+              Effect.succeed<AgentResult>({ ending: "failed", detail: text(error), reply: "" }),
+            ),
       );
   /** The turn's result, or its thread stopped when the step's time is up. */
   const within = Effect.fn("workflow.agent.within")(function* (
     turn: AgentTurn,
     startedAt: number | undefined,
   ) {
-    if (options.timeout === undefined || startedAt === undefined) return yield* agents.result(turn);
+    if (options.timeout === undefined || startedAt === undefined) return yield* resultOf(turn);
     const limit = Duration.fromInputUnsafe(options.timeout);
     const left = startedAt + Duration.toMillis(limit) - (yield* Clock.currentTimeMillis);
-    const result = yield* agents
-      .result(turn)
-      .pipe(Effect.timeoutOption(Duration.millis(Math.max(0, left))));
+    const result = yield* resultOf(turn).pipe(
+      Effect.timeoutOption(Duration.millis(Math.max(0, left))),
+    );
     if (Option.isSome(result)) return result.value;
     yield* Effect.ignore(agents.interrupt(threadOf(turn)));
     return {
@@ -123,9 +150,9 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
     );
     // Counted from the step's first turn, so corrections do not buy more time.
     const startedAt = turn.startedAt;
-    let problem = "";
+    let problem = turn.failed === undefined ? "" : `the agent could not be started: ${turn.failed}`;
     let stopped = false;
-    for (let correction = 0; ; correction++) {
+    for (let correction = 0; turn.failed === undefined; correction++) {
       const result = yield* journaled(
         run,
         name,
@@ -143,7 +170,7 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
       }
       if (decodeOutput === undefined) {
         yield* done(round, result.reply);
-        return { value: result.reply as A, thread: threadOf(turn) };
+        return { outcome: "done", value: result.reply as A, thread: threadOf(turn) };
       }
       const decoded =
         result.output === undefined
@@ -154,7 +181,7 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
             );
       if (Result.isSuccess(decoded)) {
         yield* done(round, result.output ?? null, result.reply);
-        return { value: decoded.success, thread: threadOf(turn) };
+        return { outcome: "done", value: decoded.success, thread: threadOf(turn) };
       }
       problem = `the agent did not return a result: ${decoded.failure}`;
       if (correction >= CORRECTIONS) break;
@@ -174,6 +201,23 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
     // A turn that died is not the job's fault the first time: once more, on a thread of its own.
     // One a person stopped is not tried again behind their back.
     if (round % 2 === 0 && !stopped) continue;
+    if (onFailure === "return") {
+      yield* journaled(
+        run,
+        name,
+        `agent/${name}/${round}/failed`,
+        Schema.Void,
+        Effect.andThen(
+          run.store.stepEnded(run.runId, name, "failed", problem),
+          run.store.runResumed(run.runId),
+        ),
+      );
+      return {
+        outcome: "failed",
+        reason: problem,
+        ...(turn.failed === undefined ? { thread: threadOf(turn) } : {}),
+      };
+    }
     // Fails the first time it is reached, which pauses the run here. Resuming the run reaches it
     // again, and the next round starts.
     yield* journaled(
@@ -186,6 +230,35 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
       ),
     );
   }
+});
+
+const orPause = <A = string, I = string>(
+  name: string,
+  options: AgentOptions<A, I>,
+): Effect.Effect<{ readonly value: A; readonly thread: AgentThread }, StepFailed, InRun> =>
+  Effect.flatMap(attempt(name, options, "pause"), (result) =>
+    result.outcome === "done"
+      ? Effect.succeed({ value: result.value, thread: result.thread })
+      : // `pause` never returns a failure: the step fails first, which pauses the run.
+        Effect.die(new Error(`Agent step ${name} failed without pausing: ${result.reason}`)),
+  );
+
+/**
+ * An agent doing one job in a thread a person can open. It returns data checked against `output`,
+ * or its last message without one. It starts a thread in `project`, in the linked `environment`
+ * when one is named, or continues `thread` where that is. Past `timeout` it is stopped. A turn
+ * that dies is tried once more, then the run pauses at this step.
+ */
+export const agent = Object.assign(orPause, {
+  /**
+   * For a workflow that decides for itself what a failed agent means: another model, another
+   * machine, or stop. An agent that could not be started, died twice, ran out of time or never
+   * gave its result comes back as `failed` with the reason, and the run goes on.
+   */
+  try: <A = string, I = string>(
+    name: string,
+    options: AgentOptions<A, I>,
+  ): Effect.Effect<Attempt<A>, StepFailed, InRun> => attempt(name, options, "return"),
 });
 
 /**
