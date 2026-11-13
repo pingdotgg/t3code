@@ -113,8 +113,8 @@ impl Provider for ClaudeProvider {
     }
 }
 
-/// `ClaudeProviderCapabilitiesV2`, with what this crate does not do switched off: fork,
-/// rollback, subagent projection, todo lists, handoff and checkpoint rollback.
+/// `ClaudeProviderCapabilitiesV2`, with what this crate does not do switched off: handoff and
+/// context injection, queued messages, dynamic tool callbacks, nested checkpoint scopes.
 pub fn capabilities() -> Value {
     json!({
         "sessions": {
@@ -127,9 +127,9 @@ pub fn capabilities() -> Value {
         "threads": {
             "canCreateEmptyThread": true,
             "canReadThreadSnapshot": false,
-            "canRollbackThread": false,
-            "canForkThread": false,
-            "canForkFromTurn": false,
+            "canRollbackThread": true,
+            "canForkThread": true,
+            "canForkFromTurn": true,
             "canForkFromSubagentThread": false,
             "exposesNativeThreadId": true,
         },
@@ -139,7 +139,7 @@ pub fn capabilities() -> Value {
             "emitsTurnCompleted": true,
             "supportsInterrupt": true,
             "supportsActiveSteering": true,
-            "activeSteeringInterruptsTools": false,
+            "activeSteeringInterruptsTools": true,
             "supportsSteeringByInterruptRestart": false,
             "supportsQueuedMessages": false,
             "terminalStatusQuality": "strong",
@@ -170,15 +170,15 @@ pub fn capabilities() -> Value {
         },
         "planning": {
             "emitsPlanUpdated": true,
-            "emitsTodoList": false,
+            "emitsTodoList": true,
             "emitsProposedPlan": true,
             "supportsStructuredQuestions": true,
             "planDeltasHaveItemIds": false,
         },
         "subagents": {
-            "supportsSubagents": false,
+            "supportsSubagents": true,
             "exposesSubagentThreadIds": false,
-            "emitsSubagentLifecycle": false,
+            "emitsSubagentLifecycle": true,
             "canWaitForSubagents": false,
             "canCloseSubagents": false,
             "canForkSubagentThread": false,
@@ -196,8 +196,8 @@ pub fn capabilities() -> Value {
         "checkpointing": {
             "appCanCheckpointFilesystem": true,
             "supportsNestedCheckpointScopes": false,
-            "providerCanRollbackConversation": false,
-            "providerRollbackReturnsSnapshot": false,
+            "providerCanRollbackConversation": true,
+            "providerRollbackReturnsSnapshot": true,
             "providerCanReadConversationSnapshot": false,
         },
         "identity": {
