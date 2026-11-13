@@ -11,12 +11,18 @@
 //   methods whose scope depends on the payload, and the settings keys that need
 //   `providers:manage`. The payload rules themselves stay by hand in scopes.rs; a test there
 //   fails when this list and the hand rules differ.
+// - tools/upkeep/http-routes.json: every (method, path) of the T3 server's HTTP API
+//   (`EnvironmentHttpApi` in packages/contracts/src/environmentHttp.ts), by reflection.
+//   tools/bump-report.mjs compares it with the routes this server serves.
 //
 // Prints notes for what it cannot generate: scope checks that sit inside a handler
 // (`requiredScopeFor*` functions), which the hand code must follow.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+
+import * as NodeModule from "node:module";
+import * as NodeURL from "node:url";
 
 import { importSource, inMonorepo, repoRoot } from "./monorepo.mjs";
 
@@ -123,10 +129,43 @@ const scopesRs = rustfmt(
   ].join("\n"),
 );
 
+// ---- HTTP routes -------------------------------------------------------------------------
+
+const HTTP_FILE = "packages/contracts/src/environmentHttp.ts";
+const http = await importSource(HTTP_FILE);
+// Resolve `effect` as environmentHttp.ts does, so reflection sees the same instance.
+const requireHttp = NodeModule.createRequire(inMonorepo(HTTP_FILE));
+const HttpApi = await import(
+  NodeURL.pathToFileURL(requireHttp.resolve("effect/http-api/HttpApi")).href
+);
+const routes = [];
+HttpApi.reflect(http.EnvironmentHttpApi, {
+  onGroup() {},
+  onEndpoint({ group, endpoint }) {
+    routes.push({ group: group.identifier, method: endpoint.method, path: endpoint.path });
+  },
+});
+if (routes.length === 0) throw new Error("EnvironmentHttpApi has no endpoints");
+routes.sort((a, b) =>
+  a.path === b.path ? (a.method < b.method ? -1 : 1) : a.path < b.path ? -1 : 1,
+);
+// One route per line, so a diff shows the route that moved.
+const routesJson = [
+  "{",
+  `  "generated": ${str(`${HEADER[0].slice(3)} ${HEADER[1].slice(3)}`)},`,
+  `  "source": ${str(`${HTTP_FILE} (EnvironmentHttpApi)`)},`,
+  `  "routes": [`,
+  routes.map((r) => `    ${JSON.stringify(r)}`).join(",\n"),
+  "  ]",
+  "}",
+  "",
+].join("\n");
+
 // ---- Write or check ----------------------------------------------------------------------
 
 const outputs = {
   "crates/conn-server/src/scopes/generated.rs": scopesRs,
+  "tools/upkeep/http-routes.json": routesJson,
 };
 
 let stale = false;
@@ -147,6 +186,7 @@ for (const [rel, content] of Object.entries(outputs)) {
 console.log(
   `scopes: ${scopes.length} methods, ${payloadRules.length} payload rules, ${providerKeys.length} provider settings keys`,
 );
+console.log(`http routes: ${routes.length}`);
 for (const name of inHandler) {
   console.log(`note: ${AUTH_FILE} checks a scope inside a handler: ${name}`);
 }

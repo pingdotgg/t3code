@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Prints the report of a Conn pin bump: what moved in the contract, /mcp, keybindings and the
-// provider files, and what the Conn Server does not serve. tools/bump-conn.sh calls it.
+// Prints the report of a Conn pin bump: what moved in the contract, /mcp, keybindings, scopes,
+// engine commands, HTTP routes and the upstream files each part follows, and what the Conn
+// Server does not serve. tools/bump-conn.sh calls it.
 //
 //   node tools/bump-report.mjs --before <snapshot dir> --from <old sha> --to <new sha>
 //        [--checks <file>] [--binary <conn-server>]
@@ -325,21 +326,214 @@ if (!oldKeys || !newKeys) {
   list("removed", removed, 12);
 }
 
-// ---- Provider files ----------------------------------------------------------------------
+// ---- Scopes ------------------------------------------------------------------------------
 
+const SCOPES_RS = "crates/conn-server/src/scopes/generated.rs";
+/** The generated scope file: the table and each list, or undefined when missing. */
+function scopeTables(root) {
+  const text = readText(root, SCOPES_RS);
+  if (text === undefined) return undefined;
+  const block = (name) => {
+    const m = new RegExp(`const ${name}: &\\[[^\\]]*\\] = &\\[([\\s\\S]*?)\\];`).exec(text);
+    return m ? m[1] : "";
+  };
+  const table = new Map([...block("SCOPES").matchAll(/\("([^"]+)",\s*"([^"]+)"\)/g)].map((m) => [m[1], m[2]]));
+  const strings = (name) => [...block(name).matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  return {
+    table,
+    payload: strings("PAYLOAD_RULES"),
+    providerKeys: strings("PROVIDER_SETTINGS"),
+    inHandler: strings("IN_HANDLER_RULES"),
+  };
+}
+const oldScopes = scopeTables(before);
+const newScopes = scopeTables(repoRoot);
 line();
-const specs = (readText(repoRoot, "tools/upkeep/provider-files.txt") ?? "")
-  .split("\n")
-  .map((l) => l.trim())
-  .filter((l) => l && !l.startsWith("#"));
-if (!monorepo) {
-  line("## Provider files: CONN_MONOREPO is not set");
+if (!oldScopes || !newScopes) {
+  line(`## Scopes: no ${SCOPES_RS} to compare (gen-upstream did not run or failed)`);
 } else {
-  const stat = git("diff", "--stat=100", from, to, "--", ...specs)?.trimEnd();
-  line(`## Provider files the provider crates follow (tools/upkeep/provider-files.txt)`);
-  if (stat === undefined) line("  git diff failed: is the old commit in CONN_MONOREPO's Git data?");
-  else if (stat === "") line("  no change");
-  else for (const row of stat.split("\n")) line(`  ${row.trim()}`);
+  const changedScopes = [...newScopes.table]
+    .filter(([tag, scope]) => oldScopes.table.has(tag) && oldScopes.table.get(tag) !== scope)
+    .map(([tag, scope]) => `${tag} ${oldScopes.table.get(tag)} → ${scope}`);
+  const diff = (a, b) => [b.filter((x) => !a.includes(x)), a.filter((x) => !b.includes(x))];
+  const [payloadAdded, payloadRemoved] = diff(oldScopes.payload, newScopes.payload);
+  const [keysAdded, keysRemoved] = diff(oldScopes.providerKeys, newScopes.providerKeys);
+  const [handlerAdded, handlerRemoved] = diff(oldScopes.inHandler, newScopes.inHandler);
+  const moved = changedScopes.length + payloadAdded.length + payloadRemoved.length +
+    keysAdded.length + keysRemoved.length + handlerAdded.length + handlerRemoved.length;
+  line(`## Scopes (${SCOPES_RS}): ${moved === 0 ? "no scope changed" : `${moved} changes`}`);
+  list("scope changed", changedScopes);
+  list("payload rule added (follow it in scopes.rs from_payload)", payloadAdded);
+  list("payload rule removed (drop it from scopes.rs from_payload)", payloadRemoved);
+  list("providers:manage settings key added", keysAdded);
+  list("providers:manage settings key removed", keysRemoved);
+  list("in-handler scope rule added (apply it when the method is served)", handlerAdded);
+  list("in-handler scope rule removed", handlerRemoved);
+}
+
+// ---- Engine commands ---------------------------------------------------------------------
+
+/** The `type` values of the `OrchestrationV2Command` union in generated.rs. */
+function commandTypes(root) {
+  const text = readText(root, "crates/conn-contract/src/generated.rs");
+  if (text === undefined) return undefined;
+  const start = text.indexOf("    OrchestrationV2Command, \"type\",");
+  if (start === -1) return undefined;
+  const dispatch = text.indexOf("dispatch {", start);
+  const end = text.indexOf("\n    }", dispatch);
+  const body = text.slice(dispatch, end);
+  return new Set([...body.matchAll(/^\s+((?:"[^"]+"\s*\|?\s*)+)=>/gm)].flatMap((m) =>
+    [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1])));
+}
+/** The command types the engine handles: the string patterns of `fn handler`. */
+function engineHandled() {
+  const text = readText(repoRoot, "crates/conn-engine/src/commands.rs") ?? "";
+  const start = text.indexOf("fn handler(command_type: &str)");
+  const end = text.indexOf("_ => return None", start);
+  if (start === -1 || end === -1) return undefined;
+  return new Set([...text.slice(start, end).matchAll(/"([^"]+)"/g)].map((m) => m[1]));
+}
+const oldCommands = commandTypes(before);
+const newCommands = commandTypes(repoRoot);
+const handled = engineHandled();
+line();
+if (!oldCommands || !newCommands || !handled) {
+  line("## Engine commands: cannot read the command union or the engine's handler");
+} else {
+  const mark = (t) => (handled.has(t) ? `${t}*` : t);
+  const added = [...newCommands].filter((t) => !oldCommands.has(t)).sort();
+  const removed = [...oldCommands].filter((t) => !newCommands.has(t)).sort();
+  const servedCount = [...newCommands].filter((t) => handled.has(t)).length;
+  line(`## Engine commands: ${oldCommands.size} → ${newCommands.size} in the contract, ${servedCount} handled (* = handled; read from generated.rs)`);
+  list("added", added.map(mark));
+  list("removed", removed.map(mark));
+  const dead = [...handled].filter((t) => !newCommands.has(t)).sort();
+  list("handled but gone from the contract (cargo test engine_commands fails)", dead);
+  list("not handled (refused)", [...newCommands].filter((t) => !handled.has(t)).sort(), 60);
+}
+
+// ---- HTTP routes -------------------------------------------------------------------------
+
+const ROUTES = "tools/upkeep/http-routes.json";
+const routeKey = (method, path) => `${method} ${path.replace(/\{\*[^}]+\}/g, ":*").replace(/\{([^}]+)\}/g, ":$1")}`;
+// Compare paths with every parameter name dropped.
+const routeShape = (key) => key.replace(/:\*|:\w+/g, ":");
+/** The argument text of each `.route(...)` call, matched by bracket depth. */
+function routeCalls(text) {
+  const calls = [];
+  let at = text.indexOf(".route(");
+  while (at !== -1) {
+    let depth = 0;
+    let i = at + ".route".length;
+    for (; i < text.length; i++) {
+      if (text[i] === "(") depth++;
+      else if (text[i] === ")" && --depth === 0) break;
+    }
+    calls.push(text.slice(at + ".route(".length, i));
+    at = text.indexOf(".route(", i);
+  }
+  return calls;
+}
+/** (method, path) the Conn Server serves: `.route("path", get(..).post(..))` in its sources. */
+function servedRoutes() {
+  const found = new Set();
+  const walk = (dir) => {
+    for (const entry of NodeFS.readdirSync(dir, { withFileTypes: true })) {
+      const path = NodePath.join(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.name.endsWith(".rs")) {
+        const text = NodeFS.readFileSync(path, "utf8").split(/\n#\[cfg\(test\)\]/)[0];
+        for (const call of routeCalls(text)) {
+          const m = /^\s*"([^"]+)",([\s\S]*)$/.exec(call);
+          if (!m) continue;
+          for (const verb of m[2].matchAll(/\b(get|post|put|patch|delete|any)\(/g)) {
+            const method = verb[1].toUpperCase();
+            for (const each of method === "ANY" ? ["GET", "POST", "PUT", "PATCH", "DELETE"] : [method]) {
+              found.add(routeShape(routeKey(each, m[1])));
+            }
+          }
+        }
+      }
+    }
+  };
+  walk(NodePath.join(repoRoot, "crates/conn-server/src"));
+  return found;
+}
+const routesOf = (root) => readJson(root, ROUTES)?.routes?.map((r) => routeKey(r.method, r.path));
+const oldRoutes = routesOf(before);
+const newRoutes = routesOf(repoRoot);
+line();
+if (!newRoutes) {
+  line(`## HTTP routes: no ${ROUTES} (gen-upstream did not run or failed)`);
+} else {
+  const servedHttp = servedRoutes();
+  const isServed = (key) => servedHttp.has(routeShape(key));
+  const mark = (key) => (isServed(key) ? `${key}*` : key);
+  const unserved = newRoutes.filter((k) => !isServed(k));
+  line(`## HTTP routes: ${oldRoutes?.length ?? "?"} → ${newRoutes.length} in the T3 server, ${newRoutes.length - unserved.length} served (* = served)`);
+  if (oldRoutes) {
+    list("added", newRoutes.filter((k) => !oldRoutes.includes(k)).map(mark));
+    list("removed", oldRoutes.filter((k) => !newRoutes.includes(k)).map(mark));
+  }
+  list("not served", unserved, 60);
+}
+
+// ---- Followed files ----------------------------------------------------------------------
+
+const FOLLOWED = "tools/upkeep/followed-files.txt";
+/** Parts in file order: { name, specs }. */
+function followedParts() {
+  const parts = [];
+  for (const raw of (readText(repoRoot, FOLLOWED) ?? "").split("\n")) {
+    const row = raw.trim();
+    if (!row || row.startsWith("#")) continue;
+    const head = /^\[(.+)\]$/.exec(row);
+    if (head) parts.push({ name: head[1], specs: [] });
+    else if (parts.length) parts.at(-1).specs.push(row);
+  }
+  return parts;
+}
+const NO_TESTS = [
+  ":(exclude,glob)**/*.test.ts",
+  ":(exclude,glob)**/*.testkit.ts",
+  ":(exclude,glob)**/testkit/**",
+  ":(exclude,glob)**/__fixtures__/**",
+  ":(exclude,glob)**/fixtures/**",
+];
+line();
+const parts = followedParts();
+if (!monorepo) {
+  line("## Followed files: CONN_MONOREPO is not set");
+} else if (parts.length === 0) {
+  line(`## Followed files: ${FOLLOWED} is missing or empty`);
+} else {
+  line(`## Upstream commits per part (${FOLLOWED}; tests left out)`);
+  const MAX_SUBJECTS = 12;
+  for (const part of parts) {
+    const log = git("log", "--no-merges", "--format=%h %s", `${from}..${to}`, "--", ...part.specs, ...NO_TESTS);
+    if (log === undefined) {
+      line(`  ${part.name}: git log failed: is the old commit in CONN_MONOREPO's Git data?`);
+      continue;
+    }
+    const rows = log.split("\n").filter(Boolean);
+    const stat = rows.length
+      ? git("diff", "--shortstat", from, to, "--", ...part.specs, ...NO_TESTS)?.trim()
+      : "";
+    line(`  ${part.name}: ${rows.length === 0 ? "no change" : `${rows.length} commits; ${stat}`}`);
+    for (const row of rows.slice(0, MAX_SUBJECTS)) line(`    ${row}`);
+    if (rows.length > MAX_SUBJECTS) line(`    … ${rows.length - MAX_SUBJECTS} more (git log ${short(from)}..${short(to)} -- <the part's files>)`);
+  }
+
+  // New upstream source files that no part follows: a short list to read, never a failure.
+  const SOURCES = ["apps/server/src", "packages/contracts/src", "packages/shared/src", "packages/provider-core/src"];
+  const added = (specs) =>
+    new Set((git("diff", "--diff-filter=A", "--name-only", from, to, "--", ...specs, ...NO_TESTS) ?? "").split("\n").filter(Boolean));
+  const allNew = added(SOURCES);
+  const followedNew = added(parts.flatMap((p) => p.specs));
+  const unmapped = [...allNew].filter((f) => !followedNew.has(f)).sort();
+  line(`  new upstream files no part follows (${unmapped.length}; add a pathspec when a part should follow one):`);
+  for (const file of unmapped.slice(0, 20)) line(`    ${file}`);
+  if (unmapped.length > 20) line(`    … ${unmapped.length - 20} more`);
 
   const at = (sha, rel) => git("show", `${sha}:${rel}`);
   const sdk = (sha) => {
@@ -359,9 +553,10 @@ if (!monorepo) {
   const rustCodex = rustPin("crates/conn-provider-codex/src/client.rs", /TESTED_CLI_VERSION: &str = "([^"]+)"/);
   const sdkTo = sdk(to);
   const codexTo = codex(to);
-  line(`  Claude Agent SDK: ${sdk(from)} → ${sdkTo}; conn-provider-claude pins ${rustSdk}` +
+  line("  Pins:");
+  line(`    Claude Agent SDK: ${sdk(from)} → ${sdkTo}; conn-provider-claude pins ${rustSdk}` +
     (sdkTo.includes(`lock ${rustSdk})`) ? "" : "  ← differs"));
-  line(`  Codex CLI (managed): ${codex(from)} → ${codexTo}; conn-provider-codex tested ${rustCodex}` +
+  line(`    Codex CLI (managed): ${codex(from)} → ${codexTo}; conn-provider-codex tested ${rustCodex}` +
     (codexTo.split(", ").includes(rustCodex) ? "" : "  ← differs"));
 }
 

@@ -72,6 +72,7 @@ generated=(
   crates/conn-server/keybindings.defaults.json
   crates/conn-server/keybindings.resolved.json
   crates/conn-server/src/scopes/generated.rs
+  tools/upkeep/http-routes.json
   tools/upkeep/mcp-tools.json
 )
 for rel in "${generated[@]}"; do
