@@ -24,7 +24,7 @@ import {
   turnItemNeedsDetailFetch,
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
-import { memo, use, useState, type KeyboardEvent } from "react";
+import { memo, use, useRef, useState, type KeyboardEvent } from "react";
 import {
   workEntryDisplayIndicatesToolFailure,
   workEntrySignalsSevereFailure,
@@ -32,6 +32,8 @@ import {
 } from "../../session-logic";
 import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
+import type { ExpandedImagePreview } from "./ExpandedImagePreview";
+import { markdownImageGallery, markdownImageItems } from "./markdownImageGallery";
 import { ChevronRightIcon, CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
@@ -223,6 +225,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
+  const rowRef = useRef<HTMLDivElement>(null);
   const onInitialOutputReady = () => {
     if (groupView) groupView.onContentReady?.(workEntry.id);
     else props.onContentReady?.();
@@ -355,6 +358,22 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           workspaceRoot,
         })
       : null;
+  // A lone output image repeats the row's viewed image, so it opens that image's gallery.
+  const onOutputImageExpand =
+    viewedImage && onImageExpand
+      ? (preview: ExpandedImagePreview) => {
+          const viewed = [...(rowRef.current?.querySelectorAll("img") ?? [])].find(
+            (image) => image.alt === viewedImage.alt && markdownImageItems.has(image),
+          );
+          const item = viewed && markdownImageItems.get(viewed);
+          const outputImage =
+            preview.images.length === 1 &&
+            preview.images[0]?.actionsSource?.asset?.resource._tag === "tool-output-image";
+          onImageExpand(
+            viewed && item && outputImage ? markdownImageGallery(viewed, item) : preview,
+          );
+        }
+      : onImageExpand;
   const canExpand =
     previewText.trim().length > 0 ||
     (workEntry.itemType === "dynamic_tool" && workEntry.toolData !== undefined) ||
@@ -436,6 +455,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
 
   return (
     <WorkLogRow
+      ref={rowRef}
       data-work-entry-id={workEntry.id}
       data-v2-item-type={workEntry.projectedItem?.item.type}
       data-v2-item-visibility={workEntry.projectedItem?.visibility}
@@ -582,7 +602,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               cwd={ctx.markdownCwd}
               workspaceRoot={workspaceRoot}
               onOpenToolDiff={ctx.onOpenToolDiff}
-              onImageExpand={ctx.onImageExpand}
+              onImageExpand={onOutputImageExpand}
               source={ctx.turnItemSource}
             />
           ) : (
@@ -595,7 +615,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   onInitialOutputReady={onInitialOutputReady}
                   projectedItem={workEntry.projectedItem}
                   environmentId={ctx.activeThreadEnvironmentId}
-                  onImageExpand={onImageExpand}
+                  onImageExpand={onOutputImageExpand}
                   source={ctx.turnItemSource}
                 />
               ) : null}

@@ -1727,7 +1727,26 @@ describe("MessagesTimeline attachments", () => {
         itemType: "dynamic_tool",
         toolLifecycleStatus: "completed",
         viewedImagePath: `/repo/${name}`,
+        projectedItem: v2Item("dynamic_tool", {
+          id: `read-${name}`,
+          toolName: "Read",
+          input: { file_path: `/repo/${name}` },
+          outputOmitted: true,
+          updatedAt: DateTime.makeUnsafe(CREATED_AT),
+        }),
       });
+    const image = { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" };
+    environmentQuery.error = null;
+    environmentQuery.data = {
+      item: (
+        v2Item("dynamic_tool", {
+          id: "read-output",
+          toolName: "Read",
+          output: { content: [image] },
+        }) as { item: unknown }
+      ).item,
+    };
+    onTestFinished(() => setup());
     await using screen = await renderTimeline(
       [read("first.png"), read("second.png"), read("third.png")],
       { onImageExpand, workspaceRoot: "/repo" },
@@ -1742,15 +1761,19 @@ describe("MessagesTimeline attachments", () => {
       expect(image).toBeTruthy();
       return image!;
     });
+    const gallery = expect.objectContaining({
+      index: 1,
+      images: ["first.png", "second.png", "third.png"].map((name) =>
+        expect.objectContaining({ name }),
+      ),
+    });
     await click(inRow.closest<HTMLElement>("button, [role=button]")!);
-    expect(onImageExpand).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({
-        index: 1,
-        images: ["first.png", "second.png", "third.png"].map((name) =>
-          expect.objectContaining({ name }),
-        ),
-      }),
+    expect(onImageExpand).toHaveBeenCalledExactlyOnceWith(gallery);
+    const toolOutput = await vi.waitFor(() =>
+      screen.getByRole("button", { name: "Preview Tool output image" }).element(),
     );
+    await click(toolOutput as HTMLElement);
+    expect(onImageExpand).toHaveBeenLastCalledWith(gallery);
   });
 
   it("pages between the images of one expanded tool result", async () => {
