@@ -521,8 +521,6 @@ function codexMcpToolOutput(
 const MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
 // Session setup and turn/start answer promptly; silence this long means a wedged app-server.
 const CODEX_APP_SERVER_REQUEST_DEADLINE = "2 minutes";
-// A stopped app-server ignores SIGTERM, so release escalates to SIGKILL.
-const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds";
 
 class CodexAppServerUnresponsiveError extends Schema.TaggedError<CodexAppServerUnresponsiveError>()(
   "CodexAppServerUnresponsiveError",
@@ -1552,7 +1550,6 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
     ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.extendEnv === undefined ? {} : { extendEnv: input.extendEnv }),
-    forceKillAfter: CODEX_APP_SERVER_FORCE_KILL_AFTER,
     shell: spawnCommand.shell,
     forceKillAfter: CODEX_APP_SERVER_FORCE_KILL_AFTER,
   });

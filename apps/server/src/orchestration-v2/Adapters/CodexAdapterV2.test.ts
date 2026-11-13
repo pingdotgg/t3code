@@ -42,7 +42,6 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
@@ -1362,6 +1361,16 @@ describe("CodexAdapterV2 session initialize", () => {
     ) =>
       entry.label === "request-written" ? Deferred.succeed(written, undefined) : Effect.void;
   const UNANSWERED_REQUEST_BUDGET = "5 minutes";
+  // ProviderTurnStartService skips retries and fresh-thread fallback on this tag.
+  const failedOnDeadline = (exit: Exit.Exit<unknown, unknown>): boolean => {
+    if (!Exit.isFailure(exit)) return false;
+    let error: unknown = Cause.squash(exit.cause);
+    while (Predicate.hasProperty(error, "cause")) {
+      if (Predicate.isTagged(error, "CodexAppServerUnresponsiveError")) return true;
+      error = error.cause;
+    }
+    return Predicate.isTagged(error, "CodexAppServerUnresponsiveError");
+  };
 
   // regression: #24300 a wedged shared app-server left thread/start pending and stayed ready
   it.effect("fails and retires a shared app-server that never answers thread/start", () =>
@@ -1392,8 +1401,8 @@ describe("CodexAdapterV2 session initialize", () => {
 
       const settled = yield* Fiber.join(ensured);
       assert.isTrue(
-        Option.isSome(settled) && Exit.isFailure(settled.value),
-        `ensureThread did not fail within ${UNANSWERED_REQUEST_BUDGET} of an unanswered thread/start`,
+        Option.isSome(settled) && failedOnDeadline(settled.value),
+        `ensureThread did not fail on the deadline within ${UNANSWERED_REQUEST_BUDGET} of an unanswered thread/start`,
       );
       const retired = yield* Fiber.join(events);
       assert.isTrue(
@@ -1456,7 +1465,7 @@ describe("CodexAdapterV2 session initialize", () => {
         `startTurn was still waiting on turn/start after ${UNANSWERED_REQUEST_BUDGET}`,
       );
       if (Option.isSome(settled)) {
-        assert.isTrue(Exit.isFailure(settled.value), "turn/start resolved without a response");
+        assert.isTrue(failedOnDeadline(settled.value), "turn/start did not fail on the deadline");
       }
     }).pipe(
       Effect.scoped,
