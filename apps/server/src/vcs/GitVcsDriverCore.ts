@@ -3801,6 +3801,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : yield* resolveReviewMergeBase(cwd, repository.currentBranch, input.baseRef);
 
     const diffArgs = [
+      // Porcelain diff can rewrite the real index when refreshing stat-only changes.
+      "-c",
+      "diff.autoRefreshIndex=false",
       ...REVIEW_DIFF_ARGS,
       "--minimal",
       ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),

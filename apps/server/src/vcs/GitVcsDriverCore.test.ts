@@ -3345,10 +3345,29 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* writeTextFile(cwd, "staged-only.txt", "staged only\n");
           yield* git(cwd, ["add", "."]);
           yield* writeTextFile(cwd, "README.md", "# unstaged\n");
-          yield* writeTextFile(cwd, "untracked.txt", "untracked\n");
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.utimes(path.join(cwd, "staged-only.txt"), 1_700_000_001, 1_700_000_001);
+          const indexPath = path.join(cwd, ".git", "index");
+          yield* fs.utimes(indexPath, 1_700_000_000, 1_700_000_000);
+          const indexBytesBefore = yield* fs.readFile(indexPath);
+          const indexMtimeBefore = (yield* fs.stat(indexPath)).mtime;
           const indexBefore = yield* git(cwd, ["ls-files", "--stage"]);
           const driver = yield* GitVcsDriver.GitVcsDriver;
           const input = { cwd, sourceKind: "unstaged" as const };
+          for (const options of [
+            {},
+            { metadataOnly: true },
+            { metadataOnly: true, trackedOnly: true },
+          ]) {
+            const tracked = yield* driver.getReviewDiffPreview({ ...input, ...options });
+            assert.deepStrictEqual(tracked.sources[0]!.files, [
+              { path: "README.md", previousPath: null, additions: 1, deletions: 1 },
+            ]);
+            assert.deepStrictEqual(yield* fs.readFile(indexPath), indexBytesBefore);
+            assert.deepStrictEqual((yield* fs.stat(indexPath)).mtime, indexMtimeBefore);
+          }
+          yield* writeTextFile(cwd, "untracked.txt", "untracked\n");
           const preview = yield* driver.getReviewDiffPreview(input);
           const source = preview.sources.find((source) => source.kind === "unstaged")!;
           assert.isDefined(source);
