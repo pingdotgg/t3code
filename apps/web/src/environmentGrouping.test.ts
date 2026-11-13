@@ -313,6 +313,49 @@ describe("environment grouping", () => {
     expect(entry?.targetProject.id).toBe(root.id);
   });
 
+  it("does not take a same-id checkout from another environment as the group's representative", () => {
+    const rooted = { ...repositoryIdentity, rootPath: "/tmp/shared-repo" };
+    const primaryRoot = makeProject({
+      id: ProjectId.make("shared"),
+      title: "shared-repo",
+      workspaceRoot: "/tmp/shared-repo",
+      repositoryIdentity: rooted,
+    });
+    const remoteOther = makeProject({
+      id: ProjectId.make("other"),
+      environmentId: remoteEnvironmentId,
+      title: "other",
+      workspaceRoot: "/tmp/remote-other",
+      repositoryIdentity: rooted,
+    });
+    const remoteSubfolder = makeProject({
+      id: ProjectId.make("shared"),
+      environmentId: remoteEnvironmentId,
+      title: "subfolder",
+      workspaceRoot: "/tmp/shared-repo/app",
+      repositoryIdentity: rooted,
+    });
+    const groups = buildSidebarProjectSnapshots({
+      projects: [remoteOther, remoteSubfolder, primaryRoot],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    const [entry] = buildSidebarProjectPickerEntries({
+      groups,
+      preferredProjectRef: {
+        environmentId: remoteEnvironmentId,
+        projectId: ProjectId.make("elsewhere"),
+      },
+    });
+
+    expect(entry?.targetProject).toMatchObject({
+      environmentId: remoteEnvironmentId,
+      id: remoteOther.id,
+    });
+  });
+
   it("puts the preferred project before pinned projects", () => {
     const project = (title: string, pinnedAt: string | null = null) =>
       makeProject({
