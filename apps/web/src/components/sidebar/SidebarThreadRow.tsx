@@ -1534,7 +1534,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               ) : (
                 <span
                   className={cn(
-                    "group/sidebar-status-slot relative ml-auto grid h-5 min-w-15 shrink-0 grid-flow-col auto-cols-max items-stretch justify-end text-meta font-normal",
+                    "group/sidebar-status-slot relative ml-auto grid h-5 min-w-8 shrink-0 grid-flow-col auto-cols-max items-stretch justify-end text-meta font-normal",
                     props.sweepAction !== null && "hidden",
                     jumpHintLabel && JUMP_HINT_SLOT_CLASS_NAME,
                   )}
@@ -1574,9 +1574,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                       className={cn(
                         // Mouse clicks leave Settle focused; focus-within would pin controls over
                         // the status label after the pointer leaves. Use focus-visible instead.
-                        "pointer-events-none row-start-1 flex items-stretch justify-self-end opacity-0 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
+                        "pointer-events-none absolute inset-y-0 right-0 row-start-1 flex items-stretch justify-self-end opacity-0 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:static has-[:focus-visible]:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:static group-any-hover/sidebar-row:opacity-100",
                         isWokeStatus ? "col-start-2" : "col-start-1",
-                        snoozeMenuOpen && "pointer-events-auto opacity-100",
+                        snoozeMenuOpen && "pointer-events-auto static opacity-100",
                       )}
                     >
                       {hasUnsentDraft ? (
