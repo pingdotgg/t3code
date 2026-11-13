@@ -439,6 +439,8 @@ export class ProviderAdapterEventStreamError extends Schema.TaggedError<Provider
   {
     driver: ProviderDriverKind,
     providerSessionId: ProviderSessionId,
+    /** Set when T3 closed the session because this thread detached from it, not the provider. */
+    detachedThreadId: Schema.optional(ThreadId),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
