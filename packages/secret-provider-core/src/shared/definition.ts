@@ -10,6 +10,8 @@ export interface SecretProviderDefinition<Config = unknown> {
   readonly isReference: (reference: string) => boolean;
   readonly referencePlaceholder: string;
   readonly invalidReferenceMessage: string;
+  /** Config fields whose driver can suggest values; clients ask for them by field name. */
+  readonly discoverableConfigFields?: ReadonlyArray<string>;
 }
 
 export const defineSecretProvider = <Config>(

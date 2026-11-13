@@ -1024,6 +1024,20 @@ const SecretProviderConfigWrite = Schema.Struct({
   label: SecretProviderLabel,
 });
 
+/** A value a secret provider's driver suggests for one config field. */
+export const SecretProviderConfigChoice = Schema.Struct({
+  value: TrimmedNonEmptyString,
+  label: Schema.String,
+  description: Schema.optional(Schema.String),
+});
+export type SecretProviderConfigChoice = typeof SecretProviderConfigChoice.Type;
+
+export const SecretProviderConfigChoicesInput = Schema.Struct({
+  kind: SecretProviderKind,
+  field: TrimmedNonEmptyString,
+});
+export type SecretProviderConfigChoicesInput = typeof SecretProviderConfigChoicesInput.Type;
+
 export const SourceControlHostSettings = Schema.Record(Schema.String, Schema.Unknown);
 export type SourceControlHostSettings = typeof SourceControlHostSettings.Type;
 

@@ -108,7 +108,7 @@ function AutocompletePopup({
         >
           <AutocompletePrimitive.Popup
             // Electron drag hit-testing ignores z-index; items over a drag region would swallow clicks.
-            className="flex max-h-[min(var(--available-height),23rem)] flex-1 flex-col text-foreground [-webkit-app-region:no-drag]"
+            className="flex max-h-[min(var(--available-height),23rem)] min-w-0 flex-1 flex-col text-foreground [-webkit-app-region:no-drag]"
             data-slot="autocomplete-popup"
             {...props}
           >

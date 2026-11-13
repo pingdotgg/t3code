@@ -38,4 +38,5 @@ export const definition = defineSecretProvider({
   isReference: (reference) => reference.length <= MAX_REFERENCE_LENGTH && REFERENCE.test(reference),
   referencePlaceholder: "op://vault/item/field",
   invalidReferenceMessage: "Use a 1Password reference like op://vault/item/field.",
+  discoverableConfigFields: ["account"],
 });

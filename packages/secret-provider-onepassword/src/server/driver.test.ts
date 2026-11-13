@@ -6,6 +6,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -23,6 +24,7 @@ type OpResult = {
   readonly stderr?: string;
   readonly code?: number;
   readonly hang?: boolean;
+  readonly missing?: boolean;
 };
 
 function fakeOp(answer: (args: ReadonlyArray<string>) => OpResult) {
@@ -32,26 +34,38 @@ function fakeOp(answer: (args: ReadonlyArray<string>) => OpResult) {
     Layer.succeed(
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make((command) =>
-        Effect.sync(() => {
+        Effect.suspend(() => {
           const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
           invocations.push(args);
           Deferred.doneUnsafe(spawned, Effect.void);
           const result = answer(args);
-          return ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(1),
-            exitCode: result.hang
-              ? Effect.never
-              : Effect.succeed(ChildProcessSpawner.ExitCode(result.code ?? 0)),
-            isRunning: Effect.succeed(false),
-            kill: () => Effect.void,
-            unref: Effect.succeed(Effect.void),
-            stdin: Sink.drain,
-            stdout: Stream.make(encoder.encode(result.stdout ?? "")),
-            stderr: Stream.make(encoder.encode(result.stderr ?? "")),
-            all: Stream.empty,
-            getInputFd: () => Sink.drain,
-            getOutputFd: () => Stream.empty,
-          });
+          if (result.missing) {
+            return Effect.fail(
+              PlatformError.systemError({
+                _tag: "NotFound",
+                module: "ChildProcess",
+                method: "spawn",
+                pathOrDescriptor: "op",
+              }),
+            );
+          }
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: result.hang
+                ? Effect.never
+                : Effect.succeed(ChildProcessSpawner.ExitCode(result.code ?? 0)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.make(encoder.encode(result.stdout ?? "")),
+              stderr: Stream.make(encoder.encode(result.stderr ?? "")),
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          );
         }),
       ),
     ),
@@ -150,6 +164,63 @@ describe("1Password driver", () => {
 
       assert.deepStrictEqual(yield* Fiber.join(reading), [undefined, undefined]);
       assert.strictEqual(op.invocations.length, 1);
+    }).pipe(Effect.provide(op.layer));
+  });
+});
+
+const listChoices = (field: string) => driver.listConfigChoices?.(field) ?? Effect.succeed([]);
+
+describe("1Password listConfigChoices", () => {
+  it.effect("lists each account by a value `op --account` accepts unambiguously", () => {
+    const op = fakeOp(() => ({
+      stdout: JSON.stringify([
+        { url: "https://acme.1password.com", email: "me@acme.example", user_uuid: "U1" },
+        { url: "my.1password.com", email: "me@example.com", user_uuid: "U2" },
+        { url: "my.1password.com", email: "family@example.com", user_uuid: "U3" },
+      ]),
+    }));
+    return Effect.gen(function* () {
+      assert.deepStrictEqual(yield* listChoices("account"), [
+        {
+          value: "acme.1password.com",
+          label: "acme.1password.com",
+          description: "me@acme.example",
+        },
+        { value: "U2", label: "my.1password.com", description: "me@example.com" },
+        { value: "U3", label: "my.1password.com", description: "family@example.com" },
+      ]);
+      assert.deepStrictEqual(op.invocations, [
+        ["--cache=false", "account", "list", "--format", "json"],
+      ]);
+    }).pipe(Effect.provide(op.layer));
+  });
+
+  it.effect("lists no accounts when `op` cannot answer", () =>
+    Effect.forEach(
+      [
+        { missing: true },
+        { code: 1, stderr: "not configured" },
+        { stdout: "not json" },
+        { hang: true },
+      ],
+      (answer: OpResult) => {
+        const op = fakeOp(() => answer);
+        return Effect.gen(function* () {
+          const listing = yield* listChoices("account").pipe(Effect.forkChild);
+          yield* Deferred.await(op.spawned);
+          yield* TestClock.adjust("1 minute");
+          assert.deepStrictEqual(yield* Fiber.join(listing), []);
+        }).pipe(Effect.provide(op.layer));
+      },
+      { discard: true },
+    ),
+  );
+
+  it.effect("has no choices for another field and does not spawn `op`", () => {
+    const op = fakeOp(() => ({ stdout: "[]" }));
+    return Effect.gen(function* () {
+      assert.deepStrictEqual(yield* listChoices("vault"), []);
+      assert.deepStrictEqual(op.invocations, []);
     }).pipe(Effect.provide(op.layer));
   });
 });

@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   type ProviderInstanceId,
+  type SecretProviderKind,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
@@ -36,6 +37,7 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
   createRuntimeCommand,
+  runAtomCommand,
   scheduleAtomCommandEffect,
 } from "./runtime.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
@@ -1358,6 +1360,35 @@ export function createServerEnvironmentAtoms<R, E>(
     concurrency: configConcurrency,
   });
 
+  const listSecretProviderConfigChoices = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:server:list-secret-provider-config-choices",
+    tag: WS_METHODS.serverListSecretProviderConfigChoices,
+  });
+  const secretProviderConfigChoicesFamily = Atom.family((key: string) => {
+    const [environmentId, kind, field] = JSON.parse(key) as [
+      EnvironmentId,
+      SecretProviderKind,
+      string,
+    ];
+    return Atom.make((get) =>
+      Effect.promise(() =>
+        runAtomCommand(
+          get.registry,
+          listSecretProviderConfigChoices,
+          { environmentId, input: { kind, field } },
+          { reportFailure: false },
+        ),
+      ).pipe(
+        Effect.flatMap((result) =>
+          result._tag === "Success" ? Effect.succeed(result.value) : Effect.failCause(result.cause),
+        ),
+      ),
+    ).pipe(
+      Atom.setIdleTTL(5 * 60_000),
+      Atom.withLabel(`environment-data:server:secret-provider-config-choices:${key}`),
+    );
+  });
+
   return {
     configValueAtom,
     runStorageCleanup: createEnvironmentRpcCommand(runtime, {
@@ -1461,6 +1492,13 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,
     }),
+    secretProviderConfigChoices: (target: {
+      readonly environmentId: EnvironmentId;
+      readonly input: EnvironmentRpcInput<typeof WS_METHODS.serverListSecretProviderConfigChoices>;
+    }) =>
+      secretProviderConfigChoicesFamily(
+        JSON.stringify([target.environmentId, target.input.kind, target.input.field]),
+      ),
     npmRelease: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:npm-release",
       tag: WS_METHODS.serverGetNpmRelease,
@@ -1810,6 +1848,7 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:check-otlp-endpoint",
       tag: WS_METHODS.serverCheckOtlpEndpoint,
     }),
+    listSecretProviderConfigChoices,
     checkSecretSource: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:check-secret-source",
       tag: WS_METHODS.serverCheckSecretSource,

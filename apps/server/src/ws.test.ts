@@ -1,3 +1,4 @@
+import * as SecretProviderConfigChoices from "@t3tools/secret-provider-core/server/SecretProviderConfigChoices";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -852,6 +853,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(SecretResolver.SecretResolver)({}),
+  Layer.mock(SecretProviderConfigChoices.SecretProviderConfigChoices)({}),
   Layer.mock(GuestShareService.GuestShareService)({}),
   Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({}),
   Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({}),

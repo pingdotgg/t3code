@@ -128,10 +128,13 @@ describe("command permissions", () => {
     }),
   );
 
-  it.effect("requires the destination provider grant to remove an incomplete connection", () =>
+  it.effect.each([
+    WS_METHODS.providerAuthRemoveMethod,
+    WS_METHODS.serverListSecretProviderConfigChoices,
+  ])("requires the destination provider grant for %s", (method) =>
     Effect.gen(function* () {
       const registry = yield* setup;
-      const remove = createCommandPermissions(runtime, WS_METHODS.providerAuthRemoveMethod);
+      const remove = createCommandPermissions(runtime, method);
       registry.set(sessions(env), AsyncResult.success(grant(true)));
       expect(registry.get(remove.permissionAtom(env))).toBe(false);
       expect((yield* remove.authorize(registry, env).pipe(Effect.flip))._tag).toBe(

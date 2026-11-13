@@ -1,3 +1,4 @@
+import type { SecretProviderConfigChoice } from "@t3tools/contracts";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { defineSecretProviderDriver } from "@t3tools/secret-provider-core/server/driver";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -7,8 +8,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import { ChildProcess } from "effect/process";
+import * as Schema from "effect/Schema";
 
-import { definition, type OnePasswordAccount } from "../shared/definition.ts";
+import { definition, OnePasswordAccount } from "../shared/definition.ts";
 
 const ONE_PASSWORD_BINARY = "op";
 // Bounds a read long enough to reach for a fingerprint reader, short enough not to wedge a rebuild.
@@ -95,6 +97,42 @@ const bounded = <A, E extends { readonly _tag: string }, R>(
     ),
   );
 
+const decodeAccountList = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({ url: Schema.String, email: Schema.String, user_uuid: Schema.String }),
+    ),
+  ),
+);
+const isAccount = Schema.is(OnePasswordAccount);
+
+/** Accounts `op` is configured with, by a value `op --account` accepts; empty when it cannot answer. */
+const listAccounts = Effect.fn("OnePasswordDriver.listAccounts")(function* () {
+  const result = yield* runOnePassword(["account", "list", "--format", "json"]).pipe(
+    Effect.timeoutOption(READ_TIMEOUT),
+    Effect.orElseSucceed(Option.none),
+  );
+  const accounts = Option.filter(result, ({ code }) => code === 0).pipe(
+    Option.flatMap(({ stdout }) => decodeAccountList(stdout)),
+  );
+  if (Option.isNone(accounts)) {
+    yield* Effect.logWarning("Could not list 1Password accounts");
+    return [];
+  }
+  // `op` may report the address with its scheme, and users can share one address (every personal
+  // account signs in at my.1password.com); a shared address is ambiguous, so those go by user ID.
+  const addresses = accounts.value.map(({ url }) =>
+    url.startsWith("https://") ? url.slice("https://".length) : url,
+  );
+  const users = new Map<string, number>();
+  for (const address of addresses) users.set(address, (users.get(address) ?? 0) + 1);
+  return accounts.value.flatMap(({ email, user_uuid }, index): SecretProviderConfigChoice[] => {
+    const address = addresses[index] ?? "";
+    const account = users.get(address) === 1 && isAccount(address) ? address : user_uuid;
+    return isAccount(account) ? [{ value: account, label: address, description: email }] : [];
+  });
+});
+
 export const driver = defineSecretProviderDriver({
   kind: definition.kind,
   definition,
@@ -109,4 +147,5 @@ export const driver = defineSecretProviderDriver({
       bounded("read", readOne(account, reference)).pipe(Effect.map(Option.getOrUndefined)),
     );
   }),
+  listConfigChoices: (field) => (field === "account" ? listAccounts() : Effect.succeed([])),
 });
