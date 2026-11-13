@@ -2314,6 +2314,13 @@ async fn a_model_selection_on_another_instance_switches_the_provider() {
     let (ty, payload) = switched.unwrap();
     assert_eq!(ty, "thread.provider-switched");
     assert_eq!(payload["activeProviderThreadId"], Value::Null);
+    // The close runs as an effect after the event is stored, so wait for it.
+    for _ in 0..200 {
+        if count(&claude.closed) == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     assert_eq!(count(&claude.closed), 1, "the old session closes");
 
     dispatch(&engine, message("t1", "c7", "hi")).await;

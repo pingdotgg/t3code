@@ -69,7 +69,8 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: Tests
-        run: cargo test --locked --workspace
+        # --no-fail-fast: one run shows every failing crate, not only the first.
+        run: cargo test --locked --workspace --no-fail-fast
 
       - name: Recordings decode
         run: cargo test --locked --manifest-path fixtures/decode-check/Cargo.toml
