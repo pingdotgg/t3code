@@ -1,3 +1,4 @@
+import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayDeviceRegistrationRequest } from "@t3tools/contracts/relay";
 
 import type { Preferences } from "../../persistence/mobile-preferences";
@@ -19,6 +20,7 @@ export function makeRelayDeviceRegistrationRequest(
     readonly pushToStartToken?: string;
     readonly notificationsEnabled: boolean;
     readonly preferences: Preferences;
+    readonly disabledEnvironmentIds?: ReadonlyArray<EnvironmentId>;
   } & (
     | { readonly platform?: "ios"; readonly iosMajorVersion: number }
     | {
@@ -53,6 +55,9 @@ export function makeRelayDeviceRegistrationRequest(
       notifyOnInput: true,
       notifyOnCompletion: true,
       notifyOnFailure: true,
+      ...(input.disabledEnvironmentIds
+        ? { disabledEnvironmentIds: input.disabledEnvironmentIds }
+        : {}),
     },
   };
 }

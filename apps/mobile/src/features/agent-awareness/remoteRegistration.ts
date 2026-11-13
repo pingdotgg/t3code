@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { AppState, Platform } from "react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentCatalogState } from "@t3tools/client-runtime/state/connections";
 import {
   type RelayDeviceRegistrationRequest,
   type RelayAgentActivitySnapshotResponse,
@@ -25,6 +26,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { runtime } from "../../lib/runtime";
+import { environmentCatalog } from "../../connection/catalog";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
 import type { Preferences } from "../../persistence/mobile-preferences";
@@ -63,6 +65,7 @@ const AgentAwarenessOperation = Schema.Literals([
   "load-live-activity-registration-identifier",
   "list-active-live-activities",
   "load-live-activity-prime-preferences",
+  "load-live-activity-prime-identifier",
   "prime-live-activity",
   "load-registration-record",
 ]);
@@ -97,6 +100,7 @@ let widgetSnapshotReads = 0;
 let androidDeviceReplayedAt: number | null = null;
 let pushTokenSubscription: { remove: () => void } | null = null;
 let appStateSubscription: { remove: () => void } | null = null;
+let environmentCatalogSubscription: (() => void) | null = null;
 
 export type AgentAwarenessRegistrationStatus = "unknown" | "pending" | "registered" | "failed";
 let registrationStatus: AgentAwarenessRegistrationStatus = "unknown";
@@ -137,6 +141,8 @@ let pendingDeviceRegistration: {
 
 interface DeviceRegistrationInput {
   readonly observedPushToken?: string;
+  // A registration already in flight may have read the environment list before it changed.
+  readonly environmentsChanged?: boolean;
 }
 
 interface RegisterDeviceInput extends DeviceRegistrationInput {
@@ -203,6 +209,8 @@ export function setAgentAwarenessRelayTokenProvider(
     pushTokenSubscription = null;
     appStateSubscription?.remove();
     appStateSubscription = null;
+    environmentCatalogSubscription?.();
+    environmentCatalogSubscription = null;
     if (activeLiveActivityRegistrationRetry) {
       clearTimeout(activeLiveActivityRegistrationRetry);
       activeLiveActivityRegistrationRetry = null;
@@ -218,6 +226,7 @@ export function setAgentAwarenessRelayTokenProvider(
   }
   ensurePushTokenListener();
   ensureAppStateListener();
+  ensureEnvironmentCatalogListener();
   runRegistrationInBackground(
     refreshActiveLiveActivityRemoteRegistration(),
     "active live activity registration after cloud sign-in failed",
@@ -243,6 +252,8 @@ export function releaseAgentAwarenessRelayTokenProvider(): void {
   pushTokenSubscription = null;
   appStateSubscription?.remove();
   appStateSubscription = null;
+  environmentCatalogSubscription?.();
+  environmentCatalogSubscription = null;
   if (activeLiveActivityRegistrationRetry) {
     clearTimeout(activeLiveActivityRegistrationRetry);
     activeLiveActivityRegistrationRetry = null;
@@ -354,6 +365,7 @@ function registrationSignature(body: RelayDeviceRegistrationRequest): string {
     body.preferences.notifyOnInput,
     body.preferences.notifyOnCompletion,
     body.preferences.notifyOnFailure,
+    body.preferences.disabledEnvironmentIds?.join(",") ?? "",
   ].join("|");
 }
 
@@ -540,8 +552,17 @@ const readAgentActivitySnapshot: () => Effect.Effect<
     if (!token) {
       return null;
     }
+    const deviceId = yield* Effect.tryPromise({
+      try: () => loadOrCreateAgentAwarenessDeviceId(),
+      catch: (cause) =>
+        new AgentAwarenessOperationError({
+          operation: "load-live-activity-prime-identifier",
+          cause,
+        }),
+    });
     const client = yield* ManagedRelay.ManagedRelayClient;
-    return yield* client.getAgentActivitySnapshot({ clerkToken: token });
+    // The relay hides this device's disabled environments so priming cannot show them.
+    return yield* client.getAgentActivitySnapshot({ clerkToken: token, deviceId });
   },
   Effect.catch((error) =>
     Effect.sync(() => {
@@ -606,7 +627,8 @@ function registrationAddsInformation(
   next: DeviceRegistrationInput,
 ): boolean {
   return (
-    next.observedPushToken !== undefined && next.observedPushToken !== current.observedPushToken
+    next.environmentsChanged === true ||
+    (next.observedPushToken !== undefined && next.observedPushToken !== current.observedPushToken)
   );
 }
 
@@ -661,13 +683,45 @@ function enqueueDeviceRegistration(input: DeviceRegistrationInput, context: stri
   startPendingDeviceRegistration();
 }
 
+let deviceRegistrationSession = {
+  generation: deviceRegistrationGeneration,
+  lock: Semaphore.makeUnsafe(1),
+  // Settings persists a preference only after its registration, so later ones must keep it.
+  preferencesOverride: {} as Partial<Preferences>,
+};
+
+// Each registration snapshots the catalog and preferences, so one at a time keeps the newest last.
 const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* (
   input: RegisterDeviceInput = {},
   expectedGeneration = deviceRegistrationGeneration,
 ): Effect.fn.Return<void, AgentAwarenessRegistrationError, ManagedRelay.ManagedRelayClient> {
+  if (expectedGeneration !== deviceRegistrationGeneration) return;
+  if (deviceRegistrationSession.generation !== expectedGeneration) {
+    deviceRegistrationSession = {
+      generation: expectedGeneration,
+      lock: Semaphore.makeUnsafe(1),
+      preferencesOverride: {},
+    };
+  }
+  const session = deviceRegistrationSession;
+  if (input.preferencesOverride) {
+    session.preferencesOverride = { ...session.preferencesOverride, ...input.preferencesOverride };
+  }
+  yield* session.lock.withPermits(1)(registerDeviceNow(input, session));
+});
+
+const registerDeviceNow = Effect.fn("remoteRegistration.registerDeviceNow")(function* (
+  input: DeviceRegistrationInput,
+  session: typeof deviceRegistrationSession,
+): Effect.fn.Return<void, AgentAwarenessRegistrationError, ManagedRelay.ManagedRelayClient> {
   if (!canRegisterPushNotifications()) {
     return;
   }
+  const disabledEnvironmentIds = disabledEnvironmentIdsIn(
+    appAtomRegistry.get(environmentCatalog.catalogValueAtom),
+  );
+  // Registering before the catalog loads would clear the relay's filter; the catalog listener retries.
+  if (disabledEnvironmentIds === null) return;
 
   const [deviceId, storedPreferences] = yield* Effect.all([
     Effect.tryPromise({
@@ -689,8 +743,9 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
   ]);
   const preferences = mergeAgentAwarenessRegistrationPreferences(
     storedPreferences,
-    input.preferencesOverride,
+    session.preferencesOverride,
   );
+  const expectedGeneration = session.generation;
   if (expectedGeneration !== deviceRegistrationGeneration) return;
   if (relayTokenProvider && relayTokenProviderIdentity) {
     configureAndroidAgentNotifications(
@@ -725,6 +780,7 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
       ...(pushTokenRegistration.pushToken ? { pushToken: pushTokenRegistration.pushToken } : {}),
       notificationsEnabled: pushTokenRegistration.notificationsEnabled,
       preferences,
+      disabledEnvironmentIds,
     }),
     expectedGeneration,
   );
@@ -783,6 +839,38 @@ function publishWidget(source: AgentActivityWidgetSource): void {
   });
 }
 
+function disabledEnvironmentIdsIn(
+  catalog: EnvironmentCatalogState,
+): ReadonlyArray<EnvironmentId> | null {
+  if (!catalog.isReady) return null;
+  return [...catalog.entries]
+    .filter(([, entry]) => !entry.enabled)
+    .map(([environmentId]) => environmentId)
+    .sort();
+}
+
+// The relay filters pushes for this device, so it must learn every environment toggle.
+function ensureEnvironmentCatalogListener(): void {
+  if (environmentCatalogSubscription || !canRegisterPushNotifications()) {
+    return;
+  }
+  let observed = disabledEnvironmentIdsIn(
+    appAtomRegistry.get(environmentCatalog.catalogValueAtom),
+  )?.join(",");
+  environmentCatalogSubscription = appAtomRegistry.subscribe(
+    environmentCatalog.catalogValueAtom,
+    (catalog) => {
+      const next = disabledEnvironmentIdsIn(catalog)?.join(",");
+      if (next === undefined || next === observed) return;
+      observed = next;
+      enqueueDeviceRegistration(
+        { environmentsChanged: true },
+        "device registration after environment toggle failed",
+      );
+    },
+  );
+}
+
 // Binaries built before the native dismissEnded method throw here.
 function dismissEndedLocalLiveActivities(): void {
   try {
@@ -825,26 +913,37 @@ export function refreshAgentAwarenessRegistration(): Effect.Effect<
   );
 }
 
-export function updateAgentAwarenessRegistrationPreferences(
-  preferencesOverride: Partial<Preferences>,
-): Effect.Effect<void, AgentAwarenessRegistrationError, ManagedRelay.ManagedRelayClient> {
-  return registerDevice({ preferencesOverride }).pipe(
-    Effect.tapError((error) =>
-      Effect.sync(() => {
-        if (registrationStatus !== "registered") {
-          setRegistrationStatus("failed");
-        }
-        logRegistrationError("device preference registration refresh failed", error);
-      }),
-    ),
-  );
+export function getAgentAwarenessRegistrationGeneration(): number {
+  return deviceRegistrationGeneration;
 }
+
+export const updateAgentAwarenessRegistrationPreferences = Effect.fn(
+  "remoteRegistration.updateAgentAwarenessRegistrationPreferences",
+)(
+  function* (
+    preferencesOverride: Partial<Preferences>,
+  ): Effect.fn.Return<void, AgentAwarenessRegistrationError, ManagedRelay.ManagedRelayClient> {
+    const generation = deviceRegistrationGeneration;
+    yield* registerDevice({ preferencesOverride });
+    if (generation !== deviceRegistrationGeneration) return yield* Effect.interrupt;
+  },
+  Effect.tapError((error) =>
+    Effect.sync(() => {
+      if (registrationStatus !== "registered") {
+        setRegistrationStatus("failed");
+      }
+      logRegistrationError("device preference registration refresh failed", error);
+    }),
+  ),
+);
 
 export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   pushTokenSubscription?.remove();
   pushTokenSubscription = null;
   appStateSubscription?.remove();
   appStateSubscription = null;
+  environmentCatalogSubscription?.();
+  environmentCatalogSubscription = null;
   if (activeLiveActivityRegistrationRetry) {
     clearTimeout(activeLiveActivityRegistrationRetry);
     activeLiveActivityRegistrationRetry = null;

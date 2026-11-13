@@ -13,7 +13,10 @@ import {
   linkEnvironmentToCloudWithPreference,
 } from "../cloud/linkEnvironment";
 import { setLiveActivityUpdatesEnabled } from "./liveActivityPreferences";
-import { updateAgentAwarenessRegistrationPreferences } from "./remoteRegistration";
+import {
+  getAgentAwarenessRegistrationGeneration,
+  updateAgentAwarenessRegistrationPreferences,
+} from "./remoteRegistration";
 
 vi.mock("expo-secure-store", () => ({
   deleteItemAsync: vi.fn(),
@@ -38,6 +41,7 @@ vi.mock("../cloud/linkEnvironment", async (importOriginal) => ({
 
 vi.mock("./remoteRegistration", () => ({
   updateAgentAwarenessRegistrationPreferences: vi.fn(() => Effect.void),
+  getAgentAwarenessRegistrationGeneration: vi.fn(() => 1),
 }));
 
 const connection: SavedRemoteConnection = {
@@ -73,11 +77,25 @@ const layerTest = Layer.mergeAll(
 describe("liveActivityPreferences", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getAgentAwarenessRegistrationGeneration).mockReturnValue(1);
   });
 
-  it.effect("restores relay preferences when an environment update fails", () => {
+  it.effect.each([
+    "same-session failure",
+    "account-change failure",
+    "account-change success",
+  ] as const)("restores preferences only in the original session: %s", (scenario) => {
+    const accountChanged = scenario !== "same-session failure";
     vi.mocked(linkEnvironmentToCloudWithPreference).mockImplementationOnce(() =>
-      Effect.fail(new CloudEnvironmentLinkError({ message: "environment update failed" })),
+      Effect.sync(() => {
+        if (accountChanged) vi.mocked(getAgentAwarenessRegistrationGeneration).mockReturnValue(2);
+      }).pipe(
+        Effect.andThen(
+          scenario === "account-change success"
+            ? Effect.void
+            : Effect.fail(new CloudEnvironmentLinkError({ message: "environment update failed" })),
+        ),
+      ),
     );
 
     return Effect.gen(function* () {
@@ -95,6 +113,11 @@ describe("liveActivityPreferences", () => {
       expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenNthCalledWith(1, {
         liveActivitiesEnabled: false,
       });
+      if (accountChanged) {
+        expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenCalledTimes(1);
+        expect(linkEnvironmentToCloudWithPreference).toHaveBeenCalledTimes(1);
+        return;
+      }
       expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenNthCalledWith(2, {
         liveActivitiesEnabled: true,
       });

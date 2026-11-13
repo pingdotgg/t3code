@@ -3,7 +3,10 @@ import type { EnvironmentId } from "@t3tools/contracts";
 
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { linkEnvironmentToCloudWithPreference } from "../cloud/linkEnvironment";
-import { updateAgentAwarenessRegistrationPreferences } from "./remoteRegistration";
+import {
+  getAgentAwarenessRegistrationGeneration,
+  updateAgentAwarenessRegistrationPreferences,
+} from "./remoteRegistration";
 
 export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEnabled")(
   function* (input: {
@@ -13,6 +16,8 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
     readonly connections: ReadonlyArray<SavedRemoteConnection>;
     readonly canConfigureEnvironment: (environmentId: EnvironmentId) => boolean;
   }) {
+    const generation = getAgentAwarenessRegistrationGeneration();
+    const isCurrentSession = () => generation === getAgentAwarenessRegistrationGeneration();
     const linkedConnections = input.connections.filter(
       (connection) => connection.bearerToken !== null,
     );
@@ -22,6 +27,7 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
       enabled: boolean,
       clerkToken: string,
     ) {
+      if (!isCurrentSession()) return yield* Effect.interrupt;
       if (!input.canConfigureEnvironment(connection.environmentId)) return;
 
       yield* linkEnvironmentToCloudWithPreference({
@@ -47,6 +53,7 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
     });
 
     const restoreRelayPreference = Effect.fn("restoreRelayPreference")(function* () {
+      if (!isCurrentSession()) return;
       yield* updateAgentAwarenessRegistrationPreferences({
         liveActivitiesEnabled: input.previousEnabled,
       }).pipe(
@@ -74,6 +81,7 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
     });
 
     yield* updateRelayPreference(input.enabled).pipe(
+      Effect.andThen(Effect.suspend(() => (isCurrentSession() ? Effect.void : Effect.interrupt))),
       Effect.onError(() => restoreRelayPreference()),
     );
   },

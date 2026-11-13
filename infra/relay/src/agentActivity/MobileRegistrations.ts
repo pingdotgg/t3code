@@ -1,4 +1,4 @@
-import { makeAggregateState } from "./agentActivityAggregate.ts";
+import { makeAggregateState, parseDevicePreferences } from "./agentActivityAggregate.ts";
 import type {
   RelayAgentActivitySnapshotResponse,
   RelayDeviceRegistrationRequest,
@@ -18,6 +18,7 @@ export type MobileRegistrationError =
   | Devices.DeviceRegistrationPersistenceError
   | Devices.DeviceUnregistrationPersistenceError
   | LiveActivities.LiveActivityRegistrationPersistenceError
+  | LiveActivities.LiveActivityTargetListPersistenceError
   | AgentActivityRows.AgentActivityRowListPersistenceError;
 
 export class MobileRegistrations extends Context.Service<
@@ -37,6 +38,7 @@ export class MobileRegistrations extends Context.Service<
     }) => Effect.Effect<{ readonly ok: true }, MobileRegistrationError>;
     readonly getAgentActivitySnapshot: (input: {
       readonly userId: string;
+      readonly deviceId?: string;
     }) => Effect.Effect<RelayAgentActivitySnapshotResponse, MobileRegistrationError>;
   }
 >()("t3code-relay/agentActivity/MobileRegistrations") {}
@@ -94,12 +96,19 @@ const make = Effect.gen(function* () {
     getAgentActivitySnapshot: Effect.fn("relay.mobile_registrations.get_agent_activity_snapshot")(
       function* (input) {
         const activeStates = yield* rows.listForUser({ userId: input.userId });
+        const target =
+          input.deviceId === undefined
+            ? undefined
+            : (yield* liveActivities.listTargets({ userId: input.userId })).find(
+                (row) => row.device_id === input.deviceId,
+              );
         const now = yield* DateTime.now;
         return {
           aggregate: makeAggregateState({
             activeStates,
             terminalState: null,
             nowMs: now.epochMilliseconds,
+            preferences: target ? parseDevicePreferences(target.preferences_json) : null,
           }),
         };
       },

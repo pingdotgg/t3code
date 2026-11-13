@@ -113,6 +113,7 @@ describe("LiveActivities", () => {
         deviceId: "device-1",
         kind: "live_activity_update",
         aggregate,
+        hiddenEnvironmentIds: ["hidden-env"],
         deliveredAt: "2026-05-25T00:00:10.000Z",
       });
 
@@ -126,6 +127,7 @@ describe("LiveActivities", () => {
       expect(conflictConfigs[0]?.set).toEqual(
         expect.objectContaining({
           endedAt: relayLiveActivities.endedAt,
+          lastHiddenEnvironmentIds: ["hidden-env"],
           lastLiveActivityDeliveryAt: "2026-05-25T00:00:10.000Z",
         }),
       );

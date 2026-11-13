@@ -26,8 +26,11 @@ import { androidActivityData, fitFcmData } from "./fcmPayloads.ts";
 import { makeAggregateState, statusForPhase } from "./agentActivityAggregate.ts";
 import { isExpiredAgentActivityState, notificationForActivity } from "./agentActivityPayloads.ts";
 import {
+  ANDROID_DELIVERY_JOB_TTL_MS,
   alertForActivityRows,
   attentionTransitionRows,
+  hiddenEnvironmentIds,
+  sameEnvironmentIds,
   terminalTransitionRows,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
@@ -76,6 +79,7 @@ export function androidAlertForState(
 
 export function androidAlertForAggregate(input: {
   readonly previousAggregate: RelayAgentActivityAggregateState;
+  readonly previousHiddenEnvironmentIds?: ReadonlyArray<string> | null;
   readonly nextAggregate: RelayAgentActivityAggregateState;
   readonly preferences: RelayAgentAwarenessPreferences;
   readonly nowMs: number;
@@ -187,7 +191,7 @@ const make = Effect.gen(function* () {
         Effect.mapError((cause) => new FcmDeliveryError({ operation: "decode-job", cause })),
       );
       const now = yield* DateTime.now;
-      if (now.epochMilliseconds - job.queuedAt > 5 * 60_000) return;
+      if (now.epochMilliseconds - job.queuedAt > ANDROID_DELIVERY_JOB_TTL_MS) return;
       const targets = yield* devices.listTargets({ userId: job.userId });
       const target = targets.find(
         (device) =>
@@ -198,6 +202,7 @@ const make = Effect.gen(function* () {
       if (!target) return;
       const preferences = decodePreferences(target.preferences_json);
       if (Option.isNone(preferences)) return;
+      const currentHiddenEnvironmentIds = hiddenEnvironmentIds(preferences.value);
 
       // Re-read at consumption to honor current links, tokens, preferences, and thread states.
       const states = preferences.value.liveActivitiesEnabled
@@ -207,6 +212,7 @@ const make = Effect.gen(function* () {
         activeStates: states,
         terminalState: null,
         nowMs: now.epochMilliseconds,
+        preferences: preferences.value,
       });
       const previousAggregate = target.last_aggregate_json
         ? Option.getOrNull(decodePreviousActivity(target.last_aggregate_json))
@@ -242,7 +248,7 @@ const make = Effect.gen(function* () {
         if (
           deliveryUser?.liveActivitiesEnabled &&
           preferences.value.liveActivitiesEnabled &&
-          previousAggregate &&
+          (previousAggregate || target.environment_revealed_at) &&
           aggregate
         ) {
           const environmentIds = [...new Set(aggregate.activities.map((row) => row.environmentId))];
@@ -262,12 +268,20 @@ const make = Effect.gen(function* () {
             }
           }
           alert = androidAlertForAggregate({
-            previousAggregate,
+            previousAggregate: previousAggregate ?? {
+              ...aggregate,
+              activities: [],
+              activeCount: 0,
+            },
             nextAggregate: {
               ...aggregate,
-              activities: aggregate.activities.filter((row) =>
-                allowedEnvironments.has(row.environmentId),
-              ),
+              activities: aggregate.activities.filter((row) => {
+                const revealedAt = target.environment_revealed_at?.[row.environmentId];
+                return (
+                  allowedEnvironments.has(row.environmentId) &&
+                  (revealedAt === undefined || Date.parse(row.updatedAt) > revealedAt)
+                );
+              }),
             },
             preferences: preferences.value,
             nowMs: now.epochMilliseconds,
@@ -276,6 +290,8 @@ const make = Effect.gen(function* () {
           deliveryUser?.notificationsEnabled &&
           state?.phase === job.state.phase &&
           state.updatedAt === job.state.updatedAt &&
+          // Jobs queued before the environment was re-enabled are history, like the replay baseline.
+          job.queuedAt > (target.environment_revealed_at?.[state.environmentId] ?? -Infinity) &&
           !isExpiredAgentActivityState(state, now.epochMilliseconds)
         ) {
           alert = androidAlertForState(state, preferences.value, now.epochMilliseconds);
@@ -283,7 +299,14 @@ const make = Effect.gen(function* () {
       }
       const displayedAggregate = preferences.value.liveActivitiesEnabled ? aggregate : null;
       const active = (displayedAggregate?.activeCount ?? 0) > 0;
-      if (!displayedAggregate && !alert && !previousAggregate && job.state !== null) return;
+      if (
+        !displayedAggregate &&
+        !alert &&
+        !previousAggregate &&
+        job.state !== null &&
+        sameEnvironmentIds(target.last_hidden_environment_ids, currentHiddenEnvironmentIds)
+      )
+        return;
       const data: Record<string, string> = {
         t3_kind: "agent_activity",
         device_id: job.deviceId,
@@ -329,6 +352,7 @@ const make = Effect.gen(function* () {
           kind: active ? "live_activity_update" : "live_activity_end",
           // Retain terminal rows as the baseline so finished-card replays cannot alert again.
           aggregate: preferences.value.liveActivitiesEnabled ? aggregate : null,
+          hiddenEnvironmentIds: currentHiddenEnvironmentIds,
           deliveredAt: DateTime.formatIso(now),
         });
       }

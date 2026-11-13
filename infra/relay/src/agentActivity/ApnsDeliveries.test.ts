@@ -135,6 +135,8 @@ const target: LiveActivities.TargetRow = {
   remote_started_at: "1970-01-01T00:00:00.000Z",
   ended_at: null,
   last_aggregate_json: null,
+  last_hidden_environment_ids: null,
+  environment_revealed_at: null,
   last_live_activity_delivery_at: null,
 };
 
@@ -846,6 +848,185 @@ describe("ApnsDeliveries", () => {
         }),
       ),
     );
+  });
+
+  it.effect.each([
+    {
+      label: "shows an environment the device now disables",
+      queuedHidden: [],
+      currentHidden: ["env"],
+    },
+    {
+      label: "was filtered for an environment the device re-enabled",
+      queuedHidden: ["other-env"],
+      currentHidden: [],
+    },
+  ])("skips a queued Live Activity update that $label", ({ queuedHidden, currentHidden }) => {
+    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+    const markedDeliveries: Array<
+      Parameters<LiveActivities.LiveActivities["Service"]["markDelivery"]>[0]
+    > = [];
+    let executeCount = 0;
+    const payload = makeApnsDeliveryJobPayload({
+      kind: "live_activity_update",
+      userId: target.user_id,
+      deviceId: target.device_id,
+      token: target.activity_push_token ?? "activity-token",
+      aggregate,
+      hiddenEnvironmentIds: queuedHidden.map((id) => EnvironmentId.make(id)),
+      createdAt: state.updatedAt,
+      expiresAt: "1970-01-01T00:10:00.000Z",
+      jobId: "job-filtered-under-old-preferences",
+    });
+    const signed = signApnsDeliveryJob({ secret: config.apnsDeliveryJobSigningSecret, payload });
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        executeCount += 1;
+        return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+      });
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.processSignedJob(yield* signed);
+
+      expect(executeCount).toBe(0);
+      expect(markedDeliveries).toEqual([]);
+      expect(attempts).toMatchObject([
+        {
+          sourceJobId: "job-filtered-under-old-preferences",
+          apnsReason: "Stale agent activity state skipped.",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts,
+          markedDeliveries,
+          currentTargets: [
+            {
+              ...target,
+              preferences_json: JSON.stringify({
+                ...JSON.parse(enabledPreferences),
+                disabledEnvironmentIds: currentHidden,
+              }),
+            },
+          ],
+          config: signingConfig,
+          execute,
+        }),
+      ),
+    );
+  });
+
+  it.effect.each([
+    { label: "disables", queuedHidden: [], currentHidden: ["other-env"] },
+    { label: "re-enables", queuedHidden: ["other-env"], currentHidden: [] },
+  ])(
+    "delivers a queued alert for an enabled environment when the device $label another",
+    ({ queuedHidden, currentHidden }) => {
+      const requests: HttpClientRequest.HttpClientRequest[] = [];
+      const waitingAt = "1970-01-01T00:00:01.000Z";
+      const waitingAggregate: RelayAgentActivityAggregateState = {
+        ...aggregate,
+        updatedAt: waitingAt,
+        activities: [
+          {
+            ...aggregate.activities[0]!,
+            phase: "waiting_for_approval",
+            status: "Approval",
+            updatedAt: waitingAt,
+          },
+        ],
+      };
+      const signed = signApnsDeliveryJob({
+        secret: config.apnsDeliveryJobSigningSecret,
+        payload: makeApnsDeliveryJobPayload({
+          kind: "live_activity_update",
+          userId: target.user_id,
+          deviceId: target.device_id,
+          token: target.activity_push_token ?? "activity-token",
+          aggregate: waitingAggregate,
+          alert: { title: "Thread", body: "Approval: Project" },
+          hiddenEnvironmentIds: queuedHidden.map((id) => EnvironmentId.make(id)),
+          createdAt: waitingAt,
+          expiresAt: "1970-01-01T00:10:00.000Z",
+          jobId: "job-approval-before-filter-change",
+        }),
+      });
+
+      return Effect.gen(function* () {
+        const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+        yield* deliveries.processSignedJob(yield* signed);
+
+        expect(requests).toHaveLength(1);
+        const body = requests[0]!.body;
+        expect(body._tag).toBe("Uint8Array");
+        if (body._tag === "Uint8Array") {
+          const { aps } = JSON.parse(new TextDecoder().decode(body.body));
+          expect(aps.alert).toMatchObject({ title: "Thread" });
+        }
+      }).pipe(
+        Effect.provide(
+          layerFor({
+            attempts: [],
+            config: signingConfig,
+            currentTargets: [
+              {
+                ...target,
+                preferences_json: JSON.stringify({
+                  ...JSON.parse(enabledPreferences),
+                  disabledEnvironmentIds: currentHidden,
+                }),
+                last_aggregate_json: JSON.stringify(aggregate),
+                last_hidden_environment_ids: queuedHidden,
+              },
+            ],
+            activityStates: [{ ...state, phase: "waiting_for_approval", updatedAt: waitingAt }],
+            execute: (request) =>
+              Effect.sync(() => {
+                requests.push(request);
+                return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+              }),
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect.each([
+    { name: "attention reached while disabled stays silent", revealedAtMs: 4_000, alerts: false },
+    { name: "attention reached after re-enabling alerts", revealedAtMs: 1_000, alerts: true },
+  ])("re-enabled environment: $name", ({ revealedAtMs, alerts }) => {
+    const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+    const other = { ...aggregate.activities[0]!, environmentId: EnvironmentId.make("other-env") };
+    const waiting = {
+      ...other,
+      phase: "waiting_for_approval" as const,
+      status: "Approval",
+      updatedAt: "1970-01-01T00:00:03.000Z",
+    };
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.sendForTarget({
+        target: {
+          ...target,
+          last_aggregate_json: JSON.stringify(aggregate),
+          last_hidden_environment_ids: [other.environmentId],
+          environment_revealed_at: { [other.environmentId]: revealedAtMs },
+          last_live_activity_delivery_at: state.updatedAt,
+        },
+        aggregate: {
+          ...aggregate,
+          activeCount: 2,
+          activities: [waiting, aggregate.activities[0]!],
+        },
+        nowMs: 5_000,
+      });
+
+      expect(queuedJobs).toMatchObject([{ payload: { kind: "live_activity_update" } }]);
+      expect((queuedJobs[0]?.payload.alert ?? null) !== null).toBe(alerts);
+    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
   });
 
   it.effect("retries signed queue jobs that are already claimed but not completed", () => {

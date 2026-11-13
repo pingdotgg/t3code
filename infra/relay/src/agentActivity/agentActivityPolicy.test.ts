@@ -101,5 +101,11 @@ describe("shared agent activity policy", () => {
       }),
     ).toBe(false);
     expect(shouldAlertForActivity({ ...input, nowMs: 180_000 })).toBe(false);
+    expect(
+      shouldAlertForActivity({
+        ...input,
+        preferences: { ...preferences, disabledEnvironmentIds: [state.environmentId] },
+      }),
+    ).toBe(false);
   });
 });
