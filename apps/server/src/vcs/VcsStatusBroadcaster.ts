@@ -990,12 +990,34 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const pendingBranchRefreshes = new Set<string>();
   const refreshBranchStatus: VcsStatusBroadcaster["Service"]["refreshBranchStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshBranchStatus",
   )(function* (input) {
-    const { refName, isRepo } = yield* refreshBranchStatusCore(
-      yield* withFileSystem(normalizeCwd(input.cwd)),
-    );
+    const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
+    if (!detailedSubscribers.has(cwd) && !pendingBranchRefreshes.has(cwd)) {
+      const { refName, isRepo } = yield* refreshBranchStatusCore(cwd);
+      return { refName, isRepo };
+    }
+    const refName = yield* workflow.currentBranch(cwd);
+    const isRepo = refName !== null || (yield* workflow.repositoryRoot(cwd)) !== null;
+    if (!pendingBranchRefreshes.has(cwd)) {
+      pendingBranchRefreshes.add(cwd);
+      yield* refreshBranchStatusCore(cwd).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("VCS branch refresh failed", {
+            cwdLength: cwd.length,
+            ...remoteRefreshFailureDiagnostics(cause),
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            pendingBranchRefreshes.delete(cwd);
+          }),
+        ),
+        Effect.forkIn(broadcasterScope),
+      );
+    }
     return { refName, isRepo };
   });
 

@@ -349,6 +349,34 @@ describe("VcsStatusBroadcaster", () => {
     },
   );
 
+  it.effect("refreshes the branch while an initial detailed status read is pending", () => {
+    const state = newState();
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const reading = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      state.beforeLocalStatus = Deferred.succeed(reading, undefined).pipe(
+        Effect.andThen(Deferred.await(resume)),
+      );
+      const details = yield* Stream.runHead(
+        broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }),
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(reading);
+      const refresh = yield* broadcaster
+        .refreshBranchStatus({ cwd: "/repo" })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      const result = refresh.pollUnsafe();
+      assert.isDefined(result);
+      assert.deepEqual(result, Exit.succeed({ refName: baseLocalStatus.refName, isRepo: true }));
+      yield* Deferred.succeed(resume, undefined);
+      assert.deepEqual(
+        yield* Fiber.join(details),
+        Option.some({ _tag: "snapshot" as const, local: baseLocalStatus, remote: null }),
+      );
+      assert.equal(state.localStatusCalls, 1);
+    }).pipe(Effect.provide(layerTestFor(state)));
+  });
+
   it.effect("upgrades an in-flight branch refresh when detailed demand arrives", () => {
     const state: Parameters<typeof layerTestFor>[0] = {
       currentLocalStatus: baseLocalStatus,
