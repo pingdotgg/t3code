@@ -38,13 +38,15 @@ const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
 const CURSOR_BLINK_INTERVAL_MS = 500;
 const TERMINAL_LINK_HOVER_DELAY_MS = 250;
 // Key-up cannot end the wait for Chromium's native paste: a synthetic Cmd+V releases V first.
-// A press whose native paste never comes drops any other native paste inside this window.
+// A focused press whose native paste never comes drops the next native paste inside this window.
 const PASTE_GESTURE_WINDOW_MS = 2_000;
 type PasteGesture = {
   readonly at: number;
   /** Its read is dropped once another paste moves `pasteSupersedeCount` past this. */
   readonly supersedeCount: number;
   sentText: string | null;
+  /** Focus left while its read was pending: its native paste may be lost, so only equal text is its duplicate. */
+  blurred: boolean;
 };
 /** End an unterminated synchronized update instead of freezing the last frame. */
 const SYNCHRONIZED_OUTPUT_RENDER_TIMEOUT_MS = 500;
@@ -1197,6 +1199,7 @@ export class GhosttyTerminalSurface {
         at: performance.now(),
         supersedeCount: this.pasteSupersedeCount,
         sentText: null,
+        blurred: false,
       };
       this.openPasteGestures().push(gesture);
       // A later shortcut supersedes a pending menu paste read.
@@ -1257,6 +1260,11 @@ export class GhosttyTerminalSurface {
 
   private readonly onBlur = () => {
     this.focused = false;
+    // Focus can leave before Chromium delivers a native paste. A press that already pasted
+    // stops waiting, so it cannot drop an application-menu Paste after refocus.
+    const pending = this.pasteGestures.filter((gesture) => gesture.sentText === null);
+    for (const gesture of pending) gesture.blurred = true;
+    this.pasteGestures.splice(0, this.pasteGestures.length, ...pending);
     this.refreshHoveredLink();
     this.cursorOn = true;
     this.requestRender();
@@ -1308,7 +1316,8 @@ export class GhosttyTerminalSurface {
     // A press whose read sent this text owns it even when an older press lost its native paste
     // to a blur; otherwise native pastes arrive in press order.
     const sent = data.length === 0 ? -1 : gestures.findIndex((g) => g.sentText === data);
-    const [gesture] = gestures.splice(Math.max(sent, 0), 1);
+    const owner = sent === -1 ? gestures.findIndex((g) => !g.blurred || g.sentText === null) : sent;
+    const gesture = owner === -1 ? undefined : gestures.splice(owner, 1)[0];
     // An empty native paste leaves the read as the only path.
     if (data.length === 0) return;
     // Its press's read already pasted: a duplicate, even if the clipboard changed in between.

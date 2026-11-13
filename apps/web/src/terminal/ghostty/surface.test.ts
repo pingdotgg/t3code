@@ -473,8 +473,18 @@ describe("GhosttyTerminalSurface visibility", () => {
     },
     {
       name: "each press once when a blur took the older press's native paste",
-      steps: ["press", "blur", "press", "read 1 new", "native new", "read 0 old"],
-      pasted: ["new", "old"],
+      steps: ["press", "blur", "press", "read 1 new", "native new", "read 0 old", "native menu"],
+      pasted: ["new", "old", "menu"],
+    },
+    {
+      name: "an application-menu paste after a blur took the shortcut's native paste",
+      steps: ["press", "keyup", "read 0 old", "blur", "native menu"],
+      pasted: ["old", "menu"],
+    },
+    {
+      name: "an identical application-menu paste after a blur",
+      steps: ["press", "read 0 echo hi", "blur", "native echo hi"],
+      pasted: ["echo hi", "echo hi"],
     },
     {
       name: "the read alone after an empty native paste",
