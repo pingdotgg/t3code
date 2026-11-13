@@ -361,17 +361,33 @@ function codexUserEvent(
   return { text: extractText(payload.item.content), turnId: codexTurnId(payload) };
 }
 
+// Codex and its desktop app open a prompt with these when they prepend context.
+const CODEX_CONTEXT_OPENERS = [
+  "# Context from my IDE setup:",
+  "# Files mentioned by the user:",
+  "## Referenced chats with Codex:",
+  "<in-app-browser-context",
+];
 const CODEX_REQUEST_MARKER = "\n## My request for Codex:\n";
 const CODEX_QUESTION_REPLY_OPEN = "<send_user_message_question_reply>";
 const CODEX_QUESTION_REPLY_CLOSE = "</send_user_message_question_reply>";
 
-// Shows a prompt as Codex does: the request after the last context delimiter,
-// and an answered-question envelope as the question and its answer.
-function codexUserText(text: string): string {
-  const marker = text.lastIndexOf(CODEX_REQUEST_MARKER);
+// The request that follows generated context. Text is kept as recorded when it
+// does not open with that context, or when a second delimiter makes the end of
+// the context ambiguous: either side may be quoting it.
+function codexRequestText(text: string): string {
+  const opening = text.trimStart();
+  if (!CODEX_CONTEXT_OPENERS.some((opener) => opening.startsWith(opener))) return text;
+  const marker = text.indexOf(CODEX_REQUEST_MARKER);
+  if (marker === -1 || marker !== text.lastIndexOf(CODEX_REQUEST_MARKER)) return text;
   // An attachment sent without text has an empty request; keep it as recorded.
-  const request =
-    (marker === -1 ? "" : text.slice(marker + CODEX_REQUEST_MARKER.length).trim()) || text;
+  return text.slice(marker + CODEX_REQUEST_MARKER.length).trim() || text;
+}
+
+// Shows a prompt as Codex does: the request without its generated context, and
+// an answered-question envelope as the question and its answer.
+function codexUserText(text: string): string {
+  const request = codexRequestText(text);
   const envelope = request.trim();
   if (
     !envelope.startsWith(CODEX_QUESTION_REPLY_OPEN) ||
@@ -588,8 +604,9 @@ function parseAgentSessionRecords(
       readonly text: string;
     }> = [];
     // Events before paginated rollouts name no turn. Up to the next assistant
-    // message, one covers the turn IDs whose response text repeats it, and every
-    // response without a turn ID. A response with another turn ID is an older prompt.
+    // message, one covers the turn IDs whose response text repeats it. A response
+    // without a turn ID is covered only when it repeats the event or is nothing
+    // but setup context; any other response is an older prompt.
     const finishSegment = () => {
       const repeatedTurnIds = new Set(
         responseUsers.flatMap((responseUser) =>
@@ -601,7 +618,9 @@ function parseAgentSessionRecords(
       for (const responseUser of responseUsers) {
         if (
           responseUser.turnId === null
-            ? eventTexts.size > 0
+            ? eventTexts.has(responseUser.text) ||
+              (eventTexts.size > 0 &&
+                responseUser.text.replace(CODEX_TITLE_PREAMBLE, "").trim().length === 0)
             : eventTurnIds.has(responseUser.turnId) || repeatedTurnIds.has(responseUser.turnId)
         ) {
           hiddenCodexResponseUserIndices.add(responseUser.index);

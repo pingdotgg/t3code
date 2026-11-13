@@ -3251,7 +3251,14 @@ describe("parseAgentSessionTranscript", () => {
     expect(thread?.messages.at(-1)?.text).toBe("Keep this latest response");
   });
 
-  it("keeps mixed-format response users when turn IDs repeat after an assistant", () => {
+  it.each([
+    {
+      records: "distinct turn IDs",
+      older: { turn_id: "turn-older" },
+      newer: { turn_id: "turn-newer" },
+    },
+    { records: "no turn metadata", older: undefined, newer: undefined },
+  ])("keeps an older mixed-format response prompt with $records", ({ older, newer }) => {
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
       contents: [
         encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
@@ -3260,7 +3267,7 @@ describe("parseAgentSessionTranscript", () => {
           payload: {
             type: "message",
             role: "user",
-            internal_chat_message_metadata_passthrough: { turn_id: "turn-older" },
+            internal_chat_message_metadata_passthrough: older,
             content: [{ type: "input_text", text: "Keep this older prompt" }],
           },
         }),
@@ -3273,7 +3280,7 @@ describe("parseAgentSessionTranscript", () => {
           payload: {
             type: "message",
             role: "user",
-            internal_chat_message_metadata_passthrough: { turn_id: "turn-newer" },
+            internal_chat_message_metadata_passthrough: newer,
             content: [{ type: "input_text", text: "Keep this newer prompt" }],
           },
         }),
@@ -3290,7 +3297,7 @@ describe("parseAgentSessionTranscript", () => {
           payload: {
             type: "message",
             role: "user",
-            internal_chat_message_metadata_passthrough: { turn_id: "turn-newer" },
+            internal_chat_message_metadata_passthrough: newer,
             content: [{ type: "input_text", text: "Keep this newer prompt" }],
           },
         }),
@@ -3301,6 +3308,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
     });
 
+    expect(thread?.title).toBe("Keep this older prompt");
     expect(thread?.messages.map((message) => message.text)).toEqual([
       "Keep this older prompt",
       "Keep this newer prompt",
@@ -3536,10 +3544,18 @@ describe("parseAgentSessionTranscript", () => {
       expected: "Fix a.ts",
     },
     {
-      name: "request after the last delimiter",
+      name: "prompt with an ambiguous second delimiter",
       prompt:
-        "# Context from my IDE setup:\n\n## Active selection:\n## My request for Codex:\nquoted\n\n## My request for Codex:\nUse the last request",
-      expected: "Use the last request",
+        "# Context from my IDE setup:\n\n## Active selection:\n## My request for Codex:\nquoted\n\n## My request for Codex:\nKeep both",
+      expected:
+        "# Context from my IDE setup:\n\n## Active selection:\n## My request for Codex:\nquoted\n\n## My request for Codex:\nKeep both",
+    },
+    {
+      name: "prompt quoting the delimiter",
+      prompt:
+        "Please explain this prompt format:\n```markdown\n## My request for Codex:\nFix the bug\n```",
+      expected:
+        "Please explain this prompt format:\n```markdown\n## My request for Codex:\nFix the bug\n```",
     },
     {
       name: "attachment without a request",
