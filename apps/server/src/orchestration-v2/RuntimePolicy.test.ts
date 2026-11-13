@@ -1,4 +1,8 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import {
   type ManagedPolicySummary,
   type ModelSelection,
@@ -78,7 +82,7 @@ const providerInstanceFor = (instanceId: ProviderInstanceId) =>
     },
   }) as ProviderInstance;
 
-const layerWithPolicy = (policy?: ManagedPolicySummary) =>
+const layerWithPolicy = (policy?: ManagedPolicySummary, workspaceRoot = "/project-root") =>
   RuntimePolicy.layerFromProjectStore.pipe(
     Layer.provide(ServerSettings.layerTest({}, policy)),
     Layer.provide(
@@ -96,7 +100,7 @@ const layerWithPolicy = (policy?: ManagedPolicySummary) =>
           Effect.succeedSome({
             projectId,
             title: "Project",
-            workspaceRoot: "/project-root",
+            workspaceRoot,
             defaultModelSelection: null,
             defaultThreadEnvMode: null,
             hasCustomTitle: false,
@@ -156,6 +160,34 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
       assert.equal(yield* modeFor(grokInstanceId, "full-access"), "full-access");
       assert.equal(yield* modeFor(providerInstanceId, "auto-accept-edits"), "auto-accept-edits");
     }),
+  );
+});
+
+it.effect("starts a worktree thread in the project's subdirectory of the checkout", () => {
+  const tmp = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "rp-subdir-")));
+  const repo = NodePath.join(tmp, "repo");
+  const worktree = NodePath.join(tmp, "worktree");
+  NodeFS.mkdirSync(NodePath.join(repo, "ios"), { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(repo, "ios", "README.md"), "ios\n");
+  const git = (...args: string[]) =>
+    NodeChildProcess.execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], {
+      cwd: repo,
+    });
+  git("init", "-q", "-b", "main");
+  git("add", "-A");
+  git("commit", "-qm", "init");
+  git("worktree", "add", "-q", worktree);
+  return Effect.gen(function* () {
+    const policy = yield* RuntimePolicy.RuntimePolicyV2;
+    const now = yield* DateTime.now;
+    const resolved = yield* policy.resolve({
+      thread: makeThread({ now, worktreePath: worktree }),
+      modelSelection,
+    });
+    assert.equal(resolved.cwd, NodePath.join(worktree, "ios"));
+  }).pipe(
+    Effect.provide(layerWithPolicy(undefined, NodePath.join(repo, "ios"))),
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tmp, { recursive: true, force: true }))),
   );
 });
 
