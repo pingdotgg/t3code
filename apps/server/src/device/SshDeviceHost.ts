@@ -476,6 +476,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
   const closeConnection = Effect.suspend(() => {
     const failedScope = connectionScope;
     connectionScope = null;
+    ready = null;
     return failedScope ? Scope.close(failedScope, Exit.void) : Effect.void;
   });
 

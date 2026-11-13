@@ -239,12 +239,21 @@ it.effect("releases the forward of a bootstrap interrupted before its hub answer
         });
       }),
     );
-    const host = yield* SshDeviceHost.make({
-      kind: "ssh",
-      id: "test",
-      label: "Test",
-      target: "test.example",
-    }).pipe(
+    const publishing = yield* Deferred.make<void>();
+    let holdReadyStatus = false;
+    const host = yield* SshDeviceHost.make(
+      {
+        kind: "ssh",
+        id: "test",
+        label: "Test",
+        target: "test.example",
+      },
+      undefined,
+      (status) =>
+        status === "ready" && holdReadyStatus
+          ? Deferred.succeed(publishing, undefined).pipe(Effect.andThen(Effect.never))
+          : Effect.void,
+    ).pipe(
       Effect.provide(Layer.mergeAll(ServerConfig.layerTest(home, home), Net.layer)),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(
@@ -266,6 +275,15 @@ it.effect("releases the forward of a bootstrap interrupted before its hub answer
     expect(forwards).toBe(0);
     holdReadiness = false;
     yield* host.ensureReady(() => Effect.void);
+    yield* host.stop;
+    expect(forwards).toBe(0);
+    holdReadyStatus = true;
+    const second = yield* host.ensureReady(() => Effect.void).pipe(Effect.forkChild);
+    yield* Deferred.await(publishing);
+    yield* Fiber.interrupt(second);
+    holdReadyStatus = false;
+    yield* host.ensureReady(() => Effect.void);
+    expect(forwards).toBe(1);
     yield* host.stop;
     expect(forwards).toBe(0);
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
