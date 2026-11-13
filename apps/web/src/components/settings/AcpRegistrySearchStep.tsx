@@ -24,6 +24,11 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group"
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { isConfiguredAcpRegistryAgent } from "./AddProviderInstanceDialog.logic";
+import {
+  isConfiguredAcpLocalAgent,
+  matchAcpLocalAgentPresets,
+  type AcpLocalAgentPreset,
+} from "./acpLocalAgents";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { providerClients } from "./providerDriverMeta";
@@ -127,6 +132,7 @@ interface AcpRegistrySearchStepProps {
   readonly onPrepared: (agent: AcpRegistrySearchAgent) => void;
   readonly onManualConfiguration: () => void;
   readonly onLocalConfiguration?: () => void;
+  readonly onLocalPreset?: (preset: AcpLocalAgentPreset) => void;
 }
 
 export function AcpRegistrySearchStep({
@@ -136,6 +142,7 @@ export function AcpRegistrySearchStep({
   onPrepared,
   onManualConfiguration,
   onLocalConfiguration,
+  onLocalPreset,
 }: AcpRegistrySearchStepProps) {
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const { query, search, preparingId, prepareError } = registry;
@@ -149,6 +156,7 @@ export function AcpRegistrySearchStep({
     void registry.prepare(agent, onPrepared);
   };
 
+  const presetMatches = onLocalPreset ? matchAcpLocalAgentPresets(query) : [];
   const results =
     search.data?.agents.filter((agent) => !FIRST_CLASS_REGISTRY_AGENT_IDS.has(agent.id)) ?? null;
   const isInitialSearch = search.isPending && results === null;
@@ -214,6 +222,23 @@ export function AcpRegistrySearchStep({
         </Alert>
       ) : null}
 
+      {onLocalPreset !== undefined && presetMatches.length > 0 ? (
+        <section className="grid gap-1" aria-label="Local agents">
+          <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+            Local agents
+          </p>
+          {presetMatches.map((preset) => (
+            <AcpLocalAgentRow
+              alreadyAdded={isConfiguredAcpLocalAgent(providerInstances, preset)}
+              canAdd={canManageProviders && preparingId === null}
+              key={preset.id}
+              onAdd={onLocalPreset}
+              preset={preset}
+            />
+          ))}
+        </section>
+      ) : null}
+
       {isInitialSearch ? (
         <div className="flex min-h-20 items-center justify-center text-sm text-muted-foreground">
           Searching the registry...
@@ -221,7 +246,7 @@ export function AcpRegistrySearchStep({
       ) : null}
 
       {results ? (
-        results.length === 0 ? (
+        results.length === 0 && presetMatches.length === 0 ? (
           <div className="flex min-h-28 flex-col items-center justify-center rounded-2xl border border-dashed px-4 text-center">
             <p className="text-sm font-medium">No compatible agents found</p>
             <p className="mt-1 text-xs text-muted-foreground">Try a broader search.</p>
@@ -244,6 +269,62 @@ export function AcpRegistrySearchStep({
         )
       ) : null}
     </section>
+  );
+}
+
+function AcpLocalAgentRow({
+  preset,
+  alreadyAdded,
+  canAdd,
+  onAdd,
+}: {
+  readonly preset: AcpLocalAgentPreset;
+  readonly alreadyAdded: boolean;
+  readonly canAdd: boolean;
+  readonly onAdd: (preset: AcpLocalAgentPreset) => void;
+}) {
+  return (
+    <article className="min-w-0 py-2.5">
+      <div className="flex min-w-0 items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <ProviderInstanceIcon
+            driverKind={ProviderDriverKind.make("acpRegistry")}
+            displayName={preset.name}
+            iconClassName="size-6 rounded-md text-muted-foreground"
+          />
+          <div className="min-w-0 flex-1">
+            <h4 className="min-w-0 truncate text-sm font-medium text-foreground">{preset.name}</h4>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{preset.description}</p>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="ghost-muted"
+                  aria-label={`About ${preset.name}`}
+                  render={<a href={preset.website} target="_blank" rel="noreferrer" />}
+                >
+                  <ExternalLinkIcon />
+                </Button>
+              }
+            />
+            <TooltipPopup>About {preset.name}</TooltipPopup>
+          </Tooltip>
+          <Button
+            aria-label={`${alreadyAdded ? "Already added" : "Add"} ${preset.name}`}
+            disabled={!canAdd || alreadyAdded}
+            onClick={() => onAdd(preset)}
+            size="xs"
+            variant="outline"
+          >
+            {alreadyAdded ? "Added" : "Add"}
+          </Button>
+        </div>
+      </div>
+    </article>
   );
 }
 

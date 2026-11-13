@@ -55,6 +55,7 @@ import {
 } from "./AddProviderInstanceDialog.logic";
 import { AddProviderInstanceWizardSteps } from "./AddProviderInstanceWizardSteps";
 import { AcpRegistrySearchStep, useAcpRegistrySearch } from "./AcpRegistrySearchStep";
+import { ACP_LOCAL_AGENT_PRESETS, type AcpLocalAgentPreset } from "./acpLocalAgents";
 import { ProviderWizardAuthenticationStep } from "./ProviderWizardAuthenticationStep";
 import { resolveOfficialAcpRegistryIconUrl } from "./AcpRegistryIcon";
 import { AddManagedCodexAccountDialog } from "./CodexSetupSection";
@@ -235,6 +236,8 @@ export function AddProviderInstanceDialog({
   const localCommandPath =
     typeof configDraft.commandPath === "string" ? configDraft.commandPath.trim() : "";
   const manualAgentId = typeof configDraft.agentId === "string" ? configDraft.agentId.trim() : "";
+  const localPresetName =
+    ACP_LOCAL_AGENT_PRESETS.find((preset) => preset.id === configDraft.localPresetId)?.name ?? null;
   const acpSelectionError = isLocalAcp
     ? localCommandPath.length > 0
       ? null
@@ -244,7 +247,9 @@ export function AddProviderInstanceDialog({
       : "Select an ACP or configure one manually.";
   const wizardStepSummaries = isAcpRegistry
     ? ([
-        isLocalAcp ? "Local ACP command" : (selectedAcp?.name ?? (manualAgentId || null)),
+        isLocalAcp
+          ? (localPresetName ?? "Local ACP command")
+          : (selectedAcp?.name ?? (manualAgentId || null)),
         previewLabel,
         null,
       ] as const)
@@ -365,6 +370,35 @@ export function AddProviderInstanceDialog({
     );
     setLocalEnvironment([]);
     setHasAttemptedSubmit(false);
+  };
+
+  const handleLocalPreset = (preset: AcpLocalAgentPreset) => {
+    setDriver(ACP_REGISTRY_DRIVER_KIND);
+    setSelectedAcp(null);
+    setIsManualAcpConfiguration(true);
+    const nextInstanceId = deriveAvailableInstanceId(
+      (candidateLabel) => deriveInstanceId(ACP_REGISTRY_DRIVER_KIND, candidateLabel),
+      preset.name,
+      existingIds,
+    );
+    setConfigByDriver((existing) => ({
+      ...existing,
+      [ACP_REGISTRY_DRIVER_KIND]: {
+        source: "local",
+        commandPath: preset.executable,
+        commandArgs: [...preset.args],
+        localPresetId: preset.id,
+      },
+    }));
+    setIdentityByDriver((existing) =>
+      updateProviderIdentityDraft(existing, ACP_REGISTRY_DRIVER_KIND, {
+        label: preset.name,
+        instanceIdOverride: nextInstanceId,
+      }),
+    );
+    setLocalEnvironment([]);
+    setHasAttemptedSubmit(false);
+    setWizardStep(1);
   };
 
   // A policy that owns this driver's launch settings also rules out ChatGPT's own runtime.
@@ -569,6 +603,7 @@ export function AddProviderInstanceDialog({
                             onPrepared={handleAcpPrepared}
                             onManualConfiguration={handleManualAcpConfiguration}
                             onLocalConfiguration={handleLocalAcpConfiguration}
+                            onLocalPreset={handleLocalPreset}
                           />
                           {isAcpRegistry && hasAttemptedSubmit && acpSelectionError ? (
                             <p className="mt-2 text-2xs text-destructive">{acpSelectionError}</p>

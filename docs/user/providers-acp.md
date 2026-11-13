@@ -39,6 +39,9 @@ credentials and skills remain managed by the installed agent or its wrapper. Mod
 options come from ACP, including model IDs that contain JSON. T3 Code launches the executable directly
 without expanding shell expressions.
 
+A few agents T3 Code knows about, such as **Oh My Pi**, appear in the search as a one-click local
+command: `omp` with the argument `acp`.
+
 ## Where agents run
 
 Registry agents always run on the machine that hosts your T3 Code server. That stays true when you
