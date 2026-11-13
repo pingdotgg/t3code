@@ -234,42 +234,8 @@ export function NewThreadSettingsSection() {
         value={useLastProject}
         onValueChange={(value) => savePreferences({ useLastProjectForNewThreads: value })}
       />
-      <ExplicitAgentModelRows />
     </SettingsSection>
   );
-}
-
-function ExplicitAgentModelRows() {
-  const { environments } = useEnvironments();
-  const supported = environments.filter(
-    (environment) =>
-      environment.connection.phase === "connected" &&
-      environment.serverConfig?.environment.capabilities.explicitAgentModels === true,
-  );
-  const writable = useEnvironmentsWithScope(supported, AuthSettingsWriteScope);
-  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    label: "Explicit agent model update",
-    reportFailure: true,
-  });
-  return supported.map((environment) => {
-    const policy = environment.serverConfig?.managedPolicy;
-    const managed = isManagedSettingPath(policy, "requireExplicitAgentModel");
-    return (
-      <SettingsSwitchRow
-        key={environment.environmentId}
-        label="Require explicit model for agent-created runs"
-        subtitle={`${environment.label}. ${managed ? `Managed by ${policy?.organization}.` : "Reject T3 tool and CLI launches without a model."}`}
-        value={environment.serverConfig?.settings.requireExplicitAgentModel === true}
-        disabled={managed || !writable.has(environment.environmentId)}
-        onValueChange={(value) =>
-          void updateSettings({
-            environmentId: environment.environmentId,
-            input: { patch: { requireExplicitAgentModel: value } },
-          })
-        }
-      />
-    );
-  });
 }
 
 type MachineBetaSetting = "linkedEnvironmentsEnabled" | "fastWorktreeCheckout";
