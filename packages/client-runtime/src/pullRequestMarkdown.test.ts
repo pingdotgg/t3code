@@ -300,7 +300,12 @@ describe("media folds", () => {
     [
       "its summary on the opening line, with markup",
       `<details title="not open"><summary><b>Demo</b> &amp; notes</summary>\n\n${video}\n</details>`,
-      { open: false, summary: "Demo &amp; notes", segments: [{ kind: "attachment" }] },
+      { open: false, summary: "<b>Demo</b> &amp; notes", segments: [{ kind: "attachment" }] },
+    ],
+    [
+      "a link in its summary",
+      `<details open>\n<summary><a href="https://example.com/demo">Demo</a> <code>v2</code></summary>\n\n${video}\n\n</details>`,
+      { open: true, summary: '<a href="https://example.com/demo">Demo</a> <code>v2</code>' },
     ],
     [
       "a fold nested in it",

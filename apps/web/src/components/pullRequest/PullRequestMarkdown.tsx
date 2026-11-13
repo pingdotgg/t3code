@@ -7,7 +7,6 @@ import {
   type EnvironmentId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { decodeHTMLStrict } from "entities";
 import { createContext, useContext } from "react";
 import type { PluggableList } from "unified";
 
@@ -118,7 +117,19 @@ function PullRequestBodySegmentView({
   if (segment.kind === "details") {
     return (
       <MarkdownDetails open={segment.open}>
-        <summary>{decodeHTMLStrict(segment.summary)}</summary>
+        <summary>
+          {segment.summary ? (
+            <ChatMarkdown
+              inline
+              text={segment.summary}
+              cwd={cwd}
+              threadRef={threadRef}
+              pullRequestPanelRef={threadRef ?? PULL_REQUESTS_PANEL_REF}
+              environmentId={environmentId}
+              {...(context ? { extraRemarkPlugins: context.remarkPlugins } : {})}
+            />
+          ) : null}
+        </summary>
         <div className="space-y-3">
           {segment.segments.map((detailsSegment) => (
             <PullRequestBodySegmentView

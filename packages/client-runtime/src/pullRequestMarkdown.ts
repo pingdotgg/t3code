@@ -24,7 +24,7 @@ export type PullRequestBodySegment =
       readonly id: string;
       readonly kind: "details";
       readonly open: boolean;
-      /** Plain text, with its HTML entities still encoded. */
+      /** The summary's inner HTML, for the markdown renderer: it can hold links and code. */
       readonly summary: string;
       readonly segments: ReadonlyArray<PullRequestBodySegment>;
     };
@@ -243,7 +243,7 @@ function mediaDetailsAt(
     details: {
       // Quoted values are blanked so `title="is open"` does not count as the attribute.
       open: /\sopen\b/iu.test(head[1]!.replace(/"[^"]*"|'[^']*'/gu, '""')),
-      summary: (head[2] ?? "").replace(/<[^>]*>/gu, "").trim(),
+      summary: (head[2] ?? "").trim(),
       segments,
     },
   };

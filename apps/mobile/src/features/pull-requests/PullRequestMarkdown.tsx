@@ -28,8 +28,6 @@ import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { markdownImageSources } from "../../lib/markdownImageSources";
-import { decodeHtmlEntities } from "../../lib/markdownDocument";
-import { AppText } from "../../components/ui/AppText";
 import { FilePreviewGallery, useFilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { pullRequestImageSource } from "./pullRequestMediaSource";
 import {
@@ -198,9 +196,11 @@ function PullRequestBodySegmentView(props: {
   if (segment.kind === "details") {
     return (
       <View style={{ gap: 12 }}>
-        <AppText className="font-t3-medium text-sm text-foreground">
-          {decodeHtmlEntities(segment.summary) || "Details"}
-        </AppText>
+        <PullRequestMarkdownContent
+          markdown={`<summary>${segment.summary || "Details"}</summary>`}
+          gallery={props.gallery}
+          lineBreaks={props.lineBreaks}
+        />
         {segment.segments.map((detailsSegment) => (
           <PullRequestBodySegmentView key={detailsSegment.id} {...props} segment={detailsSegment} />
         ))}
