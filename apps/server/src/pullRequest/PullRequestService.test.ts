@@ -3662,9 +3662,13 @@ it.effect("rejects mismatched routing credentials before use and preserves actio
   }),
 );
 
-it.effect(
-  "opening detail preserves enriched linked summaries and updates draft and diff fields",
-  () =>
+it.effect.each([
+  { judged: undefined, expected: "approved" },
+  { judged: "changes-requested", expected: "changes-requested" },
+  { judged: null, expected: null },
+] as const)(
+  "opening detail preserves enriched linked summaries and updates draft, diff, and judged review fields ($judged)",
+  ({ judged, expected }) =>
     Effect.gen(function* () {
       const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
       const service = yield* makeService({
@@ -3688,6 +3692,7 @@ it.effect(
                 changedFiles: 5,
                 mergeability: "conflicting",
                 rebaseRequired: true,
+                ...(judged !== undefined && { reviewDecision: judged }),
               }),
           }),
         ],
@@ -3703,7 +3708,7 @@ it.effect(
       assert.strictEqual(summary.deletions, 3);
       assert.strictEqual(summary.changedFiles, 5);
       assert.strictEqual(summary.mergeability, "conflicting");
-      assert.strictEqual(summary.reviewDecision, "approved");
+      assert.strictEqual(summary.reviewDecision, expected);
       assert.strictEqual(summary.checksState, "passing");
     }),
 );

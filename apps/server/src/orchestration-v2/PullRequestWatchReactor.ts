@@ -226,6 +226,7 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     left.conflicting === right.conflicting &&
     left.rebaseRequired === right.rebaseRequired &&
     left.mergeQueueRemovalId === right.mergeQueueRemovalId &&
+    left.approved === right.approved &&
     left.wakes === right.wakes &&
     left.awaitingBaseline === right.awaitingBaseline &&
     left.checksAwaitedSince === right.checksAwaitedSince &&
