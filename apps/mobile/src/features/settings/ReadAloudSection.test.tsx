@@ -2,6 +2,7 @@ import {
   DEFAULT_READ_ALOUD_SETTINGS,
   EMPTY_SPEECH_SYNTHESIS_CATALOG,
   EnvironmentId,
+  READ_ALOUD_LABELS,
   type ReadAloudSettings,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
@@ -14,6 +15,7 @@ import { ReadAloudSection } from "./ReadAloudSection";
 const mocks = vi.hoisted(() => ({
   settings: null as ReadAloudSettings | null,
   failures: 0,
+  pendingKey: null as Promise<void> | null,
   catalogError: "",
   connection: { environmentId: "voice-host" },
   playback: { id: null, status: "idle" },
@@ -28,7 +30,9 @@ vi.mock("../../state/preferences", () => ({
   mobilePreferencesAtom: {},
   updateMobilePreferencesAtom: {},
 }));
-vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
+vi.mock("../../state/environments", () => ({
+  useEnvironments: () => ({ environments: [{ environmentId: "voice-host", label: "Voice host" }] }),
+}));
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: () => true,
   usePreparedConnection: () => Option.some(mocks.connection),
@@ -36,7 +40,21 @@ vi.mock("../../state/session", () => ({
 vi.mock("react-native", () => ({
   View: (props: { children?: ReactNode }) => <div>{props.children}</div>,
   ScrollView: (props: { children?: ReactNode }) => <div>{props.children}</div>,
-  TextInput: () => null,
+  TextInput: ({
+    value,
+    onChangeText,
+    accessibilityLabel,
+  }: {
+    value: string;
+    onChangeText(value: string): void;
+    accessibilityLabel: string;
+  }) => (
+    <input
+      aria-label={accessibilityLabel}
+      value={value}
+      onInput={(event) => onChangeText(event.currentTarget.value)}
+    />
+  ),
 }));
 vi.mock("expo-speech", () => ({ getAvailableVoicesAsync: async () => [] }));
 vi.mock("../../components/ui/AppText", () => ({
@@ -95,6 +113,7 @@ vi.mock("../voice-input/voiceDestination", () => ({
         apiKeyProvider: "xai",
         error: mocks.catalogError,
       };
+    if (mocks.pendingKey) return mocks.pendingKey;
     if (mocks.failures-- > 0) throw new Error("key operation failed");
   },
 }));
@@ -142,6 +161,7 @@ it.each(["retry", "source change"])("clears a failed key operation after %s", as
     environmentId: EnvironmentId.make("voice-host"),
   };
   mocks.failures = 1;
+  mocks.pendingKey = null;
   mocks.catalogError = "";
   await using screen = await mount();
   await click(screen.host, "Remove shared API key");
@@ -157,3 +177,38 @@ it.each(["retry", "source change"])("clears a failed key operation after %s", as
     expect(screen.host.querySelector('[role="alert"]')?.textContent).toBe("Later catalog error");
   else expect(screen.host.querySelector('[role="alert"]')).toBeNull();
 });
+
+it.each(["save", "remove"])(
+  "ignores stale key %s completions after switching providers",
+  async (operation) => {
+    mocks.settings = {
+      ...DEFAULT_READ_ALOUD_SETTINGS,
+      provider: "xai",
+      environmentId: EnvironmentId.make("voice-host"),
+    };
+    mocks.failures = 0;
+    mocks.catalogError = "";
+    const pending = Promise.withResolvers<void>();
+    mocks.pendingKey = pending.promise;
+    await using screen = await mount();
+    const draft = () =>
+      screen.host.querySelector<HTMLInputElement>('input[aria-label="Read-aloud API key"]')!;
+    const enter = async (value: string) =>
+      act(async () => {
+        draft().value = value;
+        draft().dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    await enter("original key");
+    await click(screen.host, operation === "save" ? "Save key" : "Remove shared API key");
+    await click(screen.host, "Speech provider");
+    await click(screen.host, READ_ALOUD_LABELS.openai);
+    await enter("new provider draft");
+    await act(async () => {
+      if (operation === "save") pending.resolve();
+      else pending.reject(new Error("old provider failed"));
+      await pending.promise.catch(() => {});
+    });
+    expect(draft().value).toBe("new provider draft");
+    expect(screen.host.querySelector('[role="alert"]')).toBeNull();
+  },
+);

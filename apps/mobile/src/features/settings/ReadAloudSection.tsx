@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
@@ -56,6 +56,7 @@ export function ReadAloudSection() {
   const [voices, setVoices] = useState<Speech.Voice[]>([]);
   const [error, setError] = useState("");
   const [key, setKey] = useState("");
+  const keyRequestVersion = useRef(0);
   const state = useSyncExternalStore(
     readAloudController.subscribe,
     readAloudController.getSnapshot,
@@ -63,6 +64,7 @@ export function ReadAloudSection() {
   const change = (patch: Partial<ReadAloudSettings>) => {
     readAloudController.stop();
     if (patch.provider !== undefined || patch.environmentId !== undefined) {
+      keyRequestVersion.current++;
       setKey("");
       setError("");
     }
@@ -82,7 +84,7 @@ export function ReadAloudSection() {
       mounted = false;
     };
   }, []);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load models from the selected environment and cancel obsolete requests.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load models and invalidate speech requests when their environment or provider changes.
   useEffect(() => {
     if (!prepared || settings.provider === "system" || settings.provider === "off") return;
     const abort = new AbortController();
@@ -102,7 +104,10 @@ export function ReadAloudSection() {
           });
       },
     );
-    return () => abort.abort();
+    return () => {
+      abort.abort();
+      keyRequestVersion.current++;
+    };
   }, [prepared, settings.provider, catalogKey, catalogVersion]);
   const selectedModel = catalog.models.find((entry) => entry.id === model);
   const voiceChoices =
@@ -197,16 +202,21 @@ export function ReadAloudSection() {
               disabled={!key.trim()}
               onPress={() => {
                 if (!catalog.apiKeyProvider) return;
+                const requestVersion = ++keyRequestVersion.current;
                 setError("");
                 void runSpeech(
                   setCloudSpeechKey(prepared, catalog.apiKeyProvider, key.trim()),
                 ).then(
                   () => {
+                    if (requestVersion !== keyRequestVersion.current) return;
                     setError("");
                     setKey("");
                     setCatalogVersion((value) => value + 1);
                   },
-                  () => setError("Could not save the API key."),
+                  () => {
+                    if (requestVersion === keyRequestVersion.current)
+                      setError("Could not save the API key.");
+                  },
                 );
               }}
             />
@@ -215,14 +225,19 @@ export function ReadAloudSection() {
               size="compact"
               onPress={() => {
                 if (!catalog.apiKeyProvider) return;
+                const requestVersion = ++keyRequestVersion.current;
                 setError("");
                 void runSpeech(setCloudSpeechKey(prepared, catalog.apiKeyProvider, null)).then(
                   () => {
+                    if (requestVersion !== keyRequestVersion.current) return;
                     setError("");
                     setKey("");
                     setCatalogVersion((value) => value + 1);
                   },
-                  () => setError("Could not remove the API key."),
+                  () => {
+                    if (requestVersion === keyRequestVersion.current)
+                      setError("Could not remove the API key.");
+                  },
                 );
               }}
             />
