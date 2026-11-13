@@ -1613,7 +1613,10 @@ async fn run_to_end(engine: &SqliteEngine, thread: &str, run: &str) -> Value {
         .unwrap()
         .iter()
         .any(|r| r["id"] == run && ended(r));
-    while !done {
+    if done {
+        return projection(engine, thread).await;
+    }
+    loop {
         let item = next(&mut stream).await;
         let payload = &item["event"]["payload"];
         if item["event"]["type"] == "run.updated" && payload["id"] == run && ended(payload) {
