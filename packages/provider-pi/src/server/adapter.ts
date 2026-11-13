@@ -807,12 +807,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         function* (record: PiRpcRecord) {
           if (extensionStatusReset !== null)
             return yield* protocolError("A Pi session lifecycle request is already pending");
-          // Pi replaces a session only once it is idle, and a held run never is.
-          if (heldRunAdmission !== null) {
-            yield* answerRunAdmission(heldRunAdmission, false);
-            heldRunAdmission = null;
-            declinedRunSettling = true;
-          }
           const reset = {
             previous: sessionEntity.extensionStatuses ?? [],
             touched: new Set<string>(),
@@ -826,6 +820,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             )
               return yield* protocolError("Pi transport closed during status reset");
             yield* Deferred.await(reset.ready);
+            // Pi replaces a session only once it is idle, and a held run never is. Declined after
+            // the barrier, so a run that reached its gate while this request queued is seen too.
+            if (heldRunAdmission !== null) {
+              yield* answerRunAdmission(heldRunAdmission, false);
+              heldRunAdmission = null;
+              declinedRunSettling = true;
+            }
             // Session hooks can wait on the user, so Pi gets the whole window after the last dialog.
             const deadline = Effect.gen(function* () {
               let wait = PI_SESSION_TIMEOUT_MS;
