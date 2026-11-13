@@ -355,6 +355,17 @@ export function resolveAddProjectPath(input: {
   return path.length === 0 ? { ok: false, error: "Enter a project path." } : { ok: true, path };
 }
 
+/**
+ * Mirrors the host's `~` expansion so a typed path can be matched against registered roots, which
+ * are absolute. The rest of the path is kept verbatim: `\\` is a file name character on POSIX.
+ */
+export function expandHomeProjectPath(path: string, homeDirectory: string): string {
+  if (path !== "~" && !path.startsWith("~/") && !path.startsWith("~\\")) {
+    return path;
+  }
+  return `${ensureBrowseDirectoryPath(homeDirectory)}${path.slice(2)}`;
+}
+
 export function findExistingAddProject(input: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly environmentId: EnvironmentId;

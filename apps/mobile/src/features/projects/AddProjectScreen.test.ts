@@ -6,7 +6,11 @@ import * as NodeModule from "node:module";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { workspaceDetailRouter } from "../layout/workspace/workspace-detail-selection";
 import type { NavigationState } from "@react-navigation/native";
-import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
+import {
+  AuthFilesystemReadScope,
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { act, createElement, isValidElement, type ReactNode } from "react";
@@ -22,7 +26,9 @@ const state = vi.hoisted(() => ({
     id: string;
     title: string;
     workspaceRoot: string;
+    repositoryIdentity?: { canonicalKey: string };
   }[],
+  cloneDestinations: [] as string[],
   createResult: null as Promise<unknown> | null,
   createNewResult: null as Promise<unknown> | null,
   startCloneResult: null as Promise<unknown> | null,
@@ -134,16 +140,36 @@ vi.mock("../../state/use-remote-environment-registry", () => ({
   }),
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
-vi.mock("../../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => () => {} }));
+vi.mock("../../state/use-atom-query-runner", () => ({
+  useAtomQueryRunner:
+    () =>
+    async ({ input }: { input: { partialPath: string } }) => {
+      // The host's filesystem.browse: expand `~`, then list the directory the path names.
+      const partialPath = input.partialPath;
+      const resolved = NodePath.posix.resolve(
+        partialPath === "~" || partialPath.startsWith("~/") || partialPath.startsWith("~\\")
+          ? NodePath.posix.join("/home/tester", partialPath.slice(2))
+          : partialPath,
+      );
+      const listsDirectory = /[\\/]$/.test(partialPath) || partialPath === "~";
+      return AsyncResult.success({
+        parentPath: listsDirectory ? resolved : NodePath.posix.dirname(resolved),
+        entries: [],
+      });
+    },
+}));
 vi.mock("../../state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
 vi.mock("../../state/presentation", () => ({
   useEnvironmentPresentation: () => ({ isReady: true, presentation: null }),
 }));
-vi.mock("../../state/filesystem", () => ({ filesystemEnvironment: {} }));
+vi.mock("../../state/filesystem", () => ({
+  filesystemEnvironment: { browse: (target: unknown) => target },
+}));
 vi.mock("../../state/sourceControl", () => ({
   sourceControlEnvironment: {
     discovery: (input: unknown) => input,
     startProjectClone: async ({ input }: { input: { destinationPath: string } }) => {
+      state.cloneDestinations.push(input.destinationPath);
       if (state.startCloneResult) return state.startCloneResult;
       NodeFS.mkdirSync(input.destinationPath);
       return AsyncResult.success(undefined);
@@ -754,5 +780,112 @@ describe("local folder path", () => {
     state.connectionStates = {};
     await screen.render();
     expect(screen.path).toBe("~/code/app");
+  });
+});
+
+describe("adding a folder that is already a project", () => {
+  function setup(input: { path: string; root: string; canonicalKey?: string }) {
+    state.navigationState = undefined;
+    state.scopes = new Set([
+      AuthOrchestrationOperateScope,
+      AuthSourceControlWriteScope,
+      AuthFilesystemReadScope,
+    ]);
+    state.baseDirectory = input.path;
+    state.existingProjects = [
+      {
+        environmentId: "environment",
+        id: "existing-project",
+        title: "Bike documents",
+        workspaceRoot: input.root,
+        ...(input.canonicalKey ? { repositoryIdentity: { canonicalKey: input.canonicalKey } } : {}),
+      },
+    ];
+    state.projects = [];
+    state.cloneDestinations = [];
+    state.createResult = null;
+    state.startCloneResult = Promise.resolve(
+      AsyncResult.failure(Cause.fail(new Error("Destination is not empty"))),
+    );
+    state.dispatch.mockReset();
+    state.alert.mockReset();
+    state.waitForProject.mockReset();
+    state.waitForProject.mockResolvedValue(null);
+    return {
+      navigation: mountProjectFlow(false),
+      [Symbol.dispose]: () => {
+        state.existingProjects = [];
+        state.startCloneResult = null;
+      },
+    };
+  }
+
+  it.each([
+    { path: "~/repro/bike-documents/", root: "/home/tester/repro/bike-documents", created: [] },
+    // `work\repo` is one folder on POSIX, not the registered `work\` > `repo`.
+    { path: "~/work\\repo", root: "/home/tester/work\\/repo", created: ["~/work\\repo"] },
+  ])("matches local folder $path against registered roots", async ({ path, root, created }) => {
+    using flow = setup({ path, root });
+    const submit = findAction(
+      renderScreen(() => AddProjectLocalFolderScreen({ environmentId: "environment" })),
+      "Add project",
+    );
+    if (!submit) throw new Error("Add project action missing");
+    await submit();
+
+    expect(state.projects).toEqual(created);
+    const opened = flow.navigation.getState().routes.at(-1)?.params;
+    if (created.length === 0) {
+      expect(state.alert.mock.calls).toEqual([
+        expect.arrayContaining(["Project already exists", "Bike documents"]),
+      ]);
+      expect(opened).toEqual({
+        draft: {
+          environmentId: "environment",
+          projectId: "existing-project",
+          title: "Bike documents",
+        },
+      });
+    } else {
+      expect(opened).toBeUndefined();
+    }
+  });
+
+  it.each([
+    { canonicalKey: "example.com/owner/bike-documents", cloned: [] },
+    { canonicalKey: "example.com/owner/other", cloned: ["~/repro/bike-documents"] },
+  ])("clones into a registered folder only for another repository ($canonicalKey)", async (row) => {
+    using flow = setup({
+      path: "~/repro",
+      root: "/home/tester/repro/bike-documents",
+      canonicalKey: row.canonicalKey,
+    });
+    const submit = findAction(
+      renderScreen(() =>
+        AddProjectDestinationScreen({
+          environmentId: "environment",
+          remoteUrl: "https://example.com/owner/bike-documents.git",
+          repositoryName: "bike-documents",
+          prompt: "Fix the bike",
+        }),
+      ),
+      "Clone project",
+    );
+    if (!submit) throw new Error("Clone action missing");
+    await submit();
+
+    expect(state.cloneDestinations).toEqual(row.cloned);
+    expect(flow.navigation.getState().routes.at(-1)?.params).toEqual(
+      row.cloned.length === 0
+        ? {
+            draft: {
+              environmentId: "environment",
+              projectId: "existing-project",
+              title: "Bike documents",
+              draftId: "prompt-draft",
+            },
+          }
+        : undefined,
+    );
   });
 });

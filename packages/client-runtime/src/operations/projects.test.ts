@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import {
+  expandHomeProjectPath,
   findExistingAddProject,
   getCloneDestinationForPickedFolder,
   getCloneDestinationPath,
@@ -220,5 +221,18 @@ describe("add project shared logic", () => {
     expect(findExistingAddProject({ projects, environmentId: env, path: "/repo" })?.id).toBe(
       "project",
     );
+  });
+
+  it.each([
+    { path: "~/work/repo", home: "/home/tester", expanded: "/home/tester/work/repo" },
+    { path: "~", home: "/home/tester", expanded: "/home/tester/" },
+    // On POSIX a backslash is part of the folder name, not a separator.
+    { path: "~/work\\repo", home: "/home/tester", expanded: "/home/tester/work\\repo" },
+    { path: "~\\work\\repo", home: "C:\\Users\\tester", expanded: "C:\\Users\\tester\\work\\repo" },
+    { path: "~/repo", home: "/", expanded: "/repo" },
+    { path: "~work/repo", home: "/home/tester", expanded: "~work/repo" },
+    { path: "/srv/~/repo", home: "/home/tester", expanded: "/srv/~/repo" },
+  ])("expands $path below the home folder $home", ({ path, home, expanded }) => {
+    expect(expandHomeProjectPath(path, home)).toBe(expanded);
   });
 });
