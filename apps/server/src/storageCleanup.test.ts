@@ -2332,6 +2332,24 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.effect("keeps a thread's worktree folder that lost its .git link", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* cleanupFixture();
+        fixture.setThreads([
+          shell({ branch: "feature", worktreePath: fixture.worktree, archivedAt: at(-DAY_MS) }),
+        ]);
+        yield* fixture.fs.remove(`${fixture.worktree}/.git`);
+        yield* fixture.fs.makeDirectory(`${fixture.worktree}/node_modules`);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toEqual([
+          expect.objectContaining({ path: fixture.worktree, outcome: "kept" }),
+        ]);
+        expect(yield* fixture.fs.exists(`${fixture.worktree}/node_modules`)).toBe(true);
+      }),
+    ),
+  );
   it.live("skips a stored worktree path whose parent is a regular file", () =>
     runCleanupTest(
       Effect.gen(function* () {
