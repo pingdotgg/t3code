@@ -155,6 +155,23 @@ remembering: an own server brings its own defects.
    the Grok bot runs it); add the Claude conformance check and the T3 replay to
    `tools/check.sh` with a list of expected failures.
 
+### Where the review reports are
+
+The reports are not in this repository. They are the last messages of archived T3 threads on
+Nick's Mac (environment `f4f0396f-abce-4d69-ab4d-fb7a3deb4a59`). Read one with
+`t3_thread_read` and the thread id
+`thread:delegated-task:command%3Amcp%3A5683d32c-4438-47d4-b4f5-f332534338a4%3Adelegate-task%3A<id>`.
+The check is the one to trust; several review findings did not hold.
+
+| Component | Review `<id>` | Check `<id>` |
+| --- | --- | --- |
+| Wire, contract, server core | `308d769a-2079-4298-acf5-0bbc6c2b7180` | `08e72c69-bfa8-4a7e-87a8-7bd1395d9d28` |
+| Engine | `62f9d7e3-2dc0-4b8c-a042-542001cbbf95` | `92e476d6-b3a6-408d-9c24-839223b3b7fc` |
+| Providers and provider design | `a8b8cd82-8224-43a8-b2ca-939e94a95969` | `bbc1e75d-fa7d-4682-8ad7-9b98409e498e` |
+| `/mcp`, VCS, files, terminals | `5f4ab600-8c53-4c67-a39a-66b70c973657` | `c6ed9769-964e-4c09-a5b4-8f4135bae4b7` |
+| Staying in step with upstream | `0cc1607f-a17a-4e15-8f8e-9067e0a9bd99` | `418f55a2-c39b-4001-aa8e-859d8418e74c` |
+| Rust practices and lints | `d81e0bb1-497f-423b-b126-4355d1499056` | `b7febae4-55da-48bc-a558-ea25ca6925a6` |
+
 ## Decisions that were open
 
 - `/mcp` accepts any session with `orchestration:read`, because Orbit's Swamp planned to call
