@@ -16,10 +16,10 @@ import {
   dedupeTurnItemBodies,
 } from "@t3tools/shared/orchestrationV2DedupedBodies";
 import {
+  commandIndicatesFailure,
   compactDynamicToolOutput,
   omitToolOutputImageData,
   toolOutputImages,
-  toolOutputIndicatesFailure,
 } from "@t3tools/shared/toolOutput";
 
 // A checkpoint over vendored or generated trees can list 15k+ files; the card needs a prefix.
@@ -166,12 +166,7 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
       const { output, ...projected } = item;
       // A successful search can print "ENOENT" or "exit code 2", so output text
       // decides only when the provider reported no exit code.
-      const failed =
-        item.exitCode === undefined
-          ? item.outputIndicatesFailure === true ||
-            (output !== undefined &&
-              toolOutputIndicatesFailure(output.slice(0, MAX_DETAIL_STRING_BYTES)))
-          : item.exitCode !== 0;
+      const failed = commandIndicatesFailure(item);
       return {
         ...projected,
         ...(failed ? { outputIndicatesFailure: true } : {}),

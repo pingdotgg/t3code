@@ -12,6 +12,7 @@ import {
   type ThreadId,
   type ThreadPullRequestWatch,
 } from "@t3tools/contracts";
+import { commandIndicatesFailure } from "@t3tools/shared/toolOutput";
 import {
   changeRequestsClosedBy,
   isChangeRequestCloseCommand,
@@ -903,14 +904,9 @@ export const make = Effect.gen(function* () {
             agentEnds.delete(event.threadId);
           }
         });
-        // Some providers report a command that exited nonzero as completed.
-        const succeeded =
-          item.status === "completed" &&
-          (item.exitCode === undefined
-            ? item.outputIndicatesFailure !== true
-            : item.exitCode === 0);
+        // Some providers report a command that failed as completed.
         return Effect.andThen(
-          succeeded ? Effect.void : done,
+          item.status === "completed" && !commandIndicatesFailure(item) ? Effect.void : done,
           FiberMap.run(
             agentReads,
             item.id,

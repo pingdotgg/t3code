@@ -4051,6 +4051,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       exitCode: 1,
       wakes: ["#19: merged, stopped watching", "#20: closed, stopped watching"],
     },
+    {
+      name: "failure-output",
+      status: "completed",
+      output: "GraphQL: Pull request is not mergeable\n<exited with exit code 1>",
+      wakes: ["#19: merged, stopped watching", "#20: closed, stopped watching"],
+    },
   ] as const)(
     "ends a watch without a wake when the thread's own agent merged it ($name)",
     ({ name: key, status: ended, wakes: expected, ...result }) =>
