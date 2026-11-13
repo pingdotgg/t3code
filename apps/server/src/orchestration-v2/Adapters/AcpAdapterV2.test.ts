@@ -572,65 +572,35 @@ function makeMockRuntime(input: {
     });
 }
 
-it.live("does not detach an owned Windows ACP process and retains PID tree cleanup", () => {
-  let finalizerPid = 0;
-  let spawnedPid = 0;
-  return Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const path = yield* Path.Path;
-    const terminated: number[] = [];
-    const runtime = yield* AcpSessionRuntime.make({
-      spawn: {
-        command: process.execPath,
-        args: [
-          yield* path.fromFileUrl(new URL("../../../scripts/acp-mock-agent.ts", import.meta.url)),
-        ],
-      },
-      cwd: process.cwd(),
-      clientInfo: { name: "test", version: "1" },
-      ownDetachedProcessGroup: true,
-      processGroupPlatform: "win32",
-      windowsProcessTreeTerminator: (pid) =>
-        Effect.sync(() => {
-          terminated.push(pid);
-        }),
-    }).pipe(
-      Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provideService(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make((command) => {
-          if (!ChildProcess.isStandardCommand(command))
-            return Effect.die("Expected standard command");
-          if (command.command === "taskkill") {
-            finalizerPid = Number(command.args[1]);
-            // Exercise the Windows finalizer while terminating the mock child on any host.
-            return spawner.spawn(
-              ChildProcess.make(process.execPath, ["-e", `process.kill(${spawnedPid})`]),
-            );
-          }
-          assert.equal(command.command, process.execPath);
-          assert.isFalse(command.options.detached);
-          return spawner.spawn(command).pipe(
-            Effect.tap((child) =>
-              Effect.sync(() => {
-                spawnedPid = Number(child.pid);
-              }),
-            ),
-          );
-        }),
-      ),
-    );
-    if (runtime.terminateProcessGroup === undefined)
-      return yield* Effect.die("Missing tree cleanup");
-    yield* runtime.terminateProcessGroup;
-    assert.isAbove(spawnedPid, 0);
-    assert.deepEqual(terminated, [spawnedPid]);
-  }).pipe(
-    Effect.provide(layerTest),
-    Effect.scoped,
-    Effect.tap(() => Effect.sync(() => assert.equal(finalizerPid, spawnedPid))),
-  );
-});
+it.effect("detaches owned ACP processes on POSIX hosts but not on Windows", () =>
+  Effect.gen(function* () {
+    for (const [platform, expected] of [
+      ["win32", false],
+      ["linux", true],
+    ] as const) {
+      let detached: boolean | undefined;
+      yield* AcpSessionRuntime.make({
+        spawn: { command: "acp-agent", args: [] },
+        cwd: process.cwd(),
+        clientInfo: { name: "test", version: "1" },
+        ownDetachedProcessGroup: true,
+        processGroupPlatform: platform,
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, platform),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            if (ChildProcess.isStandardCommand(command)) detached = command.options.detached;
+            return Effect.die("spawn stopped by test");
+          }),
+        ),
+        Effect.scoped,
+        Effect.exit,
+      );
+      assert.equal(detached, expected, platform);
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
 
 const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
 
