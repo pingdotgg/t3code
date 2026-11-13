@@ -134,6 +134,17 @@ describe("auto-settle days field", () => {
     expect(failAutoSettleDaysField(back.field, submitted.revision)).toBe(back.field);
   });
 
+  it("keeps a later save in flight when an earlier one is confirmed", () => {
+    const first = commitAutoSettleDaysField(type(autoSettleDaysField(14), "30")).field;
+    const second = commitAutoSettleDaysField(type(first, "60")).field;
+    const firstConfirmed = syncAutoSettleDaysField(second, 30);
+    expect(firstConfirmed).toMatchObject({ saved: 30, draft: "60", pending: 60 });
+    expect(failAutoSettleDaysField(firstConfirmed, second.revision)).toMatchObject({
+      draft: "30",
+      pending: null,
+    });
+  });
+
   it("keeps a draft in progress when the saved value changes underneath it", () => {
     const typing = type(autoSettleDaysField(14), "4");
     expect(syncAutoSettleDaysField(typing, 30)).toMatchObject({ saved: 30, draft: "4" });
