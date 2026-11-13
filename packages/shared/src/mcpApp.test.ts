@@ -143,6 +143,16 @@ describe("readMcpAppCsp", () => {
     ).toEqual({ connectDomains: ["https://ok.test", "http://localhost:3000"] });
     expect(readMcpAppCsp({ connectDomains: ["*"] })).toBeUndefined();
   });
+
+  it("keeps every domain of a long list, so the app's own script origin is allowed", () => {
+    const cdns = Array.from({ length: 41 }, (_, index) => `https://cdn${index}.app.test`);
+    const resourceDomains = [...cdns, "https://mcp.app.test"];
+    const csp = readMcpAppCsp({ resourceDomains });
+    expect(csp?.resourceDomains).toEqual(resourceDomains);
+    expect(mcpAppContentSecurityPolicy(csp)).toMatch(
+      /script-src 'unsafe-inline' [^;]*https:\/\/mcp\.app\.test/,
+    );
+  });
 });
 
 describe("readMcpAppReference", () => {
