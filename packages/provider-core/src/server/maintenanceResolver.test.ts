@@ -1634,6 +1634,55 @@ it.layer(
       }),
   );
 
+  for (const fixture of [
+    {
+      name: "an npm-shaped package",
+      definition: packageToolUpdate,
+      target: ["lib", "node_modules", "@example", "package-tool", "bin", "package-tool.exe"],
+    },
+    {
+      name: "a launcher script",
+      definition: nativePackageToolUpdate,
+      target: ["share", "native-package-tool", "native-package-tool"],
+    },
+  ]) {
+    it.effect.skipIf(!symlinksSupported || windowsHost)(
+      `leaves ${fixture.name} owned by MacPorts to MacPorts`,
+      () =>
+        Effect.gen(function* () {
+          const prefix = yield* makeTempDir("t3-macports");
+          writeExecutable(NodePath.join(prefix, "bin", "port"));
+          const target = NodePath.join(prefix, ...fixture.target);
+          writeExecutable(target);
+          const launcher = NodePath.join(prefix, "bin", NodePath.basename(target, ".exe"));
+          NodeFS.symlinkSync(target, launcher);
+
+          const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+            fixture.definition,
+            { binaryPath: launcher, env: { PATH: NodePath.join(prefix, "bin") } },
+          ).pipe(
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              stdoutSpawner((command, args) =>
+                NodePath.basename(command) === "port" && args.includes("provides")
+                  ? args.includes("-q")
+                    ? "package-tool\n"
+                    : args
+                        .filter((arg) => arg.startsWith("/"))
+                        .map((file) => `${file} is provided by: package-tool\n`)
+                        .join("")
+                  : "",
+              ),
+            ),
+          );
+
+          expect(capabilities.update).toBeNull();
+          expect(capabilities.manualCommand).toBe("sudo port upgrade package-tool");
+        }),
+    );
+  }
+
   it("quotes copyable command words the shell would split", () => {
     const posix = makeProviderMaintenanceCapabilities({
       provider: driver("packageTool"),
