@@ -23,6 +23,7 @@ export interface ThreadFindLocalSelection {
 /** Find is open in at most one thread: the one the chat view shows. */
 export interface ThreadFindState {
   readonly threadKey: string | null;
+  readonly source: "thread" | "sidebar";
   readonly query: string;
   readonly offset: number;
   readonly start: ThreadFindStart | undefined;
@@ -34,6 +35,7 @@ export interface ThreadFindState {
 
 export const CLOSED_THREAD_FIND: ThreadFindState = {
   threadKey: null,
+  source: "thread",
   query: "",
   offset: 0,
   start: undefined,
@@ -91,6 +93,7 @@ export function openThreadFind(threadKey: string): void {
   useThreadFindStore.setState({
     ...current,
     threadKey,
+    source: "thread",
     focusRequestId: previous.focusRequestId + 1,
     ...(query
       ? {
@@ -114,12 +117,17 @@ export interface PendingThreadFind {
  * Opens find on `query` in the thread, such as at the message a search result
  * came from. The thread's view shows it once it is on screen.
  */
-export function openThreadFindOnQuery(threadKey: string, find: PendingThreadFind): void {
+export function openThreadFindOnQuery(
+  threadKey: string,
+  find: PendingThreadFind,
+  source: ThreadFindState["source"] = "thread",
+): void {
   const previous = useThreadFindStore.getState();
   announceOpening(previous, threadKey);
   useThreadFindStore.setState({
     ...(previous.threadKey === threadKey ? previous : CLOSED_THREAD_FIND),
     threadKey,
+    source,
     query: find.query,
     offset: 0,
     start: find.start,
@@ -133,6 +141,7 @@ export function openThreadFindOnQuery(threadKey: string, find: PendingThreadFind
 export function setThreadFindQuery(threadKey: string, query: string): void {
   const start = readThreadFindPosition(threadKey, query.trim());
   useThreadFindStore.setState((previous) => ({
+    source: "thread",
     query,
     offset: 0,
     start,
@@ -142,7 +151,8 @@ export function setThreadFindQuery(threadKey: string, query: string): void {
   }));
 }
 
-export function closeThreadFind(): void {
+export function closeThreadFind(source?: ThreadFindState["source"]): void {
+  if (source !== undefined && useThreadFindStore.getState().source !== source) return;
   useThreadFindStore.setState(CLOSED_THREAD_FIND);
 }
 

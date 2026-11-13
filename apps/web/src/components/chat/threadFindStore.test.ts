@@ -64,6 +64,32 @@ describe("thread find store", () => {
     detach();
   });
 
+  it("dismisses sidebar finds without closing a find the user opened or edited", () => {
+    setup();
+    openThreadFindOnQuery(threadKey, { query: "manual" });
+    closeThreadFind("sidebar");
+    expect(useThreadFindStore.getState().query).toBe("manual");
+
+    openThreadFindOnQuery(threadKey, { query: "result" }, "sidebar");
+    closeThreadFind("sidebar");
+    expect(useThreadFindStore.getState().threadKey).toBeNull();
+
+    openThreadFindOnQuery(threadKey, { query: "result" }, "sidebar");
+    openThreadFind(threadKey);
+    closeThreadFind("sidebar");
+    expect(useThreadFindStore.getState().query).toBe("result");
+
+    openThreadFindOnQuery(threadKey, { query: "result" }, "sidebar");
+    setThreadFindQuery(threadKey, "edited");
+    closeThreadFind("sidebar");
+    expect(useThreadFindStore.getState().query).toBe("edited");
+
+    openThreadFindOnQuery(threadKey, { query: "result" }, "sidebar");
+    openThreadFindOnQuery(threadKey, { query: "palette" });
+    closeThreadFind("sidebar");
+    expect(useThreadFindStore.getState().query).toBe("palette");
+  });
+
   it("keeps find over Settings and Usage, and closes it on any other route", () => {
     setup();
     openThreadFindOnQuery(threadKey, { query: "x" });

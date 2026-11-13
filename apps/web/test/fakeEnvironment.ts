@@ -52,6 +52,11 @@ import { RpcSchema } from "effect/rpc";
 
 export const ENVIRONMENT_ID = EnvironmentId.make("environment-render");
 export const PROJECT_ID = ProjectId.make("project-render");
+type FakeRpcHandlers = {
+  readonly [Method in keyof WsRpcProtocolClient]?: (
+    input: Parameters<WsRpcProtocolClient[Method]>[0],
+  ) => ReturnType<WsRpcProtocolClient[Method]>;
+};
 const CODEX = ProviderInstanceId.make("codex");
 const MODEL = { instanceId: CODEX, model: "gpt-5.4" };
 const AT = DateTime.makeUnsafe("2026-03-17T19:12:28.000Z");
@@ -123,6 +128,7 @@ const makeServerConfig = (providers: ReadonlyArray<unknown>): ServerConfig => ({
   keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
 });
 let baseServerConfig = makeServerConfig([CODEX_PROVIDER]);
+let rpcOverrides: FakeRpcHandlers = {};
 // A server only leaves threads out of the shell when it serves their families.
 const serverConfig = (): ServerConfig =>
   threads.some((thread) => thread.olderSettled)
@@ -459,6 +465,7 @@ const handlers: Record<string, (input: never) => unknown> = {
 // Unanswered calls stay pending, like a server that has not replied yet.
 const client = new Proxy(handlers, {
   get: (target, method: string) =>
+    rpcOverrides[method as keyof WsRpcProtocolClient] ??
     target[method] ??
     (() => {
       const rpc = WsRpcGroup.requests.get(method);
@@ -506,18 +513,26 @@ const encodedDescriptor = Schema.encodeSync(ExecutionEnvironmentDescriptor)(
 /** Serves the environment's HTTP API and these threads until disposed. */
 export function installFakeEnvironment(
   fixtures: ReadonlyArray<FakeThread>,
-  options?: {
+  options: {
     readonly acceptCommands?: boolean;
+    readonly config?: Partial<ServerConfig>;
+    readonly rpc?: FakeRpcHandlers;
     /** Commands left unanswered even when accepting, until `rejectPendingCommand`. */
     readonly holdCommand?: (command: OrchestrationV2Command) => boolean;
     readonly providers?: ReadonlyArray<unknown>;
-  },
+  } = {},
 ): Disposable {
+  const previousConfig = baseServerConfig;
+  const previousRpc = rpcOverrides;
+  rpcOverrides = options.rpc ?? {};
   threads = fixtures;
-  baseServerConfig = makeServerConfig(options?.providers ?? [CODEX_PROVIDER]);
+  baseServerConfig = {
+    ...makeServerConfig(options.providers ?? [CODEX_PROVIDER]),
+    ...options.config,
+  };
   dispatched = [];
-  acceptCommands = options?.acceptCommands === true;
-  holdCommand = options?.holdCommand ?? (() => false);
+  acceptCommands = options.acceptCommands === true;
+  holdCommand = options.holdCommand ?? (() => false);
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if (url.origin !== window.location.origin) return realFetch(input, init);
@@ -537,9 +552,10 @@ export function installFakeEnvironment(
   };
   return {
     [Symbol.dispose]: () => {
+      rpcOverrides = previousRpc;
       globalThis.fetch = realFetch;
       threads = [];
-      baseServerConfig = makeServerConfig([CODEX_PROVIDER]);
+      baseServerConfig = previousConfig;
       dispatched = [];
       acceptCommands = false;
       holdCommand = () => false;
