@@ -411,6 +411,47 @@ it.live("signs in a hosted agent with an https callback that asked for a client 
   ),
 );
 
+it.live("answers a missing, empty or repeated grant_type with invalid_request", () =>
+  withRoutes((handler) =>
+    Effect.gen(function* () {
+      const bodies = [
+        "",
+        "grant_type=",
+        "grant_type=authorization_code&grant_type=authorization_code",
+      ];
+      const observed = yield* Effect.forEach(bodies, (body) =>
+        handler(
+          at("/oauth/mcp/token", {
+            method: "POST",
+            headers: { "content-type": "application/x-www-form-urlencoded" },
+            body,
+          }),
+        ).pipe(
+          Effect.flatMap((response) =>
+            Effect.promise(async () => {
+              const text = await response.text();
+              return {
+                body,
+                status: response.status,
+                cacheControl: response.headers.get("cache-control"),
+                error: text ? (JSON.parse(text) as { error?: string }).error : undefined,
+              };
+            }),
+          ),
+        ),
+      );
+      expect(observed).toEqual(
+        bodies.map((body) => ({
+          body,
+          status: 400,
+          cacheControl: "no-store",
+          error: "invalid_request",
+        })),
+      );
+    }),
+  ),
+);
+
 it.live("rejects a wrong PKCE verifier and spends the code", () =>
   withRoutes((handler, auth) =>
     Effect.gen(function* () {
