@@ -4,10 +4,14 @@ import {
   ThreadId,
   type ScopedThreadRef,
   type FilesystemEntryMetadata,
+  type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { compileResolvedKeybindingsConfig, DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { Atom, AsyncResult } from "effect/reactivity";
 import type { GhosttyTerminalSurfaceOptions } from "~/terminal/ghostty/surface";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../rpc/atomRegistry";
+import { useRightPanelStore } from "../rightPanelStore";
+import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { extractTerminalLinks } from "../terminal-links";
 import { expect, it, vi } from "vite-plus/test";
 import { act, fakeTimers, render } from "../../test/render";
@@ -110,6 +114,7 @@ function Drawer(props: {
   threadRef: ScopedThreadRef;
   cwd?: string;
   onCloseTerminal: (terminalId: string, threadRef?: ScopedThreadRef) => void;
+  keybindings?: ResolvedKeybindingsConfig;
 }) {
   return (
     <ThreadTerminalDrawer
@@ -128,7 +133,7 @@ function Drawer(props: {
       onCloseTerminal={props.onCloseTerminal}
       onHeightChange={() => {}}
       onAddTerminalContext={() => {}}
-      keybindings={[]}
+      keybindings={props.keybindings ?? []}
     />
   );
 }
@@ -149,6 +154,8 @@ function setup() {
   fixture.pendingSurfaces = [];
   fixture.surfaceOptions = [];
   fixture.metadata.clear();
+  useRightPanelStore.setState(useRightPanelStore.getInitialState());
+  useTerminalUiStateStore.setState(useTerminalUiStateStore.getInitialState());
   return { original, other };
 }
 
@@ -168,6 +175,42 @@ it("closes an exited terminal on its own thread after navigating to one reusing 
     vi.runOnlyPendingTimers();
   });
   expect(onCloseTerminal.mock.calls).toEqual([["term-1", original]]);
+});
+
+// Thread navigation defaults have no `!terminalFocus`, so they apply in a focused terminal.
+it("hands thread navigation shortcuts from a focused terminal back to the app", async () => {
+  const { other: threadRef } = setup();
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  useRightPanelStore.getState().openBrowser(threadRef, null);
+  await using _screen = await render(
+    <Drawer
+      threadRef={threadRef}
+      onCloseTerminal={() => {}}
+      keybindings={compileResolvedKeybindingsConfig([
+        ...DEFAULT_KEYBINDINGS,
+        { key: "ctrl+r", command: "thread.next", when: "!previewOpen" },
+        { key: "ctrl+g", command: "thread.previous", when: "terminalOpen" },
+      ])}
+    />,
+  );
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  const terminalHandles = (key: string, code: string, shiftKey = true) =>
+    fixture.surfaceOptions
+      .at(-1)!
+      .beforeKey(new KeyboardEvent("keydown", { key, code, ctrlKey: true, shiftKey }));
+
+  expect([terminalHandles("{", "BracketLeft"), terminalHandles("}", "BracketRight")]).toEqual([
+    false,
+    false,
+  ]);
+  expect(terminalHandles("C", "KeyC")).toBe(true);
+  // Sidebar sees the open preview and the closed drawer and rejects these, so the shell keeps them.
+  expect([terminalHandles("r", "KeyR", false), terminalHandles("g", "KeyG", false)]).toEqual([
+    true,
+    true,
+  ]);
 });
 
 it("only activates terminal paths confirmed to exist on their environment", async () => {

@@ -593,6 +593,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
               createdBy: item.createdBy,
               creationSource: item.creationSource,
               ...(item.senderThreadId !== undefined ? { senderThreadId: item.senderThreadId } : {}),
+              ...(item.linkedSender !== undefined ? { linkedSender: item.linkedSender } : {}),
               ...(item.idleCompaction !== undefined ? { idleCompaction: item.idleCompaction } : {}),
               ...(item.scheduledTaskId !== undefined
                 ? { scheduledTaskId: item.scheduledTaskId }
@@ -651,22 +652,6 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       continue;
     }
 
-    const mcpApp = item.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
-    if (mcpApp !== undefined) {
-      entries.push({
-        id: item.id,
-        kind: "mcp-app",
-        createdAt,
-        runId: item.runId,
-        sourceThreadId: row.sourceThreadId,
-        itemId: row.sourceItemId,
-        revision: turnItemDetailRevision(item),
-        mcpApp,
-        ...attemptMetadata,
-      });
-      continue;
-    }
-
     if (STANDALONE_V2_ITEM_TYPES.has(item.type)) {
       entries.push({
         id: item.id,
@@ -685,6 +670,21 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       entry: projectedWorkEntry(row),
       ...attemptMetadata,
     });
+
+    const mcpApp = item.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
+    if (mcpApp !== undefined) {
+      entries.push({
+        id: `mcp-app:${item.id}`,
+        kind: "mcp-app",
+        createdAt,
+        runId: item.runId,
+        sourceThreadId: row.sourceThreadId,
+        itemId: row.sourceItemId,
+        revision: turnItemDetailRevision(item),
+        mcpApp,
+        ...attemptMetadata,
+      });
+    }
   }
 
   const retainedMessageIds = new Set([
@@ -821,24 +821,34 @@ export function isStreamingMessageTextUpdate(previous: ChatMessage, next: ChatMe
   return shallow(previousMetadata, nextMetadata);
 }
 
+function streamedTextMetadata(item: OrchestrationV2TurnItem) {
+  if (item.type === "proposed_plan" && item.streaming) {
+    const { markdown: _markdown, updatedAt: _updatedAt, ...metadata } = item;
+    return metadata;
+  }
+  if ((item.type === "assistant_message" || item.type === "reasoning") && item.streaming) {
+    const { text: _text, updatedAt: _updatedAt, ...metadata } = item;
+    return metadata;
+  }
+  return null;
+}
+
 export function isStreamingTurnItemTextUpdate(
   previous: OrchestrationV2ProjectedTurnItem,
   next: OrchestrationV2ProjectedTurnItem,
 ): boolean {
   const { item: previousItem, ...previousSource } = previous;
   const { item: nextItem, ...nextSource } = next;
+  const previousMetadata = streamedTextMetadata(previousItem);
+  const nextMetadata = streamedTextMetadata(nextItem);
   if (
-    previousItem.type !== "assistant_message" ||
-    nextItem.type !== "assistant_message" ||
-    !previousItem.streaming ||
-    !nextItem.streaming ||
+    previousMetadata === null ||
+    nextMetadata === null ||
     !shallow(previousSource, nextSource) ||
     projectedItemCreatedAt(previous) !== projectedItemCreatedAt(next)
   ) {
     return false;
   }
-  const { text: _previousText, updatedAt: _previousUpdatedAt, ...previousMetadata } = previousItem;
-  const { text: _nextText, updatedAt: _nextUpdatedAt, ...nextMetadata } = nextItem;
   // Wire decoding recreates timestamps and attachments; compare only the changed item's metadata.
   return Equal.equals(previousMetadata, nextMetadata);
 }
@@ -859,9 +869,25 @@ function canRederiveInPlace(
     item.item.type !== "user_message" &&
     item.item.type !== "assistant_message" &&
     item.item.type !== "user_input_request" &&
+    // An app call projects two entries; in-place reuse replaces one.
+    (previousItem.item.type !== "dynamic_tool" ||
+      mcpAppFromToolItem(previousItem.item) === undefined) &&
     ((input.anchoredMessages?.length ?? 0) === 0 ||
       projectedItemCreatedAt(item) === projectedItemCreatedAt(previousItem))
   );
+}
+
+/** Entries read only each plan's status; streaming plans rebuild artifacts with every delta. */
+function samePlanStatuses(
+  next: TimelineEntriesInput["plans"],
+  previous: TimelineEntriesInput["plans"],
+): boolean {
+  if (next === previous) return true;
+  if (next === undefined || previous === undefined || next.length !== previous.length) return false;
+  return next.every((plan, index) => {
+    const before = previous[index]!;
+    return plan.id === before.id && plan.kind === before.kind && plan.status === before.status;
+  });
 }
 
 function reuseTimelineEntries(
@@ -876,7 +902,7 @@ function reuseTimelineEntries(
     !shallow(input.attachmentUrlById, before.attachmentUrlById) ||
     !shallow(input.attempts, before.attempts) ||
     !shallow(input.nodes, before.nodes) ||
-    !shallow(input.plans, before.plans)
+    !samePlanStatuses(input.plans, before.plans)
   ) {
     return null;
   }
@@ -909,7 +935,11 @@ function reuseTimelineEntries(
     const previousItem = before.visibleTurnItems[index]!;
     const item = input.visibleTurnItems[index]!;
     if (item === previousItem) continue;
-    if (isStreamingTurnItemTextUpdate(previousItem, item)) {
+    // Reasoning and plan text re-derive below; only assistant text patches the message.
+    if (
+      item.item.type === "assistant_message" &&
+      isStreamingTurnItemTextUpdate(previousItem, item)
+    ) {
       replacements.set(previousItem, item);
       continue;
     }
