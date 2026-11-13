@@ -14,6 +14,7 @@ import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 import type { OtlpTracer } from "effect/observability";
 
 import {
@@ -542,6 +543,35 @@ describe("observability", () => {
         assert.equal(
           child.events.some((event) => event.attributes["effect.logLevel"] === "INFO"),
           true,
+        );
+      }),
+    );
+
+    it.effect("keeps a SQL span only when it is slow or failed", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-local-tracer-" });
+        const tracePath = path.join(tempDir, "shared.trace.ndjson");
+        const sql = { attributes: { "db.system.name": "sqlite" } };
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* Effect.void.pipe(Effect.withSpan("fast", sql));
+            yield* Effect.void.pipe(Effect.withSpan("other"));
+            yield* Effect.exit(Effect.fail("boom").pipe(Effect.withSpan("failed", sql)));
+            const slow = yield* Effect.sleep("10 millis").pipe(
+              Effect.withSpan("slow", sql),
+              Effect.forkChild,
+            );
+            yield* TestClock.adjust("10 millis");
+            yield* Fiber.join(slow);
+          }).pipe(Effect.provide(layerTest(tracePath))),
+        );
+
+        assert.deepStrictEqual(
+          (yield* readTraceRecords(tracePath)).map((record) => record.name),
+          ["other", "failed", "slow"],
         );
       }),
     );

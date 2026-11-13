@@ -1216,13 +1216,11 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
         "aggregateKind" in stored ? [] : [stored.event.threadId],
       );
       // A failed batch can't name its thread, so the scalar reads below report which one is bad.
-      // These reads run per event batch per subscriber, so this span times them as one.
       const batch =
         threadIds.length > 1
-          ? yield* threadManagement.getShellSnapshot({ threadIds }).pipe(
-              Effect.orElseSucceed(() => null),
-              Effect.withTracerEnabled(false),
-            )
+          ? yield* threadManagement
+              .getShellSnapshot({ threadIds })
+              .pipe(Effect.orElseSucceed(() => null))
           : null;
       const batchedShells =
         batch === null
@@ -1242,9 +1240,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
             const threadId = stored.event.threadId;
             const shell =
               batchedShells === null
-                ? yield* threadManagement
-                    .getThreadShell(threadId)
-                    .pipe(Effect.withTracerEnabled(false))
+                ? yield* threadManagement.getThreadShell(threadId)
                 : (batchedShells.get(threadId) ?? null);
             return shellStreamItemFromThreadShell({ stored, shell });
           }),

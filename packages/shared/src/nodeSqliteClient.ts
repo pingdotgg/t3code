@@ -80,12 +80,7 @@ const annotateAcquired = (
   acquired: Acquired | undefined,
   ownerAtWaitStart?: ConnectionOwner,
 ) => {
-  let span = Context.getOrUndefined(fiber.context, Tracer.ParentSpan);
-  // A transaction run with tracing off has no span of its own; the span that owns it is the
-  // nearest one that is written, the same one Effect gives that transaction's children.
-  while (span?._tag === "Span" && Context.get(span.annotations, Tracer.DisablePropagation)) {
-    span = Option.getOrUndefined(span.parent);
-  }
+  const span = Context.getOrUndefined(fiber.context, Tracer.ParentSpan);
   if (span?._tag !== "Span" || acquired === undefined) return;
   span.attribute("db.connection", acquired.connection);
   span.attribute("db.lock_wait_ms", acquired.lockWaitMs);

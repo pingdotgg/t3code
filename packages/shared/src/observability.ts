@@ -581,6 +581,10 @@ function redactExitCredentials(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unk
   return cause === exit.cause ? exit : ExitRuntime.failCause(cause);
 }
 
+// SQL spans end several times per streamed event and filled about half the trace file.
+// The file keeps the ones worth reading later: slow, failed, or carrying a log.
+const ROUTINE_SQL_SPAN_MAX_NANOS = 10_000_000n;
+
 class LocalFileSpan implements Tracer.Span {
   readonly _tag = "Span";
   readonly name: string;
@@ -632,7 +636,12 @@ class LocalFileSpan implements Tracer.Span {
     };
     this.delegate.end(endTime, redactExitCredentials(traceExit));
 
-    if (this.sampled) {
+    const routineSql =
+      this.attributes.has("db.system.name") &&
+      ExitRuntime.isSuccess(exit) &&
+      this.events.length === 0 &&
+      endTime - this.status.startTime < ROUTINE_SQL_SPAN_MAX_NANOS;
+    if (this.sampled && !routineSql) {
       this.push(spanToTraceRecord(this));
     }
   }
