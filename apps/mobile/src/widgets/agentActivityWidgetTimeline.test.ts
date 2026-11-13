@@ -4,6 +4,7 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
 
 import {
+  AGENT_ACTIVITY_ANDROID_WIDGET_STALE_AFTER_MS,
   AGENT_ACTIVITY_WIDGET_STALE_AFTER_MS,
   agentActivityWidgetSnapshot,
   agentActivityWidgetTimeline,
@@ -89,7 +90,7 @@ describe("agentActivityWidgetTimeline", () => {
       "running",
       "completed",
     ]);
-    expect(snapshot.stale?.at).toBe(now + AGENT_ACTIVITY_WIDGET_STALE_AFTER_MS);
+    expect(snapshot.stale?.at).toBe(now + AGENT_ACTIVITY_ANDROID_WIDGET_STALE_AFTER_MS);
     expect(snapshot.stale?.activities.map((entry) => entry.status)).toEqual([
       "Out of date",
       "Out of date",
