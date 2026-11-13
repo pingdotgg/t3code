@@ -427,6 +427,26 @@ export function projectComposerContextForProvider(input: {
   return `${body}\n\n<${CONTEXT_ENVELOPE_TAG} version="1">\n${entries.join("\n")}\n</${CONTEXT_ENVELOPE_TAG}>`;
 }
 
+const ENVELOPE_OPEN = `<${CONTEXT_ENVELOPE_TAG} version="1">`;
+const ENVELOPE_CLOSE = `</${CONTEXT_ENVELOPE_TAG}>`;
+const PROVIDER_MARKER = /\[([A-Z][^[\]:;\n]*): ([^[\];\n]*); ref=[^[\]\s]*\]/g;
+
+/** Readable form of `projectComposerContextForProvider` output: markers keep their label, envelopes go. */
+export function composerContextProviderTextForDisplay(text: string): string {
+  let result = "";
+  let cursor = 0;
+  for (;;) {
+    const start = text.indexOf(ENVELOPE_OPEN, cursor);
+    if (start === -1) break;
+    const end = text.indexOf(ENVELOPE_CLOSE, start);
+    if (end === -1) break;
+    result += text.slice(cursor, start).trimEnd();
+    cursor = end + ENVELOPE_CLOSE.length;
+  }
+  if (cursor === 0) return text;
+  return (result + text.slice(cursor)).replace(PROVIDER_MARKER, "[$1: $2]").trim();
+}
+
 // An agent reads threads on its own machine and on those it links to, even when a draft
 // moves between machines.
 export function threadContextsOutsideEnvironment(input: {

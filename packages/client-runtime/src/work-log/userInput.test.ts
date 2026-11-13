@@ -22,13 +22,13 @@ describe("question answer display", () => {
   it("keeps the provider context envelope out of answer history and preview", () => {
     const history = getQuestionAnswerText(answerWithReviewComment);
     const preview = getQuestionAnswerPreview({
+      requestId: "request-1",
       answers: { q1: answerWithReviewComment },
       attachmentsByQuestionId: {},
       questionTextById: { q1: "What should change?" },
     });
 
-    expect(history).toContain("See my note:");
-    expect(history).not.toContain("<t3_context");
+    expect(history).toBe("See my note: [Review comment: notes.md L2]");
     expect(preview).toContain("See my note:");
     expect(preview).not.toContain("<t3_context");
   });
