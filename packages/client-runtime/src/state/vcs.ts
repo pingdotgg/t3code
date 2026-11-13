@@ -341,6 +341,13 @@ export function createVcsEnvironmentAtoms<R, E>(
       concurrency: vcsCommandConcurrency,
       onSettled: invalidateRefs,
     }),
+    // Outside the serial queue: it only reads status, and a checkout picked right after opening
+    // the picker must not wait behind that read.
+    refreshLocalStatusForPicker: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:refresh-local-status-for-picker",
+      tag: WS_METHODS.vcsRefreshStatus,
+      onSettled: invalidateRefs,
+    }),
     createWorktree: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:create-worktree",
       tag: WS_METHODS.vcsCreateWorktree,
