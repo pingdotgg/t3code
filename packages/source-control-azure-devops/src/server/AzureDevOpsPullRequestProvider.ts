@@ -525,7 +525,7 @@ export const make = Effect.gen(function* () {
               }),
             );
           }
-          const batch = changes.slice(index, index + batchWidth());
+          const batch = changes.slice(index, Math.min(index + batchWidth(), blobsUntil));
           const read = yield* Effect.forEach(
             batch,
             (change) =>

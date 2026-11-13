@@ -309,7 +309,11 @@ describe("getDiff reads", () => {
   it.effect("starts a new blob batch where the last one's files run out", () =>
     Effect.gen(function* () {
       const paths = Array.from({ length: BLOB_BATCH_FILES + 3 }, (_, at) => `f${at}.ts`);
+      // Added lines that bring the slice near its edit budget by file 96, so the read batches
+      // there narrow to 3 and the one from file 99 would reach past the blob batch.
+      const added = (at: number) => (at < 60 ? 41 : at < 96 ? 40 : at < 99 ? 0 : 10);
       const batchSizes: number[] = [];
+      let fileReads = 0;
 
       const provider = yield* make.pipe(
         Effect.provide(
@@ -329,9 +333,18 @@ describe("getDiff reads", () => {
               Effect.sync(() => {
                 batchSizes.push(input.objectIds.length);
                 return new Map(
-                  input.objectIds.map((id) => [id, { contents: "same\n", isBinary: false }]),
+                  input.objectIds.map((id) => {
+                    const at = Number(id.slice(1, id.indexOf(".")));
+                    const lines = id.endsWith("-new") ? added(at) : 0;
+                    return [
+                      id,
+                      { contents: lines === 0 ? "" : side("+", lines, 1), isBinary: false },
+                    ];
+                  }),
                 );
               }),
+            readItemContent: () =>
+              Effect.sync(() => ((fileReads += 1), { contents: "", isBinary: false })),
           }),
         ),
       );
@@ -345,6 +358,7 @@ describe("getDiff reads", () => {
 
       expect(patchedPaths(slice.patch)).toHaveLength(paths.length);
       expect(batchSizes).toEqual([2 * BLOB_BATCH_FILES, 6]);
+      expect(fileReads).toBe(0);
     }),
   );
 
