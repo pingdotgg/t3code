@@ -76,6 +76,6 @@ it.layer(layerTest)("FxDriver binary path", (it) => {
       assert.isNotEmpty(launches);
       assert.deepEqual([...new Set(launches)], [path.join("/test-home", ".local", "bin", "fx")]);
       assert.isTrue(snapshot.installed);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
