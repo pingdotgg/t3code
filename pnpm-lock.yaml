@@ -362,6 +362,7 @@ patchedDependencies:
   '@alchemy.run/test@2.0.0-beta.85': 29c0539ea71d9cc372f0b16558640599beb9bc609605feb2a493da268d72713e
   '@clerk/expo-native-components@0.4.4': 7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4
   '@cursor/sdk@1.2.0': 57f502128bf6accd976963b126e227c86a45d815a53a8dc450461beae3bed4a4
+  '@effect/platform-node-shared@4.1.2': 285f31ebe703ad4303b1dea2d398855178ee29381eae470f76931172052db53e
   '@effect/vitest@4.1.2': 299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7
   '@expo/ui@58.0.27': 9f2547678939f4ec78fe45163b6455aad63d3c80353d7e0cc783f6a61a7ccc2f
   '@ff-labs/fff-node@0.11.0': a71dc3a5544fc47afacf0fe9da04dccec3018e625a76c96087ebfdf35e293768
@@ -854,7 +855,7 @@ importers:
         version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/platform-node-shared':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
+        version: 4.1.2(patch_hash=285f31ebe703ad4303b1dea2d398855178ee29381eae470f76931172052db53e)(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
       '@ff-labs/fff-node':
         specifier: 0.11.0
         version: 0.11.0(patch_hash=a71dc3a5544fc47afacf0fe9da04dccec3018e625a76c96087ebfdf35e293768)
@@ -14292,13 +14293,13 @@ snapshots:
 
   '@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)':
     dependencies:
-      '@effect/platform-node-shared': 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
+      '@effect/platform-node-shared': 4.1.2(patch_hash=285f31ebe703ad4303b1dea2d398855178ee29381eae470f76931172052db53e)(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
       effect: 4.1.3
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node-shared@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)':
+  '@effect/platform-node-shared@4.1.2(patch_hash=285f31ebe703ad4303b1dea2d398855178ee29381eae470f76931172052db53e)(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)':
     dependencies:
       '@types/ws': 8.18.2
       effect: 4.1.3
@@ -14309,7 +14310,7 @@ snapshots:
 
   '@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)':
     dependencies:
-      '@effect/platform-node-shared': 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
+      '@effect/platform-node-shared': 4.1.2(patch_hash=285f31ebe703ad4303b1dea2d398855178ee29381eae470f76931172052db53e)(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
       effect: 4.1.3
       redis: 6.2.1
       undici: 8.12.4
