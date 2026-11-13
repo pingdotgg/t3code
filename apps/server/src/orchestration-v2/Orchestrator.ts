@@ -4000,7 +4000,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .pipe(mapDispatchError(command));
       if (
         records.subagents.some(
-          (task) => task.origin === "app_owned" && isOrchestrationV2WorkActive(task.status),
+          (task) =>
+            task.origin === "app_owned" &&
+            task.childThreadId !== null &&
+            isOrchestrationV2WorkActive(task.status),
         )
       ) {
         return yield* new OrchestratorDispatchError({
