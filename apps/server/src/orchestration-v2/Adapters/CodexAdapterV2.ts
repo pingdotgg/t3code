@@ -8011,6 +8011,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 readonly completion: Deferred.Deferred<void, never>;
               }> = [];
               const trackedInterruptNativeTurnIds = new Set<string>();
+              // Untraced: runs once per lineage turn inside the interruptTurn span.
               const trackInterruptTarget = Effect.fnUntraced(function* (
                 context: ActiveCodexTurnContext,
               ) {
