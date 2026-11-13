@@ -8,6 +8,7 @@ import {
 } from "@ff-labs/fff-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -15,7 +16,6 @@ import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
@@ -73,6 +73,77 @@ it.effect("filters image searches before applying the result limit", () =>
       expect(fileSearch).toHaveBeenCalledWith("", { pageSize: 25_002 });
     }),
   ).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("fetches past a first page of Git-ignored results", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-search-ignored-" });
+      const vcsProcess = yield* VcsProcess.VcsProcess;
+      yield* vcsProcess.run({ operation: "test.gitInit", command: "git", args: ["init"], cwd });
+      yield* fs.writeFileString(path.join(cwd, ".git", "info", "exclude"), "hidden/\n");
+      yield* fs.makeDirectory(path.join(cwd, "hidden"));
+      yield* fs.writeFileString(path.join(cwd, "hidden", "a.ts"), "");
+
+      const items = [
+        fileItem("hidden/a.ts"),
+        fileItem("hidden/b.ts"),
+        fileItem("hidden/c.ts"),
+        fileItem("src/a.ts"),
+      ];
+      const fileSearch = vi.fn((_query: string, options?: { pageSize?: number }) => ({
+        ok: true as const,
+        value: {
+          items: items.slice(0, options?.pageSize),
+          scores: [],
+          totalMatched: items.length,
+          totalFiles: items.length,
+        },
+      }));
+      const finder = {
+        destroy: vi.fn(),
+        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+        isScanning: () => false,
+        watch: () => ({ ok: true as const, value: () => undefined }),
+        fileSearch,
+      } as unknown as FileFinder;
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+      const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
+      const result = yield* searchIndex.search("a", 1, "file", false);
+
+      expect(result).toEqual({ entries: [{ kind: "file", path: "src/a.ts" }], truncated: false });
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+// A backslash is a file name character on Linux and macOS, so only Windows may treat it as a separator.
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "keeps a backslash in a POSIX folder name as part of the search result path",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const items = [fileItem("dir\\one/report.txt")];
+        const finder = {
+          destroy: vi.fn(),
+          waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+          isScanning: () => false,
+          watch: () => ({ ok: true as const, value: () => undefined }),
+          fileSearch: vi.fn(() => ({
+            ok: true as const,
+            value: { items, scores: [], totalMatched: 1, totalFiles: 1 },
+          })),
+        } as unknown as FileFinder;
+        vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+        const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
+        const result = yield* searchIndex.search("report", 50, "file");
+
+        expect(result.entries).toEqual([{ kind: "file", path: "dir\\one/report.txt" }]);
+      }),
+    ).pipe(Effect.provide(testLayer)),
 );
 
 it.effect("continues whole-word searches after a filtered grep page", () =>
@@ -284,7 +355,7 @@ it.effect("keeps symlinks once the watcher subscribes after starting late", () =
   ).pipe(Effect.provide(testLayer)),
 );
 
-it.effect("lists a symlink the watcher already indexed once, with the link's kind", () =>
+it.effect("lists a symlink the watcher indexed once, with the link's kind", () =>
   Effect.scoped(
     Effect.gen(function* () {
       if ((yield* HostProcess.Platform) === "win32") return;
@@ -344,4 +415,35 @@ it.effect("finds symlinks in folders past the first page of the index", () =>
       ]);
     }),
   ).pipe(Effect.provide(testLayer)),
+);
+
+// fff reads HOME on Linux and macOS but the user profile on Windows, so a temp HOME cannot stand in there.
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "refuses to index a workspace rooted at the home directory",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-search-home-" }),
+        );
+        yield* fs.makeDirectory(path.join(home, "OneDrive", "Remix"), { recursive: true });
+        yield* fs.writeFileString(path.join(home, "OneDrive", "Remix", "part.stl"), "solid part\n");
+        yield* Effect.acquireRelease(
+          Effect.sync(() => vi.stubEnv("HOME", home)),
+          () => Effect.sync(() => vi.unstubAllEnvs()),
+        );
+
+        const result = yield* WorkspaceSearchIndex.make(home).pipe(
+          Effect.flatMap((searchIndex) => searchIndex.search("stl", 50, undefined, false)),
+          Effect.map(({ entries }) => entries),
+          Effect.catchTags({
+            WorkspaceSearchIndexCreateFailed: (error) => Effect.succeed(error._tag),
+          }),
+        );
+
+        expect(result).toBe("WorkspaceSearchIndexCreateFailed");
+      }),
+    ).pipe(Effect.provide(testLayer)),
 );
