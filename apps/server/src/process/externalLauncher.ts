@@ -133,6 +133,8 @@ function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAnd
 function resolveCommandEditorArgs(
   editor: (typeof EDITORS)[number],
   target: string,
+  isDirectory: boolean,
+  projectRoot: string | undefined,
 ): ReadonlyArray<string> {
   const parsedTarget = parseTargetPathAndPosition(target);
 
@@ -140,11 +142,15 @@ function resolveCommandEditorArgs(
     case "direct-path":
       return [target];
     case "goto":
-      return Option.isSome(parsedTarget) ? ["--goto", target] : [target];
+      if (Option.isSome(parsedTarget)) return ["--goto", target];
+      // Without a window flag, VS Code's window settings may replace the user's last active window.
+      return isDirectory ? ["--new-window", target] : [target];
     case "line-column":
       return Option.match(parsedTarget, {
         onNone: () => [target],
         onSome: ({ path, line, column }) => [
+          // Only positioned targets get the root: a folder target would open as a second project.
+          ...(projectRoot === undefined ? [] : [projectRoot]),
           "--line",
           line,
           // JetBrains IDEs count `--column` from 0; targets count columns from 1.
@@ -461,18 +467,28 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   }
 
   if (editorDef.commands) {
-    const { command, baseArgs } = Option.getOrElse(
-      yield* resolveEditorCommand(editorDef, env),
-      () => ({
+    const resolved = yield* resolveEditorCommand(editorDef, env);
+    if (Option.isNone(resolved)) {
+      return yield* new ExternalLauncherCommandNotFoundError({
+        editor: editorDef.id,
         command: editorDef.commands[0],
-        baseArgs: "baseArgs" in editorDef ? editorDef.baseArgs : [],
-      }),
-    );
+      });
+    }
+    const { command, baseArgs } = resolved.value;
+    const isDirectory =
+      editorDef.launchStyle === "goto" &&
+      (yield* (yield* FileSystem.FileSystem).stat(input.cwd).pipe(
+        Effect.map((info) => info.type === "Directory"),
+        Effect.orElseSucceed(() => false),
+      ));
     return {
       editor: editorDef.id,
       target: input.cwd,
       command,
-      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, input.cwd)],
+      args: [
+        ...baseArgs,
+        ...resolveCommandEditorArgs(editorDef, input.cwd, isDirectory, input.projectRoot),
+      ],
     };
   }
 

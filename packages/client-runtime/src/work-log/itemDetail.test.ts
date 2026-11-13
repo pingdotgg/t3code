@@ -113,3 +113,52 @@ describe("tool image output parsing", () => {
     },
   );
 });
+
+describe("MCP app tool output", () => {
+  it("shows the tool result, not the app wrapper", () => {
+    const text = "Notice\nview\tcount\n/home\t42";
+    const item = toolItem({
+      t3McpApp: {
+        attachmentId: "app-html",
+        server: "repro",
+        tool: "aggregate_rum_events",
+        resourceUri: "ui://repro/dataviz",
+      },
+      result: { content: [{ type: "text", text }] },
+    });
+    expect(turnItemOutputText(item)).toBe(text);
+  });
+
+  it("reads a result with metadata and marks images it cannot preview", () => {
+    const item = toolItem({
+      t3McpApp: {
+        attachmentId: "app-html",
+        server: "repro",
+        tool: "chart",
+        resourceUri: "ui://repro/chart",
+      },
+      result: {
+        content: [
+          { type: "text", text: "chart" },
+          { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
+        ],
+        _meta: { "ui/resourceUri": "ui://repro/chart" },
+      },
+    });
+    expect(turnItemOutputText(item)).toBe("chart\n[image]");
+
+    const bounded = toolItem({
+      t3McpApp: {
+        attachmentId: "app-html",
+        server: "repro",
+        tool: "chart",
+        resourceUri: "ui://repro/chart",
+      },
+      result: [
+        { type: "text", text: "chart" },
+        { type: "image", mimeType: "image/png" },
+      ],
+    });
+    expect(turnItemOutputText(bounded)).toBe("chart\n[image]");
+  });
+});
