@@ -1719,29 +1719,53 @@ it.effect(
     ).pipe(Effect.provide(layer)),
 );
 
-it.live("a viewer's stop settles a document that never finishes loading", () =>
+it.effect("a viewer's stop settles the navigation it cancels", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { browser, broker, tabId } = yield* ready;
+      const { browser, tabId } = yield* ready;
+      // Holds the download grace timer, so only the stop itself can settle the aborted navigation.
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
       const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
       yield* viewer.input({ type: "takeControl" });
       const page = contexts[0]!.page;
-      yield* Effect.promise(() => page.goto("https://example.com/slow"));
-      page.emit("request", {
-        url: () => "https://example.com/slow",
+      const navigation = (url: string) => ({
+        url: () => url,
         method: () => "GET",
         isNavigationRequest: () => true,
         frame: () => page,
+        failure: () => ({ errorText: "net::ERR_ABORTED" }),
       });
+      const settled = Effect.fn(function* (type: "failed" | "navigated", url: string) {
+        while (true) {
+          const event = yield* PubSub.take(events);
+          if (event.type === "failed" && type === "failed" && event.url === url) return;
+          if (
+            event.type === "navigated" &&
+            type === "navigated" &&
+            event.snapshot.navStatus._tag === "Success" &&
+            event.snapshot.navStatus.url === url
+          ) {
+            return;
+          }
+        }
+      });
+
+      // A first navigation has no document to keep; its abort must not wait out the download grace.
+      const first = navigation("https://example.com/first");
+      page.emit("request", first);
       yield* viewer.input({ type: "stop" });
       expect(contexts[0]!.sessions.at(-1)!.send).toHaveBeenCalledWith("Page.stopLoading");
-      const status = yield* broker.invoke<PreviewAutomationStatus>({
-        scope,
-        tabId,
-        operation: "status",
-        input: {},
-      });
-      expect(status.loading).toBe(false);
+      page.emit("requestfailed", first);
+      yield* settled("failed", "https://example.com/first");
+
+      // Stopping a committed document fires neither `load` nor `requestfailed`.
+      yield* Effect.promise(() => page.goto("https://example.com/slow"));
+      page.emit("request", navigation("https://example.com/slow"));
+      yield* viewer.input({ type: "stop" });
+      yield* settled("navigated", "https://example.com/slow");
     }),
   ).pipe(Effect.provide(layer)),
 );

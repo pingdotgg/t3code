@@ -19,6 +19,7 @@ import type { PreviewableServer } from "./useDiscoveredLocalServers";
 const mocks = vi.hoisted(() => ({
   navigate: vi.fn(async (_tabId: string, _url: string): Promise<void> => undefined),
   refresh: vi.fn(async (_tabId: string): Promise<void> => undefined),
+  stop: vi.fn(async (_tabId: string): Promise<void> => undefined),
   rememberPreviewUrl: vi.fn(),
   readPreparedConnection: vi.fn(() => ({ httpBaseUrl: "http://172.25.85.75:3773" })),
   readEnvironmentScope: vi.fn((_environmentId?: unknown, _scope?: unknown) => true),
@@ -61,7 +62,7 @@ vi.mock(import("./previewBridge"), async (original) => ({
     setAnnotationSendEnabled: mocks.setAnnotationSendEnabled,
     cancelPickElement: mocks.cancelPickElement,
     refresh: mocks.refresh,
-    stop: vi.fn(async () => undefined),
+    stop: mocks.stop,
     goBack: vi.fn(async () => undefined),
     goForward: vi.fn(async () => undefined),
     hardReload: vi.fn(async () => undefined),
@@ -263,13 +264,14 @@ describe("PreviewView", () => {
     },
   );
 
-  it("does not reload the page when Stop is clicked while it is loading", async () => {
+  it("stops instead of reloading when Stop is clicked while the page loads", async () => {
     setup();
     mocks.loading = true;
     await using _screen = await render(view());
 
     await userEvent.click(page.getByRole("button", { name: "Stop" }));
 
+    expect(mocks.stop).toHaveBeenCalledTimes(1);
     expect(mocks.refresh).not.toHaveBeenCalled();
   });
 
