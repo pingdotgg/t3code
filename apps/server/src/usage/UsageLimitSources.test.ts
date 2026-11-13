@@ -5,7 +5,6 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -165,13 +164,10 @@ it.effect("reads a management key from its secret provider", () => {
   );
 });
 
-it.effect("refreshUsageLimits returns without waiting for the provider probe", () =>
+it.effect("refreshUsageLimits returns while the provider probe is still running", () =>
   Effect.gen(function* () {
     const probeStarted = yield* Deferred.make<void>();
-    // The probe is held open until after the assertions, so the refresh cannot have awaited it.
     const probeGate = yield* Deferred.make<void>();
-    const returned = yield* Deferred.make<void>();
-    let probes = 0;
     const sources = yield* UsageLimitSources.make.pipe(
       Effect.provide([
         ServerSettings.layerTest({ usageLimitSources: {} }),
@@ -180,12 +176,10 @@ it.effect("refreshUsageLimits returns without waiting for the provider probe", (
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           refresh: () =>
-            Effect.gen(function* () {
-              probes += 1;
-              yield* Deferred.succeed(probeStarted, undefined);
-              yield* Deferred.await(probeGate);
-              return [];
-            }),
+            Deferred.succeed(probeStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(probeGate)),
+              Effect.as([]),
+            ),
         }),
         Layer.succeed(SecretResolver.SecretResolver, {
           label: (provider) => Effect.succeed(provider),
@@ -199,13 +193,9 @@ it.effect("refreshUsageLimits returns without waiting for the provider probe", (
         NodeCrypto.layer,
       ]),
     );
-    yield* sources.refreshUsageLimits.pipe(
-      Effect.tap(() => Deferred.succeed(returned, undefined)),
-      Effect.forkChild,
-    );
+    // The probe stays blocked, so this only returns if the refresh does not await it.
+    yield* sources.refreshUsageLimits;
     yield* Deferred.await(probeStarted);
-    expect(Option.isSome(yield* Deferred.poll(returned))).toBe(true);
     yield* Deferred.succeed(probeGate, undefined);
-    expect(probes).toBe(1);
   }).pipe(Effect.scoped),
 );

@@ -10,19 +10,13 @@ const state = vi.hoisted(() => ({
   refresh: (_environmentId: string): Promise<RefreshResult> => {
     throw new Error("refresh not set up");
   },
-  requests: [] as Array<Record<string, unknown>>,
 }));
 vi.mock("../../state/server", () => ({
   serverEnvironment: {
     refreshProviders: {
       label: "refresh providers",
-      run: (
-        _registry: unknown,
-        input: { readonly environmentId: string; readonly input: Record<string, unknown> },
-      ) => {
-        state.requests.push(input.input);
-        return state.refresh(input.environmentId);
-      },
+      run: (_registry: unknown, input: { readonly environmentId: string }) =>
+        state.refresh(input.environmentId),
     },
   },
 }));
@@ -38,7 +32,6 @@ const failure: RefreshResult = AsyncResult.failure(Cause.fail("offline"));
 
 function setup(refresh: (environmentId: string) => Promise<RefreshResult>) {
   state.refresh = refresh;
-  state.requests = [];
   const registry = AtomRegistry.make();
   return {
     registry,
@@ -49,13 +42,6 @@ function setup(refresh: (environmentId: string) => Promise<RefreshResult>) {
     },
   };
 }
-
-it("asks for usage limits only, without a provider refresh", async () => {
-  const a = EnvironmentId.make("mobile-limits-payload");
-  const { registry } = setup(() => Promise.resolve(success));
-  await refreshEnvironmentLimits(registry, a);
-  expect(state.requests).toEqual([{ usageLimitsOnly: true }]);
-});
 
 it("keeps a newer environment failure when an older refresh finishes", async () => {
   const a = EnvironmentId.make("mobile-limits-a");

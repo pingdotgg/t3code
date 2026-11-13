@@ -1605,8 +1605,6 @@ export function createServerEnvironmentAtoms<R, E>(
         Effect.sync(() => {
           const { instanceId, cwd } = input;
           if (instanceId === undefined || cwd === undefined) return;
-          // A limits-only refresh carries no provider list, so it cannot update a snapshot.
-          if (input.usageLimitsOnly === true) return;
           const refreshed = result.providers.find((provider) => provider.instanceId === instanceId);
           if (refreshed?.catalogDigest !== undefined) {
             const catalog = {
@@ -1641,8 +1639,7 @@ export function createServerEnvironmentAtoms<R, E>(
             input.fresh ?? false,
             input.refreshModels ?? false,
             input.modelCatalogOnly ?? false,
-            // A limits-only refresh answers before the provider probe, so it cannot share
-            // a request with a full refresh.
+            // A limits-only reply comes before the probe, so a full refresh cannot join it.
             input.usageLimitsOnly ?? false,
           ]),
       },
