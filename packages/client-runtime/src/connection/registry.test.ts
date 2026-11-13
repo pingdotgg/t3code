@@ -168,6 +168,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     ) => Effect.Effect<ConnectionBlockedError | undefined>;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
     readonly directEndpoints?: ServerConfig["directEndpoints"];
+    readonly reportedLabel?: string;
   },
 ) {
   const storedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>(initialTargets);
@@ -398,6 +399,18 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
           ? { _tag: "Bearer", token: credential.value.token }
           : null,
         target,
+        ...(options?.reportedLabel === undefined
+          ? {}
+          : {
+              descriptor: {
+                environmentId: target.environmentId,
+                label: options.reportedLabel,
+                platform: { os: "linux", arch: "x64" },
+                serverVersion: "1.0.0",
+                orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+                capabilities: { repositoryIdentity: true },
+              } satisfies ExecutionEnvironmentDescriptor,
+            }),
       };
       if (options?.prepareError) return yield* options.prepareError;
       const heldError = options?.beforePrepareRoute
@@ -410,21 +423,26 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       yield* options?.beforeSessionConnect?.(target.environmentId) ?? Effect.void;
       const closed = yield* Deferred.make<never, ConnectionTransientError>();
       yield* Ref.update(sessions, (current) => [...current, { closed }]);
+      const reportsConfig =
+        options?.directEndpoints !== undefined || options?.reportedLabel !== undefined;
+      const config = {
+        directEndpoints: options?.directEndpoints ?? [],
+        ...(options?.reportedLabel === undefined
+          ? {}
+          : {
+              environment: { environmentId: target.environmentId, label: options.reportedLabel },
+            }),
+      } as unknown as ServerConfig;
       const session = yield* Effect.acquireRelease(
         Effect.succeed({
           client: {} as RpcSession.RpcSession["client"],
-          initialConfig:
-            options?.directEndpoints === undefined
-              ? Effect.die(new Error("Config is not used by registry tests."))
-              : Effect.succeed({ directEndpoints: options.directEndpoints } as ServerConfig),
+          initialConfig: reportsConfig
+            ? Effect.succeed(config)
+            : Effect.die(new Error("Config is not used by registry tests.")),
           subscribeServerConfig: () =>
-            options?.directEndpoints === undefined
-              ? Stream.never
-              : Stream.make({
-                  version: 1 as const,
-                  type: "snapshot" as const,
-                  config: { directEndpoints: options.directEndpoints } as ServerConfig,
-                }),
+            reportsConfig
+              ? Stream.make({ version: 1 as const, type: "snapshot" as const, config })
+              : Stream.never,
           ready: Effect.void,
           probe: Effect.void,
           inboundFrames: Effect.succeed(0),
@@ -2315,6 +2333,32 @@ describe("EnvironmentRegistry routes", () => {
           learned: true,
           httpBaseUrl,
         });
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a saved environment takes the label its server reports on connect", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [BEARER_TARGET],
+        [BEARER_PROFILE],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+        { reportedLabel: "Renamed host" },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* SubscriptionRef.changes(registry.entries).pipe(
+          Stream.filter(
+            (entries) => entries.get(BEARER_TARGET.environmentId)?.target.label === "Renamed host",
+          ),
+          Stream.runHead,
+        );
+        expect(
+          routesOf(yield* Ref.get(harness.storedTargets), BEARER_TARGET.environmentId).map(
+            (target) => target.label,
+          ),
+        ).toEqual(["Renamed host"]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
