@@ -374,6 +374,45 @@ try {
         else extraServers.push(extra);
         return extra;
       },
+      /** Issues a bearer session on `s` from its own CLI, as Orbit does; returns its id. */
+      issueSession: (s, label) => {
+        const argv = s.rust
+          ? [
+              rustBinary,
+              [
+                "auth",
+                "session",
+                "issue",
+                "--state-dir",
+                NodePath.join(s.root, "state"),
+                "--label",
+                label,
+                "--json",
+              ],
+            ]
+          : [
+              process.execPath,
+              [
+                NodePath.join(repo, "apps/server/src/bin.ts"),
+                "auth",
+                "session",
+                "issue",
+                "--base-dir",
+                s.base,
+                "--label",
+                label,
+                "--json",
+              ],
+            ];
+        const out = NodeChildProcess.execFileSync(argv[0], argv[1], {
+          cwd: s.project,
+          encoding: "utf8",
+          env: { ...process.env, T3CODE_HOME: s.base ?? "" },
+        });
+        const issued = JSON.parse(out.slice(out.indexOf("{")));
+        addSecret(issued.token);
+        return issued.sessionId;
+      },
       stopServer: (s) =>
         new Promise((r) => {
           if (s.external) throw new Error("cannot stop a server this run did not start");

@@ -191,7 +191,11 @@ async function remote(ctx) {
 
 /** Pairs the Rust conn-server from Settings › Connections, as `remote` does. Records only it. */
 async function pairRust(ctx) {
-  const target = await ctx.startRustServer();
+  return pairTarget(ctx, await ctx.startRustServer());
+}
+
+/** Pairs `target` from Settings › Connections and records only its traffic from then on. */
+async function pairTarget(ctx, target) {
   await ctx.page.goto(`${ctx.server.origin}/settings/connections`);
   await settle(ctx);
   ctx.cap.only(new URL(target.origin).host);
@@ -366,6 +370,61 @@ async function rustStop(ctx) {
   await ctx.shotAlways("stopped");
 }
 
+/**
+ * Settings and access on a paired remote environment: change a server setting, then list the
+ * environment's clients and revoke one that its CLI issued. `rust` picks the Conn Server.
+ */
+async function settingsAndAccess(ctx, rust) {
+  const target = await pairTarget(
+    ctx,
+    rust ? await ctx.startRustServer() : await ctx.startServer(),
+  );
+  const environmentId = (await (await fetch(`${target.origin}/.well-known/t3/environment`)).json())
+    .environmentId;
+  const bot = "Recorder bot";
+  const botSession = ctx.issueSession(target, bot);
+  ctx.log(`issued ${botSession}`);
+
+  await ctx.page.goto(`${ctx.server.origin}/settings/threads?machine=${environmentId}`);
+  await settle(ctx, 3000, 30_000);
+  await dump(ctx, "threads-settings");
+  const toggle = ctx.page.getByRole("switch").first();
+  await toggle.waitFor({ timeout: 15_000 });
+  const before = await toggle.getAttribute("aria-checked");
+  await toggle.click();
+  const deadline = Date.now() + 15_000;
+  while (
+    Date.now() < deadline &&
+    !ctx.cap.lines.some((l) => l.frame?.tag === "server.updateSettings")
+  ) {
+    await ctx.page.waitForTimeout(200);
+  }
+  await settle(ctx, 2000, 15_000);
+  const after = await toggle.getAttribute("aria-checked");
+  ctx.log(`setting switched ${before} -> ${after}`);
+  if (before === after) throw new Error("the setting did not change");
+  await ctx.shotAlways("setting-changed");
+
+  await ctx.page.goto(`${ctx.server.origin}/settings/access?machine=${environmentId}`);
+  await settle(ctx, 3000, 30_000);
+  await ctx.page.getByText("Authorized clients", { exact: true }).first().click();
+  await dump(ctx, "access");
+  const row = ctx.page.getByText(bot, { exact: false }).first();
+  await row.waitFor({ timeout: 15_000 });
+  await ctx.shotAlways("access");
+  const revoke = ctx.page
+    .locator("li, [role=listitem], [data-slot=item], div")
+    .filter({ hasText: bot })
+    .getByRole("button", { name: /^Revoke/ })
+    .last();
+  await revoke.click();
+  const confirm = ctx.page.getByRole("alertdialog").getByRole("button", { name: /^Revoke/ });
+  if (await confirm.isVisible().catch(() => false)) await confirm.click();
+  await ctx.page.getByText(bot).first().waitFor({ state: "detached", timeout: 15_000 });
+  await settle(ctx, 2000, 15_000);
+  await ctx.shotAlways("revoked");
+}
+
 export const SCENARIOS = {
   pairing,
   reconnect,
@@ -378,4 +437,6 @@ export const SCENARIOS = {
   "rust-restart": rustRestart,
   "rust-permission": rustPermission,
   "rust-stop": rustStop,
+  settings: (ctx) => settingsAndAccess(ctx, false),
+  "rust-settings": (ctx) => settingsAndAccess(ctx, true),
 };

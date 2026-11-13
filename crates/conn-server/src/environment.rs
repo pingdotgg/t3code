@@ -95,9 +95,19 @@ fn load_or_create_id(file: &Path) -> io::Result<String> {
     }
 }
 
+/// The machine's name, as `os.hostname()` gives the T3 server its label.
 fn hostname() -> Option<String> {
     fs::read_to_string("/etc/hostname")
         .ok()
+        .or_else(|| {
+            let out = std::process::Command::new("hostname")
+                .arg("-s")
+                .output()
+                .ok()?;
+            out.status
+                .success()
+                .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+        })
         .map(|h| h.trim().to_owned())
 }
 

@@ -250,15 +250,15 @@ fn require_scope(
     state: &AppState,
     headers: &HeaderMap,
     scope: &str,
-) -> Result<Principal, Response> {
+) -> Result<Principal, Box<Response>> {
     let Some(token) = bearer(headers) else {
-        return Err(auth_invalid("missing_credential"));
+        return Err(Box::new(auth_invalid("missing_credential")));
     };
     let Some(principal) = state.auth.authenticate_bearer(token) else {
-        return Err(auth_invalid("invalid_credential"));
+        return Err(Box::new(auth_invalid("invalid_credential")));
     };
     if !principal.has_scope(scope) {
-        return Err(scope_required(scope));
+        return Err(Box::new(scope_required(scope)));
     }
     Ok(principal)
 }
@@ -295,7 +295,7 @@ async fn pairing_token(
 ) -> Response {
     let principal = match require_scope(&state, &headers, "access:write") {
         Ok(principal) => principal,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let request = body.map(|Json(b)| b).unwrap_or_default();
     // MCP approval codes (`access`) need the MCP OAuth flow, which this server lacks.
@@ -367,7 +367,7 @@ async fn revoke_pairing_link(
     Json(request): Json<IdRequest>,
 ) -> Response {
     if let Err(response) = require_scope(&state, &headers, "access:write") {
-        return response;
+        return *response;
     }
     match state.auth.revoke_pairing_link(&request.id) {
         Ok(revoked) => Json(json!({ "revoked": revoked })).into_response(),
@@ -381,7 +381,7 @@ async fn clients(State(state): State<AppState>, headers: HeaderMap) -> Response 
         Ok(principal) => {
             Json(state.auth.client_sessions(Some(&principal.session_id))).into_response()
         }
-        Err(response) => response,
+        Err(response) => *response,
     }
 }
 
@@ -392,7 +392,7 @@ async fn revoke_client(
 ) -> Response {
     let principal = match require_scope(&state, &headers, "access:write") {
         Ok(principal) => principal,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     match state
         .auth
@@ -413,7 +413,7 @@ async fn revoke_client(
 async fn revoke_other_clients(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let principal = match require_scope(&state, &headers, "access:write") {
         Ok(principal) => principal,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     match state.auth.revoke_other_sessions(&principal.session_id) {
         Ok(count) => Json(json!({ "revokedCount": count })).into_response(),
@@ -565,11 +565,8 @@ async fn revoked(auth: &AuthStore, session_id: &str) {
         tokio::select! {
             change = changes.recv() => match change {
                 Ok(AccessChange::ClientRemoved(id)) if id == session_id => return,
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    if !auth.session_active(session_id) {
-                        return;
-                    }
-                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_))
+                    if !auth.session_active(session_id) => return,
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => std::future::pending::<()>().await,
                 _ => {}
             },
@@ -838,6 +835,150 @@ mod tests {
         let (status, body) = get("/api/orchestration/threads/nope", &[header, &bearer]).await;
         assert_eq!((status, body.as_str()), (404, ""));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn access_routes_issue_scoped_links_list_and_revoke_clients() {
+        let (addr, auth) = serve().await;
+        let admin = auth
+            .issue_session(auth::SessionRequest {
+                scopes: vec![
+                    "access:read".into(),
+                    "access:write".into(),
+                    "relay:read".into(),
+                ],
+                label: Some("Orbit Gateway".into()),
+                subject: None,
+                ttl_ms: auth::SESSION_TTL_MS,
+            })
+            .unwrap();
+        let bearer = format!("authorization: Bearer {}", admin.token);
+        let post = |path: &str, body: &str| {
+            let head =
+                format!("POST {path} HTTP/1.1\r\n{bearer}\r\ncontent-type: application/json");
+            let body = body.to_owned();
+            async move { call(addr, &head, &body).await }
+        };
+
+        let (status, body) = post(
+            "/api/auth/pairing-token",
+            r#"{"label":"node via Orbit","scopes":["relay:read","access:read"]}"#,
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        let link: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(link["label"], "node via Orbit");
+        // A scope the caller lacks is refused with the exact permission.
+        let (status, body) = post(
+            "/api/auth/pairing-token",
+            r#"{"scopes":["settings:write"]}"#,
+        )
+        .await;
+        assert_eq!(status, 403);
+        assert_eq!(
+            serde_json::from_str::<Value>(&body).unwrap()["requiredPermission"],
+            "settings:write"
+        );
+        let (status, _) = post(
+            "/api/auth/pairing-token",
+            r#"{"scopes":["access:read","access:read"]}"#,
+        )
+        .await;
+        assert_eq!(status, 400);
+
+        let device = auth
+            .exchange(
+                link["credential"].as_str().unwrap(),
+                None,
+                ClientInfo::default(),
+            )
+            .unwrap();
+        let (status, body) = call(
+            addr,
+            &format!("GET /api/auth/clients HTTP/1.1\r\n{bearer}"),
+            "",
+        )
+        .await;
+        assert_eq!(status, 200);
+        let clients: Vec<Value> = serde_json::from_str(&body).unwrap();
+        assert_eq!(clients.len(), 2);
+        assert!(
+            clients
+                .iter()
+                .any(|c| c["current"] == true && c["client"]["label"] == "Orbit Gateway")
+        );
+
+        let mine = format!(r#"{{"sessionId":"{}"}}"#, admin.principal.session_id);
+        let (status, body) = post("/api/auth/clients/revoke", &mine).await;
+        assert_eq!(status, 403);
+        assert_eq!(
+            serde_json::from_str::<Value>(&body).unwrap()["reason"],
+            "current_session_revoke_not_allowed"
+        );
+        let theirs = format!(r#"{{"sessionId":"{}"}}"#, device.principal.session_id);
+        let (status, body) = post("/api/auth/clients/revoke", &theirs).await;
+        assert_eq!((status, body.as_str()), (200, r#"{"revoked":true}"#));
+        assert!(auth.authenticate_bearer(&device.token).is_none());
+
+        let unused = auth.issue_pairing_code(None, auth::PAIRING_CODE_TTL_MS);
+        let (_, body) = post(
+            "/api/auth/pairing-links/revoke",
+            &format!(r#"{{"id":"{}"}}"#, unused.id),
+        )
+        .await;
+        assert_eq!(body, r#"{"revoked":true}"#);
+        let (_, body) = post("/api/auth/clients/revoke-others", "").await;
+        assert_eq!(body, r#"{"revokedCount":0}"#);
+        // Without access:read the list is refused.
+        let (status, _) = call(addr, "GET /api/auth/clients HTTP/1.1", "").await;
+        assert_eq!(status, 401);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_revoked_session_loses_its_open_socket() {
+        let (addr, auth) = serve().await;
+        let session = auth
+            .exchange(
+                &auth
+                    .issue_pairing_code(None, auth::PAIRING_CODE_TTL_MS)
+                    .code,
+                None,
+                ClientInfo::default(),
+            )
+            .unwrap();
+        let (ticket, _) = auth.issue_ticket(&session.token, Some("rpc")).unwrap();
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let request = format!(
+            "GET /ws?orchestrationProtocol=2&wsTicket={ticket} HTTP/1.1\r\nhost: {addr}\r\n{UPGRADE}\r\n\r\n"
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut buf = [0u8; 1024];
+        let n = stream.read(&mut buf).await.unwrap();
+        assert!(buf[..n].starts_with(b"HTTP/1.1 101"));
+        // Connected sockets show in the access list.
+        let listed = auth.client_session(&session.principal.session_id, None);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let mut connected = listed.is_some_and(|s| s.connected);
+        while !connected && tokio::time::Instant::now() < deadline {
+            tokio::task::yield_now().await;
+            connected = auth
+                .client_session(&session.principal.session_id, None)
+                .is_some_and(|s| s.connected);
+        }
+        assert!(connected);
+        auth.revoke_session(None, &session.principal.session_id)
+            .unwrap()
+            .unwrap();
+        let closed = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match stream.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => continue,
+                }
+            }
+        })
+        .await;
+        assert!(closed.is_ok(), "the socket stayed open after revocation");
     }
 
     #[tokio::test(flavor = "current_thread")]
