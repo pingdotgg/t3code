@@ -331,6 +331,82 @@ it.effect("keeps one queued occurrence of a recurring task while its bound threa
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+it.effect("a schedule whose thread is archived after saving stops firing", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-07-01T09:00:00.000Z"));
+    const sends = yield* Ref.make(0);
+    const runDueWork = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      ManagedPolicy.layerTest(),
+      Layer.mock(Scheduler.Scheduler)({
+        register: (name, work) =>
+          name !== "scheduled-tasks"
+            ? Effect.void
+            : Effect.context<Effect.Services<typeof work>>().pipe(
+                Effect.flatMap((context) =>
+                  Ref.set(runDueWork, work.pipe(Effect.provideContext(context), Effect.ignore)),
+                ),
+              ),
+      }),
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        isScratchProject: () => Effect.succeed(false),
+      }),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        sendToThread: (input) =>
+          Ref.update(sends, (n) => n + 1).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ThreadManagementService.ThreadManagementThreadArchivedError({
+                  threadId: input.threadId,
+                }),
+              ),
+            ),
+          ),
+        getThreadRecords: () => Effect.succeed({ runs: [], messages: [] } as never),
+        // Saving sees a live thread; it is archived before the first run.
+        getThreadShell: () =>
+          Effect.succeed({
+            projectId: "project-archived-thread",
+            deletedAt: null,
+            archivedAt: null,
+          } as never),
+      }),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      yield* service.upsert(
+        yield* decodeUpsertInput({
+          id: "scheduled-task:archived-thread",
+          title: "Check progress",
+          prompt: "Check progress",
+          enabled: true,
+          schedule: { type: "interval", everyMs: 60_000 },
+          projectId: "project-archived-thread",
+          threadId: "thread:archived",
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        }),
+      );
+
+      for (let interval = 0; interval < 5; interval++) {
+        yield* TestClock.adjust("61 seconds");
+        yield* Effect.flatten(Ref.get(runDueWork));
+      }
+
+      expect(yield* Ref.get(sends)).toBe(1);
+      const [listed] = (yield* service.list()).tasks;
+      expect(listed?.enabled).toBe(false);
+      expect(listed?.nextRunAt).toBeNull();
+    }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 it.effect(
   "idle polls still wake for tasks saved later, recorded due times, and beside far-future tasks",
   () =>
