@@ -316,7 +316,7 @@ export function decodeScanCache(
       !legacy &&
       !(
         entry.p === "codex" &&
-        (version < 15 || hasUndatedCodexBaseline(entry.cs as CodexScanState))
+        (version < 15 || (entry.cs !== null && hasUndatedCodexBaseline(entry.cs as CodexScanState)))
       );
 
     const provider = entry.p;
