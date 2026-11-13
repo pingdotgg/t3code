@@ -32,7 +32,8 @@ export function AssistantSelectionToolbar({
   const [selection, setSelection] = useState<{
     citation: AssistantCitation;
     position: SelectionActionPoint;
-    above: boolean;
+    /** Set when Cite opens above the released line; the fallback top when that has no room. */
+    belowY: number | null;
     sourceAnchor: AssistantCitationSourceAnchor;
   } | null>(null);
   const toolbarRef = useRef<HTMLButtonElement>(null);
@@ -45,7 +46,13 @@ export function AssistantSelectionToolbar({
     if (!toolbar || !selection) return;
     const rect = toolbar.getBoundingClientRect();
     toolbar.style.left = `${Math.max(8, Math.min(selection.position.x, window.innerWidth - rect.width - 8))}px`;
-    const top = selection.above ? selection.position.y - rect.height : selection.position.y;
+    const { position, belowY } = selection;
+    const top =
+      belowY === null
+        ? position.y
+        : position.y - rect.height >= 8
+          ? position.y - rect.height
+          : belowY;
     toolbar.style.top = `${Math.max(8, Math.min(top, window.innerHeight - rect.height - 8))}px`;
   }, [selection]);
 
@@ -142,7 +149,7 @@ export function AssistantSelectionToolbar({
               : null,
           viewport: { width: window.innerWidth, height: window.innerHeight },
         }),
-        above: pointerLine !== undefined,
+        belowY: pointer && pointerLine ? Math.max(pointer.y, pointerLine.bottom) + 4 : null,
       });
     };
     const actions = observeSelectionActions({
