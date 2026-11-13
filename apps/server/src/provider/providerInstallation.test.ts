@@ -59,6 +59,7 @@ function instance(kind = driver, id = instanceId): ProviderInstance {
 const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function* (
   input: {
     instance?: ProviderInstance;
+    others?: ReadonlyArray<ProviderInstance>;
     settings?: Parameters<typeof ServerSettings.layerTest>[0];
   } = {},
 ) {
@@ -69,11 +70,12 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
   const installationState = yield* SubscriptionRef.make(state);
   let protectedPaths: ReadonlyArray<string> = [];
   const configured = input.instance ?? instance();
+  const all = [configured, ...(input.others ?? [])];
   const dependencies = Layer.mergeAll(
     ServerSettings.layerTest(input.settings),
     Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-      getInstance: (id) => Effect.succeed(id === configured.instanceId ? configured : undefined),
-      listInstances: Effect.succeed([configured]),
+      getInstance: (id) => Effect.succeed(all.find((entry) => entry.instanceId === id)),
+      listInstances: Effect.succeed(all),
     }),
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       refreshInstance: () =>
@@ -115,7 +117,7 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
           return state;
         }),
       state: Effect.succeed(state),
-      changes: input.instance?.refreshModels
+      changes: all.some((entry) => entry.refreshModels)
         ? SubscriptionRef.changes(installationState).pipe(
             Stream.tap(() => Deferred.succeed(listening, undefined)),
             Stream.ensuring(Deferred.succeed(observed, undefined)),
@@ -201,6 +203,40 @@ describe("provider installation routing", () => {
           harness.calls,
           expectedChecks > 0 ? ["start", "start", "refresh"] : ["start", "start"],
         );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    { starter: "the disabled default instance", startEnabled: false },
+    { starter: "an enabled instance", startEnabled: true },
+  ] as const)(
+    "refreshes every enabled instance after an install started on $starter",
+    ({ startEnabled }) =>
+      Effect.gen(function* () {
+        const sibling = ProviderInstanceId.make("antigravity-work");
+        const refreshedModels = new Map<ProviderInstanceId, Deferred.Deferred<void>>();
+        const withModels = (id: ProviderInstanceId, enabled: boolean) => {
+          const done = Deferred.makeUnsafe<void>();
+          refreshedModels.set(id, done);
+          return Object.assign(instance(driver, id), {
+            enabled,
+            refreshModels: () => Deferred.succeed(done, undefined).pipe(Effect.asVoid),
+          });
+        };
+        const harness = yield* makeHarness({
+          instance: withModels(instanceId, startEnabled),
+          others: [withModels(sibling, true)],
+        });
+        yield* harness.router.start({ instanceId });
+        yield* Deferred.await(harness.listening);
+        yield* SubscriptionRef.set(harness.installationState, {
+          ...state,
+          operationId: "install-1",
+          phase: "succeeded",
+          installedVersion: "1.5.8",
+        });
+        yield* Deferred.await(refreshedModels.get(sibling)!);
+        if (startEnabled) yield* Deferred.await(refreshedModels.get(instanceId)!);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
