@@ -1,3 +1,4 @@
+import { LiveVoiceButton } from "./LiveVoiceButton";
 import { VoiceInputSetup } from "./VoiceInputSetup";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
@@ -1805,6 +1806,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerApprovalState ||
     activePendingIsResponding ||
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
+  const [liveVoiceActive, setLiveVoiceActive] = useState(false);
   const speechInput = useEnvironmentSpeechInput({
     environmentId,
     projectId: activeProjectId,
@@ -1854,7 +1856,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const dictationShortcutLabel = useDictationShortcut({
     keybindings,
     speech: speechInput,
-    disabled: dictationDisabled,
+    disabled: dictationDisabled || liveVoiceActive,
     terminalOpen,
     modelPickerOpen: isComposerModelPickerOpen,
     ...(backgroundThread ? { targetRef: composerFormRef } : {}),
@@ -3722,6 +3724,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     keepFullHistory={props.keepFullHistory}
                     onToggleKeepFullHistory={props.onToggleKeepFullHistory}
                   >
+                    {selectedProvider === "codex" &&
+                    routeKind === "server" &&
+                    activeThreadId &&
+                    !multipleModelSelections ? (
+                      <LiveVoiceButton
+                        key={`${environmentId}:${activeThreadId}:${activeThreadModelSelection?.instanceId}:${activeThreadModelSelection?.model}`}
+                        environmentId={environmentId}
+                        threadId={activeThreadId}
+                        disabled={!canOperateThread || speechInput.state.phase !== "idle"}
+                        onActiveChange={setLiveVoiceActive}
+                      />
+                    ) : null}
                     {speechInput.available ? (
                       <>
                         <ComposerSpeechRecordingPill
@@ -3730,7 +3744,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           finishShortcutLabel={dictationShortcutLabel}
                           cancelShortcutLabel="Esc"
                           level={speechInput.level}
-                          disabled={dictationDisabled}
+                          disabled={dictationDisabled || liveVoiceActive}
                           onStart={() => void speechInput.start()}
                           onStop={() => void speechInput.stop()}
                           onCancel={() => speechInput.cancel()}
@@ -3739,7 +3753,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         <ComposerSpeechButton
                           state={speechInput.state}
                           shortcutLabel={dictationShortcutLabel}
-                          disabled={dictationDisabled}
+                          disabled={dictationDisabled || liveVoiceActive}
                           onStart={() => void speechInput.start()}
                         />
                       </>

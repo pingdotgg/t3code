@@ -72,11 +72,14 @@ const handleMethod = (message: Record<string, unknown>) => {
     }
     case "account/read": {
       respond(message.id as number | string, {
-        account: {
-          type: "chatgpt",
-          email: "mock@example.com",
-          planType: "plus",
-        },
+        account:
+          process.env.CODEX_APP_SERVER_TEST_ACCOUNT === "apiKey"
+            ? { type: "apiKey" }
+            : {
+                type: "chatgpt",
+                email: "mock@example.com",
+                planType: "plus",
+              },
         requiresOpenaiAuth: false,
       });
       return;

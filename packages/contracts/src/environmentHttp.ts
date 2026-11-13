@@ -1,3 +1,10 @@
+import {
+  LiveVoiceId,
+  LiveVoiceOptions,
+  LiveVoiceStart,
+  LiveVoiceState,
+  LiveVoiceError,
+} from "./liveVoice.ts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -796,6 +803,41 @@ export class EnvironmentVoiceBodyLimit extends HttpApiMiddleware.Service<Environ
   { error: EnvironmentRequestInvalidError },
 ) {}
 
+class EnvironmentLiveVoiceHttpApi extends HttpApiGroup.make("liveVoice")
+  .add(
+    HttpApiEndpoint.get("options", "/api/voice/live/:threadId/options", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ threadId: ThreadId }),
+      success: LiveVoiceOptions,
+      error: [...EnvironmentScopedOperationErrors, LiveVoiceError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("start", "/api/voice/live/sessions", {
+      headers: OptionalBearerHeaders,
+      payload: LiveVoiceStart,
+      success: Schema.Struct({ sdp: Schema.String }),
+      error: [...EnvironmentScopedOperationErrors, LiveVoiceError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("poll", "/api/voice/live/sessions/:sessionId", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ sessionId: LiveVoiceId }),
+      query: Schema.Struct({ revision: Schema.NumberFromString }),
+      success: LiveVoiceState,
+      error: [...EnvironmentScopedOperationErrors, LiveVoiceError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("stop", "/api/voice/live/sessions/:sessionId/stop", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ sessionId: LiveVoiceId }),
+      success: HttpApiSchema.NoContent,
+      error: [...EnvironmentScopedOperationErrors, LiveVoiceError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
   .add(
     HttpApiEndpoint.get("cloudKeys", "/api/voice/cloud/keys", {
@@ -1027,5 +1069,6 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentVoiceHttpApi)
+  .add(EnvironmentLiveVoiceHttpApi)
   .add(EnvironmentConnectHttpApi)
   .add(EnvironmentWebhooksHttpApi) {}

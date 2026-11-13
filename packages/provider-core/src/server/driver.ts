@@ -1,6 +1,8 @@
 // Context tags are runtime singletons; drivers need multiple instances.
 import type {
   ProviderConsumeResetCreditOutcome,
+  LiveVoiceError,
+  LiveVoiceOptions,
   AcpRegistryListSessionsResult,
   AcpRegistryListProvidersResult,
   AcpRegistryOperationError,
@@ -14,6 +16,7 @@ import type {
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
+import type * as Stream from "effect/Stream";
 
 import type * as ProviderAdapter from "./ProviderAdapter.ts";
 import type { ProviderAuthController } from "./auth.ts";
@@ -37,6 +40,23 @@ export type ProviderWorkspaceSnapshot = ServerProvider &
     readonly workspaceModelsPending?: boolean;
   };
 
+export interface ProviderLiveVoice {
+  readonly options: Effect.Effect<LiveVoiceOptions, LiveVoiceError>;
+  readonly open: (input: {
+    readonly sdp: string;
+    readonly voice: string;
+    readonly context: ReadonlyArray<{ readonly role: "user" | "assistant"; readonly text: string }>;
+  }) => Effect.Effect<
+    {
+      readonly sdp: string;
+      readonly events: Stream.Stream<string, LiveVoiceError>;
+      readonly send: (event: unknown) => Effect.Effect<void, LiveVoiceError>;
+    },
+    LiveVoiceError,
+    Scope.Scope
+  >;
+}
+
 export interface ProviderInstance {
   readonly instanceId: ProviderInstanceId;
   readonly driverKind: ProviderDriverKind;
@@ -57,6 +77,7 @@ export interface ProviderInstance {
   ) => Effect.Effect<ProviderConsumeResetCreditOutcome, ProviderDriverError>;
   readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly textGeneration: ProviderTextGeneration;
+  readonly liveVoice?: ProviderLiveVoice;
   readonly auth?: ProviderAuthController;
   readonly acpSessionManagement?: {
     readonly listSessions: (input: {

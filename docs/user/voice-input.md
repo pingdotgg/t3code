@@ -10,6 +10,29 @@ On iPhone and Android, voice input transcribes on the device by default. To opt 
 to a named environment on that phone, open **Settings → Voice → Transcribe on**. See
 [Voice input on mobile](./composer.md#voice-input-on-mobile).
 
+## Live conversations with ChatGPT
+
+On web and desktop, open a saved Codex conversation and choose the headphones
+button beside the composer. Pick a voice and choose **Start voice**. This uses
+the ChatGPT account already connected to that conversation, not a separate voice
+account, an API key, or a downloaded transcription model.
+
+Your microphone starts only after **Start voice** and browser permission. Audio
+goes to OpenAI. Use **Mute** to pause your microphone, or **End voice** to close
+the call. Closing the voice panel or changing conversations also ends the call.
+Remote browsers need HTTPS; localhost also works.
+
+Requests handed to the coding agent appear in the same conversation and use its
+normal permissions. Use T3's existing approval controls when needed. Ending voice
+does not cancel coding tasks that are already running. The voice transcript is
+shown for the current call; coding requests and results remain in chat history.
+
+Live voice is experimental and depends on the account connection and Codex
+version. A successful coding sign-in does not guarantee voice access. A rejected
+connection reports an error instead of switching accounts, models, or billing
+routes. The native iPhone and Android apps do not yet have these live-call controls;
+their dictation remains unchanged.
+
 ## Choose where audio goes
 
 On web and desktop, you choose where transcription runs.

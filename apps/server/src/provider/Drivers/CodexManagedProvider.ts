@@ -1,3 +1,5 @@
+import * as Redacted from "effect/Redacted";
+import { makeCodexLiveVoice } from "../CodexLiveVoice.ts";
 import {
   ProviderDriverKind,
   ProviderSetupError,
@@ -275,6 +277,18 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
           }),
       ),
     );
+  const liveVoice = yield* makeCodexLiveVoice(
+    resolveRuntime.pipe(
+      Effect.flatMap((effective) =>
+        runtime.auth.access.pipe(
+          Effect.map((credentials) => ({
+            ...effective,
+            subscriptionToken: Redacted.make(credentials.accessToken),
+          })),
+        ),
+      ),
+    ),
+  );
   const textGeneration: ProviderInstance["textGeneration"] = {
     generateCommitMessage: (value) =>
       protect("generateCommitMessage", nativeGeneration.generateCommitMessage(value)),
@@ -302,6 +316,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     snapshot,
     orchestrationAdapter,
     textGeneration,
+    liveVoice,
     auth: runtime.auth.controller,
     snapshotForCwd: (cwd: string) =>
       enabled

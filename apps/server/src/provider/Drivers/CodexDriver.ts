@@ -1,4 +1,5 @@
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
+import { makeCodexLiveVoice } from "../CodexLiveVoice.ts";
 import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -316,6 +317,9 @@ export const CodexDriver: ProviderDriver<
           }),
       ),
     );
+    const liveVoice = yield* makeCodexLiveVoice(
+      Effect.succeed({ config: effectiveConfig, environment: processEnv }),
+    );
     const textGeneration = yield* makeCodexTextGeneration(
       effectiveConfig,
       processEnv,
@@ -425,6 +429,7 @@ export const CodexDriver: ProviderDriver<
       consumeResetCredit,
       orchestrationAdapter,
       textGeneration,
+      liveVoice,
     } satisfies ProviderInstance;
   }),
 };
