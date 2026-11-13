@@ -7,6 +7,8 @@ import {
   PullRequestOperationError,
   type OrchestrationProjectShell,
   type PullRequestActionInput,
+  type PullRequestDiffResult,
+  type PullRequestSubmitReviewInput,
   type PullRequestActivity,
   type PullRequestListInput,
   type PullRequestDetail,
@@ -1006,6 +1008,125 @@ describe("source control tools", () => {
         .call("pull_request_respond", { body: "Done", resolved: true })
         .pipe(Effect.flip);
       expect(error._tag).toBe("PullRequestNothingToDoError");
+    }),
+  );
+
+  it.effect("places review comments by the diff page that shows their line", () =>
+    Effect.gen(function* () {
+      const reviews: Array<PullRequestSubmitReviewInput> = [];
+      const pages: Record<string, PullRequestDiffResult> = {
+        first: {
+          patch:
+            "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,2 +1,2 @@\n-old\n+new\n same\n",
+          truncated: false,
+          nextCursor: "second",
+        },
+        second: {
+          patch:
+            "diff --git a/b.ts b/b.ts\n--- a/b.ts\n+++ b/b.ts\n@@ -9,1 +9,2 @@\n kept\n+added\n",
+          truncated: false,
+          nextCursor: null,
+        },
+      };
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          diff: (input) => Effect.succeed(pages[input.cursor ?? "first"]!),
+          submitReview: (input) => Effect.sync(() => void reviews.push(input)),
+        },
+      });
+      yield* harness.call("pull_request_review", {
+        verdict: "request-changes",
+        body: "Two things.",
+        comments: [
+          { path: "b.ts", line: 10, startLine: 9, body: "Why?" },
+          { path: "a.ts", line: 1, side: "old", body: "Keep this." },
+        ],
+      });
+      expect(reviews).toMatchObject([
+        {
+          number: 42,
+          verdict: "request-changes",
+          body: "Two things.",
+          comments: [
+            {
+              path: "b.ts",
+              position: { kind: "added", newLine: 10 },
+              startPosition: { kind: "context", oldLine: 9, newLine: 9, side: "right" },
+            },
+            { path: "a.ts", position: { kind: "deleted", oldLine: 1 } },
+          ],
+        },
+      ]);
+
+      // A line the diff never shows fails before anything is posted.
+      const error = yield* harness
+        .call("pull_request_review", {
+          verdict: "comment",
+          comments: [{ path: "a.ts", line: 40, body: "Here?" }],
+        })
+        .pipe(Effect.flip);
+      expect(error.message).toContain("a.ts line 40 (new side) is not in this PR's diff");
+      expect(reviews).toHaveLength(1);
+    }),
+  );
+
+  it.effect("updates labels, requests reviewers by login, and closes the PR", () =>
+    Effect.gen(function* () {
+      const calls: Array<unknown> = [];
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          setLabels: (input) =>
+            Effect.sync(() => void calls.push(["labels", input.labels, input.applied])),
+          reviewerCandidates: (input) =>
+            Effect.succeed({
+              candidates: [
+                {
+                  id: "MDQ6VXNlcjE=",
+                  kind: "user",
+                  login: input.query === "Octo" ? "octo" : "x",
+                  name: null,
+                  avatarUrl: null,
+                  isRequested: false,
+                },
+                {
+                  id: "core",
+                  kind: "team",
+                  login: "acme/core",
+                  name: null,
+                  avatarUrl: null,
+                  isRequested: false,
+                },
+              ],
+            } as never),
+          requestReviewers: (input) =>
+            Effect.sync(() => void calls.push(["reviewers", input.reviewers])),
+          runAction: (input) => Effect.sync(() => void calls.push(["action", input.action])),
+        },
+      });
+      yield* harness.call("pull_request_update", {
+        addLabels: ["bug"],
+        removeLabels: ["wip"],
+        requestReviewers: ["Octo", "acme/core"],
+        state: "closed",
+      });
+      expect(calls).toEqual([
+        ["labels", ["bug"], true],
+        ["labels", ["wip"], false],
+        [
+          "reviewers",
+          [
+            { id: "MDQ6VXNlcjE=", kind: "user" },
+            { id: "core", kind: "team" },
+          ],
+        ],
+        ["action", "close"],
+      ]);
+      const unknown = yield* harness
+        .call("pull_request_update", { requestReviewers: ["nobody"] })
+        .pipe(Effect.flip);
+      expect(unknown.message).toContain("No reviewer named nobody");
     }),
   );
 });

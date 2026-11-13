@@ -10,6 +10,7 @@ import {
   PullRequestListState,
   PullRequestMergeability,
   PullRequestMergeMethod,
+  PullRequestReviewVerdict,
   PullRequestReviewDecision,
   PullRequestReviewGuide,
   PullRequestReviewGuideRun,
@@ -653,13 +654,25 @@ const CreatePullRequestTool = Tool.make("pull_request_create", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, true);
 
+const UpdateNames = Schema.Array(TrimmedNonEmptyString).check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(25),
+);
+
 const UpdatePullRequestTool = Tool.make("pull_request_update", {
-  description: "Edit a PR's title or body, or set ready (false: back to draft).",
+  description:
+    "Edit a PR's title, body, labels, or reviewers, close or reopen it, or set ready (false: back to draft).",
   parameters: Schema.Struct({
     ...ThreadPullRequestInput.fields,
     title: Schema.optional(TrimmedNonEmptyString),
     body: Schema.optional(Schema.String),
     ready: Schema.optional(Schema.Boolean),
+    state: Schema.optional(Schema.Literals(["open", "closed"])),
+    addLabels: Schema.optional(UpdateNames),
+    removeLabels: Schema.optional(UpdateNames),
+    requestReviewers: Schema.optional(
+      UpdateNames.annotate({ description: "Logins, or org/team for a team." }),
+    ),
   }),
   success: Schema.Struct(PullRequestIdentity),
   failure: PullRequestToolError,
@@ -685,6 +698,38 @@ const RespondToPullRequestTool = Tool.make("pull_request_respond", {
   dependencies: forgeDependencies,
 })
   .annotate(Tool.Title, "Respond on pull request")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true);
+
+export const ReviewLineComment = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  line: PositiveInt,
+  startLine: Schema.optional(PositiveInt),
+  side: Schema.optional(
+    Schema.Literals(["new", "old"]).annotate({
+      description: "Default new. old: line numbers in the base, for removed lines.",
+    }),
+  ),
+  body: TrimmedNonEmptyString,
+});
+export type ReviewLineComment = typeof ReviewLineComment.Type;
+
+const ReviewPullRequestTool = Tool.make("pull_request_review", {
+  description:
+    "Submit a review: approve, request changes, or comment, with optional line comments.",
+  parameters: Schema.Struct({
+    ...ThreadPullRequestInput.fields,
+    verdict: PullRequestReviewVerdict,
+    body: Schema.optional(Schema.String),
+    comments: Schema.optional(Schema.Array(ReviewLineComment).check(Schema.isMaxLength(50))),
+  }),
+  success: Schema.Struct(PullRequestIdentity),
+  failure: PullRequestToolError,
+  dependencies: forgeDependencies,
+})
+  .annotate(Tool.Title, "Review pull request")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
@@ -728,5 +773,6 @@ export const PullRequestsToolkit = Toolkit.make(
   CreatePullRequestTool,
   UpdatePullRequestTool,
   RespondToPullRequestTool,
+  ReviewPullRequestTool,
   MergePullRequestTool,
 );

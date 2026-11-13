@@ -4,6 +4,7 @@ import {
   type PullRequestActivity,
   PullRequestListCursors,
   type PullRequestRef,
+  type PullRequestReviewCommentDraft,
   type PullRequestReviewThread,
   type OrchestrationProjectShell,
   type OrchestrationV2ThreadShell,
@@ -25,6 +26,7 @@ import * as PullRequestWatchService from "../../../pullRequest/PullRequestWatchS
 import { resolveTarget, type ResolvedTarget } from "../../../pullRequest/pullRequestTarget.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
+import { reviewPositionInPatch } from "../../../pullRequest/pullRequestReviewPosition.ts";
 import { pullRequestSyncKey } from "../../../pullRequest/pullRequestSyncKey.ts";
 import { sourceControlDefinitions } from "../../../sourceControl/sourceControlDefinitions.ts";
 import {
@@ -46,6 +48,7 @@ import {
   PullRequestNothingToDoError,
   type PullRequestReadSection,
   type ReadPullRequestResult,
+  type ReviewLineComment,
   type ThreadPullRequestInput,
   PullRequestLinkFailedError,
   PullRequestUnlinkFailedError,
@@ -102,6 +105,8 @@ const listCursors = {
 /** Keeps one conversation page near the size of a capped CI log. */
 const CONVERSATION_PAGE_CHARS = 32_000;
 const THREAD_COMMENT_PAGES = 4;
+/** Diff pages searched for review comment lines; a PR past this is too big to review by line. */
+const REVIEW_DIFF_PAGES = 10;
 
 function conversationPage(
   activity: PullRequestActivity,
@@ -362,6 +367,65 @@ const make = Effect.gen(function* () {
 
   const forgeFailure = (error: { readonly message: string }) =>
     new PullRequestForgeError({ detail: error.message, cause: error });
+
+  /** A login or org/team, matched to the host's own reviewer id. */
+  const reviewerNamed = (ref: PullRequestRef, name: string) =>
+    pullRequests.reviewerCandidates({ ...ref, query: name }).pipe(
+      Effect.mapError(forgeFailure),
+      Effect.flatMap(({ candidates }) => {
+        const wanted = name.toLowerCase();
+        const match = candidates.find(
+          (candidate) =>
+            candidate.login.toLowerCase() === wanted || candidate.id.toLowerCase() === wanted,
+        );
+        return match === undefined
+          ? Effect.fail(
+              new PullRequestForgeError({
+                detail: `No reviewer named ${name} can be requested on this PR.`,
+              }),
+            )
+          : Effect.succeed({ id: match.id, kind: match.kind });
+      }),
+    );
+
+  /** Line comments placed by the PR's diff, which says whether each line was added, removed, or kept. */
+  const reviewComments = Effect.fn("PullRequestsToolkit.reviewComments")(function* (
+    ref: PullRequestRef,
+    comments: ReadonlyArray<ReviewLineComment>,
+  ) {
+    const placed = new Map<ReviewLineComment, PullRequestReviewCommentDraft>();
+    const unplaced = () => comments.filter((comment) => !placed.has(comment));
+    let cursor: string | undefined;
+    for (let page = 0; page < REVIEW_DIFF_PAGES && unplaced().length > 0; page += 1) {
+      const diff = yield* pullRequests
+        .diff({ ...ref, ...(cursor === undefined ? {} : { cursor }) })
+        .pipe(Effect.mapError(forgeFailure));
+      for (const comment of unplaced()) {
+        const side = comment.side ?? "new";
+        const position = reviewPositionInPatch(diff.patch, comment.path, comment.line, side);
+        const start =
+          comment.startLine === undefined
+            ? undefined
+            : reviewPositionInPatch(diff.patch, comment.path, comment.startLine, side);
+        if (position === null || start === null) continue;
+        placed.set(comment, {
+          path: comment.path,
+          position,
+          ...(start === undefined ? {} : { startPosition: start }),
+          body: comment.body,
+        });
+      }
+      if (diff.nextCursor === null) break;
+      cursor = diff.nextCursor;
+    }
+    const missing = unplaced()[0];
+    if (missing !== undefined) {
+      return yield* new PullRequestForgeError({
+        detail: `${missing.path} line ${missing.startLine ?? missing.line} (${missing.side ?? "new"} side) is not in this PR's diff. Comment on a changed line or one shown around it.`,
+      });
+    }
+    return comments.map((comment) => placed.get(comment)!);
+  });
 
   /** The thread's checkout, its project, and the PR the input names (default: the branch's). */
   const locate = Effect.fn("PullRequestsToolkit.locate")(function* (input: ThreadPullRequestInput) {
@@ -914,8 +978,18 @@ const make = Effect.gen(function* () {
     ),
     pull_request_update: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
-        if (input.title === undefined && input.body === undefined && input.ready === undefined) {
-          return yield* new PullRequestNothingToDoError({ detail: "Pass title, body, or ready." });
+        if (
+          input.title === undefined &&
+          input.body === undefined &&
+          input.ready === undefined &&
+          input.state === undefined &&
+          input.addLabels === undefined &&
+          input.removeLabels === undefined &&
+          input.requestReviewers === undefined
+        ) {
+          return yield* new PullRequestNothingToDoError({
+            detail: "Pass title, body, ready, state, addLabels, removeLabels, or requestReviewers.",
+          });
         }
         const { target, ref } = yield* locate(input);
         if (input.title !== undefined || input.body !== undefined) {
@@ -927,9 +1001,32 @@ const make = Effect.gen(function* () {
             })
             .pipe(Effect.mapError(forgeFailure));
         }
+        for (const [labels, applied] of [
+          [input.addLabels, true],
+          [input.removeLabels, false],
+        ] as const) {
+          if (labels !== undefined) {
+            yield* pullRequests
+              .setLabels({ ...ref, labels, applied })
+              .pipe(Effect.mapError(forgeFailure));
+          }
+        }
+        if (input.requestReviewers !== undefined) {
+          const reviewers = yield* Effect.forEach(input.requestReviewers, (name) =>
+            reviewerNamed(ref, name),
+          );
+          yield* pullRequests
+            .requestReviewers({ ...ref, reviewers, requested: true })
+            .pipe(Effect.mapError(forgeFailure));
+        }
         if (input.ready !== undefined) {
           yield* pullRequests
             .runAction({ ...ref, action: input.ready ? "ready" : "draft" })
+            .pipe(Effect.mapError(forgeFailure));
+        }
+        if (input.state !== undefined) {
+          yield* pullRequests
+            .runAction({ ...ref, action: input.state === "closed" ? "close" : "reopen" })
             .pipe(Effect.mapError(forgeFailure));
         }
         return identityOf(target);
@@ -979,6 +1076,16 @@ const make = Effect.gen(function* () {
           replied: input.body !== undefined,
           resolved: input.resolved ?? null,
         };
+      }),
+    ),
+    pull_request_review: McpToolAccess.writesWithCapability((input) =>
+      Effect.gen(function* () {
+        const { target, ref } = yield* locate(input);
+        const comments = yield* reviewComments(ref, input.comments ?? []);
+        yield* pullRequests
+          .submitReview({ ...ref, verdict: input.verdict, body: input.body ?? "", comments })
+          .pipe(Effect.mapError(forgeFailure));
+        return identityOf(target);
       }),
     ),
     pull_request_merge: McpToolAccess.writesWithCapability((input) =>

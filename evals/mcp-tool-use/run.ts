@@ -1429,6 +1429,7 @@ export const t3Default = (
       };
     }
     case "pull_request_update":
+    case "pull_request_review":
       return pullRequest(sample.repo, { number: input.number ?? branchPullRequest(sample).number });
     case "pull_request_respond":
       return {
@@ -1622,6 +1623,7 @@ const BRANCH_PULL_REQUEST_TOOLS = new Set([
   "pull_request_read",
   "pull_request_update",
   "pull_request_respond",
+  "pull_request_review",
   "pull_request_merge",
 ]);
 const BRANCH_HAS_NO_PR_ERROR =
