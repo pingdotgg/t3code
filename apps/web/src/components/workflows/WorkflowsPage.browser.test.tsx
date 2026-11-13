@@ -38,6 +38,7 @@ const step = (
   detail: null,
   threadId: null,
   environmentId: null,
+  result: null,
   startedAt: at(0),
   endedAt: at(0),
   ...fields,
@@ -45,7 +46,8 @@ const step = (
 
 const state = vi.hoisted(() => ({
   live: { query: "live" },
-  snapshot: { runs: [], questions: [] } as {
+  snapshot: { workflows: [], runs: [], questions: [] } as {
+    workflows: ReadonlyArray<unknown>;
     runs: ReadonlyArray<unknown>;
     questions: ReadonlyArray<unknown>;
   },
@@ -57,10 +59,10 @@ const canOperate = Atom.make(true);
 const cannotOperate = Atom.make(false);
 
 function setup(
-  snapshot: WorkflowRunsSnapshot,
+  given: Omit<WorkflowRunsSnapshot, "workflows"> & Partial<Pick<WorkflowRunsSnapshot, "workflows">>,
   steps: Record<string, ReadonlyArray<WorkflowStep>> = {},
 ) {
-  state.snapshot = snapshot;
+  state.snapshot = { workflows: [], ...given };
   state.steps = steps;
   state.commands = [];
   state.permitted = true;
@@ -264,7 +266,7 @@ describe("WorkflowsPage", () => {
     await expect.element(rows.nth(0)).toMatchTextContent("2 quick steps");
     await expect.element(rows.nth(1)).toMatchTextContent(/triage.*Agent, 3m 0s/);
     await expect
-      .element(rows.nth(1).getByRole("link", { name: "Open thread" }))
+      .element(rows.nth(1).getByRole("link", { name: "Transcript" }))
       .toHaveAttribute("href", "/laptop/thread-1");
     // This client is not connected to the linked environment, so there is nothing to open.
     await expect.element(rows.nth(2)).toMatchTextContent("Thread on build-box");
@@ -301,6 +303,59 @@ describe("WorkflowsPage", () => {
     await expect.element(happened).toMatchTextContent("Runs Check web");
     await happened.getByRole("button", { name: "Open run" }).click();
     expect(onSelect).toHaveBeenCalledWith("chk");
+  });
+
+  it("lists each workflow with what starts it, also one that has not run yet", async () => {
+    setup({
+      workflows: [
+        { name: "release", version: 1, triggers: ["webhook tags"] },
+        { name: "report", version: 1, triggers: ["daily at 09:00"] },
+      ],
+      runs: [run({ runId: "rel", title: "Release 1.3" })],
+      questions: [],
+    });
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    const release = screen.getByRole("region", { name: "release" });
+    await expect.element(release).toMatchTextContent("Starts on webhook tags");
+    await expect.element(release.getByRole("button", { name: /Release 1\.3/ })).toBeVisible();
+    const report = screen.getByRole("region", { name: "report" });
+    await expect.element(report).toMatchTextContent("Starts on daily at 09:00");
+    await expect.element(report).toMatchTextContent("Has not run yet.");
+  });
+
+  it("shows what an agent returned and what a person answered", async () => {
+    setup(
+      {
+        runs: [run({ runId: "fix", title: "#7 Crash", status: "completed", endedAt: at(9) })],
+        questions: [],
+      },
+      {
+        fix: [
+          step({
+            name: "triage",
+            kind: "agent",
+            endedAt: at(3),
+            threadId: "thread-1",
+            result: { kind: "bug", reproduced: true },
+          }),
+          step({
+            name: "approve",
+            kind: "ask",
+            startedAt: at(3),
+            endedAt: at(4),
+            result: { choice: "Fix it", reason: "It hits everyone on Windows" },
+          }),
+        ],
+      },
+    );
+    await using screen = await render(page("fix"));
+
+    const rows = screen.getByRole("region", { name: "What happened" }).getByRole("listitem");
+    await expect.element(rows.nth(0)).toMatchTextContent(/kind: bug.*reproduced: true/);
+    await expect.element(rows.nth(1)).toMatchTextContent("Answered “Fix it” after 1m 0s");
+    await expect.element(rows.nth(1)).toMatchTextContent("Because: It hits everyone on Windows");
   });
 
   it("says how to turn workflows on when nothing has run", async () => {

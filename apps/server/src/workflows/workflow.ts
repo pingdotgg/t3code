@@ -159,6 +159,8 @@ export const step = <A, I, E>(
 ): Effect.Effect<A, StepFailed, InRun> =>
   Effect.flatMap(claim(name), (run) => {
     const retry = options.retry ?? DEFAULT_RETRY;
+    const resultCodec = Schema.toCodecJson(options.returns);
+    const encodeResult = Schema.encodeEffect(resultCodec);
     // Made per try, so a retry numbers its signals from the start again.
     const execute = Effect.suspend(() => Effect.provideContext(code, run.forStep(name)));
     return journaled(
@@ -176,6 +178,14 @@ export const step = <A, I, E>(
               }),
         ),
         Effect.tap(() => run.store.stepEnded(run.runId, name, "completed", null)),
+        // For a person reading the run. A value that does not encode fails the step just after.
+        Effect.tap((value) =>
+          Effect.ignore(
+            Effect.flatMap(encodeResult(value), (json) =>
+              run.store.stepResult(run.runId, name, json as Schema.Json),
+            ),
+          ),
+        ),
       ),
     );
   });
@@ -277,6 +287,7 @@ export const waitAs = Effect.fn("workflow.wait")(function* <A, I>(
     execute: Effect.gen(function* () {
       yield* run.store.waitClosed(run.runId, name);
       yield* run.store.stepEnded(run.runId, name, "completed", woke.expired ? "timed out" : null);
+      if (!woke.expired) yield* run.store.stepResult(run.runId, name, woke.value);
       yield* run.store.runResumed(run.runId);
     }),
   });

@@ -17,6 +17,7 @@ import Migration0094 from "../../apps/server/src/persistence/Migrations/094_Work
 import Migration0095 from "../../apps/server/src/persistence/Migrations/095_WorkflowRunInput.ts";
 import Migration0096 from "../../apps/server/src/persistence/Migrations/096_WorkflowStore.ts";
 import Migration0097 from "../../apps/server/src/persistence/Migrations/097_WorkflowRunParent.ts";
+import Migration0098 from "../../apps/server/src/persistence/Migrations/098_WorkflowStepResult.ts";
 import type { WorkflowDefinition } from "../../apps/server/src/workflows/workflow.ts";
 import {
   type AgentResult,
@@ -74,7 +75,15 @@ const world = Effect.fn("gradeWorkflow.world")(function* (
   const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
   yield* Effect.provide(
     Effect.all(
-      [Migration0092, Migration0093, Migration0094, Migration0095, Migration0096, Migration0097],
+      [
+        Migration0092,
+        Migration0093,
+        Migration0094,
+        Migration0095,
+        Migration0096,
+        Migration0097,
+        Migration0098,
+      ],
       {
         discard: true,
       },

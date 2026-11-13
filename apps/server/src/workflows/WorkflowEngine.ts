@@ -336,7 +336,27 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         })),
     ),
   );
+  const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const triggerText = (trigger: WorkflowDefinition["triggers"][number]) => {
+    if (trigger.kind === "webhook") return `webhook ${trigger.name}`;
+    if (trigger.schedule.type === "interval") {
+      return `every ${Duration.format(Duration.millis(trigger.schedule.everyMs))}`;
+    }
+    const days = trigger.schedule.weekdays;
+    return `daily at ${trigger.schedule.timeOfDay}${
+      days === undefined ? "" : ` on ${days.map((day) => WEEKDAYS[day] ?? day).join(", ")}`
+    }`;
+  };
+  const summaries = [...new Set(registered.map(([definition]) => definition.name))].flatMap(
+    (name) => {
+      const found = latest(name);
+      return found === undefined
+        ? []
+        : [{ name, version: found[0].version, triggers: found[0].triggers.map(triggerText) }];
+    },
+  );
   const snapshot = Effect.all({
+    workflows: Effect.succeed(summaries),
     runs: Effect.map(store.runs(undefined), (rows) => rows.map(toRun)),
     questions,
   });
@@ -469,6 +489,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
           detail: step.detail,
           threadId: step.thread_id,
           environmentId: step.environment_id,
+          result: step.result_json === null ? null : WorkflowStore.jsonValue(step.result_json),
           startedAt: step.started_at,
           endedAt: step.ended_at,
         })),

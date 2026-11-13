@@ -24,12 +24,12 @@ import Migration0094 from "../persistence/Migrations/094_WorkflowStepEnvironment
 import Migration0095 from "../persistence/Migrations/095_WorkflowRunInput.ts";
 import Migration0096 from "../persistence/Migrations/096_WorkflowStore.ts";
 import Migration0097 from "../persistence/Migrations/097_WorkflowRunParent.ts";
+import Migration0098 from "../persistence/Migrations/098_WorkflowStepResult.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import { agent, ask } from "./workflowAgent.ts";
 import * as Workflows from "./Workflows.ts";
 import type { WorkflowRun, WorkflowRunStatus } from "./WorkflowStore.ts";
 
-const EMPTY = { runs: [], questions: [] };
 const once = { retry: { times: 0 } } as const;
 
 /** A workflow whose `flaky` step fails until `failures` reaches zero, counting every execution. */
@@ -355,7 +355,15 @@ const harness = Effect.gen(function* () {
   const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
   yield* Effect.provide(
     Effect.all(
-      [Migration0092, Migration0093, Migration0094, Migration0095, Migration0096, Migration0097],
+      [
+        Migration0092,
+        Migration0093,
+        Migration0094,
+        Migration0095,
+        Migration0096,
+        Migration0097,
+        Migration0098,
+      ],
       {
         discard: true,
       },
@@ -611,6 +619,16 @@ it.effect(
           const done = yield* workflows.waitFor(runId, status("completed"));
           assert.equal(done.result, "fix/1: merged as abc123");
           assert.deepStrictEqual(yield* workflows.questions, []);
+          // Each step keeps what it produced, for a person reading the run afterwards.
+          const { steps } = yield* workflows.get(runId);
+          assert.deepStrictEqual(
+            steps.map((step) => [step.name, step.result]),
+            [
+              ["write", { branch: "fix/1" }],
+              ["merge", { choice: "Merge" }],
+              ["land", "merged as abc123"],
+            ],
+          );
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
@@ -1007,7 +1025,14 @@ it.effect("a watcher is sent the runs again when one changes", () =>
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
-        assert.deepStrictEqual(yield* Stream.runHead(workflows.watch), Option.some(EMPTY));
+        const first = Option.getOrThrow(yield* Stream.runHead(workflows.watch));
+        assert.deepStrictEqual([first.runs, first.questions], [[], []]);
+        // What exists is listed before anything has run, with what starts it.
+        assert.deepInclude(first.workflows, {
+          name: "inbound",
+          version: 1,
+          triggers: ["webhook push"],
+        });
         const { runId } = yield* workflows.start(
           "review",
           { change: "c9", timeout: "1 hour" },

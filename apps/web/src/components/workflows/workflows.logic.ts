@@ -1,4 +1,9 @@
-import type { WorkflowQuestion, WorkflowRun, WorkflowStep } from "@t3tools/contracts";
+import type {
+  WorkflowQuestion,
+  WorkflowRun,
+  WorkflowStep,
+  WorkflowSummary,
+} from "@t3tools/contracts";
 
 export interface WorkflowQuestionView {
   readonly title: string;
@@ -37,22 +42,37 @@ export interface WorkflowRunNode {
   readonly questions: ReadonlyArray<WorkflowQuestion>;
 }
 
+/** One workflow and the runs of it that nobody has to act on. */
+export interface WorkflowSection {
+  readonly name: string;
+  /** What starts it, in words. Null for a workflow this server no longer has registered. */
+  readonly triggers: ReadonlyArray<string> | null;
+  readonly active: ReadonlyArray<WorkflowRunNode>;
+  readonly finished: ReadonlyArray<WorkflowRunNode>;
+  /** It has runs, and every one was invoked by a run of another workflow. */
+  readonly invokedOnly: boolean;
+  /** It has never run here, as far as the list goes back. */
+  readonly neverRan: boolean;
+}
+
 export interface WorkflowRunGroups {
   /** Runs a person has to act on: one has a question open or is paused, itself or below it. */
   readonly needsYou: ReadonlyArray<WorkflowRunNode>;
-  readonly active: ReadonlyArray<WorkflowRunNode>;
-  readonly finished: ReadonlyArray<WorkflowRunNode>;
+  /** Every workflow there is, busiest first, each with its other runs. */
+  readonly workflows: ReadonlyArray<WorkflowSection>;
 }
 
 const needsPerson = (node: WorkflowRunNode): boolean =>
   node.questions.length > 0 || node.run.status === "paused" || node.children.some(needsPerson);
 
 /**
- * The list a person reads: what waits on them first, then what is under way, then what is over.
- * A run that another invoked sits under that one, wherever the two would fall by themselves, so
- * a piece of work is one entry. `runs` is newest first and that order is kept within a group.
+ * The list a person reads: what waits on them first, then each workflow with its runs. A run
+ * that another invoked sits under that one, so a piece of work is one entry, and a workflow that
+ * has not run yet is still listed, since the list is also how one learns what exists. `runs` is
+ * newest first and that order is kept.
  */
 export function groupWorkflowRuns(
+  workflows: ReadonlyArray<WorkflowSummary>,
   runs: ReadonlyArray<WorkflowRun>,
   questions: ReadonlyArray<WorkflowQuestion>,
 ): WorkflowRunGroups {
@@ -76,29 +96,84 @@ export function groupWorkflowRuns(
       .map(node),
   });
   const needsYou: WorkflowRunNode[] = [];
-  const active: WorkflowRunNode[] = [];
-  const finished: WorkflowRunNode[] = [];
+  const sections = new Map<string, { active: WorkflowRunNode[]; finished: WorkflowRunNode[] }>();
+  const sectionOf = (name: string) => {
+    const known = sections.get(name);
+    if (known) return known;
+    const made = { active: [], finished: [] };
+    sections.set(name, made);
+    return made;
+  };
   for (const root of roots.map(node)) {
     if (needsPerson(root)) needsYou.push(root);
-    else if (root.run.endedAt === null) active.push(root);
-    else finished.push(root);
+    else if (root.run.endedAt === null) sectionOf(root.run.workflow).active.push(root);
+    else sectionOf(root.run.workflow).finished.push(root);
   }
-  return { needsYou, active, finished };
+  const registered = new Map(workflows.map((workflow) => [workflow.name, workflow] as const));
+  const hasRuns = new Set(runs.map((run) => run.workflow));
+  const hasRootRuns = new Set(roots.map((run) => run.workflow));
+  const names = [...new Set([...sections.keys(), ...registered.keys(), ...hasRuns])];
+  const rank = (name: string) => {
+    const section = sections.get(name);
+    if (section !== undefined && section.active.length > 0) return 0;
+    return section !== undefined && section.finished.length > 0 ? 1 : 2;
+  };
+  return {
+    needsYou,
+    workflows: names
+      .map((name) => ({
+        name,
+        triggers: registered.get(name)?.triggers ?? null,
+        active: sections.get(name)?.active ?? [],
+        finished: sections.get(name)?.finished ?? [],
+        invokedOnly: hasRuns.has(name) && !hasRootRuns.has(name),
+        neverRan: !hasRuns.has(name),
+      }))
+      .toSorted(
+        (left, right) => rank(left.name) - rank(right.name) || left.name.localeCompare(right.name),
+      ),
+  };
 }
 
-/** Every run of the groups, parents before the runs they invoked. */
-export function flattenWorkflowRunNodes(
+/** Every run of these, parents before the runs they invoked. */
+function flattenWorkflowRunNodes(
   nodes: ReadonlyArray<WorkflowRunNode>,
 ): ReadonlyArray<WorkflowRunNode> {
   return nodes.flatMap((node) => [node, ...flattenWorkflowRunNodes(node.children)]);
 }
 
-/** The run to show when none was picked: the first that waits on a person, else the newest. */
+/** Every run in the list, in the order it is listed. */
+export function allWorkflowRunNodes(groups: WorkflowRunGroups): ReadonlyArray<WorkflowRunNode> {
+  return flattenWorkflowRunNodes([
+    ...groups.needsYou,
+    ...groups.workflows.flatMap((section) => [...section.active, ...section.finished]),
+  ]);
+}
+
+/** The run to show when none was picked: the first that waits on a person, else one under way. */
 export function defaultWorkflowRunId(groups: WorkflowRunGroups): string | null {
   const waiting = flattenWorkflowRunNodes(groups.needsYou).find(
     (node) => node.questions.length > 0 || node.run.status === "paused",
   );
-  return waiting?.run.runId ?? groups.active[0]?.run.runId ?? groups.finished[0]?.run.runId ?? null;
+  const rest = groups.workflows;
+  return (
+    waiting?.run.runId ??
+    rest.find((section) => section.active.length > 0)?.active[0]?.run.runId ??
+    rest
+      .flatMap((section) => section.finished)
+      .toSorted((left, right) => right.run.updatedAt.localeCompare(left.run.updatedAt))[0]?.run
+      .runId ??
+    null
+  );
+}
+
+/** What starts a workflow, as the line under its name. */
+export function workflowTriggerLine(section: WorkflowSection): string {
+  if (section.triggers === null) return "No longer registered on this server";
+  if (section.invokedOnly) return "Runs as part of other workflows";
+  return section.triggers.length === 0
+    ? "Started by hand"
+    : `Starts on ${section.triggers.join(", ")}`;
 }
 
 /** What a run is doing right now, in a few words, for its line in the list. */
@@ -166,6 +241,8 @@ export interface WorkflowBeat {
   readonly attempts: number;
   /** A failure's reason, or when a sleep wakes. */
   readonly detail: string | null;
+  /** What it produced: a value, an agent's data or reply, the answer to a question. */
+  readonly result: WorkflowStep["result"];
   readonly startMs: number;
   /** When it ended, or `nowMs` while it is under way. */
   readonly endMs: number;
@@ -246,6 +323,7 @@ export function buildWorkflowTimeline(input: {
       status: step.status,
       attempts: step.attempts,
       detail: step.detail,
+      result: step.result,
       startMs: stepStart,
       endMs: Math.max(stepStart, stepEnd),
       thread:
@@ -282,4 +360,15 @@ export function workflowBeatSpan(
   // A sliver stays visible: a beat that took a moment of a long run still happened.
   const length = Math.min(1 - offset, Math.max(0.01, (beat.endMs - beat.startMs) / span));
   return { offset, length };
+}
+
+/** What a person answered a question with, when a step's result is such an answer. */
+export function workflowAnswer(
+  result: WorkflowStep["result"],
+): { readonly choice: string; readonly reason: string | null } | null {
+  const choice = field(result, "choice");
+  const reason = field(result, "reason");
+  return typeof choice === "string"
+    ? { choice, reason: typeof reason === "string" && reason.trim() !== "" ? reason : null }
+    : null;
 }

@@ -2504,6 +2504,7 @@ const workflowStep: WorkflowStep = {
   detail: "exit 1",
   threadId: null,
   environmentId: null,
+  result: null,
   startedAt: "2026-11-01T00:00:10.000Z",
   endedAt: "2026-11-01T00:01:00.000Z",
 };
