@@ -90,7 +90,7 @@ export function resolveProviderInstanceAcpRegistryIconUrl(input: {
 export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   driverKind: ProviderDriverKind;
   displayName: string;
-  /** The model shown next to the icon; the server-routed `auto` model gets its own icon. */
+  /** The model shown next to the icon; the server-routed `auto` model gets a route badge. */
   modelSlug?: string | undefined;
   accentColor?: string | undefined;
   acpRegistryAgentId?: string | undefined;
@@ -133,9 +133,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       style={accentStyle}
       data-provider-accent-color={accentColor}
     >
-      {props.modelSlug === "auto" ? (
-        <RouteIcon className={cn("size-5 shrink-0 text-primary", iconClassName)} aria-hidden />
-      ) : isAcpRegistry ? (
+      {isAcpRegistry ? (
         <AcpRegistryAgentIcon
           className={cn("size-5 rounded-none bg-transparent", iconClassName)}
           fallbackClassName="size-full"
@@ -177,7 +175,20 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           {providerInstanceInitials(props.displayName)}
         </span>
       )}
-      {isCustomEndpoint || props.modelSlug === "auto" ? null : props.showBadge ? (
+      {isCustomEndpoint ? null : props.modelSlug === "auto" ? (
+        // Auto keeps the logo of the provider it routes to and marks it with a route badge.
+        <span
+          className={cn(
+            "pointer-events-none absolute right-0 bottom-0 z-10 flex size-3.5 items-center justify-center rounded-full border bg-card text-primary shadow-sm",
+            props.size === "compact" && "right-[-0.1875rem] bottom-[-0.1875rem] size-3",
+            props.badgeClassName,
+          )}
+          style={{ borderColor: indicatorBackground }}
+          aria-hidden
+        >
+          <RouteIcon className="size-2.5" />
+        </span>
+      ) : props.showBadge ? (
         <span
           className={cn(
             "pointer-events-none absolute right-0 bottom-0 z-10 flex h-3.5 min-w-3.5 items-center justify-center rounded-full border px-0.5 text-4xs font-semibold leading-none shadow-sm",
