@@ -260,6 +260,7 @@ name = "conn-vcs"
 version = "0.1.0"
 dependencies = [
  "conn-contract",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

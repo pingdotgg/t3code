@@ -374,7 +374,13 @@ pub async fn provision(
         &STAGE_ORDER,
     );
     let mut created: Option<(PathBuf, String)> = None;
+    let mut dropped = FinishOnDrop {
+        setups,
+        thread,
+        armed: true,
+    };
     let result = provision_stages(setups, &request, &cancel, &mut created).await;
+    dropped.armed = false;
     if let Err(error) = &result {
         if let Some((path, branch)) = created {
             let root = request.project_root.as_path();
@@ -582,6 +588,10 @@ async fn base_remote(root: &Path, base_ref: &str) -> VcsResult<Option<(String, S
 /// Runs the script with `sh -c` in the worktree (the TypeScript server types it into a
 /// terminal; this server has no terminal service in this crate). Keeps the last 4 output
 /// lines in the stage's tail. Returns the exit code.
+///
+/// The script runs in its own process group. The group is killed when the script exits (jobs
+/// it left behind would hold its pipes open), and when this future is dropped, which is how
+/// a cancel or a dropped launch ends it.
 async fn run_setup_script(
     setups: &WorktreeSetups,
     thread: &str,
@@ -601,16 +611,61 @@ async fn run_setup_script(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .process_group(0)
         .kill_on_drop(true)
         .spawn()
         .ok()?;
-    let stdout = child.stdout.take().expect("piped");
-    let stderr = child.stderr.take().expect("piped");
-    tokio::join!(
-        tail_lines(setups, thread, stdout),
-        tail_lines(setups, thread, stderr)
+    let group = GroupKill(
+        child
+            .id()
+            .and_then(|id| i32::try_from(id).ok())
+            .and_then(rustix::process::Pid::from_raw),
     );
-    child.wait().await.ok()?.code()
+    let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
+    let wait = async move {
+        let code = child.wait().await.ok().and_then(|status| status.code());
+        drop(group);
+        code
+    };
+    let (code, (), ()) = tokio::join!(
+        wait,
+        tail_pipe(setups, thread, stdout),
+        tail_pipe(setups, thread, stderr)
+    );
+    code
+}
+
+async fn tail_pipe(setups: &WorktreeSetups, thread: &str, pipe: Option<impl AsyncRead + Unpin>) {
+    if let Some(pipe) = pipe {
+        tail_lines(setups, thread, pipe).await;
+    }
+}
+
+/// Kills a process group with `SIGKILL` when dropped.
+struct GroupKill(Option<rustix::process::Pid>);
+
+impl Drop for GroupKill {
+    fn drop(&mut self) {
+        if let Some(group) = self.0.take() {
+            let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+        }
+    }
+}
+
+/// Ends a setup entry as cancelled if [`provision`] is dropped before it returns, so a
+/// dropped launch never leaves an entry running forever.
+struct FinishOnDrop<'a> {
+    setups: &'a WorktreeSetups,
+    thread: &'a str,
+    armed: bool,
+}
+
+impl Drop for FinishOnDrop<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.setups.finish(self.thread, Phase::Cancelled, None);
+        }
+    }
 }
 
 /// Longest partial line kept; the rest of a longer line is skipped.

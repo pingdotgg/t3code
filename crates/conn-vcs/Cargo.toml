@@ -13,6 +13,9 @@ serde_json.workspace = true
 tokio = { workspace = true, features = ["process", "io-util", "sync", "time", "rt", "macros"] }
 # Already in the tree through conn-server: diff hashes.
 sha2 = { version = "0.10", default-features = false }
+# Already in the tree through conn-server and conn-terminal: kills a setup script's process
+# group without `unsafe`.
+rustix = { version = "1", default-features = false, features = ["std", "process"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }

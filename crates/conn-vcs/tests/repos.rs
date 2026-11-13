@@ -632,3 +632,136 @@ async fn provision_creates_a_worktree_and_runs_the_setup_script() {
     let branch = snapshot.branch.unwrap();
     assert!(!git(&fx.work, &["branch", "--list", &branch]).contains(&branch));
 }
+
+/// Reads a PID the script wrote, waiting up to 10 s for the file.
+async fn read_pid(path: &std::path::Path) -> u32 {
+    for _ in 0..200 {
+        if let Some(pid) = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| text.trim().parse().ok())
+        {
+            return pid;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("no pid in {}", path.display())
+}
+
+fn alive(pid: u32) -> bool {
+    // `ps -o stat=` prints nothing for a missing process and `Z` for a zombie.
+    let out = std::process::Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .unwrap();
+    let stat = String::from_utf8_lossy(&out.stdout);
+    !stat.trim().is_empty() && !stat.trim().starts_with('Z')
+}
+
+/// Waits up to 3 s for `pids` to end; kills the survivors either way, and returns them.
+async fn survivors(pids: &[u32]) -> Vec<u32> {
+    for _ in 0..60 {
+        if pids.iter().all(|p| !alive(*p)) {
+            return Vec::new();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let left: Vec<u32> = pids.iter().copied().filter(|p| alive(*p)).collect();
+    for pid in &left {
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status();
+    }
+    left
+}
+
+/// The setup script's whole process tree ends when the setup is cancelled, when the launch is
+/// dropped, and when the script exits leaving a background job; no entry stays running.
+#[tokio::test]
+async fn setup_scripts_leave_no_processes_behind() {
+    use conn_contract::ProjectClonePhase as Phase;
+    use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, SetupScript, WorktreeSetups};
+
+    let fx = Fixture::new("setup-tree");
+    let setups = WorktreeSetups::new();
+    let request = |thread: &str, command: &str| ProvisionRequest {
+        thread_id: thread.into(),
+        project_root: fx.work.clone(),
+        base_ref: "main".into(),
+        branch: None,
+        start_from_origin: false,
+        setup_script: Some(SetupScript {
+            id: "s1".into(),
+            name: "Setup".into(),
+            command: command.into(),
+        }),
+        worktrees_dir: fx.root.path().join("worktrees"),
+    };
+    let pids_dir = fx.root.path().join("pids");
+    std::fs::create_dir_all(&pids_dir).unwrap();
+    let script = |name: &str, tail: &str| {
+        let d = pids_dir.join(name);
+        std::fs::create_dir_all(&d).unwrap();
+        let d = d.display();
+        format!("sleep 30 & echo $! > {d}/bg; sleep 31 & echo $! > {d}/fg; {tail}")
+    };
+
+    // Cancelled while it runs.
+    let run = {
+        let (setups, request) = (setups.clone(), request("cancel", &script("cancel", "wait")));
+        tokio::spawn(async move { setup::provision(&setups, request).await })
+    };
+    let pids = [
+        read_pid(&pids_dir.join("cancel/bg")).await,
+        read_pid(&pids_dir.join("cancel/fg")).await,
+    ];
+    assert!(setups.cancel("cancel"));
+    let result = run.await.unwrap();
+    let left = survivors(&pids).await;
+    assert!(
+        matches!(result, Err(ProvisionError::Cancelled)),
+        "{result:?}"
+    );
+    assert_eq!(left, Vec::<u32>::new(), "cancel left processes running");
+
+    // The launch future dropped while the script runs.
+    let run = {
+        let (setups, request) = (setups.clone(), request("drop", &script("drop", "wait")));
+        tokio::spawn(async move { setup::provision(&setups, request).await })
+    };
+    let pids = [
+        read_pid(&pids_dir.join("drop/bg")).await,
+        read_pid(&pids_dir.join("drop/fg")).await,
+    ];
+    run.abort();
+    let _ = run.await;
+    let left = survivors(&pids).await;
+    assert_eq!(
+        left,
+        Vec::<u32>::new(),
+        "a dropped launch left processes running"
+    );
+    assert_ne!(setups.get("drop").unwrap().phase, Phase::Running);
+
+    // The script exits at once, but its background jobs hold its output pipes.
+    let started = std::time::Instant::now();
+    let done = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        setup::provision(&setups, request("exit", &script("exit", "exit 0"))),
+    )
+    .await;
+    let pids = [
+        read_pid(&pids_dir.join("exit/bg")).await,
+        read_pid(&pids_dir.join("exit/fg")).await,
+    ];
+    let left = survivors(&pids).await;
+    assert!(
+        matches!(done, Ok(Ok(_))),
+        "{done:?} after {:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        left,
+        Vec::<u32>::new(),
+        "background jobs outlived the script"
+    );
+}
