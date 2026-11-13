@@ -238,7 +238,7 @@ it.layer(NodeServices.layer)("self-update launchers", (it) => {
 
         assert.equal(yield* fs.readLink(installed), exe("2.0.0"));
         assert.equal(yield* fs.readLink(onPath), exe("2.0.0"));
-      }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+      }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("still moves the PATH launcher when the install bin one cannot be rewritten", () =>
@@ -292,7 +292,7 @@ it.layer(NodeServices.layer)("self-update launchers", (it) => {
       assert.include(JSON.stringify(warnings), installed);
       assert.equal(yield* fs.readLink(installed), exe("1.0.0"));
       assert.equal(yield* fs.readLink(onPath), exe("2.0.0"));
-    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("leaves unowned install files and PATH symlinks untouched after self-update", () =>
@@ -321,6 +321,6 @@ it.layer(NodeServices.layer)("self-update launchers", (it) => {
 
       assert.equal(yield* fs.readFileString(installed), "user-owned file");
       assert.equal(yield* fs.readLink(onPath), foreign);
-    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 });

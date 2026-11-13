@@ -1626,6 +1626,73 @@ it.effect("ProviderSessionManagerV2 gives up on a provider that never confirms a
   }),
 );
 
+it.effect("ProviderSessionManagerV2 still idles out a session releaseUnlessBusy kept", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-kept-idles");
+      const providerSessionId = idAllocator.derive.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = makeProviderThread({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        now,
+        nativeThreadId: `native-${threadId}`,
+      });
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      yield* runtime.startTurn({
+        appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+        threadId,
+        runId,
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+        rootNodeId: idAllocator.derive.rootNode({ runId }),
+        providerThread,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+          text: "turn",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy,
+      });
+
+      assert.isFalse(
+        yield* manager.releaseUnlessBusy({
+          providerSessionId,
+          ownProviderThreadIds: [providerThread.id],
+          throughRunOrdinal: 1,
+          keepIf: Effect.succeed(true),
+          reason: "manual_shutdown",
+        }),
+      );
+      assert.isTrue(yield* manager.isLive(providerSessionId));
+      // The stopped run 1 never reports its end.
+      yield* TestClock.adjust("2 seconds");
+      assert.isFalse(yield* manager.isLive(providerSessionId));
+    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000 })));
+  }),
+);
+
 it.effect(
   "ProviderSessionManagerV2 keeps a shared session a sibling is busy on when releasing",
   () =>
@@ -1692,6 +1759,7 @@ it.effect(
           manager.releaseUnlessBusy({
             providerSessionId,
             ownProviderThreadIds: [providerThreadOf(own).id],
+            throughRunOrdinal: 1,
             reason: "manual_shutdown",
           });
 
