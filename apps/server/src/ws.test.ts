@@ -126,6 +126,7 @@ import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -815,6 +816,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(DeviceService.DeviceService)({}),
   Layer.mock(EnvironmentTheme.EnvironmentThemeService)({}),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
+  Layer.mock(GitVcsDriver.GitVcsDriver)({}),
   Layer.mock(HostResources.HostResources)({}),
   Layer.mock(McpAppRequests.McpAppRequests)({}),
   Layer.mock(ModelManifest.ModelManifest)({}),
@@ -1710,6 +1712,7 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
             IdAllocator.layer,
             Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({}),
             Layer.mock(ThreadCommandExecutor.ThreadCommandExecutor)({}),
+            Layer.mock(GitVcsDriver.GitVcsDriver)({}),
           ),
         ),
       ),

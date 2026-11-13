@@ -356,6 +356,10 @@ export function layerWithRegistry<Error>(
   const layerCommandReceiptStoreProvided = CommandReceiptStore.layer.pipe(
     Layer.provide(layerDatabase),
   );
+  const layerGitVcsDriver = GitVcsDriver.layer.pipe(
+    Layer.provide(layerServerConfig),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
   const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -366,10 +370,7 @@ export function layerWithRegistry<Error>(
         layerEventSinkProvided,
         IdAllocator.layer,
         ThreadCommandExecutor.layer,
-        GitVcsDriver.layer.pipe(
-          Layer.provide(layerServerConfig),
-          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-        ),
+        layerGitVcsDriver,
       ),
     ),
   );
@@ -448,6 +449,7 @@ export function layerWithRegistry<Error>(
         layerRuntime,
         layerServerConfig,
         layerServerSettings,
+        layerGitVcsDriver,
       ),
     ),
   );
@@ -469,6 +471,7 @@ export function layerWithRegistry<Error>(
         layerRuntime,
         layerServerConfig,
         layerServerSettings,
+        layerGitVcsDriver,
       ),
     ),
   );

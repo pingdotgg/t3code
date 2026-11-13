@@ -35,6 +35,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import type * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { makeRestoreMissingWorktree } from "../workspace/restoreMissingWorktree.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
@@ -140,6 +141,7 @@ export const layer: Layer.Layer<
   | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService
   | GitWorkflowService.GitWorkflowService
+  | GitVcsDriver.GitVcsDriver
   | ProjectService.ProjectService
   | ProviderAuthService.ProviderAuthService
   | ProjectionStore.ProjectionStoreV2

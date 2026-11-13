@@ -52,7 +52,8 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { isNonRepositoryGitStderr } from "./vcs/GitVcsDriverCore.ts";
-import { removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
+import { makeManagedWorktreePaths } from "./vcs/managedWorktreePaths.ts";
+import { registeredWorktreeAdminDirectory, removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -323,6 +324,7 @@ const make = Effect.gen(function* () {
   const terminals = yield* TerminalManager.TerminalManager;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const managedWorktreePaths = yield* makeManagedWorktreePaths;
   const liveTerminals = new Map<string, Map<string, TerminalSummary>>();
   const orphanSizes = new Map<string, number | null>();
   const noteTerminal = (terminal: TerminalSummary) => {
@@ -658,6 +660,15 @@ const make = Effect.gen(function* () {
       if (!reported.has(key)) orphanSizes.delete(key);
     }
   });
+
+  // A matching branch name is not ownership: another repository's worktree can share it.
+  const belongsToProject = (worktreePath: string, workspaceRoot: string) =>
+    registeredWorktreeAdminDirectory({
+      operation: "StorageCleanup.belongsToProject",
+      cwd: workspaceRoot,
+      worktreePath,
+      execute: git.execute,
+    }).pipe(Effect.map((adminDirectory) => adminDirectory !== null));
 
   // Use two small Git reads: statusDetailsLocal also diffs and counts for every worktree.
   const branchChanged = Effect.fn("StorageCleanup.branchChanged")(function* (
@@ -1013,13 +1024,23 @@ const make = Effect.gen(function* () {
     }
     const worktreePathReason = Effect.fn("StorageCleanup.worktreePathReason")(function* (
       worktreePath: string,
+      projectRoot: string,
     ) {
       // Allow symlinked parents, never a symlinked worktree directory.
       const realPath = yield* fs.realPath(worktreePath);
       const realParent = yield* fs.realPath(path.dirname(worktreePath));
       if (realPath !== path.join(realParent, path.basename(worktreePath)))
         return "worktree is a symbolic link";
-      if (!roots.some((root) => inside(root, realPath)))
+      // In-project folders count only inside this thread's own project, and only for its threads.
+      if (
+        !roots.some((root) => inside(root, realPath)) &&
+        (isWorktreeDevHome ||
+          !(yield* managedWorktreePaths.isProjectWorktreePath({
+            worktreePath,
+            projectRoot,
+            settings: serverSettings,
+          })))
+      )
         return "outside the managed worktree folder";
       if ((yield* fs.stat(path.join(worktreePath, ".git"))).type !== "File")
         return "not a linked worktree";
@@ -1166,11 +1187,14 @@ const make = Effect.gen(function* () {
         // Only Git-based rules can make a not-yet-due worktree eligible, so skip Git otherwise.
         if (!eligible && !settings.worktreeUnchanged && !settings.worktreeOnMerge)
           return keep(notDueReason);
-        const pathReason = yield* worktreePathReason(worktreePath);
+        const pathReason = yield* worktreePathReason(worktreePath, project.workspaceRoot);
         if (pathReason !== null) return keep(pathReason);
         if (yield* containsProjectRoot(worktreePath, [project, ...snapshot.projects]))
           return keep("contains a project checkout");
-        if (yield* branchChanged(worktreePath, thread.branch))
+        if (
+          !(yield* belongsToProject(worktreePath, project.workspaceRoot)) ||
+          (yield* branchChanged(worktreePath, thread.branch))
+        )
           return keep("repository or branch changed");
         const changes = yield* localChangesReason(worktreePath, settings);
         if (changes !== null) return keep(changes);
@@ -1368,11 +1392,14 @@ const make = Effect.gen(function* () {
         yield* withWorkspaceLease(
           worktreePath,
           Effect.gen(function* () {
-            const pathReason = yield* worktreePathReason(worktreePath);
+            const pathReason = yield* worktreePathReason(worktreePath, project.workspaceRoot);
             if (pathReason !== null) return keep(pathReason);
             const blockedWhileMeasuring = yield* blockedSinceCheck();
             if (blockedWhileMeasuring !== null) return keep(blockedWhileMeasuring);
-            if (yield* branchChanged(worktreePath, thread.branch))
+            if (
+              !(yield* belongsToProject(worktreePath, project.workspaceRoot)) ||
+              (yield* branchChanged(worktreePath, thread.branch))
+            )
               return keep("repository or branch changed since check");
             if (
               (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==

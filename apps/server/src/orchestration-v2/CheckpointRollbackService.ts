@@ -20,7 +20,8 @@ import * as Schema from "effect/Schema";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import type * as ServerConfig from "../config.ts";
 import type * as ServerSettings from "../serverSettings.ts";
-import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
+import type * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { makeManagedWorktreePaths } from "../vcs/managedWorktreePaths.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
   isCheckpointRestoreIsolated,
@@ -110,6 +111,7 @@ export const layer: Layer.Layer<
   never,
   | CheckpointServiceV2
   | GitWorkflowService.GitWorkflowService
+  | GitVcsDriver.GitVcsDriver
   | EventSinkV2
   | IdAllocator.IdAllocatorV2
   | ProjectionStoreV2
@@ -135,7 +137,7 @@ export const layer: Layer.Layer<
     const projects = yield* ProjectStore.ProjectStoreV2;
     const path = yield* Path.Path;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-    const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+    const managedWorktreePaths = yield* makeManagedWorktreePaths;
 
     const execute = Effect.fn("orchestrationV2.checkpointRollback.execute")(function* (input: {
       readonly threadId: ThreadId;
@@ -234,19 +236,22 @@ export const layer: Layer.Layer<
         });
 
       const { worktreePath, branch } = context.thread;
-      // Recreated only where the server would have made it, as turn start does.
+      // Recreated only where the server would have made it for this project, as turn start does.
       if (worktreePath != null && branch != null) {
         // A failed removal can leave the folder without its checkout; only a file restore replaces it.
         const leftover =
           restoreFiles &&
           (yield* fileSystem.exists(worktreePath)) &&
           !(yield* fileSystem.exists(path.join(worktreePath, ".git")));
-        if (
-          (leftover || !(yield* fileSystem.exists(worktreePath))) &&
-          (yield* isManagedWorktreePath(worktreePath))
-        ) {
+        if (leftover || !(yield* fileSystem.exists(worktreePath))) {
           const project = yield* projects.get(context.thread.projectId);
-          if (Option.isSome(project)) {
+          if (
+            Option.isSome(project) &&
+            (yield* managedWorktreePaths.isManagedWorktreePath({
+              worktreePath,
+              projectRoot: project.value.workspaceRoot,
+            }))
+          ) {
             const recreate = gitWorkflow.pruneWorktrees({ cwd: project.value.workspaceRoot }).pipe(
               Effect.andThen(
                 gitWorkflow.createWorktree({

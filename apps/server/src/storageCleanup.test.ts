@@ -1882,11 +1882,23 @@ describe("orphan worktree reports", () => {
   );
 
   it.live.each([
-    { home: "an installed", worktreeHome: false, customFolderOutcome: "removed" },
-    { home: "a git worktree's dev", worktreeHome: true, customFolderOutcome: "kept" },
+    { home: "an installed", worktreeHome: false, inProject: false, customFolderOutcome: "removed" },
+    {
+      home: "a git worktree's dev",
+      worktreeHome: true,
+      inProject: false,
+      customFolderOutcome: "kept",
+    },
+    { home: "an installed", worktreeHome: false, inProject: true, customFolderOutcome: "removed" },
+    {
+      home: "a git worktree's dev",
+      worktreeHome: true,
+      inProject: true,
+      customFolderOutcome: "kept",
+    },
   ] as const)(
-    "on $home home, a custom worktrees folder ends $customFolderOutcome",
-    ({ worktreeHome, customFolderOutcome }) =>
+    "on $home home, a custom worktrees folder (in project: $inProject) ends $customFolderOutcome",
+    ({ worktreeHome, inProject, customFolderOutcome }) =>
       runCleanupTest(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -1904,9 +1916,13 @@ describe("orphan worktree reports", () => {
           const customFolder = yield* fs.realPath(
             yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-real-worktrees-" }),
           );
-          const realWorktree = `${customFolder}/seeded`;
+          const realWorktree = inProject
+            ? `${fixture.repo}/.claude/worktrees/seeded`
+            : `${customFolder}/seeded`;
           yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "seeded", realWorktree]);
-          fixture.setSettings({ worktreesDirectory: customFolder });
+          fixture.setSettings({
+            worktreesDirectory: inProject ? ".claude/worktrees" : customFolder,
+          });
           fixture.setThreads([
             shell({ branch: "feature", worktreePath: fixture.worktree }),
             shell({
@@ -2654,6 +2670,99 @@ describe("storage cleanup reports and local file policies", () => {
         expect(fullStatusCalls()).toBe(0);
       }),
     ),
+  );
+  it.live("never cleans another repository's worktree on the thread's branch", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, config, command, setThreads, setPolicy } = yield* cleanupFixture();
+        setPolicy("tracked-changes");
+        const other = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-other-" }),
+        );
+        yield* command(other, ["init", "-b", "main"]);
+        yield* command(other, [
+          "-c",
+          "user.name=Cleanup test",
+          "-c",
+          "user.email=cleanup@example.test",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "initial",
+        ]);
+        const foreign = `${config.worktreesDir}/foreign`;
+        yield* command(other, ["worktree", "add", "-b", "feature", foreign]);
+        yield* fs.writeFileString(`${foreign}/notes.txt`, "other repository's work\n");
+        setThreads([shell({ branch: "feature", worktreePath: foreign })]);
+        const report = yield* service.runNow;
+        expect(yield* fs.readFileString(`${foreign}/notes.txt`)).toBe("other repository's work\n");
+        expect(report.entries.find((entry) => entry.path === foreign)).toMatchObject({
+          outcome: "kept",
+          reason: "Repository or branch changed",
+        });
+      }),
+    ),
+  );
+  it.live(
+    "removes a thread's worktree from a previous in-project folder, never its neighbors",
+    () =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, repo, command, setThreads, setSettings } = yield* cleanupFixture();
+          // Reset to the default location; the old in-project folder stays in the history.
+          setSettings({
+            worktreesDirectory: "",
+            previousWorktreesDirectories: [".claude/worktrees"],
+          });
+          const owned = `${repo}/.claude/worktrees/relative`;
+          const native = `${repo}/.claude/worktrees/native`;
+          yield* command(repo, ["worktree", "add", "-b", "relative", owned]);
+          yield* command(repo, ["worktree", "add", "-b", "native", native]);
+          yield* fs.writeFileString(`${native}/notes.txt`, "native agent work\n");
+          const other = yield* fs.realPath(
+            yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-other-" }),
+          );
+          yield* command(other, ["init", "-b", "main"]);
+          yield* command(other, [
+            "-c",
+            "user.name=Cleanup test",
+            "-c",
+            "user.email=cleanup@example.test",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "initial",
+          ]);
+          const foreign = `${other}/.claude/worktrees/relative`;
+          yield* command(other, ["worktree", "add", "-b", "relative", foreign]);
+          const otherThread = ThreadId.make("thread-2");
+          setThreads([
+            shell({ branch: "relative", worktreePath: owned }),
+            shell({
+              id: otherThread,
+              branch: "relative",
+              worktreePath: foreign,
+              lineage: {
+                rootThreadId: otherThread,
+                parentThreadId: null,
+                relationshipToParent: null,
+              },
+            }),
+          ]);
+          const report = yield* service.runNow;
+          expect(report.entries.find((entry) => entry.path === owned)).toMatchObject({
+            outcome: "removed",
+          });
+          expect(report.entries.find((entry) => entry.path === foreign)).toMatchObject({
+            outcome: "kept",
+            reason: "Outside the managed worktree folder",
+          });
+          expect(report.entries.filter((entry) => entry.path?.startsWith(native))).toEqual([]);
+          expect(yield* fs.exists(owned)).toBe(false);
+          expect(yield* fs.exists(foreign)).toBe(true);
+          expect(yield* fs.readFileString(`${native}/notes.txt`)).toBe("native agent work\n");
+        }),
+      ),
   );
   it.live.each([
     ["any-local-files", ".env", "kept"],

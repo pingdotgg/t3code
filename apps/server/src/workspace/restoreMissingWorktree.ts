@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
+import { makeManagedWorktreePaths } from "../vcs/managedWorktreePaths.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
 import { TerminalCwdRecovery } from "../terminal/Manager.ts";
 
@@ -44,7 +44,7 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const projects = yield* ProjectService.ProjectService;
-  const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+  const managedWorktreePaths = yield* makeManagedWorktreePaths;
 
   const resolveRecreateBase = Effect.fn("restoreMissingWorktree.resolveRecreateBase")(function* (
     cwd: string,
@@ -111,12 +111,20 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
     const { worktreePath, branch } = thread;
     if (worktreePath === null || branch === null) return;
     const exists = yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true));
-    if (exists || !(yield* isManagedWorktreePath(worktreePath))) return;
+    if (exists) return;
     const project = yield* projects.getById(thread.projectId).pipe(
       Effect.map(Option.getOrUndefined),
       Effect.orElseSucceed(() => undefined),
     );
-    if (project === undefined) return;
+    if (
+      project === undefined ||
+      !(yield* managedWorktreePaths.isManagedWorktreePath({
+        worktreePath,
+        projectRoot: project.workspaceRoot,
+      }))
+    ) {
+      return;
+    }
     yield* Effect.logWarning("recreating missing worktree", {
       threadId: thread.id,
       worktreePath,

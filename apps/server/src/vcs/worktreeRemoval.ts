@@ -10,6 +10,52 @@ import type * as GitVcsDriver from "./GitVcsDriver.ts";
 const INDEX_LIST_MAX_BYTES = 64 * 1024 * 1024;
 
 /**
+ * The admin directory of `worktreePath` when it is a linked worktree of `cwd`'s repository: one
+ * common directory, the admin directory under its `worktrees/`, and a `gitdir` pointing back.
+ * Null otherwise, even for another repository's worktree on the same branch.
+ */
+export const registeredWorktreeAdminDirectory = Effect.fn(
+  "WorktreeRemoval.registeredWorktreeAdminDirectory",
+)(function* (input: {
+  readonly operation: string;
+  readonly cwd: string;
+  readonly worktreePath: string;
+  readonly execute: GitVcsDriver.GitVcsDriver["Service"]["execute"];
+}) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const windows = yield* HostProcess.isWindows;
+  const gitPath = (cwd: string, args: ReadonlyArray<string>) =>
+    input
+      .execute({ operation: input.operation, cwd, args })
+      .pipe(Effect.map((result) => path.resolve(cwd, result.stdout.trim())));
+  // Only Windows paths ignore case; elsewhere two repositories may differ only by case.
+  const samePath = (left: string, right: string) =>
+    Effect.all([fileSystem.realPath(left), fileSystem.realPath(right)]).pipe(
+      Effect.map(([a, b]) => (windows ? a.toLowerCase() === b.toLowerCase() : a === b)),
+      Effect.orElseSucceed(() => false),
+    );
+  const worktree = yield* Effect.all([
+    gitPath(input.worktreePath, ["rev-parse", "--absolute-git-dir"]),
+    gitPath(input.worktreePath, ["rev-parse", "--git-common-dir"]),
+  ]).pipe(Effect.option);
+  if (Option.isNone(worktree)) return null;
+  const [adminDir, worktreeCommonDir] = worktree.value;
+  const commonDir = yield* gitPath(input.cwd, ["rev-parse", "--git-common-dir"]);
+  const pointsBack = yield* fileSystem.readFileString(path.join(adminDir, "gitdir")).pipe(
+    Effect.flatMap((gitdir) =>
+      samePath(path.resolve(adminDir, gitdir.trim()), path.join(input.worktreePath, ".git")),
+    ),
+    Effect.orElseSucceed(() => false),
+  );
+  return pointsBack &&
+    (yield* samePath(worktreeCommonDir, commonDir)) &&
+    (yield* samePath(path.dirname(adminDir), path.join(commonDir, "worktrees")))
+    ? adminDir
+    : null;
+});
+
+/**
  * Git for Windows before 2.54 follows NTFS junctions; newer Git leaves them behind.
  * On Windows, mirror Git's removal checks, then delete with Node's `rm`, which
  * unlinks junctions without following them. Git then removes the worktree metadata.
@@ -69,31 +115,14 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
         ...(env === undefined ? {} : { env }),
       })
       .pipe(Effect.map((result) => result.stdout));
-  const samePath = (left: string, right: string) =>
-    Effect.all([fileSystem.realPath(left), fileSystem.realPath(right)]).pipe(
-      Effect.map(([a, b]) => a.toLowerCase() === b.toLowerCase()),
-      Effect.orElseSucceed(() => false),
-    );
-
-  // A registered worktree of this repository: its `.git` file names an admin
-  // directory under the common `worktrees/`, whose `gitdir` points back.
   const notAWorktree = refuse(`'${worktreePath}' is not a working tree`);
-  const adminDir = path.resolve(
+  const adminDir = yield* registeredWorktreeAdminDirectory({
+    operation: input.operation,
+    cwd: input.cwd,
     worktreePath,
-    (yield* gitOutput(worktreePath, ["rev-parse", "--absolute-git-dir"]).pipe(
-      Effect.mapError(() => notAWorktree),
-    )).trim(),
-  );
-  const commonDir = path.resolve(
-    input.cwd,
-    (yield* gitOutput(input.cwd, ["rev-parse", "--git-common-dir"])).trim(),
-  );
-  const pointsBack = yield* fileSystem.readFileString(path.join(adminDir, "gitdir")).pipe(
-    Effect.flatMap((gitdir) => samePath(path.resolve(adminDir, gitdir.trim()), gitFile)),
-    Effect.orElseSucceed(() => false),
-  );
-  if (!pointsBack || !(yield* samePath(path.dirname(adminDir), path.join(commonDir, "worktrees"))))
-    return yield* notAWorktree;
+    execute: input.execute,
+  });
+  if (adminDir === null) return yield* notAWorktree;
   // Git counts the file's existence as a lock. T3 passes at most one
   // `--force`, which never removes a locked worktree. Anything but a
   // confirmed absence refuses.

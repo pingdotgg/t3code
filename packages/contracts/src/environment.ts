@@ -112,6 +112,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   projectWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
   settledWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
   worktreesDirectory: Schema.optionalKey(Schema.Boolean),
+  /** Relative `worktreesDirectory` values; older servers store them but fail every new worktree. */
+  repositoryWorktreesDirectory: Schema.optionalKey(Schema.Boolean),
   /** Sent by macOS servers, which honor the fastWorktreeCheckout setting. */
   fastWorktreeCheckout: Schema.optionalKey(Schema.Boolean),
   threadAutoSettlementScope: Schema.optionalKey(Schema.Boolean),

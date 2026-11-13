@@ -46,6 +46,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { makePrepareTerminalLaunch } from "../workspace/restoreMissingWorktree.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
@@ -497,6 +498,7 @@ it.layer(
               Layer.mock(ProjectService.ProjectService)({
                 getById: () => Effect.succeedSome({ workspaceRoot: baseDir } as never),
               }),
+              Layer.mock(GitVcsDriver.GitVcsDriver)({}),
               Layer.mock(GitWorkflowService.GitWorkflowService)({
                 pruneWorktrees: () => Effect.void,
                 listLocalBranchNames: () => Effect.succeed(["feature"]),
