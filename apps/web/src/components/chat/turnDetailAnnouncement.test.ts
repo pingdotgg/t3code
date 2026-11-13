@@ -116,11 +116,30 @@ describe("turnDetail", () => {
       activity: null,
     },
     {
-      name: "nothing while the context is compacted",
+      name: "the context being compacted",
       entries: [
         prompt,
         command("git"),
-        work("compact", { tone: "info", sourceActivityKind: "context-compaction" }),
+        work("compact", {
+          tone: "info",
+          sourceActivityKind: "context-compaction",
+          label: "Compacting context",
+          toolLifecycleStatus: "inProgress",
+        }),
+      ],
+      activity: "Compacting context",
+    },
+    {
+      name: "nothing once the context is compacted",
+      entries: [
+        prompt,
+        command("git"),
+        work("compact", {
+          tone: "info",
+          sourceActivityKind: "context-compaction",
+          label: "Context compacted",
+          toolLifecycleStatus: "completed",
+        }),
       ],
       activity: null,
     },
