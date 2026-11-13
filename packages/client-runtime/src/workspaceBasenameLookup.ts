@@ -162,6 +162,8 @@ function cdOperands(script: string): Array<string> {
     wordOpen = false;
   };
   for (const [token] of script.matchAll(SHELL_TOKEN)) {
+    // A here-document's body is data, and where it ends is the shell's to say.
+    if (!/^["'#]/.test(token) && token.includes("<<")) break;
     if (/^[;&|()\n]/.test(token)) endCommand();
     else if (/^[ \t]/.test(token) || (!wordOpen && token.startsWith("#"))) wordOpen = false;
     else if (wordOpen) words[words.length - 1] += token;

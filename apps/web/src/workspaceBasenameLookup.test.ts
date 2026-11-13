@@ -145,6 +145,7 @@ describe("agentWorkingDirectories", () => {
         "abcd /work/a; echo cd /work/b; git -C /work/c status; cd /work/d",
         `echo "cd /work/g"; echo 'x; cd /work/h' && grep -c "cd /work/i" notes`,
         "echo bash -c 'cd /work/j'; cd -",
+        "cat <<EOF > notes\ncd /work/k\nEOF",
         "cd /work/e\\ f && cd `pwd`/x",
       ),
     ).toEqual(["/work/d"]);
