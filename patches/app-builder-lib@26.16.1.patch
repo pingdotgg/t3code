@@ -13,6 +13,38 @@ index 8a3462b185b078a260483635e6d774e2ece6e269..105778c145ab63a26444179215c643a7
              try {
                  await nsisUtil_1.UninstallerReader.exec(installerPath, uninstallerPath);
              }
+diff --git a/out/targets/nsis/nsisScriptGenerator.js b/out/targets/nsis/nsisScriptGenerator.js
+--- a/out/targets/nsis/nsisScriptGenerator.js
++++ b/out/targets/nsis/nsisScriptGenerator.js
+@@ -29,8 +29,27 @@ class NsisScriptGenerator {
+     flags(flags) {
+         for (const flagName of flags) {
+             const variableName = getVarNameForFlag(flagName).replace(/[-]+(\w|$)/g, (m, p1) => p1.toUpperCase());
++            // StdUtils.TestParameter frees msvcrt's argv at exit, crashing with 0xC0000374. Match
++            // its rules on $CMDLINE instead: --flag or /flag as a whole token, optionally =value.
++            const dashed = ` --${flagName}`;
++            const slashed = ` /${flagName}`;
+             this.lines.push(`!macro _${variableName} _a _b _t _f
+-  $\{StdUtils.TestParameter} $R9 "${flagName}"
++  Push $R8
++  Push $R7
++  StrCpy $R9 "false"
++  StrCpy $R8 0
++  StrCpy $R7 " $CMDLINE " ${dashed.length + 1} $R8
++  StrCmp $R7 "" +9
++  StrCmp $R7 "${dashed} " +7
++  StrCmp $R7 "${dashed}=" +6
++  StrCpy $R7 $R7 ${slashed.length + 1}
++  StrCmp $R7 "${slashed} " +4
++  StrCmp $R7 "${slashed}=" +3
++  IntOp $R8 $R8 + 1
++  Goto -8
++  StrCpy $R9 "true"
++  Pop $R7
++  Pop $R8
+   StrCmp "$R9" "true" \`$\{_t}\` \`$\{_f}\`
+ !macroend
+ !define ${variableName} \`"" ${variableName} ""\`
 diff --git a/templates/nsis/include/allowOnlyOneInstallerInstance.nsh b/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
 --- a/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
 +++ b/templates/nsis/include/allowOnlyOneInstallerInstance.nsh

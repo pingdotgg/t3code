@@ -30,6 +30,19 @@
   Pop $0
 !macroend
 
+# Older uninstallers can crash at exit (0xC0000374) after removing the app; carry on if it is gone.
+!macro customUnInstallCheck
+  ${If} ${Errors}
+    DetailPrint `Uninstall was not successful. Not able to launch uninstaller!`
+  ${ElseIf} $R0 != 0
+  ${AndIf} ${FileExists} "$appExe"
+    MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0"
+    DetailPrint `Uninstall was not successful. Uninstaller error code: $R0.`
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
+!macroend
+
 !macro customInstall
   !ifndef DO_NOT_CREATE_START_MENU_SHORTCUT
     ${IfNot} ${FileExists} "$newStartMenuLink"
