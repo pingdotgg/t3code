@@ -204,9 +204,19 @@ it.effect.each([false, true])("batches worker results without losing rows (reade
         }
         assert.isAbove(batches.length, 1);
         for (const batch of batches) {
-          assert.isAtMost(batch.length, 128);
-          assert.isAtMost(batch.length * text.length * 2, 1024 * 1024);
+          assert.isAtMost(batch.length, 16_384);
+          assert.isAtMost(batch.length * text.length * 2, 8 * 1024 * 1024);
         }
+        batches.length = 0;
+        const narrow = sql<{ n: number }>`
+          WITH RECURSIVE sequence(n) AS (
+            SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < 10000
+          ) SELECT n FROM sequence
+        `;
+        const narrowRows = yield* reader ? route(narrow.values) : narrow;
+        assert.equal(narrowRows.length, 10_000);
+        assert.deepEqual(narrowRows.at(-1), reader ? [10_000] : { n: 10_000 });
+        assert.equal(batches.length, 1);
       }).pipe(Effect.ensuring(Effect.sync(() => worker.off("message", record))));
     }).pipe(
       Effect.provide(SqliteClient.layer({ filename, writerWorker: true, readerWorker: true })),

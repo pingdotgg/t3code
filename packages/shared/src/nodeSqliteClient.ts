@@ -254,23 +254,27 @@ parentPort.on("message", (request) => {
       statement.setReturnArrays(values);
       let rows = [];
       let bytes = 0;
+      let pendingBatch = false;
       for (const row of statement.iterate(...params)) {
         let rowBytes = 0;
-        for (const value of Object.values(row)) {
+        for (const key in row) {
+          const value = row[key];
           rowBytes += typeof value === "string" ? value.length * 2
             : ArrayBuffer.isView(value) ? value.byteLength : 8;
         }
-        if (rows.length > 0 && (rows.length >= 128 || bytes + rowBytes > 1024 * 1024)) {
-          // Wait for receipt so the message queue cannot retain the whole result either.
+        if (rows.length > 0 && (rows.length >= 16384 || bytes + rowBytes > 8 * 1024 * 1024)) {
+          // Build the next batch during receipt, but allow only one unacknowledged message.
+          if (pendingBatch) Atomics.wait(received, 0, 0);
           Atomics.store(received, 0, 0);
           parentPort.postMessage({ id, rows, more: true });
           rows = [];
           bytes = 0;
-          Atomics.wait(received, 0, 0);
+          pendingBatch = true;
         }
         rows.push(row);
         bytes += rowBytes;
       }
+      if (pendingBatch) Atomics.wait(received, 0, 0);
       parentPort.postMessage({ id, rows });
     } else {
       const result = statement.run(...params);
