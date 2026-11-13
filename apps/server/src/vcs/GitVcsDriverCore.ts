@@ -81,8 +81,8 @@ const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_METADATA_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 // Temporary-index git add scales poorly (50k files took ~30 s); report incomplete totals above this cap.
 const REVIEW_UNTRACKED_MAX_FILES = 5_000;
-// git diff --numstat reads every untracked byte (~5 ms/MB), so status totals skip larger untracked input.
-const UNTRACKED_TOTALS_MAX_BYTES = 256 * 1024 * 1024;
+// git diff reads every untracked byte (~5 ms/MB), so larger untracked input stays out of the review index.
+const REVIEW_UNTRACKED_MAX_BYTES = 256 * 1024 * 1024;
 // The listing walks the whole untracked tree before the cap applies, so a folder whose listing
 // failed (too many files, output limit, timeout) is not listed again on every status poll.
 const UNTRACKED_TOTALS_RETRY_MIN_MS = 60_000;
@@ -3242,7 +3242,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const prepareReviewIndex = Effect.fn("prepareReviewIndex")(function* (
     cwd: string,
     untrackedPaths: ReadonlyArray<string>,
-    maxBytes?: number,
+    allowPartial: boolean,
   ) {
     const [stagedDeletionsStdout, indexValue] = yield* Effect.all(
       [
@@ -3270,21 +3270,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { concurrency: 2 },
     );
     const stagedDeletions = new Set(stagedDeletionsStdout.split("\0").filter(Boolean));
-    const pathsToAdd = untrackedPaths.filter((relativePath) => !stagedDeletions.has(relativePath));
-    if (pathsToAdd.length === 0) return undefined;
-    if (maxBytes !== undefined) {
-      const sizes = yield* Effect.forEach(
-        pathsToAdd,
-        (relativePath) =>
-          fileSystem.lstat(path.resolve(cwd, relativePath)).pipe(
-            Effect.map((info) => (info.type === "File" ? Number(info.size) : 0)),
-            Effect.orElseSucceed(() => 0),
-          ),
-        { concurrency: 16 },
-      );
-      // null: over the byte budget, so the caller reports totals as unavailable.
-      if (sizes.reduce((total, size) => total + size, 0) > maxBytes) return null;
+    // Staged deletions never enter the index, so their worktree copies must not spend the budget.
+    const candidates = untrackedPaths.filter((relativePath) => !stagedDeletions.has(relativePath));
+    const sizes = yield* Effect.forEach(
+      candidates,
+      (relativePath) =>
+        fileSystem.lstat(path.resolve(cwd, relativePath)).pipe(
+          Effect.map((info) => (info.type === "File" ? Number(info.size) : 0)),
+          Effect.orElseSucceed(() => 0),
+          Effect.map((size) => ({ relativePath, size })),
+        ),
+      { concurrency: 16 },
+    );
+    // Smallest first, so which files fit does not depend on how their names sort.
+    const pathsToAdd: string[] = [];
+    let bytes = 0;
+    for (const { relativePath, size } of sizes.toSorted((left, right) => left.size - right.size)) {
+      bytes += size;
+      if (bytes > REVIEW_UNTRACKED_MAX_BYTES) break;
+      pathsToAdd.push(relativePath);
     }
+    const omitted = pathsToAdd.length < candidates.length;
+    if (pathsToAdd.length === 0 || (omitted && !allowPartial)) return { env: undefined, omitted };
 
     const indexPath = path.isAbsolute(indexValue.trim())
       ? indexValue.trim()
@@ -3337,7 +3344,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ],
       { env, stdin: `${pathsToAdd.join("\0")}\0` },
     );
-    return env;
+    return { env, omitted };
   });
 
   const readEmptyTreeHash = Effect.fn("readEmptyTreeHash")(function* (cwd: string) {
@@ -3353,8 +3360,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const prepareUntrackedReviewIndexOrReason = Effect.fn("prepareUntrackedReviewIndex")(function* (
     cwd: string,
     pathArgs: ReadonlyArray<string>,
-    onlyPath?: string,
-    maxBytes?: number,
+    onlyPath: string | undefined,
+    allowPartial: boolean,
   ) {
     const untracked = yield* executeGit(
       "GitVcsDriver.review.listUntracked",
@@ -3373,10 +3380,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       (candidate) =>
         onlyPath === undefined || candidate === onlyPath || candidate === `${onlyPath}/`,
     );
-    if (paths.length === 0) return { env: undefined };
+    if (paths.length === 0) return { env: undefined, omitted: false };
     if (paths.length > REVIEW_UNTRACKED_MAX_FILES)
       return { unavailable: "Too many untracked files to count." };
-    const env = yield* prepareReviewIndex(cwd, paths, maxBytes).pipe(
+    const index = yield* prepareReviewIndex(cwd, paths, allowPartial).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
           Effect.fail(
@@ -3390,15 +3397,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ),
       }),
     );
-    if (env === null) return { unavailable: "Untracked files are too large to count." };
-    return { env };
+    if (index.omitted && !allowPartial)
+      return { unavailable: "Untracked files are too large to count." };
+    return index;
   });
   const prepareUntrackedReviewIndex = (
     cwd: string,
     pathArgs: ReadonlyArray<string>,
     onlyPath?: string,
   ) =>
-    prepareUntrackedReviewIndexOrReason(cwd, pathArgs, onlyPath).pipe(
+    prepareUntrackedReviewIndexOrReason(cwd, pathArgs, onlyPath, true).pipe(
       Effect.map((result) => ("unavailable" in result ? null : result)),
     );
 
@@ -3490,12 +3498,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
     // Empty status can mean untracked files are hidden; retain the full scan.
-    const untracked = yield* prepareUntrackedReviewIndexOrReason(
-      cwd,
-      pathspecs,
-      undefined,
-      UNTRACKED_TOTALS_MAX_BYTES,
-    );
+    const untracked = yield* prepareUntrackedReviewIndexOrReason(cwd, pathspecs, undefined, false);
     if ("unavailable" in untracked) {
       const count = remembered?.roots === rootsKey ? remembered.count + 1 : 1;
       untrackedTotalsFailures.delete(cwd);
@@ -3846,9 +3849,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
     const [dirtyTrackedResult, baseResult] = yield* Effect.gen(function* () {
       const untracked = input.trackedOnly
-        ? { env: undefined }
+        ? { env: undefined, omitted: false }
         : yield* prepareUntrackedReviewIndex(cwd, pathArgs, input.file?.path);
-      const metadataOnly = input.metadataOnly === true && !input.file && untracked !== null;
+      // Untracked files left out make the file list partial, so the bounded patch is sent instead.
+      const complete = untracked !== null && !untracked.omitted;
+      const metadataOnly = input.metadataOnly === true && !input.file && complete;
       const [dirty, base] =
         review.mergeBase === dirtyRef
           ? yield* readTrackedDiff(dirtyRef, untracked?.env, metadataOnly).pipe(
@@ -3861,7 +3866,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               ],
               { concurrency: 2 },
             );
-      if (untracked !== null) return [dirty, base] as const;
+      if (complete) return [dirty, base] as const;
       const incomplete = (ref: string | null, result: typeof dirty) =>
         ref === null ? result : { ...result, files: undefined, stdoutTruncated: true };
       return [incomplete(dirtyRef, dirty), incomplete(review.mergeBase, base)] as const;
