@@ -583,29 +583,34 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const natives: Array<AcpSessionRuntime.AcpSessionRuntime["Service"]> = [];
+  const runtimeInputs: AcpAdapterV2RuntimeInput[] = [];
   const instanceId = ProviderInstanceId.make("acp-prompt-inactivity");
+  const baseMakeRuntime = makeMockRuntime({
+    childProcessSpawner,
+    mockAgentPath: yield* bundledMockAgentPath,
+    environment: input.environment,
+    wrapRuntime: (runtime) => {
+      natives.push(runtime);
+      return {
+        ...runtime,
+        prompt: input.wrapPrompt?.(runtime.prompt) ?? runtime.prompt,
+        cancel:
+          input.cancelled === undefined
+            ? runtime.cancel
+            : Deferred.succeed(input.cancelled, undefined).pipe(Effect.andThen(runtime.cancel)),
+      };
+    },
+  });
   const adapter = yield* makeAcpAdapterV2({
     instanceId,
     flavor: {
       driver: ACP_TEST_DRIVER,
       capabilities: AcpProviderCapabilitiesV2,
       promptInactivityTimeout: "15 minutes",
-      makeRuntime: makeMockRuntime({
-        childProcessSpawner,
-        mockAgentPath: yield* bundledMockAgentPath,
-        environment: input.environment,
-        wrapRuntime: (runtime) => {
-          natives.push(runtime);
-          return {
-            ...runtime,
-            prompt: input.wrapPrompt?.(runtime.prompt) ?? runtime.prompt,
-            cancel:
-              input.cancelled === undefined
-                ? runtime.cancel
-                : Deferred.succeed(input.cancelled, undefined).pipe(Effect.andThen(runtime.cancel)),
-          };
-        },
-      }),
+      makeRuntime: (runtimeInput) =>
+        Effect.sync(() => {
+          runtimeInputs.push(runtimeInput);
+        }).pipe(Effect.andThen(baseMakeRuntime(runtimeInput))),
     },
     selfInvocation: yield* resolveSelfInvocation(),
   });
@@ -649,6 +654,13 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
       ),
     emitUpdate: (notification: EffectAcpSchema.SessionNotification) =>
       natives.at(-1)!.request("_test/emit-update", notification),
+    /** Reports the latest runtime's transport as lost while its process keeps running. */
+    terminate: () =>
+      runtimeInputs
+        .at(-1)!
+        .onTermination(
+          new EffectAcpErrors.AcpTransportError({ detail: "Injected termination", cause: "test" }),
+        ),
     terminals: (count: number) =>
       runtime.events.pipe(
         Stream.filter((event) => event.type === "turn.terminal"),
@@ -5044,6 +5056,48 @@ describe("AcpAdapterV2", () => {
       assert.notEqual(silent?.providerTurnId, exited?.providerTurnId);
       assert.equal(next?.status, "completed");
       assert.lengthOf(harness.natives, 3);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("drops an approval its finished turn left open when the runtime is replaced", () =>
+    Effect.gen(function* () {
+      const approvalSeen = yield* Deferred.make<void>();
+      let prompts = 0;
+      const harness = yield* makePromptInactivityHarness({
+        environment: (runtimeOrdinal) =>
+          runtimeOrdinal === 1
+            ? { T3_ACP_EMIT_TOOL_CALLS: "1" }
+            : { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+        runtimeMode: "approval-required",
+        // The first prompt returns while its approval is still unanswered.
+        wrapPrompt: (prompt) => (request, options) =>
+          (prompts += 1) === 1
+            ? Effect.raceFirst(
+                prompt(request, options),
+                Deferred.await(approvalSeen).pipe(
+                  Effect.as({ stopReason: "end_turn" } satisfies EffectAcpSchema.PromptResponse),
+                ),
+              )
+            : prompt(request, options),
+      });
+      yield* harness.startTurn(1);
+      yield* harness.runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+        ),
+        Stream.runHead,
+      );
+      yield* Deferred.succeed(approvalSeen, undefined);
+      yield* harness.terminals(1);
+      yield* harness.terminate();
+
+      // A leftover approval would pause the replacement's inactivity deadline.
+      yield* harness.startTurn(2);
+      yield* TestClock.adjust("15 minutes");
+      assert.isFalse(yield* harness.nextTurnRejected(3));
+      const [silent] = yield* harness.terminals(1);
+      assert.equal(silent?.status, "failed");
     }).pipe(Effect.provide(layerTest)),
   );
 

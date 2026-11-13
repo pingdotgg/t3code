@@ -8304,6 +8304,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const restartRequired = yield* Ref.get(runtimeRestartRequired);
           if (!restartRequired) return false;
           yield* runtimeCallbackPermit.withPermit(advanceRuntimeCallbackGeneration);
+          yield* cancelPendingRuntimeRequests();
           yield* restartAcpRuntime(threadId);
           yield* Ref.set(runtimeRestartRequired, false);
           yield* Ref.set(activeSessionId, null);
