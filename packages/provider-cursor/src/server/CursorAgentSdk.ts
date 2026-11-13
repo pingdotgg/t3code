@@ -691,6 +691,8 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
             },
           });
           callbacksReady = true;
+          // Queued before anything live can arrive, so a stream close cannot overtake a buffered turn-ended.
+          const replayed = Promise.all(pendingUpdates.map(dispatchUpdate));
           const unsubscribeShellOutput = subscribeShellStreamOutput((output) => {
             if (output.conversationId !== agent.agentId || typeof output.toolCallId !== "string") {
               return;
@@ -700,12 +702,10 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
               event: { ...output.event, toolCallId: output.toolCallId },
             });
           });
-          for (const update of pendingUpdates) {
-            yield* Effect.tryPromise({
-              try: () => dispatchUpdate(update),
-              catch: (cause) => runnerError(cause, "run.onDelta"),
-            });
-          }
+          yield* Effect.tryPromise({
+            try: () => replayed,
+            catch: (cause) => runnerError(cause, "run.onDelta"),
+          });
 
           const cancel = log({
             direction: "outgoing",

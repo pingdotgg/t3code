@@ -328,16 +328,21 @@ describe("CursorAgentSdkRunner", () => {
   it.effect.each([
     {
       reason: "abandons a turn stream Cursor leaves open after turn-ended",
-      streamCloses: false,
+      closes: "never",
       cancellations: 1,
     },
     {
       // Stop hooks and background agents run after the stream closes, for as long as they like.
       reason: "leaves a run alone once its turn stream has closed",
-      streamCloses: true,
+      closes: "after turn-ended",
       cancellations: 0,
     },
-  ])("$reason", ({ streamCloses, cancellations }) =>
+    {
+      reason: "keeps a close that arrives while buffered updates replay behind their turn-ended",
+      closes: "during replay",
+      cancellations: 0,
+    },
+  ] as const)("$reason", ({ closes, cancellations }) =>
     Effect.gen(function* () {
       cursorSdkMock.runCancel.mockClear();
       const settled = Promise.withResolvers<"finished" | "cancelled">();
@@ -349,7 +354,11 @@ describe("CursorAgentSdkRunner", () => {
         model: { id: "default" },
         durationMs: 1,
       }));
-      if (!streamCloses) {
+      const closeTurnStream = () =>
+        (Reflect.get(globalThis, Symbol.for("@cursor/sdk.turnStreamClosed")) as Function)({
+          conversationId: "agent-cursor-agent-sdk-test",
+        });
+      if (closes === "never") {
         cursorSdkMock.runCancel.mockImplementationOnce(async () => {
           settled.resolve("cancelled");
         });
@@ -357,11 +366,7 @@ describe("CursorAgentSdkRunner", () => {
       cursorSdkMock.send.mockImplementationOnce(async (_message, options) => {
         await options.onDelta?.({ update: { type: "text-delta", text: "The answer." } });
         await options.onDelta?.({ update: { type: "turn-ended" } });
-        if (streamCloses) {
-          (Reflect.get(globalThis, Symbol.for("@cursor/sdk.turnStreamClosed")) as Function)({
-            conversationId: "agent-cursor-agent-sdk-test",
-          });
-        }
+        if (closes === "after turn-ended") closeTurnStream();
         return {
           id: "run-cursor-agent-sdk-test",
           agentId: "agent-cursor-agent-sdk-test",
@@ -377,7 +382,13 @@ describe("CursorAgentSdkRunner", () => {
         threadId: ThreadId.make("thread-cursor-agent-sdk-turn-stream"),
         providerSessionId: ProviderSessionId.make("provider-session-cursor-agent-sdk-turn-stream"),
       });
-      const run = yield* session.send({ message: "answer" });
+      const run = yield* session.send({
+        message: "answer",
+        onDelta: (update) =>
+          closes === "during replay" && update.type === "text-delta"
+            ? Effect.sync(closeTurnStream)
+            : Effect.void,
+      });
       const waiting = yield* Effect.forkChild(run.wait);
 
       yield* TestClock.adjust("119 seconds");
