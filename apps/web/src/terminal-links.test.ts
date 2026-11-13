@@ -5,6 +5,7 @@ import {
   collectWrappedTerminalLinkLine,
   extractTerminalLinks,
   isTerminalUrl,
+  resolveTerminalLinkTarget,
   type TerminalBufferLineLike,
 } from "./terminal-links";
 
@@ -300,11 +301,14 @@ describe("resolvePathLinkTarget", () => {
 
   // regression: #36005 OSC 8 file URIs were joined onto the cwd as relative paths
   it("does not resolve an OSC 8 file URI target against the cwd", () => {
-    expect(resolvePathLinkTarget("file:///var/tmp/report.txt", "/workspace/project")).toBe(
+    expect(resolveTerminalLinkTarget("file:///var/tmp/report.txt", "/workspace/project")).toBe(
       "/var/tmp/report.txt",
     );
     expect(
-      resolvePathLinkTarget("file://remote.invalid/var/tmp/report.txt", "/workspace/project"),
+      resolveTerminalLinkTarget("file://remote.invalid/var/tmp/report.txt", "/workspace/project"),
     ).not.toMatch(/^\/workspace\/project\//);
+    expect(resolvePathLinkTarget("file:notes.md", "/workspace/project")).toBe(
+      "/workspace/project/file:notes.md",
+    );
   });
 });
