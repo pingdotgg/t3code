@@ -25,7 +25,11 @@ import {
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
-import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
+import {
+  htmlRenderFromToolItem,
+  mcpAppFromToolItem,
+  sentMessageFromToolItem,
+} from "@t3tools/shared/toolOutput";
 import {
   contextCompactionLabel,
   workEntryIndicatesToolFailure,
@@ -122,6 +126,13 @@ export type TimelineEntry = (
       readonly createdAt: string;
       readonly runId: RunId | null;
       readonly htmlRender: HtmlRenderReference;
+    }
+  | {
+      readonly id: string;
+      readonly kind: "sent-message";
+      readonly createdAt: string;
+      readonly runId: RunId | null;
+      readonly text: string;
     }
   | {
       readonly id: string;
@@ -527,10 +538,11 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     return undefined;
   };
 
-  const foldedAnswerMessageIds = new Set(
+  // An answer that started a later run stays a normal message at that run's position.
+  const foldedAnswerRunIdByMessageId = new Map<string, OrchestrationV2TurnItem["runId"]>(
     input.visibleTurnItems.flatMap(({ item }) =>
       item.type === "user_input_request" && item.questionAnswer
-        ? [`async-answer:${item.questionAnswer.requestId}`]
+        ? [[`async-answer:${item.questionAnswer.requestId}`, item.runId] as const]
         : [],
     ),
   );
@@ -544,7 +556,11 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       item.status === "pending"
     )
       continue;
-    if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
+    if (
+      item.type === "user_message" &&
+      foldedAnswerRunIdByMessageId.get(item.messageId) === item.runId
+    )
+      continue;
     const createdAt = projectedItemCreatedAt(row);
     const attempt = resolveAttempt(item);
     const attemptMetadata = attempt === undefined ? {} : { attempt };
@@ -588,6 +604,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
               createdBy: item.createdBy,
               creationSource: item.creationSource,
               ...(item.senderThreadId !== undefined ? { senderThreadId: item.senderThreadId } : {}),
+              ...(item.linkedSender !== undefined ? { linkedSender: item.linkedSender } : {}),
               ...(item.idleCompaction !== undefined ? { idleCompaction: item.idleCompaction } : {}),
               ...(item.scheduledTaskId !== undefined
                 ? { scheduledTaskId: item.scheduledTaskId }
@@ -646,17 +663,17 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       continue;
     }
 
-    const mcpApp = item.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
-    if (mcpApp !== undefined) {
+    const sentMessage =
+      item.type === "dynamic_tool" && item.status === "completed"
+        ? sentMessageFromToolItem(item)
+        : undefined;
+    if (sentMessage !== undefined) {
       entries.push({
         id: item.id,
-        kind: "mcp-app",
+        kind: "sent-message",
         createdAt,
         runId: item.runId,
-        sourceThreadId: row.sourceThreadId,
-        itemId: row.sourceItemId,
-        revision: turnItemDetailRevision(item),
-        mcpApp,
+        text: sentMessage,
         ...attemptMetadata,
       });
       continue;
@@ -680,9 +697,27 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       entry: projectedWorkEntry(row),
       ...attemptMetadata,
     });
+
+    const mcpApp = item.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
+    if (mcpApp !== undefined) {
+      entries.push({
+        id: `mcp-app:${item.id}`,
+        kind: "mcp-app",
+        createdAt,
+        runId: item.runId,
+        sourceThreadId: row.sourceThreadId,
+        itemId: row.sourceItemId,
+        revision: turnItemDetailRevision(item),
+        mcpApp,
+        ...attemptMetadata,
+      });
+    }
   }
 
-  const retainedMessageIds = new Set([...committedMessageIds, ...foldedAnswerMessageIds]);
+  const retainedMessageIds = new Set([
+    ...committedMessageIds,
+    ...foldedAnswerRunIdByMessageId.keys(),
+  ]);
   for (const message of input.anchoredMessages ?? []) {
     if (retainedMessageIds.has(message.id)) continue;
     retainedMessageIds.add(message.id);
@@ -813,24 +848,34 @@ export function isStreamingMessageTextUpdate(previous: ChatMessage, next: ChatMe
   return shallow(previousMetadata, nextMetadata);
 }
 
+function streamedTextMetadata(item: OrchestrationV2TurnItem) {
+  if (item.type === "proposed_plan" && item.streaming) {
+    const { markdown: _markdown, updatedAt: _updatedAt, ...metadata } = item;
+    return metadata;
+  }
+  if ((item.type === "assistant_message" || item.type === "reasoning") && item.streaming) {
+    const { text: _text, updatedAt: _updatedAt, ...metadata } = item;
+    return metadata;
+  }
+  return null;
+}
+
 export function isStreamingTurnItemTextUpdate(
   previous: OrchestrationV2ProjectedTurnItem,
   next: OrchestrationV2ProjectedTurnItem,
 ): boolean {
   const { item: previousItem, ...previousSource } = previous;
   const { item: nextItem, ...nextSource } = next;
+  const previousMetadata = streamedTextMetadata(previousItem);
+  const nextMetadata = streamedTextMetadata(nextItem);
   if (
-    previousItem.type !== "assistant_message" ||
-    nextItem.type !== "assistant_message" ||
-    !previousItem.streaming ||
-    !nextItem.streaming ||
+    previousMetadata === null ||
+    nextMetadata === null ||
     !shallow(previousSource, nextSource) ||
     projectedItemCreatedAt(previous) !== projectedItemCreatedAt(next)
   ) {
     return false;
   }
-  const { text: _previousText, updatedAt: _previousUpdatedAt, ...previousMetadata } = previousItem;
-  const { text: _nextText, updatedAt: _nextUpdatedAt, ...nextMetadata } = nextItem;
   // Wire decoding recreates timestamps and attachments; compare only the changed item's metadata.
   return Equal.equals(previousMetadata, nextMetadata);
 }
@@ -851,9 +896,25 @@ function canRederiveInPlace(
     item.item.type !== "user_message" &&
     item.item.type !== "assistant_message" &&
     item.item.type !== "user_input_request" &&
+    // An app call projects two entries; in-place reuse replaces one.
+    (previousItem.item.type !== "dynamic_tool" ||
+      mcpAppFromToolItem(previousItem.item) === undefined) &&
     ((input.anchoredMessages?.length ?? 0) === 0 ||
       projectedItemCreatedAt(item) === projectedItemCreatedAt(previousItem))
   );
+}
+
+/** Entries read only each plan's status; streaming plans rebuild artifacts with every delta. */
+function samePlanStatuses(
+  next: TimelineEntriesInput["plans"],
+  previous: TimelineEntriesInput["plans"],
+): boolean {
+  if (next === previous) return true;
+  if (next === undefined || previous === undefined || next.length !== previous.length) return false;
+  return next.every((plan, index) => {
+    const before = previous[index]!;
+    return plan.id === before.id && plan.kind === before.kind && plan.status === before.status;
+  });
 }
 
 function reuseTimelineEntries(
@@ -868,7 +929,7 @@ function reuseTimelineEntries(
     !shallow(input.attachmentUrlById, before.attachmentUrlById) ||
     !shallow(input.attempts, before.attempts) ||
     !shallow(input.nodes, before.nodes) ||
-    !shallow(input.plans, before.plans)
+    !samePlanStatuses(input.plans, before.plans)
   ) {
     return null;
   }
@@ -901,7 +962,11 @@ function reuseTimelineEntries(
     const previousItem = before.visibleTurnItems[index]!;
     const item = input.visibleTurnItems[index]!;
     if (item === previousItem) continue;
-    if (isStreamingTurnItemTextUpdate(previousItem, item)) {
+    // Reasoning and plan text re-derive below; only assistant text patches the message.
+    if (
+      item.item.type === "assistant_message" &&
+      isStreamingTurnItemTextUpdate(previousItem, item)
+    ) {
       replacements.set(previousItem, item);
       continue;
     }
@@ -992,14 +1057,14 @@ export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
 export function deriveRevertTurnCountByUserMessageId(input: {
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
-  readonly threadStartCheckpointReady: boolean;
+  readonly threadStartCheckpointAvailable: boolean;
   readonly availableRevertTurnCounts?: ReadonlySet<number> | undefined;
   readonly unsettledRunId?: RunId | null;
 }): Map<ChatMessage["id"], number> {
-  const readyTurnCountByRunId = new Map<RunId, number>();
+  const turnCountByRunId = new Map<RunId, number>();
   for (const checkpoint of input.checkpoints) {
-    if (checkpoint.status === "ready") {
-      readyTurnCountByRunId.set(checkpoint.runId, checkpoint.checkpointTurnCount);
+    if (isRewindableCheckpoint(checkpoint)) {
+      turnCountByRunId.set(checkpoint.runId, checkpoint.checkpointTurnCount);
     }
   }
   const targetByRunId = new Map<RunId, number | undefined>();
@@ -1022,10 +1087,10 @@ export function deriveRevertTurnCountByUserMessageId(input: {
       targetByRunId.set(
         runId,
         previousRunId === null
-          ? input.threadStartCheckpointReady
+          ? input.threadStartCheckpointAvailable
             ? 0
             : undefined
-          : readyTurnCountByRunId.get(previousRunId),
+          : turnCountByRunId.get(previousRunId),
       );
       previousRunId = runId;
     }
@@ -1043,13 +1108,19 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   return byUserMessageId;
 }
 
+// A missing snapshot (no git, or a side chat) still pins a conversation position; only
+// restoring files needs a ready one.
+function isRewindableCheckpoint(checkpoint: Pick<OrchestrationV2Checkpoint, "status">) {
+  return checkpoint.status === "ready" || checkpoint.status === "missing";
+}
+
 export function findRevertCheckpoint(
   checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>,
   turnCount: number,
 ): OrchestrationV2Checkpoint | undefined {
   return checkpoints.findLast(
     (checkpoint) =>
-      checkpoint.status === "ready" &&
+      isRewindableCheckpoint(checkpoint) &&
       (turnCount === 0
         ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
         : checkpoint.appRunOrdinal === turnCount),
