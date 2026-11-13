@@ -19,8 +19,53 @@ import {
 } from "vite-plus/test";
 
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
+import { SessionControl } from "./SessionControl.ts";
 
 const decodeEvaluateInput = Schema.decodeUnknownSync(PreviewAutomationEvaluateInput);
+
+describe("server browser capture deadlines", () => {
+  it("releases control after an unanswered capture and ignores its late reply", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const captured = Promise.withResolvers<{ data: string }>();
+      const send = vi.fn(async (method: string) =>
+        method === "Page.captureScreenshot"
+          ? captured.promise
+          : { result: { value: "still responsive" } },
+      );
+      const cdp = { send } as unknown as CDPSession;
+      const control = new SessionControl("agent");
+      let outcome: unknown;
+      const capture = control
+        .agent("agent", () => ServerBrowserPage.captureViewport(cdp, { format: "png" }))
+        .catch((cause: unknown) => {
+          outcome = cause;
+        });
+      const evaluation = control.agent("agent", () =>
+        ServerBrowserPage.evaluate(cdp, { expression: "document.title" }, 1_000),
+      );
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(outcome).toMatchObject({
+        tag: "PreviewAutomationExecutionError",
+        message: expect.stringContaining("not producing screenshot frames"),
+      });
+      await capture;
+      expect(await evaluation).toBe("still responsive");
+      expect(vi.getTimerCount()).toBe(0);
+
+      captured.resolve({ data: "late-frame" });
+      await captured.promise;
+      expect(outcome).toBeInstanceOf(ServerBrowserPage.ServerBrowserOperationError);
+      expect(send.mock.calls.map(([method]) => method)).toEqual([
+        "Page.captureScreenshot",
+        "Runtime.evaluate",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe("server browser element refs", () => {
   let browser: Browser;
@@ -530,6 +575,37 @@ describe("server browser drag", () => {
       expect(unobserved).toEqual([]);
     } finally {
       process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("moves the mouse after dragstart, so pages that track a drag with mousemove see it", async () => {
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`
+        <div style="display:flex;gap:40px">
+          <div id="source" draggable="true" style="width:200px;height:120px">source</div>
+          <div id="target" style="width:200px;height:120px">target</div>
+        </div>
+        <script>
+          window.events = [];
+          let dragging = false;
+          source.addEventListener("dragstart", (event) => {
+            event.preventDefault();
+            dragging = true;
+            events.push("dragstart");
+          });
+          addEventListener("mousemove", () => dragging && events.push("mousemove"));
+          addEventListener("mouseup", () => events.push("mouseup"));
+        </script>`);
+
+      await ServerBrowserPage.drag(page, { source: "#source", target: "#target" });
+
+      const events = (await page.evaluate("window.events")) as Array<string>;
+      expect(events.slice(0, 2)).toEqual(["dragstart", "mousemove"]);
+      expect(events.at(-1)).toBe("mouseup");
+    } finally {
+      await browser.close();
     }
   });
 });
