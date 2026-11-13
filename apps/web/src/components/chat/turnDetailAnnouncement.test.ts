@@ -133,6 +133,11 @@ describe("turnDetail", () => {
     expect(turnDetail(entries, undefined, null).activity).toBe(activity);
   });
 
+  it("cuts a long step without splitting an emoji", () => {
+    const edit = work("edit", { itemType: "file_change", changedFiles: [`${"a".repeat(111)}😀z`] });
+    expect(turnDetail([prompt, edit], undefined, null).activity).not.toMatch(/[\uD800-\uDFFF]/u);
+  });
+
   it.each<{
     name: string;
     entries: ReadonlyArray<TimelineEntry>;
@@ -295,6 +300,12 @@ describe("nextTurnDetailAnnouncement", () => {
         frame(null, [first, { ...said("empty", true, true), text: "<!-- note -->" }]),
       ]),
     ).toEqual(["T3 Code: Tests pass in web. See the docs"]);
+  });
+
+  it("cuts a long message without splitting an emoji", () => {
+    const long = { ...said("long", true, true), text: `${"a".repeat(1999)}😀z` };
+    const [spoken] = speak("messages", [frame(null), frame(null, [long])]);
+    expect(spoken).not.toMatch(/[\uD800-\uDFFF]/u);
   });
 
   it("says a step again after waiting on the user", () => {
