@@ -1074,6 +1074,109 @@ const optionValues = (question: OrchestrationV2UserInputQuestion | undefined) =>
 describe("AcpAdapterV2", () => {
   beforeAll(() => bundleAgents);
 
+  it.live("keeps a completed tool's status when its linked ACP terminal streams output", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("acp-test-terminal-linked-tool");
+      const threadId = ThreadId.make("thread-acp-terminal-linked-tool");
+      let notify: Parameters<
+        AcpSessionRuntime.AcpSessionRuntime["Service"]["handleSessionUpdate"]
+      >[0];
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  notify = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: () =>
+                Effect.gen(function* () {
+                  const send = (update: EffectAcpSchema.SessionUpdate) =>
+                    notify({ sessionId: "mock-session-1", update });
+                  yield* send({ sessionUpdate: "state_update", state: "running" });
+                  yield* send({
+                    sessionUpdate: "terminal_update",
+                    terminalId: "term",
+                    command: "npm run dev",
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "linked",
+                    kind: "execute",
+                    title: "Start dev server",
+                    status: "completed",
+                    content: [{ type: "terminal", terminalId: "term" }],
+                  });
+                  yield* send({
+                    sessionUpdate: "terminal_output_chunk",
+                    terminalId: "term",
+                    data: Buffer.from("still running").toString("base64"),
+                  });
+                  yield* send({
+                    sessionUpdate: "state_update",
+                    state: "idle",
+                    stopReason: "end_turn",
+                  });
+                  return { stopReason: "end_turn" as const };
+                }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-terminal-linked-tool"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          ordinal: 1,
+        }),
+      );
+      const items = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      ).flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === "linked"
+          ? [event.turnItem]
+          : [],
+      );
+      const last = items.at(-1);
+      assert.equal(last?.type === "command_execution" ? last.output : null, "still running");
+      assert.deepEqual(
+        items.map((item) => item.status),
+        items.map(() => "completed"),
+        "terminal output must not reopen a tool the agent completed",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("reports per-turn usage unavailable on a continuation turn that never prompts", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("acp-test-usage-continuation");
@@ -2877,6 +2980,19 @@ describe("AcpAdapterV2", () => {
         ["assistant_message", "fresh tail"],
         ["reasoning", "Thinking more"],
       ],
+    },
+    {
+      label: "opaque ids differ only in surrounding whitespace",
+      steps: [answer("answer", "A"), answer(" answer ", "B")],
+      expected: [
+        ["assistant_message", "A"],
+        ["assistant_message", "B"],
+      ],
+    },
+    {
+      label: "a chunk continues a full update with the same whitespace-padded id",
+      steps: [agentMessage(" answer ", "A"), answer(" answer ", "B")],
+      expected: [["assistant_message", "AB"]],
     },
   ] satisfies ReadonlyArray<{
     readonly label: string;
