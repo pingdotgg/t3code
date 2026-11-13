@@ -289,7 +289,7 @@ const UnlinkPullRequestTool = Tool.make("unlink_pull_request", {
 
 const UnlinkPullRequestsTool = Tool.make("unlink_pull_requests", {
   description:
-    "Unlink every PR on a thread whose last known state (as `list_thread_pull_requests` shows) is in `states`, in one call. Use it instead of one `unlink_pull_request` per PR. PRs with no known state stay linked.",
+    "Unlink every PR on a thread whose last known state is in `states`, in one call. Use it instead of one `unlink_pull_request` per PR. PRs with no known state stay linked.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId.annotate({ description: "Thread. Default: this thread." })),
