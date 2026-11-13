@@ -118,7 +118,8 @@ fn string_end(input: &str, from: usize) -> Option<usize> {
                 let next = *bytes.get(i + 1)?;
                 return Some(if next == b'\\' { i + 2 } else { i });
             }
-            _ if input[i..].starts_with(ST_C1) => return Some(i + ST_C1.len_utf8()),
+            // U+009C, the C1 string terminator, in UTF-8.
+            0xc2 if bytes.get(i + 1) == Some(&0x9c) => return Some(i + 2),
             _ => i += 1,
         }
     }
@@ -257,6 +258,13 @@ mod tests {
         assert_eq!(run(&["a\u{1b}", "[6", "nb"]), "ab");
         assert_eq!(run(&["a\u{1b}]11;", "?\u{1b}", "\\b"]), "ab");
         assert_eq!(run(&["a\u{1b}[3", "1mb"]), "a\u{1b}[31mb");
+        // Multibyte text inside a string sequence, and the C1 terminator.
+        let title = "\u{1b}]0;caf\u{e9} \u{1f600}\u{9c}x";
+        assert_eq!(run(&[title]), title);
+        assert_eq!(
+            run(&["\u{1b}]0;\u{e9}", "\u{e9}\u{7}y"]),
+            "\u{1b}]0;\u{e9}\u{e9}\u{7}y"
+        );
         // CAN cancels a CSI; its text stays.
         assert_eq!(run(&["\u{1b}[6\u{18}x"]), "\u{1b}[6\u{18}x");
     }

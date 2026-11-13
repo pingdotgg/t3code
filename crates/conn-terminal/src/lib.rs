@@ -229,7 +229,11 @@ impl TerminalManager {
         let mut state = self.inner.lock();
         let grid = state.shared_grid(&key);
         self.inner.open_locked(&mut state, &key, launch, grid)?;
-        Ok(state.sessions[&key].snapshot(None))
+        state
+            .sessions
+            .get(&key)
+            .map(|s| s.snapshot(None))
+            .ok_or_else(|| lookup_error(&key))
     }
 
     /// `terminal.attach`: the terminal's stream, starting with a snapshot (or `closed`).
@@ -270,14 +274,12 @@ impl TerminalManager {
                 self.inner.open_locked(&mut state, &key, launch, shared)?
             }
             (Some(_), _) => {
-                if let Some((cols, rows)) = shared {
-                    let session = state.sessions.get_mut(&key).expect("checked");
-                    if session.proc.is_some() {
-                        let event = session.resize(cols, rows)?;
-                        if let Some(event) = event {
-                            state.publish(&key, event);
-                        }
-                    }
+                if let Some((cols, rows)) = shared
+                    && let Some(session) = state.sessions.get_mut(&key)
+                    && session.proc.is_some()
+                    && let Some(event) = session.resize(cols, rows)?
+                {
+                    state.publish(&key, event);
                 }
             }
         }
@@ -630,7 +632,9 @@ impl Inner {
 
     /// Starts the shell of an existing session and announces it with a snapshot.
     fn start(self: &Arc<Self>, state: &mut State, key: &Key) {
-        let session = state.sessions.get_mut(key).expect("session exists");
+        let Some(session) = state.sessions.get_mut(key) else {
+            return;
+        };
         let env = pty::shell_env(&session.env, &self.config.version);
         session.generation += 1;
         session.exit_code = None;
@@ -1097,11 +1101,12 @@ impl Session {
             return;
         }
         let full = self.history.tail(None);
-        let tail = if pending <= full.len() {
-            &full[full.len() - pending..]
-        } else {
-            full
-        };
+        // The last `pending` bytes are whole pushes, so they start at a char boundary.
+        let tail = full
+            .len()
+            .checked_sub(pending)
+            .and_then(|start| full.get(start..))
+            .unwrap_or(full);
         let limit = 2 * cap as u64;
         let len = if pending <= full.len() {
             store.append(
