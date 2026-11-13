@@ -631,8 +631,16 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
         ? `${window.kind}:${window.id}`
         : pooled;
       const list = byKey.get(key);
-      if (list) list.push(member);
-      else byKey.set(key, [member]);
+      if (list) {
+        // The same credential on two accounts is one allowance, so it counts once.
+        const credential = window.credentialFingerprint;
+        if (
+          credential !== undefined &&
+          list.some((member) => member.window.credentialFingerprint === credential)
+        )
+          continue;
+        list.push(member);
+      } else byKey.set(key, [member]);
     }
   }
   const pools = [...byKey].map(([key, members]): LimitPoolWindow => {

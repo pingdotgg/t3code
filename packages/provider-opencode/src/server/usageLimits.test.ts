@@ -17,6 +17,8 @@ const openDatabase = (filename: string) =>
     Effect.map(Context.get(SqlClient.SqlClient)),
   );
 
+const MINIMAX_ENDPOINT = "https://api.minimax.io/anthropic/v1";
+
 const MINIMAX_RESPONSE = {
   base_resp: { status_code: 0, status_msg: "success" },
   model_remains: [
@@ -40,7 +42,11 @@ const MINIMAX_RESPONSE = {
 };
 
 /** A credential store with one active key for the given integration. */
-const storeWithCredential = (integrationId: string, key: string) =>
+const storeWithCredential = (
+  integrationId: string,
+  key: string,
+  metadata?: Record<string, unknown>,
+) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -53,10 +59,30 @@ const storeWithCredential = (integrationId: string, key: string) =>
     );
     yield* db.unsafe(
       "INSERT INTO credential (id, integration_id, value, active, time_created) VALUES (?, ?, ?, 1, 0)",
-      ["cred-1", integrationId, JSON.stringify({ type: "key", key })],
+      [
+        "cred-1",
+        integrationId,
+        JSON.stringify({ type: "key", key, ...(metadata ? { metadata } : {}) }),
+      ],
     );
     return { dir, dataHome };
   });
+
+const readLimits = (
+  dataHome: string,
+  dir: string,
+  client: HttpClient.HttpClient,
+  endpoints: ReadonlyMap<string, string>,
+) =>
+  readOpenCodeIntegrationUsageLimits({
+    enabled: true,
+    serverUrl: "",
+    environment: {
+      HOME: dir,
+      XDG_DATA_HOME: dataHome,
+    },
+    endpoints,
+  }).pipe(Effect.provideService(HttpClient.HttpClient, client));
 
 describe("readOpenCodeIntegrationUsageLimits", () => {
   it.effect("reads an integration's own quota instead of the OpenCode Console budget", () =>
@@ -66,14 +92,12 @@ describe("readOpenCodeIntegrationUsageLimits", () => {
       const client = HttpClient.make((request) =>
         Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(MINIMAX_RESPONSE))),
       );
-      const result = yield* readOpenCodeIntegrationUsageLimits({
-        enabled: true,
-        serverUrl: "",
-        environment: {
-          HOME: dir,
-          XDG_DATA_HOME: dataHome,
-        },
-      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+      const result = yield* readLimits(
+        dataHome,
+        dir,
+        client,
+        new Map([["minimax-coding-plan", MINIMAX_ENDPOINT]]),
+      );
 
       assert.strictEqual(result.windows.length, 2);
       const [interval, weekly] = result.windows;
@@ -94,14 +118,12 @@ describe("readOpenCodeIntegrationUsageLimits", () => {
       const client = HttpClient.make((request) =>
         Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(MINIMAX_RESPONSE))),
       );
-      const result = yield* readOpenCodeIntegrationUsageLimits({
-        enabled: true,
-        serverUrl: "",
-        environment: {
-          HOME: dir,
-          XDG_DATA_HOME: dataHome,
-        },
-      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+      const result = yield* readLimits(
+        dataHome,
+        dir,
+        client,
+        new Map([["minimax-coding-plan", MINIMAX_ENDPOINT]]),
+      );
 
       // The video bucket is exhausted; reporting it would exhaust the plan too.
       assert.isTrue(result.windows.every((window) => window.usedPercent < 100));
@@ -115,14 +137,70 @@ describe("readOpenCodeIntegrationUsageLimits", () => {
       const client = HttpClient.make((request) =>
         Effect.die(`The key left the machine: ${request.url}`),
       );
-      const result = yield* readOpenCodeIntegrationUsageLimits({
-        enabled: true,
-        serverUrl: "",
-        environment: {
-          HOME: dir,
-          XDG_DATA_HOME: dataHome,
+      const result = yield* readLimits(
+        dataHome,
+        dir,
+        client,
+        new Map([["minimax-coding-plan", MINIMAX_ENDPOINT]]),
+      );
+
+      assert.deepStrictEqual(result.windows, []);
+      assert.isUndefined(result.credentialFingerprint);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("never sends a key that the provider points at another endpoint", () =>
+    Effect.gen(function* () {
+      const { dir, dataHome } = yield* storeWithCredential("minimax-coding-plan", "sk-cp-plan-key");
+
+      const client = HttpClient.make((request) =>
+        Effect.die(`The key left the machine: ${request.url}`),
+      );
+      const result = yield* readLimits(
+        dataHome,
+        dir,
+        client,
+        new Map([["minimax-coding-plan", "https://gateway.example/v1"]]),
+      );
+
+      assert.deepStrictEqual(result.windows, []);
+      assert.isUndefined(result.credentialFingerprint);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("never sends a key whose owner is unknown", () =>
+    Effect.gen(function* () {
+      const { dir, dataHome } = yield* storeWithCredential("minimax-coding-plan", "sk-cp-plan-key");
+
+      const client = HttpClient.make((request) =>
+        Effect.die(`The key left the machine: ${request.url}`),
+      );
+      const result = yield* readLimits(dataHome, dir, client, new Map());
+
+      assert.deepStrictEqual(result.windows, []);
+      assert.isUndefined(result.credentialFingerprint);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("never sends a key that names another endpoint itself", () =>
+    Effect.gen(function* () {
+      const { dir, dataHome } = yield* storeWithCredential(
+        "minimax-coding-plan",
+        "sk-cp-plan-key",
+        {
+          baseURL: "https://gateway.example/v1",
         },
-      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+      );
+
+      const client = HttpClient.make((request) =>
+        Effect.die(`The key left the machine: ${request.url}`),
+      );
+      const result = yield* readLimits(
+        dataHome,
+        dir,
+        client,
+        new Map([["minimax-coding-plan", MINIMAX_ENDPOINT]]),
+      );
 
       assert.deepStrictEqual(result.windows, []);
       assert.isUndefined(result.credentialFingerprint);
@@ -187,5 +265,36 @@ describe("mergeUsageLimits", () => {
       credentialFingerprint: "minimax-account",
     });
     assert.strictEqual(merged.credentialFingerprint, "go-account.minimax-account");
+  });
+
+  it("names the credential that meters each window", () => {
+    const merged = mergeUsageLimits(
+      {
+        checkedAt: "2026-11-10T00:00:00.000Z",
+        windows: [
+          {
+            id: "go_weekly",
+            kind: "weekly",
+            label: "Go · Weekly",
+            usedPercent: 20,
+          },
+        ],
+        credentialFingerprint: "go-account",
+      },
+      {
+        checkedAt: "2026-11-10T00:00:00.000Z",
+        windows: [
+          {
+            id: "minimax-coding-plan_weekly",
+            kind: "weekly",
+            label: "MiniMax Token Plan · Weekly",
+            usedPercent: 9,
+          },
+        ],
+        credentialFingerprint: "minimax-account",
+      },
+    );
+    assert.strictEqual(merged.windows[0]?.credentialFingerprint, "go-account");
+    assert.strictEqual(merged.windows[1]?.credentialFingerprint, "minimax-account");
   });
 });

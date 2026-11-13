@@ -1082,6 +1082,33 @@ describe("pooled account columns", () => {
       row.columns.map((member) => (member.window ? member.account.key : null)),
     );
 
+  it("counts one credential once in a pool", () => {
+    const accounts = [
+      {
+        ...account("env-a", [
+          { ...weekly, id: "go_weekly", usedPercent: 20, credentialFingerprint: "go-key" },
+        ]),
+        driver: ProviderDriverKind.make("opencode"),
+      },
+      {
+        // The same Go credential on another environment, with a plan of its own.
+        ...account("env-b", [
+          { ...weekly, id: "go_weekly", usedPercent: 20, credentialFingerprint: "go-key" },
+        ]),
+        driver: ProviderDriverKind.make("opencode"),
+      },
+      {
+        ...account("env-c", [
+          { ...weekly, id: "go_weekly", usedPercent: 80, credentialFingerprint: "other-go-key" },
+        ]),
+        driver: ProviderDriverKind.make("opencode"),
+      },
+    ];
+    const [pool] = collectLimitPools(accounts, now);
+    expect(pool?.windows[0]?.members).toHaveLength(2);
+    expect(pool?.windows[0]?.usedPercent).toBe(50);
+  });
+
   it.each([
     {
       reports: [

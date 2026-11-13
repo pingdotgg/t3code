@@ -29,8 +29,14 @@ const StoredKey = Schema.Struct({
   type: Schema.Literal("key"),
   key: Schema.String,
   metadata: Schema.optionalKey(
-    Schema.NullOr(Schema.Struct({ server: Schema.optionalKey(Schema.Unknown) })),
+    Schema.NullOr(
+      Schema.Struct({
+        server: Schema.optionalKey(Schema.Unknown),
+        baseURL: Schema.optionalKey(Schema.Unknown),
+      }),
+    ),
   ),
+  configuration: Schema.optionalKey(Schema.Struct({ baseURL: Schema.optionalKey(Schema.Unknown) })),
 });
 const decodeStoredKey = Schema.decodeOption(Schema.fromJsonString(StoredKey));
 const UsageWindow = Schema.Struct({
@@ -141,6 +147,8 @@ interface StoredCredential {
   readonly key: string;
   /** The OpenCode deployment the credential belongs to, when the store names one. */
   readonly server: string | undefined;
+  /** The endpoint the credential reaches, when the store names one. */
+  readonly baseURL: string | undefined;
 }
 
 /**
@@ -170,9 +178,16 @@ const readStoredCredentials = (databasePath: string) =>
           const key = stored?.key.trim();
           if (!key) continue;
           const server = stored?.metadata?.server;
+          const configuredBaseURL =
+            typeof stored?.metadata?.baseURL === "string"
+              ? stored.metadata.baseURL
+              : typeof stored?.configuration?.baseURL === "string"
+                ? stored.configuration.baseURL
+                : undefined;
           credentials.set(integrationId, {
             key,
             server: typeof server === "string" ? server : undefined,
+            baseURL: configuredBaseURL,
           });
         }
         return credentials;
@@ -198,7 +213,18 @@ function isOfficialConsole(server: string | undefined): boolean {
 function servesMiniMax(server: string | undefined): boolean {
   if (server === undefined) return true;
   try {
-    return MINI_MAX_HOSTS.has(new URL(server).host);
+    const url = new URL(server);
+    return MINI_MAX_HOSTS.has(url.host);
+  } catch {
+    return false;
+  }
+}
+
+/** The endpoint MiniMax serves its own API from. */
+function isMiniMaxEndpoint(baseURL: string | undefined): boolean {
+  if (baseURL === undefined) return false;
+  try {
+    return MINI_MAX_HOSTS.has(new URL(baseURL).host);
   } catch {
     return false;
   }
@@ -266,6 +292,12 @@ export interface OpenCodeUsageLimitsInput {
   readonly enabled: boolean;
   readonly serverUrl: string;
   readonly environment: NodeJS.ProcessEnv;
+  /**
+   * The endpoint OpenCode resolves for each provider, by provider or
+   * integration id. A provider without one is not probed: the key's owner
+   * would be unknown.
+   */
+  readonly endpoints?: ReadonlyMap<string, string> | undefined;
 }
 
 export interface OpenCodeIntegrationUsageLimits {
@@ -297,11 +329,17 @@ export const readOpenCodeIntegrationUsageLimits = Effect.fn("readOpenCodeIntegra
       // Only a credential that MiniMax itself issued may reach MiniMax's API.
       const candidates = Object.entries(INTEGRATION_QUOTA_ENDPOINTS).filter(([integrationId]) => {
         const credential = storedCredentials.get(integrationId);
-        return (
-          credential !== undefined &&
-          credential.key.startsWith(MINI_MAX_PLAN_KEY_PREFIX) &&
-          servesMiniMax(credential.server)
-        );
+        if (
+          credential === undefined ||
+          !credential.key.startsWith(MINI_MAX_PLAN_KEY_PREFIX) ||
+          !servesMiniMax(credential.server)
+        )
+          return false;
+        // The provider must resolve to MiniMax's own endpoint, and the
+        // credential must not point somewhere else.
+        const endpoint = input.endpoints?.get(integrationId);
+        if (endpoint === undefined || !isMiniMaxEndpoint(endpoint)) return false;
+        return credential.baseURL === undefined || isMiniMaxEndpoint(credential.baseURL);
       });
       if (candidates.length === 0) return empty;
 
@@ -420,11 +458,23 @@ export function mergeUsageLimits(
     consoleMetadata.credentialFingerprint,
     integration.credentialFingerprint,
   );
+  // Each window names the credential that meters it, so a pool counts one
+  // credential once even when two accounts report it.
+  const withCredential = (
+    windows: readonly ServerProviderUsageWindow[],
+    fingerprint: string | undefined,
+  ) =>
+    fingerprint === undefined
+      ? windows
+      : windows.map((window) => ({ ...window, credentialFingerprint: fingerprint }));
   return {
     ...consoleMetadata,
     ...(credentialFingerprint === undefined ? {} : { credentialFingerprint }),
     checkedAt: console.checkedAt,
-    windows: [...console.windows, ...integration.windows],
+    windows: [
+      ...withCredential(console.windows, consoleMetadata.credentialFingerprint),
+      ...withCredential(integration.windows, integration.credentialFingerprint),
+    ],
   };
 }
 
@@ -518,7 +568,12 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
       .digest(Digest.sha256, new TextEncoder().encode(`opencode-go\0${apiKey}`))
       .pipe(Effect.map(Hex.encode), Effect.orDie);
     return {
-      ...makeUsageLimits({ checkedAt, windows }),
+      ...makeUsageLimits({
+        checkedAt,
+        // The window names the credential that meters it, so a pool counts one
+        // Go account once even when two environments report it.
+        windows: windows.map((window) => ({ ...window, credentialFingerprint })),
+      }),
       credentialFingerprint,
     };
   }).pipe(
