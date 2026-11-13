@@ -577,10 +577,25 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
           threadId,
         });
         yield* worker.drain();
-        assert.include(
-          (yield* tasks.list()).tasks.map((task) => task.id),
-          bound.id,
-        );
+        const findTask = (id: ScheduledTaskId) =>
+          tasks.list().pipe(Effect.map((listed) => listed.tasks.find((task) => task.id === id)));
+        const pausedByArchive = {
+          enabled: false,
+          nextRunAt: null,
+          lastRunStatus: "failed" as const,
+          lastRunError: `Thread ${threadId} is archived and cannot receive messages.`,
+        };
+        assert.deepInclude(yield* findTask(bound.id), pausedByArchive);
+        assert.deepInclude(yield* findTask(other.id), { enabled: true, lastRunError: null });
+        assert.deepInclude(yield* findTask(moved.id), { enabled: true, lastRunError: null });
+        // Restoring the thread does not resume delivery: the schedule stays off until re-enabled.
+        yield* orchestrator.dispatch({
+          type: "thread.unarchive",
+          commandId: CommandId.make(`automation-unarchive:${deletion}`),
+          threadId,
+        });
+        yield* worker.drain();
+        assert.deepInclude(yield* findTask(bound.id), pausedByArchive);
 
         if (deletion === "thread") {
           yield* orchestrator.dispatch({

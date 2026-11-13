@@ -267,6 +267,10 @@ export class ScheduledTaskService extends Context.Service<
     ) => Effect.Effect<ScheduledTaskDeleteResult, ScheduledTaskError>;
     /** Deletes only tasks that still target this thread, including their webhook deliveries. */
     readonly deleteForThread: (threadId: ThreadId) => Effect.Effect<void, ScheduledTaskError>;
+    /** Turns off the tasks bound to a thread that is still archived; unarchiving leaves them off. */
+    readonly pauseForArchivedThread: (
+      threadId: ThreadId,
+    ) => Effect.Effect<void, ScheduledTaskError>;
     /** Points tasks bound to these threads at the project the threads moved to. */
     readonly moveThreadTasks: (input: {
       readonly threadIds: ReadonlyArray<ThreadId>;
@@ -1722,6 +1726,41 @@ export const layer = Layer.effect(
       if (removed.length > 0) yield* notifyChanged;
     });
 
+    const pauseForArchivedThread = Effect.fn("ScheduledTaskService.pauseForArchivedThread")(
+      function* (threadId: ThreadId) {
+        // The archive queued this; a thread restored or deleted since then is not paused here.
+        const shell = yield* threadManagement
+          .getThreadShell(threadId)
+          .pipe(
+            Effect.mapError((cause) => taskError("Could not read the archived thread.", { cause })),
+          );
+        if (shell === null || shell.deletedAt != null || shell.archivedAt == null) return;
+        const now = yield* localNow;
+        const reason = new ThreadManagementService.ThreadManagementThreadArchivedError({ threadId })
+          .message;
+        // A run in flight records its own outcome; its completion keeps the task off.
+        const paused = yield* sql<{ task_id: string }>`
+          UPDATE scheduled_tasks
+          SET enabled = 0,
+              next_run_at = NULL,
+              updated_at = ${iso(now)},
+              last_run_error = CASE
+                WHEN last_run_status = 'running' THEN last_run_error ELSE ${reason}
+              END,
+              last_run_status = CASE
+                WHEN last_run_status = 'running' THEN last_run_status ELSE 'failed'
+              END
+          WHERE thread_id = ${threadId} AND enabled = 1
+          RETURNING task_id
+        `.pipe(
+          Effect.mapError((cause) =>
+            taskError("Could not pause the archived thread's schedule tasks.", { cause }),
+          ),
+        );
+        if (paused.length > 0) yield* notifyChanged;
+      },
+    );
+
     const moveThreadTasks: ScheduledTaskService["Service"]["moveThreadTasks"] = Effect.fn(
       "ScheduledTaskService.moveThreadTasks",
     )(function* (input) {
@@ -2669,6 +2708,7 @@ export const layer = Layer.effect(
       setEnabled,
       delete: deleteTask,
       deleteForThread,
+      pauseForArchivedThread,
       moveThreadTasks,
       runNow,
       rotateWebhookToken,

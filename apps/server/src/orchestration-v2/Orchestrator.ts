@@ -5305,6 +5305,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           request: { type: "terminal.cleanup" },
         } satisfies PendingOrchestrationEffectV2,
+        {
+          id: `effect:${command.commandId}:scheduled-tasks.pause`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: { type: "scheduled-tasks.pause" },
+        } satisfies PendingOrchestrationEffectV2,
       ]);
     }
   });
