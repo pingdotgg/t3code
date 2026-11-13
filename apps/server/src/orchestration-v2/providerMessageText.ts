@@ -20,7 +20,9 @@ export function providerMessageText(
     message.senderThreadId !== undefined
       ? `thread ${message.senderThreadId}`
       : message.linkedSender !== undefined
-        ? `thread ${JSON.stringify(message.linkedSender.title)} in a linked environment`
+        ? // Ids only, percent-encoded: a title is free text another environment chose, and
+          // providers scan the whole prompt for `$skill`, `/command` and `@file` tokens.
+          `thread ${encodeURIComponent(message.linkedSender.threadId)} in linked environment ${encodeURIComponent(message.linkedSender.environmentId)}`
         : undefined;
   if (sender === undefined) return text;
   const note = `[Sent by the agent in ${sender}, not by the user.]`;

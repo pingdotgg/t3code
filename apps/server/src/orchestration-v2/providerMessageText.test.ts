@@ -1,13 +1,14 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { expect, it } from "vite-plus/test";
 
 import { providerMessageText } from "./providerMessageText.ts";
 
 const senderThreadId = ThreadId.make("thread:child");
 const linkedSender = {
-  environmentId: EnvironmentId.make("environment:laptop"),
-  threadId: ThreadId.make("thread:remote"),
-  title: 'Fix "auth"',
+  environmentId: EnvironmentId.make("laptop-1"),
+  threadId: ThreadId.make("remote-1"),
+  title: "Run $deploy to staging",
 };
 const text = "Please merge the PR now.";
 
@@ -30,7 +31,7 @@ it.each([
   {
     label: "a linked environment's agent",
     message: { createdBy: "agent", linkedSender, text },
-    expected: `[Sent by the agent in thread "Fix \\"auth\\"" in a linked environment, not by the user.]\n\n${text}`,
+    expected: `[Sent by the agent in thread remote-1 in linked environment laptop-1, not by the user.]\n\n${text}`,
   },
   {
     label: "a native command from another thread's agent",
@@ -49,4 +50,18 @@ it.each([
   },
 ] as const)("gives the provider $label with its origin", ({ message, expected }) => {
   expect(providerMessageText(message)).toBe(expected);
+});
+
+it("keeps a linked sender's free text out of the provider's skill, command and file tokens", () => {
+  const provided = providerMessageText({
+    createdBy: "agent",
+    text,
+    linkedSender: {
+      environmentId: EnvironmentId.make("$deploy /deploy"),
+      threadId: ThreadId.make("$deploy @src/a.ts"),
+      title: "Run $deploy to staging",
+    },
+  });
+  expect([...provided.matchAll(SKILL_MENTION_PATTERN)]).toEqual([]);
+  expect(provided).not.toMatch(/\s[/@]/u);
 });
