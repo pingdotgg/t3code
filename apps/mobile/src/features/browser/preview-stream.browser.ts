@@ -111,6 +111,7 @@ export function start(configuration: PreviewStreamConfiguration) {
 
   let stopped = false;
   let streaming = false;
+  let painted = false;
   let viewport: PreviewStreamViewport | null = null;
   let size: { width: number; height: number } | null = null;
   let cap: { width: number; height: number } | null = null;
@@ -156,12 +157,19 @@ export function start(configuration: PreviewStreamConfiguration) {
     button: MouseInput["button"];
   } | null = null;
 
-  const reportStatus = (status: "connecting" | "streaming") => {
+  const reportStatus = (status: "connecting" | "streaming", preserveControl?: boolean) => {
     streaming = status === "streaming";
-    post({ type: "status", status });
+    post({ type: "status", status, ...(preserveControl ? { preserveControl } : {}) });
+  };
+  // The semantic view covers the canvas, so only its document shows the page while it is on.
+  const syncStatus = () => {
+    const ready = accessible ? accessibleDocument !== null : painted;
+    if (stopped || ready === streaming) return;
+    reportStatus(ready ? "streaming" : "connecting", !ready);
   };
   const painter = createPreviewFramePainter(canvas, () => {
-    if (!streaming && !stopped) reportStatus("streaming");
+    painted = true;
+    syncStatus();
     sendPictureInPictureFrame();
   });
   const send = (message: PreviewStreamInput) => client?.send(message) ?? false;
@@ -180,6 +188,7 @@ export function start(configuration: PreviewStreamConfiguration) {
   };
 
   const connect = () => {
+    painted = false;
     if (client) reportStatus("connecting");
     client?.stop();
     control = null;
@@ -242,8 +251,9 @@ export function start(configuration: PreviewStreamConfiguration) {
         onConnectedChange: (connected) => {
           if (!connected) {
             control = null;
+            painted = false;
             clearInput();
-            if (streaming) reportStatus("connecting");
+            reportStatus("connecting");
             return;
           }
         },
@@ -253,6 +263,7 @@ export function start(configuration: PreviewStreamConfiguration) {
         onAccessibility: (document) => {
           accessibleDocument = document;
           showAccessibleDocument();
+          syncStatus();
         },
         onAccessibilityNotice: (message) => accessibleView?.notice(message),
       },
@@ -724,6 +735,7 @@ export function start(configuration: PreviewStreamConfiguration) {
       accessibleView = null;
       accessibleDocument = null;
     }
+    syncStatus();
   };
 
   activeViewer = {

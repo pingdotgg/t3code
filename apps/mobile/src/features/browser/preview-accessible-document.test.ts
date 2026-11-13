@@ -6,6 +6,138 @@ import {
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
+import { accessibility, start, stop } from "./preview-stream.browser";
+import type { PreviewStreamMessage } from "./preview-stream-document";
+
+it("uses fresh visible semantics to finish connecting before any image arrives", async () => {
+  vi.useFakeTimers();
+  const sockets: WebSocketFixture[] = [];
+  class WebSocketFixture extends EventTarget {
+    static OPEN = 1;
+    readyState = 0;
+    constructor() {
+      super();
+      sockets.push(this);
+    }
+    send() {}
+    close() {}
+    open() {
+      this.readyState = 1;
+      this.dispatchEvent(new Event("open"));
+    }
+    message(message: unknown) {
+      this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(message) }));
+    }
+  }
+  const messages: PreviewStreamMessage[] = [];
+  let nativeControl: Extract<PreviewStreamMessage, { type: "control" }> | null = null;
+  vi.stubGlobal("WebSocket", WebSocketFixture);
+  vi.stubGlobal("ReactNativeWebView", {
+    postMessage: (message: string) => {
+      const next: PreviewStreamMessage = JSON.parse(message);
+      messages.push(next);
+      if (next.type === "status" && next.status === "connecting" && !next.preserveControl)
+        nativeControl = null;
+      if (next.type === "control") nativeControl = next;
+    },
+  });
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(private readonly callback: () => void) {}
+      observe() {
+        this.callback();
+      }
+      disconnect() {}
+    },
+  );
+  using _rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+    x: 0,
+    y: 0,
+    width: 400,
+    height: 600,
+    top: 0,
+    right: 400,
+    bottom: 600,
+    left: 0,
+    toJSON() {},
+  });
+  using _canvas = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  const status = () => messages.filter((message) => message.type === "status").at(-1)?.status;
+  const page: PreviewAccessibilityDocument = {
+    document: "page",
+    version: 1,
+    truncated: false,
+    root: { id: "heading", role: "heading", name: "Fresh page", level: 1 },
+  };
+  const documentMessage = { type: "accessibility", document: page };
+  try {
+    start({
+      access: {
+        httpBase: "https://environment.test",
+        wsBase: "wss://environment.test",
+        credentials: false,
+        query: {},
+      },
+      threadId: "thread",
+      tabId: "tab",
+      interactive: true,
+      background: "white",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const first = sockets[0]!;
+    first.open();
+    first.message({
+      type: "control",
+      controller: "you",
+      canOperate: true,
+      generation: 1,
+      dialog: null,
+    });
+    first.message(documentMessage);
+    expect(status()).toBe("connecting");
+    accessibility(true);
+    first.message({ type: "accessibility", document: null });
+    expect(status()).toBe("connecting");
+    first.message(documentMessage);
+    expect(document.querySelector("h1")?.textContent).toBe("Fresh page");
+    expect(status()).toBe("streaming");
+
+    accessibility(false);
+    expect(status()).toBe("connecting");
+    expect(messages.filter((message) => message.type === "status").at(-1)).toMatchObject({
+      preserveControl: true,
+    });
+    expect(nativeControl).toMatchObject({ controller: "you" });
+    accessibility(true);
+    first.message(documentMessage);
+    expect(status()).toBe("streaming");
+    first.dispatchEvent(new CloseEvent("close", { code: 1000 }));
+    expect(status()).toBe("connecting");
+    expect(nativeControl).toBeNull();
+    expect(document.querySelector("h1")).toBeNull();
+    await vi.advanceTimersByTimeAsync(500);
+    const second = sockets[1]!;
+    second.open();
+    second.message({
+      type: "control",
+      controller: "you",
+      canOperate: true,
+      generation: 1,
+      dialog: null,
+    });
+    second.message({ type: "accessibility", document: null });
+    expect(status()).toBe("connecting");
+    second.message(documentMessage);
+    expect(status()).toBe("streaming");
+  } finally {
+    stop();
+    document.body.replaceChildren();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  }
+});
+
 it("preserves drafts and submits only values the viewer edited", () => {
   const container = document.createElement("div");
   document.body.append(container);

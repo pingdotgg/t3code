@@ -20,6 +20,8 @@ export type PreviewStreamMessage =
       readonly type: "status";
       readonly status: "connecting" | "streaming" | "error";
       readonly detail?: string;
+      // Set when only local render readiness dropped; the stream connection and its control remain.
+      readonly preserveControl?: boolean;
     }
   | { readonly type: "unauthorized" }
   | { readonly type: "gone" }

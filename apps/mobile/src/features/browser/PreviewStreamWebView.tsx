@@ -440,7 +440,7 @@ function PreviewStreamDocumentView({
                   return;
                 }
                 setStatus(message.status);
-                if (message.status === "connecting") {
+                if (message.status === "connecting" && !message.preserveControl) {
                   // Dialogs may have closed and reopened while this viewer was disconnected.
                   dialogRef.current = null;
                   setControl(null);

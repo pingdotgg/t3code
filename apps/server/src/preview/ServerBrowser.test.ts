@@ -3064,7 +3064,7 @@ const takeAccessibility = Effect.fn(function* (viewer: ServerBrowser.ServerBrows
   }
 });
 
-it.live("a read-only viewer reads the page's semantics but cannot act through them", () =>
+it.effect("a read-only viewer reads the page's semantics but cannot act through them", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { browser, tabId } = yield* ready;
@@ -3100,7 +3100,7 @@ it.live("a read-only viewer reads the page's semantics but cannot act through th
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("only the controller's current-document actions reach the page", () =>
+it.effect("only the controller's current-document actions reach the page", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { browser, tabId } = yield* ready;
@@ -3146,7 +3146,7 @@ it.live("only the controller's current-document actions reach the page", () =>
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("turning the view off or leaving releases the Accessibility domain and its session", () =>
+it.effect("turning the view off or leaving releases the Accessibility domain and its session", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { browser, tabId } = yield* ready;
@@ -3184,7 +3184,7 @@ it.live("turning the view off or leaving releases the Accessibility domain and i
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("a viewer whose backlog is replaced still gets the page's semantics", () =>
+it.effect("a viewer whose backlog is replaced still gets the page's semantics", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { browser, tabId } = yield* ready;
@@ -3649,7 +3649,7 @@ it.effect("failed session and browser launches release capacity, as does closing
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("a superseded accessibility failure leaves the newer viewer request enabled", () =>
+it.effect("a superseded accessibility failure leaves the newer viewer request enabled", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { browser, tabId } = yield* ready;
