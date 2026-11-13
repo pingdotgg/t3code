@@ -40,6 +40,10 @@ import {
   withWorkspaceLease,
 } from "../workspace/workspaceLease.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import {
+  layerThreadWorktreeRestore,
+  ThreadWorktreeRestore,
+} from "../workspace/restoreMissingWorktree.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { layerRealGit } from "./ProviderTurnStartService.testkit.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -270,6 +274,101 @@ it.each([
   const harness = startWithMissingWorktree(input.worktreePath, input.realPaths);
   await harness.start;
   expect(harness.createWorktree).toHaveBeenCalledTimes(input.recreated ? 1 : 0);
+});
+
+const restoreLeaseExists = vi.fn(() => Effect.succeed(false));
+const restoreLeaseCreateWorktree = vi.fn(() => Effect.succeed({} as never));
+const layerRestoreLeaseTest = layerThreadWorktreeRestore.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.succeed(FileSystem.FileSystem, {
+        exists: restoreLeaseExists,
+        realPath: (target: string) => Effect.succeed(normalize(target)),
+      } as never),
+      layerWorktreeLocation(),
+      Layer.mock(GitWorkflow.GitWorkflowService)({
+        pruneWorktrees: () => Effect.void,
+        createWorktree: restoreLeaseCreateWorktree,
+        listLocalBranchNames: () => Effect.succeed(["feature/restore"]),
+      }),
+      Layer.mock(ProjectService.ProjectService)({
+        getById: () =>
+          Effect.succeedSome({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
+      }),
+    ),
+  ),
+);
+
+effectIt.effect("restores a missing worktree before a send only under the workspace lease", () =>
+  Effect.gen(function* () {
+    const worktreePath = `${managedWorktreesDir}/project/feature-restore`;
+    const { restore } = yield* ThreadWorktreeRestore;
+    yield* withWorkspaceLease(
+      worktreePath,
+      Effect.gen(function* () {
+        const restoring = yield* restore({
+          id: ThreadId.make("thread_send_restore_lease"),
+          projectId: ProjectId.make("project_send_restore_lease"),
+          worktreePath,
+          branch: "feature/restore",
+        }).pipe(Effect.forkChild({ startImmediately: true }));
+        expect(restoreLeaseExists).not.toHaveBeenCalled();
+        return restoring;
+      }),
+    ).pipe(Effect.flatMap(Fiber.join));
+    expect(restoreLeaseCreateWorktree).toHaveBeenCalledTimes(1);
+  }).pipe(Effect.provide(layerRestoreLeaseTest)),
+);
+
+it.each([
+  { label: "directly in the scratch root", folder: "/tmp/t3-home/scratch/notes", recreated: true },
+  { label: "below another folder", folder: "/tmp/t3-home/scratch/notes/deep", recreated: false },
+  {
+    label: "in another project",
+    folder: "/tmp/elsewhere/notes",
+    workspaceRoot: "/tmp/elsewhere",
+    recreated: false,
+  },
+])("recreates a pruned No project folder only $label", async (input) => {
+  const makeDirectory = vi.fn(() => Effect.void);
+  await Effect.gen(function* () {
+    const { restore } = yield* ThreadWorktreeRestore;
+    yield* restore({
+      id: ThreadId.make("thread_scratch_restore"),
+      projectId: ProjectId.make("project_scratch_restore"),
+      worktreePath: input.folder,
+      branch: null,
+    });
+  }).pipe(
+    Effect.provide(
+      layerThreadWorktreeRestore.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(FileSystem.FileSystem, {
+              exists: () => Effect.succeed(false),
+              realPath: (target: string) => Effect.succeed(target),
+              makeDirectory,
+            } as never),
+            Path.layer,
+            Layer.mock(ServerConfig.ServerConfig)({
+              baseDir: "/tmp/t3-home",
+              worktreesDir: managedWorktreesDir,
+            } as ServerConfig.ServerConfig["Service"]),
+            ServerSettings.layerTest(),
+            Layer.mock(GitWorkflow.GitWorkflowService)({}),
+            Layer.mock(ProjectService.ProjectService)({
+              getById: () =>
+                Effect.succeedSome({
+                  workspaceRoot: input.workspaceRoot ?? "/tmp/t3-home/scratch",
+                } as never),
+            }),
+          ),
+        ),
+      ),
+    ),
+    Effect.runPromise,
+  );
+  expect(makeDirectory).toHaveBeenCalledTimes(input.recreated ? 1 : 0);
 });
 
 function makeLocalCommandHarness(input: {
@@ -1127,6 +1226,8 @@ effectIt.effect(
 
       const expectedTips = {
         retained: { tip: threadTip, file: "thread.txt", upstream: null, base: "" },
+        // A failed removal can leave the folder behind with only dependencies inside.
+        leftover: { tip: threadTip, file: "thread.txt", upstream: null, base: "" },
         deleted: { tip: projectTip, file: "project.txt", upstream: null, base: "project-current" },
         pushed: {
           tip: threadTip,
@@ -1171,7 +1272,12 @@ effectIt.effect(
           yield* git(workspaceRoot, ["remote", "remove", "origin"]);
         }
         yield* fileSystem.remove(worktreePath, { recursive: true });
-        if (scenario !== "retained") {
+        if (scenario === "leftover") {
+          yield* fileSystem.makeDirectory(path.join(worktreePath, "node_modules"), {
+            recursive: true,
+          });
+        }
+        if (scenario !== "retained" && scenario !== "leftover") {
           yield* git(workspaceRoot, ["worktree", "prune"]);
           yield* git(workspaceRoot, ["branch", "-D", "feature/restore"]);
         }
@@ -1218,6 +1324,27 @@ effectIt.effect(
         expect(harness.projection().runs.at(-1)?.status).toBe("running");
       }
     }).pipe(Effect.scoped, Effect.provide(layerRealGit)),
+);
+
+effectIt.effect("leaves a managed worktree folder without .git that holds user files", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const worktreesDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-leftover-" });
+    const worktreePath = path.join(worktreesDir, "project", "restore");
+    yield* fileSystem.makeDirectory(path.join(worktreePath, "node_modules"), { recursive: true });
+    yield* fileSystem.writeFileString(path.join(worktreePath, "notes.md"), "keep me");
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      worktreePath,
+      worktreesDir,
+      fileSystem,
+      failReadsAfterRunning: true,
+    });
+    yield* harness.start;
+    expect(harness.createWorktree).not.toHaveBeenCalled();
+    expect(yield* fileSystem.readFileString(path.join(worktreePath, "notes.md"))).toBe("keep me");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 effectIt.effect(
