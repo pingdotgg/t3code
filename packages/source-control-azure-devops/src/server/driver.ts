@@ -8,11 +8,17 @@ import * as Layer from "effect/Layer";
 import { definition } from "../shared/definition.ts";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
+import * as AzureDevOpsCredentials from "./AzureDevOpsCredentials.ts";
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import * as AzureDevOpsPullRequestProvider from "./AzureDevOpsPullRequestProvider.ts";
+import * as AzureDevOpsRest from "./AzureDevOpsRest.ts";
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 
-const services = AzureDevOpsPullRequestCli.layer.pipe(Layer.provideMerge(AzureDevOpsCli.layer));
+const services = AzureDevOpsPullRequestCli.layer.pipe(
+  Layer.provideMerge(AzureDevOpsCli.layer),
+  Layer.provideMerge(AzureDevOpsRest.layer),
+  Layer.provideMerge(AzureDevOpsCredentials.layer),
+);
 
 const makeInstance = Effect.all({
   sourceControl: AzureDevOpsSourceControlProvider.make,

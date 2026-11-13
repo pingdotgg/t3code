@@ -34,6 +34,7 @@ import type {
   AzureDevOpsRepositoryLocation,
 } from "./azureDevOpsPullRequestJson.ts";
 import { definition } from "../shared/definition.ts";
+import { azureDevOpsOrganizationKey } from "../shared/organization.ts";
 
 /** Each file pays for two Python startups. */
 const DIFF_FILE_CONCURRENCY = 4;
@@ -86,6 +87,9 @@ function azureDevOpsProviderFailure(
 ): PullRequestProviderFailure {
   if (error._tag === "AzureDevOpsCliUnavailableError") return { reason: "missing-tool" };
   if (error._tag === "AzureDevOpsCliAuthenticationError") return { reason: "unauthenticated" };
+  // Not "unauthenticated": that shows the az login requirement, and signing in to az cannot read
+  // the saved token. Its own detail says to fix the secret provider.
+  if (error._tag === "AzureDevOpsSavedTokenUnreadableError") return { reason: "failed" };
   if (error._tag === "AzureDevOpsCliRateLimitError") return { reason: "rate-limited" };
   if (error._tag === "AzureDevOpsPullRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };
@@ -160,11 +164,17 @@ export const make = Effect.gen(function* () {
 
   const EMPTY_DIFF_SLICE: ProviderDiffSlice = { patch: "", truncated: false, nextCursor: null };
 
-  // PR locations are immutable; caching avoids full PR reads for viewed-file checks.
+  // PR locations are immutable; caching avoids full PR reads for viewed-file checks. The key holds
+  // the repository, which names the organization, so a checkout pointed at another organization
+  // cannot reuse the old one's location and REST URL.
   const locations = new Map<string, AzureDevOpsRepositoryLocation>();
 
-  const locationOf = (input: { readonly cwd: string; readonly number: number }) => {
-    const key = `${input.cwd} ${input.number}`;
+  const locationOf = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly number: number;
+  }) => {
+    const key = JSON.stringify([input.cwd, input.repository.toLowerCase(), input.number]);
     const held = locations.get(key);
     if (held !== undefined) {
       locations.delete(key);
@@ -187,6 +197,7 @@ export const make = Effect.gen(function* () {
 
   const diffScope = Effect.fn("AzureDevOpsPullRequestProvider.diffScope")(function* (input: {
     readonly cwd: string;
+    readonly repository: string;
     readonly number: number;
   }) {
     const location = yield* locationOf(input);
@@ -263,6 +274,8 @@ export const make = Effect.gen(function* () {
     unavailableRequirement: UNAVAILABLE_REQUIREMENT,
     // The bare repository name repeats across an organization; the project path does not.
     repositoryKey: ({ canonicalKey }) => canonicalKey,
+    // Each organization can sign in with its own saved token, so each has its own viewer.
+    viewerScope: ({ remoteUrl }) => azureDevOpsOrganizationKey(remoteUrl),
 
     getViewer: (input) =>
       cli.getViewer({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),

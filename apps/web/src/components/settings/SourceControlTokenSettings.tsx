@@ -48,7 +48,15 @@ export function SourceControlTokenSettings({
     readonly draft: string | SecretReference;
   } | null>(null);
   const [saving, setSaving] = useState(false);
-  const normalizedHost = host.trim().toLowerCase();
+  const typedHost = host.trim();
+  // A forge keyed by something narrower than a host names the key itself; "" when it names none.
+  const normalizedHost =
+    typedHost === ""
+      ? ""
+      : credentials.tokenKey === undefined
+        ? typedHost.toLowerCase()
+        : (credentials.tokenKey.normalize(typedHost) ?? "");
+  const unrecognized = typedHost !== "" && normalizedHost === "";
   const savedToken = tokens[normalizedHost];
   const isSaved = hasToken(savedToken);
   const savedHosts = Object.entries(tokens)
@@ -92,8 +100,10 @@ export function SourceControlTokenSettings({
           <code className="rounded bg-muted px-1 py-px text-2xs">{credentials.tokenEnvVar}</code>{" "}
           and the{" "}
           <code className="rounded bg-muted px-1 py-px text-2xs">{credentials.cliName}</code> login,
-          so {definition.label} works without the {credentials.cliLabel}. Give it{" "}
-          {credentials.tokenAccess}.{" "}
+          so{" "}
+          {credentials.savedTokenUse ??
+            `${definition.label} works without the ${credentials.cliLabel}`}
+          . Give it {credentials.tokenAccess}.{" "}
           {normalizedHost || defaultHost ? (
             <InlineButton
               render={
@@ -111,12 +121,14 @@ export function SourceControlTokenSettings({
         </p>
         <div className="grid gap-3 sm:grid-cols-[12rem_1fr]">
           <div className="grid gap-1.5">
-            <Label htmlFor={`${definition.kind}-token-host-${environmentId}`}>Host</Label>
+            <Label htmlFor={`${definition.kind}-token-host-${environmentId}`}>
+              {credentials.tokenKey?.label ?? "Host"}
+            </Label>
             <Input
               id={`${definition.kind}-token-host-${environmentId}`}
               autoComplete="off"
               size="sm"
-              placeholder={defaultHost}
+              placeholder={credentials.tokenKey?.placeholder ?? defaultHost}
               value={host}
               onChange={(event) => setHost(event.target.value)}
             />
@@ -138,9 +150,11 @@ export function SourceControlTokenSettings({
         </div>
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs text-muted-foreground">
-            {savedHosts.length === 0
-              ? `No token saved; the server uses ${credentials.tokenEnvVar} or the ${credentials.cliName} login.`
-              : `Saved for ${savedHosts.join(", ")}.`}
+            {unrecognized
+              ? `Not recognized. Try ${credentials.tokenKey?.placeholder ?? defaultHost}.`
+              : savedHosts.length === 0
+                ? `No token saved; the server uses ${credentials.tokenEnvVar} or the ${credentials.cliName} login.`
+                : `Saved for ${savedHosts.join(", ")}.`}
           </p>
           <div className="flex shrink-0 gap-2">
             {isSaved ? (

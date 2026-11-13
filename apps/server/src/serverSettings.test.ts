@@ -1959,6 +1959,51 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }),
   );
 
+  it.effect("reads the stored settings when the secret store cannot be read", () => {
+    const cause = new ServerSecretStore.SecretStoreReadError({
+      resource: "source-control-token",
+      cause: PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "readFile",
+        pathOrDescriptor: "source-control-token",
+        description: "Secret backend unavailable.",
+      }),
+    });
+    const layerSettings = ServerSettingsModule.layer.pipe(
+      Layer.provide(ManagedPolicy.layerTest()),
+      Layer.provide(layerFailingSecretStore(cause)),
+      Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
+      Layer.provideMerge(
+        Layer.fresh(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3code-server-settings-stored-test-",
+          }),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        JSON.stringify({
+          sourceControlHosts: {
+            "azure-devops": { tokens: { "dev.azure.com/acme": SECRET_REDACTED } },
+          },
+        }),
+      );
+
+      const materialized = yield* Effect.flip(serverSettings.getSettings);
+      assert.equal(materialized.operation, "read-secret");
+      const stored = yield* serverSettings.getStoredSettings!;
+      assert.deepEqual(stored.sourceControlHosts["azure-devops"], {
+        tokens: { "dev.azure.com/acme": SECRET_REDACTED },
+      });
+    }).pipe(Effect.provide(layerSettings));
+  });
+
   it.effect("keeps the retired keys for another load when a token cannot be copied", () => {
     const cause = new ServerSecretStore.SecretStoreReadError({
       resource: "bitbucket-access-token",
@@ -2041,12 +2086,34 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
         yield* fileSystem.writeFileString(
           serverConfig.settingsPath,
-          '{"sourceControlHosts":{"bitbucket":{"accessToken":"hand-edited-token"}}}',
+          JSON.stringify({
+            sourceControlHosts: {
+              bitbucket: { accessToken: "hand-edited-token" },
+              "azure-devops": {
+                tokens: {
+                  "dev.azure.com/acme": "acme-pat",
+                  "dev.azure.com/globex": 42,
+                  "dev.azure.com/initech": { provider: "incomplete" },
+                },
+              },
+            },
+          }),
         );
 
         const loaded = yield* serverSettings.getSettings;
 
         assert.equal(loaded.sourceControlHosts.bitbucket?.accessToken, "hand-edited-token");
+        assert.deepEqual(loaded.sourceControlHosts["azure-devops"]?.tokens, {
+          "dev.azure.com/acme": "acme-pat",
+          "dev.azure.com/globex": 42,
+          "dev.azure.com/initech": { provider: "incomplete" },
+        });
+        const persisted = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));
+        assert.deepEqual(persisted.sourceControlHosts["azure-devops"].tokens, {
+          "dev.azure.com/acme": SECRET_REDACTED,
+          "dev.azure.com/globex": 42,
+          "dev.azure.com/initech": { provider: "incomplete" },
+        });
         assert.notInclude(
           yield* fileSystem.readFileString(serverConfig.settingsPath),
           "hand-edited-token",

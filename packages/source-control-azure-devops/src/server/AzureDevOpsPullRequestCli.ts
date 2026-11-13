@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
@@ -12,6 +13,8 @@ import type {
 } from "@t3tools/contracts";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
+import * as AzureDevOpsCredentials from "./AzureDevOpsCredentials.ts";
+import * as AzureDevOpsRest from "./AzureDevOpsRest.ts";
 import {
   decodeItemContentJson,
   decodeIterationChangesJson,
@@ -19,6 +22,7 @@ import {
   decodePullRequestJson,
   decodePullRequestListJson,
   decodeThreadsJson,
+  decodeConnectionAccountJson,
   decodeViewerJson,
   type AzureDevOpsChangeEntry,
   type AzureDevOpsItemContent,
@@ -274,8 +278,12 @@ function isReviewerName(value: string): boolean {
 }
 
 /** @public */
-export const make = Effect.gen(function* () {
+const CONNECTION_DATA_MAX_OUTPUT_BYTES = 256 * 1024;
+
+const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
+  const credentials = yield* AzureDevOpsCredentials.AzureDevOpsCredentials;
+  const rest = yield* AzureDevOpsRest.AzureDevOpsRest;
 
   // Let `az` parse all three remote formats.
   const detectArgs = ["--detect", "true"] as const;
@@ -298,29 +306,33 @@ export const make = Effect.gen(function* () {
     readonly resource: string;
     readonly routeParameters: ReadonlyArray<string>;
     readonly queryParameters?: ReadonlyArray<string>;
-    readonly maxOutputBytes?: number;
+    /** The same resource's REST URL, read first when present. */
+    readonly restUrl?: string | undefined;
+    readonly maxOutputBytes: number;
     readonly decode: (raw: string) => Result.Result<A, unknown>;
-  }): Effect.Effect<A, AzureDevOpsPullRequestCliError> =>
-    executeJson({
-      cwd: input.cwd,
-      ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
-      args: [
-        "devops",
-        "invoke",
-        ...detectArgs,
-        "--area",
-        "git",
-        "--resource",
-        input.resource,
-        "--api-version",
-        REST_API_VERSION,
-        "--route-parameters",
-        ...input.routeParameters,
-        ...(input.queryParameters === undefined
-          ? []
-          : ["--query-parameters", ...input.queryParameters]),
-      ],
-    }).pipe(
+  }): Effect.Effect<A, AzureDevOpsPullRequestCliError> => {
+    const viaCli = Effect.suspend(() =>
+      executeJson({
+        cwd: input.cwd,
+        maxOutputBytes: input.maxOutputBytes,
+        args: [
+          "devops",
+          "invoke",
+          ...detectArgs,
+          "--area",
+          "git",
+          "--resource",
+          input.resource,
+          "--api-version",
+          REST_API_VERSION,
+          "--route-parameters",
+          ...input.routeParameters,
+          ...(input.queryParameters === undefined
+            ? []
+            : ["--query-parameters", ...input.queryParameters]),
+        ],
+      }),
+    ).pipe(
       Effect.flatMap((result) => {
         const decoded = input.decode(result.stdout.trim());
         return Result.isSuccess(decoded)
@@ -335,6 +347,30 @@ export const make = Effect.gen(function* () {
             );
       }),
     );
+    if (input.restUrl === undefined) return viaCli;
+    // A REST answer that does not decode is read again through az, which keeps its own errors.
+    return rest
+      .getJson({ cwd: input.cwd, url: input.restUrl, maxOutputBytes: input.maxOutputBytes })
+      .pipe(
+        Effect.flatMap((body) => {
+          if (Option.isNone(body)) return viaCli;
+          const decoded = input.decode(body.value.trim());
+          return Result.isSuccess(decoded) ? Effect.succeed(decoded.success) : viaCli;
+        }),
+      );
+  };
+
+  /** A resource under the repository's REST URL; query values are encoded here. */
+  const restUrl = (
+    location: AzureDevOpsRepositoryLocation,
+    path: string,
+    query: ReadonlyArray<readonly [string, string]> = [],
+  ) =>
+    location.apiUrl === undefined
+      ? undefined
+      : `${location.apiUrl}/${path}${query.length === 0 ? "" : "?"}${query
+          .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+          .join("&")}`;
 
   /** Azure's items route requires a leading slash. */
   const toItemPath = (path: string) => (path.startsWith("/") ? path : `/${path}`);
@@ -446,55 +482,100 @@ export const make = Effect.gen(function* () {
 
   return AzureDevOpsPullRequestCli.of({
     getViewer: Effect.fn("AzureDevOpsPullRequestCli.getViewer")(function (input) {
-      return executeJson({ cwd: input.cwd, args: ["account", "show", "--query", "user"] }).pipe(
-        Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
-          const decoded = decodeViewerJson(`{"user":${result.stdout.trim() || "null"}}`);
-          if (!Result.isSuccess(decoded)) {
-            return Effect.fail(
-              new AzureDevOpsPullRequestReadError({
-                command: "az",
-                cwd: input.cwd,
-                operation: "getViewer",
-                cause: decoded.failure,
-              }),
-            );
-          }
-          return decoded.success === null
-            ? Effect.fail(new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }))
-            : Effect.succeed(decoded.success);
-        }),
-        // `az account show` cannot identify PAT logins; the extension resolves `--creator me`.
-        Effect.catchIf(
-          (error) => error._tag !== "AzureDevOpsCliUnavailableError",
-          () =>
-            executeJson({
-              cwd: input.cwd,
-              args: [
-                "repos",
-                "pr",
-                "list",
-                ...detectArgs,
-                "--creator",
-                "me",
-                "--status",
-                "all",
-                "--top",
-                "1",
-              ],
-            }).pipe(
-              Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
-                const decoded = decodePullRequestListJson(result.stdout.trim() || "[]");
-                const login = Result.isSuccess(decoded)
-                  ? decoded.success.items[0]?.author?.login
-                  : undefined;
-                return login === undefined
-                  ? Effect.fail(
-                      new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }),
-                    )
-                  : Effect.succeed(login);
+      // The extension resolves `--creator me` for whichever credential it uses, a PAT included.
+      const viaCreator = Effect.suspend(() =>
+        executeJson({
+          cwd: input.cwd,
+          args: [
+            "repos",
+            "pr",
+            "list",
+            ...detectArgs,
+            "--creator",
+            "me",
+            "--status",
+            "all",
+            "--top",
+            "1",
+          ],
+        }).pipe(
+          Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
+            const decoded = decodePullRequestListJson(result.stdout.trim() || "[]");
+            const login = Result.isSuccess(decoded)
+              ? decoded.success.items[0]?.author?.login
+              : undefined;
+            return login === undefined
+              ? Effect.fail(
+                  new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }),
+                )
+              : Effect.succeed(login);
+          }),
+        ),
+      );
+      const viaAccount = Effect.suspend(() =>
+        executeJson({
+          cwd: input.cwd,
+          args: ["account", "show", "--query", "user"],
+        }).pipe(
+          Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
+            const decoded = decodeViewerJson(`{"user":${result.stdout.trim() || "null"}}`);
+            if (!Result.isSuccess(decoded)) {
+              return Effect.fail(
+                new AzureDevOpsPullRequestReadError({
+                  command: "az",
+                  cwd: input.cwd,
+                  operation: "getViewer",
+                  cause: decoded.failure,
+                }),
+              );
+            }
+            return decoded.success === null
+              ? Effect.fail(
+                  new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }),
+                )
+              : Effect.succeed(decoded.success);
+          }),
+          // `az account show` cannot identify PAT logins.
+          Effect.catchIf(
+            (error) => error._tag !== "AzureDevOpsCliUnavailableError",
+            () => viaCreator,
+          ),
+        ),
+      );
+      // The saved token's own account, which needs no pull request history; `--creator me` is the
+      // fallback when Azure does not answer directly.
+      const viaSavedToken = (saved: AzureDevOpsCredentials.SavedOrganizationToken) =>
+        rest
+          .getJson({
+            cwd: input.cwd,
+            url: `https://${saved.organization}/_apis/connectionData`,
+            maxOutputBytes: CONNECTION_DATA_MAX_OUTPUT_BYTES,
+            apiVersion: "7.1-preview",
+          })
+          .pipe(
+            Effect.map(
+              Option.flatMap((body) => {
+                const decoded = decodeConnectionAccountJson(body);
+                return Result.isSuccess(decoded)
+                  ? Option.fromNullishOr(decoded.success)
+                  : Option.none();
               }),
             ),
+            Effect.flatMap(Option.match({ onNone: () => viaCreator, onSome: Effect.succeed })),
+          );
+      return credentials.savedTokenForCheckout(input.cwd).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AzureDevOpsCli.AzureDevOpsSavedTokenUnreadableError({
+              operation: "execute",
+              command: "az",
+              cwd: input.cwd,
+              argumentCount: 0,
+              cause,
+            }),
         ),
+        // `az account show` names the az login account, not the one a saved token belongs to.
+        Effect.flatMap((saved) => (Option.isSome(saved) ? viaSavedToken(saved.value) : viaAccount)),
       );
     }),
 
@@ -551,6 +632,7 @@ export const make = Effect.gen(function* () {
         operation: "listThreads",
         resource: "pullRequestThreads",
         routeParameters: pullRequestRoute(input),
+        restUrl: restUrl(input.location, `pullRequests/${input.number}/threads`),
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
         decode: decodeThreadsJson,
       });
@@ -562,6 +644,7 @@ export const make = Effect.gen(function* () {
         operation: "listIterations",
         resource: "pullRequestIterations",
         routeParameters: pullRequestRoute(input),
+        restUrl: restUrl(input.location, `pullRequests/${input.number}/iterations`),
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
         decode: decodeIterationsJson,
       });
@@ -576,6 +659,14 @@ export const make = Effect.gen(function* () {
             resource: "pullRequestIterationChanges",
             routeParameters: [...pullRequestRoute(input), `iterationId=${input.iterationId}`],
             queryParameters: [`$top=${CHANGE_ENTRIES_PER_PAGE}`, `$skip=${skip}`],
+            restUrl: restUrl(
+              input.location,
+              `pullRequests/${input.number}/iterations/${input.iterationId}/changes`,
+              [
+                ["$top", String(CHANGE_ENTRIES_PER_PAGE)],
+                ["$skip", String(skip)],
+              ],
+            ),
             maxOutputBytes: CHANGE_ENTRIES_MAX_OUTPUT_BYTES,
             decode: decodeIterationChangesJson,
           });
@@ -613,6 +704,14 @@ export const make = Effect.gen(function* () {
           // `az devops invoke` requires JSON; otherwise Azure returns raw file bytes.
           "$format=json",
         ],
+        restUrl: restUrl(input.location, "items", [
+          ["path", toItemPath(input.path)],
+          ["versionDescriptor.versionType", "commit"],
+          ["versionDescriptor.version", input.commit],
+          ["includeContent", "true"],
+          ["includeContentMetadata", "true"],
+          ["$format", "json"],
+        ]),
         maxOutputBytes: ITEM_CONTENT_MAX_OUTPUT_BYTES,
         decode: decodeItemContentJson,
       });
