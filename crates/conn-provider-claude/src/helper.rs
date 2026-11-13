@@ -734,14 +734,8 @@ mod tests {
                 .is_some_and(|d| d.contains("SDK host exited")),
             "the session ended with the host's death"
         );
-        let mut gone = false;
-        for _ in 0..80 {
-            if !conn_provider_support::process::pid_alive(cli) {
-                gone = true;
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        // SIGTERM is ignored; the watcher's SIGKILL follows 5 s later.
+        let gone = conn_provider_support::process::wait_gone(cli, Duration::from_secs(9)).await;
         let _ = std::fs::remove_dir_all(&dir);
         assert!(gone, "the CLI was stopped by its watcher");
     }

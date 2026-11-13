@@ -269,13 +269,49 @@ pub fn signal_group(pgid: u32, signal: rustix::process::Signal) {
     let _ = rustix::process::kill_process_group(pgid, signal);
 }
 
-/// Whether a process with this pid exists (signal 0). For checking that a child ended.
+/// Whether a process with this pid still runs. Signal 0 succeeds on a zombie too, and on Linux
+/// a killed orphan stays a zombie until its new parent reaps it, so there a `Z` (or `X`) state
+/// in `/proc/<pid>/stat` counts as ended.
 #[cfg(unix)]
 pub fn pid_alive(pid: u32) -> bool {
-    i32::try_from(pid)
+    let signalled = i32::try_from(pid)
         .ok()
         .and_then(rustix::process::Pid::from_raw)
-        .is_some_and(|pid| rustix::process::test_kill_process(pid).is_ok())
+        .is_some_and(|pid| rustix::process::test_kill_process(pid).is_ok());
+    signalled && !is_zombie(pid)
+}
+
+#[cfg(target_os = "linux")]
+fn is_zombie(pid: u32) -> bool {
+    // `pid (comm) S ...`: the state follows the last ')', since comm may hold one.
+    std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|stat| {
+            let rest = stat.get(stat.rfind(')')? + 1..)?;
+            rest.trim_start().chars().next()
+        })
+        .is_some_and(|state| state == 'Z' || state == 'X')
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn is_zombie(_pid: u32) -> bool {
+    false
+}
+
+/// Waits up to `timeout` for `pid` to end ([`pid_alive`]). For tests and shutdown checks: a
+/// killed process can take a moment to be reaped.
+#[cfg(unix)]
+pub async fn wait_gone(pid: u32, timeout: Duration) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if !pid_alive(pid) {
+            return true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 /// Keeps the last [`STDERR_TAIL_BYTES`] of stderr. Lines are framed with a cap and decoded
@@ -358,7 +394,7 @@ mod tests {
         drop(process);
         let exited = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
         assert!(matches!(exited, Ok(Some(ProcEvent::Exited(_)))));
-        assert!(!pid_alive(pid));
+        assert!(wait_gone(pid, Duration::from_secs(5)).await);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -384,7 +420,10 @@ mod tests {
         };
         while !matches!(rx.recv().await, Some(ProcEvent::Exited(_))) {}
         drop(process);
-        let alive = pid.parse().is_ok_and(pid_alive);
-        assert!(!alive, "grandchild {pid} survived the group kill");
+        let pid: u32 = pid.parse().unwrap();
+        assert!(
+            wait_gone(pid, Duration::from_secs(5)).await,
+            "grandchild {pid} survived the group kill"
+        );
     }
 }
