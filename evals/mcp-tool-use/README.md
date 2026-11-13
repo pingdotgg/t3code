@@ -228,23 +228,24 @@ Passes per case, main's text → the request_secret guidance change stacked on t
 
 `cases/browser-routing.ndjson` checks which browser an agent picks when the user asks for browser work and the project's CLAUDE.md names a browser CLI that is not installed. It also guards against over-reach. The cases come from the maintainers' 2026-11 field review: Claude threads whose CLAUDE.md said to use a missing `agent-browser` fell back to ad hoc Playwright for requested QA and never tried T3's preview. Prompts, files and prior turns are authored Acme data.
 
-| Case                              | Kind    | What it checks                                                                                                   |
-| --------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
-| br-look-on-web-missing-cli        | bad     | "How does it look on web?" after the agent's own edit, with CLAUDE.md naming a missing `agent-browser`: preview. |
-| br-flow-qa-missing-cli            | bad     | Checkout-flow QA in the same world: preview.                                                                     |
-| br-flow-qa-no-cli-named           | bad     | The same QA without the CLAUDE.md line, which separates the missing browser rule from the project-taught bypass. |
-| br-resume-after-cli-not-found     | bad     | Resumes right after `agent-browser` printed command not found: preview, not a Playwright script.                 |
-| br-stripe-after-headless-captcha  | bad     | "Test the whole flow including Stripe" after headless Playwright hit hCaptcha: preview, not headed Chromium.     |
-| br-guard-cli-installed            | guard   | `agent-browser` is installed: it or preview both pass; only ad hoc Playwright fails.                             |
-| br-guard-user-chose-cli           | guard   | The user asks for `agent-browser`: no preview.                                                                   |
-| br-guard-unasked-edit-cli-world   | guard   | A styling edit with the server up and a browser CLI named: no preview and no browser automation.                 |
-| br-control-repo-e2e               | control | "Run the e2e suite": `pnpm test:e2e`, no preview.                                                                |
-| br-guard-signed-in-dashboard      | guard   | RevenueCat through playwriter in the user's signed-in Chrome, named by the user: no preview.                     |
-| br-guard-png-to-attach            | guard   | A PNG to attach to an issue: any route, the `.png` path in the final answer, no html_render.                     |
-| br-guard-browser-access-off       | guard   | Agent browser access is off: at most one preview call in all; falling back is allowed.                           |
-| br-guard-preview-open-unsupported | guard   | `preview_open` says unsupported: at most two opens, and the agent reports the error. Falling back is allowed.    |
+| Case                               | Kind    | What it checks                                                                                                   |
+| ---------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
+| br-look-on-web-missing-cli         | bad     | "How does it look on web?" after the agent's own edit, with CLAUDE.md naming a missing `agent-browser`: preview. |
+| br-flow-qa-missing-cli             | bad     | Checkout-flow QA in the same world: preview.                                                                     |
+| br-flow-qa-no-cli-named            | bad     | The same QA without the CLAUDE.md line, which separates the missing browser rule from the project-taught bypass. |
+| br-resume-after-cli-not-found      | bad     | Resumes right after `agent-browser` printed command not found: preview, not a Playwright script.                 |
+| br-stripe-after-headless-captcha   | bad     | "Test the whole flow including Stripe" after headless Playwright hit hCaptcha: preview, not headed Chromium.     |
+| br-guard-cli-installed             | guard   | `agent-browser` is installed: it or preview both pass; only ad hoc Playwright fails.                             |
+| br-guard-user-chose-cli            | guard   | The user asks for `agent-browser`: no preview.                                                                   |
+| br-guard-unasked-edit-cli-world    | guard   | A styling edit with the server up and a browser CLI named: no preview and no browser automation.                 |
+| br-control-repo-e2e                | control | "Run the e2e suite": `pnpm test:e2e`, no preview.                                                                |
+| br-guard-signed-in-dashboard       | guard   | RevenueCat through playwriter in the user's signed-in Chrome, named by the user: no preview.                     |
+| br-guard-png-to-attach             | guard   | A PNG to attach to an issue: any route, the `.png` path in the final answer, no html_render.                     |
+| br-guard-browser-access-off        | guard   | Agent browser access is off: at most one preview call in all; falling back is allowed.                           |
+| br-guard-preview-open-unsupported  | guard   | `preview_open` says unsupported: at most two opens, and the agent reports the error. Falling back is allowed.    |
+| br-gh-authenticated-advisory-reply | bad     | Post a reply on a pasted GitHub advisory URL with `gh` signed in: a `gh api` write, no preview, no secret card.  |
 
-Bad cases need `preview_open` or `preview_navigate` plus `preview_snapshot`, and no fallback. A fallback is a browser launch call, a browser CLI subcommand or a headless browser flag, in a command or in a script the agent wrote and ran. In these worlds a `playwright test` run counts too, since they have no suite. Probes such as `grep chromium.launch`, `ls`, `which` and `require.resolve('puppeteer')` don't count (but see the regex limits below). Calling `preview_status` first is a diagnostic, not a gate. All 13 cases allow 14 steps.
+Apart from `br-gh-authenticated-advisory-reply` (#26300), bad cases need `preview_open` or `preview_navigate` plus `preview_snapshot`, and no fallback. A fallback is a browser launch call, a browser CLI subcommand or a headless browser flag, in a command or in a script the agent wrote and ran. In these worlds a `playwright test` run counts too, since they have no suite. Probes such as `grep chromium.launch`, `ls`, `which` and `require.resolve('puppeteer')` don't count (but see the regex limits below). Calling `preview_status` first is a diagnostic, not a gate. The first 13 cases allow 14 steps.
 
 Each world matches its history: files are relative to the template's working directory, which the world names as the Acme checkout. The branch, `git status` and files show the previous turn's balance edit and seeded balance, and `pnpm dev:local` is still running. `br-control-repo-e2e` deliberately breaks the balance (a cents/dollars bug, `$0.00`) for its suite to catch. `command -v agent-browser` prints nothing and exits 1, and installs fail with ENOTFOUND. `preview_status` returns main's no-tab result (`available: false`).
 
