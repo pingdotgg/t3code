@@ -48,6 +48,7 @@ import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
@@ -294,6 +295,8 @@ it.effect("routes full projection reads to readers and retains uncommitted write
         forkedFrom: { type: "run", threadId: parentId, runId: parent.runs[0]!.id },
       },
     });
+    // Historical forks use the timestamp fallback even when their source run is now rolled back.
+    yield* sql`UPDATE orchestration_v2_projection_threads SET fork_run_ids_json = NULL WHERE thread_id = ${threadId}`;
     const messageId = MessageId.make("message:reader-routing");
     yield* store.apply({
       id: EventId.make("event:reader-routing:message"),
@@ -9076,6 +9079,33 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           deletedAt: null,
         },
       });
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-imported-fork-shell:source-run"),
+        type: "run.created",
+        threadId: sourceThreadId,
+        runId: sourceRunId,
+        nodeId: rootNodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: sourceRunId,
+          threadId: sourceThreadId,
+          ordinal: 1,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("message:projection-imported-fork-shell:run"),
+          rootNodeId,
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+
       for (const [threadId, sideChat] of [
         [targetThreadId, false],
         [sideChatThreadId, true],
@@ -9119,32 +9149,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           },
         });
       }
-      yield* projectionStore.apply({
-        id: EventId.make("event:projection-imported-fork-shell:source-run"),
-        type: "run.created",
-        threadId: sourceThreadId,
-        runId: sourceRunId,
-        nodeId: rootNodeId,
-        driver,
-        occurredAt: now,
-        payload: {
-          id: sourceRunId,
-          threadId: sourceThreadId,
-          ordinal: 1,
-          providerInstanceId,
-          modelSelection,
-          providerThreadId: null,
-          userMessageId: MessageId.make("message:projection-imported-fork-shell:run"),
-          rootNodeId,
-          activeAttemptId: null,
-          status: "completed",
-          requestedAt: now,
-          startedAt: now,
-          completedAt: now,
-          checkpointId: null,
-          contextHandoffId: null,
-        },
-      });
 
       const applyAssistantItem = (suffix: string, runId: RunId | null, ordinal: number) =>
         projectionStore.apply({
@@ -9664,43 +9668,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           deletedAt: null,
         },
       });
-      yield* projectionStore.apply({
-        id: EventId.make("event:projection-fork-source-rollback:target-thread"),
-        type: "thread.created",
-        threadId: targetThreadId,
-        occurredAt: now,
-        payload: {
-          createdBy: "user",
-          creationSource: "web",
-          id: targetThreadId,
-          projectId,
-          title: "Projection fork source rollback target",
-          providerInstanceId,
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          activeProviderThreadId: targetProviderThreadId,
-          lineage: {
-            parentThreadId: sourceThreadId,
-            relationshipToParent: "fork",
-            rootThreadId: sourceThreadId,
-          },
-          forkedFrom: {
-            type: "run",
-            threadId: sourceThreadId,
-            runId: sourceRun2Id,
-          },
-          createdAt: now,
-          updatedAt: now,
-          archivedAt: null,
-          settledOverride: null,
-          settledAt: null,
-          lastVisitedAt: null,
-          deletedAt: null,
-        },
-      });
 
       for (const [ordinal, runId, nodeId, promptText, responseText] of [
         [1, sourceRun1Id, sourceRun1NodeId, "source one", "one"],
@@ -9798,6 +9765,44 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           },
         });
       }
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-fork-source-rollback:target-thread"),
+        type: "thread.created",
+        threadId: targetThreadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: targetThreadId,
+          projectId,
+          title: "Projection fork source rollback target",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: targetProviderThreadId,
+          lineage: {
+            parentThreadId: sourceThreadId,
+            relationshipToParent: "fork",
+            rootThreadId: sourceThreadId,
+          },
+          forkedFrom: {
+            type: "run",
+            threadId: sourceThreadId,
+            runId: sourceRun2Id,
+          },
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
 
       const targetBeforeRollback = yield* projectionStore.getThreadProjection(targetThreadId);
       assert.deepEqual(
@@ -10554,10 +10559,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const heldAttemptId = RunAttemptId.make(`attempt:${prefix}:held`);
         const answeredRunId = RunId.make(`run:${prefix}:answered`);
 
-        for (const [threadId, forkedFrom] of [
-          [sourceThreadId, null],
-          [targetThreadId, { type: "run", threadId: sourceThreadId, runId: answeredRunId }],
-        ] as const) {
+        const createThread = Effect.fn("test.createForkHeldQueueThread")(function* (
+          threadId: ThreadId,
+        ) {
+          const forkedFrom =
+            threadId === sourceThreadId
+              ? null
+              : { type: "run" as const, threadId: sourceThreadId, runId: answeredRunId };
           yield* projectionStore.apply({
             id: EventId.make(`event:${threadId}:created`),
             type: "thread.created",
@@ -10591,7 +10599,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
               deletedAt: null,
             },
           });
-        }
+        });
+        yield* createThread(sourceThreadId);
 
         const applyRun = (
           runId: RunId,
@@ -10707,6 +10716,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           text: "delivered steer",
           inputIntent: "queued_turn",
         });
+        yield* createThread(targetThreadId);
         // Enough local turns for a turn-limited window to count inherited rows in SQL.
         for (let index = 0; index < THREAD_HISTORY_PAGE_POLICY.maxUserTurns; index += 1) {
           yield* applyUserItem({
@@ -10917,13 +10927,14 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       }
 
       const forkedFrom = { type: "run" as const, threadId: sourceThreadId, runId: runIds[2]! };
-      yield* projectionStore.apply({
+      const forkEvent = {
         id: EventId.make(`event:${prefix}:target-thread`),
-        type: "thread.created",
+        type: "thread.created" as const,
         threadId: targetThreadId,
         occurredAt: forkedAt,
-        payload: threadPayload({ id: targetThreadId, forkedFrom, createdAt: forkedAt }),
-      });
+        payload: threadPayload({ id: targetThreadId, forkedFrom, createdAt: now }),
+      };
+      yield* projectionStore.apply(forkEvent);
 
       const visibleTexts = (rows: ReadonlyArray<{ readonly item: OrchestrationV2TurnItem }>) =>
         rows.map((row) =>
@@ -10939,21 +10950,43 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         "reply three",
       ]);
       const expected = ["prompt one", "reply one", "prompt three", "reply three", "fork"];
-      const target = yield* projectionStore.getThreadProjection(targetThreadId);
-      assert.deepEqual(visibleTexts(target.visibleTurnItems), expected);
-      const page = yield* projectionStore.getTimelinePage(targetThreadId, {
-        view: "activity",
-        limit: 10,
+      const assertHistory = Effect.fn("test.assertForkHistory")(function* () {
+        const handoff = yield* ContextHandoffService.readInheritedHandoffItems(
+          projectionStore,
+          (yield* projectionStore.getThreadRecords(targetThreadId, [])).thread,
+        );
+        assert.deepEqual(visibleTexts(handoff.map((item) => ({ item }))), expected.slice(0, -1));
+        const target = yield* projectionStore.getThreadProjection(targetThreadId);
+        assert.deepEqual(visibleTexts(target.visibleTurnItems), expected);
+        const page = yield* projectionStore.getTimelinePage(targetThreadId, {
+          view: "activity",
+          limit: 10,
+        });
+        assert.deepEqual(visibleTexts(page.items), expected);
+        const window = yield* projectionStore.getThreadSnapshotWindow(targetThreadId, {
+          rowLimit: 10,
+        });
+        assert.deepEqual(visibleTexts(window.projection.visibleTurnItems), expected);
+        assert.equal(
+          (yield* projectionStore.getThreadShell(targetThreadId))?.visibleItemCount,
+          expected.length,
+        );
       });
-      assert.deepEqual(visibleTexts(page.items), expected);
-      const window = yield* projectionStore.getThreadSnapshotWindow(targetThreadId, {
-        rowLimit: 10,
-      });
-      assert.deepEqual(visibleTexts(window.projection.visibleTurnItems), expected);
-      assert.equal(
-        (yield* projectionStore.getThreadShell(targetThreadId))?.visibleItemCount,
-        expected.length,
-      );
+      yield* assertHistory();
+      for (const index of [2, 0]) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:${prefix}:later-rewind-${index}`),
+          type: "run.updated",
+          threadId: sourceThreadId,
+          runId: runIds[index]!,
+          nodeId: nodeIds[index]!,
+          driver,
+          occurredAt: forkedAt,
+          payload: { ...runPayload(index, "rolled_back"), completedAt: now },
+        });
+        yield* projectionStore.apply(forkEvent);
+        yield* assertHistory();
+      }
     }),
   );
 
