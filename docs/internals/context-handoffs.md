@@ -13,6 +13,12 @@ Provider handoffs use either the full eligible app history or the delta since th
 participated. Fork merge-back handoffs summarize eligible delta items from the child. Neither path
 reconstructs provider-native session state, tool state, approvals, or omitted text.
 
+A native goal stays with the session that owns it. Delivery names every unfinished goal held by
+another native session of the thread, including the previous session after a failed resume, in the
+context that is never trimmed. It reads the goal from the provider threads at delivery and not from
+the handoff record: a retained handoff is delivered again later, and a stored copy would then
+announce a goal that has since been cleared.
+
 Legacy v1 continuation uses a separate algorithm. It considers only user and assistant messages,
 walks backward from the newest message, and builds a transcript suffix within a 32,000-character
 budget. Do not describe that migration budget as the limit for portable handoffs, and do not describe

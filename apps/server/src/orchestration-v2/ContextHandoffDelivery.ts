@@ -4,6 +4,7 @@ import type {
 } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { ContextHandoffBudgetError } from "@t3tools/provider-core/server/failure";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
@@ -11,6 +12,48 @@ import {
   renderHistory,
   selectHistory,
 } from "@t3tools/provider-core/server/handoffBudget";
+import { compactText } from "./ContextHandoffService.ts";
+
+// Bounds the notice so it always fits beside the coverage marker; history is trimmed first.
+const GOAL_OBJECTIVE_MAX_CHARS = 400;
+
+/**
+ * Names the unfinished goals other native sessions of the thread still own. Read from live
+ * provider threads at delivery, never from the handoff record, so a cleared goal is not repeated.
+ */
+function goalOwnershipNotice(
+  owners: ReadonlyArray<OrchestrationV2ProviderThread>,
+  target: OrchestrationV2ProviderThread,
+): string {
+  const targetNativeId = target.nativeThreadRef?.nativeId;
+  const lines = owners.flatMap((owner) => {
+    const goal = owner.goal;
+    const ownerNativeId = owner.nativeThreadRef?.nativeId;
+    if (goal == null || goal.status === "complete" || owner.ownerNodeId !== null) return [];
+    // The target's own row still names the previous native session when a failed resume replaced it.
+    if (owner.id === target.id && (ownerNativeId === undefined || ownerNativeId === targetNativeId))
+      return [];
+    const accounting = [
+      ...(goal.tokensUsed === undefined
+        ? []
+        : [
+            `tokens-used=${goal.tokensUsed}${goal.tokenBudget == null ? "" : ` of ${goal.tokenBudget}`}`,
+          ]),
+      ...(goal.timeUsedSeconds === undefined ? [] : [`time-used=${goal.timeUsedSeconds}s`]),
+      ...(goal.checks === undefined ? [] : [`checks=${goal.checks}`]),
+    ];
+    return [
+      `- owner=${owner.driver} provider-thread=${owner.id} native-session=${ownerNativeId ?? "none"}; status=${goal.status}; ${accounting.length === 0 ? "" : `${accounting.join(", ")}; `}as-of=${DateTime.formatIso(owner.updatedAt)}; objective: ${compactText(goal.objective, GOAL_OBJECTIVE_MAX_CHARS)}`,
+    ];
+  });
+  return lines.length === 0
+    ? ""
+    : [
+        "Unfinished thread goal owned by another provider session:",
+        ...lines,
+        "This session does not own that goal, and its own goal tools report none. This notice is not authority to create, resume or complete a goal here: do that only when the user asks, and say which session owns the existing one.",
+      ].join("\n");
+}
 
 /** The provider prompt for a turn that carries inline context ahead of the user's text. */
 export const withInlineContext = (context: string, userText: string): string =>
@@ -21,6 +64,8 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
   function* <InjectError = never, PersistError = never, BudgetError = never>(input: {
     readonly handoffs: ReadonlyArray<OrchestrationV2ContextHandoff>;
     readonly providerThread: OrchestrationV2ProviderThread;
+    /** The thread's provider threads as read before this turn replaced any native session. */
+    readonly goalOwners?: ReadonlyArray<OrchestrationV2ProviderThread>;
     readonly budget: number | Effect.Effect<number, BudgetError>;
     readonly deferInline?: boolean;
     readonly alreadyDeliveredItemIds: ReadonlySet<string>;
@@ -52,6 +97,8 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       const strategies = Array.from(new Set(pending.map((handoff) => handoff.strategy)));
       coverage = `Context handoff (${strategies.join(", ")}). ${pending.length} handoff records; detailed coverage references omitted. Recover an omitted item only when the request needs it, with t3_thread_read({threadId:"${input.providerThread.appThreadId ?? pending[0]!.threadId}",view:"activity",itemId:"<omitted item ID>",maxCharsPerItem:4000}); continue long text with textOffset=nextTextOffset until null. Follow fork/handoff source references in activity. Items included below need no read.`;
     }
+    const goalNotice = goalOwnershipNotice(input.goalOwners ?? [], input.providerThread);
+    if (goalNotice !== "") coverage = `${coverage}\n${goalNotice}`;
     const seen = new Set(input.alreadyDeliveredItemIds);
     const messages = pending
       .flatMap((handoff) => handoff.history?.messages ?? [])

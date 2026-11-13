@@ -106,7 +106,7 @@ export class ContextHandoffServiceV2 extends Context.Service<
   ContextHandoffServiceV2Shape
 >()("t3/orchestration-v2/ContextHandoffService/ContextHandoffServiceV2") {}
 
-function compactText(text: string, maxLength = 240): string {
+export function compactText(text: string, maxLength = 240): string {
   const compacted = text.replace(/\s+/g, " ").trim();
   if (compacted.length <= maxLength) {
     return compacted;

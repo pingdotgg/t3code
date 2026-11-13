@@ -1258,6 +1258,7 @@ export const layer: Layer.Layer<
           const fits = yield* deliverContextHandoffs({
             handoffs: [...handoffs, ...resumedRetryHandoff],
             providerThread: { ...resumed.success, id: providerThread.id },
+            goalOwners: projection.providerThreads,
             budget: context.budget,
             deferInline: isCompactionCommandMessage(message) || goalCommand,
             alreadyDeliveredItemIds: context.deliveredItemIds,
@@ -1273,6 +1274,7 @@ export const layer: Layer.Layer<
           const fitsFresh = yield* deliverContextHandoffs({
             handoffs: withRecoveryHandoff(handoff),
             providerThread: freshThread,
+            goalOwners: projection.providerThreads,
             budget: freshContext.budget,
             alreadyDeliveredItemIds: freshContext.deliveredItemIds,
             persist: () => Effect.void,
@@ -1615,6 +1617,7 @@ export const layer: Layer.Layer<
             handoffs: [...effectiveHandoffs, ...retryHandoff],
             deferInline: compact || goalCommand,
             providerThread: runningProviderThread,
+            goalOwners: projection.providerThreads,
             budget,
             alreadyDeliveredItemIds: deliveredItemIds,
             ...(session.injectHistory === undefined

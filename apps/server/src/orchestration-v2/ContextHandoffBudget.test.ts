@@ -650,6 +650,91 @@ describe("handoff delivery", () => {
     }),
   );
 
+  it.effect("names an unfinished goal's owner at any budget that delivers, or fails", () =>
+    Effect.gen(function* () {
+      const owner: OrchestrationV2ProviderThread = {
+        ...providerThread,
+        id: ProviderThreadId.make("provider-thread:source"),
+        nativeThreadRef: { ...providerThread.nativeThreadRef!, nativeId: "native:source" },
+        goal: {
+          objective: `ZEBRA ${"o".repeat(1_990)}`,
+          status: "paused",
+          tokensUsed: 25_909,
+          tokenBudget: 50_000,
+        },
+      };
+      let delivered = 0;
+      for (let budget = 0; budget <= 3_000; budget += 100) {
+        let durable = handoff;
+        let context: string | undefined;
+        const result = yield* deliverContextHandoffs({
+          handoffs: [handoff],
+          providerThread,
+          goalOwners: [providerThread, owner],
+          budget,
+          alreadyDeliveredItemIds: new Set(),
+          inject: (value) =>
+            Effect.sync(() => {
+              context = value.context;
+              return true;
+            }),
+          persist: (value) =>
+            Effect.sync(() => {
+              durable = value;
+            }),
+        }).pipe(Effect.result);
+        if (result._tag === "Failure") {
+          assert.isUndefined(context);
+          assert.isUndefined(durable.delivery);
+          continue;
+        }
+        delivered++;
+        assert.equal(durable.delivery?.status, "injected");
+        assert.include(context, "objective: ZEBRA ");
+        assert.include(
+          context,
+          "owner=codex provider-thread=provider-thread:source native-session=native:source; status=paused; tokens-used=25909 of 50000;",
+        );
+        assert.isAtMost(historyCost([], context!), budget);
+      }
+      assert.isAbove(delivered, 0);
+    }),
+  );
+
+  it.effect("names only goals that are unfinished now and held by another native session", () =>
+    Effect.gen(function* () {
+      const goal = { objective: "Ship ZEBRA", status: "active" as const };
+      const context = (goalOwners: ReadonlyArray<OrchestrationV2ProviderThread>) =>
+        deliverContextHandoffs({
+          handoffs: [handoff],
+          providerThread,
+          goalOwners,
+          budget: 16_000,
+          alreadyDeliveredItemIds: new Set(),
+          persist: () => Effect.void,
+        }).pipe(Effect.map((result) => result.context));
+      const other = { ...providerThread, id: ProviderThreadId.make("provider-thread:source") };
+      // A goal cleared or finished after an earlier handoff recorded it is not repeated.
+      assert.notInclude(yield* context([{ ...other, goal: null }]), "ZEBRA");
+      assert.notInclude(
+        yield* context([{ ...other, goal: { ...goal, status: "complete" } }]),
+        "ZEBRA",
+      );
+      assert.notInclude(yield* context([{ ...providerThread, goal }]), "ZEBRA");
+      // A failed resume replaced the native session, so the stored row names the previous owner.
+      assert.include(
+        yield* context([
+          {
+            ...providerThread,
+            nativeThreadRef: { ...providerThread.nativeThreadRef!, nativeId: "native:lost" },
+            goal,
+          },
+        ]),
+        "native-session=native:lost; status=active; as-of=2026-09-17T00:00:00.000Z; objective: Ship ZEBRA",
+      );
+    }),
+  );
+
   it.effect("fails before delivery when even the coverage marker cannot fit", () =>
     Effect.gen(function* () {
       let calls = 0;
