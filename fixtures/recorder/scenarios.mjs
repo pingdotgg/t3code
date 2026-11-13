@@ -735,6 +735,148 @@ async function filesOn(ctx, rust) {
 const tsFiles = (ctx) => filesOn(ctx, false);
 const rustFiles = (ctx) => filesOn(ctx, true);
 
+/** True once the server sent a frame whose JSON contains `text`, after `from` lines. */
+const sentOut = (ctx, text, from = 0) =>
+  ctx.cap.lines.slice(from).some((l) => l.dir === "out" && JSON.stringify(l.frame).includes(text));
+
+async function waitOut(ctx, text, from = 0, timeout = 30_000) {
+  const deadline = Date.now() + timeout;
+  while (!sentOut(ctx, text, from)) {
+    if (Date.now() > deadline) throw new Error(`no server frame with ${JSON.stringify(text)}`);
+    await ctx.page.waitForTimeout(100);
+  }
+}
+
+async function waitRequest(ctx, tag, from = 0, timeout = 30_000) {
+  const deadline = Date.now() + timeout;
+  while (!ctx.cap.lines.slice(from).some((l) => l.dir === "in" && l.frame?.tag === tag)) {
+    if (Date.now() > deadline) throw new Error(`the client never called ${tag}`);
+    await ctx.page.waitForTimeout(100);
+  }
+}
+
+/**
+ * On a draft: opens the terminal drawer, runs `echo`, resizes the window, reloads the page
+ * and checks the scrollback comes back, runs a busy command, then closes the terminal.
+ * `memory(label)` samples the server at each step. The terminal draws on a canvas, so the
+ * checks read the wire, and the screenshots show the screen.
+ */
+async function terminalFlow(ctx, memory) {
+  const toggle = ctx.page.getByRole("button", { name: "Toggle terminal drawer" }).first();
+  let from = ctx.cap.lines.length;
+  await toggle.click();
+  await waitRequest(ctx, "terminal.attach", from);
+  await waitOut(ctx, '"type":"snapshot"', from);
+  await settle(ctx, 1500, 15_000);
+  memory("terminal-idle");
+  from = ctx.cap.lines.length;
+  await ctx.page.keyboard.type("echo conn-terminal-$((6*7))");
+  await ctx.page.keyboard.press("Enter");
+  await waitOut(ctx, "conn-terminal-42", from);
+  await settle(ctx, 1000, 10_000);
+  await ctx.shotAlways("terminal-echo");
+
+  from = ctx.cap.lines.length;
+  await ctx.page.setViewportSize({ width: 1100, height: 760 });
+  await waitRequest(ctx, "terminal.resize", from);
+  await settle(ctx, 1000, 10_000);
+  await ctx.shotAlways("terminal-resized");
+
+  from = ctx.cap.lines.length;
+  await ctx.page.reload();
+  // The drawer stays open across a reload; open it if this client does not keep it.
+  await ctx.page
+    .getByRole("button", { name: "Toggle terminal drawer" })
+    .first()
+    .waitFor({ timeout: 30_000 });
+  if (
+    !(await waitOut(ctx, '"type":"snapshot"', from, 8_000).then(
+      () => true,
+      () => false,
+    ))
+  ) {
+    await ctx.page.getByRole("button", { name: "Toggle terminal drawer" }).first().click();
+  }
+  await waitOut(ctx, "conn-terminal-42", from);
+  await settle(ctx, 1500, 15_000);
+  await ctx.shotAlways("terminal-after-reload");
+
+  from = ctx.cap.lines.length;
+  let peak = {};
+  await ctx.page.keyboard.type('yes | head -c 50000000; echo busy-""done');
+  await ctx.page.keyboard.press("Enter");
+  const deadline = Date.now() + 300_000;
+  while (!sentOut(ctx, "busy-done", from)) {
+    if (Date.now() > deadline) throw new Error("the busy command did not finish");
+    peak = peakOf(peak, memory("terminal-busy", true));
+    await ctx.page.waitForTimeout(250);
+  }
+  ctx.log(`memory KB peak while busy ${JSON.stringify(peak)}`);
+  await settle(ctx, 2000, 30_000);
+  // Keep the recording small: drop the flood's output chunks and the acks for them.
+  const before = ctx.cap.lines.length;
+  const kept = ctx.cap.lines.slice(from).filter((l) => {
+    const text = JSON.stringify(l.frame);
+    return !(
+      l.frame?._tag === "Ack" ||
+      (l.frame?._tag === "Chunk" && text.includes('"type":"output"') && !text.includes("busy-done"))
+    );
+  });
+  ctx.cap.lines.splice(from, Infinity, ...kept);
+  ctx.log(`dropped ${before - ctx.cap.lines.length} frames of busy output from the recording`);
+  memory("terminal-after-busy");
+  await ctx.shotAlways("terminal-busy-done");
+
+  from = ctx.cap.lines.length;
+  await ctx.page
+    .getByRole("button", { name: /^Close Terminal/ })
+    .first()
+    .click();
+  // The client may ask to confirm closing a terminal.
+  const confirm = ctx.page.getByRole("button", { name: /^(Close|Close terminal|Confirm)$/ });
+  await confirm
+    .first()
+    .waitFor({ timeout: 3_000 })
+    .then(
+      () => confirm.first().click(),
+      () => {},
+    );
+  await waitRequest(ctx, "terminal.close", from);
+  await settle(ctx, 1500, 15_000);
+  memory("terminal-closed");
+  await ctx.shotAlways("terminal-closed");
+}
+
+const peakOf = (a, b) =>
+  Object.fromEntries(Object.keys(b).map((k) => [k, Math.max(a[k] ?? 0, b[k] ?? 0)]));
+
+async function terminal(ctx) {
+  await reconnect(ctx);
+  await ctx.page.getByRole("button", { name: "New thread", exact: true }).first().click();
+  await ctx.page.waitForURL((u) => u.pathname.startsWith("/draft/"), { timeout: 15_000 });
+  await settle(ctx);
+  ctx.memory(ctx.server, "connected");
+  await terminalFlow(ctx, (label, quiet) => {
+    const m = ctx.memory(ctx.server, label);
+    if (!quiet) ctx.log(`memory KB ${label} ${JSON.stringify(m)}`);
+    return m;
+  });
+}
+
+async function rustTerminal(ctx) {
+  const target = await pairRust(ctx);
+  await ctx.page.getByRole("button", { name: "New thread", exact: true }).first().click();
+  await ctx.page.getByRole("dialog").getByText("rust-project", { exact: true }).first().click();
+  await ctx.page.waitForURL((u) => u.pathname.startsWith("/draft/"), { timeout: 15_000 });
+  await settle(ctx);
+  ctx.log(`memory KB connected ${JSON.stringify(ctx.memory(target, "connected"))}`);
+  await terminalFlow(ctx, (label, quiet) => {
+    const m = ctx.memory(target, label);
+    if (!quiet) ctx.log(`memory KB ${label} ${JSON.stringify(m)}`);
+    return m;
+  });
+}
+
 export const SCENARIOS = {
   pairing,
   reconnect,
@@ -759,4 +901,6 @@ export const SCENARIOS = {
   "rust-vcs": rustVcs,
   "ts-files": tsFiles,
   "rust-files": rustFiles,
+  terminal,
+  "rust-terminal": rustTerminal,
 };

@@ -89,6 +89,7 @@ no model. The `rust-*` scenarios spend about five Haiku turns.
 | `conn-provider-support` | Ids, line framing and the process supervisor shared by CLI providers  |
 | `conn-mcp`              | `/mcp`: T3 tools over MCP Streamable HTTP; see its README             |
 | `conn-files`            | Project files, search, asset URLs, attachments                        |
+| `conn-terminal`         | Shells on PTYs: sessions, scrollback, viewers (`terminal.*`)          |
 | `conn-server`           | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
 
 Dependencies point one way: `conn-server` → `conn-engine` → `conn-provider` → `conn-contract`;

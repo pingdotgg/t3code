@@ -34,11 +34,6 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         Ok(Value::Null)
     });
 
-    table.stream("subscribeTerminalMetadata", |_, _: Value| async {
-        Ok(open_stream(vec![
-            json!({ "type": "snapshot", "terminals": [] }),
-        ]))
-    });
     table.stream("subscribeProjectClones", |_, _: Value| async {
         Ok(open_stream(vec![json!([])]))
     });
