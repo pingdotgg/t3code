@@ -385,8 +385,15 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const forgetPendingToken = (environmentId: EnvironmentId, id: object) => {
+    if (pendingTokens.get(environmentId)?.id === id) {
+      pendingTokens.delete(environmentId);
+    }
+  };
+
   const getDpopToken = Effect.fn("clientRuntime.connection.remote.getDpopToken")(function* (
     input: Parameters<RemoteEnvironmentAuthorization["Service"]["authorizeDpopHttp"]>[0],
+    connectionAttempt = false,
   ) {
     const session = yield* cloudSession.identity;
     if (Option.isNone(session)) {
@@ -426,6 +433,7 @@ export const make = Effect.gen(function* () {
           });
           return {
             issued: Effect.succeed<IssuedDpopToken>({ token: cached.value }),
+            pendingId: undefined,
             fromCache: true,
           };
         }
@@ -434,7 +442,7 @@ export const make = Effect.gen(function* () {
         }
         const pending = pendingTokens.get(input.expectedEnvironmentId);
         if (pending?.identity === identity && pending.thumbprint === thumbprint) {
-          return { issued: pending.issued, fromCache: false };
+          return { issued: pending.issued, pendingId: pending.id, fromCache: false };
         }
 
         const id = {};
@@ -460,9 +468,7 @@ export const make = Effect.gen(function* () {
                   accessToken: token.accessToken,
                   identity,
                 });
-                if (pendingTokens.get(input.expectedEnvironmentId)?.id === id) {
-                  pendingTokens.delete(input.expectedEnvironmentId);
-                }
+                forgetPendingToken(input.expectedEnvironmentId, id);
                 return issued;
               }),
             ),
@@ -479,11 +485,7 @@ export const make = Effect.gen(function* () {
           }),
           Effect.ensuring(
             tokenLock.withPermits(1)(
-              Effect.sync(() => {
-                if (pendingTokens.get(input.expectedEnvironmentId)?.id === id) {
-                  pendingTokens.delete(input.expectedEnvironmentId);
-                }
-              }),
+              Effect.sync(() => forgetPendingToken(input.expectedEnvironmentId, id)),
             ),
           ),
           // One caller's timeout must not cancel renewal for other HTTP requests.
@@ -491,13 +493,24 @@ export const make = Effect.gen(function* () {
         );
         const issued = Fiber.join(fiber);
         pendingTokens.set(input.expectedEnvironmentId, { id, identity, thumbprint, issued });
-        return { issued, fromCache: false };
+        return { issued, pendingId: id, fromCache: false };
       }),
     );
     yield* Effect.annotateCurrentSpan({
       "connection.remote_token_cache": selected.fromCache ? "hit" : "miss",
     });
-    const issued = yield* selected.issued;
+    const { pendingId } = selected;
+    const issued = yield* connectionAttempt && pendingId !== undefined
+      ? // Attempts are interrupted to replace a stalled one, so the replacement
+        // starts its own renewal while other waiters keep this one.
+        selected.issued.pipe(
+          Effect.onInterrupt(() =>
+            tokenLock.withPermits(1)(
+              Effect.sync(() => forgetPendingToken(input.expectedEnvironmentId, pendingId)),
+            ),
+          ),
+        )
+      : selected.issued;
     yield* assertSession(identity);
     return { ...issued, fromCache: selected.fromCache, identity };
   });
@@ -552,7 +565,7 @@ export const make = Effect.gen(function* () {
       }
       return Result.succeed(authorized(issued.token, opened.success, yield* Fiber.join(reading)));
     });
-    let selected = yield* getDpopToken(input);
+    let selected = yield* getDpopToken(input, true);
     if (selected.fromCache) {
       const cachedSocket = yield* openSocket(selected, CACHED_ENDPOINT_SOCKET_TIMEOUT_MS);
       if (Result.isSuccess(cachedSocket)) {
@@ -568,10 +581,10 @@ export const make = Effect.gen(function* () {
         return yield* mapDpopSocketError(cachedSocket.failure);
       }
       yield* assertSession(selected.identity);
-      selected = yield* getDpopToken({
-        ...input,
-        rejectedAccessToken: selected.token.accessToken,
-      });
+      selected = yield* getDpopToken(
+        { ...input, rejectedAccessToken: selected.token.accessToken },
+        true,
+      );
     }
     const socket = yield* openSocket(selected);
     if (Result.isFailure(socket)) {

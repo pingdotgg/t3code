@@ -579,7 +579,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
-  const waitForEstablishmentInterrupt = Effect.fnUntraced(function* () {
+  const waitForEstablishmentInterrupt = Effect.fnUntraced(function* (reconnecting: boolean) {
     // A primary attempt keeps running through an offline report, so the
     // network returning restarts it in case it stalled meanwhile.
     let deviceOffline = (yield* connectivity.status) === "offline";
@@ -606,6 +606,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         case "Wakeup":
           // An attempt that ran into a long suspension is likely stuck.
           if (next.reason === "application-active-long") {
+            return true;
+          }
+          // A reconnect may have stalled while the tab was hidden, so returning restarts it.
+          if (next.reason === "application-active" && reconnecting) {
             return true;
           }
           if (next.reason === "credentials-changed" && usesRelay) {
@@ -916,7 +920,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           exit,
         })),
       ),
-      waitForEstablishmentInterrupt().pipe(
+      // Only the first attempt of the first connection is not a reconnect.
+      waitForEstablishmentInterrupt(
+        generation > 1 || attempt > 1 || lastFailure !== null || ignoreOffline,
+      ).pipe(
         Effect.map((resetRetry): EstablishmentEvent => ({
           _tag: "Interrupted",
           resetRetry,
