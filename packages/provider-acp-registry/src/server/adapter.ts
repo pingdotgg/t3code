@@ -9,6 +9,8 @@ import {
   extractDevinSubagentUpdate,
 } from "./devinAcp.ts";
 import { extractDroidElicitationForm } from "./droidAcp.ts";
+import { extractOmpElicitationForm } from "./ompAcp.ts";
+import { extractOpenCodeElicitationForm } from "./opencodeAcp.ts";
 import {
   copilotClientCapabilitiesMeta,
   extractCopilotSubagentUpdate,
@@ -187,6 +189,16 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const startupKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : registryAgentId;
   const isDevin = registryAgentId === "devin";
+  const isOmp =
+    options.settings.source === "local" &&
+    /^omp(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
+  const isOpenCode =
+    registryAgentId === "opencode" ||
+    registryAgentId === "opencode-v2" ||
+    (options.settings.source === "local" &&
+      /^opencode(?:-v2)?(\.exe|\.cmd)?$/i.test(
+        options.settings.commandPath.split(/[\\/]/).pop() ?? "",
+      ));
   const isCopilot = isCopilotAcpRegistrySettings(options.settings);
   const isClaude =
     registryAgentId === "claude-acp" ||
@@ -215,10 +227,15 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
         }
       : AcpProviderCapabilitiesV2,
     customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
+    compactViaAdvertisedCommand: true,
     promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
     ...(registryAgentId === "factory-droid"
       ? { extractElicitationForm: extractDroidElicitationForm }
-      : {}),
+      : isOmp
+        ? { extractElicitationForm: extractOmpElicitationForm }
+        : isOpenCode
+          ? { extractElicitationForm: extractOpenCodeElicitationForm }
+          : {}),
     // glm-acp-agent is the one agent whose per-turn usage a live probe has verified.
     ...(registryAgentId === "glm-acp-agent" ? { reportsPerTurnPromptUsage: true } : {}),
     ...(registryAgentId === "mistral-vibe"
@@ -254,6 +271,8 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           normalizeSessionUpdate: copilotRouting.normalizeSessionUpdate,
           extractSubagentUpdate: extractCopilotSubagentUpdate,
           restartRuntimeAfterPromptError: isCopilotLostSessionError,
+          // session/new reports a built-in default, not the model Copilot runs (github/copilot-cli#5363).
+          alwaysSetModel: true,
         }),
     makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(runtimeOptions, catalog),
     ...(runtimeCoordinator === undefined
@@ -264,6 +283,28 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
               options.instanceId,
               normalizeAcpRegistryCommands(commands),
             ),
+          // A new Copilot session starts at its own effort, not the one the composer shows.
+          ...(isCopilot
+            ? {
+                unsetOptionDefaults: runtimeCoordinator
+                  .getLiveConfiguration(options.instanceId)
+                  .pipe(
+                    Effect.map(
+                      Option.match({
+                        onNone: () => [],
+                        onSome: ({ configOptions }) =>
+                          configOptions.flatMap((descriptor) =>
+                            descriptor.type === "select" &&
+                            descriptor.role === "reasoning" &&
+                            descriptor.currentValue !== undefined
+                              ? [{ id: descriptor.id, value: descriptor.currentValue }]
+                              : [],
+                          ),
+                      }),
+                    ),
+                  ),
+              }
+            : {}),
           onSessionConfigurationUpdate: (configOptions, modeState, modelState) =>
             runtimeCoordinator.publishLiveConfiguration(
               options.instanceId,
