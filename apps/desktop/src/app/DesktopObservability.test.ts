@@ -181,7 +181,10 @@ describe("DesktopObservability", () => {
       assert.equal(end.annotations.phase, "END");
       assert.equal(end.annotations.details, "code=1");
 
-      const traceRecords = (yield* fileSystem.readFileString(tracePath))
+      // Fast successful spans are not written, so this run may leave no trace file at all.
+      const traceRecords = (yield* fileSystem
+        .readFileString(tracePath)
+        .pipe(Effect.orElseSucceed(() => "")))
         .trim()
         .split("\n")
         .filter((line) => line.length > 0)

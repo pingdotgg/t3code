@@ -41,6 +41,10 @@ server starts: production and explicitly configured homes use
 `<worktree>/.t3/userdata/logs/server.trace.ndjson`, and an implicit dev run outside a linked
 worktree uses `~/.t3/dev/logs/server.trace.ndjson`.
 
+The file keeps a server span only when it took 10 ms or more, failed, was interrupted, or carries
+a log event, so its retained files cover hours of agent work. A kept span can name a
+`parentSpanId` that is not in the file. An OTLP exporter still receives every span.
+
 Important fields common to both record types:
 
 - `type`: `effect-span` or `otlp-span`
@@ -62,8 +66,7 @@ read-only one. For a database file both run in worker threads; an in-memory data
 writer, on the event loop. `db.lock_wait_ms` is the part of the
 span spent waiting for that connection, behind other SQL. That wait does not block the event loop,
 so subtract it before you blame a slow span on the query. Statements inside a transaction use its
-connection and do not carry these attributes. The trace file keeps a SQL span only when it took
-10 ms or more, failed, or carries a log event; every SQL span still reaches an OTLP exporter.
+connection and do not carry these attributes.
 
 An MCP request over HTTP has a `McpHttpServer.authenticateRequest` span that covers only admitting
 it: the credential check, the mode limit, and the Linked environments gate. The request runs after

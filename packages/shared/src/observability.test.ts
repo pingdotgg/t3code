@@ -174,6 +174,7 @@ describe("observability", () => {
           let span: Tracer.Span | undefined;
           const result = yield* Effect.gen(function* () {
             span = yield* Effect.currentSpan;
+            span.event("read", 0n);
             return payload;
           }).pipe(
             Effect.withSpan("read-thread-projection"),
@@ -547,21 +548,19 @@ describe("observability", () => {
       }),
     );
 
-    it.effect("keeps a SQL span only when it is slow or failed", () =>
+    it.effect("writes a span without events only when it is slow or failed", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-local-tracer-" });
         const tracePath = path.join(tempDir, "shared.trace.ndjson");
-        const sql = { attributes: { "db.system.name": "sqlite" } };
 
         yield* Effect.scoped(
           Effect.gen(function* () {
-            yield* Effect.void.pipe(Effect.withSpan("fast", sql));
-            yield* Effect.void.pipe(Effect.withSpan("other"));
-            yield* Effect.exit(Effect.fail("boom").pipe(Effect.withSpan("failed", sql)));
+            yield* Effect.void.pipe(Effect.withSpan("fast"));
+            yield* Effect.exit(Effect.fail("boom").pipe(Effect.withSpan("failed")));
             const slow = yield* Effect.sleep("10 millis").pipe(
-              Effect.withSpan("slow", sql),
+              Effect.withSpan("slow"),
               Effect.forkChild,
             );
             yield* TestClock.adjust("10 millis");
@@ -571,7 +570,7 @@ describe("observability", () => {
 
         assert.deepStrictEqual(
           (yield* readTraceRecords(tracePath)).map((record) => record.name),
-          ["other", "failed", "slow"],
+          ["failed", "slow"],
         );
       }),
     );
