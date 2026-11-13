@@ -3343,11 +3343,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           else yield* git(cwd, ["init"]);
           yield* writeTextFile(cwd, "README.md", "# staged\n");
           yield* writeTextFile(cwd, "staged-only.txt", "staged only\n");
+          yield* writeTextFile(cwd, "binary.dat", "binary\0data");
           yield* git(cwd, ["add", "."]);
           yield* writeTextFile(cwd, "README.md", "# unstaged\n");
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           yield* fs.utimes(path.join(cwd, "staged-only.txt"), 1_700_000_001, 1_700_000_001);
+          yield* fs.utimes(path.join(cwd, "binary.dat"), 1_700_000_001, 1_700_000_001);
           const indexPath = path.join(cwd, ".git", "index");
           yield* fs.utimes(indexPath, 1_700_000_000, 1_700_000_000);
           const indexBytesBefore = yield* fs.readFile(indexPath);
@@ -3403,6 +3405,20 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             });
           }
           assert.strictEqual(yield* git(cwd, ["ls-files", "--stage"]), indexBefore);
+          yield* writeTextFile(cwd, "binary.dat", "binary\0changed");
+          const binary = yield* driver.getReviewDiffPreview({
+            ...input,
+            file: { path: "binary.dat", previousPath: null, sourceKind: "unstaged" },
+          });
+          assert.deepStrictEqual(binary.sources[0]!.files, [
+            { path: "binary.dat", previousPath: null, additions: 0, deletions: 0 },
+          ]);
+          assert.include(
+            binary.sources[0]!.diff,
+            "Binary files a/binary.dat and b/binary.dat differ",
+          );
+          assert.deepStrictEqual(yield* fs.readFile(indexPath), indexBytesBefore);
+          assert.deepStrictEqual((yield* fs.stat(indexPath)).mtime, indexMtimeBefore);
         }),
     );
 
