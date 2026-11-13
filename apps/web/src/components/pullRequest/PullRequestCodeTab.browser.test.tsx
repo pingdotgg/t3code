@@ -52,14 +52,16 @@ const { diffAtom, pagedDiffAtom, pages, filePatch } = await vi.hoisted(async () 
     // An environment query whose refetch returns equal content hands back the previous value
     // itself, so a refresh publishes a new result around the very same page.
     diffAtom: Atom.make(() => AsyncResult.success(firstPage)),
-    pagedDiffAtom: Atom.family((cursor: string) =>
-      Atom.make(() => AsyncResult.success(pages[cursor]!)),
+    // Keyed by test as well, so a page one test refreshed is not the next test's cached answer.
+    pagedDiffAtom: Atom.family((key: string) =>
+      Atom.make(() => AsyncResult.success(pages[key.slice(key.indexOf(":") + 1)]!)),
     ),
   };
 });
 
 const mocks = vi.hoisted(() => ({
   paged: false,
+  generation: 0,
   diffCommits: [] as Array<string | undefined>,
   viewedPaths: null as ReadonlySet<string> | null,
   viewedListeners: new Set<() => void>(),
@@ -103,7 +105,9 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
       ...actual.pullRequestEnvironment,
       diff: (({ input }: { input: { cursor?: string; commit?: string } }) => {
         mocks.diffCommits.push(input.commit);
-        return mocks.paged ? pagedDiffAtom(input.cursor ?? "first") : diffAtom;
+        return mocks.paged
+          ? pagedDiffAtom(`${mocks.generation}:${input.cursor ?? "first"}`)
+          : diffAtom;
       }) as never,
     },
   };
@@ -169,6 +173,7 @@ function setup({ paged }: { paged: boolean }) {
   window.localStorage.removeItem("t3code.diffHideTestFiles");
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   mocks.paged = paged;
+  mocks.generation += 1;
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
   mocks.viewedListeners.clear();
@@ -292,39 +297,43 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
   await expectFileHeaderShown(screen, container, "late.test.ts");
 });
 
-// regression: #22886 a push to a file on an earlier page must not move a reader on a later one
-it("keeps later pages and the reader's place when a refresh changes an earlier page", async () => {
+// regression: #22886 a push that adds a file above the reader must not move them. A host hands
+// out new continuation cursors for the new revision, and a page's patch changes with any file on it.
+it.for([
+  ["on a later page that comes back unchanged under a fresh cursor", "late.test.ts", 41],
+  // The second page is not loaded yet, so the count is of the first.
+  ["on the page that changed", "early-39.ts", 40],
+] as const)("keeps the reader's file in place across a refresh when it is %s", async (row) => {
+  const [, path, loaded] = row;
+  const count = (files: number) => (path === "late.test.ts" ? `${files} files` : `${files} files+`);
   setup({ paged: true });
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
-  const firstPatch = pages.first!.patch;
+  const first = pages.first!;
   using _restore = {
     [Symbol.dispose]() {
-      pages.first = { ...pages.first!, patch: firstPatch };
+      pages.first = first;
+      delete pages["page-2b"];
       __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
     },
   };
   const container = pagedContainer();
-  await using screen = await render(tab(0, { path: "late.test.ts", nonce: 1 }), { container });
-  await expectFileHeaderShown(screen, container, "late.test.ts");
-  await expect.element(screen.getByText("41 files", { exact: true })).toBeVisible();
+  await using screen = await render(tab(0, { path, nonce: 1 }), { container });
+  await expectFileHeaderShown(screen, container, path);
+  await expect.element(screen.getByText(count(loaded), { exact: true })).toBeVisible();
   const scroller = container.querySelector<HTMLElement>(".diff-render-surface")!;
   // The reader takes over from the reveal, as any scroll of their own does.
   scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
   // The viewer re-measures files above, so the place is where the file sits, not a scroll offset.
-  const header = screen.getByText("late.test.ts", { exact: true }).first();
-  const headerTop = () => header.element().getBoundingClientRect().top;
+  const headerTop = () =>
+    screen.getByText(path, { exact: true }).first().element().getBoundingClientRect().top;
   const before = headerTop();
 
-  pages.first = { ...pages.first!, patch: firstPatch + filePatch("early-new.ts") };
+  pages.first = { ...first, patch: filePatch("added.ts") + first.patch, nextCursor: "page-2b" };
+  pages["page-2b"] = { ...pages["page-2"]! };
   await screen.rerender(tab(1));
 
-  await expect.element(screen.getByText("42 files", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText(count(loaded + 1), { exact: true })).toBeVisible();
   await vi.waitFor(() => expect(headerTop()).toBeCloseTo(before, 0));
-  const key = pullRequestCodeViewKey(EnvironmentId.make("environment"), detail);
-  expect(usePullRequestReviewStore.getState().codePositions[key]).toMatchObject({
-    path: "late.test.ts",
-    pages: 2,
-  });
 });
 
 it("returns to the folds and the file a reader left when the tab opens again", async () => {

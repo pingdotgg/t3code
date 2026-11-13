@@ -75,7 +75,7 @@ import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 import {
   buildFileDiffContentVersion,
-  buildFileDiffRenderKey,
+  buildFileDiffIdentityKey,
   fnv1a32,
   getDiffLineStat,
   getRenderablePatch,
@@ -136,7 +136,6 @@ import {
   isFileDiffCollapsed,
   isLineInFileDiff,
   isSameDiffPage,
-  keepUnchangedDiffPages,
   revalidateDiffPage,
   withFileDiffFold,
   type DiffFoldOverride,
@@ -210,15 +209,24 @@ function parseSlice(slice: DiffSlice, cacheKey: string, ignoreWhitespace: boolea
 type DiffModel = {
   readonly parsedSlices: ReadonlyArray<RenderablePatch | null>;
   readonly loadedFiles: ReadonlyArray<Extract<RenderablePatch, { kind: "files" }>["files"][number]>;
+  readonly fileIds: ReadonlyMap<FileDiffMetadata, string>;
   readonly sourceFileStats: ReadonlyMap<string, ReturnType<typeof getDiffLineStat>>;
 };
 const diffModels = new WeakMap<ReadonlyArray<DiffSlice>, Map<string, DiffModel>>();
 const patchHashes = new WeakMap<DiffSlice, number>();
+const fileVersions = new WeakMap<FileDiffMetadata, number>();
+
+function fileContentVersion(file: FileDiffMetadata): number {
+  let version = fileVersions.get(file);
+  if (version === undefined) fileVersions.set(file, (version = buildFileDiffContentVersion(file)));
+  return version;
+}
 
 // Hashing, ordering and counting every file of a huge pull request costs a second, and the tab
 // renders far more often than its slices change, so the model is kept per slice list.
 function diffModel(
   slices: ReadonlyArray<DiffSlice>,
+  scopeKey: string,
   keyPrefix: string,
   ignoreWhitespace: boolean,
 ): DiffModel {
@@ -233,20 +241,32 @@ function diffModel(
     // hash: a refreshed page reuses its cursor, so position alone would return a stale parse.
     return parseSlice(slice, `${keyPrefix}:${slice.cursor ?? "first"}:${hash}`, ignoreWhitespace);
   });
+  const loadedFiles = orderDiffFilesLikeTree(
+    parsedSlices.flatMap((parsed) =>
+      parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
+    ),
+  );
+  // The viewer holds the reader's place by file id, so an id names the file and not the page it
+  // came on: a refresh that changes another file, or moves this one to another page, keeps it.
+  const fileIds = new Map<FileDiffMetadata, string>();
+  const occurrences = new Map<string, number>();
+  for (const file of loadedFiles) {
+    const identity = buildFileDiffIdentityKey(file);
+    const occurrence = occurrences.get(identity) ?? 0;
+    occurrences.set(identity, occurrence + 1);
+    fileIds.set(file, `${scopeKey}:${identity}:${occurrence}`);
+  }
   const model: DiffModel = {
     parsedSlices,
-    loadedFiles: orderDiffFilesLikeTree(
-      parsedSlices.flatMap((parsed) =>
-        parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
-      ),
-    ),
+    loadedFiles,
+    fileIds,
     sourceFileStats: new Map(
       parsedSlices.flatMap((parsed) =>
         parsed?.kind === "files"
           ? parsed.files.map(
               (file, index) =>
                 [
-                  buildFileDiffRenderKey(file),
+                  fileIds.get(file) ?? "",
                   getDiffLineStat([parsed.sourceFiles[index] ?? file]),
                 ] as const,
             )
@@ -511,7 +531,12 @@ function PullRequestCodeTab({
       setSliceState({
         key: scopeKey,
         cursor,
-        slices: keepUnchangedDiffPages(loadedSlices, step.pages),
+        // An identical re-read keeps the list, and with it the parsed model.
+        slices:
+          step.pages.length === loadedSlices.length &&
+          step.pages.every((fresh, index) => isSameDiffPage(loadedSlices[index]!, fresh))
+            ? loadedSlices
+            : step.pages,
       });
     } else {
       setRevalidation({ ...step.revalidation, key: scopeKey, cursor: step.cursor, before: null });
@@ -659,8 +684,9 @@ function PullRequestCodeTab({
   // Agent context is local, so it does not require host comment permission.
   const canSelectLines =
     commit === null && (review.inlineComment || onAddToAgentSelection !== undefined);
-  const { parsedSlices, loadedFiles, sourceFileStats } = diffModel(
+  const { parsedSlices, loadedFiles, fileIds, sourceFileStats } = diffModel(
     loadedSlices,
+    scopeKey,
     `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}`,
     ignoreWhitespace,
   );
@@ -734,11 +760,11 @@ function PullRequestCodeTab({
   const draft =
     savedDraft !== null &&
     draftFile !== undefined &&
-    buildFileDiffContentVersion(draftFile) === savedDraft.version
+    fileContentVersion(draftFile) === savedDraft.version
       ? savedDraft
       : null;
   const annotatedFiles = files.map((fileDiff) => {
-    const fileKey = buildFileDiffRenderKey(fileDiff);
+    const fileKey = fileIds.get(fileDiff) ?? "";
     const path = resolveFileDiffPath(fileDiff);
     const groups = new Map<string, MutableAnnotationGroup>();
     // Stacked view draws a context row once, so its old side shares the new side's annotation.
@@ -884,7 +910,10 @@ function PullRequestCodeTab({
         fileDiff,
         annotations,
         collapsed,
-        version: fnv1a32(`${collapsed ? "1" : "0"}:${viewedMark}:${annotationsVersion}`),
+        // A changed file is redrawn under the id it had; the theme is part of how it was drawn.
+        version: fnv1a32(
+          `${collapsed ? "1" : "0"}:${viewedMark}:${annotationsVersion}:${fileContentVersion(fileDiff)}:${resolvedTheme}`,
+        ),
       };
     },
   );
@@ -1020,7 +1049,7 @@ function PullRequestCodeTab({
     if (!range || !canSelectLines) return;
     const item = context.item;
     if (item.type !== "diff") return;
-    const file = files.find((candidate) => buildFileDiffRenderKey(candidate) === item.id);
+    const file = files.find((candidate) => fileIds.get(candidate) === item.id);
     if (!file) return;
     // On a host without ranged comments a range collapses to its last line: one that silently
     // lost its first line there would be worse than one line.
@@ -1036,7 +1065,7 @@ function PullRequestCodeTab({
     setDraft({
       path,
       oldPath: previousPath === path ? null : previousPath,
-      version: buildFileDiffContentVersion(file),
+      version: fileContentVersion(file),
       ...anchor,
       range,
     });
@@ -1052,7 +1081,7 @@ function PullRequestCodeTab({
       file === undefined
         ? null
         : buildDiffReviewComment({
-            id: `pull-request-selection:${buildFileDiffRenderKey(file)}:${anchor.range.start}:${anchor.range.end}`,
+            id: `pull-request-selection:${fileIds.get(file) ?? anchor.path}:${anchor.range.start}:${anchor.range.end}`,
             sectionId: `pull-request:${detail.number}`,
             sectionTitle: `PR #${detail.number} review`,
             filePath: anchor.path,

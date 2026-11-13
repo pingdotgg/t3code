@@ -5,7 +5,6 @@ import {
   getFileViewedRange,
   isFileDiffCollapsed,
   isLineInFileDiff,
-  keepUnchangedDiffPages,
   revalidateDiffPage,
   withFileDiffFold,
 } from "./pullRequestDiff.logic";
@@ -95,8 +94,6 @@ describe("revalidateDiffPage", () => {
     truncated: false,
     omittedFileStats: [],
   });
-  const shown = [page(null, "one", "2"), page("2", "two", "3"), page("3", "three", "4")];
-
   it("re-reads every loaded page from fresh cursors before replacing any of them", () => {
     const first = revalidateDiffPage({ fresh: [], depth: 3 }, page(null, "one changed", "2b"));
     // The pages after the changed one stay on screen until all three are read again.
@@ -114,19 +111,5 @@ describe("revalidateDiffPage", () => {
     expect(revalidateDiffPage({ fresh: [], depth: 3 }, page(null, "all", null))).toEqual({
       pages: [page(null, "all", null)],
     });
-  });
-
-  it("keeps the identity of pages a refresh brought back unchanged", () => {
-    const changed = page(null, "one changed", "2");
-    const merged = keepUnchangedDiffPages(shown, [changed, { ...shown[1]! }, { ...shown[2]! }]);
-    expect(merged[0]).toBe(changed);
-    expect(merged[1]).toBe(shown[1]);
-    expect(merged[2]).toBe(shown[2]);
-    expect(
-      keepUnchangedDiffPages(
-        shown,
-        shown.map((entry) => ({ ...entry })),
-      ),
-    ).toBe(shown);
   });
 });
