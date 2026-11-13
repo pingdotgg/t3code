@@ -98,9 +98,9 @@ function linkedThreadsView(
 
 /**
  * Tells how a domain event changed `pullRequests.linkedThreads` answers, so readers can refresh on
- * change instead of polling. `reordered` means a linked thread's activity moved, which can reorder
- * its answers. A thread's first event after a restart counts as a change, since its earlier links
- * are unknown.
+ * change instead of polling. `reordered` means activity on a linked thread, or on one whose links
+ * are unknown since a restart, which can reorder answers. A thread's first full event after a
+ * restart counts as a change, since its earlier links are unknown.
  */
 export function makeLinkedThreadsChangeDetector() {
   const views = new Map<ThreadId, string | null>();
@@ -115,8 +115,10 @@ export function makeLinkedThreadsChangeDetector() {
     return true;
   };
   return (event: OrchestrationV2DomainEvent): "changed" | "reordered" | null => {
-    // The projection stamps every non-thread event as the thread's activity.
+    // The projection stamps every non-thread event as the thread's activity. A thread not seen
+    // since startup may be linked already, since history is not replayed.
     if (!event.type.startsWith("thread.")) {
+      if (!views.has(event.threadId)) return "reordered";
       return active(event.threadId, event.occurredAt) ? "reordered" : null;
     }
     if (!("lineage" in event.payload)) return null;

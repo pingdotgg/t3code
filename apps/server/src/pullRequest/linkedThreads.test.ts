@@ -298,7 +298,7 @@ it("signals when activity reorders the threads linked to a pull request", () => 
     url: "https://github.com/acme/web/pull/7",
     source: "agent",
   };
-  const thread = (id: string, second: number) =>
+  const thread = (id: string, second: number, pullRequests: ReadonlyArray<unknown> = [link]) =>
     ({
       type: "thread.pull-request-synced",
       threadId: ThreadId.make(id),
@@ -307,7 +307,7 @@ it("signals when activity reorders the threads linked to a pull request", () => 
         projectId: ProjectId.make("project-a"),
         title: id,
         lineage: { rootThreadId: ThreadId.make(id) },
-        pullRequests: [link],
+        pullRequests,
         archivedAt: null,
         settledOverride: null,
         settledAt: null,
@@ -331,9 +331,13 @@ it("signals when activity reorders the threads linked to a pull request", () => 
       activity("a", 4),
       activity("b", 5),
       activity("b", 5),
+      // Seen since startup without links, so its activity can't reorder an answer.
+      thread("unlinked", 5, []),
       activity("unlinked", 6),
+      // Not seen since startup, so it may be linked from before the restart.
+      activity("persisted", 6),
     ].map(changed),
-  ).toEqual(["reordered", "reordered", "reordered", null, null]);
+  ).toEqual(["reordered", "reordered", "reordered", null, "changed", null, "reordered"]);
 
   // Other threads linked to the pull request may have had no event since the restart.
   const afterRestart = makeLinkedThreadsChangeDetector();
