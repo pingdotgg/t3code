@@ -135,6 +135,22 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
       const missing = folder("gone", "gone");
       const linked = folder("shared", "app", "linked");
       const shared = path.join(tmp, "shared");
+      const worktree = path.join(tmp, "tree");
+      // `lib` is checked out with a submodule of its own; `docs` was never initialized.
+      const gitmodules =
+        '[submodule "lib"]\n\tpath = vendor/lib\n[submodule "docs"]\n\tpath = docs\n';
+      for (const root of [workspaceRoot, worktree]) {
+        yield* fileSystem.makeDirectory(path.join(root, "vendor", "lib", "deep", ".git"), {
+          recursive: true,
+        });
+        yield* fileSystem.makeDirectory(path.join(root, "docs"), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(root, "vendor", "lib", ".git"), "gitdir: x\n");
+        yield* fileSystem.writeFileString(path.join(root, ".gitmodules"), gitmodules);
+        yield* fileSystem.writeFileString(
+          path.join(root, "vendor", "lib", ".gitmodules"),
+          '[submodule "deep"]\n\tpath = deep\n',
+        );
+      }
       for (const directory of [inside.path, path.join(repository.path, ".git"), shared]) {
         yield* fileSystem.makeDirectory(directory, { recursive: true });
       }
@@ -159,9 +175,35 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
           // A symlink inside the project folder still leads outside it.
           extraRoots: [repository.path, linked.path, shared],
         });
+        assert.deepEqual(yield* workspaceFolders.forThread({ projectId, worktreePath: worktree }), {
+          folders: [],
+          extraRoots: [],
+        });
+        assert.deepEqual(yield* workspaceFolders.submodules({ projectId, worktreePath: null }), [
+          { name: "lib", path: path.join(workspaceRoot, "vendor", "lib"), isGitRepository: true },
+          {
+            name: "deep",
+            path: path.join(workspaceRoot, "vendor", "lib", "deep"),
+            isGitRepository: true,
+          },
+        ]);
+        // A worktree reaches its own submodules, named by where the project folder has them.
         assert.deepEqual(
-          yield* workspaceFolders.forThread({ projectId, worktreePath: path.join(tmp, "tree") }),
-          { folders: [], extraRoots: [] },
+          yield* workspaceFolders.submodules({ projectId, worktreePath: worktree }),
+          [
+            {
+              name: "lib",
+              path: path.join(worktree, "vendor", "lib"),
+              isGitRepository: true,
+              repositoryPath: path.join(workspaceRoot, "vendor", "lib"),
+            },
+            {
+              name: "deep",
+              path: path.join(worktree, "vendor", "lib", "deep"),
+              isGitRepository: true,
+              repositoryPath: path.join(workspaceRoot, "vendor", "lib", "deep"),
+            },
+          ],
         );
       }).pipe(
         Effect.provide(

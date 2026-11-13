@@ -28,6 +28,8 @@ export interface ThreadFolder {
   readonly name: string;
   readonly path: string;
   readonly isGitRepository: boolean;
+  /** The folder `path` is a checkout of. Absent when `path` is that folder. */
+  readonly repositoryPath?: string;
 }
 
 export interface ThreadWorkspace {
@@ -37,6 +39,8 @@ export interface ThreadWorkspace {
 }
 
 const EMPTY_WORKSPACE: ThreadWorkspace = { folders: [], extraRoots: [] };
+// Each one costs a status per turn.
+const THREAD_SUBMODULES_MAX = 32;
 
 export class WorkspaceFolders extends Context.Service<
   WorkspaceFolders,
@@ -49,6 +53,14 @@ export class WorkspaceFolders extends Context.Service<
       readonly projectId: ProjectId;
       readonly worktreePath: string | null;
     }) => Effect.Effect<ThreadWorkspace, WorkspaceFoldersError>;
+    /**
+     * Submodules checked out inside the thread's cwd or its folders. Their repository owns how
+     * they get there, so they are reviewed like the folders but never granted or announced.
+     */
+    readonly submodules: (input: {
+      readonly projectId: ProjectId;
+      readonly worktreePath: string | null;
+    }) => Effect.Effect<ReadonlyArray<ThreadFolder>, WorkspaceFoldersError>;
     readonly list: (
       input: WorkspaceListFoldersInput,
     ) => Effect.Effect<WorkspaceListFoldersResult, WorkspaceFoldersError>;
@@ -77,7 +89,7 @@ const decodeCodeWorkspace = Schema.decodeUnknownEffect(
 );
 
 /** Submodule paths a `.gitmodules` file declares, relative to its folder with `/` separators. */
-const parseGitmodulesPaths = (text: string): ReadonlyArray<string> =>
+export const parseGitmodulesPaths = (text: string): ReadonlyArray<string> =>
   text.split(/\r?\n/).flatMap((line) => {
     const value = /^\s*path\s*=\s*(.*?)\s*$/.exec(line)?.[1];
     if (value === undefined) return [];
@@ -216,7 +228,7 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const projects = yield* ProjectStore.ProjectStoreV2;
 
-  const { realPath, classify } = yield* folderProbes;
+  const { exists, realPath, classify } = yield* folderProbes;
 
   const readProject = Effect.fn("WorkspaceFolders.readProject")(function* (projectId: ProjectId) {
     const row = yield* projects
@@ -237,6 +249,61 @@ const make = Effect.gen(function* () {
 
   const classifyAll = (folders: ReadonlyArray<ProjectTrackedFolder>) =>
     Effect.forEach(folders, classify, { concurrency: DETECTION_CONCURRENCY });
+
+  // `identity` is `root` in the checkout the thread's was made from: it names the same submodule
+  // in every worktree.
+  const submodulesBelow = (root: {
+    readonly path: string;
+    readonly identity: string;
+  }): Effect.Effect<ReadonlyArray<ThreadFolder>> =>
+    fileSystem.readFileString(path.join(root.path, ".gitmodules")).pipe(
+      Effect.orElseSucceed(() => ""),
+      Effect.flatMap((text) =>
+        Effect.forEach(
+          parseGitmodulesPaths(text),
+          (relative) => {
+            const folder = path.resolve(root.path, relative);
+            const identity = path.resolve(root.identity, relative);
+            if (folder === root.path || !isWithinRoot(path, folder, root.path)) {
+              return Effect.succeed([]);
+            }
+            // One that was never initialized is an empty folder.
+            return exists(path.join(folder, ".git")).pipe(
+              Effect.flatMap((present) =>
+                present
+                  ? submodulesBelow({ path: folder, identity }).pipe(
+                      Effect.map((nested) => [
+                        {
+                          name: path.basename(folder),
+                          path: folder,
+                          isGitRepository: true,
+                          ...(identity === folder ? {} : { repositoryPath: identity }),
+                        },
+                        ...nested,
+                      ]),
+                    )
+                  : Effect.succeed([]),
+              ),
+            );
+          },
+          { concurrency: DETECTION_CONCURRENCY },
+        ),
+      ),
+      Effect.map((found) => found.flat()),
+    );
+
+  const submodulesOf = Effect.fnUntraced(function* (
+    roots: ReadonlyArray<{ readonly path: string; readonly identity: string }>,
+  ) {
+    const found = yield* Effect.forEach(roots, submodulesBelow, {
+      concurrency: DETECTION_CONCURRENCY,
+    });
+    const taken = new Set(roots.map((root) => root.path));
+    return found
+      .flat()
+      .filter((folder) => !taken.has(folder.path))
+      .slice(0, THREAD_SUBMODULES_MAX);
+  });
 
   const forThread: WorkspaceFolders["Service"]["forThread"] = Effect.fn(
     "WorkspaceFolders.forThread",
@@ -262,6 +329,29 @@ const make = Effect.gen(function* () {
     return { folders, extraRoots: [...new Set(outside.flat())] };
   });
 
+  const submodules: WorkspaceFolders["Service"]["submodules"] = Effect.fn(
+    "WorkspaceFolders.submodules",
+  )(function* (input) {
+    const { folders } = yield* forThread(input);
+    // A worktree can outlive its project record; its submodules are then named by where they are.
+    const projectRoot = yield* readProject(input.projectId).pipe(
+      Effect.map((project) => path.resolve(project.workspaceRoot)),
+      Effect.option,
+    );
+    const own = input.worktreePath === null ? null : path.resolve(input.worktreePath);
+    const root = own ?? Option.getOrNull(projectRoot);
+    if (root === null) return [];
+    const identity = Option.getOrElse(projectRoot, () => root);
+    return yield* submodulesOf([
+      { path: root, identity },
+      ...folders.flatMap((folder) =>
+        folder.isGitRepository
+          ? [{ path: folder.path, identity: folder.repositoryPath ?? folder.path }]
+          : [],
+      ),
+    ]);
+  });
+
   const list: WorkspaceFolders["Service"]["list"] = Effect.fn("WorkspaceFolders.list")(
     function* (input) {
       return { folders: yield* classifyAll((yield* readProject(input.projectId)).trackedFolders) };
@@ -274,7 +364,7 @@ const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
 
-  return WorkspaceFolders.of({ forThread, list, scan });
+  return WorkspaceFolders.of({ forThread, submodules, list, scan });
 });
 
 export const layer = Layer.effect(WorkspaceFolders, make);

@@ -188,6 +188,42 @@ export function getRenderablePatch(
   }
 }
 
+/**
+ * Several patches as one file list. Each file is named from the folder the patches share, so the
+ * same path in two repositories stays two files.
+ */
+export function getRenderablePatchSections(
+  sections: ReadonlyArray<{
+    readonly key: string;
+    readonly relativePath: string;
+    readonly diff: string;
+  }>,
+  cacheScope = "diff-panel",
+  options: RenderablePatchOptions = {},
+): RenderablePatch | null {
+  const files: FileDiffMetadata[] = [];
+  const sourceFiles: FileDiffMetadata[] = [];
+  for (const section of sections) {
+    const patch = getRenderablePatch(section.diff, `${cacheScope}:${section.key}`, options);
+    if (patch === null) continue;
+    if (patch.kind === "raw") {
+      return { ...patch, text: sections.map((entry) => entry.diff).join("\n") };
+    }
+    const prefix = section.relativePath === "" ? "" : `${section.relativePath}/`;
+    const inFolder = (file: FileDiffMetadata): FileDiffMetadata =>
+      prefix === ""
+        ? file
+        : {
+            ...file,
+            name: `${prefix}${file.name}`,
+            ...(file.prevName === undefined ? {} : { prevName: `${prefix}${file.prevName}` }),
+          };
+    files.push(...patch.files.map(inFolder));
+    sourceFiles.push(...patch.sourceFiles.map(inFolder));
+  }
+  return files.length === 0 ? null : { kind: "files", files, sourceFiles };
+}
+
 /** Uses the parser-decoded filename, including Git's quoted and escaped names. */
 export function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
   return fileDiff.name ?? fileDiff.prevName ?? "";

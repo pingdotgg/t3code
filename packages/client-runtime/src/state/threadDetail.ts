@@ -490,7 +490,10 @@ export function createEnvironmentThreadDetailAtoms<E>(
   });
 
   const checkpointSummariesAtomFamily = Atom.family((key: string) => {
-    let previous: Pick<OrchestrationV2ThreadProjection, "checkpoints" | "messages"> | null = null;
+    let previous: Pick<
+      OrchestrationV2ThreadProjection,
+      "checkpoints" | "checkpointScopes" | "messages"
+    > | null = null;
     let value = EMPTY_CHECKPOINT_SUMMARIES;
     return Atom.make((get) => {
       const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
@@ -499,19 +502,21 @@ export function createEnvironmentThreadDetailAtoms<E>(
         value = EMPTY_CHECKPOINT_SUMMARIES;
       } else if (
         projection.checkpoints !== previous?.checkpoints ||
+        projection.checkpointScopes !== previous?.checkpointScopes ||
         projection.messages !== previous?.messages
       ) {
-        const { checkpoints, messages } = projection;
-        const next = deriveThreadCheckpointSummaries({ checkpoints, messages });
+        const { checkpoints, checkpointScopes, messages } = projection;
+        const next = deriveThreadCheckpointSummaries({ checkpoints, checkpointScopes, messages });
         // The same checkpoints give the same summaries; messages only pick each assistant message.
         if (
           checkpoints !== previous?.checkpoints ||
+          checkpointScopes !== previous?.checkpointScopes ||
           next.some(
             (summary, index) => summary.assistantMessageId !== value[index]?.assistantMessageId,
           )
         )
           value = next;
-        previous = { checkpoints, messages };
+        previous = { checkpoints, checkpointScopes, messages };
       }
       return value;
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-checkpoint-summaries:${key}`));

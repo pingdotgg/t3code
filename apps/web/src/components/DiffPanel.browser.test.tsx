@@ -3,10 +3,13 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
+  CheckpointRef,
+  CheckpointScopeId,
   ProjectId,
   RunId,
   ThreadId,
   type ClientSettings,
+  type OrchestrationGetTurnDiffResult,
   type ReviewBranchCommitsResult,
   type ReviewDiffPreviewResult,
   type ReviewDiffPreviewSource,
@@ -37,7 +40,7 @@ const state = vi.hoisted(() => ({
   remoteRefs: null as unknown as ResultAtom<VcsListRefsResult>,
   commits: null as unknown as ResultAtom<ReviewBranchCommitsResult>,
   checkpoints: [] as unknown[],
-  checkpointDiff: null as { diff: string } | null,
+  checkpointDiff: null as Partial<OrchestrationGetTurnDiffResult> | null,
 }));
 
 vi.mock("~/state/server", () => ({
@@ -301,4 +304,81 @@ it("says a turn diff cut off at the server's size limit is incomplete", async ()
   await expect
     .element(screen.getByText("This preview exceeds the size limit. Changes shown are incomplete."))
     .toBeVisible();
+});
+
+it("shows a turn's repositories in a folder that is not a Git repository", async () => {
+  using context = setup("origin/orphan");
+  state.status = Atom.make(
+    AsyncResult.success({
+      isRepo: false,
+      hasPrimaryRemote: false,
+      isDefaultRef: false,
+      refName: null,
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      hasUpstream: false,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: null,
+    }),
+  );
+  const patch = (path: string) =>
+    `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-before\n+after\n`;
+  const repository = (name: string) => ({
+    scopeId: CheckpointScopeId.make(`scope-${name}`),
+    name,
+    repositoryPath: `${cwd}/${name}`,
+    cwd: `${cwd}/${name}`,
+    relativePath: name,
+    files: [{ path: "README.md", kind: "modified", additions: 1, deletions: 1 }],
+    baselineMissing: false,
+  });
+  state.checkpoints = [
+    {
+      runId: RunId.make("run-1"),
+      checkpointTurnCount: 1,
+      checkpointRef: CheckpointRef.make("refs/t3/root-1"),
+      status: "missing",
+      files: [],
+      repositories: [repository("api"), repository("web")],
+      assistantMessageId: null,
+      completedAt: "2026-11-10T00:00:00.000Z",
+    },
+  ];
+  state.checkpointDiff = {
+    threadId: context.threadRef.threadId,
+    fromTurnCount: 0,
+    toTurnCount: 1,
+    diff: "",
+    repositories: ["api", "web"].map((name) => ({
+      name,
+      repositoryPath: `${cwd}/${name}`,
+      relativePath: name,
+      diff: patch("README.md"),
+    })),
+  };
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, width: 390, display: "flex", flexDirection: "column" }}>
+        <DiffPanel
+          mode="embedded"
+          composerDraftTarget={context.threadRef}
+          workspaceMutationId={null}
+          visible
+        />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  const api = screen.getByRole("button", { name: "Collapse api/README.md", exact: true });
+  const web = screen.getByRole("button", { name: "Collapse web/README.md", exact: true });
+  await expect.element(api).toBeVisible();
+  await expect.element(web).toBeVisible();
+  // Both pickers keep their labels in a phone-width panel.
+  await expect.element(screen.getByText("Latest turn", { exact: true })).toBeVisible();
+  const picker = screen.getByRole("button", { name: "Repository: All repositories" });
+  await expect.element(picker.getByText("All repositories")).toBeVisible();
+  await userEvent.click(picker);
+  await userEvent.click(page.getByRole("menuitemradio", { name: "web" }));
+  await expect.element(web).toBeVisible();
+  await expect.element(api).not.toBeInTheDocument();
 });

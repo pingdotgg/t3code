@@ -172,9 +172,11 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           branch: offersGit && props.isGitRepo && visible.branch,
           // Without a branch selector, linked pull requests still need somewhere to show.
           pullRequests: !(offersGit && props.isGitRepo) && visible.branch,
+          // A plain folder that tracks repositories is not asked to become one itself.
           git:
             offersGit &&
             props.activeProjectName !== undefined &&
+            (props.isGitRepo || (project?.trackedFolders?.length ?? 0) === 0) &&
             (visible.gitActions || (visible.changes && props.isGitRepo)),
         };
         return (

@@ -18,7 +18,15 @@ export type DiffPanelSelection =
   | { kind: "branch"; baseRef: string | null }
   | { kind: "unstaged" }
   | { kind: "commit"; sha: string; baseRef: string | null }
-  | { kind: "turn"; turnId: RunId; filePath: string | null; revealRequestId: number };
+  | {
+      kind: "turn";
+      turnId: RunId;
+      /** From the thread's folder, so a tracked repository's file carries that repository's folder. */
+      filePath: string | null;
+      revealRequestId: number;
+      /** A turn diff section key to narrow to; absent shows every repository. */
+      repository?: string;
+    };
 
 const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
 
@@ -29,6 +37,7 @@ interface DiffPanelStoreState {
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectToolCall: (ref: ScopedThreadRef, target: ToolCallDiffTarget) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
+  selectTurnRepository: (ref: ScopedThreadRef, turnId: RunId, repository: string | null) => void;
   selectCommit: (ref: ScopedThreadRef, sha: string) => void;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<RunId>) => void;
   removeThread: (ref: ScopedThreadRef) => void;
@@ -99,14 +108,38 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           const previous = state.byThreadKey[threadKey];
+          const requestedPath = filePath?.trim() || null;
           return {
             byThreadKey: {
               ...state.byThreadKey,
               [threadKey]: {
                 kind: "turn",
                 turnId,
-                filePath: filePath?.trim() || null,
+                filePath: requestedPath,
                 revealRequestId: previous?.kind === "turn" ? previous.revealRequestId + 1 : 1,
+                // A requested file may sit outside the repository the view was narrowed to.
+                ...(requestedPath === null &&
+                previous?.kind === "turn" &&
+                previous.repository !== undefined
+                  ? { repository: previous.repository }
+                  : {}),
+              },
+            },
+          };
+        }),
+      selectTurnRepository: (ref, turnId, repository) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const previous = state.byThreadKey[threadKey];
+          return {
+            byThreadKey: {
+              ...state.byThreadKey,
+              [threadKey]: {
+                kind: "turn",
+                turnId,
+                filePath: null,
+                revealRequestId: previous?.kind === "turn" ? previous.revealRequestId : 0,
+                ...(repository === null ? {} : { repository }),
               },
             },
           };

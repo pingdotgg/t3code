@@ -62,6 +62,9 @@ files.
 From a script, `t3 project add <path> --track-repos` tracks every repository it finds, and
 `--track <folder>` adds one by path.
 
+Each turn's changes are listed per repository; see
+[Review turn changes](source-control.md#review-turn-changes).
+
 A thread that runs in its own worktree works only in the project's own folder.
 
 ## Pin and archive projects

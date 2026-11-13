@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointRef,
   CheckpointScopeId,
   ProjectId,
   RunId,
@@ -40,6 +41,16 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
   const threadId = ThreadId.make("thread_refresh_failure");
   const runId = RunId.make("run_refresh_failure");
   const scopeId = CheckpointScopeId.make("scope_refresh_failure");
+  const usedRepositoryScopeId = CheckpointScopeId.make("scope_refresh_failure_api");
+  const idleRepositoryScopeId = CheckpointScopeId.make("scope_refresh_failure_docs");
+  const repositoryCheckpoint = (repositoryScopeId: CheckpointScopeId, checkpointRunId: RunId) => ({
+    scopeId: repositoryScopeId,
+    runId: checkpointRunId,
+    ordinalWithinScope: 1,
+    appRunOrdinal: null,
+    status: "ready" as const,
+    ref: CheckpointRef.make(`refs/t3/test/${repositoryScopeId}`),
+  });
   const captured: string[] = [];
   const layer = RunFinalization.layer.pipe(
     Layer.provide(
@@ -54,8 +65,27 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
           getCheckpointContext: () =>
             Effect.succeed({
               runs: [],
-              checkpointScopes: [{ id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" }],
-              checkpoints: [],
+              checkpointScopes: [
+                { id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" },
+                {
+                  id: usedRepositoryScopeId,
+                  runId,
+                  kind: "manual" as const,
+                  cwd: "/api",
+                  repositoryPath: "/api",
+                },
+                {
+                  id: idleRepositoryScopeId,
+                  runId,
+                  kind: "manual" as const,
+                  cwd: "/docs",
+                  repositoryPath: "/docs",
+                },
+              ],
+              checkpoints: [
+                repositoryCheckpoint(usedRepositoryScopeId, runId),
+                repositoryCheckpoint(idleRepositoryScopeId, RunId.make("run_before")),
+              ],
             }),
         }),
         Layer.succeed(RunFinalization.RunFinalizationObserver, {
@@ -68,6 +98,10 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
               });
             }),
           refreshAfterTurn: () => Effect.void,
+          refreshRepositories: ({ cwds }) =>
+            Effect.sync(() => {
+              captured.push(`repositories:${cwds.join(",")}`);
+            }),
         }),
       ),
     ),
@@ -75,7 +109,8 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
   return Effect.gen(function* () {
     const service = yield* RunFinalization.RunFinalizationService;
     yield* service.finalize({ threadId, runId, scopeId });
-    assert.deepEqual(captured, ["checkpoint", "refresh"]);
+    // Only the tracked repository this run checkpointed is refreshed.
+    assert.deepEqual(captured, ["checkpoint", "refresh", "repositories:/api"]);
   }).pipe(Effect.provide(layer));
 });
 

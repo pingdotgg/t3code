@@ -7,6 +7,7 @@ import {
   buildFileDiffRenderKey,
   getDiffLineStat,
   getRenderablePatch,
+  getRenderablePatchSections,
   resolveFileDiffPath,
   resolveFileDiffPreviousPath,
 } from "./diffRendering";
@@ -403,5 +404,42 @@ describe("a file whose name a patch header cannot carry plainly", () => {
 
     expect(resolveFileDiffPath(file)).toBe("new\tname.ts");
     expect(resolveFileDiffPreviousPath(file)).toBe("old\tname.ts");
+  });
+});
+
+describe("getRenderablePatchSections", () => {
+  const patch = (path: string) =>
+    [
+      `diff --git a/${path} b/${path}`,
+      `--- a/${path}`,
+      `+++ b/${path}`,
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+      "",
+    ].join("\n");
+
+  it("names each repository's files from the shared folder and keeps equal paths apart", () => {
+    const parsed = getRenderablePatchSections(
+      [
+        { key: ".", relativePath: "", diff: patch("README.md") },
+        { key: "/work/api", relativePath: "api", diff: patch("README.md") },
+        { key: "/shared", relativePath: "../shared", diff: patch("src/a.ts") },
+      ],
+      "turn",
+    );
+    expect(parsed?.kind).toBe("files");
+    if (parsed?.kind !== "files") return;
+    expect(parsed.files.map(resolveFileDiffPath)).toEqual([
+      "README.md",
+      "api/README.md",
+      "../shared/src/a.ts",
+    ]);
+    expect(new Set(parsed.files.map((file) => file.cacheKey)).size).toBe(3);
+    expect(new Set(parsed.files.map(buildFileDiffIdentityKey)).size).toBe(3);
+  });
+
+  it("gives nothing when every section is empty", () => {
+    expect(getRenderablePatchSections([{ key: ".", relativePath: "", diff: "" }])).toBeNull();
   });
 });
