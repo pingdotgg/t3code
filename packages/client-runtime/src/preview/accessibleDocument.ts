@@ -437,12 +437,24 @@ export function createAccessibleDocumentView(
     return node && element ? { node, element } : null;
   };
 
+  /** Plain wrappers pass a click up to their nearest control; a label's own field keeps it. */
+  const controlOf = (target: EventTarget | null) => {
+    const next = (from: Element | null | undefined) =>
+      from?.closest<HTMLElement>("[data-node], label") ?? null;
+    let element = next(target instanceof Element ? target : null);
+    while (element && body.contains(element)) {
+      const node = nodes.get(element.dataset.node ?? "");
+      const plan = node ? planAccessibleNode(node, canAct) : null;
+      if (!node || plan?.kind !== "element") return null;
+      if (plan.control) return { node, control: plan.control };
+      element = next(element.parentElement);
+    }
+    return null;
+  };
+
   const onClick = (event: Event) => {
-    const hit = nodeOf(event.target);
-    if (!hit) return;
-    const plan = planAccessibleNode(hit.node, canAct);
-    if (plan?.kind !== "element" || (plan.control !== "activate" && plan.control !== "check"))
-      return;
+    const hit = controlOf(event.target);
+    if (!hit || (hit.control !== "activate" && hit.control !== "check")) return;
     // Local links and checkboxes must not change on their own; the page answers.
     event.preventDefault();
     if (hit.node.disabled) {

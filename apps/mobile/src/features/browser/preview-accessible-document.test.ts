@@ -263,3 +263,65 @@ it("toggles one option of a multiple select without clearing the others", () => 
     container.remove();
   }
 });
+
+it("activates the nearest tree item from wrapped text but never from its fields", () => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const onAction = vi.fn((_action: PreviewAccessibilityAction) => true);
+  const view = createAccessibleDocumentView(container, { onAction });
+  const text = (id: string, name: string) => ({ id, role: "text", name });
+  try {
+    view.update(
+      {
+        document: "page",
+        version: 1,
+        truncated: false,
+        root: {
+          id: "folder",
+          role: "treeitem",
+          name: "src",
+          expanded: true,
+          children: [
+            { id: "folder-label", role: "generic", children: [text("folder-text", "src")] },
+            {
+              id: "files",
+              role: "group",
+              children: [
+                {
+                  id: "file",
+                  role: "treeitem",
+                  name: "index.ts",
+                  children: [
+                    {
+                      id: "file-label",
+                      role: "paragraph",
+                      children: [text("file-text", "index.ts")],
+                    },
+                  ],
+                },
+                { id: "rename", role: "textbox", name: "Rename", value: "src" },
+                {
+                  id: "kind",
+                  role: "combobox",
+                  name: "Kind",
+                  children: [{ id: "ts", role: "option", name: "TypeScript", selected: true }],
+                },
+              ],
+            },
+          ],
+        },
+      },
+      true,
+    );
+    const click = (selector: string) => container.querySelector<HTMLElement>(selector)!.click();
+    click('[data-node="folder-label"]');
+    click('[data-node="file-label"]');
+    click('[data-node="rename"]');
+    click("label > span");
+    click('[data-node="kind"]');
+    expect(onAction.mock.calls.map(([action]) => action.node)).toEqual(["folder", "file"]);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
