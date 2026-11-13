@@ -75,8 +75,59 @@ pub(crate) fn handler(command_type: &str) -> Option<Handler> {
         "queued-run.edit" => queued_run_edit,
         "queue.resume" => queue_resume,
         "queued-message.promote-to-steer" => queued_message_promote_to_steer,
+        "thread.settle" | "thread.auto-settle" => thread_settle,
+        "thread.unsettle" => thread_unsettle,
+        "thread.snooze" => thread_snooze,
+        "thread.unsnooze" => thread_unsnooze,
+        "thread.auto-settle.set" => thread_auto_settle_set,
+        "thread.pin" => thread_pin,
+        "thread.unpin" => thread_unpin,
+        "thread.pin.reorder" => thread_pin_reorder,
+        "thread.active.reorder" => thread_active_reorder,
+        "thread.tag.set" => thread_tag_set,
+        "thread.mark-unread" => thread_mark_unread,
+        "thread.pull-request.link" => thread_pull_request_link,
+        "thread.pull-request.unlink" => thread_pull_request_unlink,
+        "thread.user-input.dismiss" => thread_user_input_dismiss,
+        "provider-session.detach" => provider_session_detach,
+        "provider.switch" => provider_switch,
+        "thread.title.regeneration.complete" => thread_title_regeneration_complete,
         _ => return None,
     })
+}
+
+/// Why a contract command this engine does not handle is refused. The client shows the text.
+pub(crate) fn refusal(command_type: &str) -> &'static str {
+    match command_type {
+        "checkpoint.rollback" | "thread.merge_back" => {
+            "conn-server has no checkpoints yet, so it cannot restore or merge a turn."
+        }
+        "thread.fork" => "conn-server cannot fork a thread yet.",
+        "prepared-run.release"
+        | "prepared-run.progress"
+        | "prepared-run.fail"
+        | "prepared-run.retry" => "conn-server does not prepare worktrees for runs yet.",
+        "thread.guest-share.close" | "thread.guest-message.dismiss" => {
+            "conn-server does not share threads with guests."
+        }
+        "thread.pull-request-link.sync"
+        | "thread.pull-request.watch"
+        | "thread.pull-request.sync" => "conn-server does not watch pull requests yet.",
+        "notification.delivery.accept" => {
+            "conn-server does not deliver background notifications yet."
+        }
+        "subagent.stop" => {
+            "conn-server cannot stop a single subagent yet; stop the thread instead."
+        }
+        "delegated_task.request"
+        | "delegated_task.wake-policy"
+        | "delegated_task.completion-delivery.acknowledge"
+        | "delegated_task.completion-delivery.dispose" => {
+            "conn-server does not run delegated tasks yet."
+        }
+        "thread.created.record" => "conn-server does not record threads from linked environments.",
+        _ => "conn-server does not support this command.",
+    }
 }
 
 fn decode<T: for<'de> Deserialize<'de>>(command: Value) -> Result<T, CommandError> {
@@ -1190,5 +1241,373 @@ pub(crate) fn failure(class: &str, message: &str, code: Option<&str>) -> Value {
         "message": if message.is_empty() { "The turn failed.".to_owned() } else { message },
         "code": code,
         "retryable": null,
+    })
+}
+
+/// The thread record and the time of this write, for the field setters below.
+fn thread_patch(
+    tx: &mut Tx<'_>,
+    command: &Value,
+    event_type: &'static str,
+    patch: impl FnOnce(&mut Value, &str) -> Result<(), CommandError>,
+) -> Outcome {
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    let mut thread = live_thread(tx, &thread_id)?;
+    let before = thread.clone();
+    let now = tx.now().to_owned();
+    patch(&mut thread, &now)?;
+    // A setter that changes nothing writes nothing, so a retry or a double click is quiet.
+    if thread != before {
+        let cid = command["commandId"].as_str().map(str::to_owned);
+        tx.append(Draft::new(&thread_id, event_type, thread).command(cid.as_deref()))?;
+    }
+    Ok(vec![])
+}
+
+fn is_null(thread: &Value, field: &str) -> bool {
+    thread.get(field).is_none_or(Value::is_null)
+}
+
+fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    if let Some(expected) = command["expectedLatestRunId"].as_str() {
+        let latest = tx
+            .entities(&thread_id, "runs")?
+            .into_iter()
+            .filter(|r| r["status"] != "queued")
+            .max_by_key(|r| r["ordinal"].as_u64().unwrap_or(0));
+        if latest.is_some_and(|r| r["id"] != expected) {
+            return Ok(vec![]);
+        }
+    }
+    if command["type"] == "thread.auto-settle" {
+        let thread = live_thread(tx, &thread_id)?;
+        if !is_null(&thread, "autoSettleDisabledAt") || !is_null(&thread, "pinnedAt") {
+            return Ok(vec![]);
+        }
+    }
+    if active_run(tx, &thread_id)?.is_some() {
+        return reject(format!(
+            "Thread {thread_id} is still running and cannot be settled."
+        ));
+    }
+    let settled_at = command["settledAt"].clone();
+    thread_patch(tx, &command, "thread.settled", |t, now| {
+        let already =
+            t["settledOverride"] == "settled" && !is_null(t, "settledAt") && is_null(t, "pinnedAt");
+        t["settledOverride"] = json!("settled");
+        if !already {
+            t["settledAt"] = if settled_at.is_string() {
+                settled_at
+            } else {
+                json!(now)
+            };
+        }
+        for field in [
+            "unsettledAt",
+            "pinnedAt",
+            "pinOrderKey",
+            "activeOrderKey",
+            "snoozedUntil",
+            "snoozedAt",
+        ] {
+            t[field] = Value::Null;
+        }
+        if !already {
+            t["updatedAt"] = json!(now);
+        }
+        Ok(())
+    })
+}
+
+fn thread_unsettle(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    thread_patch(tx, &command, "thread.unsettled", |t, now| {
+        if t["settledOverride"] != "active" {
+            t["settledOverride"] = json!("active");
+            t["settledAt"] = Value::Null;
+            t["unsettledAt"] = json!(now);
+            t["updatedAt"] = json!(now);
+        }
+        Ok(())
+    })
+}
+
+fn thread_snooze(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    let until = command["snoozedUntil"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    if crate::time::millis_from_iso(&until).is_none() {
+        return reject(format!("snoozedUntil `{until}` is not a time."));
+    }
+    if !queued_runs(tx, &thread_id)?.is_empty() {
+        return reject(format!(
+            "Thread {thread_id} has a queued run and cannot be snoozed."
+        ));
+    }
+    thread_patch(tx, &command, "thread.snoozed", |t, now| {
+        t["snoozedUntil"] = json!(until);
+        t["snoozedAt"] = json!(now);
+        t["updatedAt"] = json!(now);
+        Ok(())
+    })
+}
+
+fn thread_unsnooze(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    thread_patch(tx, &command, "thread.unsnoozed", |t, now| {
+        if !is_null(t, "snoozedUntil") {
+            t["snoozedUntil"] = Value::Null;
+            t["snoozedAt"] = Value::Null;
+            t["lastSnoozeWakeAt"] = json!(now);
+            t["updatedAt"] = json!(now);
+        }
+        Ok(())
+    })
+}
+
+fn thread_auto_settle_set(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let enabled = command["enabled"] == true;
+    thread_patch(tx, &command, "thread.auto-settle-set", |t, now| {
+        if enabled != is_null(t, "autoSettleDisabledAt") {
+            t["autoSettleDisabledAt"] = if enabled { Value::Null } else { json!(now) };
+            t["updatedAt"] = json!(now);
+        }
+        Ok(())
+    })
+}
+
+fn thread_pin(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let order_key = command["orderKey"].clone();
+    thread_patch(tx, &command, "thread.pinned", |t, now| {
+        let was_pinned = !is_null(t, "pinnedAt");
+        if !was_pinned {
+            t["pinnedAt"] = json!(now);
+            if order_key.is_string() {
+                t["pinOrderKey"] = order_key;
+            }
+        }
+        if t["settledOverride"] == "settled" {
+            t["settledOverride"] = json!("active");
+            t["settledAt"] = Value::Null;
+            t["unsettledAt"] = json!(now);
+        }
+        if !is_null(t, "snoozedUntil") {
+            t["lastSnoozeWakeAt"] = json!(now);
+        }
+        t["snoozedUntil"] = Value::Null;
+        t["snoozedAt"] = Value::Null;
+        t["updatedAt"] = json!(now);
+        Ok(())
+    })
+}
+
+fn thread_unpin(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    thread_patch(tx, &command, "thread.unpinned", |t, now| {
+        if !is_null(t, "pinnedAt") {
+            t["pinnedAt"] = Value::Null;
+            t["pinOrderKey"] = Value::Null;
+            t["updatedAt"] = json!(now);
+        }
+        Ok(())
+    })
+}
+
+fn thread_pin_reorder(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let key = command["orderKey"].clone();
+    thread_patch(tx, &command, "thread.pin-reordered", |t, now| {
+        if t["pinOrderKey"] != key {
+            t["pinOrderKey"] = key;
+            t["updatedAt"] = json!(now);
+        }
+        Ok(())
+    })
+}
+
+fn thread_active_reorder(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let key = command["orderKey"].clone();
+    thread_patch(tx, &command, "thread.active-reordered", |t, _| {
+        t["activeOrderKey"] = key;
+        Ok(())
+    })
+}
+
+fn thread_tag_set(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let tag = command["tag"].clone();
+    let tagged = command["tagged"] == true;
+    thread_patch(tx, &command, "thread.tags-updated", |t, _| {
+        let mut tags: Vec<Value> = t["tags"].as_array().cloned().unwrap_or_default();
+        tags.retain(|existing| *existing != tag);
+        if tagged {
+            tags.push(tag);
+        }
+        t["tags"] = json!(tags);
+        Ok(())
+    })
+}
+
+fn thread_mark_unread(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    let completed = tx
+        .entities(&thread_id, "runs")?
+        .into_iter()
+        .filter_map(|r| {
+            r["completedAt"]
+                .as_str()
+                .and_then(crate::time::millis_from_iso)
+        })
+        .max();
+    let Some(completed) = completed else {
+        return reject(format!(
+            "Thread {thread_id} has no completed run to mark unread."
+        ));
+    };
+    thread_patch(tx, &command, "thread.marked-unread", |t, _| {
+        t["lastVisitedAt"] = json!(crate::time::iso_from_millis(completed - 1));
+        Ok(())
+    })
+}
+
+fn pull_request_key(link: &Value) -> (Value, Value, Value) {
+    let lower = |v: &Value| json!(v.as_str().unwrap_or_default().to_lowercase());
+    (
+        lower(&link["host"]),
+        lower(&link["repository"]),
+        link["number"].clone(),
+    )
+}
+
+fn thread_pull_request_link(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let key = pull_request_key(&command);
+    let mut link = json!({
+        "host": command["host"],
+        "repository": command["repository"],
+        "number": command["number"],
+        "url": command["url"],
+        "source": command["source"],
+        "linkedAt": tx.now(),
+        "snapshot": null,
+        "stack": null,
+    });
+    if command["repositoryWebUrl"].is_string() {
+        link["repositoryWebUrl"] = command["repositoryWebUrl"].clone();
+    }
+    thread_patch(tx, &command, "thread.metadata-updated", |t, now| {
+        let mut links = t["pullRequests"].as_array().cloned().unwrap_or_default();
+        if links
+            .iter()
+            .any(|l| pull_request_key(l) == key && l["source"] != "stack-dismissed")
+        {
+            return Ok(());
+        }
+        links.retain(|l| pull_request_key(l) != key);
+        links.push(link);
+        t["pullRequests"] = json!(links);
+        t["updatedAt"] = json!(now);
+        Ok(())
+    })
+}
+
+fn thread_pull_request_unlink(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let key = pull_request_key(&command);
+    thread_patch(tx, &command, "thread.metadata-updated", |t, now| {
+        let mut links = t["pullRequests"].as_array().cloned().unwrap_or_default();
+        let before = links.len();
+        links.retain(|l| pull_request_key(l) != key);
+        if links.len() != before {
+            t["pullRequests"] = json!(links);
+            t["updatedAt"] = json!(now);
+        }
+        Ok(())
+    })
+}
+
+/// Dismisses a pending user question without an answer: the provider gets an empty answer.
+fn thread_user_input_dismiss(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    let request_id = command["requestId"].as_str().unwrap_or_default().to_owned();
+    live_thread(tx, &thread_id)?;
+    let Some(mut request) = tx.entity(&thread_id, "runtimeRequests", &request_id)? else {
+        return reject(format!("Request {request_id} does not exist."));
+    };
+    if request["status"] != "pending" {
+        return Ok(vec![]);
+    }
+    request["status"] = json!("cancelled");
+    request["resolvedAt"] = json!(tx.now());
+    let node = request["nodeId"].as_str().map(str::to_owned);
+    tx.append(Draft::new(&thread_id, "runtime-request.updated", request).node(node.as_deref()))?;
+    Ok(vec![Effect::Respond {
+        thread_id,
+        request: json!({"requestId": request_id, "decision": "cancel"}),
+    }])
+}
+
+/// Ends the thread's provider session. The next turn opens a new one.
+fn provider_session_detach(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    live_thread(tx, &thread_id)?;
+    if active_run(tx, &thread_id)?.is_some() {
+        return reject(format!(
+            "Thread {thread_id} is running; stop it before detaching its session."
+        ));
+    }
+    let session_id = command["providerSessionId"].as_str().unwrap_or_default();
+    if let Some(mut session) = tx.entity(&thread_id, "providerSessions", session_id)? {
+        session["status"] = json!("stopped");
+        session["updatedAt"] = json!(tx.now());
+        tx.append(Draft::new(&thread_id, "provider-session.updated", session))?;
+    }
+    Ok(vec![Effect::CloseSession { thread_id }])
+}
+
+/// `provider.switch`: the next turn runs on another provider instance. Its history does not
+/// move to the new provider (no context handoff yet), so the new provider starts fresh.
+fn provider_switch(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    if active_run(tx, &thread_id)?.is_some() {
+        return reject(format!(
+            "Thread {thread_id} is running; switch providers between turns."
+        ));
+    }
+    let selection = normalize_model_selection(&command["modelSelection"]);
+    let switching = live_thread(tx, &thread_id)?["providerInstanceId"] != selection["instanceId"];
+    thread_patch(tx, &command, "thread.provider-switched", |t, now| {
+        t["providerInstanceId"] = selection["instanceId"].clone();
+        t["modelSelection"] = selection;
+        if switching {
+            t["activeProviderThreadId"] = Value::Null;
+        }
+        t["updatedAt"] = json!(now);
+        Ok(())
+    })?;
+    Ok(if switching {
+        vec![Effect::CloseSession { thread_id }]
+    } else {
+        vec![]
+    })
+}
+
+/// Applies a generated title when it answers the thread's current request.
+fn thread_title_regeneration_complete(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let request_id = command["requestId"].clone();
+    let title = command["title"].clone();
+    let outcome = command["outcome"].clone();
+    thread_patch(tx, &command, "thread.metadata-updated", |t, now| {
+        if t["titleRegeneration"]["requestId"] != request_id {
+            return Ok(());
+        }
+        if let Some(title) = title.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+            t["title"] = json!(title);
+        }
+        if outcome.is_object() {
+            let mut last = outcome;
+            last["requestId"] = request_id;
+            last["completedAt"] = json!(now);
+            t["lastTitleRegeneration"] = last;
+        }
+        t["titleRegeneration"] = Value::Null;
+        t["updatedAt"] = json!(now);
+        Ok(())
     })
 }

@@ -201,9 +201,9 @@ impl Inner {
             ));
         };
         let Some(handler) = commands::handler(&command_type) else {
-            return Err(DispatchError::Rejected(format!(
-                "conn-server does not support `{command_type}` commands yet."
-            )));
+            return Err(DispatchError::Rejected(
+                commands::refusal(&command_type).to_owned(),
+            ));
         };
         let outcome = self
             .db(move |store| {

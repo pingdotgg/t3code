@@ -24,6 +24,32 @@ pub(crate) fn iso_from_millis(millis: i64) -> String {
     )
 }
 
+/// Milliseconds since the epoch of an ISO-8601 UTC time (`2026-11-13T08:49:41.123Z`, with or
+/// without fraction). `None` when it does not parse.
+pub(crate) fn millis_from_iso(text: &str) -> Option<i64> {
+    let text = text.strip_suffix('Z')?;
+    let (date, time) = text.split_once('T')?;
+    let mut date = date.split('-').map(|p| p.parse::<i64>().ok());
+    let (y, m, d) = (date.next()??, date.next()??, date.next()??);
+    let (hms, frac) = time.split_once('.').unwrap_or((time, "0"));
+    let mut hms = hms.split(':').map(|p| p.parse::<i64>().ok());
+    let (h, mi, s) = (hms.next()??, hms.next()??, hms.next()??);
+    let ms: i64 = format!("{frac:0<3}").get(..3)?.parse().ok()?;
+    let days = days_from_civil(y, m, d);
+    Some(((days * 24 + h) * 60 + mi) * 60_000 + s * 1000 + ms)
+}
+
+/// Howard Hinnant's `days_from_civil`.
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
 /// Howard Hinnant's `civil_from_days`.
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
@@ -40,7 +66,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::iso_from_millis;
+    use super::{iso_from_millis, millis_from_iso};
 
     #[test]
     fn formats_utc() {
@@ -50,5 +76,13 @@ mod tests {
             "2026-11-13T08:49:41.123Z"
         );
         assert_eq!(iso_from_millis(951_782_400_000), "2000-02-29T00:00:00.000Z");
+        for millis in [0, 951_782_400_000, 1_794_559_781_123] {
+            assert_eq!(millis_from_iso(&iso_from_millis(millis)), Some(millis));
+        }
+        assert_eq!(
+            millis_from_iso("2026-11-13T08:49:41Z"),
+            Some(1_794_559_781_000)
+        );
+        assert_eq!(millis_from_iso("yesterday"), None);
     }
 }

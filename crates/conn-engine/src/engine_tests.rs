@@ -1023,3 +1023,245 @@ async fn scratch_and_new_projects_get_folders_under_home() {
             .ends_with("my-app-2")
     );
 }
+
+/// Every `type` of `OrchestrationV2Command` at the pinned contract.
+const CONTRACT_COMMANDS: [&str; 56] = [
+    "thread.stop",
+    "thread.create",
+    "thread.archive",
+    "thread.guest-share.close",
+    "thread.guest-message.dismiss",
+    "thread.unarchive",
+    "thread.delete",
+    "thread.settle",
+    "thread.auto-settle",
+    "thread.unsettle",
+    "thread.snooze",
+    "thread.unsnooze",
+    "thread.auto-settle.set",
+    "thread.pin",
+    "thread.unpin",
+    "thread.tag.set",
+    "thread.pin.reorder",
+    "thread.active.reorder",
+    "thread.visit",
+    "thread.mark-unread",
+    "thread.metadata.update",
+    "thread.pull-request.link",
+    "thread.pull-request.unlink",
+    "thread.pull-request-link.sync",
+    "thread.pull-request.watch",
+    "thread.pull-request.sync",
+    "thread.title.regeneration.complete",
+    "thread.runtime-mode.set",
+    "thread.interaction-mode.set",
+    "thread.model-selection.set",
+    "provider-session.detach",
+    "message.dispatch",
+    "prepared-run.release",
+    "notification.delivery.accept",
+    "prepared-run.progress",
+    "prepared-run.fail",
+    "prepared-run.retry",
+    "subagent.stop",
+    "run.interrupt",
+    "queued-message.promote-to-steer",
+    "queue.resume",
+    "queued-run.start",
+    "queued-run.reorder",
+    "queued-run.cancel",
+    "queued-run.edit",
+    "runtime-request.respond",
+    "thread.user-input.dismiss",
+    "checkpoint.rollback",
+    "thread.fork",
+    "thread.merge_back",
+    "delegated_task.request",
+    "delegated_task.wake-policy",
+    "delegated_task.completion-delivery.acknowledge",
+    "delegated_task.completion-delivery.dispose",
+    "thread.created.record",
+    "provider.switch",
+];
+
+#[test]
+fn every_contract_command_is_handled_or_refused_with_a_reason() {
+    let mut handled = 0;
+    for command in CONTRACT_COMMANDS {
+        if crate::commands::handler(command).is_some() {
+            handled += 1;
+        } else {
+            assert_ne!(
+                crate::commands::refusal(command),
+                "conn-server does not support this command.",
+                "{command} has no reason"
+            );
+        }
+    }
+    assert_eq!(handled, 37);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn thread_lifecycle_commands_reach_the_shell_row() {
+    let db = TempDb::new("lifecycle");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let row = |shell: &Value| shell["threads"][0].clone();
+    let cmd = |n: u32, ty: &str, extra: Value| {
+        let mut c = json!({"type": ty, "commandId": format!("l{n}"), "threadId": "t1"});
+        c.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        c
+    };
+
+    dispatch(&engine, cmd(1, "thread.pin", json!({"orderKey": "a0"}))).await;
+    let r = row(&engine.shell_snapshot().await.unwrap());
+    assert!(r["pinnedAt"].is_string());
+    assert_eq!(r["pinOrderKey"], "a0");
+    dispatch(
+        &engine,
+        cmd(2, "thread.pin.reorder", json!({"orderKey": "b0"})),
+    )
+    .await;
+    dispatch(
+        &engine,
+        cmd(3, "thread.tag.set", json!({"tag": "bug", "tagged": true})),
+    )
+    .await;
+    dispatch(
+        &engine,
+        cmd(4, "thread.tag.set", json!({"tag": "ui", "tagged": true})),
+    )
+    .await;
+    dispatch(
+        &engine,
+        cmd(5, "thread.tag.set", json!({"tag": "bug", "tagged": false})),
+    )
+    .await;
+    let r = row(&engine.shell_snapshot().await.unwrap());
+    assert_eq!(r["pinOrderKey"], "b0");
+    assert_eq!(r["tags"], json!(["ui"]));
+
+    // Settling unpins; pinning again brings it back as active.
+    dispatch(&engine, cmd(6, "thread.settle", json!({}))).await;
+    let r = row(&engine.shell_snapshot().await.unwrap());
+    assert_eq!(r["settledOverride"], "settled");
+    assert_eq!(r["pinnedAt"], Value::Null);
+    dispatch(
+        &engine,
+        cmd(7, "thread.unsettle", json!({"reason": "user"})),
+    )
+    .await;
+    let r = row(&engine.shell_snapshot().await.unwrap());
+    assert_eq!(r["settledOverride"], "active");
+    assert!(r["unsettledAt"].is_string());
+
+    dispatch(
+        &engine,
+        cmd(
+            8,
+            "thread.snooze",
+            json!({"snoozedUntil": "2030-01-01T00:00:00.000Z"}),
+        ),
+    )
+    .await;
+    assert_eq!(
+        row(&engine.shell_snapshot().await.unwrap())["snoozedUntil"],
+        "2030-01-01T00:00:00.000Z"
+    );
+    dispatch(
+        &engine,
+        cmd(9, "thread.unsnooze", json!({"reason": "user"})),
+    )
+    .await;
+    dispatch(
+        &engine,
+        cmd(10, "thread.auto-settle.set", json!({"enabled": false})),
+    )
+    .await;
+    let r = row(&engine.shell_snapshot().await.unwrap());
+    assert_eq!(r["snoozedUntil"], Value::Null);
+    assert!(r["autoSettleDisabledAt"].is_string());
+
+    dispatch(
+        &engine,
+        cmd(
+            11,
+            "thread.pull-request.link",
+            json!({"host": "github.com", "repository": "o/r",
+            "number": 7, "url": "https://github.com/o/r/pull/7", "source": "manual"}),
+        ),
+    )
+    .await;
+    assert_eq!(
+        row(&engine.shell_snapshot().await.unwrap())["pullRequests"][0]["number"],
+        7
+    );
+    dispatch(
+        &engine,
+        cmd(
+            12,
+            "thread.pull-request.unlink",
+            json!({"host": "GitHub.com", "repository": "o/r", "number": 7}),
+        ),
+    )
+    .await;
+    assert_eq!(
+        row(&engine.shell_snapshot().await.unwrap())["pullRequests"],
+        json!([])
+    );
+
+    // Mark unread needs a completed run; with one, the visit moves just before it.
+    let refused = engine
+        .dispatch(from_json(cmd(13, "thread.mark-unread", json!({}))).unwrap())
+        .await;
+    assert!(matches!(refused, Err(EngineError::Rejected(_))));
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hi")).await;
+    until_run_ends(&mut thread).await;
+    dispatch(&engine, cmd(14, "thread.mark-unread", json!({}))).await;
+    let r = row(&engine.shell_snapshot().await.unwrap());
+    let visited = crate::time::millis_from_iso(r["lastVisitedAt"].as_str().unwrap()).unwrap();
+    let completed =
+        crate::time::millis_from_iso(r["latestRunCompletedAt"].as_str().unwrap()).unwrap();
+    assert_eq!(visited, completed - 1);
+
+    // A provider switch takes effect between turns and drops the old provider thread.
+    dispatch(
+        &engine,
+        cmd(
+            15,
+            "provider.switch",
+            json!({"modelSelection": {"instanceId": "codex", "model": "gpt"}}),
+        ),
+    )
+    .await;
+    let r = row(&engine.shell_snapshot().await.unwrap());
+    assert_eq!(r["providerInstanceId"], "codex");
+    assert_eq!(r["activeProviderThreadId"], Value::Null);
+
+    let refused = engine
+        .dispatch(
+            from_json(cmd(
+                16,
+                "checkpoint.rollback",
+                json!({"checkpointId": "x", "scopeId": "s"}),
+            ))
+            .unwrap(),
+        )
+        .await;
+    let Err(EngineError::Rejected(error)) = refused else {
+        panic!("expected a refusal")
+    };
+    assert!(
+        to_json(&error)["message"]
+            .as_str()
+            .unwrap()
+            .contains("checkpoints")
+    );
+}
