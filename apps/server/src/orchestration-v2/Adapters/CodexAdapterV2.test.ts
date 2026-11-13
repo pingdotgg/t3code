@@ -4455,6 +4455,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                           item: { type: "reasoning", id: "delta-only", summary: [], content: [] },
                         },
                       },
+                      {
+                        method: "item/reasoning/summaryTextDelta",
+                        params: {
+                          itemId: "emptied",
+                          summaryIndex: 0,
+                          delta: "Draft the completion empties",
+                        },
+                      },
+                      {
+                        method: "item/completed",
+                        params: {
+                          item: { type: "reasoning", id: "emptied", summary: [""], content: [] },
+                        },
+                      },
                     ]
                   : []),
               ].map((event, index) => ({
@@ -4497,7 +4511,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ),
           );
           assert.deepEqual(
-            [...latest.values()].map((item) => item.text),
+            [...latest.values()].map((item) => item.text).filter((text) => text.length > 0),
             terminalStatus === "completed"
               ? [
                   "Final summary one",
@@ -4540,6 +4554,81 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("an empty completed plan supersedes its streamed draft", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-plan-emptied";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const nativeTurnId = `native-${scenario}-turn`;
+        const prompt = "Plan the change.";
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+            ...[
+              {
+                method: "item/plan/delta",
+                params: { itemId: "plan", delta: "Obsolete draft" },
+              },
+              {
+                method: "item/completed",
+                params: { item: { type: "plan", id: "plan", text: "" } },
+              },
+            ].map((event, index) => ({
+              type: "emit_inbound" as const,
+              label: `plan-${index}`,
+              frame: {
+                method: event.method,
+                params: { threadId: nativeThreadId, turnId: nativeTurnId, ...event.params },
+              },
+            })),
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: prompt,
+          }),
+        );
+        yield* harness.firstTerminal;
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "proposed_plan" &&
+            !event.turnItem.streaming
+              ? [event.turnItem.markdown]
+              : [],
+          ),
+          [""],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
   );
 
   const finalAnswerTranscript = (
