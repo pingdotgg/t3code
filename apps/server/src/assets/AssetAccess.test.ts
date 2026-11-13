@@ -1566,10 +1566,7 @@ describe("AssetAccess", () => {
       // A pull request's own repository wins over the checkout it is shown in.
       yield* sourceControlMediaResponse({ ...asset, repository: "enterprise/private" }, {});
       expect(fetched.at(-1)?.repository).toBe("enterprise/private");
-    }).pipe(
-      Effect.provide(Layer.mergeAll(layerTest, layerDrivers, layerIdentities)),
-      Effect.scoped,
-    );
+    }).pipe(Effect.provide(Layer.mergeAll(layerTest, layerDrivers, layerIdentities)));
   });
 
   it.effect("refuses media no host keeps behind a credential, without echoing the URL", () =>
