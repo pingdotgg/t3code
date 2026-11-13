@@ -146,6 +146,8 @@ export interface EnvironmentSupervisorOptions {
     readonly activeRoute: ConnectionRoute;
     readonly reported: ReadonlyArray<ReportedEndpoint>;
   }) => Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
+  /** Saves the label the connected server reports. Succeeds with the entry when it changed. */
+  readonly adoptLabel?: (label: string) => Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
 }
 
 function retryDelayMs(failureCount: number, random: number): number {
@@ -1025,9 +1027,17 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     const connectedAt = yield* Clock.currentTimeMillis;
     yield* SubscriptionRef.set(prepared, Option.some(connectedLease.prepared));
     yield* SubscriptionRef.set(session, Option.some(connectedLease.session));
-    if (options?.learnRoutes !== undefined) {
-      yield* learnRoutesFrom(options.learnRoutes, connectedLease).pipe(Effect.forkScoped);
-    }
+    // One fiber, so the entries the registry hands back are applied in the order it saved them.
+    yield* Effect.gen(function* () {
+      const reportedLabel = connectedLease.prepared.descriptor?.label;
+      if (options?.adoptLabel !== undefined && reportedLabel !== undefined) {
+        const relabeled = yield* options.adoptLabel(reportedLabel);
+        if (Option.isSome(relabeled)) yield* Ref.set(currentEntry, relabeled.value);
+      }
+      if (options?.learnRoutes !== undefined) {
+        yield* learnRoutesFrom(options.learnRoutes, connectedLease);
+      }
+    }).pipe(Effect.forkScoped);
     yield* setState({
       desired: true,
       network: currentIntent.network,

@@ -52,6 +52,7 @@ import {
   hasSavedBearerRoute,
   mergeLearnedRoutes,
   routesAfterRemoving,
+  routesWithReportedLabel,
   upsertRoute,
   type ReportedEndpoint,
 } from "./routes.ts";
@@ -368,6 +369,7 @@ export const make = Effect.gen(function* () {
             // before an enabled, compatible environment starts connecting.
             initiallyDesired: entry.enabled && entry.unsupportedReason === undefined,
             learnRoutes: (input) => learnRoutes({ environmentId, ...input }),
+            adoptLabel: (label) => adoptLabel(environmentId, label),
           }).pipe(
             Effect.provideService(Connectivity.Connectivity, connectivity),
             Effect.provideService(ConnectionDriver.ConnectionDriver, driver),
@@ -916,6 +918,41 @@ export const make = Effect.gen(function* () {
     typeof globalThis.location === "undefined" || globalThis.location.protocol !== "https:";
 
   /**
+   * Saves routes the connected server reported and updates the lease in place, so the supervisor
+   * keeps its session; `installEntryLocked` would tear it down instead.
+   */
+  const saveRoutesInPlaceLocked = Effect.fn("EnvironmentRegistry.saveRoutesInPlaceLocked")(
+    function* (entry: ConnectionCatalogEntry, routes: ReadonlyArray<ConnectionRoute>) {
+      const environmentId = entry.target.environmentId;
+      const next = entryWithRoutes(entry, routes);
+      const previousProfiles = new Map(
+        connectionRoutes(entry).map((route) => [
+          connectionRouteId(route.target),
+          Option.getOrNull(route.profile),
+        ]),
+      );
+      for (const route of routes) {
+        const profile = Option.getOrNull(route.profile);
+        if (profile === null || previousProfiles.get(connectionRouteId(route.target)) === profile) {
+          continue;
+        }
+        yield* profiles.put(profile);
+      }
+      yield* registrations.setRoutes(environmentId, persistedRoutes(next));
+      const lease = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
+      if (lease !== undefined) {
+        yield* SubscriptionRef.update(serviceScopes, (current) =>
+          new Map(current).set(environmentId, { ...lease, entry: next }),
+        );
+      }
+      yield* SubscriptionRef.update(entries, (current) =>
+        new Map(current).set(environmentId, next),
+      );
+      return next;
+    },
+  );
+
+  /**
    * Learned routes reuse the active route's credential, so they do not revoke pull request routing
    * trust the way a newly paired address does.
    */
@@ -939,39 +976,39 @@ export const make = Effect.gen(function* () {
           allowInsecure: allowInsecureRoutes,
         });
         if (routes === null) return Option.none<ConnectionCatalogEntry>();
-        const next = entryWithRoutes(entry, routes);
-        const previousProfiles = new Map(
-          connectionRoutes(entry).map((route) => [
-            connectionRouteId(route.target),
-            Option.getOrNull(route.profile),
-          ]),
-        );
-        for (const route of routes) {
-          const profile = Option.getOrNull(route.profile);
-          if (
-            profile === null ||
-            previousProfiles.get(connectionRouteId(route.target)) === profile
-          ) {
-            continue;
-          }
-          yield* profiles.put(profile);
-        }
-        yield* registrations.setRoutes(input.environmentId, persistedRoutes(next));
-        const lease = (yield* SubscriptionRef.get(serviceScopes)).get(input.environmentId);
-        if (lease !== undefined) {
-          yield* SubscriptionRef.update(serviceScopes, (current) =>
-            new Map(current).set(input.environmentId, { ...lease, entry: next }),
-          );
-        }
-        yield* SubscriptionRef.update(entries, (current) =>
-          new Map(current).set(input.environmentId, next),
-        );
-        return Option.some(next);
+        return Option.some(yield* saveRoutesInPlaceLocked(entry, routes));
       }),
     ).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Could not save routes learned from the environment.", {
           environmentId: input.environmentId,
+          error,
+        }).pipe(Effect.as(Option.none<ConnectionCatalogEntry>())),
+      ),
+    );
+  });
+
+  /** The server is the same one at the same addresses, so pull request routing trust stays. */
+  const adoptLabel = Effect.fn("EnvironmentRegistry.adoptLabel")(function* (
+    environmentId: EnvironmentId,
+    label: string,
+  ) {
+    return yield* withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
+          return Option.none<ConnectionCatalogEntry>();
+        }
+        const entry = (yield* SubscriptionRef.get(entries)).get(environmentId);
+        if (entry === undefined) return Option.none<ConnectionCatalogEntry>();
+        const routes = routesWithReportedLabel(entry, label);
+        if (routes === null) return Option.none<ConnectionCatalogEntry>();
+        return Option.some(yield* saveRoutesInPlaceLocked(entry, routes));
+      }),
+    ).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not save the label the environment reports.", {
+          environmentId,
           error,
         }).pipe(Effect.as(Option.none<ConnectionCatalogEntry>())),
       ),

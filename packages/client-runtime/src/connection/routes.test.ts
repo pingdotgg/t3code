@@ -16,12 +16,14 @@ import {
   credentialConnectionId,
   insertRoute,
   entryWithRoutes,
+  isLearned,
   isNearbyAddress,
   mergeLearnedRoutes,
   pendingRouteOrder,
   removedWithRelay,
   routeKeepsItsHost,
   routesAfterRemoving,
+  routesWithReportedLabel,
   sendsTokenInClear,
   upsertRoute,
   usableRoutes,
@@ -137,6 +139,50 @@ describe("connection routes", () => {
     expect(pendingRouteOrder(dragged, ["tailnet", "lan"])).toBeNull();
     expect(pendingRouteOrder(dragged, ["lan", "public"])).toBeNull();
     expect(pendingRouteOrder(dragged, ["lan", "tailnet", "public"])).toBeNull();
+  });
+});
+
+describe("reported label", () => {
+  const entry = (routes: ReadonlyArray<ConnectionRoute>) =>
+    entryWithRoutes({ target: RELAY.target, profile: RELAY.profile, enabled: true }, routes);
+  const labels = (routes: ReadonlyArray<ConnectionRoute> | null) =>
+    routes?.map((route) => [route.target.label, Option.getOrNull(route.profile)?.label ?? null]);
+
+  it("renames every saved route and keeps what else the route records", () => {
+    const routes = routesWithReportedLabel(
+      entry([learned("learned:lan", "http://192.168.1.10:3773/"), TAILNET, RELAY]),
+      "Laptop",
+    );
+    expect(labels(routes)).toEqual([
+      ["Laptop", "Laptop"],
+      ["Laptop", "Laptop"],
+      ["Laptop", null],
+    ]);
+    expect(routes?.map(isLearned)).toEqual([true, false, false]);
+    expect(routes?.map((route) => connectionRouteId(route.target))).toEqual([
+      "learned:lan",
+      "tailnet",
+      "relay",
+    ]);
+    expect(routesWithReportedLabel(entry(routes!), "Laptop")).toBeNull();
+  });
+
+  it("leaves an environment the user named alone, even where a route shares the old label", () => {
+    const named: ConnectionRoute = {
+      target: new BearerConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Desk",
+        connectionId: "tailnet",
+        customLabel: true,
+      }),
+      profile: TAILNET.profile,
+    };
+    expect(
+      routesWithReportedLabel(
+        entry([learned("learned:lan", "http://192.168.1.10:3773/"), named, RELAY]),
+        "Laptop",
+      ),
+    ).toBeNull();
   });
 });
 

@@ -7,6 +7,9 @@ const ConnectionTargetBase = {
   label: Schema.String,
 };
 
+/** Set when the user typed the label, so the name the server reports does not replace it. */
+const customLabel = Schema.optionalKey(Schema.Literal(true));
+
 export class PrimaryConnectionTarget extends Schema.TaggedClass<PrimaryConnectionTarget>()(
   "PrimaryConnectionTarget",
   {
@@ -21,6 +24,7 @@ export class BearerConnectionTarget extends Schema.TaggedClass<BearerConnectionT
   {
     ...ConnectionTargetBase,
     connectionId: Schema.String,
+    customLabel,
   },
 ) {}
 
@@ -36,6 +40,7 @@ export class SshConnectionTarget extends Schema.TaggedClass<SshConnectionTarget>
   {
     ...ConnectionTargetBase,
     connectionId: Schema.String,
+    customLabel,
   },
 ) {}
 

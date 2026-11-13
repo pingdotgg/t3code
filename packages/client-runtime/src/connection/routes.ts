@@ -11,8 +11,15 @@ import {
   BearerConnectionProfile,
   type ConnectionCatalogEntry,
   type ConnectionRoute,
+  SshConnectionProfile,
 } from "./catalog.ts";
-import { BearerConnectionTarget, type ConnectionTarget } from "./model.ts";
+import {
+  BearerConnectionTarget,
+  type ConnectionTarget,
+  PrimaryConnectionTarget,
+  RelayConnectionTarget,
+  SshConnectionTarget,
+} from "./model.ts";
 
 export type ConnectionRouteKind =
   | "relay"
@@ -56,6 +63,50 @@ export function entryWithRoutes(
     profile: first.profile,
     ...(rest.length === 0 ? {} : { alternateRoutes: rest }),
   };
+}
+
+/**
+ * The saved routes renamed to the label the server reports, or null when
+ * nothing changes. A label the user typed names the whole environment, so no
+ * route of it is renamed.
+ */
+export function routesWithReportedLabel(
+  entry: ConnectionCatalogEntry,
+  label: string,
+): ReadonlyArray<ConnectionRoute> | null {
+  const routes = connectionRoutes(entry);
+  const userNamed = routes.some(
+    ({ target }) =>
+      (target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget") &&
+      target.customLabel === true,
+  );
+  if (userNamed || routes.every((route) => routeLabels(route).every((saved) => saved === label))) {
+    return null;
+  }
+  return routes.map((route) => withLabel(route, label));
+}
+
+function routeLabels(route: ConnectionRoute): ReadonlyArray<string> {
+  return [route.target.label, ...Option.toArray(route.profile).map((profile) => profile.label)];
+}
+
+function withLabel(route: ConnectionRoute, label: string): ConnectionRoute {
+  const { target } = route;
+  const profile = Option.map(route.profile, (saved) =>
+    saved._tag === "BearerConnectionProfile"
+      ? new BearerConnectionProfile({ ...saved, label })
+      : new SshConnectionProfile({ ...saved, label }),
+  );
+  switch (target._tag) {
+    case "PrimaryConnectionTarget":
+      return { target: new PrimaryConnectionTarget({ ...target, label }), profile };
+    case "RelayConnectionTarget":
+      return { target: new RelayConnectionTarget({ ...target, label }), profile };
+    case "BearerConnectionTarget":
+      return { target: new BearerConnectionTarget({ ...target, label }), profile };
+    case "SshConnectionTarget":
+      return { target: new SshConnectionTarget({ ...target, label }), profile };
+  }
 }
 
 export function routeEntry(

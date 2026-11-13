@@ -574,12 +574,7 @@ describe("connection onboarding", () => {
   it.effect("updates bearer metadata while preserving the credential and identity", () =>
     Effect.gen(function* () {
       const environmentId = EnvironmentId.make("environment-paired");
-      const registration = yield* prepareBearerConnectionUpdate({
-        input: {
-          environmentId,
-          label: "  Renamed environment  ",
-          httpBaseUrl: "http://100.65.180.100:3773/path",
-        },
+      const saved = {
         entry: Option.some({
           target: new BearerConnectionTarget({
             environmentId,
@@ -598,13 +593,24 @@ describe("connection onboarding", () => {
           enabled: true,
         }),
         credential: Option.some(new BearerConnectionCredential({ token: "bearer-token" })),
+      };
+      const httpBaseUrl = "http://100.65.180.100:3773/path";
+      const registration = yield* prepareBearerConnectionUpdate({
+        input: { environmentId, label: "  Renamed environment  ", httpBaseUrl },
+        ...saved,
       });
+      const addressOnly = yield* prepareBearerConnectionUpdate({
+        input: { environmentId, label: "Old label", httpBaseUrl },
+        ...saved,
+      });
+      expect(addressOnly.target.customLabel).toBeUndefined();
 
       expect(registration).toMatchObject({
         target: {
           environmentId,
           label: "Renamed environment",
           connectionId: "bearer:environment-paired",
+          customLabel: true,
         },
         profile: {
           environmentId,
