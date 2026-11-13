@@ -12,6 +12,7 @@ import { useRightPanelStore } from "../rightPanelStore";
 import { remarkEnableOrderedListNumbers } from "@t3tools/shared/markdownPipeline";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import { HostImageUrlContext } from "./chat/hostImageUrl";
+import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 
 const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   workspaceSearch: vi.fn(),
@@ -120,6 +121,7 @@ vi.mock(import("../hooks/useSettings"), async (original) => {
 });
 
 import ChatMarkdown from "./ChatMarkdown";
+import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
 import { AudioPreview } from "./files/AudioPreview";
 
 it("keeps compact audio playback loaded across signed URL renewals", async () => {
@@ -247,6 +249,30 @@ it("loads the <picture> source for the current theme through the image route", a
     .toHaveAttribute("src", `${pixel}#/work/dark.png`);
 });
 
+it("sizes a raw HTML image by width and height written with px units", async () => {
+  setup();
+  const largeImage = `data:image/svg+xml,${encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"/>',
+  )}`;
+  await using screen = await render(
+    <HostImageUrlContext value={() => largeImage}>
+      <ChatMarkdown
+        cwd={undefined}
+        parseRawHtml
+        text={
+          '### PR Review in progress <img src="/work/spinner.gif" alt="spinner" width="14px" height="7px" />'
+        }
+      />
+    </HostImageUrlContext>,
+  );
+  const image = screen.getByAltText("spinner");
+  await expect.element(image).toHaveAttribute("src", largeImage);
+  const element = image.element() as HTMLImageElement;
+  await element.decode();
+  const { width, height } = element.getBoundingClientRect();
+  expect({ width, height }).toEqual({ width: 14, height: 7 });
+});
+
 it("reuses the parse of a streaming reply's finished blocks when it remounts", async () => {
   setup();
   const message = (
@@ -275,6 +301,23 @@ it("reuses the parse of a remounted message that has stable extra plugins", asyn
   expect(parsed).toHaveBeenCalledTimes(1);
 });
 
+it("highlights a code block's own source when an earlier block of the same length was cached", async () => {
+  setup();
+  const highlightedText = (container: HTMLElement) =>
+    container.querySelector(".chat-markdown-shiki")?.textContent?.trim();
+  // These two lines share a 32-bit FNV-1a hash and a length.
+  const first = 'const commitSha = "f36a6d8fe0aa";';
+  const second = 'const commitSha = "cb06f8d135b3";';
+  // The block suspends until the shared highlighter loads, which can outlast vi.waitFor on a busy runner.
+  await getSyntaxHighlighterPromise("ts");
+  {
+    await using screen = await renderText(`\`\`\`ts\n${first}\n\`\`\``);
+    await vi.waitFor(() => expect(highlightedText(screen.container)).toBe(first));
+  }
+  await using screen = await renderText(`\`\`\`ts\n${second}\n\`\`\``);
+  await vi.waitFor(() => expect(highlightedText(screen.container)).toBe(second));
+});
+
 describe("ChatMarkdown favicon privacy", () => {
   it("suppresses private link images while preserving public links across updates", async () => {
     setup();
@@ -293,6 +336,23 @@ describe("ChatMarkdown favicon privacy", () => {
     await rerender(markdown("https://github.com/pingdotgg/t3code/pull/1"));
     expect(container.querySelectorAll("img")).toHaveLength(0);
     expect(container.querySelector("a svg")).not.toBeNull();
+  });
+});
+
+describe("ChatMarkdown external link labels", () => {
+  it("keeps a leading emoji whole", async () => {
+    setup();
+    await using screen = await render(
+      <ChatMarkdown cwd="/tmp/project" text="[😀 Read the documentation](https://example.com)" />,
+    );
+    await vi.waitFor(() => {
+      const link = screen.container.querySelector("a");
+      expect(link?.textContent).toContain("😀 Read");
+      const walker = document.createTreeWalker(link!, NodeFilter.SHOW_TEXT);
+      const textNodes: string[] = [];
+      while (walker.nextNode()) textNodes.push(walker.currentNode.nodeValue ?? "");
+      expect(textNodes.filter((node) => /\p{Surrogate}/u.test(node))).toEqual([]);
+    });
   });
 });
 
@@ -546,6 +606,66 @@ describe("ChatMarkdown inline code selection", () => {
     const fenced = screen.container.querySelector("pre code")!;
     await userEvent.dblClick(fenced, { position: { x: 4, y: 4 } });
     expect(window.getSelection()?.toString()).toBe("fenced");
+  });
+
+  it("selects the whole line on triple-click beside a favicon link or a file chip", async () => {
+    setup();
+    await using screen = await renderText(
+      "Before [docs](https://example.com/docs) after words\n\nBefore [App.tsx](/tmp/project/src/App.tsx) after words",
+    );
+    const tripleClickWord = async (paragraph: HTMLElement, word: string) => {
+      const text = [...paragraph.childNodes].find((node) => node.textContent?.includes(word))!;
+      const range = document.createRange();
+      range.setStart(text, text.textContent!.indexOf(word));
+      range.setEnd(text, text.textContent!.indexOf(word) + word.length);
+      const wordBox = range.getBoundingClientRect();
+      const paragraphBox = paragraph.getBoundingClientRect();
+      window.getSelection()?.removeAllRanges();
+      await userEvent.tripleClick(paragraph, {
+        position: {
+          x: wordBox.left - paragraphBox.left + wordBox.width / 2,
+          y: wordBox.top - paragraphBox.top + wordBox.height / 2,
+        },
+      });
+      return window.getSelection()?.toString().trim();
+    };
+
+    const paragraphs = screen.container.querySelectorAll("p");
+    expect(paragraphs).toHaveLength(2);
+    const selections = [];
+    const lines = [];
+    for (const paragraph of paragraphs) {
+      lines.push(paragraph.textContent?.trim(), paragraph.textContent?.trim());
+      selections.push(
+        await tripleClickWord(paragraph, "Before"),
+        await tripleClickWord(paragraph, "after"),
+      );
+    }
+    expect(selections).toEqual(lines);
+  });
+});
+
+describe("ChatMarkdown alert copy", () => {
+  it("copies a fully selected callout as alert Markdown and a partial one as text", async () => {
+    setup();
+    await using screen = await renderText("> [!WARNING]\n> Back up first.");
+    const [label, body] = screen.container.querySelectorAll('[role="note"] > p');
+    const select = (startNode: Node, endNode: Node, endOffset: number) => {
+      const range = document.createRange();
+      range.setStart(startNode, 0);
+      range.setEnd(endNode, endOffset);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return chatMarkdownClipboardPayload(selection)?.text;
+    };
+    const labelText = label!.lastChild!;
+    const bodyText = body!.firstChild!;
+
+    expect(select(labelText, bodyText, bodyText.textContent!.length)).toBe(
+      "> [!WARNING]\n> Back up first.",
+    );
+    expect(select(labelText, bodyText, "Back up".length)).toBe("Warning\n\nBack up");
   });
 });
 
