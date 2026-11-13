@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   markdownForNativeRendering,
   markdownHtmlContent,
+  markdownWithBlockImages,
   markdownWithHtml,
   markdownWithFileEmbeds,
   parseMarkdownDocument,
@@ -441,4 +442,21 @@ it("leaves a captioned image in place when its caption alone would open another 
   ]) {
     expect(markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX)).toBe(markdown);
   }
+});
+
+it("lifts only embeds that stay images, leaving file links in their sentence", () => {
+  const input = {
+    environmentId: EnvironmentId.make("environment-1"),
+    threadId: ThreadId.make("thread-1"),
+    workspaceRoot: "/repo",
+  };
+  const label = (href: string, standalone: boolean) =>
+    markdownFileEmbedLabel(href, input, standalone);
+  for (const markdown of [
+    "See ![report](./report.pdf) for the full numbers.",
+    "Listen: ![sound](./sound.mp3) then reply",
+  ]) {
+    expect(markdownWithBlockImages(markdown, label)).toBe(markdown);
+  }
+  expect(markdownWithBlockImages("Shot ![a](./a.png)", label)).toBe("Shot\n\n![a](./a.png)");
 });

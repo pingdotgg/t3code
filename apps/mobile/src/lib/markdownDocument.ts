@@ -461,16 +461,29 @@ export function parseMarkdownDocument(markdown: string): Root {
   return parser.parse(markdownForNativeParsing(markdown));
 }
 
-const isImage = (node: MarkdownNode) => node.type === "image" || node.type === "imageReference";
-
 /**
  * The native view gives the media slot only to an image alone in a top-level paragraph and draws
- * any other image at line height, so each image moves to its own paragraph.
+ * any other image at line height, so each image moves to its own paragraph. With `fileLabel`, only
+ * embeds it keeps as images move; other files stay inline filename links.
  */
-export function markdownWithBlockImages(markdown: string): string {
+export function markdownWithBlockImages(
+  markdown: string,
+  fileLabel?: (href: string, standalone: boolean) => string | null,
+): string {
   if (!markdown.includes("![")) return markdown;
+  const root = parser.parse(markdown);
+  const definitions = new Map<string, string>();
+  for (const node of root.children)
+    if (node.type === "definition" && !definitions.has(node.identifier.toUpperCase()))
+      definitions.set(node.identifier.toUpperCase(), node.url);
+  const isImage = (node: MarkdownNode) => {
+    if (node.type !== "image" && node.type !== "imageReference") return false;
+    if (!fileLabel) return true;
+    const href = node.type === "image" ? node.url : definitions.get(node.identifier.toUpperCase());
+    return href !== undefined && fileLabel(href, false) === null;
+  };
   const edits: MarkdownEdit[] = [];
-  for (const paragraph of parser.parse(markdown).children) {
+  for (const paragraph of root.children) {
     const start = paragraph.position?.start.offset;
     const end = paragraph.position?.end.offset;
     if (paragraph.type !== "paragraph" || paragraph.children.length < 2) continue;

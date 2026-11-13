@@ -229,7 +229,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
       };
     }
     const content = markdownWithInlineFileLinks(
-      markdownWithBlockImages(markdownForNativeParsing(props.markdown)),
+      markdownWithBlockImages(markdownForNativeParsing(props.markdown), fileEmbedLabel),
       ENRICHED_INLINE_FILE_LINK_REGEX,
     );
     const files = markdownWithFileEmbeds(content, fileEmbedLabel);
