@@ -318,6 +318,11 @@ export const make = Effect.gen(function* () {
   // Each summary read can be a host CLI process (one `az` per read on Azure DevOps), so a quiet
   // open pull request is read on the sync reactor's quiet cadence rather than every sweep.
   const quietOpenReadAt = new Map<string, number>();
+  const quietReadKey = (reference: {
+    readonly projectId: string;
+    readonly repository: string;
+    readonly number: number;
+  }) => `${reference.projectId}\0${reference.repository.toLowerCase()}\0${reference.number}`;
   const terminals = yield* TerminalManager.TerminalManager;
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   // Repeated thread.settled retains settledAt; run the action only once per settlement.
@@ -327,6 +332,8 @@ export const make = Effect.gen(function* () {
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
     threadId?: ThreadId,
   ) {
+    // A thread that is not a candidate now (still running) must not keep a merged PR's quiet entry.
+    if (mergedPullRequest !== null) quietOpenReadAt.delete(quietReadKey(mergedPullRequest));
     const settings = yield* settingsService.getSettings;
     const automaticSettlementEnabled = autoSettlementConfigured(settings);
     const threads = yield* projections.getSettlementCandidates(threadId);
@@ -509,11 +516,12 @@ export const make = Effect.gen(function* () {
         if (!matchesMerge && !projects.has(reference.projectId)) {
           return yield* Effect.die(new Error("linked pull request project not found"));
         }
-        const readKey = `${reference.projectId}\0${reference.repository.toLowerCase()}\0${reference.number}`;
-        const shellClosed = group.filter((member) => shellClosedThreads.delete(member.id)).length;
+        const readKey = quietReadKey(reference);
+        const shellClosed =
+          group.filter((member) => shellClosedThreads.delete(member.id)).length > 0;
         const readAtMs = quietOpenReadAt.get(readKey);
         const readNowMs = DateTime.toEpochMillis(yield* DateTime.now);
-        if (matchesMerge || shellClosed > 0) quietOpenReadAt.delete(readKey);
+        if (shellClosed) quietOpenReadAt.delete(readKey);
         else if (readAtMs !== undefined && readNowMs - readAtMs < QUIET_SYNC_INTERVAL_MS) {
           return { state: "open", closedAt: null, mergedAt: null } satisfies SettlementPullRequest;
         }
@@ -529,7 +537,7 @@ export const make = Effect.gen(function* () {
                 repository: reference.repository,
                 number: reference.number,
               },
-              { recoverTransientFailure: false },
+              { recoverTransientFailure: false, bypassCache: shellClosed },
             );
         if (
           "updatedAt" in summary &&

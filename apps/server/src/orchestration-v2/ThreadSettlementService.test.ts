@@ -1623,20 +1623,40 @@ describe("ThreadSettlementServiceV2 worker", () => {
     }),
   );
 
-  it.effect("settles an unlinked branch thread its agent merged from a shell, past the cache", () =>
+  it.effect.each([
+    { kind: "an unlinked", linked: false },
+    { kind: "a quiet linked", linked: true },
+  ])("settles $kind branch thread its agent merged from a shell, past the cache", ({ linked }) =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(NOW));
-      const settled = yield* Deferred.make<void>();
       const thread = makeThread("shell-merged", {
         branch: "saved-feature",
         latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+        ...(linked
+          ? {
+              branchPullRequest: {
+                projectId: PROJECT_ID,
+                repository: "owner/repository",
+                number: 42,
+                url: "https://example.test/owner/repository/pull/42",
+              },
+            }
+          : {}),
       });
       const fixture = yield* makeHarness({
         snapshot: makeSnapshot([thread]),
         // The host already merged it; only a fresh read sees that past the cached open lookup.
         branchPullRequest: (_input, lookupOptions) =>
           Effect.succeed(makeBranchPullRequest(lookupOptions?.refresh ? "merged" : "open")),
-        onDispatch: () => Deferred.succeed(settled, undefined),
+        pullRequestSummary: (input, readOptions) =>
+          Effect.succeed({
+            ...makePullRequestSummary({
+              ...input,
+              state: readOptions?.bypassCache ? "merged" : "open",
+              updatedAt: DateTime.formatIso(DateTime.makeUnsafe(Date.parse(NOW) - 2 * DAY_MS)),
+            }),
+            ...(readOptions?.bypassCache ? { mergedAt: NOW } : {}),
+          }),
       });
       const at = DateTime.makeUnsafe(NOW);
       const runId = RunId.make("run:shell-merged");
@@ -1681,7 +1701,8 @@ describe("ThreadSettlementServiceV2 worker", () => {
             input: "gh pr merge 42 --squash",
           },
         });
-        yield* Deferred.await(settled);
+        yield* Queue.take(fixture.snapshotReads);
+        yield* reactor.drain;
         assert.deepStrictEqual(
           (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
           [thread.id],
@@ -1772,6 +1793,52 @@ describe("ThreadSettlementServiceV2 worker", () => {
         assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
       }).pipe(Effect.provide(fixture.layer));
     }),
+  );
+
+  it.effect(
+    "a merge while a quiet pull request's thread is not a candidate rereads it next sweep",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const thread = makeThread("busy-branch", {
+          branch: "feature",
+          latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+          branchPullRequest: {
+            projectId: PROJECT_ID,
+            repository: "owner/repository",
+            number: 42,
+            url: "https://example.test/owner/repository/pull/42",
+          },
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([thread]),
+          pullRequestSummary: (input) =>
+            Effect.succeed(
+              makePullRequestSummary({
+                ...input,
+                state: "open",
+                updatedAt: DateTime.formatIso(DateTime.makeUnsafe(Date.parse(NOW) - 2 * DAY_MS)),
+              }),
+            ),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+
+          yield* Ref.set(fixture.snapshots, makeSnapshot([]));
+          yield* fixture.publishMerge;
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+
+          yield* Ref.set(fixture.snapshots, makeSnapshot([thread]));
+          yield* TestClock.adjust("1 minute");
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
   );
 
   it.effect("a merged branch PR that cannot settle its thread rereads no git state", () =>
