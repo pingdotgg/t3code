@@ -49,8 +49,7 @@ export function RedactedSensitiveText(props: {
               props.className,
             )}
             onClick={() => setRevealed((current) => !current)}
-            aria-label={revealed ? value : props.ariaLabel}
-            aria-pressed={revealed}
+            aria-label={props.ariaLabel}
           >
             {revealed ? value : redacted}
           </button>

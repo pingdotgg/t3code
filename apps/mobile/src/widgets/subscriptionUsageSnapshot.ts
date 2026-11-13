@@ -106,38 +106,26 @@ function subscriptionUsageProps(
           .filter((window) => window !== undefined)
           .slice(0, maxWindowsPerProvider)
           .sort((a, b) => a.remainingPercent - b.remainingPercent);
-        const partial = pool.accounts.some(
-          (account) =>
-            account.limits.windows.length === 0 &&
-            account.limits.unavailable?.reason === "probeFailed",
+        const failed = pool.accounts.filter(
+          (account) => account.limits.unavailable?.reason === "probeFailed",
         );
         return {
           name,
           detail: !fresh
             ? "Open T3 to refresh"
-            : partial
+            : failed.some((account) => account.limits.windows.length === 0)
               ? "Partial limits"
-              : pool.accounts.some(
-                    (account) =>
-                      account.limits.windows.length > 0 &&
-                      account.limits.unavailable?.reason === "probeFailed",
-                  )
+              : failed.length > 0
                 ? "Last known limits"
                 : pool.accounts.length > 1
-                  ? "Available subscription limits"
+                  ? `${pool.accounts.length} accounts · pooled`
                   : "Subscription remaining",
           expiresAt: fresh ? expiresAt : 0,
           totalWindows: fresh ? pool.windows.length : 0,
           windows: fresh
             ? selectedWindows.map((window) => ({
                 kind: window.kind,
-                label: `${partial ? "Partial · " : ""}${
-                  window.members.some(
-                    (member) => member.account.limits.unavailable?.reason === "probeFailed",
-                  )
-                    ? `Stale · ${window.label}`
-                    : window.label
-                }`,
+                label: window.label,
                 remaining: Math.round(window.remainingPercent),
                 reset: window.resets[0]
                   ? `${isUpcoming(window.resets[0]) ? "Next reset" : "Reset"} ${new Date(

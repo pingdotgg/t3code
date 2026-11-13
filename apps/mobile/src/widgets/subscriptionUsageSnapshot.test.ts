@@ -143,17 +143,13 @@ describe("subscription widget snapshots", () => {
     ]);
     const partial = buildSubscriptionUsageSnapshot(failedInput([], true), deepLink);
     expect(partial.providers[0]?.detail).toBe("Partial limits");
-    expect(partial.providers[0]?.windows[0]?.label).toBe("Partial · 5 hours");
     expect(partial.providers[0]?.windows[0]?.remaining).toBe(60);
     expect(partial.checkedAt).toBe(now);
     expect(partial.providers[0]?.expiresAt).toBe(now + 10 * 60_000);
     expect(subscriptionUsageTimeline(partial, now)[0]?.props.providers[0]?.windows).toHaveLength(1);
     const retained = buildSubscriptionUsageSnapshot(failedInput(limits.windows), deepLink);
     expect(retained.providers[0]?.detail).toBe("Last known limits");
-    expect(retained.providers[0]?.windows[0]).toMatchObject({
-      label: "Stale · 5 hours",
-      remaining: 60,
-    });
+    expect(retained.providers[0]?.windows[0]?.remaining).toBe(60);
     expect(retained.checkedAt).toBe(now);
     expect(retained.providers[0]?.expiresAt).toBe(now + 10 * 60_000);
   });
@@ -243,7 +239,7 @@ describe("subscription widget expiry", () => {
         deepLink,
       );
       expect(snapshot.providers[0]).toMatchObject({
-        detail: "Available subscription limits",
+        detail: "2 accounts · pooled",
         expiresAt,
         windows: [{ remaining: 60, reset: expect.stringMatching(label) }],
       });
