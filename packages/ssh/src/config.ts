@@ -347,7 +347,11 @@ export const discoverSshHosts = Effect.fnUntraced(
     }
 
     for (const { hostname, port } of knownHosts) {
-      if (discovered.has(hostname) || configuredHostnames.has(hostname.toLowerCase())) {
+      // An alias names its address only; known_hosts entries on explicit ports stay distinct.
+      if (
+        port === null &&
+        (discovered.has(hostname) || configuredHostnames.has(hostname.toLowerCase()))
+      ) {
         continue;
       }
       discovered.set(`${hostname}\u0000${port ?? ""}`, {
