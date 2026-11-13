@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { continuedThreadFollowThrough } from "./continueOnMachine.logic";
+import { afterContinuedThreadWait, continuedThreadFollowThrough } from "./continueOnMachine.logic";
 
 describe("continuedThreadFollowThrough", () => {
   it.each([
@@ -25,5 +25,16 @@ describe("continuedThreadFollowThrough", () => {
       kind: "connect",
       host: null,
     });
+  });
+});
+
+describe("afterContinuedThreadWait", () => {
+  it.each([
+    [{ arrived: true, movedOn: false }, "open"],
+    [{ arrived: true, movedOn: true }, "offer"],
+    [{ arrived: false, movedOn: false }, "missing"],
+    [{ arrived: false, movedOn: true }, "missing"],
+  ] as const)("%o: %s", (input, expected) => {
+    expect(afterContinuedThreadWait(input)).toBe(expected);
   });
 });

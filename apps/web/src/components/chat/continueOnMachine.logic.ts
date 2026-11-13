@@ -20,3 +20,15 @@ export function continuedThreadFollowThrough(input: {
   if (input.saved === null) return { kind: "connect", host: input.linkUrls[0] ?? null };
   return input.saved.enabled ? { kind: "open" } : { kind: "turn-on" };
 }
+
+/**
+ * What to do once waiting for the continued thread ends. Opening it after the user moved
+ * elsewhere would pull them away from what they are doing, so they get a button instead.
+ */
+export function afterContinuedThreadWait(input: {
+  readonly arrived: boolean;
+  readonly movedOn: boolean;
+}): "open" | "offer" | "missing" {
+  if (!input.arrived) return "missing";
+  return input.movedOn ? "offer" : "open";
+}

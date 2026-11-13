@@ -10,7 +10,7 @@ import type {
   WorkFilesMode,
   WorkFilesSummary,
 } from "@t3tools/contracts";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { environmentCatalog } from "~/connection/catalog";
@@ -33,7 +33,7 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { continuedThreadFollowThrough } from "./continueOnMachine.logic";
+import { afterContinuedThreadWait, continuedThreadFollowThrough } from "./continueOnMachine.logic";
 import { continueOnMachineThreadAtom } from "./continueOnMachineDialogState";
 
 /** A new thread reaches this window over the target's own connection, which may be reconnecting. */
@@ -67,7 +67,7 @@ function workFilesDescription(summary: WorkFilesSummary): string {
     summary.deletionCount === 0
       ? ""
       : ` and ${summary.deletionCount.toLocaleString()} ${summary.deletionCount === 1 ? "deletion" : "deletions"}`;
-  return `${files}${deletions} (${formatBytes(summary.totalBytes)}) from ${summary.directory}. Every uncommitted and untracked file goes, secrets included. Git-ignored files stay on this machine.`;
+  return `${files}${deletions} (${formatBytes(summary.totalBytes)}) from ${summary.directory}. Every changed and new file goes, secrets included. Ignored files, node_modules, and build output stay on this machine.`;
 }
 
 function ContinueOnMachineDialog({
@@ -78,6 +78,7 @@ function ContinueOnMachineDialog({
   readonly onClose: () => void;
 }) {
   const navigate = useNavigate();
+  const router = useRouter();
   const links = useEnvironmentQuery(
     peerLinkEnvironment.list({ environmentId: threadRef.environmentId, input: {} }),
   );
@@ -118,15 +119,25 @@ function ContinueOnMachineDialog({
       void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(target) });
     // Opens the thread as a new local one opens, once this window's connection there has it.
     const openWhenItArrives = async () => {
-      if (await waitForThreadShell(target, CONTINUED_THREAD_WAIT_MS)) {
+      const location = router.latestLocation;
+      const arrived = await waitForThreadShell(target, CONTINUED_THREAD_WAIT_MS);
+      const next = afterContinuedThreadWait({
+        arrived,
+        movedOn: router.latestLocation !== location,
+      });
+      if (next === "open") {
         openThread();
         return;
       }
       toastManager.add(
         stackedThreadToast({
-          type: "warning",
-          title: `The thread on ${continued.label} has not reached this window yet`,
-          description: `Check ${continued.label} in Settings → Connections, then open it.`,
+          type: arrived ? "info" : "warning",
+          title: arrived
+            ? `The thread on ${continued.label} is ready`
+            : `The thread on ${continued.label} has not reached this window yet`,
+          description: arrived
+            ? "Open it when you're ready."
+            : `Check ${continued.label} in Settings → Connections, then open it.`,
           actionProps: { children: "Open thread", onClick: openThread },
           data: { hideCopyButton: true },
         }),

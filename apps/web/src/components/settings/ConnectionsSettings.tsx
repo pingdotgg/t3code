@@ -1,5 +1,5 @@
 import { SessionPermissions } from "./SessionPermissions";
-import { useSearch } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { type ReactNode, useState } from "react";
@@ -332,6 +332,7 @@ function ConnectionsSettingsContent({
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
   // A link that names an address to pair with opens Add environment on it, also when this
   // page is already open.
+  const navigate = useNavigate();
   const connectHost = useSearch({
     strict: false,
     select: (search) => (typeof search.connect === "string" ? search.connect : null),
@@ -355,6 +356,8 @@ function ConnectionsSettingsContent({
       setRouteTarget(null);
     } else {
       setSavedBackendError(null);
+      // Closing forgets the link's address, so reload or Back doesn't reopen the dialog.
+      if (connectHost !== null) void navigate({ to: ".", search: {}, replace: true });
     }
   };
   const [removingSavedEnvironmentId, setRemovingSavedEnvironmentId] =
