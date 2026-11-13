@@ -1375,8 +1375,8 @@ export interface LauncherOptions {
 }
 
 export async function main(options: LauncherOptions = {}): Promise<void> {
-  const baseDir = (options.baseDir ?? process.env.T3CODE_HOME)?.trim();
-  if (baseDir === undefined || baseDir === "") {
+  const baseDir = options.baseDir ?? process.env.T3CODE_HOME;
+  if (baseDir === undefined || baseDir.trim() === "") {
     throw new Error("T3CODE_HOME is required by the T3 Code service launcher.");
   }
   const output =
