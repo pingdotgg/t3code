@@ -62,7 +62,8 @@ read-only one. For a database file both run in worker threads; an in-memory data
 writer, on the event loop. `db.lock_wait_ms` is the part of the
 span spent waiting for that connection, behind other SQL. That wait does not block the event loop,
 so subtract it before you blame a slow span on the query. Statements inside a transaction use its
-connection and do not carry these attributes.
+connection and do not carry these attributes. A provider event batch does not trace its
+transaction, so `orchestrationV2.EventSink.providerBatch` carries them instead.
 
 An MCP request over HTTP has a `McpHttpServer.authenticateRequest` span that covers only admitting
 it: the credential check, the mode limit, and the Linked environments gate. The request runs after
@@ -690,7 +691,8 @@ Current high-value span and metric boundaries include:
 - git command execution and git hook events
 - terminal session lifecycle
 - sqlite query execution, except the statements inside `orchestrationV2.EventSink.write`, which
-  its `sql.transaction` span times as one
+  its `sql.transaction` span times as one, and a provider event batch's transaction, which
+  `orchestrationV2.EventSink.providerBatch` times as one
 - event loop stalls (`server.eventLoop.stall`)
 
 ### Current Constraints

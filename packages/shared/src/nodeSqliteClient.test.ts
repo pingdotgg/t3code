@@ -109,6 +109,22 @@ layer("NodeSqliteClient", (it) => {
     }),
   );
 
+  it.effect("records an untraced transaction's connection on the span that owns it", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const span = yield* sql
+        .withTransaction(Effect.void)
+        .pipe(
+          Effect.withTracerEnabled(false),
+          Effect.andThen(Effect.currentSpan),
+          Effect.withSpan("test.transactionOwner"),
+        );
+
+      assert.equal(span.attributes.get("db.connection"), "writer");
+      assert.typeOf(span.attributes.get("db.lock_wait_ms"), "number");
+    }),
+  );
+
   it.effect("retries preparing a query after the missing schema becomes available", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

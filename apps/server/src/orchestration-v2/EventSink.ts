@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as References from "effect/References";
 import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -301,9 +302,19 @@ const layerBase: Layer.Layer<
 
     // Serialize commit and publish; reordered publication makes clients drop earlier sequences.
     const publishLane = yield* Semaphore.make(1);
+    // Provider batches run per streamed event batch, so their span stands for the transaction:
+    // BEGIN, COMMIT and SAVEPOINT are not traced, and the work inside keeps the caller's tracing.
+    const withUntracedTransaction = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      Effect.flatMap(References.TracerEnabled, (enabled) =>
+        sql
+          .withTransaction(effect.pipe(Effect.withTracerEnabled(enabled)))
+          .pipe(Effect.withTracerEnabled(false)),
+      );
+
     const commitThenPublishNow = <A, E, R>(
       transaction: Effect.Effect<A, E, R>,
       publish: (committed: A) => Effect.Effect<void>,
+      withTransaction: typeof withUntracedTransaction = sql.withTransaction,
     ) =>
       Effect.uninterruptibleMask((restore) => {
         let holdsLane = false;
@@ -318,14 +329,10 @@ const layerBase: Layer.Layer<
         // Cancellation may roll back the transaction's work. Once it commits,
         // every subscriber must hear about it before this writer can exit.
         // Otherwise a failed child run can leave its parent's task running.
-        return sql
-          .withTransaction(Effect.tap(restore(transaction), () => takeLane))
-          .pipe(
-            Effect.tap(publish),
-            Effect.ensuring(
-              Effect.suspend(() => (holdsLane ? publishLane.release(1) : Effect.void)),
-            ),
-          );
+        return withTransaction(Effect.tap(restore(transaction), () => takeLane)).pipe(
+          Effect.tap(publish),
+          Effect.ensuring(Effect.suspend(() => (holdsLane ? publishLane.release(1) : Effect.void))),
+        );
       });
 
     // A user can answer after terminal normalization reads the pending request.
@@ -1004,6 +1011,7 @@ const layerBase: Layer.Layer<
           started = true;
         }).pipe(Effect.andThen(Effect.provideService(effect, CurrentProviderBatch, batch))),
         () => Effect.forEach(batch.publish, (publish) => publish, { discard: true }),
+        withUntracedTransaction,
       ).pipe(
         // Normalization mutates run-local state, so only retry before its transaction body starts.
         Effect.retry({
@@ -1041,7 +1049,7 @@ const layerBase: Layer.Layer<
         const batch = yield* CurrentProviderBatch;
         const publicationCount = batch?.publish.length ?? 0;
         const eventCount = batch?.eventCount ?? 0;
-        return yield* sql.withTransaction(work).pipe(
+        return yield* withUntracedTransaction(work).pipe(
           Effect.onError(() =>
             Effect.sync(() => {
               if (batch !== undefined) {

@@ -601,7 +601,9 @@ it.effect.each([false, true])("groups shutdown commits with rollback=%s", (fail)
       const end = span.end.bind(span);
       span.end = (time, exit) => {
         end(time, exit);
-        if (span.name === "COMMIT") commits++;
+        if (span.name === "orchestrationV2.EventSink.providerBatch" && Exit.isSuccess(exit)) {
+          commits++;
+        }
       };
       return span;
     },
