@@ -392,7 +392,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           { name: "already-off", enabled: false },
         ],
         requireArg:
-          '--config features.plugins=false --config features.apps=false --config mcp_servers={"augmenter"={enabled=false},"my.server"={enabled=false}}',
+          'exec --config mcp_servers={"augmenter"={enabled=false},"my.server"={enabled=false}} --config developer_instructions="Use',
       },
       (textGeneration) =>
         Effect.gen(function* () {

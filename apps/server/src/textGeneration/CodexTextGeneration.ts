@@ -301,10 +301,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         binary,
         [
           "exec",
+          // Before launch args: a later table would replace servers their -c flags define.
+          ...(mcpServersOff ? ["--config", mcpServersOff] : []),
           ...codexExecLaunchArgs(launchArgs),
           // A user's MCP server could act on the text-generation prompt.
           ...CODEX_NO_PLUGIN_ARGS,
-          ...(mcpServersOff ? ["--config", mcpServersOff] : []),
           "--ephemeral",
           "--skip-git-repo-check",
           "-s",
