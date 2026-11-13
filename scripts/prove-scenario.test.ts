@@ -91,6 +91,20 @@ describe("prove-scenario", () => {
     expect(proof.verdict).toMatch(row.verdict);
   });
 
+  it("tells a scenario that stopped from an app that did not start", () => {
+    const side = (report: Parameters<typeof readSide>[2]) =>
+      readSide("aaaaaaaaaaaa", "/out/base/results", report);
+    const head = readSide("bbbbbbbbbbbb", "/out/head/results", passed);
+    // A control the scenario did not find: the app ran, so the scenario is what needs fixing.
+    const stopped = buildProof(side(brokenScenario), head, (path) => path);
+    expect(stopped.couldNotRun).toBe("scenario");
+    expect(stopped.verdict).toMatch(/fix the scenario/);
+    const noApp = buildProof(side(undefined), head, (path) => path);
+    expect(noApp.couldNotRun).toBe("app");
+    expect(noApp.verdict).not.toMatch(/fix the scenario/);
+    expect(buildProof(side(failed), head, (path) => path).couldNotRun).toBeNull();
+  });
+
   it("labels captures with their side and commit and keeps the pairing token out", () => {
     const proof = buildProof(
       readSide("aaaaaaaaaaaa", "/out/base/results", failed),
