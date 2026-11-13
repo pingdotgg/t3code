@@ -207,6 +207,9 @@ private extension UIColor {
 public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInteractionDelegate {
   private static let minimumVerticalScrollStepPoints: CGFloat = 18
   private static let verticalScrollStepMultiplier: CGFloat = 1.15
+  // XTGETTCAP for `npc`, a cap no program queries, so its fixed reply marks the end of a replay.
+  private static let replayFenceQuery = Data("\u{1B}P+q6E7063\u{1B}\\".utf8)
+  private static let replayFenceReply = "\u{1B}P1+r6E7063\u{1B}\\"
 
   private let terminalViewport = UIView()
   private let inputField = TerminalInputField()
@@ -224,6 +227,8 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
   private var sentInput = ""
   private var app: ghostty_app_t?
   private let callbackRef = TerminalViewRef()
+  private var writeCallbackRef: TerminalViewRef?
+  private var isAwaitingReplayFence = false
   private var surface: ghostty_surface_t?
   private var isCreatingSurface = false
   private var surfaceCreationFailed = false
@@ -698,6 +703,10 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     } else if !hasPendingBuffer {
       feedBuffer(initialBuffer)
     }
+    // Ghostty answers the replay's queries on its io thread after any callback change made here,
+    // so drop write output until the fence query fed behind the replay is answered.
+    isAwaitingReplayFence = true
+    feedData(Self.replayFenceQuery)
   }
 
   private func resetSurface() {
@@ -803,7 +812,11 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
   private func setupWriteCallback() {
     guard let surface else { return }
 
-    let userdata = Unmanaged.passUnretained(callbackRef).toOpaque()
+    // A ref per surface, so a fence reply from a freed surface cannot end the new surface's fence.
+    let ref = TerminalViewRef()
+    ref.view = self
+    writeCallbackRef = ref
+    let userdata = Unmanaged.passUnretained(ref).toOpaque()
     ghostty_surface_set_write_callback(surface, { userdata, data, len in
       guard let userdata, let data, len > 0 else { return }
       let ref = Unmanaged<TerminalViewRef>.fromOpaque(userdata).takeUnretainedValue()
@@ -811,9 +824,19 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
       guard let input = String(data: bytes, encoding: .utf8), !input.isEmpty else { return }
 
       DispatchQueue.main.async {
-        ref.view?.emitInput(input)
+        ref.view?.handleSurfaceWrite(input, from: ref)
       }
     }, userdata)
+  }
+
+  private func handleSurfaceWrite(_ input: String, from ref: TerminalViewRef) {
+    guard isAwaitingReplayFence else {
+      emitInput(input)
+      return
+    }
+    if ref === writeCallbackRef, input == Self.replayFenceReply {
+      isAwaitingReplayFence = false
+    }
   }
 
   private func resizeSurface() {
