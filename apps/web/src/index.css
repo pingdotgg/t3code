@@ -2624,11 +2624,19 @@ code {
 }
 
 /* A workspace area with no control of its own takes F6 focus itself; keep that visible.
-   workspaceFocus.ts marks those, since :focus-visible also matches a clicked area after a key press. */
+   workspaceFocus.ts marks those, since :focus-visible also matches a clicked area after a key press.
+   The conversation's timeline takes it instead, and its top fade mask would hide its own ring. */
 [data-workspace-area]:focus-visible {
   outline: none;
 }
-[data-workspace-keyboard-focus]:focus {
+[data-workspace-keyboard-focus]:focus,
+[data-workspace-area="conversation"]:has(
+  .messages-timeline-scroll[data-workspace-keyboard-focus]:focus
+) {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
+}
+
+.messages-timeline-scroll:focus-visible {
+  outline: none;
 }
