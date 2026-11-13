@@ -29,6 +29,7 @@ describe("HistorySwipeNavigation", () => {
     ["a swipe that started in a closed dialog keeps the thread", "closed-dialog", 0, -130, false],
   ] as const)("%s", async (_name, scroller, scrollLeft, deltaX, navigates) => {
     navigateHistory.mockReset();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
     await using screen = await render(<HistorySwipeNavigation />);
     const panel = screen.container.appendChild(document.createElement("div"));
     const root = scroller.startsWith("shadow") ? panel.attachShadow({ mode: "open" }) : panel;
@@ -95,9 +96,9 @@ describe("HistorySwipeNavigation", () => {
       ],
       false,
     ],
-    ["a Linux horizontal mouse wheel notch keeps the thread", 1, [[-120, 120]], false],
   ] as const)("%s", async (_name, zoomFactor, events, navigates) => {
     navigateHistory.mockReset();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
     using _bridge = stubGlobal("desktopBridge", {
       getWindowZoomFactor: () => zoomFactor,
       onTrackpadScrollBegin: () => () => {},
@@ -110,5 +111,17 @@ describe("HistorySwipeNavigation", () => {
       target.dispatchEvent(new WheelEvent("wheel", init));
     }
     expect(navigateHistory).toHaveBeenCalledTimes(navigates ? 1 : 0);
+  });
+
+  it("a horizontal mouse wheel tick off macOS keeps the thread", async () => {
+    navigateHistory.mockReset();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+    await using screen = await render(<HistorySwipeNavigation />);
+    const content = screen.container.appendChild(document.createElement("div"));
+    content.style.cssText = "height: 20px; width: 100px";
+
+    swipe(content, -120);
+
+    expect(navigateHistory).not.toHaveBeenCalled();
   });
 });

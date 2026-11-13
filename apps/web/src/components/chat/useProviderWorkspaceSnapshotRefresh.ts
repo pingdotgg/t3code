@@ -19,18 +19,18 @@ const idleRefreshAtom: Atom.Atom<ProviderWorkspaceSnapshotRefreshState | undefin
 >(undefined).pipe(Atom.withLabel("provider-workspace-snapshot-refresh:idle"));
 
 /**
- * Keeps the selected provider's workspace snapshot fresh for the composer's
- * cwd while mounted. Returns a check to run when the user types, and whether
- * the cwd's skills are still being scanned.
+ * Keeps a provider's workspace snapshot fresh for the composer's cwd while
+ * mounted. Returns a check to run when the user types, and whether the cwd's
+ * skills are still being scanned.
  */
 export function useProviderWorkspaceSnapshotRefresh(input: {
-  readonly environmentId: EnvironmentId;
+  readonly environmentId: EnvironmentId | null;
   readonly gitCwd: string | null;
   readonly instanceId: ProviderInstanceId | undefined;
 }): { readonly refresh: () => void; readonly scanning: boolean } {
   const { environmentId, gitCwd, instanceId } = input;
   const atom =
-    gitCwd && instanceId
+    environmentId && gitCwd && instanceId
       ? providerWorkspaceSnapshotRefresh({ environmentId, instanceId, cwd: gitCwd })
       : idleRefreshAtom;
   return {
