@@ -1,12 +1,13 @@
 import { Button } from "../../components/ui/Button";
 import { QuestionAttachments } from "./QuestionAttachments";
-import type { EnvironmentId, RuntimeRequestId } from "@t3tools/contracts";
+import type { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
 import {
   markdownProseDirection,
   textDirection,
   type TextDirection,
 } from "@t3tools/shared/textDirection";
+import { useNavigation } from "@react-navigation/native";
 import { useRef } from "react";
 import {
   Platform,
@@ -29,9 +30,15 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ControlPill } from "../../components/ui/ControlPill";
 import { cn } from "../../lib/cn";
+import { resolveMarkdownLinkPresentation } from "../../lib/markdownLinks";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
+import {
+  fileRoutePathSegments,
+  resolveFileLinkPath,
+  resolveWorkspaceRelativeFilePath,
+} from "../files/filePath";
 import { useLiveThreadLinkLabels } from "../../state/entities";
 import {
   isPendingUserInputOptionSelected,
@@ -44,6 +51,8 @@ const VIEWPORT_SETTLE_MS = 120;
 
 export interface PendingUserInputCardProps {
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly workspaceRoot: string | null;
   readonly canOperateThread: boolean;
   readonly pendingUserInput: PendingUserInput;
   readonly maxHeight: DerivedValue<number>;
@@ -81,11 +90,32 @@ function proseDirectionStyle(text: string, setDirection: TextDirection | undefin
 function QuestionText(props: {
   readonly markdown: string;
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly workspaceRoot: string | null;
   readonly setDirection: TextDirection | undefined;
+  readonly preserveSoftBreaks?: boolean;
 }) {
   const styles = useMarkdownPreviewStyles();
   const markdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
-  const openLink = useOpenPullRequest();
+  const navigation = useNavigation();
+  const openPullRequest = useOpenPullRequest();
+  const openLink = (href: string) => {
+    const link = resolveMarkdownLinkPresentation(href);
+    if (link.kind !== "file") {
+      void openPullRequest(href);
+      return;
+    }
+    const path = resolveFileLinkPath(props.workspaceRoot, link.path);
+    if (path === null) return;
+    navigation.navigate("ThreadFile", {
+      environmentId: String(props.environmentId),
+      threadId: String(props.threadId),
+      path: fileRoutePathSegments(
+        resolveWorkspaceRelativeFilePath(props.workspaceRoot, path) ?? path,
+      ),
+      ...(link.line ? { line: String(link.line) } : {}),
+    });
+  };
   return (
     <SelectableMarkdownText
       markdown={markdown}
@@ -95,7 +125,8 @@ function QuestionText(props: {
       textAlign={
         Platform.OS === "android" ? undefined : props.setDirection === "rtl" ? "right" : "left"
       }
-      onLinkPress={(href) => void openLink(href)}
+      onLinkPress={openLink}
+      preserveSoftBreaks={props.preserveSoftBreaks}
     />
   );
 }
@@ -289,7 +320,10 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
               <QuestionText
                 markdown={question.question}
                 environmentId={props.environmentId}
+                threadId={props.threadId}
+                workspaceRoot={props.workspaceRoot}
                 setDirection={setDirection}
+                preserveSoftBreaks
               />
               <View className="gap-2">
                 {question.options.map((option) => {
@@ -298,43 +332,56 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   const description =
                     option.description !== option.label ? option.description : undefined;
                   return (
-                    <Pressable
-                      key={optionValue}
-                      accessibilityRole={question.multiSelect ? "checkbox" : "radio"}
-                      accessibilityState={{ checked: selected, disabled: responseDisabled }}
-                      disabled={responseDisabled}
-                      className={cn(
-                        "min-h-12 w-full rounded-2xl border px-3.5 py-3",
-                        selected ? "border-primary bg-primary/10" : "border-border bg-input",
-                      )}
-                      onPress={() =>
-                        props.onSelectOption(
-                          props.pendingUserInput.requestId,
-                          question,
-                          optionValue,
-                        )
-                      }
-                    >
-                      <View className="min-w-0 flex-1 gap-0.5">
-                        <Text
-                          className={cn(
-                            "font-t3-bold text-sm",
-                            selected ? "text-foreground" : "text-foreground-secondary",
-                          )}
-                          style={proseDirectionStyle(option.label, setDirection)}
-                        >
-                          {option.label}
-                        </Text>
-                        {description ? (
+                    <View key={optionValue} className="gap-1.5">
+                      <Pressable
+                        accessibilityRole={question.multiSelect ? "checkbox" : "radio"}
+                        accessibilityState={{ checked: selected, disabled: responseDisabled }}
+                        disabled={responseDisabled}
+                        className={cn(
+                          "min-h-12 w-full rounded-2xl border px-3.5 py-3",
+                          selected ? "border-primary bg-primary/10" : "border-border bg-input",
+                        )}
+                        onPress={() =>
+                          props.onSelectOption(
+                            props.pendingUserInput.requestId,
+                            question,
+                            optionValue,
+                          )
+                        }
+                      >
+                        <View className="min-w-0 flex-1 gap-0.5">
                           <Text
-                            className="font-sans text-sm leading-5 text-foreground-muted"
-                            style={proseDirectionStyle(description, setDirection)}
+                            className={cn(
+                              "font-t3-bold text-sm",
+                              selected ? "text-foreground" : "text-foreground-secondary",
+                            )}
+                            style={proseDirectionStyle(option.label, setDirection)}
                           >
-                            {description}
+                            {option.label}
                           </Text>
-                        ) : null}
-                      </View>
-                    </Pressable>
+                          {description ? (
+                            <Text
+                              className="font-sans text-sm leading-5 text-foreground-muted"
+                              style={proseDirectionStyle(description, setDirection)}
+                            >
+                              {description}
+                            </Text>
+                          ) : null}
+                        </View>
+                      </Pressable>
+                      {option.preview ? (
+                        <View className="px-3.5">
+                          <QuestionText
+                            markdown={option.preview}
+                            environmentId={props.environmentId}
+                            threadId={props.threadId}
+                            workspaceRoot={props.workspaceRoot}
+                            setDirection={setDirection}
+                            preserveSoftBreaks
+                          />
+                        </View>
+                      ) : null}
+                    </View>
                   );
                 })}
               </View>
