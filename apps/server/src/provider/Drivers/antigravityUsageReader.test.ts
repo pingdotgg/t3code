@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures and tests use Node builtins
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's File.Info has no ctime or sub-millisecond mtime, which the cache tests compare.
 import * as NodeFSP from "node:fs/promises";
 

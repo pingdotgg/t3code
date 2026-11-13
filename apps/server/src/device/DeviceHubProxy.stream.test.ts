@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures and tests use Node builtins
 import { expect, it } from "@effect/vitest";
 import * as NodeWS from "@effect/platform-node/NodeWS";
 import * as NodeNet from "node:net";

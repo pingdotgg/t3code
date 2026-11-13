@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures and tests use Node builtins
 import * as NodeEvents from "node:events";
 import * as NodeVM from "node:vm";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Playwright download mocks perform real file operations outside the Effect runtime.

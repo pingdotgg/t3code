@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures and tests use Node builtins
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as NodeUtil from "node:util";
 

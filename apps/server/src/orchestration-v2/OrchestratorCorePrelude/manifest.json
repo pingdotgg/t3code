@@ -1,0 +1,39 @@
+[
+  {
+    "name": "OrchestratorV2Shape",
+    "file": "OrchestratorV2Shape.ts",
+    "declared": [
+      "isMessageQuestionAnswer",
+      "isOrchestratorDispatchError",
+      "runtimePolicyCeilingCause",
+      "OrchestratorRuntimeModeAboveCeilingError",
+      "OrchestratorCommandPreviouslyRejectedError",
+      "OrchestratorCommandIdConflictError",
+      "nextRunOrdinal",
+      "threadPullRequestLinksEqual",
+      "threadHasUnfinishedWork",
+      "decodeUserInputAnswers",
+      "pendingThreadTitleGenerationEffect",
+      "delegatedTasksStopEffect",
+      "withoutPreparationResult",
+      "cancelledAppOwnedTask",
+      "mayStartSubagentFollowup",
+      "isLiveRun",
+      "hasLiveRun",
+      "isTerminalDelegatedTaskStatus",
+      "worktreeSetupPending",
+      "nextQueuedRun",
+      "followsCurrentConversation",
+      "queuedRunModelSelection",
+      "pendingForkTransferForThread",
+      "pendingMergeBackTransfersForThread",
+      "latestContextTransfer",
+      "shouldPrepareLegacyImportHandoff",
+      "appendContextHandoffId",
+      "rootProviderThreadsForProvider",
+      "isHandoffSourceRun",
+      "lastDeliveredRunForProviderThread"
+    ],
+    "hasYield": false
+  }
+]

@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures and tests use Node builtins
 import * as NodeURL from "node:url";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";

@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures and tests use Node builtins
 import * as NodeV8 from "node:v8";
 
 import { SourceControlProviderKind } from "@t3tools/contracts";

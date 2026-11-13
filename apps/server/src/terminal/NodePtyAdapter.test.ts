@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures and tests use Node builtins
 import * as NodeEvents from "node:events";
 import * as NodeNet from "node:net";
 

@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures and tests use Node builtins
 import * as NodeAssert from "node:assert/strict";
 
 import { describe, it } from "vite-plus/test";

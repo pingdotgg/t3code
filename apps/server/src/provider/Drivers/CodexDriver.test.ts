@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures and tests use Node builtins
 import * as CodexInstallation from "../CodexInstallation.ts";
 import * as CodexManagedTokenBroker from "../CodexManagedTokenBroker.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";

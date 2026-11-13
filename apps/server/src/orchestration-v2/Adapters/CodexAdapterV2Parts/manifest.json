@@ -1,0 +1,227 @@
+[
+  {
+    "name": "RegisterRootTurn",
+    "file": "RegisterRootTurn.ts",
+    "declared": [
+      "scope",
+      "resolvedRuntime",
+      "client",
+      "additionalContextByThread",
+      "restoreAdditionalContext",
+      "initialized",
+      "initializePermit",
+      "ensureInitialized",
+      "now",
+      "session",
+      "events",
+      "rateLimitSnapshot",
+      "limitedTurnItems",
+      "activeTurns",
+      "turnTokenUsageByThread",
+      "usageStateForThread",
+      "beginTurnTokenUsage",
+      "markSubagentUsage",
+      "pendingRootTurns",
+      "turnWaiters",
+      "subagentThreads",
+      "subagentSelections",
+      "reroutedTurnModels",
+      "reroutedThreads",
+      "reportedTurnModel",
+      "pendingSubagentTurns",
+      "nextProviderTurnOrdinals",
+      "providerRetries",
+      "planIds",
+      "pendingRuntimeRequests",
+      "sessionApprovals",
+      "endSessionApprovalsOnModeChange",
+      "sessionAllowance",
+      "settledTurns",
+      "runningCommandItemsByTurn",
+      "runningDynamicToolsByTurn",
+      "interruptingNativeTurns",
+      "terminalizedNonCompletedNativeTurns",
+      "deferredRootTerminals",
+      "offeredContinuationItemsByTurn",
+      "finalAnswerItemIdsByTurn",
+      "completedFinalAnswerTextsByTurn",
+      "imageTurns",
+      "imageTurn",
+      "turnTerminalizationPermit",
+      "goalsByNativeThread",
+      "rootProviderThreads",
+      "goalHolds",
+      "continuedRuns",
+      "capacityContinuations",
+      "goalActivations",
+      "goalStops",
+      "latestRunTurnId",
+      "isContinuedRunDescendant",
+      "emitProviderEvent",
+      "emitImageWorkState",
+      "clearImageWork",
+      "goalUpdatesHeld",
+      "emitGoalUpdate",
+      "rememberRootProviderThread",
+      "releaseGoalUpdates",
+      "completeProviderRetry",
+      "registerRootTurn",
+      "findActiveTurnByNativeThreadId",
+      "awaitActiveTurn",
+      "resolveItemEventContext",
+      "trackRunningCommandItem",
+      "clearRunningCommandItem",
+      "pendingMcpAppCaptures",
+      "takePendingMcpAppCapture",
+      "trackRunningDynamicTool",
+      "clearRunningDynamicTool",
+      "turnHasRetainedBackgroundWork"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "EmitSubagentProviderTurnStarted",
+    "file": "EmitSubagentProviderTurnStarted.ts",
+    "declared": [
+      "releaseSettledTurnIfIdle",
+      "terminalizeRunningCommandItems",
+      "terminateBackgroundTerminal",
+      "terminalizeRunningDynamicTools",
+      "resolveItemPosition",
+      "resolveItemOrdinal",
+      "nextProviderTurnOrdinal",
+      "emitSubagentTaskUpdate",
+      "emitSubagentProviderTurnStarted",
+      "rememberSubagentTurnStarted",
+      "buildDynamicToolArtifacts"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "RegisterSubagentThread",
+    "file": "RegisterSubagentThread.ts",
+    "declared": [
+      "updateSubagentSelection",
+      "registerSubagentThread",
+      "registerSubagentThreads",
+      "registerSubagentActivity",
+      "updateSubagentStates",
+      "resolvePlanId",
+      "resolveCodexAttachment",
+      "toCodexInput"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "BuildAgentMessageArtifacts",
+    "file": "BuildAgentMessageArtifacts.ts",
+    "declared": [
+      "buildAgentMessageArtifacts",
+      "reasoningParts",
+      "reasoningDeltas",
+      "reasoningPartKey",
+      "appendReasoning",
+      "completeReasoning",
+      "agentMessageDeltas",
+      "emitSubagentUserMessage",
+      "buildCommandExecutionArtifacts",
+      "buildFileChangeArtifacts",
+      "buildWebSearchArtifacts"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "BuildUserInputRequestArtifacts",
+    "file": "BuildUserInputRequestArtifacts.ts",
+    "declared": [
+      "captureMcpApp",
+      "captureMcpAppItem",
+      "terminalizeMcpAppCaptures",
+      "buildProposedPlanArtifacts",
+      "planDeltas",
+      "buildTodoListArtifacts",
+      "buildApprovalRequestArtifacts",
+      "buildUserInputRequestArtifacts"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "EmitRootTerminal",
+    "file": "EmitRootTerminal.ts",
+    "declared": [
+      "emitCompactionItem",
+      "emitRootTerminal",
+      "settleGoalHold",
+      "releaseGoalHold"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "ProjectGeneratedImages",
+    "file": "ProjectGeneratedImages.ts",
+    "declared": [
+      "projectGeneratedImages"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "MakeRootTerminalEvent",
+    "file": "MakeRootTerminalEvent.ts",
+    "declared": [
+      "makeRootTerminalEvent"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "FinalizeCodexTurn",
+    "file": "FinalizeCodexTurn.ts",
+    "declared": [
+      "emitOrDeferRootTerminal",
+      "pauseUncontinuedGoal",
+      "flushReadyRootTerminals",
+      "finalizeCodexTurn",
+      "startNativeTurn"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "RetryCapacityFailure",
+    "file": "RetryCapacityFailure.ts",
+    "declared": [
+      "retryCapacityFailure",
+      "completeGoalCommandTurn",
+      "heldGoalTurn",
+      "resolveGoalStopTarget",
+      "resumeNativeThread",
+      "runGoalCommand",
+      "mcpAppsError",
+      "mcpApps"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "RuntimeThreadControl",
+    "file": "RuntimeThreadControl.ts",
+    "declared": [
+      "runtimeThreadControl"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "RuntimeInterrupt",
+    "file": "RuntimeInterrupt.ts",
+    "declared": [
+      "runtimeInterrupt"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "RuntimeThreadLifecycle",
+    "file": "RuntimeThreadLifecycle.ts",
+    "declared": [
+      "runtimeThreadLifecycle",
+      "runtime"
+    ],
+    "hasYield": true
+  }
+]

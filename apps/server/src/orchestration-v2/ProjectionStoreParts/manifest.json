@@ -1,0 +1,165 @@
+[
+  {
+    "name": "ApplyRecordTail",
+    "file": "ApplyRecordTail.ts",
+    "declared": [
+      "sql",
+      "inlineWorkOutput",
+      "keepRecordedRunField",
+      "applyRecordTail",
+      "getThread"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "ApplyRunTail",
+    "file": "ApplyRunTail.ts",
+    "declared": [
+      "applyRunTail"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "RetainedWindowRows",
+    "file": "RetainedWindowRows.ts",
+    "declared": [
+      "apply",
+      "retainedWindowRows"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "ReadCanonicalProjection",
+    "file": "ReadCanonicalProjection.ts",
+    "declared": [
+      "readCanonicalProjection"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "ReadProjection",
+    "file": "ReadProjection.ts",
+    "declared": [
+      "readProjection",
+      "getLimitRecoveryCandidates",
+      "getLimitRecoveryWakeAt",
+      "getRecoveryThreadIds"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "GetUnreadableThreadIds",
+    "file": "GetUnreadableThreadIds.ts",
+    "declared": [
+      "getUnreadableThreadIds",
+      "javascriptTrimWhitespace",
+      "getTurnStartContext",
+      "getTurnStartHistory",
+      "getThreadProjection"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "GetRuntimeRecoveryProjection",
+    "file": "GetRuntimeRecoveryProjection.ts",
+    "declared": [
+      "getRuntimeRecoveryProjection",
+      "requireThread",
+      "controlReadError",
+      "getPendingNativeUserInputs",
+      "getPlan",
+      "hasUnpairedRunInterruptRequest",
+      "isNodeStored",
+      "getRuntimeRequest",
+      "getProviderControlContext",
+      "getRunningTurnContext"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "GetCheckpointRollbackContext",
+    "file": "GetCheckpointRollbackContext.ts",
+    "declared": [
+      "getThreadProviderContext",
+      "getRuntimeResponseContext",
+      "getCheckpointContext",
+      "getCheckpointCaptureContext",
+      "getCheckpointRollbackContext",
+      "getRunMessage",
+      "canStartQueuedRun",
+      "getHeldQueuedRuns",
+      "getMessageCount",
+      "getSubagentCount",
+      "listAppOwnedChildThreadIds",
+      "getNextTurnItemOrdinal",
+      "getTurnItem",
+      "getThreadAttachmentIds",
+      "getThreadRecords",
+      "getThreadSnapshot"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "ReadTimelineIndex",
+    "file": "ReadTimelineIndex.ts",
+    "declared": [
+      "readTimelineIndex",
+      "searchThread",
+      "searchThreadStream",
+      "getThreadHistoryPage",
+      "getTimelinePage",
+      "getThreadSnapshotWindow",
+      "isIdleCompactionMessage",
+      "isSilentShellRun"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "SelectShellThreadRows",
+    "file": "SelectShellThreadRows.ts",
+    "declared": [
+      "selectShellThreadRows",
+      "selectShellRunRows",
+      "selectShellRunItemCounts",
+      "selectShellItemCounts",
+      "selectShellProviderThreadRows",
+      "selectShellPendingTurnItemRows",
+      "runMapsByThreadId",
+      "shellItemCountMap",
+      "pendingBackgroundDataByThreadId",
+      "getSettlementCandidates",
+      "getOpenRemoteDelegatedTasks",
+      "getThreadsWithPullRequests"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "ShellThreadStateFromRow",
+    "file": "ShellThreadStateFromRow.ts",
+    "declared": [
+      "getThreadWorktreePaths",
+      "shellThreadStateFromRow",
+      "shellSnapshotReadError",
+      "readShellSnapshotRows",
+      "decodeShellSnapshot",
+      "readShellSnapshot",
+      "getPullRequestSnapshot",
+      "getShellSnapshot",
+      "listActiveSubagentThreadIds",
+      "countThreads",
+      "listActiveShellIndex",
+      "findGuestShareThreadId",
+      "listOlderSettledThreads"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "GetThreadShell",
+    "file": "GetThreadShell.ts",
+    "declared": [
+      "getThreadShell",
+      "readOnReader"
+    ],
+    "hasYield": true
+  }
+]

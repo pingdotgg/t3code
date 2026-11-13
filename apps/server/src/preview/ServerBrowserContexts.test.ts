@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures and tests use Node builtins
 import * as NodeEvents from "node:events";
 
 import { INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";

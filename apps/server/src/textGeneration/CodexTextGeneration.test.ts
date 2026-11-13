@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures and tests use Node builtins
 import {
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   ProviderDriverKind,

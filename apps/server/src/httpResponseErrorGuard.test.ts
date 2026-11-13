@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures and tests use Node builtins
 // Exercise the raw Node HTTP boundary before Effect attaches serving handlers.
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";

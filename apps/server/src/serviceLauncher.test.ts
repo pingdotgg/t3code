@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures and tests use Node builtins
 // @effect-diagnostics-next-line nodeBuiltinImport:off - observes the children the launcher spawns with Node built-ins.
 import type * as NodeChildProcess from "node:child_process";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - the free-space probe is a plain Promise callback.

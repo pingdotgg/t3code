@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures and tests use Node builtins
 import * as Effect from "effect/Effect";
 import * as NodePathLayer from "@effect/platform-node/NodePath";
 import * as ProcessRunner from "../processRunner.ts";

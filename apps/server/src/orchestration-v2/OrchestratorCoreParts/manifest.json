@@ -1,0 +1,248 @@
+[
+  {
+    "name": "FailQueuedRunStart",
+    "file": "FailQueuedRunStart.ts",
+    "declared": [
+      "checkpointService",
+      "commandPolicy",
+      "contextHandoffService",
+      "eventSink",
+      "commandReceipts",
+      "idAllocator",
+      "makeEvent",
+      "emit",
+      "projects",
+      "projectionStore",
+      "effectOutbox",
+      "nextTurnItemOrdinal",
+      "fileSystem",
+      "path",
+      "providerAdapters",
+      "continuationRequests",
+      "providerSessions",
+      "providerSwitchService",
+      "serverSettings",
+      "runtimePolicy",
+      "threadForkService",
+      "threadDispatch",
+      "managedPolicy",
+      "runtimeModeCeiling",
+      "goalDriverFor",
+      "ensureGoalCommandSupported",
+      "mapDelegatedCompletionError",
+      "providerSessionIdFor",
+      "sessionHasBackgroundWork",
+      "readCommandProjection",
+      "notificationTasks",
+      "readHandoffItems",
+      "readInheritedItems",
+      "findThread",
+      "liveSideChatIds",
+      "getProjectionWithPendingEvents",
+      "makeSystemEvent",
+      "writeSystemEvents",
+      "completionDeliveryRun",
+      "completionDeliveryMessage",
+      "offerDelegatedCompletionDelivery",
+      "offerDelegatedCompletionDeliveries",
+      "emitQueuedRunCancellation",
+      "failQueuedRunStart"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "StartNextQueuedRun",
+    "file": "StartNextQueuedRun.ts",
+    "declared": [
+      "startNextQueuedRun"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "DispatchDelegatedTaskCompletionDeliveryResolution",
+    "file": "DispatchDelegatedTaskCompletionDeliveryResolution.ts",
+    "declared": [
+      "retryContinuationStart",
+      "releaseUnattendedHolds",
+      "resumeQueuedRuns",
+      "dispatchDelegatedTaskCompletionDeliveryResolution",
+      "disposeDelegatedCompletionCohort",
+      "disposeAllDelegatedCompletionCohorts",
+      "closePendingLinkRequests"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "RecordSubagentFollowup",
+    "file": "RecordSubagentFollowup.ts",
+    "declared": [
+      "recordSubagentFollowup",
+      "stopReachedRun"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "DispatchSteerIntoRun",
+    "file": "DispatchSteerIntoRun.ts",
+    "declared": [
+      "dispatchSteerIntoRun"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "SettleInterruptedRun",
+    "file": "SettleInterruptedRun.ts",
+    "declared": [
+      "releaseGuestAttachments",
+      "emitRemoteStopOwed",
+      "loadProjectionForCommand",
+      "preparedRunState",
+      "runInterruptReason",
+      "settleInterruptedRun",
+      "markStoppedRun",
+      "awaitsRestartContinuation",
+      "planDelegatedCompletionDelivery"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "SettleBackgroundWork",
+    "file": "SettleBackgroundWork.ts",
+    "declared": [
+      "settleBackgroundWork"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "DispatchRunInterrupt",
+    "file": "DispatchRunInterrupt.ts",
+    "declared": [
+      "holdStoppedThread",
+      "dispatchRunInterrupt",
+      "stopRunForQueuedCommand",
+      "dispatchQueuedRunEdit",
+      "dispatchQueuedRunCancel",
+      "dispatchPreparedRunProgress",
+      "dispatchPreparedRunRetry",
+      "dispatchPreparedRunRelease",
+      "dispatchPreparedRunFail",
+      "dispatchQueuedMessagePromoteToSteer",
+      "dispatchRuntimeRequestDeliveryFail",
+      "dispatchSecretRequestRecord",
+      "dispatchRemoteDelegatedTaskStop",
+      "dispatchDelegatedTaskWakePolicy"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "DispatchRuntimeRequestRespond",
+    "file": "DispatchRuntimeRequestRespond.ts",
+    "declared": [
+      "dispatchPullRequestWatchSync",
+      "emitGuestMessageSent",
+      "refuseAboveDispatchModeLimit",
+      "refuseAboveRuntimeModeCeiling",
+      "dispatchRuntimeRequestRespond",
+      "dispatchMessage",
+      "dispatchThreadMutation"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "DispatchThreadMergeBack",
+    "file": "DispatchThreadMergeBack.ts",
+    "declared": [
+      "dispatchThreadFork",
+      "dispatchThreadMergeBack",
+      "subagentCount"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "DispatchDelegatedTaskRequest",
+    "file": "DispatchDelegatedTaskRequest.ts",
+    "declared": [
+      "dispatchDelegatedTaskRequest",
+      "dispatchRemoteDelegatedTaskRequest"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "DispatchRemoteDelegatedTaskComplete",
+    "file": "DispatchRemoteDelegatedTaskComplete.ts",
+    "declared": [
+      "dispatchRemoteDelegatedTaskComplete",
+      "dispatchLinkRequestRecord",
+      "dispatchBackgroundWorkSettle",
+      "writeAppOwnedTask"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "DispatchSubagentStop",
+    "file": "DispatchSubagentStop.ts",
+    "declared": [
+      "dispatchSubagentStop",
+      "cancelIdleOrphans",
+      "dispatchThreadStop",
+      "dispatchCheckpointRollback",
+      "dispatchCheckpointRollbackFail",
+      "appOwnedSubagentParentThreadId",
+      "childAwaitsRestartContinuation"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "FinalizeAppOwnedSubagentTask",
+    "file": "FinalizeAppOwnedSubagentTask.ts",
+    "declared": [
+      "finalizeAppOwnedSubagentTask",
+      "dispatchNotificationAccepted",
+      "dispatchUnsupported",
+      "dispatchInterruptUnresponsive",
+      "dispatchProviderSessionDetach",
+      "dispatchThreadVisit",
+      "dispatchQueuedRunReorder",
+      "dispatchThreadCreate",
+      "dispatchThreadProjectAdoptFolder",
+      "dispatchCreatedThreadRecord",
+      "dispatchThreadUserInputDismiss",
+      "dispatchGuestShare"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "DispatchOnce",
+    "file": "DispatchOnce.ts",
+    "declared": [
+      "dispatchOnce"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "DispatchWithReceiptEffect",
+    "file": "DispatchWithReceiptEffect.ts",
+    "declared": [
+      "finalizeAppOwnedSubagent",
+      "finalizeDelegatedCompletionDelivery",
+      "dispatchWithReceiptEffect",
+      "dispatchWithReceipt"
+    ],
+    "hasYield": true
+  },
+  {
+    "name": "RecoverDelegatedTasks",
+    "file": "RecoverDelegatedTasks.ts",
+    "declared": [
+      "handleRunUpdate",
+      "terminalEventsAfterSequence",
+      "providerThreadsWithBackgroundWork",
+      "settlesChildWork",
+      "recoverDelegatedTasks",
+      "delegatedTaskResultPending",
+      "recoverDelegatedTask",
+      "shellProjectionError"
+    ],
+    "hasYield": true
+  }
+]

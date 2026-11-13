@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures and tests use Node builtins
 import type * as NodeOS from "node:os";
 
 import { describe, expect, it } from "@effect/vitest";

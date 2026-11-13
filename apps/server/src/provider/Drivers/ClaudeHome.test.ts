@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures and tests use Node builtins
 import * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
