@@ -55,7 +55,7 @@ const mocks = vi.hoisted(() => ({
   cleanupOptions: [] as SpeechPostProcessingOptions[],
   recordingOptions: [] as SpeechTranscriptionOptions[],
   projectWords: {} as Record<string, SpeechCustomWords>,
-  transcripts: [] as Array<string | Error>,
+  transcripts: [] as Array<string | Error | Promise<string>>,
   committed: vi.fn(),
   draft: "",
 }));
@@ -190,7 +190,7 @@ vi.mock("./browserVoiceInput", () => ({
                   ? `${[input.cloudProvider, (input as { cloudModel?: string }).cloudModel].filter(Boolean).join(":")} via ${environmentId}`
                   : environmentId,
               );
-              const next = mocks.transcripts.shift() ?? "dictated";
+              const next = await (mocks.transcripts.shift() ?? "dictated");
               if (next instanceof Error) throw next;
               return next;
             },
@@ -245,6 +245,7 @@ function setDestination(environmentId: string | null) {
 }
 
 function Probe(props: {
+  readonly ownerKey?: string;
   readonly projectId?: string;
   readonly projectName?: string;
   readonly cleanup?: boolean;
@@ -255,7 +256,7 @@ function Probe(props: {
     projectId: props.projectId as ProjectId | undefined,
     projectName: props.projectName,
     cleanup: props.cleanup,
-    ownerKey: "draft",
+    ownerKey: props.ownerKey ?? "draft",
     readDraft: () => ({
       text: mocks.draft,
       selection: { start: mocks.draft.length, end: mocks.draft.length },
@@ -361,6 +362,22 @@ it.each([
   await act(() => mocks.voice.stop());
   expect(mocks.transcribeCalls).toEqual([]);
   expect(mocks.committed).not.toHaveBeenCalled();
+});
+
+it("delivers a confirmed send once with its transcript when the owner changes during transcription", async () => {
+  setup({ destination: "env-a" });
+  const transcript = Promise.withResolvers<string>();
+  mocks.transcripts = [transcript.promise];
+  const submit = vi.fn();
+  await using screen = await render(<Probe ownerKey="thread-a" />);
+  await act(() => mocks.voice.start());
+  await act(() => mocks.voice.submitAfterDictation(submit));
+  expect(mocks.voice.state.phase).toBe("transcribing");
+  await screen.rerender(<Probe ownerKey="thread-b" />);
+  await act(async () => transcript.resolve("dictated in A"));
+  await screen.rerender(<Probe ownerKey="thread-a" />);
+  await act(async () => {});
+  expect(submit).toHaveBeenCalledExactlyOnceWith("dictated in A");
 });
 
 it("retries a failed transcription on the same chosen environment", async () => {
