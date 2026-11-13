@@ -6426,7 +6426,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
-    it.effect("declines URL and value forms without a card", () =>
+    it.effect("declines URL and unaskable forms without a card", () =>
       Effect.gen(function* () {
         const { elicit, runtimeRequests } = yield* startElicitationTurn();
         for (const request of [
@@ -6435,14 +6435,97 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ...approvalOnly,
             requestedSchema: {
               type: "object",
-              properties: { reason: { type: "string" } },
-              required: ["reason"],
+              properties: { target: { type: "object" } },
+              required: ["target"],
             },
           },
         ] satisfies ReadonlyArray<ElicitationRequest>) {
           assert.deepEqual(yield* Fiber.join(yield* elicit(request)), { action: "decline" });
         }
         assert.isEmpty(runtimeRequests());
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    const valueForm = (
+      properties: Record<string, unknown>,
+      required: ReadonlyArray<string>,
+    ): ElicitationRequest => ({
+      ...approvalOnly,
+      message: "Type 390878 to allow loading PROJ-123",
+      requestedSchema: { type: "object", properties, required },
+    });
+    const codeForm = valueForm({ code: { type: "string", title: "Code" } }, ["code"]);
+
+    it.effect("asks a value form as questions and accepts the typed answers", () =>
+      Effect.gen(function* () {
+        const { harness, elicit, awaitCard } = yield* startElicitationTurn();
+        const answer = yield* elicit(codeForm);
+        const request = yield* awaitCard(1);
+        assert.equal(request.kind, "user_input");
+        const card = harness.events.findLast((event) => event.type === "turn_item.updated");
+        assert.equal(
+          card?.turnItem.type === "user_input_request"
+            ? card.turnItem.questions[0]?.header
+            : undefined,
+          "Deploy: Code",
+        );
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: request.id,
+          answers: { code: "390878" },
+        });
+        assert.deepEqual(yield* Fiber.join(answer), {
+          action: "accept",
+          content: { code: "390878" },
+        });
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect("keeps an allow choice on the approval card", () =>
+      Effect.gen(function* () {
+        const { harness, elicit, awaitCard } = yield* startElicitationTurn();
+        const answer = yield* elicit(
+          valueForm({ decision: { type: "string", enum: ["allow", "deny"] } }, ["decision"]),
+        );
+        const request = yield* awaitCard(1);
+        assert.equal(request.kind, "mcp-elicitation");
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: request.id,
+          decision: "accept",
+        });
+        assert.deepEqual(yield* Fiber.join(answer), {
+          action: "accept",
+          content: { decision: "allow" },
+        });
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect("cancels a value form whose required answer is missing", () =>
+      Effect.gen(function* () {
+        const { harness, elicit, awaitCard } = yield* startElicitationTurn();
+        const answer = yield* elicit(codeForm);
+        const request = yield* awaitCard(1);
+        yield* harness.runtime.respondToRuntimeRequest({ requestId: request.id, answers: {} });
+        assert.deepEqual(yield* Fiber.join(answer), { action: "cancel" });
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect("withdraws an open value form when the SDK cancels", () =>
+      Effect.gen(function* () {
+        const { harness, elicit, awaitCard } = yield* startElicitationTurn();
+        const controller = yield* Effect.sync(() => new AbortController());
+        const answer = yield* elicit(codeForm, controller.signal);
+        const request = yield* awaitCard(1);
+        yield* Effect.sync(() => controller.abort());
+        assert.deepEqual(yield* Fiber.join(answer), { action: "cancel" });
+        const cancelled = yield* Queue.take(harness.runtimeRequestReceipts);
+        assert.equal(cancelled.runtimeRequest.id, request.id);
+        assert.equal(cancelled.runtimeRequest.status, "cancelled");
+        yield* Effect.flip(
+          harness.runtime.respondToRuntimeRequest({
+            requestId: request.id,
+            answers: { code: "390878" },
+          }),
+        );
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
