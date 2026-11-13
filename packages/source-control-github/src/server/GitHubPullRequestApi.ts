@@ -308,8 +308,23 @@ export class GitHubBranchDeletionRefusedError extends Schema.TaggedError<GitHubB
   }
 }
 
+export class GitHubMergeHeadError extends Schema.TaggedError<GitHubMergeHeadError>()(
+  "GitHubMergeHeadError",
+  {
+    number: Schema.Int,
+    reason: Schema.Literals(["unconfirmed", "changed"]),
+  },
+) {
+  override get message(): string {
+    return this.reason === "unconfirmed"
+      ? `Confirm the head of pull request #${this.number} before overriding merge requirements.`
+      : `Pull request #${this.number} has new commits. Refresh before merging.`;
+  }
+}
+
 export type GitHubPullRequestApiError =
   | GitHubBranchDeletionRefusedError
+  | GitHubMergeHeadError
   | GitHubStackActionError
   | GitHubRequestPolicy.GitHubApiError
   | GitHubPullRequestReadError
@@ -3178,18 +3193,10 @@ export const make = Effect.gen(function* () {
           input.adminOverride === true &&
           input.expectedHeadSha === undefined
         ) {
-          return yield* readError(
-            input.cwd,
-            "runPullRequestAction",
-            new Error("Confirm the pull request head before overriding merge requirements."),
-          );
+          return yield* new GitHubMergeHeadError({ number: input.number, reason: "unconfirmed" });
         }
         if (input.expectedHeadSha !== undefined && input.expectedHeadSha !== state.headRefOid) {
-          return yield* readError(
-            input.cwd,
-            "runPullRequestAction",
-            new Error("The pull request head changed. Refresh before merging."),
-          );
+          return yield* new GitHubMergeHeadError({ number: input.number, reason: "changed" });
         }
         let body: string | undefined;
         let expectedHead = input.expectedHeadSha;
@@ -3212,11 +3219,10 @@ export const make = Effect.gen(function* () {
             if (cleaned !== message.viewerMergeBodyText) {
               body = cleaned;
               if (expectedHead !== undefined && expectedHead !== message.headRefOid) {
-                return yield* readError(
-                  input.cwd,
-                  "runPullRequestAction",
-                  new Error("The pull request head changed. Refresh before merging."),
-                );
+                return yield* new GitHubMergeHeadError({
+                  number: input.number,
+                  reason: "changed",
+                });
               }
               expectedHead = message.headRefOid;
             }

@@ -2601,23 +2601,24 @@ layer("GitHubPullRequestApi.layer", (it) => {
       }),
   );
 
-  it.effect.each([undefined, "previous-head"])(
-    "rejects admin merge with unconfirmed head %s",
-    (expectedHeadSha) =>
-      Effect.gen(function* () {
-        route(["query PullRequestActionState", actionState()]);
-        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-        const failure = yield* cli
-          .runPullRequestAction({
-            ...pullRequestInput,
-            action: "merge",
-            adminOverride: true,
-            ...(expectedHeadSha === undefined ? {} : { expectedHeadSha }),
-          })
-          .pipe(Effect.flip);
-        expect(failure._tag).toBe("GitHubPullRequestReadError");
-        expect(variablesOf("mergePullRequest(")).toEqual([]);
-      }),
+  it.effect.each([
+    [undefined, "unconfirmed"],
+    ["previous-head", "changed"],
+  ] as const)("rejects admin merge with unconfirmed head %s", ([expectedHeadSha, reason]) =>
+    Effect.gen(function* () {
+      route(["query PullRequestActionState", actionState()]);
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const failure = yield* cli
+        .runPullRequestAction({
+          ...pullRequestInput,
+          action: "merge",
+          adminOverride: true,
+          ...(expectedHeadSha === undefined ? {} : { expectedHeadSha }),
+        })
+        .pipe(Effect.flip);
+      expect(failure).toMatchObject({ _tag: "GitHubMergeHeadError", reason });
+      expect(variablesOf("mergePullRequest(")).toEqual([]);
+    }),
   );
 
   it.effect("an auto-merge request cannot become an immediate bypass merge", () =>
