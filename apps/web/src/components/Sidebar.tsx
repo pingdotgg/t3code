@@ -45,7 +45,6 @@ import { foldSearchQuery, rankMessageMatches } from "@t3tools/shared/paletteSear
 import { findForMessageMatch, openThreadFindOnQuery } from "./chat/threadFindStore";
 import {
   threadRuntimeCanArchive,
-  threadRuntimeIsActive,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
 import {
@@ -173,6 +172,7 @@ import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
   threadActionRequiresOperate,
+  threadRuntimeHidesMarkUnread,
 } from "./threadActionMenu.logic";
 import {
   applySidebarThreadDrop,
@@ -2345,7 +2345,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         pinnedCount: pinnedSelectedThreads.length,
       });
       const markUnreadThreads = selectedThreads.filter(
-        (thread) => !threadRuntimeIsActive(thread.runtime),
+        (thread) => !threadRuntimeHidesMarkUnread(thread.runtime),
       );
       const markUnreadMenuItem = buildBulkMarkUnreadContextMenuItem({
         eligibleCount: markUnreadThreads.length,
@@ -2673,7 +2673,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
               isRegeneratingTitle,
               isRunning: !threadRuntimeCanArchive(thread.runtime),
-              hasActiveRun: threadRuntimeIsActive(thread.runtime),
+              hidesMarkUnread: threadRuntimeHidesMarkUnread(thread.runtime),
               canShareWithGuest: appAtomRegistry.get(
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
