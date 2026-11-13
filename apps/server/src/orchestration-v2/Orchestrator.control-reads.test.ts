@@ -1401,6 +1401,22 @@ it.effect("archiving a parent takes its delegated children out of active listing
     });
     const grandchildThreadId = (yield* projections.getThreadProjection(childThreadId)).subagents[0]!
       .childThreadId!;
+    // The child still waits on the grandchild, so both stay active while the parent archives.
+    yield* orchestrator.dispatch({
+      type: "thread.archive",
+      commandId: CommandId.make("archive-parent-busy-child"),
+      threadId: parentThreadId,
+    });
+    assert.isNotNull((yield* projections.getThread(parentThreadId)).archivedAt);
+    const busySubagents = yield* orchestrator.listActiveSubagentThreadIds();
+    assert.include(busySubagents, childThreadId);
+    assert.include(busySubagents, grandchildThreadId);
+    yield* orchestrator.dispatch({
+      type: "thread.unarchive",
+      commandId: CommandId.make("unarchive-parent-busy-child"),
+      threadId: parentThreadId,
+    });
+
     yield* completeTask(childThreadId);
     yield* orchestrator.dispatch({
       type: "thread.archive",

@@ -1367,6 +1367,14 @@ function lastDeliveredRunForProviderThread(
   );
 }
 
+const hasRunningDelegatedTasks = (subagents: ReadonlyArray<OrchestrationV2Subagent>) =>
+  subagents.some(
+    (task) =>
+      task.origin === "app_owned" &&
+      task.childThreadId !== null &&
+      isOrchestrationV2WorkActive(task.status),
+  );
+
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
   const checkpointService = yield* CheckpointServiceV2;
   const commandPolicy = yield* CommandPolicyV2;
@@ -4039,14 +4047,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const records = yield* projectionStore
         .getThreadRecords(command.threadId, ["subagents"])
         .pipe(mapDispatchError(command));
-      if (
-        records.subagents.some(
-          (task) =>
-            task.origin === "app_owned" &&
-            task.childThreadId !== null &&
-            isOrchestrationV2WorkActive(task.status),
-        )
-      ) {
+      if (hasRunningDelegatedTasks(records.subagents)) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -14584,10 +14585,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           )).archivedAt;
         const at = yield* DateTime.now;
         yield* dispatchThreadMutation(command, events, effects, at);
+        // A descendant still waiting on its own delegated tasks stays active with its subtree,
+        // as archive refuses it. Parents precede their children in `cascadeThreadIds`.
+        const keptActive = new Set<ThreadId>();
         for (const threadId of cascadeThreadIds) {
-          const { archivedAt, deletedAt } = yield* projectionStore
+          const { archivedAt, deletedAt, lineage } = yield* projectionStore
             .getThread(threadId)
             .pipe(mapDispatchError(command));
+          if (command.type === "thread.archive" && archivedAt === null) {
+            const parentId = lineage.parentThreadId;
+            const { subagents } = yield* projectionStore
+              .getThreadRecords(threadId, ["subagents"])
+              .pipe(mapDispatchError(command));
+            if (
+              (parentId != null && keptActive.has(parentId)) ||
+              hasRunningDelegatedTasks(subagents)
+            ) {
+              keptActive.add(threadId);
+              continue;
+            }
+          }
           if (
             deletedAt !== null ||
             (command.type === "thread.archive"
