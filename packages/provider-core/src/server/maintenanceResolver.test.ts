@@ -1678,6 +1678,7 @@ it.layer(
           );
 
           expect(capabilities.update).toBeNull();
+          expect(capabilities.manualCommand).toBe("sudo port upgrade package-tool");
         }),
     );
   }
