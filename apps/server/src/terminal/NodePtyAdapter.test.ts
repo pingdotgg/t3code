@@ -1,4 +1,5 @@
 import * as NodeEvents from "node:events";
+import * as NodeModule from "node:module";
 import * as NodeNet from "node:net";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -195,5 +196,46 @@ it.effect("replays an exit to late subscribers and respects unsubscription", () 
     assert.equal(removed.mock.calls.length, 0);
     assert.deepEqual(late.mock.calls, [[{ exitCode: 7, signal: 2 }]]);
     assert.equal(nativeProcess.events.listenerCount("exit"), 0);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("kills a PID-ready Windows terminal that has not produced output", () =>
+  Effect.gen(function* () {
+    const require = NodeModule.createRequire(import.meta.url);
+    const agentModule = require("node-pty/lib/windowsPtyAgent.js");
+    const { WindowsTerminal } = require("node-pty/lib/windowsTerminal.js");
+    const agent = {
+      outSocket: new NodeNet.Socket(),
+      inSocket: new NodeNet.Socket(),
+      innerPid: 0,
+      onError: () => ({ dispose() {} }),
+      kill: vi.fn(),
+    };
+    const realAgent = agentModule.WindowsPtyAgent;
+    agentModule.WindowsPtyAgent = function () {
+      return agent;
+    };
+    const nativeProcess = (() => {
+      try {
+        return new WindowsTerminal("powershell.exe", [], { cwd: ".", env: {} });
+      } finally {
+        agentModule.WindowsPtyAgent = realAgent;
+      }
+    })();
+    const subscribed = Promise.withResolvers<void>();
+    nativeProcess._socket.on("newListener", (event: string) => {
+      if (event === "ready_datapipe") queueMicrotask(() => subscribed.resolve());
+    });
+    spawn.mockReturnValueOnce(nativeProcess);
+    const adapter = yield* PtyAdapter.PtyAdapter;
+    const fiber = yield* adapter.spawn(spawnInput).pipe(Effect.forkChild);
+    yield* Effect.promise(() => subscribed.promise);
+    agent.innerPid = 41002;
+    nativeProcess._socket.emit("ready_datapipe");
+    const process = yield* Fiber.join(fiber);
+    process.kill("SIGTERM");
+    agent.outSocket.destroy();
+    agent.inSocket.destroy();
+    assert.equal(agent.kill.mock.calls.length, 1);
   }).pipe(Effect.provide(layerTest)),
 );
