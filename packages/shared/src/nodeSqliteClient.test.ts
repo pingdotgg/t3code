@@ -174,6 +174,46 @@ const makeTempDatabase = Effect.gen(function* () {
   return { filename, other };
 });
 
+it.effect.each([false, true])("batches worker results without losing rows (reader=%s)", (reader) =>
+  Effect.gen(function* () {
+    const { filename } = yield* makeTempDatabase;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const route = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        reader ? effect.pipe(SqliteClient.readOnly) : effect;
+      yield* route(sql`SELECT 1`);
+      const worker = startedWorkers
+        .filter((candidate) => !checkpointWorkers.includes(candidate))
+        .at(-1)!;
+      const batches: Array<ReadonlyArray<unknown>> = [];
+      const record = (reply: { rows?: ReadonlyArray<unknown> }) => {
+        if (Array.isArray(reply.rows) && reply.rows.length > 0) batches.push(reply.rows);
+      };
+      worker.prependListener("message", record);
+      yield* Effect.gen(function* () {
+        const text = "x".repeat(16 * 1024);
+        const query = sql<{ n: number; text: string }>`
+          WITH RECURSIVE sequence(n) AS (
+            SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < 300
+          ) SELECT n, ${text} AS text FROM sequence
+        `;
+        const rows = yield* reader ? route(query.values) : query;
+        assert.equal(rows.length, 300);
+        for (const [index, row] of rows.entries()) {
+          assert.deepEqual(row, reader ? [index + 1, text] : { n: index + 1, text });
+        }
+        assert.isAbove(batches.length, 1);
+        for (const batch of batches) {
+          assert.isAtMost(batch.length, 128);
+          assert.isAtMost(batch.length * text.length * 2, 1024 * 1024);
+        }
+      }).pipe(Effect.ensuring(Effect.sync(() => worker.off("message", record))));
+    }).pipe(
+      Effect.provide(SqliteClient.layer({ filename, writerWorker: true, readerWorker: true })),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("keeps another connection from committing between a transaction's read and write", () =>
   Effect.gen(function* () {
     const { filename, other } = yield* makeTempDatabase;

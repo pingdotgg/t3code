@@ -242,7 +242,7 @@ parentPort.on("message", (request) => {
     parentPort.close();
     return;
   }
-  const { id, sql, params, cached, values, raw, safeIntegers } = request;
+  const { id, sql, params, cached, values, raw, safeIntegers, received } = request;
   let operation = "open";
   try {
     if (db === undefined) throw new Error("database connection is unavailable");
@@ -252,7 +252,26 @@ parentPort.on("message", (request) => {
     statement.setReadBigInts(safeIntegers);
     if (statement.columns().length > 0) {
       statement.setReturnArrays(values);
-      parentPort.postMessage({ id, rows: statement.all(...params) });
+      let rows = [];
+      let bytes = 0;
+      for (const row of statement.iterate(...params)) {
+        let rowBytes = 0;
+        for (const value of Object.values(row)) {
+          rowBytes += typeof value === "string" ? value.length * 2
+            : ArrayBuffer.isView(value) ? value.byteLength : 8;
+        }
+        if (rows.length > 0 && (rows.length >= 128 || bytes + rowBytes > 1024 * 1024)) {
+          // Wait for receipt so the message queue cannot retain the whole result either.
+          Atomics.store(received, 0, 0);
+          parentPort.postMessage({ id, rows, more: true });
+          rows = [];
+          bytes = 0;
+          Atomics.wait(received, 0, 0);
+        }
+        rows.push(row);
+        bytes += rowBytes;
+      }
+      parentPort.postMessage({ id, rows });
     } else {
       const result = statement.run(...params);
       parentPort.postMessage({ id, rows: raw ? result : [] });
@@ -283,7 +302,7 @@ type WorkerStartup =
   | ({ readonly type: "unavailable" } & WorkerFailure);
 
 type WorkerReply =
-  | { readonly id: number; readonly rows: ReadonlyArray<any> }
+  | { readonly id: number; readonly rows: ReadonlyArray<any>; readonly more?: boolean }
   | {
       readonly id: number;
       readonly error: WorkerFailure & { readonly operation: "open" | "prepare" | "execute" };
@@ -353,7 +372,12 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
     let stoppedMessage: string | undefined;
     const pending = new Map<
       number,
-      { readonly endsTransaction: boolean; readonly resume: (reply: WorkerReply) => void }
+      {
+        readonly endsTransaction: boolean;
+        readonly received: Int32Array;
+        readonly rows: Array<unknown>;
+        readonly resume: (reply: WorkerReply) => void;
+      }
     >();
     const stop = (message: string) => {
       stoppedMessage = message;
@@ -377,10 +401,21 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
       }
       const request = pending.get(reply.id);
       if (request === undefined) return;
+      if ("rows" in reply && reply.more) {
+        for (const row of reply.rows) request.rows.push(row);
+        Atomics.store(request.received, 0, 1);
+        Atomics.notify(request.received, 0);
+        return;
+      }
       pending.delete(reply.id);
       if (pending.size === 0) worker.unref();
       options.onReply?.();
-      request.resume(reply);
+      if ("rows" in reply && request.rows.length > 0) {
+        for (const row of reply.rows) request.rows.push(row);
+        request.resume({ id: reply.id, rows: request.rows });
+      } else {
+        request.resume(reply);
+      }
     });
     worker.on("error", (cause) => stop(`${label} failed: ${cause.message}`));
     worker.on("exit", (code) => stop(`${label} exited with code ${code}`));
@@ -399,8 +434,11 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
         const safeIntegers = Boolean(Context.get(fiber.context, Client.SafeIntegers));
         const reply = Effect.callback<ReadonlyArray<any>, SqlError>((resume) => {
           const id = nextRequestId++;
+          const received = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
           pending.set(id, {
             endsTransaction,
+            received,
+            rows: [],
             resume: (reply) =>
               resume(
                 "rows" in reply
@@ -411,7 +449,7 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
           if (pending.size === 1) worker.ref();
           const cached = input.cached && !hasLargeBinding(input.params);
           // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
-          worker.postMessage({ id, safeIntegers, ...input, cached });
+          worker.postMessage({ id, safeIntegers, ...input, cached, received });
         });
         // A posted write runs to the end, as it did on the event loop; the caller and its lock
         // must not move on while the worker is still applying it. Reads stay cancellable.
