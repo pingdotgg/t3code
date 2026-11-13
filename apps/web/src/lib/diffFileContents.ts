@@ -63,44 +63,69 @@ function hunkSideMatches(
   patchLines: ReadonlyArray<string>,
   patchIndex: number,
   fileLines: ReadonlyArray<string>,
-  start: number,
+  fileIndex: number,
   count: number,
 ): boolean {
-  const fileIndex = hunkSideEnd(start, count) - count;
   for (let offset = 0; offset < count; offset++) {
     if (!sameLine(patchLines[patchIndex + offset], fileLines[fileIndex + offset])) return false;
   }
   return true;
 }
 
-// Pierre hydrates a partial patch by trusting its hunk positions, so contents that
-// changed since the patch was computed make it render corrupt hunks or throw.
+function unchangedRangeMatches(
+  oldLines: ReadonlyArray<string>,
+  oldStart: number,
+  oldEnd: number,
+  newLines: ReadonlyArray<string>,
+  newStart: number,
+  newEnd: number,
+): boolean {
+  if (oldEnd - oldStart !== newEnd - newStart) return false;
+  return hunkSideMatches(oldLines, oldStart, newLines, newStart, oldEnd - oldStart);
+}
+
+// Pierre hydrates a partial patch by trusting its hunk positions and shows the lines
+// around hunks as unchanged context, so both must still hold for the loaded contents.
 function reproducesPatch(fileDiff: FileDiffMetadata, oldContents: string, newContents: string) {
-  const lastHunk = fileDiff.hunks.at(-1);
-  if (lastHunk === undefined) return true;
+  if (fileDiff.hunks.length === 0) return true;
   const oldLines = splitLines(oldContents);
   const newLines = splitLines(newContents);
-  const hunksMatch = fileDiff.hunks.every(
-    (hunk) =>
-      hunkSideMatches(
+  let oldIndex = 0;
+  let newIndex = 0;
+  for (const hunk of fileDiff.hunks) {
+    const oldEnd = hunkSideEnd(hunk.deletionStart, hunk.deletionCount);
+    const newEnd = hunkSideEnd(hunk.additionStart, hunk.additionCount);
+    const oldStart = oldEnd - hunk.deletionCount;
+    const newStart = newEnd - hunk.additionCount;
+    if (
+      !unchangedRangeMatches(oldLines, oldIndex, oldStart, newLines, newIndex, newStart) ||
+      !hunkSideMatches(
         fileDiff.deletionLines,
         hunk.deletionLineIndex,
         oldLines,
-        hunk.deletionStart,
+        oldStart,
         hunk.deletionCount,
-      ) &&
-      hunkSideMatches(
+      ) ||
+      !hunkSideMatches(
         fileDiff.additionLines,
         hunk.additionLineIndex,
         newLines,
-        hunk.additionStart,
+        newStart,
         hunk.additionCount,
-      ),
-  );
-  return (
-    hunksMatch &&
-    oldLines.length - hunkSideEnd(lastHunk.deletionStart, lastHunk.deletionCount) ===
-      newLines.length - hunkSideEnd(lastHunk.additionStart, lastHunk.additionCount)
+      )
+    ) {
+      return false;
+    }
+    oldIndex = oldEnd;
+    newIndex = newEnd;
+  }
+  return unchangedRangeMatches(
+    oldLines,
+    oldIndex,
+    oldLines.length,
+    newLines,
+    newIndex,
+    newLines.length,
   );
 }
 
