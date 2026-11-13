@@ -64,23 +64,28 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       .filter((handoff) => handoff.history === undefined)
       .map((handoff) => handoff.summaryText)
       .join("\n\n");
-    // Optional like legacy context, but admitted first: a goal never fails a handoff that fits without it.
-    const fit = (base: string, extra: string) =>
-      extra && historyCost([], `${base}\n${extra}`) + 512 <= budget ? `${base}\n${extra}` : base;
-    const fullCoverage = fit(
-      fit(
-        coverage,
-        [...new Set(pending.flatMap((handoff) => handoff.history?.goal ?? []))].join("\n"),
-      ),
-      oldContext,
+    const withLegacy = (base: string) =>
+      oldContext && historyCost([], `${base}\n${oldContext}`) + 512 <= budget
+        ? `${base}\n${oldContext}`
+        : base;
+    const select = (base: string) =>
+      selectHistory({
+        messages,
+        coverage: withLegacy(base),
+        omittedItems: pending.reduce(
+          (sum, handoff) => sum + (handoff.history?.omittedItems ?? 0),
+          0,
+        ),
+        omittedItemIds: pending.flatMap((handoff) => handoff.history?.omittedItemIds ?? []),
+        budget,
+      });
+    const goals = [...new Set(pending.flatMap((handoff) => handoff.history?.goal ?? []))].join(
+      "\n",
     );
-    const selected = selectHistory({
-      messages,
-      coverage: fullCoverage,
-      omittedItems: pending.reduce((sum, handoff) => sum + (handoff.history?.omittedItems ?? 0), 0),
-      omittedItemIds: pending.flatMap((handoff) => handoff.history?.omittedItemIds ?? []),
-      budget,
-    });
+    // The goal is optional: when the final selection with it overflows, deliver what main would.
+    let selected = select(goals ? `${coverage}\n${goals}` : coverage);
+    if (goals && historyCost(selected.messages, selected.context) > budget)
+      selected = select(coverage);
     if (historyCost(selected.messages, selected.context) > budget) {
       if (input.deferInline) return { context: "", delivered: Effect.void, unsent: Effect.void };
       return yield* new ContextHandoffBudgetError();

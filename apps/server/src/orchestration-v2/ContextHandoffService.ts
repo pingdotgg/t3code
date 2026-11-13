@@ -292,17 +292,20 @@ export const isSideChatContextHandoff = (handoff: OrchestrationV2ContextHandoff)
 const GOAL_OBJECTIVE_MAX_CHARS = 2_000;
 
 /**
- * A native goal stays with the provider thread that set it; whichever provider thread runs next
+ * A native goal stays with the native session that set it; whichever provider thread runs next
  * has to be told. Any earlier owner counts, so a later switch or a resume fallback still carries it.
+ * The target counts too when it is also a source: the handoff then rebuilds its native session.
  */
 function sourceGoalNotice(input: {
+  readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
   readonly toProviderThreadId: ProviderThreadId;
   readonly providerThreads?: ReadonlyArray<OrchestrationV2ProviderThread>;
 }): string | null {
   const owner = (input.providerThreads ?? [])
     .filter(
       (thread) =>
-        thread.id !== input.toProviderThreadId &&
+        (thread.id !== input.toProviderThreadId ||
+          input.fromProviderThreadIds.includes(thread.id)) &&
         thread.ownerNodeId === null &&
         thread.goal != null &&
         thread.goal.status !== "complete",

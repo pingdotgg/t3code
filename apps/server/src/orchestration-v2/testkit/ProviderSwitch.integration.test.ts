@@ -1513,6 +1513,8 @@ describe("orchestration v2 provider switching", () => {
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const failResumeOnce = yield* Ref.make(false);
         const generation = yield* Ref.make(0);
+        const codexFailResumeOnce = yield* Ref.make(false);
+        const codexGeneration = yield* Ref.make(0);
         const registry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
             instanceId: CODEX_MODEL_SELECTION.instanceId,
@@ -1521,6 +1523,8 @@ describe("orchestration v2 provider switching", () => {
             modelSelection: CODEX_MODEL_SELECTION,
             responseByRunOrdinal: {},
             capturedTurns,
+            failResumeOnce: codexFailResumeOnce,
+            nativeThreadGeneration: codexGeneration,
           }),
           makeTestAdapter({
             instanceId: CLAUDE_MODEL_SELECTION.instanceId,
@@ -1620,6 +1624,14 @@ describe("orchestration v2 provider switching", () => {
           const recovered = (yield* Ref.get(capturedTurns)).at(-1)!;
           assert.notEqual(recovered.nativeThreadId, target.nativeThreadId);
           assert.include(recovered.text, "Finish the ZEBRA-42 migration");
+
+          // Back on the owner's provider thread, a replacement native session no longer holds it.
+          yield* Ref.set(codexFailResumeOnce, true);
+          yield* run(4, CODEX_MODEL_SELECTION);
+          const reclaimed = (yield* Ref.get(capturedTurns)).at(-1)!;
+          assert.equal(reclaimed.driver, CODEX_DRIVER);
+          assert.equal(yield* Ref.get(codexGeneration), 2);
+          assert.include(reclaimed.text, "Finish the ZEBRA-42 migration");
         }).pipe(
           Effect.provide(
             ProviderReplayHarness.layerWithRegistry(

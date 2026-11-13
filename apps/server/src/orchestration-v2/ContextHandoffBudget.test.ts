@@ -614,6 +614,32 @@ describe("handoff delivery", () => {
       assert.notInclude(injected[0]?.context, goal);
       yield* deliver(16_000);
       assert.include(injected[1]?.context, goal);
+
+      // Omitted item IDs are listed after admission; a goal near the edge must still not fail.
+      const omittedItemIds = Array.from({ length: 30 }, (_, index) =>
+        TurnItemId.make(`item:omitted-${index}-${"0".repeat(36)}`),
+      );
+      for (let size = 0; size <= 3_000; size++) {
+        yield* deliverContextHandoffs({
+          handoffs: [
+            {
+              ...handoff,
+              history: {
+                ...handoff.history!,
+                messages: [],
+                omittedItems: omittedItemIds.length,
+                omittedItemIds,
+                goal: "g".repeat(size),
+              },
+            },
+          ],
+          providerThread,
+          budget: 3_000,
+          alreadyDeliveredItemIds: new Set(),
+          inject: () => Effect.succeed(true),
+          persist: () => Effect.void,
+        });
+      }
     }),
   );
 
