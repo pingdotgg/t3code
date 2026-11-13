@@ -151,16 +151,24 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
   const gitFileContents = yield* fileSystem
     .readFileString(gitFile)
     .pipe(Effect.mapError(() => notAWorktree));
-  yield* fileSystem.remove(worktreePath, { recursive: true, force: true }).pipe(
-    // Node cannot cancel fs.rm; wait for its callback before restoring `.git`.
-    Effect.uninterruptible,
-    Effect.retry({
-      times: input.force ? OPEN_FILE_RETRIES : 0,
-      schedule: Schedule.spaced(OPEN_FILE_RETRY_DELAY),
-    }),
-    Effect.onError(() => fileSystem.writeFileString(gitFile, gitFileContents).pipe(Effect.ignore)),
-    Effect.mapError((cause) => refuse(`failed to delete '${worktreePath}'`, cause)),
+  // Once the folder is gone, Git cleanup must run: nothing else can drop the metadata.
+  return yield* Effect.uninterruptibleMask((restore) =>
+    restore(
+      fileSystem.remove(worktreePath, { recursive: true, force: true }).pipe(
+        // Node cannot cancel fs.rm; wait for its callback before restoring `.git`.
+        Effect.uninterruptible,
+        Effect.retry({
+          times: input.force ? OPEN_FILE_RETRIES : 0,
+          schedule: Schedule.spaced(OPEN_FILE_RETRY_DELAY),
+        }),
+        Effect.onError(() =>
+          fileSystem.writeFileString(gitFile, gitFileContents).pipe(Effect.ignore),
+        ),
+        Effect.mapError((cause) => refuse(`failed to delete '${worktreePath}'`, cause)),
+      ),
+    ).pipe(
+      // The folder is gone, so Git only drops the worktree's metadata.
+      Effect.andThen(input.run(["worktree", "remove", "--force", "--force", "--", worktreePath])),
+    ),
   );
-  // The folder is gone, so Git only drops the worktree's metadata.
-  return yield* input.run(["worktree", "remove", "--force", "--force", "--", worktreePath]);
 });
