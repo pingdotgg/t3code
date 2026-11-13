@@ -37,11 +37,19 @@ function goalOwnershipNotice(
   target: OrchestrationV2ProviderThread,
 ): string {
   const runs = new Map(sources.runs.map((run) => [run.id, run]));
+  const session = (providerThreadId: string, nativeThreadId: string | null) =>
+    `${providerThreadId} ${nativeThreadId}`;
+  // Keyed per native session: a provider thread recovered twice has displaced two of them.
   const displaced = new Map<string, OrchestrationV2ContextHandoff>();
   for (const handoff of [...sources.contextHandoffs, ...pending]) {
-    if (handoff.displacedGoal !== undefined) displaced.set(handoff.toProviderThreadId, handoff);
+    if (handoff.displacedGoal !== undefined)
+      displaced.set(
+        session(handoff.toProviderThreadId, handoff.displacedGoal.nativeThreadId),
+        handoff,
+      );
   }
-  for (const [providerThreadId, handoff] of displaced) {
+  for (const [key, handoff] of displaced) {
+    const providerThreadId = handoff.toProviderThreadId;
     const since = runs.get(handoff.targetRunId)?.ordinal ?? 0;
     const decided = sources.messages.some((message) => {
       const run = message.runId === null ? undefined : runs.get(message.runId);
@@ -55,7 +63,7 @@ function goalOwnershipNotice(
         (command?.type === "set" || command?.type === "clear")
       );
     });
-    if (decided) displaced.delete(providerThreadId);
+    if (decided) displaced.delete(key);
   }
   const owners = [
     ...Array.from(displaced.values(), (handoff) => ({
@@ -68,8 +76,7 @@ function goalOwnershipNotice(
       owner.ownerNodeId !== null ||
       owner.id === target.id ||
       // A row not yet rewritten still names the displaced session; the replacement's goal is its own.
-      displaced.get(owner.id)?.displacedGoal?.nativeThreadId ===
-        (owner.nativeThreadRef?.nativeId ?? null)
+      displaced.has(session(owner.id, owner.nativeThreadRef?.nativeId ?? null))
         ? []
         : [
             {

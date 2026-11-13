@@ -809,6 +809,25 @@ describe("handoff delivery", () => {
       assert.include(both, displacedOwner);
       assert.include(both, "native-session=native:target; status=active;");
       assert.include(both, "objective: Ship YAK");
+      // A second recovery of the same provider thread displaces that goal too, and both stay named.
+      const twice = yield* context({
+        ...replaced,
+        contextHandoffs: [
+          recovery,
+          {
+            ...recovery,
+            id: ContextHandoffId.make("handoff:recovery-2"),
+            targetRunId: RunId.make("run:later"),
+            displacedGoal: {
+              ...recovery.displacedGoal!,
+              nativeThreadId: "native:lost-2",
+              goal: { ...goal, objective: "Ship YAK" },
+            },
+          },
+        ],
+      });
+      assert.include(twice, displacedOwner);
+      assert.include(twice, "native-session=native:lost-2 (replaced after a failed resume)");
     }),
   );
 
