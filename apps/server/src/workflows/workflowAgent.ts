@@ -94,15 +94,19 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
       reply: "",
     };
   });
-  const done = (round: number) =>
+  const done = (round: number, produced: Schema.Json) =>
     journaled(
       run,
       name,
       `agent/${name}/${round}/done`,
       Schema.Void,
-      Effect.andThen(
-        run.store.stepEnded(run.runId, name, "completed", null),
-        run.store.runResumed(run.runId),
+      Effect.all(
+        [
+          run.store.stepEnded(run.runId, name, "completed", null),
+          run.store.stepResult(run.runId, name, produced),
+          run.store.runResumed(run.runId),
+        ],
+        { discard: true },
       ),
     );
 
@@ -138,7 +142,7 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
         break;
       }
       if (decodeOutput === undefined) {
-        yield* done(round);
+        yield* done(round, result.reply);
         return { value: result.reply as A, thread: threadOf(turn) };
       }
       const decoded =
@@ -149,7 +153,7 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
               Effect.result,
             );
       if (Result.isSuccess(decoded)) {
-        yield* done(round);
+        yield* done(round, result.output ?? null);
         return { value: decoded.success, thread: threadOf(turn) };
       }
       problem = `the agent did not return a result: ${decoded.failure}`;

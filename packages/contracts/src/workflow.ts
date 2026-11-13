@@ -44,6 +44,8 @@ export const WorkflowStep = Schema.Struct({
   threadId: Schema.NullOr(Schema.String),
   /** The linked environment that thread is in; null when it is this one. */
   environmentId: Schema.NullOr(Schema.String),
+  /** What it produced: a step's value, an agent's data or reply, the answer to a question. */
+  result: Schema.NullOr(Schema.Json),
   startedAt: Schema.String,
   endedAt: Schema.NullOr(Schema.String),
 });
@@ -72,7 +74,17 @@ export const WorkflowHook = Schema.Struct({
 export type WorkflowHook = typeof WorkflowHook.Type;
 
 /** What a client shows of workflows: recent runs, newest first, and the questions still open. */
+/** A workflow this server has registered, at its newest version, and what starts it. */
+export const WorkflowSummary = Schema.Struct({
+  name: Schema.String,
+  version: Schema.Number,
+  /** In words: "every 1h", "daily at 09:00", "webhook issues". Empty when only started by hand. */
+  triggers: Schema.Array(Schema.String),
+});
+export type WorkflowSummary = typeof WorkflowSummary.Type;
+
 export const WorkflowRunsSnapshot = Schema.Struct({
+  workflows: Schema.Array(WorkflowSummary),
   runs: Schema.Array(WorkflowRun),
   questions: Schema.Array(WorkflowQuestion),
 });

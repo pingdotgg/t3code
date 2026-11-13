@@ -158,7 +158,7 @@ export const layerDisabled = Layer.succeed(
     }),
     storeSet: refuse,
     storeDelete: refuse,
-    watch: Stream.concat(Stream.make({ runs: [], questions: [] }), Stream.never),
+    watch: Stream.concat(Stream.make({ workflows: [], runs: [], questions: [] }), Stream.never),
     counts: Stream.concat(Stream.make({ needsYou: 0, active: 0, total: 0 }), Stream.never),
     sweep: Effect.void,
   }),
