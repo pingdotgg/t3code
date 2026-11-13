@@ -169,6 +169,24 @@ describe("KeybindingsSettings.logic", () => {
     ).toBe("mod+m");
   });
 
+  it("keeps a letter key that types punctuation distinct from the punctuation key", () => {
+    const base = { metaKey: false, ctrlKey: true, altKey: false, shiftKey: false };
+    const letterKey = { ...base, key: ".", code: "KeyH" };
+    const periodKey = { ...base, key: ".", code: "Period" };
+    const options = { layoutCharacter: true };
+    const letterInput = keybindingFromKeyboardEvent(letterKey, "Linux x86_64", options);
+    const periodInput = keybindingFromKeyboardEvent(periodKey, "Linux x86_64", options);
+    expect(letterInput).not.toBe(periodInput);
+    assert(periodInput);
+    const shortcut = parseKeybindingShortcut(periodInput);
+    assert(shortcut);
+    const bindings = [{ command: "chat.new" as const, shortcut }];
+    expect(resolveShortcutCommand(periodKey, bindings, { platform: "Linux x86_64" })).toBe(
+      "chat.new",
+    );
+    expect(resolveShortcutCommand(letterKey, bindings, { platform: "Linux x86_64" })).toBeNull();
+  });
+
   it("serializes shortcuts and when expressions for upserts", () => {
     expect(
       shortcutToKeybindingInput({
