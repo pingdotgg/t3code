@@ -617,6 +617,7 @@ export function filterSidebarV2VisibleThreads<
   threads: readonly T[],
   scopedProjectKeys: ReadonlySet<string> | null,
   delegatedUnderParent: ReadonlySet<string>,
+  excludedEnvironmentIds?: ReadonlySet<string>,
 ): T[] {
   return threads.filter(
     (thread) =>
@@ -626,6 +627,7 @@ export function filterSidebarV2VisibleThreads<
         thread.lineage,
         delegatedUnderParent,
       ) &&
+      !excludedEnvironmentIds?.has(thread.environmentId) &&
       (scopedProjectKeys === null ||
         scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
   );
@@ -1436,10 +1438,11 @@ export function sortSidebarV2ProjectGroups<
   threads: readonly TThread[],
   sortOrder: SidebarProjectSortOrder,
   delegatedUnderParent: ReadonlySet<string>,
+  excludedEnvironmentIds?: ReadonlySet<string>,
 ): TProject[] {
   return sortLogicalProjectsForSidebar(
     projects,
-    filterSidebarV2VisibleThreads(threads, null, delegatedUnderParent),
+    filterSidebarV2VisibleThreads(threads, null, delegatedUnderParent, excludedEnvironmentIds),
     sortOrder,
   );
 }
