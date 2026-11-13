@@ -13,7 +13,7 @@ use conn_contract::{
     SourceControlProviderDiscoveryItem, VcsDiscoveryItem, VcsDiscoveryItemDetail,
     VcsDiscoveryItemDetailNone, VcsDiscoveryItemDetailSome, VcsDriverKind, lit,
 };
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const PROBE_MAX_BYTES: usize = 8_000;
@@ -53,19 +53,12 @@ async fn probe(cwd: &Path, exe: &str, args: &[&str]) -> Result<Probe, ProbeError
             std::io::ErrorKind::NotFound => ProbeError::Missing,
             _ => ProbeError::Failed(format!("`{exe} {}` failed.", args.join(" "))),
         })?;
-    let mut stdout = child
-        .stdout
-        .take()
-        .expect("piped")
-        .take(PROBE_MAX_BYTES as u64);
-    let mut stderr = child
-        .stderr
-        .take()
-        .expect("piped")
-        .take(PROBE_MAX_BYTES as u64);
+    let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
     let work = async {
-        let (mut out, mut err) = (Vec::new(), Vec::new());
-        let _ = tokio::join!(stdout.read_to_end(&mut out), stderr.read_to_end(&mut err));
+        let (out, err) = tokio::join!(
+            read_capped(stdout, PROBE_MAX_BYTES),
+            read_capped(stderr, PROBE_MAX_BYTES)
+        );
         let status = child.wait().await.ok();
         (out, err, status)
     };
@@ -80,6 +73,25 @@ async fn probe(cwd: &Path, exe: &str, args: &[&str]) -> Result<Probe, ProbeError
             args.join(" "),
             PROBE_TIMEOUT.as_millis()
         ))),
+    }
+}
+
+/// Keeps the first `cap` bytes and reads on to the end, so a child that writes more than a
+/// pipe holds never blocks on a full pipe.
+async fn read_capped(pipe: Option<impl AsyncRead + Unpin>, cap: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    let Some(mut pipe) = pipe else {
+        return out;
+    };
+    let mut buf = [0u8; 8192];
+    loop {
+        match pipe.read(&mut buf).await {
+            Ok(0) | Err(_) => return out,
+            Ok(n) => {
+                let room = cap.saturating_sub(out.len()).min(n);
+                out.extend_from_slice(buf.get(..room).unwrap_or_default());
+            }
+        }
     }
 }
 
@@ -323,6 +335,32 @@ pub async fn discover(cwd: &Path) -> SourceControlDiscoveryResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A CLI that writes more than a pipe holds must not stall the probe until its timeout.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_verbose_cli_does_not_stall_the_probe() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("conn-vcs-probe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let stub = dir.join("verbose");
+        std::fs::write(
+            &stub,
+            "#!/bin/sh\necho 'verbose 1.0'\nhead -c 300000 /dev/zero | tr '\\0' x\nhead -c 300000 /dev/zero >&2\nexit 0\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let started = std::time::Instant::now();
+        let result = probe(&dir, &stub.to_string_lossy(), &["--version"]).await;
+        let elapsed = started.elapsed();
+        let _ = std::fs::remove_dir_all(&dir);
+        let Ok(p) = result else {
+            panic!("the probe failed after {elapsed:?}")
+        };
+        assert_eq!(p.code, Some(0));
+        assert_eq!(first_line(&p).as_deref(), Some("verbose 1.0"));
+        assert!(p.stdout.len() <= PROBE_MAX_BYTES && p.stderr.len() <= PROBE_MAX_BYTES);
+        assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+    }
 
     #[test]
     fn reads_github_accounts() {
