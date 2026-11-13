@@ -82,6 +82,7 @@ import type {
 } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
+import { WorkspaceScanRunsHooks } from "./WorkspaceScanHooks.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
@@ -2288,6 +2289,7 @@ it.layer(
           skills: [],
         } as const satisfies ServerProvider;
         const scannedDirectories = yield* Ref.make<ReadonlyArray<string>>([]);
+        const scansRunningHooks = yield* Ref.make<ReadonlyArray<boolean>>([]);
         const instance: ProviderInstance = {
           instanceId,
           driverKind: driver,
@@ -2309,6 +2311,10 @@ it.layer(
           },
           snapshotForCwd: (directory) =>
             Ref.update(scannedDirectories, (directories) => [...directories, directory]).pipe(
+              Effect.andThen(WorkspaceScanRunsHooks),
+              Effect.flatMap((runHooks) =>
+                Ref.update(scansRunningHooks, (scans) => [...scans, runHooks]),
+              ),
               Effect.as({
                 ...provider,
                 skills: [{ name: "finalize", path: `${directory}/finalize`, enabled: true }],
@@ -2351,6 +2357,11 @@ it.layer(
             scanCwd: "/project",
           });
           assert.deepStrictEqual(yield* Ref.get(scannedDirectories), ["/project"]);
+          // The scan is detached from its caller, whose permission to run hooks must still reach it.
+          yield* registry
+            .refreshWorkspaceSnapshot({ instanceId, cwd: "/operated" })
+            .pipe(Effect.provideService(WorkspaceScanRunsHooks, true));
+          assert.deepStrictEqual(yield* Ref.get(scansRunningHooks), [false, true]);
           assert.deepStrictEqual(
             providers[0]?.workspaceSnapshots
               ?.find((snapshot) => snapshot.cwd === "/worktree")

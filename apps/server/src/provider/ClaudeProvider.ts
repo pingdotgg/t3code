@@ -233,14 +233,16 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string | undefined;
   readonly managedMcpConfig: boolean;
+  readonly runHooks?: boolean;
 }): ClaudeQueryOptions {
   return {
     persistSession: false,
     pathToClaudeCodeExecutable: input.executablePath,
     abortController: input.abortController,
     settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
-    // Keep settings for slash-command discovery, but disable hooks so health checks do not run SessionStart repeatedly.
-    settings: { disableAllHooks: true },
+    // Keep settings for slash-command discovery, but disable hooks so health checks do not run
+    // SessionStart repeatedly. Only the once-per-folder hook command discovery runs them.
+    ...(input.runHooks ? {} : { settings: { disableAllHooks: true } }),
     allowedTools: [],
     // Exclude filesystem MCP servers; omit strict mode when managed-mcp.json already excludes them and forbids the flag.
     mcpServers: {},
@@ -445,6 +447,7 @@ const probeClaudeCapabilities = (
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
   includeStatus = true,
+  runHooks = false,
 ) => {
   const abort = new AbortController();
   const abortProbe = Effect.sync(() => {
@@ -477,8 +480,10 @@ const probeClaudeCapabilities = (
             environment: claudeEnvironment,
             cwd,
             managedMcpConfig,
+            runHooks,
           }),
         });
+        // Claude Code answers initialize after SessionStart hooks finish, so it lists their commands.
         const init = await q.initializationResult();
         return { q, init, graceMs };
       },
@@ -583,28 +588,69 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
 });
 
+/**
+ * Commands that only SessionStart hooks register, such as a Claude Code mod's. Scans stay hookless
+ * so telemetry hooks do not log each one as a session: one hook-running probe per folder finds
+ * these commands and later scans reuse its answer.
+ */
+export type ClaudeHookSlashCommandsByCwd = ReadonlyMap<
+  string,
+  ReadonlyArray<ServerProviderSlashCommand>
+>;
+
+interface ClaudeHookSlashCommands {
+  readonly byCwd: Ref.Ref<ClaudeHookSlashCommandsByCwd>;
+  /** False for callers that may not run the user's hooks; they still get what is remembered. */
+  readonly discover: boolean;
+}
+
 export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnapshot")(function* (
   claudeSettings: ClaudeSettings,
   machineSnapshot: ServerProvider,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
+  hookCommands?: ClaudeHookSlashCommands,
 ): Effect.fn.Return<ProviderWorkspaceSnapshot, never, FileSystem.FileSystem | Path.Path> {
   if (!claudeSettings.enabled) return machineSnapshot;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, environment);
   const fileSystem = yield* FileSystem.FileSystem;
   // A deleted worktree can never answer the probe. Pending would make clients rescan it forever.
   const cwdExists = yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true));
-  const probeResult = cwdExists
-    ? yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false).pipe(Effect.result)
+  const probe = (runHooks: boolean) =>
+    probeClaudeCapabilities(claudeSettings, environment, cwd, false, runHooks).pipe(Effect.result);
+  const knownHookCommands = hookCommands
+    ? (yield* Ref.get(hookCommands.byCwd)).get(cwd)
     : undefined;
+  const [probeResult, hookProbeResult] = cwdExists
+    ? yield* Effect.all(
+        [
+          probe(false),
+          hookCommands?.discover && knownHookCommands === undefined
+            ? probe(true)
+            : Effect.undefined,
+        ],
+        { concurrency: "unbounded" },
+      )
+    : [undefined, undefined];
   const capabilities =
     probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
+  let hookSlashCommands = knownHookCommands ?? [];
+  // A failed hook probe is not remembered, so the next scan tries again.
+  if (hookCommands && capabilities && hookProbeResult && Result.isSuccess(hookProbeResult)) {
+    const hookless = new Set(capabilities.slashCommands.map(({ name }) => name.toLowerCase()));
+    const discovered = hookProbeResult.success.slashCommands.filter(
+      ({ name }) => !hookless.has(name.toLowerCase()),
+    );
+    hookSlashCommands = discovered;
+    yield* Ref.update(hookCommands.byCwd, (byCwd) => new Map(byCwd).set(cwd, discovered));
+  }
   return {
     ...machineSnapshot,
     skills,
     slashCommands: dedupeSlashCommands([
       COMPACT_SLASH_COMMAND,
       ...(capabilities?.slashCommands ?? []),
+      ...hookSlashCommands,
     ]),
     slashCommandsPending: cwdExists && !capabilities,
   };

@@ -32,6 +32,7 @@ import {
   probeClaudeCapabilities,
   probeClaudeWorkspaceSnapshot,
   type ClaudeCapabilitiesProbe,
+  type ClaudeHookSlashCommandsByCwd,
 } from "../ClaudeProvider.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
@@ -56,6 +57,7 @@ import {
 } from "./ClaudeHome.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { makeClaudeMaintenanceResolution } from "./ClaudeMaintenance.ts";
+import { WorkspaceScanRunsHooks } from "../WorkspaceScanHooks.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
@@ -146,6 +148,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     });
 
     const scopedLimitNames = yield* makeClaudeScopedLimitNames;
+    const hookSlashCommandsByCwd = yield* Ref.make<ClaudeHookSlashCommandsByCwd>(new Map());
     const orchestrationAdapter = yield* createClaudeAdapterV2(
       {
         instanceId,
@@ -381,11 +384,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       accentColor,
       enabled,
       snapshot,
-      invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
+      invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache).pipe(
+        Effect.andThen(Ref.set(hookSlashCommandsByCwd, new Map())),
+      ),
       snapshotForCwd: (cwd: string) =>
-        snapshot.getSnapshot.pipe(
-          Effect.flatMap((machineSnapshot) =>
-            probeClaudeWorkspaceSnapshot(effectiveConfig, machineSnapshot, cwd, processEnv),
+        Effect.all([snapshot.getSnapshot, WorkspaceScanRunsHooks]).pipe(
+          Effect.flatMap(([machineSnapshot, discover]) =>
+            probeClaudeWorkspaceSnapshot(effectiveConfig, machineSnapshot, cwd, processEnv, {
+              byCwd: hookSlashCommandsByCwd,
+              discover,
+            }),
           ),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),

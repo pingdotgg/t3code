@@ -175,6 +175,7 @@ import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErr
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as SecretCheck from "./secrets/SecretCheck.ts";
 import * as AcpRegistrySessions from "./provider/AcpRegistrySessions.ts";
+import { WorkspaceScanRunsHooks } from "./provider/WorkspaceScanHooks.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
@@ -2442,12 +2443,19 @@ export const layerWsRpc = (
               yield* usageLimitSources.refresh;
             }
             let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
-              ? providerRegistry.refreshWorkspaceSnapshot({
-                  instanceId: input.instanceId,
-                  cwd: input.cwd,
-                  scanCwd: yield* projectService.workspaceScanDirectory(input.cwd),
-                  fresh: input.fresh === true,
-                })
+              ? providerRegistry
+                  .refreshWorkspaceSnapshot({
+                    instanceId: input.instanceId,
+                    cwd: input.cwd,
+                    scanCwd: yield* projectService.workspaceScanDirectory(input.cwd),
+                    fresh: input.fresh === true,
+                  })
+                  .pipe(
+                    Effect.provideService(
+                      WorkspaceScanRunsHooks,
+                      currentSession.scopes.includes(AuthOrchestrationOperateScope),
+                    ),
+                  )
               : input.reloadSecrets === true
                 ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)
                 : input.instanceId !== undefined
