@@ -206,7 +206,7 @@ describe("serializeRenderedMarkdownFragment", () => {
     }).append(
       new FakeElement("P", [], {
         "data-thread-find-ignore": "true",
-        "data-markdown-copy": "",
+        "data-markdown-alert-label": "",
       }).append(new FakeElement("SVG", [], { "aria-hidden": "true" }), new FakeText("Warning")),
       new FakeElement("P").append(new FakeText("Back up first.")),
     );
@@ -221,7 +221,7 @@ describe("serializeRenderedMarkdownFragment", () => {
     }).append(
       new FakeElement("P", [], {
         "data-thread-find-ignore": "true",
-        "data-markdown-copy": "",
+        "data-markdown-alert-label": "",
       }).append(new FakeText("Insight")),
       new FakeElement("P").append(new FakeText("Caches are warm.")),
     );
