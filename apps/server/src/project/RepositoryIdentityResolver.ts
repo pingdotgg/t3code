@@ -1,5 +1,7 @@
 import type { RepositoryIdentity, SourceControlProviderError } from "@t3tools/contracts";
+import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
 import { repositoryPathFromRemoteUrl } from "@t3tools/source-control-core/server/SourceControlProvider";
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -69,21 +71,44 @@ function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   return remotes;
 }
 
-// `gh repo set-default` marks the chosen remote with `remote.<name>.gh-resolved base`.
-function parseGhDefaultRemoteName(stdout: string): string | null {
-  const marked = stdout
-    .split("\n")
-    .map((line) => /^remote\.(.+)\.gh-resolved\s+base$/.exec(line.trim())?.[1])
-    .filter((name): name is string => name !== undefined);
-  return marked.length === 1 ? marked[0]! : null;
+// `gh repo set-default` marks one remote with `base`, or with OWNER/REPO when it picked a
+// parent repository. gh reads PRs from that repository, so the identity follows the mark when
+// a remote fetches it. The locator must name a real remote: review checkouts fetch through it.
+function pickMarkedRemote(
+  remotes: ReadonlyMap<string, string>,
+  resolved: string,
+): { readonly remoteName: string; readonly remoteUrl: string } | null {
+  const marks = resolved.split("\n").flatMap((line) => {
+    const match = /^remote\.(.+)\.gh-resolved\s+(\S+)$/u.exec(line.trim());
+    const remoteUrl = match?.[1] === undefined ? undefined : remotes.get(match[1]);
+    return match?.[1] && match[2] && remoteUrl
+      ? [{ remoteName: match[1], remoteUrl, value: match[2] }]
+      : [];
+  });
+  // gh's choice is ambiguous with several marks; GitHubSourceControlProvider ignores them too.
+  const [mark, ...others] = marks;
+  if (!mark || others.length > 0) return null;
+  if (mark.value === "base") return { remoteName: mark.remoteName, remoteUrl: mark.remoteUrl };
+  // Compare hosts with HTTP ports kept: one hostname can serve separate forges on two ports.
+  const host = parseGitRemoteHost(mark.remoteUrl)?.host;
+  const markedPath = mark.value.toLowerCase();
+  const [remoteName, remoteUrl] =
+    [...remotes.entries()].find(
+      ([, url]) =>
+        parseGitRemoteHost(url)?.host === host &&
+        normalizeGitRemoteUrl(url).split("/").slice(1).join("/") === markedPath,
+    ) ?? [];
+  return remoteName && remoteUrl ? { remoteName, remoteUrl } : null;
 }
 
 function pickPrimaryRemote(
   remotes: ReadonlyMap<string, string>,
-  ghDefaultRemoteName: string | null,
+  resolved: string,
 ): { readonly remoteName: string; readonly remoteUrl: string } | null {
-  for (const preferredRemoteName of [ghDefaultRemoteName, "upstream", "origin"]) {
-    if (preferredRemoteName === null) continue;
+  const marked = pickMarkedRemote(remotes, resolved);
+  if (marked) return marked;
+
+  for (const preferredRemoteName of ["upstream", "origin"] as const) {
     const remoteUrl = remotes.get(preferredRemoteName);
     if (remoteUrl) {
       return { remoteName: preferredRemoteName, remoteUrl };
@@ -242,40 +267,30 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
 ): Effect.fn.Return<RepositoryIdentity | null, never, ProcessRunner.ProcessRunner> {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const env = gitEnv(yield* HostProcess.Platform);
-  const remoteResult = yield* processRunner
-    .run({
-      command: "git",
-      args: ["-C", cacheKey.rootPath, ...(cacheKey.isBare ? ["--git-dir=."] : []), "remote", "-v"],
-      env,
-      timeoutBehavior: "timedOutResult",
-    })
-    .pipe(Effect.option);
+  const runGit = (args: ReadonlyArray<string>) =>
+    processRunner
+      .run({
+        command: "git",
+        args: ["-C", cacheKey.rootPath, ...(cacheKey.isBare ? ["--git-dir=."] : []), ...args],
+        env,
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(Effect.option);
+  const [remoteResult, resolvedResult] = yield* Effect.all(
+    [runGit(["remote", "-v"]), runGit(["config", "--get-regexp", "^remote\\..*\\.gh-resolved$"])],
+    { concurrency: "unbounded" },
+  );
   if (remoteResult._tag === "None" || remoteResult.value.code !== 0) {
     return null;
   }
 
-  const ghResolvedResult = yield* processRunner
-    .run({
-      command: "git",
-      args: [
-        "-C",
-        cacheKey.rootPath,
-        ...(cacheKey.isBare ? ["--git-dir=."] : []),
-        "config",
-        "--get-regexp",
-        "^remote\\..*\\.gh-resolved$",
-      ],
-      env,
-      timeoutBehavior: "timedOutResult",
-    })
-    .pipe(Effect.option);
-  const ghDefaultRemoteName =
-    ghResolvedResult._tag === "Some" && ghResolvedResult.value.code === 0
-      ? parseGhDefaultRemoteName(ghResolvedResult.value.stdout)
-      : null;
-
   const remotes = parseRemoteFetchUrls(remoteResult.value.stdout);
-  const remote = pickPrimaryRemote(remotes, ghDefaultRemoteName);
+  // Exits 1 when no remote has a mark.
+  const resolved =
+    resolvedResult._tag === "Some" && resolvedResult.value.code === 0
+      ? resolvedResult.value.stdout
+      : "";
+  const remote = pickPrimaryRemote(remotes, resolved);
   return remote
     ? buildRepositoryIdentity({
         ...remote,

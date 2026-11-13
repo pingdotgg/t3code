@@ -577,6 +577,98 @@ describe("server browser drag", () => {
       process.off("unhandledRejection", onUnhandled);
     }
   });
+
+  it("moves the mouse after dragstart, so pages that track a drag with mousemove see it", async () => {
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`
+        <div style="display:flex;gap:40px">
+          <div id="source" draggable="true" style="width:200px;height:120px">source</div>
+          <div id="target" style="width:200px;height:120px">target</div>
+        </div>
+        <script>
+          window.events = [];
+          let dragging = false;
+          source.addEventListener("dragstart", (event) => {
+            event.preventDefault();
+            dragging = true;
+            events.push("dragstart");
+          });
+          addEventListener("mousemove", () => dragging && events.push("mousemove"));
+          addEventListener("mouseup", () => events.push("mouseup"));
+        </script>`);
+
+      await ServerBrowserPage.drag(page, { source: "#source", target: "#target" });
+
+      const events = (await page.evaluate("window.events")) as Array<string>;
+      expect(events.slice(0, 2)).toEqual(["dragstart", "mousemove"]);
+      expect(events.at(-1)).toBe("mouseup");
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+describe("server browser click", () => {
+  it("clicks a target the page replaced while it was being scrolled into view", async () => {
+    let scrolls = 0;
+    const clicks: Array<unknown> = [];
+    const page = {
+      locator: () => ({
+        // Playwright resolves the node once; a page re-rendering it detaches that node.
+        scrollIntoViewIfNeeded: async () => {
+          if (scrolls++ === 0) {
+            throw new Error("locator.scrollIntoViewIfNeeded: Element is not attached to the DOM");
+          }
+        },
+        boundingBox: async () => ({ x: 0, y: 0, width: 20, height: 20 }),
+        click: async (options: unknown) => {
+          clicks.push(options);
+        },
+        count: async () => 1,
+      }),
+      once: () => {},
+      off: () => {},
+    } as unknown as Page;
+
+    await expect(ServerBrowserPage.click(page, { selector: "#save" })).resolves.toEqual({
+      x: 10,
+      y: 10,
+    });
+    expect(clicks).toHaveLength(1);
+  });
+
+  it("retries a replaced target only within the action's timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const timeouts: Array<number | undefined> = [];
+      const clicks: Array<unknown> = [];
+      const detached = new Error(
+        "locator.scrollIntoViewIfNeeded: Element is not attached to the DOM",
+      );
+      const page = {
+        locator: () => ({
+          scrollIntoViewIfNeeded: async (options?: { timeout?: number }) => {
+            timeouts.push(options?.timeout);
+            vi.advanceTimersByTime(60);
+            throw detached;
+          },
+          click: async (options: unknown) => {
+            clicks.push(options);
+          },
+        }),
+      } as unknown as Page;
+
+      await expect(
+        ServerBrowserPage.click(page, { selector: "#save", timeoutMs: 100 }),
+      ).rejects.toBe(detached);
+      expect(timeouts).toEqual([100, 40]);
+      expect(clicks).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("server browser evaluate", () => {

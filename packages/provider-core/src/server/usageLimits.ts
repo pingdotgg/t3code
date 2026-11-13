@@ -113,6 +113,7 @@ export function applyUsageLimitsUpdate(input: {
     ...(previous?.refreshAfter !== undefined ? { refreshAfter: previous.refreshAfter } : {}),
     ...(previous?.stale ? { stale: true } : {}),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
+    ...(previous?.zeroSpendCap ? { zeroSpendCap: true } : {}),
     ...(unavailable !== undefined ? { unavailable } : {}),
   };
 }
