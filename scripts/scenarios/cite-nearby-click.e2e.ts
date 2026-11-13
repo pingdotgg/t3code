@@ -16,6 +16,7 @@ test(
     await screen.getByRole("textbox").fill("Give me a short tour");
     await screen.getByRole("textbox").press("Enter");
     await expect(screen.getByText("This turn is a replay.", { exact: false })).toBeVisible();
+    await expect(screen.getByRole("button", "Stop generation")).toBeHidden();
 
     const line = await browser.evaluate((text: string) => {
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
