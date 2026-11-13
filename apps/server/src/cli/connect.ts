@@ -7,6 +7,7 @@ import {
   formatConnectReachable,
   type RelayClientInstallProgressEvent,
   type RelayClientInstallProgressStage,
+  t3ConnectTroubleshootingUrl,
 } from "@t3tools/contracts";
 import { RelayOkResponse } from "@t3tools/contracts/relay";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -39,6 +40,7 @@ import * as CliTokenManager from "../cloud/CliTokenManager.ts";
 import { formatReachabilityFailure } from "../cloud/ConnectReachability.ts";
 import { filterRelayResponse } from "../cloud/relayResponse.ts";
 import {
+  CLOUD_HOST_CLOCK_BEHIND,
   CLOUD_LINK_REVOKED,
   CLOUD_LINKED_USER_ID,
   isAgentActivityPublishingEnabledValue,
@@ -157,6 +159,8 @@ interface CloudCliStatus {
   readonly linkMode: CliState.CliDesiredLinkMode;
   /** `null` when no server answered the live check, or none ran because no tunnel is wanted. */
   readonly reachability: EnvironmentConnectReachability | null;
+  /** When this host last refused a relay request because its clock was behind. */
+  readonly hostClockBehindAt: string | null;
 }
 
 function formatRelayClientStatus(executable: RelayClient.RelayClientStatus): ReadonlyArray<string> {
@@ -227,6 +231,15 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
               `✓ Other devices can reach this machine · ${formatConnectReachable(status.reachability)}`,
             ]
           : ["", formatReachabilityFailure(status.reachability)]),
+    ...(!status.linked || status.hostClockBehindAt === null
+      ? []
+      : [
+          "",
+          "✕ This machine's clock is behind, so it refused T3 Connect requests",
+          `  Last refused: ${status.hostClockBehindAt} (this machine's clock)`,
+          "  Fix: turn on automatic date and time on this machine. This clears after the next accepted request.",
+          `  More info: ${t3ConnectTroubleshootingUrl("the-clock-is-off")}`,
+        ]),
     ...(nextStep ? ["", `Next: ${nextStep}`] : []),
   ].join("\n");
 }
@@ -694,6 +707,7 @@ const connectStatusCommand = Command.make("status", {
           revoked,
           executable,
           linkMode,
+          hostClockBehindAt,
         ] = yield* Effect.all(
           [
             CliState.readCliDesiredCloudLink,
@@ -704,6 +718,7 @@ const connectStatusCommand = Command.make("status", {
             secrets.get(CLOUD_LINK_REVOKED),
             relayClient.resolve,
             CliState.readCliDesiredLinkMode,
+            secrets.get(CLOUD_HOST_CLOCK_BEHIND),
           ],
           { concurrency: "unbounded" },
         );
@@ -723,6 +738,9 @@ const connectStatusCommand = Command.make("status", {
           relayClient: executable,
           linkMode,
           reachability,
+          hostClockBehindAt: Option.isSome(hostClockBehindAt)
+            ? bytesToString(hostClockBehindAt.value)
+            : null,
         };
         yield* Console.log(formatCloudStatus(status, { json: flags.json }));
       }),

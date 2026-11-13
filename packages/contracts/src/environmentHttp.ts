@@ -294,6 +294,7 @@ export class EnvironmentHttpUnauthorizedError extends Schema.TaggedError<Environ
   "EnvironmentHttpUnauthorizedError",
   {
     message: Schema.String,
+    reason: Schema.optionalKey(Schema.Literal("host_clock_behind")),
   },
   { httpApiStatus: 401 },
 ) {

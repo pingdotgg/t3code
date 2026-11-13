@@ -4,6 +4,7 @@ import {
   type EnvironmentCloudLinkStateResult,
   type EnvironmentCloudPreferencesRequest,
   type EnvironmentCloudRelayConfigResult,
+  t3ConnectTroubleshootingUrl,
 } from "@t3tools/contracts";
 import {
   RelayCloudEnvironmentHealthProofPayload,
@@ -37,6 +38,7 @@ import {
   RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
   RELAY_MINT_REQUEST_TYP,
   RELAY_MINT_RESPONSE_TYP,
+  RelayJwtError,
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
@@ -81,6 +83,7 @@ import * as CliTokenManager from "./CliTokenManager.ts";
 import {
   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  CLOUD_HOST_CLOCK_BEHIND,
   CLOUD_LINK_REVOKED,
   CLOUD_LINKED_USER_ID,
   CLOUD_MINT_PUBLIC_KEY,
@@ -198,12 +201,35 @@ const SignedRelayRequest = Schema.Literals(["health", "mint"]);
 
 export class CloudLinkProofRejectedError extends Schema.TaggedError<CloudLinkProofRejectedError>()(
   "CloudLinkProofRejectedError",
-  { request: SignedRelayRequest },
+  { request: SignedRelayRequest, hostClockBehind: Schema.optional(Schema.Boolean) },
 ) {
   override get message(): string {
-    return `Invalid cloud ${this.request} request.`;
+    return this.hostClockBehind
+      ? `Refused the cloud ${this.request} request because this host's clock is more than a minute behind. Sync the host's clock, then retry.`
+      : `Invalid cloud ${this.request} request.`;
   }
 }
+
+/** Jwt.verify reports a future iat only after the signature, issuer and audience check out. */
+const verifiedRelayProofOrNone =
+  (request: typeof SignedRelayRequest.Type, recordHostClockBehind: Effect.Effect<void>) =>
+  <A, R>(verify: Effect.Effect<A, RelayJwtError, R>) =>
+    verify.pipe(
+      Effect.asSome,
+      Effect.catch((error) =>
+        RelayJwtError.diagnosticCode(error) === "ClaimValidationFailed.iat.future"
+          ? Effect.logWarning(
+              "Refused a T3 Connect relay request because this host's clock is behind",
+              { request, moreInfo: t3ConnectTroubleshootingUrl("the-clock-is-off") },
+            ).pipe(
+              Effect.andThen(recordHostClockBehind),
+              Effect.andThen(
+                Effect.fail(new CloudLinkProofRejectedError({ request, hostClockBehind: true })),
+              ),
+            )
+          : Effect.succeedNone,
+      ),
+    );
 
 export class CloudLinkProofReplayedError extends Schema.TaggedError<CloudLinkProofReplayedError>()(
   "CloudLinkProofReplayedError",
@@ -1424,6 +1450,12 @@ const make = Effect.gen(function* () {
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("read-preferences")),
   );
 
+  // A diagnostic for `t3 connect status`; failing to record it must not change the response.
+  const recordHostClockBehind = (now: DateTime.Utc) =>
+    secrets
+      .set(CLOUD_HOST_CLOCK_BEHIND, stringToBytes(DateTime.formatIso(now)))
+      .pipe(Effect.ignore);
+
   const answerHealthRequest = Effect.fn("environment.cloud.health")(
     function* (request: RelayCloudEnvironmentHealthRequest) {
       const cloudMintPublicKey = yield* secrets
@@ -1464,7 +1496,10 @@ const make = Effect.gen(function* () {
         typ: RELAY_HEALTH_REQUEST_TYP,
         issuer: normalizeRelayIssuer(relayIssuer),
         audience: `t3-env:${environmentId}`,
-      }).pipe(Effect.provideService(Signature.Signature, signature), Effect.option);
+      }).pipe(
+        Effect.provideService(Signature.Signature, signature),
+        verifiedRelayProofOrNone("health", recordHostClockBehind(now)),
+      );
       if (
         Option.isNone(proofOption) ||
         proofOption.value.environmentId !== environmentId ||
@@ -1486,6 +1521,7 @@ const make = Effect.gen(function* () {
       if (!consumedReplayGuards) {
         return yield* new CloudLinkProofReplayedError({ request: "health" });
       }
+      yield* secrets.remove(CLOUD_HOST_CLOCK_BEHIND).pipe(Effect.ignore);
 
       const descriptor = yield* environment.getDescriptor;
       const responseExpiresAt = DateTime.add(now, { minutes: 5 });
@@ -1566,7 +1602,10 @@ const make = Effect.gen(function* () {
         typ: RELAY_MINT_REQUEST_TYP,
         issuer: normalizeRelayIssuer(relayIssuer),
         audience: `t3-env:${environmentId}`,
-      }).pipe(Effect.provideService(Signature.Signature, signature), Effect.option);
+      }).pipe(
+        Effect.provideService(Signature.Signature, signature),
+        verifiedRelayProofOrNone("mint", recordHostClockBehind(now)),
+      );
       if (
         Option.isNone(proofOption) ||
         proofOption.value.environmentId !== environmentId ||
@@ -1589,6 +1628,7 @@ const make = Effect.gen(function* () {
       if (!consumedReplayGuards) {
         return yield* new CloudLinkProofReplayedError({ request: "mint" });
       }
+      yield* secrets.remove(CLOUD_HOST_CLOCK_BEHIND).pipe(Effect.ignore);
 
       const issued = yield* environmentAuth.createPairingLink({
         scopes: AuthStandardClientScopes,

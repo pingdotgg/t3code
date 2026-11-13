@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Signs proofs as the relay would, outside the code under test.
+import * as NodeCrypto from "node:crypto";
+
 import { EnvironmentId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -7,7 +10,7 @@ import * as Option from "effect/Option";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { HttpClient, HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import * as EnvironmentKeys from "./environmentKeys.ts";
@@ -21,10 +24,13 @@ import * as CloudLink from "./CloudLink.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import {
+  CLOUD_HOST_CLOCK_BEHIND,
   CLOUD_LINKED_USER_ID,
+  CLOUD_MINT_PUBLIC_KEY,
   HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+  RELAY_ISSUER_SECRET,
   RELAY_URL_SECRET,
 } from "./config.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
@@ -38,6 +44,7 @@ const withService = <A, E>(
     readonly relayFails?: boolean;
     readonly failActivityRead?: boolean;
     readonly failHoldRead?: boolean;
+    readonly secrets?: ReadonlyArray<readonly [string, Uint8Array]>;
     readonly holdFirstRelayCall?: {
       readonly started: () => void;
       readonly released: Promise<void>;
@@ -45,6 +52,7 @@ const withService = <A, E>(
   },
   body: (input: {
     readonly preferences: { readonly update: CloudLink.CloudLink["Service"]["updatePreferences"] };
+    readonly link: CloudLink.CloudLink["Service"];
     readonly stored: Map<string, Uint8Array>;
     readonly relayCalls: Array<boolean>;
   }) => Effect.Effect<A, E, never>,
@@ -55,6 +63,7 @@ const withService = <A, E>(
       [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, encode("credential")],
       [HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET, encode("false")],
       [PUBLISH_AGENT_ACTIVITY_SECRET, encode("false")],
+      ...(options.secrets ?? []),
     ]);
     const relayCalls: Array<boolean> = [];
     const fetch: typeof globalThis.fetch = Object.assign(
@@ -93,9 +102,12 @@ const withService = <A, E>(
                 }),
               )
             : Effect.sync(() => void stored.set(name, value)),
+        create: (name, value) => Effect.sync(() => void stored.set(name, value)),
+        remove: (name) => Effect.sync(() => void stored.delete(name)),
       }),
       Layer.mock(ServerEnvironment.ServerEnvironment)({
         getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-1")),
+        getDescriptor: Effect.succeed({} as never),
       }),
       Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({ requestCatchUp: () => Effect.void }),
       Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({}),
@@ -114,16 +126,26 @@ const withService = <A, E>(
         HttpClient.make(() => Effect.die("unused")),
       ),
       NodeServices.layer,
-      NodeCrypto.layer,
+      NodePlatformCrypto.layer,
     );
     return yield* Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;
-      return yield* body({ preferences: { update: link.updatePreferences }, stored, relayCalls });
+      return yield* body({
+        preferences: { update: link.updatePreferences },
+        link,
+        stored,
+        relayCalls,
+      });
     }).pipe(
       Effect.provide(
         CloudLink.layer.pipe(
-          // These tests never sign proofs; the mocked secret store cannot create a key pair.
-          Layer.provide(Layer.mock(EnvironmentKeys.EnvironmentSigningKey)({ publicKey: "" })),
+          // The mocked secret store cannot create a key pair, so responses carry a fixed proof.
+          Layer.provide(
+            Layer.mock(EnvironmentKeys.EnvironmentSigningKey)({
+              publicKey: "",
+              sign: () => Effect.succeed("signed"),
+            }),
+          ),
           Layer.provide(layerDependencies),
         ),
       ),
@@ -257,6 +279,58 @@ it.effect("an update the client walks away from still finishes", () => {
   );
 });
 
+it.effect(
+  "says a health proof was refused because of the host clock, not just that it was invalid",
+  () => {
+    const keys = NodeCrypto.generateKeyPairSync("ed25519");
+    const b64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    const header = b64({ alg: "EdDSA", typ: "t3-cloud-health+jwt" });
+    const healthProof = (iat: number) => {
+      const payload = b64({
+        iss: "https://relay.test",
+        aud: "t3-env:environment-1",
+        sub: "user-1",
+        jti: `jti-${iat}`,
+        iat,
+        exp: iat + 120,
+        environmentId: "environment-1",
+        nonce: `nonce-${iat}`,
+        scope: ["environment:status"],
+      });
+      const signature = NodeCrypto.sign(
+        null,
+        Buffer.from(`${header}.${payload}`),
+        keys.privateKey,
+      ).toString("base64url");
+      return { proof: `${header}.${payload}.${signature}` } as never;
+    };
+    return withService(
+      {
+        secrets: [
+          [
+            CLOUD_MINT_PUBLIC_KEY,
+            encode(String(keys.publicKey.export({ type: "spki", format: "pem" }))),
+          ],
+          [RELAY_ISSUER_SECRET, encode("https://relay.test")],
+          [CLOUD_LINKED_USER_ID, encode("user-1")],
+        ],
+      },
+      ({ link, stored }) =>
+        Effect.gen(function* () {
+          // The test clock is at 0, so a proof issued at 90 is what a host 90 seconds slow receives.
+          const error = yield* link.answerHealthRequest(healthProof(90)).pipe(Effect.flip);
+
+          assert.match(error.message, /clock/i);
+          assert.isTrue(stored.has(CLOUD_HOST_CLOCK_BEHIND));
+
+          // After the clock is synced, the next accepted request clears what `t3 connect status` shows.
+          yield* link.answerHealthRequest(healthProof(0));
+          assert.isFalse(stored.has(CLOUD_HOST_CLOCK_BEHIND));
+        }),
+    );
+  },
+);
+
 it.effect("unlinks on startup and refuses to link when the policy turns Connect off", () =>
   Effect.gen(function* () {
     const stored = new Map<string, Uint8Array>([
@@ -297,7 +371,7 @@ it.effect("unlinks on startup and refuses to link when the policy turns Connect 
         HttpClient.make(() => Effect.die("unused")),
       ),
       NodeServices.layer,
-      NodeCrypto.layer,
+      NodePlatformCrypto.layer,
     );
     yield* Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;

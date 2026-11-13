@@ -106,7 +106,9 @@ function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError
         traceId,
         // The tunnel carried the request when T3 Code is what failed to answer.
         hop:
-          endpointFailure === "origin_unreachable" || endpointFailure === "invalid_response"
+          endpointFailure === "origin_unreachable" ||
+          endpointFailure === "invalid_response" ||
+          endpointFailure === "host_clock_behind"
             ? "server"
             : "tunnel",
         via: "relay",

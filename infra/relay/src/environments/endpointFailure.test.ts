@@ -1,6 +1,12 @@
+import { EnvironmentHttpUnauthorizedError } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 
-import { classifyEndpointResponse, classifyTransportFailure } from "./endpointFailure.ts";
+import {
+  classifyEndpointResponse,
+  classifyTransportFailure,
+  diagnoseEndpointFailure,
+} from "./endpointFailure.ts";
 
 describe("classifyEndpointResponse", () => {
   it.each([
@@ -32,4 +38,23 @@ describe("classifyTransportFailure", () => {
   ] as const)("reads %s from the cause chain", (code, expected) => {
     expect(classifyTransportFailure(nested(code))).toBe(expected);
   });
+});
+
+describe("diagnoseEndpointFailure", () => {
+  it.effect("names a host whose clock is behind instead of an unexpected answer", () =>
+    Effect.gen(function* () {
+      const refused = (reason?: "host_clock_behind") =>
+        new EnvironmentHttpUnauthorizedError({
+          message: "Refused.",
+          ...(reason ? { reason } : {}),
+        });
+      expect(yield* diagnoseEndpointFailure(refused("host_clock_behind"))).toEqual({
+        endpointFailure: "host_clock_behind",
+        endpointStatus: 401,
+      });
+      expect(yield* diagnoseEndpointFailure(refused())).toEqual({
+        endpointFailure: "invalid_response",
+      });
+    }),
+  );
 });

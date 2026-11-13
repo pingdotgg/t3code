@@ -60,6 +60,7 @@ interface Located {
 const NOT_ANSWERING: ReadonlySet<ConnectionFailureCause> = new Set([
   "origin_unreachable",
   "invalid_response",
+  "host_clock_behind",
 ]);
 
 function locate(input: ConnectionDiagnosisInput): Located | null {
@@ -105,6 +106,8 @@ function headline(host: string, located: Located, failure: ConnectionAttemptErro
       return `${host} runs an older T3 Code`;
     case "clock_skew":
       return "This device's clock is off";
+    case "host_clock_behind":
+      return `${host}'s clock is behind`;
     case "not_linked":
       return `${host} is not linked to your T3 Connect account`;
     case "relay_error":
@@ -167,6 +170,8 @@ function steps(host: string, located: Located, failure: ConnectionAttemptError |
       return [`Update T3 Code on ${host}.`];
     case "clock_skew":
       return [`Turn on automatic date and time on this device and on ${host}, then retry.`];
+    case "host_clock_behind":
+      return [`Turn on automatic date and time on ${host}, then retry.`];
     case "not_linked":
       return [
         "Check that this device is signed in to the same T3 Connect account as the host.",
@@ -241,6 +246,7 @@ function helpSection(
     case "outdated":
       return "the-host-runs-an-older-t3-code";
     case "clock_skew":
+    case "host_clock_behind":
       return "the-clock-is-off";
     case "session_pending":
     case "not_linked":
