@@ -542,36 +542,33 @@ const refreshOnSignalWhileRead =
     );
   };
 
+/**
+ * Subscribes rather than reading `self` as a dependency: an idle node would only be marked stale
+ * by a refresh, dropping its timer, and a signed asset URL must keep renewing while cached.
+ */
 const refreshEveryUntilFinal =
   <V>(intervalMs: number, isFinal: (value: V) => boolean) =>
   <A extends V>(self: Atom.Atom<A>): Atom.Atom<A> =>
     Atom.transform(
       self,
       (get) => {
-        const value = get(self);
-        if (!isFinal(value)) {
+        let handle: ReturnType<typeof setTimeout> | undefined;
+        const schedule = (value: A) => {
+          clearTimeout(handle);
           // @effect-diagnostics-next-line globalTimers:off - Mirrors `Atom.withRefresh`, outside an Effect runtime.
-          const handle = setTimeout(() => get.refresh(self), intervalMs);
-          get.addFinalizer(() => clearTimeout(handle));
-        }
+          if (!isFinal(value)) handle = setTimeout(() => get.refresh(self), intervalMs);
+        };
+        get.addFinalizer(() => clearTimeout(handle));
+        get.subscribe(self, (value) => {
+          schedule(value);
+          get.setSelf(value);
+        });
+        const value = get.once(self);
+        schedule(value);
         return value;
       },
       { initialValueTarget: self },
     );
-
-/**
- * Subscribes to `self` for as long as this layer is cached, so a refresh fetches with no reader.
- * An interval query renews while idle this way: a signed asset URL must not expire in the cache.
- */
-const observeWhileCached = <A>(self: Atom.Atom<A>): Atom.Atom<A> =>
-  Atom.transform(
-    self,
-    (get) => {
-      get.subscribe(self, (value) => get.setSelf(value));
-      return get.once(self);
-    },
-    { initialValueTarget: self },
-  );
 
 const isStale = (result: AsyncResult.AsyncResult<unknown, unknown>, staleTimeMs: number) => {
   if (result.waiting) return false;
@@ -865,10 +862,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
     const intervalQuery =
       options.refreshIntervalMs === undefined
         ? queryAtom
-        : queryAtom.pipe(
-            observeWhileCached,
-            refreshEveryUntilFinal(options.refreshIntervalMs, isFinal),
-          );
+        : queryAtom.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal));
     const refreshTrigger = options.refreshTrigger?.(target);
     const cache = (
       refreshTrigger === undefined

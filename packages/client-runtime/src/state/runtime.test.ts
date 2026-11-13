@@ -1205,6 +1205,9 @@ describe("environment query lifecycle", () => {
         // A signed asset URL renews this way; one left to expire would reach the next reader.
         vi.advanceTimersByTime(30_000);
         expect(yield* Queue.take(answered)).toBe(2);
+        yield* Effect.yieldNow;
+        vi.advanceTimersByTime(30_000);
+        expect(yield* Queue.take(answered)).toBe(3);
       }),
     ),
   );
