@@ -38,6 +38,7 @@ import * as McpSchema from "effect/ai/McpSchema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
+import { delegatedCompletionWakeDetail } from "../../apps/server/src/orchestration-v2/delegatedCompletionWake.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
 import * as Contracts from "@t3tools/contracts";
@@ -338,6 +339,17 @@ export const McpToolUseCase = Schema.Struct({
   }),
   /** Empty to resume a top-level thread without side-chat context after its last tool result. */
   prompt: Schema.String,
+  /** Delegated tasks whose completion wakes the thread; T3's wake text replaces `prompt`. */
+  delegatedWake: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        title: Schema.NullOr(Schema.String),
+        status: Schema.Literals(["completed", "failed", "cancelled", "interrupted"]),
+        result: Schema.NullOr(Schema.String),
+      }),
+    ),
+  ),
   /** Records for the context chips `prompt` links, projected as T3 sends them. */
   promptContext: Schema.optional(Schema.Struct({ records: Schema.Array(ComposerContextRecord) })),
   expect: McpToolUseExpect,
@@ -347,6 +359,14 @@ export const McpToolUseCase = Schema.Struct({
   notes: Schema.optional(Schema.String),
 });
 export type McpToolUseCase = typeof McpToolUseCase.Type;
+
+const casePrompt = ({ prompt, delegatedWake }: Pick<McpToolUseCase, "prompt" | "delegatedWake">) =>
+  delegatedWake === undefined
+    ? prompt
+    : delegatedCompletionWakeDetail(
+        delegatedWake.map((task) => task.id),
+        delegatedWake,
+      );
 const AnyBlock = Schema.StructWithRest(
   Schema.Struct({ type: Schema.String, text: Schema.optional(Schema.String) }),
   Rest,
@@ -1030,7 +1050,7 @@ export const buildMessages = (sample: Sample) => {
   };
   const { role, context, delegateRole, priorTurns = [] } = testCase.setup;
   const sideChat = testCase.setup.sideChat;
-  if (testCase.prompt === "" && (role !== "top" || sideChat !== undefined)) {
+  if (casePrompt(testCase) === "" && (role !== "top" || sideChat !== undefined)) {
     throw new Error(
       `${testCase.id}: Empty-prompt replay requires a top-level thread without side-chat context.`,
     );
@@ -1092,12 +1112,12 @@ export const buildMessages = (sample: Sample) => {
   }
   const userText =
     testCase.promptContext === undefined
-      ? testCase.prompt
+      ? casePrompt(testCase)
       : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
   const prompt =
     sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
-  if (testCase.prompt !== "")
+  if (casePrompt(testCase) !== "")
     push("user", text(role === "delegated-child" ? childPrompt() : prompt));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
   if (native && base.subagentContext) {
@@ -1524,7 +1544,7 @@ export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, m
         ]
       : []),
     ...(context ? [`The agent was told: ${context}`] : []),
-    `The agent's task: ${testCase.prompt}`,
+    `The agent's task: ${casePrompt(testCase)}`,
     ...namedPathsLine(testCase),
   ];
   const history = shell.map((entry) => `${callText(entry)}\n<output>\n${entry.output}\n</output>`);
