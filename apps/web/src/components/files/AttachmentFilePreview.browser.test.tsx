@@ -1494,6 +1494,124 @@ it("keeps a workspace PDF open across URL renewals and reloads it when the file 
     URL.revokeObjectURL(edited);
   }
 });
+it("keeps a workspace image and its zoom across agent commands and reloads it when the file changes", async () => {
+  assetUrlState.mockReset();
+  const { WorkspaceImagePreview } = await import("./FilePreviewPanel");
+  const original =
+    'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"/>';
+  const edited =
+    'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="80" height="20"/>';
+  const preview = (mutation: string) => (
+    <WorkspaceImagePreview
+      environmentId={EnvironmentId.make("test")}
+      threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+      draft={false}
+      workspaceRoot="/repo"
+      absolutePath="/repo/screenshot.svg"
+      alt="screenshot.svg"
+      workspaceMutationId={mutation}
+    />
+  );
+  // The fragment keeps the revision query out of the data URL's payload.
+  assetUrlState.mockReturnValue({
+    _tag: "Success",
+    url: `${original}#initial`,
+    expiresAt: 0,
+    fileRevision: "one",
+  });
+  await using screen = await render(preview("first"));
+  await vi.waitFor(() => expect(screen.container.querySelector("img")).not.toBeNull());
+  const opened = screen.container.querySelector("img");
+  const zoomLabel = () =>
+    [...screen.container.querySelectorAll("span")].find((span) => /^\d+%$/.test(span.textContent))
+      ?.textContent;
+  await expect.element(screen.getByRole("button", { name: "Zoom in" })).toBeEnabled();
+  const fitted = zoomLabel();
+  await userEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+  await vi.waitFor(() => expect(zoomLabel()).not.toBe(fitted));
+  const zoomed = zoomLabel();
+
+  // An agent command moves the workspace revision and renews the URL, but the file is unchanged.
+  assetUrlState.mockReturnValue({
+    _tag: "Success",
+    url: `${original}#renewed`,
+    expiresAt: 0,
+    fileRevision: "one",
+  });
+  await screen.rerender(preview("second"));
+  expect(assetUrlState).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), "second");
+  expect(screen.container.querySelector("img")).toBe(opened);
+  expect(zoomLabel()).toBe(zoomed);
+
+  assetUrlState.mockReturnValue({
+    _tag: "Success",
+    url: `${edited}#initial`,
+    expiresAt: 0,
+    fileRevision: "two",
+  });
+  await screen.rerender(preview("third"));
+  await vi.waitFor(() => {
+    const reloaded = screen.container.querySelector("img");
+    expect(reloaded).not.toBe(opened);
+    expect(reloaded?.getAttribute("src")?.startsWith(edited)).toBe(true);
+  });
+});
+it("retries a failed workspace image when its URL is renewed for the same file", async () => {
+  assetUrlState.mockReset();
+  const { WorkspaceImagePreview } = await import("./FilePreviewPanel");
+  const preview = (mutation: string) => (
+    <WorkspaceImagePreview
+      environmentId={EnvironmentId.make("test")}
+      threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+      draft={false}
+      workspaceRoot="/repo"
+      absolutePath="/repo/screenshot.svg"
+      alt="screenshot.svg"
+      workspaceMutationId={mutation}
+    />
+  );
+  assetUrlState.mockReturnValue({
+    _tag: "Success",
+    url: "data:image/svg+xml,broken",
+    expiresAt: 0,
+    fileRevision: "one",
+  });
+  await using screen = await render(preview("first"));
+  await expect.element(screen.getByText("Unable to load image.")).toBeVisible();
+
+  assetUrlState.mockReturnValue({
+    _tag: "Success",
+    url: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="100"/>#renewed',
+    expiresAt: 0,
+    fileRevision: "one",
+  });
+  await screen.rerender(preview("second"));
+  await expect.element(screen.getByRole("button", { name: "Zoom in" })).toBeEnabled();
+  expect(screen.container.textContent).not.toContain("Unable to load image.");
+  const zoomLabel = () =>
+    [...screen.container.querySelectorAll("span")].find((span) => /^\d+%$/.test(span.textContent))
+      ?.textContent;
+  // The label must follow the live viewport, so the resize observer has to watch the new one.
+  const expectedFit = () => {
+    const viewport = screen.container.querySelector("img")?.closest("button")
+      ?.parentElement?.parentElement;
+    if (!viewport) return undefined;
+    const fit = Math.min(1, (viewport.clientWidth - 32) / 4000, (viewport.clientHeight - 32) / 100);
+    return `${Math.round(fit * 100)}%`;
+  };
+  Object.assign(screen.container.style, {
+    display: "flex",
+    flexDirection: "column",
+    height: "400px",
+  });
+  for (const width of ["600px", "300px"]) {
+    screen.container.style.width = width;
+    await vi.waitFor(() => {
+      expect(zoomLabel()).not.toBe("0%");
+      expect(zoomLabel()).toBe(expectedFit());
+    });
+  }
+});
 function planningPdf(
   titles = ["Quarterly outlook", "Delivery milestones", "Budget and risks"],
   firstHeight = 140,
