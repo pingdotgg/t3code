@@ -9,6 +9,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -70,6 +71,12 @@ const decodeFailure = Schema.decodeUnknownOption(
     Schema.Struct({ code: OrchestratorMcpFailure.fields.code, message: Schema.String }),
   ),
 );
+
+const decodeErrorBody = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ message: Schema.String })),
+);
+const decodeErrorMessage = (text: string) =>
+  Option.map(decodeErrorBody(text), (body) => body.message);
 
 /** A peer link problem, as the agent that asked hears it. */
 const fromLinkError = (error: PeerLinkError) =>
@@ -223,7 +230,21 @@ const make = Effect.gen(function* () {
             "The linked environment no longer accepts this link. It may have been revoked there; link it again.",
         });
       }
-      if (response.status === 403) return yield* linkedEnvironmentsOffThere;
+      if (response.status === 403) {
+        // The peer refused this tool for the link's scope; the link itself still works.
+        if (response.headers["www-authenticate"]?.includes('error="insufficient_scope"')) {
+          return Result.fail(
+            new OrchestratorMcpFailure({
+              code: "capability_denied",
+              message: Option.getOrElse(
+                decodeErrorMessage(yield* response.text),
+                () => "The linked environment refused this call for the link's access.",
+              ),
+            }),
+          );
+        }
+        return yield* linkedEnvironmentsOffThere;
+      }
       if (response.status !== 200) {
         return yield* new OrchestratorMcpFailure({
           code: "orchestration_error",

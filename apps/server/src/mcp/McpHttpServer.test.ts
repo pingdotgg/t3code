@@ -1179,6 +1179,10 @@ it.effect("admits provider and OAuth client credentials and points only clients 
           success: Schema.Struct({ ok: Schema.Boolean }),
           failure: OrchestratorMcpFailure,
           failureMode: "return",
+          dependencies: [
+            McpInvocationContext.McpInvocationContext,
+            ThreadManagementService.ThreadManagementService,
+          ],
         }),
       );
       const serverLayer = McpHttpServer.layerMcpTransport(
@@ -1201,6 +1205,7 @@ it.effect("admits provider and OAuth client credentials and points only clients 
         ),
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(Layer.mock(ThreadManagementService.ThreadManagementService)({})),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) =>
