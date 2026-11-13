@@ -1,0 +1,220 @@
+/* Observability section: the Layer + a small monitor window
+   (ObservabilityDash.tsx). Same chrome as TypePolicy and PreviewComment. */
+
+.od {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+@media (max-width: 900px) {
+  .od {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.od-code,
+.od-win {
+  border: 1px solid var(--alc-hairline);
+  border-radius: 10px;
+  background: var(--alc-bg-code);
+  color: var(--alc-fg-invert);
+  box-shadow: var(--alc-shadow-sm);
+  overflow: hidden;
+}
+.od-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(var(--alc-code-edge), 0.08);
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+}
+.od-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.od-bar__file {
+  margin-left: 8px;
+  color: var(--alc-code-comment);
+}
+.od-code .od-bar__file {
+  margin-left: 4px;
+}
+.od-badge {
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-weight: 600;
+  color: var(--alc-success);
+  transition: color 200ms ease;
+}
+.od-badge.is-red {
+  color: var(--alc-danger);
+}
+
+.od-code__pre {
+  margin: 0;
+  padding: 14px 0 16px;
+  font-family: var(--alc-font-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre;
+  overflow-x: auto;
+}
+.od-line {
+  display: block;
+  padding: 0 16px 0 14px;
+  border-left: 2px solid transparent;
+  transition:
+    background 300ms ease,
+    border-color 300ms ease;
+}
+.od-line.is-lit {
+  border-left-color: #7ee787;
+  background: rgba(126, 231, 135, 0.07);
+}
+
+.od-win__body {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px 16px;
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+}
+.od-muted {
+  color: var(--alc-code-comment);
+}
+.od-red {
+  color: var(--alc-danger);
+}
+.od-block,
+.od-traces {
+  border-radius: 6px;
+  transition: background 300ms ease;
+}
+.od-block.is-focus,
+.od-traces.is-focus {
+  background: rgba(126, 231, 135, 0.05);
+}
+.od-label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  color: var(--alc-code-comment);
+}
+.od-chart {
+  display: block;
+  width: 100%;
+  height: 64px;
+}
+.od-threshold {
+  stroke: var(--alc-warn);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+  vector-effect: non-scaling-stroke;
+}
+.od-path {
+  fill: none;
+  stroke: var(--alc-danger);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.od-area {
+  fill: var(--alc-danger);
+  opacity: 0.12;
+}
+
+/* Room for every row, so the window keeps one height as traces arrive. */
+.od-traces {
+  min-height: 84px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  align-content: start;
+  gap: 2px;
+}
+.od-traces li {
+  display: grid;
+  grid-template-columns: 1.2em minmax(0, 1fr) auto;
+  gap: 6px;
+  animation: od-in 300ms ease-out;
+}
+@keyframes od-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+.od-traces__mark {
+  color: var(--alc-success);
+}
+.od-traces__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.od-traces__ms {
+  color: var(--alc-code-comment);
+}
+.od-traces li.is-failed,
+.od-traces li.is-failed .od-traces__mark,
+.od-traces li.is-failed .od-traces__ms {
+  color: var(--alc-danger);
+}
+
+.od-monitor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(var(--alc-code-edge), 0.08);
+}
+.od-monitor .od-muted {
+  margin-left: auto;
+}
+.od-monitor__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--alc-success);
+}
+.od-monitor.is-red .od-monitor__dot {
+  background: var(--alc-danger);
+  animation: od-pulse 0.8s ease-in-out infinite;
+}
+@keyframes od-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+/* Always in the layout, so the window keeps one height. */
+.od-alert {
+  padding: 6px 10px;
+  border-left: 2px solid var(--alc-danger);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--alc-danger) 12%, transparent);
+  line-height: 1.5;
+  opacity: 0;
+  transform: translateY(-3px);
+  transition:
+    opacity 220ms ease,
+    transform 220ms ease;
+}
+.od-alert.is-shown {
+  opacity: 1;
+  transform: none;
+}
+
+.alc-motion-paused .od * {
+  animation-play-state: paused !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .od * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
