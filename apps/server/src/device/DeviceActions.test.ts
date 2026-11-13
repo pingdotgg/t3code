@@ -81,6 +81,29 @@ describe("runDeviceAction", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("reports an Android URL no app handles even when am start exits 0", () =>
+    Effect.gen(function* () {
+      // Android 13 and 14 print the rejection to stderr and still exit 0.
+      const stderr =
+        "Error: Activity not started, unable to resolve Intent { act=android.intent.action.VIEW dat=t3-unhandled:// flg=0x10000000 }";
+      const { ready } = makeReady(() => ({
+        stdout: "Starting: Intent { act=android.intent.action.VIEW dat=t3-unhandled:// }\n",
+        stderr,
+      }));
+      const result = yield* Effect.result(
+        runDeviceAction(ready, "android", {
+          type: "openUrl",
+          deviceId: "emulator-5554",
+          url: "t3-unhandled://",
+        }),
+      );
+      expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "DeviceOperationError", cause: { stderr } },
+      });
+    }),
+  );
+
   it.effect.each([
     ["emulator-5554", "Physical size: 2560x1600", "portrait", "-9.81:0:0"],
     ["emulator-5554", "Physical size: 2560x1600", "landscape_left", "0:9.81:0"],
