@@ -55,7 +55,9 @@ reached through `localhost`. That server can still report the previous version
 until you restart it. For a loopback URL, T3 Code shows that restart requirement
 instead of treating the CLI update as a failure.
 
-After a lost connection, send another prompt to reconnect to the same OpenCode
+T3 Code waits for a local server it started to recover after a lost connection.
+You can stop the turn while it reconnects. If the server exits or an external
+connection cannot be restored, send another prompt to resume the same OpenCode
 session.
 
 ## Approvals
