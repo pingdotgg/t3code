@@ -142,6 +142,7 @@ describe("agentWorkingDirectories", () => {
       directories(
         "cd docs && cd ../other && cd ~/repo && cd $ROOT/x && cd /work/*/src",
         "abcd /work/a; echo cd /work/b; git -C /work/c status; cd /work/d",
+        `echo "cd /work/g"; echo 'x; cd /work/h' && grep -c "cd /work/i" notes`,
         "cd /work/e\\ f && cd `pwd`/x",
       ),
     ).toEqual(["/work/d"]);
