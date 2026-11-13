@@ -2413,11 +2413,12 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
   const reportedSelection = { ...modelSelection, options: [{ id: "thinking", value: "low" }] };
   for (const [origin, instanceId, model] of [
     ["provider_native", providerInstanceId, modelSelection.model],
+    ["app_owned", providerInstanceId, modelSelection.model],
     ["app_owned", ProviderInstanceId.make("other-instance"), modelSelection.model],
     ["app_owned", providerInstanceId, "older-model"],
   ] as const) {
     yield* store.apply({
-      id: EventId.make(`event:settled-subagents:guard:${origin}`),
+      id: EventId.make(`event:settled-subagents:guard:${origin}:${instanceId}:${model}`),
       type: "subagent.updated",
       threadId,
       nodeId: deliveredId,

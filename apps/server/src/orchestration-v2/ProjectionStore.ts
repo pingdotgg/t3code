@@ -3647,9 +3647,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 },
               };
         });
-        // Settled children leave the shell stream, so their own selection travels with the task.
+        // Tasks recorded before delegation saved a selection fall back to their child's.
         const subagentPayload = sql`CASE
           WHEN subagent.origin = 'app_owned'
+            AND json_extract(subagent.payload_json, '$.modelSelection') IS NULL
             AND child.provider_instance_id = subagent.provider_instance_id
             AND (json_extract(subagent.payload_json, '$.model') IS NULL
               OR json_extract(child.payload_json, '$.modelSelection.model')

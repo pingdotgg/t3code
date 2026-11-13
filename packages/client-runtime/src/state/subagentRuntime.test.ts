@@ -113,7 +113,7 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
     expect(formatSubagentEffort({ modelSlug, modelSelection, provider })).toBe("xhigh");
   });
 
-  it("picks a delegated child's own saved selection, never the parent's or a guess", () => {
+  it("keeps a task's recorded selection, falling back to its delegated child's", () => {
     const instanceId = ProviderInstanceId.make("pi");
     const model = "opencode-go/deepseek-v4.1-flash";
     const saved = { instanceId, model, options: [{ id: "thinking", value: "high" }] };
@@ -128,10 +128,13 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
       modelSelection: { ...saved, instanceId: ProviderInstanceId.make("pi-work") },
     };
 
-    expect(subagentModelSelection(delegated, { modelSelection: saved })).toBe(saved);
-    expect(subagentModelSelection({ ...delegated, model: null }, { modelSelection: saved })).toBe(
-      saved,
-    );
+    expect(subagentModelSelection(delegated, { modelSelection: saved })).toBe(reported);
+    expect(
+      subagentModelSelection(
+        { ...delegated, modelSelection: undefined, model: null },
+        { modelSelection: saved },
+      ),
+    ).toBe(saved);
     expect(subagentModelSelection(delegated, undefined)).toBe(reported);
     expect(subagentModelSelection(delegated, movedChild)).toBe(reported);
     expect(
