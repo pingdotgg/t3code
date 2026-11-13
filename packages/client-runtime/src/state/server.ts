@@ -9,6 +9,7 @@ import {
   type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateResult,
   shouldRecommendDatabaseCompaction,
+  type UsageSummary,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -1497,30 +1498,42 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.scheduledTasksSubscribe,
     }),
     // A cold transcript scan is measured in seconds, so keep the result around
-    // long enough that switching windows or re-rendering does not rescan.
+    // long enough that switching windows or re-rendering does not rescan. With
+    // nothing to show yet, the server's last scan answers first, then a plain
+    // read, then a read that waits for slow sources.
     usageSummary: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:usage-summary",
       tag: WS_METHODS.serverGetUsageSummary,
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
-      execute: (input, emit) =>
-        request(WS_METHODS.serverGetUsageSummary, input).pipe(
-          Effect.filterOrElse(
-            (summary) => !summary.sources.some((source) => source.refreshing === true),
-            (summary) =>
-              emit(summary).pipe(
-                Effect.andThen(
-                  request(WS_METHODS.serverGetUsageSummary, { ...input, awaitRefresh: true }),
-                ),
-                Effect.catch((error) =>
-                  Effect.logWarning("Could not refresh slow usage sources.").pipe(
-                    Effect.annotateLogs({ ...safeErrorLogAttributes(error) }),
-                    Effect.as(summary),
-                  ),
+      execute: (input, emit, previous) => {
+        const settled = (summary: UsageSummary) =>
+          !summary.sources.some((source) => source.refreshing === true);
+        const read = request(WS_METHODS.serverGetUsageSummary, input).pipe(
+          Effect.filterOrElse(settled, (summary) =>
+            emit(summary).pipe(
+              Effect.andThen(
+                request(WS_METHODS.serverGetUsageSummary, { ...input, awaitRefresh: true }),
+              ),
+              Effect.catch((error) =>
+                Effect.logWarning("Could not refresh slow usage sources.").pipe(
+                  Effect.annotateLogs({ ...safeErrorLogAttributes(error) }),
+                  Effect.as(summary),
                 ),
               ),
+            ),
           ),
-        ),
+        );
+        if (Option.isSome(previous)) return read;
+        return request(WS_METHODS.serverGetUsageSummary, { ...input, provisional: true }).pipe(
+          Effect.matchEffect({
+            // The saved answer only speeds things up; without it the plain read still answers.
+            onFailure: () => read,
+            onSuccess: (saved) =>
+              settled(saved) ? Effect.succeed(saved) : emit(saved).pipe(Effect.andThen(read)),
+          }),
+        );
+      },
     }),
     resourceTelemetry: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:resource-telemetry",
@@ -1796,6 +1809,10 @@ export function createServerEnvironmentAtoms<R, E>(
     checkOtlpEndpoint: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:check-otlp-endpoint",
       tag: WS_METHODS.serverCheckOtlpEndpoint,
+    }),
+    checkSecretSource: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:check-secret-source",
+      tag: WS_METHODS.serverCheckSecretSource,
     }),
     listTextGeneratorModels: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:list-text-generator-models",

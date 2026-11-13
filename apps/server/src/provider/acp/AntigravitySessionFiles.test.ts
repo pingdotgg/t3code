@@ -31,7 +31,7 @@ it.layer(NodeServices.layer)("retireAntigravityRuntimeTempDirs", (it) => {
 
       yield* removeRetired;
       expect((yield* fs.readDirectory(parent)).toSorted()).toEqual(["other-instance"]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect(
