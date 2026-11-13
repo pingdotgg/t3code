@@ -122,6 +122,7 @@ version = "0.1.0"
 dependencies = [
  "conn-contract",
  "conn-provider",
+ "serde",
  "serde_json",
  "tokio",
 ]

@@ -1,33 +1,58 @@
 //! The Claude provider: drives the `claude` CLI over its stdio stream-JSON protocol and
 //! implements [`conn_provider::Provider`].
 //!
-//! Stub. Track (c) builds it. Reference behaviour: `ClaudeAdapterV2.ts` in
-//! `apps/server/src/orchestration-v2/Adapters`, recorded sessions in
-//! `apps/server/src/orchestration-v2/testkit`, and the stdio probe in
-//! `~/apps/conn-rust-claude-probe`.
+//! - [`protocol`]: typed CLI messages with a raw-JSON fallback.
+//! - [`launch`]: executable, argv and environment, matching what `ClaudeAdapterV2` passes.
+//! - [`mapper`]: CLI messages → `ProviderEvent`s and CLI replies (pure, replay-tested).
+//! - [`process`]: the child process and its bounded I/O.
+//! - [`session`]: the `Session` implementation.
+//!
+//! Reference behaviour: `ClaudeAdapterV2.ts` in `apps/server/src/orchestration-v2/Adapters`.
+//! See `README.md` in this crate for the event mapping and its known differences.
 
-use std::path::PathBuf;
+pub mod ids;
+pub mod launch;
+pub mod mapper;
+pub mod process;
+pub mod protocol;
+pub mod session;
+
+#[cfg(test)]
+mod live_tests;
+#[cfg(test)]
+mod replay_tests;
+#[cfg(test)]
+pub(crate) mod testdata;
 
 use conn_contract::{ProviderCapabilities, ProviderInstanceId, from_json};
 use conn_provider::{
-    BoxFuture, OpenSessionInput, OpenedSession, Provider, ProviderError, ProviderResult,
+    BoxFuture, OpenSessionInput, OpenedSession, Provider, ProviderError, ProviderEvent,
+    ProviderResult,
 };
+use serde_json::{Value, json};
+use tokio::sync::mpsc;
+
+pub use launch::ClaudeConfig;
+pub use session::ClaudeSession;
 
 /// The contract's `ProviderDriverKind` for Claude.
-pub const DRIVER: &str = "claudeAgent";
+pub const DRIVER: &str = ids::DRIVER;
 
 pub struct ClaudeProvider {
     instance_id: ProviderInstanceId,
-    /// The `claude` executable.
-    pub binary: PathBuf,
+    config: ClaudeConfig,
 }
 
 impl ClaudeProvider {
-    pub fn new(instance_id: ProviderInstanceId, binary: PathBuf) -> Self {
+    pub fn new(instance_id: ProviderInstanceId, config: ClaudeConfig) -> Self {
         Self {
             instance_id,
-            binary,
+            config,
         }
+    }
+
+    pub fn config(&self) -> &ClaudeConfig {
+        &self.config
     }
 }
 
@@ -42,7 +67,7 @@ impl Provider for ClaudeProvider {
 
     fn capabilities(&self) -> BoxFuture<'_, ProviderResult<ProviderCapabilities>> {
         Box::pin(async {
-            from_json(serde_json::json!({})).map_err(|e| ProviderError::Protocol {
+            from_json(capabilities()).map_err(|e| ProviderError::Protocol {
                 detail: e.to_string(),
             })
         })
@@ -50,14 +75,169 @@ impl Provider for ClaudeProvider {
 
     fn open_session(
         &self,
-        _input: OpenSessionInput,
+        input: OpenSessionInput,
     ) -> BoxFuture<'_, ProviderResult<OpenedSession>> {
-        Box::pin(async {
-            Err(ProviderError::Unsupported {
-                operation: "open_session",
+        Box::pin(async move {
+            let (tx, events) = mpsc::channel(session::EVENT_CAPACITY);
+            let now = ids::Env::now(&mut ids::SystemEnv);
+            let model = conn_contract::to_json(&input.model_selection)["model"].clone();
+            // The trait returns no ProviderSession; the engine learns it from this event.
+            let provider_session = json!({
+                "id": input.provider_session_id.as_str(),
+                "driver": DRIVER,
+                "providerInstanceId": self.instance_id.as_str(),
+                "status": "ready",
+                "cwd": input.runtime_policy.cwd,
+                "model": model,
+                "capabilities": capabilities(),
+                "createdAt": now,
+                "updatedAt": now,
+                "lastError": null,
+            });
+            let event = ProviderEvent::ProviderSessionUpdated {
+                provider_session: from_json(provider_session).map_err(|e| {
+                    ProviderError::Protocol {
+                        detail: e.to_string(),
+                    }
+                })?,
+            };
+            tx.try_send(event)
+                .map_err(|_| ProviderError::SessionStopped)?;
+            let session = ClaudeSession::open(input.provider_session_id, self.config.clone(), tx);
+            Ok(OpenedSession {
+                session: Box::new(session),
+                events,
             })
         })
     }
+}
+
+/// `ClaudeProviderCapabilitiesV2`, with what this crate does not do switched off: fork,
+/// rollback, subagent projection, todo lists, handoff and checkpoint rollback.
+pub fn capabilities() -> Value {
+    json!({
+        "sessions": {
+            "supportsMultipleProviderThreadsPerSession": false,
+            "supportsModelSwitchInSession": true,
+            "supportsProviderSwitchingViaHandoff": false,
+            "supportsRuntimeModeSwitchInSession": false,
+            "pendingRequestsSurviveRestart": false,
+        },
+        "threads": {
+            "canCreateEmptyThread": true,
+            "canReadThreadSnapshot": false,
+            "canRollbackThread": false,
+            "canForkThread": false,
+            "canForkFromTurn": false,
+            "canForkFromSubagentThread": false,
+            "exposesNativeThreadId": true,
+        },
+        "turns": {
+            "exposesNativeTurnId": false,
+            "emitsTurnStarted": true,
+            "emitsTurnCompleted": true,
+            "supportsInterrupt": true,
+            "supportsActiveSteering": true,
+            "activeSteeringInterruptsTools": false,
+            "supportsSteeringByInterruptRestart": false,
+            "supportsQueuedMessages": false,
+            "terminalStatusQuality": "strong",
+        },
+        "streaming": {
+            "streamsAssistantText": true,
+            "streamsReasoning": true,
+            "streamsToolOutput": false,
+            "streamsPlanText": false,
+            "emitsMessageCompleted": true,
+        },
+        "tools": {
+            "exposesToolItemIds": true,
+            "emitsToolStarted": true,
+            "emitsToolCompleted": true,
+            "emitsToolOutput": true,
+            "supportsMcpTools": true,
+            "supportsDynamicToolCallbacks": false,
+        },
+        "approvals": {
+            "supportsCommandApproval": true,
+            "supportsFileReadApproval": true,
+            "supportsFileChangeApproval": true,
+            "supportsApplyPatchApproval": false,
+            "approvalsHaveNativeRequestIds": true,
+            "approvalCallbacksAreLiveOnly": true,
+            "approvalsCanOriginateFromSubagents": false,
+        },
+        "planning": {
+            "emitsPlanUpdated": true,
+            "emitsTodoList": false,
+            "emitsProposedPlan": true,
+            "supportsStructuredQuestions": true,
+            "planDeltasHaveItemIds": false,
+        },
+        "subagents": {
+            "supportsSubagents": false,
+            "exposesSubagentThreadIds": false,
+            "emitsSubagentLifecycle": false,
+            "canWaitForSubagents": false,
+            "canCloseSubagents": false,
+            "canForkSubagentThread": false,
+        },
+        "context": {
+            "acceptsSystemContext": false,
+            "acceptsDeveloperContext": false,
+            "acceptsSyntheticUserContext": false,
+            "canGenerateSummaries": false,
+            "canConsumeHandoffSummaries": false,
+            "supportsDeltaHandoff": false,
+            "supportsFullThreadHandoff": false,
+            "maxRecommendedHandoffChars": null,
+        },
+        "checkpointing": {
+            "appCanCheckpointFilesystem": true,
+            "supportsNestedCheckpointScopes": false,
+            "providerCanRollbackConversation": false,
+            "providerRollbackReturnsSnapshot": false,
+            "providerCanReadConversationSnapshot": false,
+        },
+        "identity": {
+            "nativeThreadIds": "strong",
+            "nativeTurnIds": "weak",
+            "nativeItemIds": "strong",
+            "nativeRequestIds": "strong",
+        },
+        "runtimePolicy": {"enforcement": "native"},
+    })
+}
+
+/// Models offered before the CLI is asked. T3 reads the live list from the CLI's
+/// `initialize` answer (`models`); this static list keeps the picker usable until then.
+pub const MODELS: &[(&str, &str)] = &[
+    ("claude-sonnet-5-5", "Claude Sonnet 5.5"),
+    ("claude-opus-5-5", "Claude Opus 5.5"),
+    ("claude-haiku-5-5", "Claude Haiku 5.5"),
+];
+
+/// The `ServerProvider` entry (`packages/contracts/src/server.ts`) a client needs to offer
+/// Claude in its model picker and enable Send: enabled, installed, `status: "ready"`.
+/// It belongs in `ServerConfig.providers`, which `subscribeServerConfig` delivers.
+pub fn server_provider_entry(instance_id: &str, checked_at: &str) -> Value {
+    json!({
+        "instanceId": instance_id,
+        "driver": DRIVER,
+        "displayName": "Claude",
+        "enabled": true,
+        "installed": true,
+        "version": null,
+        "status": "ready",
+        "auth": {"status": "unknown"},
+        "checkedAt": checked_at,
+        "models": MODELS
+            .iter()
+            .map(|(slug, name)| json!({"slug": slug, "name": name, "isCustom": false, "capabilities": null}))
+            .collect::<Vec<_>>(),
+        "slashCommands": [],
+        "skills": [],
+    })
 }
 
 #[cfg(test)]
@@ -66,9 +246,11 @@ mod tests {
 
     #[test]
     fn registers_as_a_dyn_provider() {
-        let provider: Box<dyn Provider> =
-            Box::new(ClaudeProvider::new("claude".into(), "claude".into()));
+        let provider: Box<dyn Provider> = Box::new(ClaudeProvider::new(
+            "claudeAgent".into(),
+            ClaudeConfig::default(),
+        ));
         assert_eq!(provider.driver(), DRIVER);
-        assert_eq!(provider.instance_id().as_str(), "claude");
+        assert_eq!(provider.instance_id().as_str(), "claudeAgent");
     }
 }
