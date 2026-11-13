@@ -159,6 +159,11 @@ it.effect.each([false, true])(
       const result = yield* query.getTurnDiff({ threadId, fromTurnCount: 2, toTurnCount: 3 });
 
       assert.strictEqual(result.diff, "diff --git a/file b/file");
+      assert.deepEqual(result.source, {
+        cwd: "/repo",
+        fromCheckpointRef: "refs/t3/test/ordinal/2",
+        toCheckpointRef: "refs/t3/test/ordinal/3",
+      });
       yield* query.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 3 });
       yield* query.getFullThreadDiff({ threadId, toTurnCount: 3 });
       assert.deepEqual(

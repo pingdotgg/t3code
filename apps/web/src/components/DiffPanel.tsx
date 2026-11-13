@@ -138,6 +138,29 @@ function getCachedFileEntry(fileDiff: FileDiffMetadata) {
 }
 
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
+const hydrationRequested = new WeakSet<FileDiffMetadata>();
+
+// Pierre highlights each hunk of a partial patch from a fresh grammar state, so a hunk inside a
+// docstring or an SFC script block is tokenized as code. Loading the full files of a diff once it
+// is on screen lets the highlighter see what opened above the hunk. One attempt per patch object.
+function hydrateRenderedDiff(
+  item: { readonly fileDiff: FileDiffMetadata; readonly collapsed?: boolean | undefined },
+  instance: { prepareForEditing(): Promise<void> },
+) {
+  const { fileDiff } = item;
+  if (
+    item.collapsed ||
+    !fileDiff.isPartial ||
+    fileDiff.hunks.length === 0 ||
+    (fileDiff.type !== "change" && fileDiff.type !== "rename-changed") ||
+    hydrationRequested.has(fileDiff)
+  ) {
+    return;
+  }
+  hydrationRequested.add(fileDiff);
+  // Pierre reports a failed load itself, and the patch stays rendered as it was.
+  instance.prepareForEditing().catch(() => undefined);
+}
 
 function DiffFileCollapseToggle({
   filePath,
@@ -545,17 +568,29 @@ export default function DiffPanel({
           { additions: 0, deletions: 0 },
         )
       : null;
+  const turnDiffSource = selectedTurn ? activeCheckpointDiff.data?.source : undefined;
   const currentLoadDiffFiles =
-    isGitSelection && activeThread && preview && selectedGitSource && canReadFiles
-      ? createGitDiffFileContentsLoader(getDiffFileContents, {
-          environmentId: activeThread.environmentId,
-          cwd: preview.cwd,
-          sourceKind: selectedGitSource.kind,
-          baseRef: selectedGitSource.baseRef,
-          headRef: selectedGitSource.headRef,
-          cacheKey: selectedGitSource.diffHash,
-        })
-      : undefined;
+    !activeThread || !canReadFiles
+      ? undefined
+      : isGitSelection && preview && selectedGitSource
+        ? createGitDiffFileContentsLoader(getDiffFileContents, {
+            environmentId: activeThread.environmentId,
+            cwd: preview.cwd,
+            sourceKind: selectedGitSource.kind,
+            baseRef: selectedGitSource.baseRef,
+            headRef: selectedGitSource.headRef,
+            cacheKey: selectedGitSource.diffHash,
+          })
+        : selectedTurn && turnDiffSource
+          ? createGitDiffFileContentsLoader(getDiffFileContents, {
+              environmentId: activeThread.environmentId,
+              cwd: turnDiffSource.cwd,
+              sourceKind: "revisions",
+              baseRef: turnDiffSource.fromCheckpointRef,
+              headRef: turnDiffSource.toCheckpointRef,
+              cacheKey: `turn:${turnDiffSource.fromCheckpointRef}:${turnDiffSource.toCheckpointRef}`,
+            })
+          : undefined;
   const loadDiffFiles: FileDiffContentsLoader = useStableCallback(async (fileDiff) => {
     if (!currentLoadDiffFiles) {
       throw new Error("Diff file contents are unavailable for this selection.");
@@ -1520,7 +1555,16 @@ export default function DiffPanel({
                       preferredHighlighter: PREFERRED_HIGHLIGHTER,
                       themeType: resolvedTheme as DiffThemeType,
                       stickyHeaders: true,
-                      onPostRender: flushCodeView,
+                      onPostRender: (_node, _instance, phase, context) => {
+                        flushCodeView();
+                        if (
+                          currentLoadDiffFiles &&
+                          phase !== "unmount" &&
+                          context.type === "diff"
+                        ) {
+                          hydrateRenderedDiff(context.item, context.instance);
+                        }
+                      },
                       ...(currentLoadDiffFiles ? { loadDiffFiles } : {}),
                     }}
                   />

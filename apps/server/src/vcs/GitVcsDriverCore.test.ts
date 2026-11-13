@@ -3408,6 +3408,27 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("loads both sides of a revision range without reading the working tree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "README.md", "# saved\n");
+        yield* git(cwd, ["commit", "-am", "save"]);
+        yield* writeTextFile(cwd, "README.md", "# unsaved\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, {
+            sourceKind: "revisions",
+            baseRef: "HEAD~1",
+            headRef: "HEAD",
+          }),
+        );
+
+        assert.deepStrictEqual(contents, { oldContents: "# test\n", newContents: "# saved\n" });
+      }),
+    );
+
     it.effect.each([
       { scenario: "kept", before: "\uFEFFold\n", after: "\uFEFFnew\n" },
       { scenario: "added", before: "same\n", after: "\uFEFFsame\n" },

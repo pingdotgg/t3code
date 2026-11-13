@@ -71,7 +71,8 @@ export type ReviewDiffPreviewSource = typeof ReviewDiffPreviewSource.Type;
 
 export const ReviewDiffFileContentsInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-  sourceKind: ReviewDiffPreviewSourceKind,
+  // `revisions` reads `baseRef:oldPath` and `headRef:newPath`, such as a turn's two checkpoints.
+  sourceKind: Schema.Literals([...ReviewDiffPreviewSourceKind.literals, "revisions"]),
   changeType: Schema.Literals(["change", "rename-pure", "rename-changed", "new", "deleted"]),
   baseRef: Schema.NullOr(TrimmedNonEmptyString),
   headRef: Schema.NullOr(TrimmedNonEmptyString),

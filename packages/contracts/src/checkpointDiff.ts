@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Struct from "effect/Struct";
 
-import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { CheckpointRef, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /** Ends a checkpoint diff the server cut off at its output size limit. */
 export const CHECKPOINT_DIFF_TRUNCATED_MARKER = "\n\n[truncated]";
@@ -25,6 +25,14 @@ export const ThreadTurnDiff = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
     diff: Schema.String,
+    // The checkpoints the diff compares, so a client can load full files for highlighting.
+    source: Schema.optionalKey(
+      Schema.Struct({
+        cwd: TrimmedNonEmptyString,
+        fromCheckpointRef: CheckpointRef,
+        toCheckpointRef: CheckpointRef,
+      }),
+    ),
   }),
   { unsafePreserveChecks: true },
 );

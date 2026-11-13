@@ -4044,6 +4044,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (repositoryRoot.length === 0) {
       return yield* reviewDiffFileError(input, "Could not resolve the Git repository root.");
     }
+    if (input.sourceKind === "revisions") {
+      const { baseRef, headRef } = input;
+      if (!baseRef || !headRef) {
+        return yield* reviewDiffFileError(input, "Both revisions are required.");
+      }
+      const [oldContents, newContents] = yield* Effect.all(
+        [
+          input.changeType === "new"
+            ? Effect.succeed("")
+            : readReviewFileAtRevision(input, baseRef, input.oldPath),
+          input.changeType === "deleted"
+            ? Effect.succeed("")
+            : readReviewFileAtRevision(input, headRef, input.newPath),
+        ],
+        { concurrency: 2 },
+      );
+      return { oldContents, newContents };
+    }
     if (input.sourceKind === "commit") {
       if (!input.headRef) {
         return yield* reviewDiffFileError(input, "Selected commit is no longer available.");
