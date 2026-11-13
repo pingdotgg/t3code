@@ -577,10 +577,25 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
           threadId,
         });
         yield* worker.drain();
-        assert.include(
-          (yield* tasks.list()).tasks.map((task) => task.id),
-          bound.id,
-        );
+        const findTask = (id: ScheduledTaskId) =>
+          tasks.list().pipe(Effect.map(({ tasks }) => tasks.find((task) => task.id === id)));
+        // Archive pauses the thread's automations instead of removing them.
+        const archived = yield* findTask(bound.id);
+        assert.isFalse(archived?.enabled);
+        assert.isNull(archived?.nextRunAt);
+        assert.equal(archived?.lastRunError, "Paused because its thread was archived.");
+        assert.equal(archived?.runCount, bound.runCount);
+        for (const id of [independent.id, other.id]) {
+          assert.isTrue((yield* findTask(id))?.enabled, `${id} must keep running`);
+        }
+        // Restoring the thread leaves resuming to the user.
+        yield* orchestrator.dispatch({
+          type: "thread.unarchive",
+          commandId: CommandId.make(`automation-unarchive:${deletion}`),
+          threadId,
+        });
+        yield* worker.drain();
+        assert.isFalse((yield* findTask(bound.id))?.enabled);
 
         if (deletion === "thread") {
           yield* orchestrator.dispatch({

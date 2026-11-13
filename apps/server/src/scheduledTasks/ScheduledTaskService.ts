@@ -229,6 +229,7 @@ interface ScheduledTaskRow {
   readonly last_run_status: string;
   readonly last_run_error: string | null;
   readonly run_count: number;
+  readonly consecutive_failures: number;
   readonly webhook_token: string | null;
   readonly webhook_secret: string | null;
 }
@@ -267,6 +268,8 @@ export class ScheduledTaskService extends Context.Service<
     ) => Effect.Effect<ScheduledTaskDeleteResult, ScheduledTaskError>;
     /** Deletes only tasks that still target this thread, including their webhook deliveries. */
     readonly deleteForThread: (threadId: ThreadId) => Effect.Effect<void, ScheduledTaskError>;
+    /** Pauses tasks that still target this archived thread; restoring it does not resume them. */
+    readonly pauseForThread: (threadId: ThreadId) => Effect.Effect<void, ScheduledTaskError>;
     /** Points tasks bound to these threads at the project the threads moved to. */
     readonly moveThreadTasks: (input: {
       readonly threadIds: ReadonlyArray<ThreadId>;
@@ -315,6 +318,16 @@ const UNSUCCESSFUL_RUN_ERRORS = {
   rolled_back: "The run was rolled back.",
 } as const;
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
+
+// Bounds an outage that outlives several occurrences; the user resumes the task.
+const MAX_CONSECUTIVE_FAILED_RUNS = 5;
+
+const isGoneThreadError = Schema.is(
+  Schema.Union([
+    ThreadManagementService.ThreadManagementThreadArchivedError,
+    ThreadManagementService.ThreadManagementThreadNotFoundError,
+  ]),
+);
 
 function nextRunAt(
   task: Pick<ScheduledTask, "enabled" | "schedule">,
@@ -576,6 +589,7 @@ export const layer = Layer.effect(
         last_run_status,
         last_run_error,
         run_count,
+        consecutive_failures,
         webhook_token,
         webhook_secret
       FROM scheduled_tasks
@@ -688,6 +702,8 @@ export const layer = Layer.effect(
           title = excluded.title,
           prompt = excluded.prompt,
           enabled = excluded.enabled,
+          -- A saved edit is the user's retry, so the failure limit starts over.
+          consecutive_failures = 0,
           schedule_json = excluded.schedule_json,
           project_id = excluded.project_id,
           -- A first run may bind the thread while this save is in flight; only a
@@ -773,17 +789,21 @@ export const layer = Layer.effect(
     const markCompleted = (input: {
       readonly id: ScheduledTaskId;
       readonly completedAtIso: string;
+      readonly enabled: boolean;
       readonly nextRunAtIso: string | null;
       readonly status: "succeeded" | "failed";
       readonly error: string | null;
+      readonly consecutiveFailures: number;
       readonly startedAtIso: string;
     }) =>
       sql`
         UPDATE scheduled_tasks
         SET updated_at = ${input.completedAtIso},
+            enabled = ${input.enabled ? 1 : 0},
             next_run_at = ${input.nextRunAtIso},
             last_run_status = ${input.status},
             last_run_error = ${input.error},
+            consecutive_failures = ${input.consecutiveFailures},
             run_count = run_count + 1
         WHERE task_id = ${input.id}
           AND last_run_status = 'running'
@@ -1098,8 +1118,13 @@ export const layer = Layer.effect(
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
         const completedAt = yield* localNow;
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
-        const lastRunError = runSucceeded ? null : errorMessage(result.cause);
         const threadId = runSucceeded ? result.value : null;
+        // A bound thread that is gone fails every later occurrence the same way, so
+        // stop firing at it. Other failures retry until MAX_CONSECUTIVE_FAILED_RUNS.
+        const destinationGone =
+          !runSucceeded &&
+          active.threadId !== null &&
+          Option.exists(Cause.findErrorOption<unknown>(result.cause), isGoneThreadError);
         // One transaction, so an edit cannot land between reading the schedule and
         // writing the next run computed from it. The origin is read first: it reads
         // files, and the transaction holds SQLite's writer lock.
@@ -1107,7 +1132,34 @@ export const layer = Layer.effect(
         const record = Effect.gen(function* () {
           const [row] = yield* getRows(task.id);
           const current = row === undefined ? null : yield* decodeRow(row, origin);
-          const scheduleSource = current ?? task;
+          // An edit mid-run can rebind the task; this run's failure is not the new destination's.
+          const sameDestination =
+            current !== null &&
+            current.threadId === active.threadId &&
+            (active.threadId !== null || current.projectId === active.projectId);
+          const consecutiveFailures =
+            runSucceeded || !sameDestination ? 0 : (row?.consecutive_failures ?? 0) + 1;
+          // A webhook task runs when its sender calls; pausing it would drop later requests.
+          const failuresExhausted =
+            !destinationGone &&
+            active.schedule.type !== "webhook" &&
+            consecutiveFailures >= MAX_CONSECUTIVE_FAILED_RUNS;
+          const pause = failuresExhausted || (destinationGone && sameDestination);
+          const runError = runSucceeded
+            ? null
+            : failuresExhausted
+              ? `${errorMessage(result.cause)} Paused after ${MAX_CONSECUTIVE_FAILED_RUNS} failed runs in a row.`
+              : errorMessage(result.cause);
+          // markRunning cleared the error, so one present now is a pause note written mid-run.
+          const pauseNote = current?.enabled === false ? current.lastRunError : null;
+          const lastRunError =
+            pauseNote === null
+              ? runError
+              : runError === null
+                ? pauseNote
+                : `${runError} ${pauseNote}`;
+          const scheduleSource =
+            current === null ? task : pause ? { ...current, enabled: false } : current;
           const completed: ScheduledTask = {
             ...scheduleSource,
             updatedAt: iso(completedAt),
@@ -1128,9 +1180,11 @@ export const layer = Layer.effect(
           const completion = markCompleted({
             id: task.id,
             completedAtIso: completed.updatedAt,
+            enabled: completed.enabled,
             nextRunAtIso: completed.nextRunAt,
             status: lastRunStatus,
             error: lastRunError,
+            consecutiveFailures,
             startedAtIso,
           });
           let written = false;
@@ -1589,6 +1643,7 @@ export const layer = Layer.effect(
           UPDATE scheduled_tasks
           SET enabled = ${input.enabled ? 1 : 0},
               next_run_at = ${next},
+              consecutive_failures = 0,
               updated_at = ${iso(now)}
           WHERE task_id = ${input.id}
           RETURNING task_id
@@ -1671,6 +1726,26 @@ export const layer = Layer.effect(
         discard: true,
       });
       if (removed.length > 0) yield* notifyChanged;
+    });
+
+    const pauseForThread = Effect.fn("ScheduledTaskService.pauseForThread")(function* (
+      threadId: ThreadId,
+    ) {
+      const now = yield* localNow;
+      const paused = yield* sql<{ task_id: ScheduledTaskId }>`
+        UPDATE scheduled_tasks
+        SET enabled = 0,
+            next_run_at = NULL,
+            updated_at = ${iso(now)},
+            last_run_error = COALESCE(last_run_error || ' ', '') || 'Paused because its thread was archived.'
+        WHERE thread_id = ${threadId} AND enabled = 1
+        RETURNING task_id
+      `.pipe(
+        Effect.mapError((cause) =>
+          taskError("Could not pause thread's schedule tasks.", { cause }),
+        ),
+      );
+      if (paused.length > 0) yield* notifyChanged;
     });
 
     const moveThreadTasks: ScheduledTaskService["Service"]["moveThreadTasks"] = Effect.fn(
@@ -2620,6 +2695,7 @@ export const layer = Layer.effect(
       setEnabled,
       delete: deleteTask,
       deleteForThread,
+      pauseForThread,
       moveThreadTasks,
       runNow,
       rotateWebhookToken,

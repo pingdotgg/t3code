@@ -2198,3 +2198,23 @@ it.effect("filters run before replay and coalescing without claiming ignored del
     { workers },
   );
 });
+
+it.effect("a webhook task keeps accepting requests after repeated failed runs", () =>
+  withService(
+    ({ service, launches }) =>
+      Effect.gen(function* () {
+        const { task } = yield* service.upsert(yield* webhookTaskInput());
+        for (let attempt = 0; attempt < 6; attempt++) {
+          yield* waitForSpan(
+            service.triggerWebhook(requestFor(task, { relayDeliveryId: `attempt-${attempt}` })),
+            "ScheduledTaskService.runWebhookDelivery",
+          );
+          yield* Queue.take(launches);
+        }
+        const [current] = (yield* service.list()).tasks;
+        assert.equal(current?.lastRunStatus, "failed");
+        assert.isTrue(current?.enabled, "a sender's later requests must still run");
+      }),
+    { failLaunches: { remaining: 6 } },
+  ),
+);
