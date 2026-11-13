@@ -265,6 +265,27 @@ describe("buildProjectGroups", () => {
     }
   });
 
+  it("represents a group by its repository root checkout, preferring the preferred environment", () => {
+    const remoteEnvironmentId = EnvironmentId.make("remote");
+    const rooted = { ...repositoryIdentity, rootPath: "/work/t3code" };
+    const projects = [
+      makeProject("web", "/work/t3code/apps/web", { repositoryIdentity: rooted }),
+      makeProject("remote-web", "/work/t3code/apps/web", {
+        environmentId: remoteEnvironmentId,
+        repositoryIdentity: rooted,
+      }),
+      makeProject("server", "/work/t3code/apps/server", { repositoryIdentity: rooted }),
+      makeProject("root", "/work/t3code", { repositoryIdentity: rooted }),
+    ];
+    const representativeId = (preferredEnvironmentId: EnvironmentId | null = null) =>
+      buildProjectGroups({ projects, settings: settings("repository"), preferredEnvironmentId })[0]
+        ?.representative.id;
+
+    expect(representativeId()).toBe("root");
+    expect(representativeId(environmentId)).toBe("root");
+    expect(representativeId(remoteEnvironmentId)).toBe("remote-web");
+  });
+
   it("keeps a fork apart from its upstream checkout and labels it by its own remote", () => {
     const fork = makeProject("fork", "/work/t3code-fork", {
       repositoryIdentity: {

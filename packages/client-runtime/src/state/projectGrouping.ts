@@ -358,10 +358,14 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
 
   const preferredEnvironmentId = input.preferredEnvironmentId ?? null;
   return Array.from(groupedMembers, ([key, members]) => {
-    const representative =
-      (preferredEnvironmentId
-        ? members.find((member) => member.project.environmentId === preferredEnvironmentId)?.project
-        : null) ?? members[0]!.project;
+    const preferredMembers = members.filter(
+      (member) => member.project.environmentId === preferredEnvironmentId,
+    );
+    const candidates = preferredMembers.length > 0 ? preferredMembers : members;
+    const representative = (
+      candidates.find((member) => deriveRepositoryRelativeProjectPath(member.project) === "") ??
+      candidates[0]!
+    ).project;
     return {
       key,
       label:
