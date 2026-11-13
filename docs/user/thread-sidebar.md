@@ -276,6 +276,13 @@ fill the screen; close the full-screen view to return to the parent and inspecto
 Stop on a thread also stops the subagents it delegated to.
 Before archiving the parent, wait for its delegated tasks to finish or cancel them.
 
+To keep working in a delegated thread on its own, choose **Pop out to top level**
+from its thread menu or its row in the parent's **Lineage**; in the mobile app it's
+in the thread's header, under the overflow menu on Android. It keeps its history,
+model, and folder, gets its own sidebar row, and no longer reports to the parent or
+stops with it. It is available once the delegated task has finished and its result
+reached the parent; stop it first if you can't wait.
+
 Subagent threads started by the agent can't take messages; message the parent
 thread instead. When such a subagent needs an approval or an answer, the parent
 thread asks for it.

@@ -86,6 +86,16 @@ describe("subagent shell events", () => {
     ).toBe(true);
     expect(subagents.has("new-child")).toBe(true);
   });
+
+  it("publishes a popped-out child's transcript once it leaves its parent", () => {
+    const subagents = new Set(["child"]);
+    expect(shouldPublishShellApplicationEvent(stored("child", "thread.detached"), subagents)).toBe(
+      true,
+    );
+    expect(
+      shouldPublishShellApplicationEvent(stored("child", "turn-item.updated"), subagents),
+    ).toBe(true);
+  });
 });
 
 it.effect("coalesces a slow shell subscriber by identity and location in sequence order", () =>

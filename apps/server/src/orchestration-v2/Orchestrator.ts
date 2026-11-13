@@ -27,6 +27,8 @@ import {
   type GuestMessageId,
   isCompactionCommandMessage,
   isOrchestrationV2WorkActive,
+  isDelegatedChildThread,
+  isDelegatedTaskReported,
   isProviderNativeSubagentThread,
   MessageId,
   type NodeId,
@@ -627,6 +629,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.snooze":
     case "thread.unsnooze":
     case "thread.auto-settle.set":
+    case "thread.detach":
     case "thread.pin":
     case "thread.unpin":
     case "thread.pin.reorder":
@@ -5330,6 +5333,87 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         } satisfies PendingOrchestrationEffectV2,
       ]);
     }
+  });
+
+  // Only finished, reported work may leave: an in-flight task's result would have nowhere to go.
+  const dispatchThreadDetach = Effect.fn("orchestrationV2.dispatch.threadDetach")(function* (
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.detach" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const refuse = (cause: string) =>
+      new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} ${cause}`,
+      });
+    const child = yield* loadProjectionForCommand(command, [
+      "runs",
+      "runtimeRequests",
+      "providerThreads",
+    ]).pipe(mapDispatchError(command));
+    const thread = child.thread;
+    if (thread.deletedAt !== null) return yield* refuse("is deleted.");
+    if (thread.archivedAt !== null) return yield* refuse("is archived.");
+    if (isProviderNativeSubagentThread(thread)) {
+      return yield* refuse("is run by its provider's own subagent tool and cannot be popped out.");
+    }
+    const parentThreadId = thread.lineage.parentThreadId;
+    if (!isDelegatedChildThread(thread) || parentThreadId === null) {
+      return yield* refuse("is not a delegated child thread.");
+    }
+    if (
+      threadHasUnfinishedWork(child) ||
+      child.providerThreads.some((thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0)
+    ) {
+      return yield* refuse("is still working. Wait for it to finish or stop it first.");
+    }
+    const tasks = (yield* projectionStore
+      .getThreadRecords(parentThreadId, ["subagents"])
+      .pipe(mapDispatchError(command))).subagents.filter(
+      (task) => task.origin === "app_owned" && task.childThreadId === thread.id,
+    );
+    const spawningRunIds = tasks.flatMap((task) =>
+      task.completionDelivery === undefined && task.runId !== null ? [task.runId] : [],
+    );
+    const liveSpawningRunIds = new Set(
+      spawningRunIds.length === 0
+        ? []
+        : (yield* projectionStore
+            .getThreadRecords(parentThreadId, ["runs"], { runIds: spawningRunIds })
+            .pipe(mapDispatchError(command))).runs
+            .filter(isLiveRun)
+            .map((run) => run.id),
+    );
+    if (
+      tasks.some(
+        (task) =>
+          !isDelegatedTaskReported(task, task.runId !== null && liveSpawningRunIds.has(task.runId)),
+      )
+    ) {
+      return yield* refuse(
+        "has a delegated task whose result has not reached its parent. Wait for it to finish or stop it first.",
+      );
+    }
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.detached",
+      threadId: thread.id,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: {
+        ...thread,
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: thread.lineage.rootThreadId,
+          detachedFrom: { threadId: parentThreadId },
+        },
+        updatedAt: now,
+      },
+    });
   });
 
   const dispatchProviderSessionDetach = Effect.fn("orchestrationV2.dispatch.providerSessionDetach")(
@@ -13761,8 +13845,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   );
 
   /**
-   * Thread lineage and fork origin are immutable, so this
-   * is safe to read without holding either thread's dispatch lock.
+   * Safe to read without holding either thread's dispatch lock: fork origin is immutable and
+   * lineage only ever leaves a parent (pop-out), so a stale read names the parent the child had,
+   * and work under that parent's lock re-reads the child's lineage.
    */
   const appOwnedSubagentParentThreadId = Effect.fn("Orchestrator.appOwnedSubagentParentThreadId")(
     function* (childThreadId: ThreadId) {
@@ -14788,6 +14873,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.guest-message.dismiss":
         yield* dispatchGuestShare(command, events, effects);
         break;
+      case "thread.detach":
+        yield* dispatchThreadDetach(command, events);
+        break;
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
         break;
@@ -15387,8 +15475,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? withSubagentParentLock(message.threadId, dispatch)
           : dispatch,
       );
-    // Answering a message-mode question can also start a follow-up.
-    return yield* command.type === "runtime-request.respond"
+    // Answering a message-mode question can also start a follow-up, and a pop-out must not
+    // race the parent writing a follow-up task for the child.
+    return yield* command.type === "runtime-request.respond" || command.type === "thread.detach"
       ? withSubagentParentLock(command.threadId, dispatch)
       : dispatch;
   });

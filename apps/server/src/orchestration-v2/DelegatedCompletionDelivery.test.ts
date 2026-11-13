@@ -20,6 +20,7 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   RunId,
+  isListedThreadLineage,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
@@ -1353,6 +1354,14 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
   );
 });
 
+const refusalOf = <A>(dispatch: Effect.Effect<A, Orchestrator.OrchestratorV2Error>) =>
+  dispatch.pipe(
+    Effect.flip,
+    Effect.map((error) =>
+      error._tag === "OrchestratorDispatchError" ? String(error.cause) : error._tag,
+    ),
+  );
+
 const reconcileCommandId = (name: string) => CommandId.make(`command:runtime-reconcile:${name}`);
 
 const parentProviderThreadId = (threadId: ThreadId) =>
@@ -2431,6 +2440,184 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         assert.equal(resumed.subagents.find((row) => row.id === task.id)?.status, "running");
         assert.isNull(resumed.subagents.find((row) => row.id === task.id)?.result);
       }),
+    );
+
+    it.effect("pops a reported child out in place, and its later turns stay its own", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread:pop-out-parent");
+        const projectId = ProjectId.make("project:pop-out");
+        const parentRunId = RunId.make("run:pop-out-parent");
+        const rootNodeId = NodeId.make("node:pop-out-parent");
+        yield* seedParentWithTerminalTask({
+          threadId: parentThreadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId: NodeId.make("node:pop-out-seed"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId,
+          projectId,
+          parentRunId,
+          rootNodeId,
+          name: "pop-out-child",
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        const popOut = (name: string) =>
+          orchestrator.dispatch({
+            type: "thread.detach",
+            commandId: CommandId.make(`command:pop-out:${name}`),
+            threadId: child.childThreadId,
+          });
+        assert.include(
+          yield* refusalOf(popOut("unreported")),
+          "has a delegated task whose result has not reached its parent",
+        );
+        yield* orchestrator.recoverDelegatedTasks;
+        yield* orchestrator.dispatch({
+          type: "delegated_task.completion-delivery.acknowledge",
+          commandId: CommandId.make("command:pop-out:acknowledge"),
+          parentThreadId,
+          taskId: child.taskId,
+          observedByRunId: parentRunId,
+        });
+        yield* popOut("reported");
+
+        const popped = yield* orchestrator.getThreadProjection(child.childThreadId);
+        assert.deepStrictEqual(popped.thread.lineage, {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: parentThreadId,
+          detachedFrom: { threadId: parentThreadId },
+        });
+        assert.deepStrictEqual(yield* orchestrator.listAppOwnedChildThreadIds(parentThreadId), []);
+        const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (row) => row.id === child.childThreadId,
+        );
+        assert.isTrue(shell !== undefined && isListedThreadLineage(shell.lineage));
+
+        // The old parent's agent can still message it, but that starts no task of its own.
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId: CommandId.make("command:pop-out:followup"),
+          threadId: child.childThreadId,
+          senderThreadId: parentThreadId,
+          messageId: MessageId.make("message:pop-out:followup"),
+          text: "Keep going on your own.",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+        });
+        const followup = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+          (run) => run.ordinal === 2,
+        );
+        assert.isDefined(followup);
+        assert.isUndefined(followup?.delegatedTaskId);
+        const tasks = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.filter(
+          (task) => task.childThreadId === child.childThreadId,
+        );
+        assert.deepStrictEqual(
+          tasks.map((task) => [task.id, task.status, task.completionDelivery?.state]),
+          [[child.taskId, "completed", "acknowledged"]],
+        );
+      }),
+    );
+
+    it.effect(
+      "refuses to pop out a working child, a provider's subagent, or a top-level thread",
+      () =>
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const sink = yield* EventSink.EventSinkV2;
+          const now = yield* DateTime.now;
+          const parentThreadId = ThreadId.make("thread:pop-out-refused-parent");
+          const projectId = ProjectId.make("project:pop-out-refused");
+          const parentRunId = RunId.make("run:pop-out-refused-parent");
+          const rootNodeId = NodeId.make("node:pop-out-refused-parent");
+          yield* seedParentWithTerminalTask({
+            threadId: parentThreadId,
+            projectId,
+            runId: parentRunId,
+            rootNodeId,
+            taskId: NodeId.make("node:pop-out-refused-seed"),
+            deliveryState: "acknowledged",
+            now,
+          });
+          const child = yield* seedRestartCancelledChild({
+            parentThreadId,
+            projectId,
+            parentRunId,
+            rootNodeId,
+            name: "pop-out-refused-child",
+            completionWake: "always",
+            continuationPending: false,
+            runStatus: "completed",
+            now,
+          });
+          yield* orchestrator.recoverDelegatedTasks;
+          yield* orchestrator.dispatch({
+            type: "delegated_task.completion-delivery.acknowledge",
+            commandId: CommandId.make("command:pop-out-refused:acknowledge"),
+            parentThreadId,
+            taskId: child.taskId,
+            observedByRunId: parentRunId,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "agent",
+            creationSource: "mcp",
+            commandId: CommandId.make("command:pop-out-refused:followup"),
+            threadId: child.childThreadId,
+            senderThreadId: parentThreadId,
+            messageId: MessageId.make("message:pop-out-refused:followup"),
+            text: "One more thing.",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+          });
+          const providerChildThreadId = ThreadId.make("thread:pop-out-refused-native");
+          const created = (yield* orchestrator.getThreadProjection(child.childThreadId)).thread;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make("event:pop-out-refused-native"),
+                type: "thread.created",
+                threadId: providerChildThreadId,
+                occurredAt: now,
+                payload: {
+                  ...created,
+                  id: providerChildThreadId,
+                  creationSource: "provider",
+                  forkedFrom: null,
+                },
+              },
+            ],
+          });
+          const refusals = [];
+          for (const threadId of [child.childThreadId, providerChildThreadId, parentThreadId]) {
+            refusals.push(
+              yield* refusalOf(
+                orchestrator.dispatch({
+                  type: "thread.detach",
+                  commandId: CommandId.make(`command:pop-out-refused:${threadId}`),
+                  threadId,
+                }),
+              ),
+            );
+          }
+          assert.deepStrictEqual(refusals, [
+            `Thread ${child.childThreadId} is still working. Wait for it to finish or stop it first.`,
+            `Thread ${providerChildThreadId} is run by its provider's own subagent tool and cannot be popped out.`,
+            `Thread ${parentThreadId} is not a delegated child thread.`,
+          ]);
+        }),
     );
 
     it.effect("checkpoint retry releases a pending sibling after its wake offer failed", () =>

@@ -512,6 +512,28 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       assert.deepEqual((yield* search.search({ query: "ab" })).matches, []);
       assert.lengthOf((yield* search.search({ query: "renam be" })).matches, 1);
       assert.lengthOf((yield* search.search({ query: "renam ab" })).matches, 0);
+
+      // Popping the subagent out lists it, along with what it wrote before.
+      const created = thread(subagent, project, { subagentOf: parent });
+      if (created.type !== "thread.created") throw new Error("expected thread.created");
+      yield* projections.apply({
+        ...created,
+        id: EventId.make(`detached:${subagent}`),
+        type: "thread.detached",
+        payload: {
+          ...created.payload,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: parent,
+            detachedFrom: { threadId: parent },
+          },
+        },
+      });
+      assert.deepEqual(
+        (yield* search.search({ query: "search servi" })).matches.map((match) => match.threadId),
+        [parent, subagent],
+      );
     }),
   );
 

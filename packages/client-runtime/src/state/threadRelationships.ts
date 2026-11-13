@@ -1,12 +1,16 @@
 import {
+  isDelegatedChildThread,
+  isDelegatedTaskReported,
+  isLiveSubagentShell,
   isOrchestrationV2WorkActive,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-export type ThreadRelationshipKind = "parent" | "fork" | "subagent" | "transfer";
+export type ThreadRelationshipKind = "parent" | "fork" | "subagent" | "popped_out" | "transfer";
 
 export interface ThreadRelationshipNode {
   readonly threadId: ThreadId;
@@ -86,6 +90,16 @@ export function deriveThreadRelationshipGraph(input: {
       ? [...threads, { ...selectedThread, activityRunStatus: null, status: null }]
       : threads;
   for (const thread of lineageThreads) {
+    const detachedFrom = thread.lineage.detachedFrom?.threadId;
+    if (detachedFrom !== undefined) {
+      addEdge({
+        sourceThreadId: detachedFrom,
+        targetThreadId: thread.id,
+        kind: "popped_out",
+        status: thread.activityRunStatus ?? thread.status,
+      });
+      continue;
+    }
     const parentThreadId =
       thread.forkedFrom?.type === "run"
         ? thread.forkedFrom.threadId
@@ -104,6 +118,7 @@ export function deriveThreadRelationshipGraph(input: {
     for (const subagent of input.projection.subagents) {
       if (subagent.childThreadId === null) continue;
       const child = threadsById.get(subagent.childThreadId);
+      if (child?.lineage.detachedFrom?.threadId === ownerThreadId) continue;
       addEdge({
         sourceThreadId: ownerThreadId,
         targetThreadId: subagent.childThreadId,
@@ -204,4 +219,28 @@ export function orderWebThreadLineageRows(input: {
     }
     return left.threadId < right.threadId ? -1 : left.threadId > right.threadId ? 1 : 0;
   });
+}
+
+export type ThreadPopOutAvailability = "unsupported" | "blocked" | "available";
+
+/**
+ * Whether a delegated child can be popped out to top level: once it is idle and every task it was
+ * given has reported to its parent. The server re-checks against the parent's records.
+ */
+export function threadPopOutAvailability(
+  thread: Pick<
+    OrchestrationV2ThreadShell,
+    | "lineage"
+    | "creationSource"
+    | "activityRunStatus"
+    | "status"
+    | "pendingRuntimeRequest"
+    | "pendingBackgroundTasks"
+  >,
+  tasks: ReadonlyArray<Pick<OrchestrationV2Subagent, "status" | "completionDelivery">> = [],
+): ThreadPopOutAvailability {
+  if (!isDelegatedChildThread(thread)) return "unsupported";
+  return isLiveSubagentShell(thread) || tasks.some((task) => !isDelegatedTaskReported(task, false))
+    ? "blocked"
+    : "available";
 }

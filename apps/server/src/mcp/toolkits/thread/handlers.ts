@@ -369,6 +369,16 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         case "mark_unread":
           command = { ...common, type: "thread.mark-unread" };
           break;
+        case "pop_out":
+          // Otherwise a child could leave its parent's Stop on its own.
+          if (caller?.id === projection.thread.id) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "A thread cannot pop itself out; its parent or the user can.",
+            });
+          }
+          command = { ...common, type: "thread.detach" };
+          break;
         default:
           command = { ...common, type: `thread.${input.action}` };
       }

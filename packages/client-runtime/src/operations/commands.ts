@@ -677,6 +677,17 @@ export const markThreadUnread = Effect.fn("EnvironmentCommands.markThreadUnread"
   });
 });
 
+export type PopOutThreadInput = ThreadCommandInput;
+export const popOutThread = Effect.fn("EnvironmentCommands.popOutThread")(function* (
+  input: PopOutThreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.detach",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+  });
+});
+
 export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadMetadata")(
   function* (input: UpdateThreadMetadataInput) {
     const commandId = yield* allocateCommandId(input);

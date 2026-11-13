@@ -611,6 +611,41 @@ it.effect.each(["run.interrupt", "thread.stop"] as const)(
     }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("a parent's Stop no longer reaches a child popped out of it", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const parentThreadId = ThreadId.make("thread:stop-popped-parent");
+    yield* createWatchingThread(parentThreadId, 1);
+    yield* send(parentThreadId, "first", "start_immediately");
+    const childThreadId = yield* delegate(parentThreadId, "popped child");
+    const child = (yield* orchestrator.getThreadProjection(childThreadId)).thread;
+    const before = yield* threadState(childThreadId);
+    yield* projections.apply({
+      id: EventId.make("event:stop-popped:detached"),
+      type: "thread.detached",
+      threadId: childThreadId,
+      occurredAt: yield* DateTime.now,
+      payload: {
+        ...child,
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: child.lineage.rootThreadId,
+          detachedFrom: { threadId: parentThreadId },
+        },
+      },
+    });
+
+    yield* threads.stopDelegatedTasks({
+      threadId: parentThreadId,
+      commandId: CommandId.make("stop-popped-parent"),
+    });
+    assert.deepEqual(yield* threadState(childThreadId), before);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("a repeated Stop that changes nothing still stops the delegated tasks", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

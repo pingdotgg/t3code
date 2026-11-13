@@ -35,6 +35,7 @@ import {
   forkSideChat,
   forkThreadFromRun,
   markThreadUnread,
+  popOutThread,
   mergeThreadBack,
   promoteQueuedRun,
   resumeThreadQueue,
@@ -259,6 +260,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     markUnread: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:mark-unread",
       execute: markThreadUnread,
+      scheduler,
+      concurrency,
+    }),
+    popOut: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:pop-out",
+      execute: popOutThread,
       scheduler,
       concurrency,
     }),

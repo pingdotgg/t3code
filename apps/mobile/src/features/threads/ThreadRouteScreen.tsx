@@ -90,7 +90,10 @@ import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-s
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
-import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
+import {
+  resolveMergeBackTargetThreadId,
+  threadPopOutAvailability,
+} from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
 import { threadEnvironment } from "../../state/threads";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
@@ -447,6 +450,30 @@ function ThreadRouteContent(
   const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
   const openPullRequest = useOpenPullRequest();
+  const popOut = useAtomCommand(threadEnvironment.popOut, { reportFailure: false });
+  const popOutAvailability =
+    selectedThread && canOperateThread
+      ? threadPopOutAvailability(selectedThread.source)
+      : "unsupported";
+  const handlePopOut = () => {
+    if (!selectedThread) return;
+    if (popOutAvailability === "blocked") {
+      Dialog.alert("Can't pop out yet", "Wait for it to finish or stop it first.");
+      return;
+    }
+    const environmentId = selectedThread.environmentId;
+    const threadId = selectedThread.id;
+    Dialog.confirm({
+      title: "Pop out to top level?",
+      message:
+        "It becomes an ordinary thread in your list and stops reporting to the thread that started it.",
+      confirmText: "Pop out",
+      onConfirm: () =>
+        void popOut({ environmentId, input: { threadId } }).then((result) => {
+          if (result._tag !== "Success") Dialog.alert("Could not pop out thread");
+        }),
+    });
+  };
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack, "merge thread back");
   const mergeBackTargetThreadId = resolveMergeBackTargetThreadId(selectedThreadDetail);
   const mergeBackRun =
@@ -983,6 +1010,7 @@ function ThreadRouteContent(
                 inspectorMode={inspectorMode}
                 onOpenFilesInspector={handleOpenFilesInspector}
                 onReturnToThread={props.onReturnToThread}
+                onPopOut={popOutAvailability === "unsupported" ? undefined : handlePopOut}
               />
             )
           }

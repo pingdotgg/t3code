@@ -58,6 +58,7 @@ vi.mock("../state/entities", () => ({
     worktreePath: null,
     runtime: null,
     latestRun: null,
+    source: { lineage: { parentThreadId: null, relationshipToParent: null } },
   }),
   useProjects: () => [{ id: "project", environmentId: "secondary" }],
 }));
@@ -120,6 +121,7 @@ vi.mock("./useSettings", () => ({
 }));
 vi.mock("./useThreadActions", () => ({
   canTurnThreadIntoProject: () => false,
+  usePopOutThread: () => async () => AsyncResult.success(undefined),
   useThreadActions: () =>
     Object.fromEntries(
       [

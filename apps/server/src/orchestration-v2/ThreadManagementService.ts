@@ -1593,6 +1593,10 @@ const make = Effect.gen(function* () {
     "ThreadManagementService.stopDelegatedTasks",
   )(function* (input) {
     const { subagents } = yield* orchestrator.getThreadRecords(input.threadId, ["subagents"]);
+    // A child popped out to top level no longer answers to this parent's Stop.
+    const attachedChildThreadIds = new Set(
+      yield* orchestrator.listAppOwnedChildThreadIds(input.threadId),
+    );
     const failures: Array<
       Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
     > = [];
@@ -1636,7 +1640,7 @@ const make = Effect.gen(function* () {
       }
       const threadId = task.childThreadId;
       // Follow-up tasks reuse a child thread; walk its subtree only once.
-      if (stoppedChildThreadIds.has(threadId)) continue;
+      if (stoppedChildThreadIds.has(threadId) || !attachedChildThreadIds.has(threadId)) continue;
       stoppedChildThreadIds.add(threadId);
       yield* dispatch({
         type: "thread.stop",
