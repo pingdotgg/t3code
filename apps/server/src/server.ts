@@ -345,7 +345,7 @@ const layerRelayClient = Layer.unwrap(
   }),
 ).pipe(Layer.provide(ManagedPolicy.layer));
 
-const layerHttpServer = Layer.unwrap(
+export const layerHttpServer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     // Before binding: a host the policy does not allow must never listen, not even briefly.
@@ -383,9 +383,9 @@ const layerHttpServer = Layer.unwrap(
       },
     );
   }),
-).pipe(Layer.provide(ManagedPolicy.layer));
+).pipe(Layer.provide(ManagedPolicy.layer), Layer.merge(SpawnHost.layer));
 
-const layerPlatformServices = DocumentText.layer.pipe(
+export const layerPlatformServices = DocumentText.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       NodeServices.layer,
@@ -394,6 +394,8 @@ const layerPlatformServices = DocumentText.layer.pipe(
     ),
   ),
 );
+
+export const layerProcessRunner = ProcessRunner.layer.pipe(Layer.provide(layerPlatformServices));
 
 const layerPersistence = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.layerConfig));
 
@@ -1306,6 +1308,6 @@ const layerMakeServer = Layer.unwrap(
       Layer.provide(Layer.succeed(HostProcess.InvokedAs, invokedAs)),
     );
   }),
-).pipe(Layer.provide(ProcessRunner.layer));
+).pipe(Layer.provide(layerProcessRunner));
 
 export const runServer = Layer.launch(layerMakeServer);
