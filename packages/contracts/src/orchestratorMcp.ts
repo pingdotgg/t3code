@@ -180,7 +180,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   mode: Schema.optional(
     Schema.Literals(["async", "wait"]).annotate({
       description:
-        "Default 'async'. Parallel children: all 'async'. 'wait' only if this turn needs the result. A question or approval ends the wait.",
+        "Default 'async'. Parallel: start all, then follow `next`. 'wait' only for one child this turn needs. A question or approval ends the wait.",
     }),
   ),
   timeoutMs: Schema.optional(Schema.Finite).annotate({
