@@ -7,7 +7,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
-import { checkpointRefForScopeOrdinal } from "../orchestration-v2/CheckpointService.ts";
+import {
+  checkpointRefForScopeOrdinal,
+  turnStartRefForScopeOrdinal,
+} from "../orchestration-v2/CheckpointService.ts";
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import type { ProjectionCheckpointContext } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -51,6 +54,7 @@ function layerFor(input: {
   readonly projection: Effect.Effect<ProjectionCheckpointContext, OrchestratorProjectionError>;
   readonly diffCheckpoints?: CheckpointStore.CheckpointStore["Service"]["diffCheckpoints"];
   readonly authoredPaths?: ReadonlySet<string>;
+  readonly hasCheckpointRef?: CheckpointStore.CheckpointStore["Service"]["hasCheckpointRef"];
 }) {
   return CheckpointDiffQuery.layer.pipe(
     Layer.provide(
@@ -61,6 +65,7 @@ function layerFor(input: {
         Layer.mock(CheckpointStore.CheckpointStore)({
           diffCheckpoints: input.diffCheckpoints ?? (() => Effect.succeed("diff")),
           listAuthoredPaths: () => Effect.succeed(input.authoredPaths ?? null),
+          hasCheckpointRef: input.hasCheckpointRef ?? (() => Effect.succeed(false)),
         }),
       ),
     ),
@@ -149,9 +154,11 @@ it.effect.each([false, true])(
     const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
       Effect.succeed("diff --git a/file b/file"),
     );
+    const hasCheckpointRef = vi.fn(() => Effect.succeed(false));
     const layer = layerFor({
       projection: Effect.succeed(makeProjectionAfterStoppedRun(stoppedRunCheckpoint)),
       diffCheckpoints,
+      hasCheckpointRef,
     });
 
     return Effect.gen(function* () {
@@ -185,6 +192,18 @@ it.effect.each([false, true])(
       assert.deepEqual(
         { checkpoint: stoppedTurnError.checkpoint, turnCount: stoppedTurnError.turnCount },
         { checkpoint: "to", turnCount: 2 },
+      );
+
+      // The checkout can change between turns, so a recorded turn start replaces the parent.
+      hasCheckpointRef.mockReturnValue(Effect.succeed(true));
+      yield* query.getTurnDiff({ threadId, fromTurnCount: 2, toTurnCount: 3 });
+      yield* query.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 3 });
+      assert.deepEqual(
+        diffCheckpoints.mock.calls.slice(-2).map(([input]) => input.fromCheckpointRef),
+        [
+          yield* turnStartRefForScopeOrdinal({ scopeId: firstScopeId, ordinalWithinScope: 3 }),
+          "refs/t3/test/ordinal/1",
+        ],
       );
     }).pipe(Effect.provide(layer));
   },

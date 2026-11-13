@@ -169,14 +169,17 @@ it.effect(
           .pipe(Effect.result, Effect.forkChild);
         yield* TestClock.adjust("10 seconds");
         assert.strictEqual((yield* Fiber.join(postTurn)).status, "ready");
-        assert.strictEqual((yield* Fiber.join(waitingBaseline))._tag, "Success");
+        // The waiting baseline reuses that ref, so its one snapshot is the next turn's start.
+        yield* TestClock.adjust("5 seconds");
+        assert.strictEqual((yield* Fiber.join(waitingBaseline))._tag, "Failure");
+        assert.strictEqual(yield* Ref.get(snapshots), 2);
 
         const slowBaseline = yield* checkpoints
           .captureBaseline({ scope, ordinalWithinScope: 2 })
           .pipe(Effect.result, Effect.forkChild);
         yield* TestClock.adjust("5 seconds");
         assert.strictEqual((yield* Fiber.join(slowBaseline))._tag, "Failure");
-        assert.strictEqual(yield* Ref.get(snapshots), 2);
+        assert.strictEqual(yield* Ref.get(snapshots), 3);
         assert.strictEqual((yield* Ref.get(refs)).size, 1);
       }).pipe(Effect.provide(layerTest));
     }),
@@ -291,6 +294,22 @@ it.effect("a turn's changed files leave out edits another thread made while it w
 
     assert.strictEqual(second.status, "ready");
     assert.deepEqual(second.files, []);
+
+    // A retried attempt captures the baseline again after the turn's first attempt wrote a file.
+    yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 2 });
+    yield* fileSystem.writeFileString(NodePath.join(cwd, "own.txt"), "mine\n");
+    const third = yield* runTurn(3);
+    assert.deepEqual(
+      third.files.map((file) => file.path),
+      ["own.txt"],
+    );
+
+    yield* checkpoints.deleteStaleRefs({ scope, checkpoints: [third] });
+    const remaining = yield* git("for-each-ref", "--format=%(refname)", "refs/t3");
+    assert.deepEqual(
+      remaining.stdout.split("\n").filter((ref) => ref.endsWith("/3")),
+      [],
+    );
   }).pipe(
     Effect.scoped,
     Effect.provide(

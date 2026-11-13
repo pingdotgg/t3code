@@ -14,7 +14,10 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { CHECKPOINT_DIFF_MAX_OUTPUT_BYTES } from "../vcs/VcsDriver.ts";
-import { checkpointRefForScopeOrdinal } from "../orchestration-v2/CheckpointService.ts";
+import {
+  checkpointRefForScopeOrdinal,
+  turnStartRefForScopeOrdinal,
+} from "../orchestration-v2/CheckpointService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import {
   CheckpointDiffResultInvalidError,
@@ -202,9 +205,22 @@ export const make = Effect.gen(function* () {
         });
       }
 
+      // One turn is measured from its own start, as its changed-files card was at capture.
+      const turnStartRef =
+        input.fromTurnCount === input.toTurnCount - 1
+          ? yield* turnStartRefForScopeOrdinal(toCheckpoint).pipe(
+              Effect.provideService(Digest.Digest, digest),
+            )
+          : undefined;
+      const fromTurnStart =
+        turnStartRef !== undefined &&
+        (yield* checkpointStore
+          .hasCheckpointRef({ cwd: toScope.cwd, checkpointRef: turnStartRef })
+          .pipe(Effect.orElseSucceed(() => false)));
+
       const comparison = {
         cwd: toScope.cwd,
-        fromCheckpointRef,
+        fromCheckpointRef: fromTurnStart ? turnStartRef : fromCheckpointRef,
         toCheckpointRef: toCheckpoint.ref,
         fallbackFromToHead: false,
         ignoreWhitespace,
