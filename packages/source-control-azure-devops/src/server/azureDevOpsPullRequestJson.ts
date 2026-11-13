@@ -16,7 +16,7 @@ import type {
 import { TrimmedNonEmptyString } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
-import { azureDevOpsPullRequestWebUrl } from "./azureDevOpsPullRequests.ts";
+import { azureDevOpsPullRequestWebUrl } from "../shared/pullRequestUrls.ts";
 
 // CLI fields vary by command; unknown enum values must not fail the payload.
 const RawIdentitySchema = Schema.Struct({
