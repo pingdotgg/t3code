@@ -10,10 +10,16 @@ import { primaryServerKeybindingsAtom } from "../state/server";
 
 const scopes = vi.hoisted(() => ({
   denied: undefined as string | undefined,
+  draftEnvironment: null as string | null,
+  draftProjectId: null as string | null,
+  openExtensionCommand: vi.fn(),
   sourceControl: undefined as unknown,
 }));
 const setup = (deniedScope?: string, sourceControl?: unknown) => {
   scopes.denied = deniedScope;
+  scopes.draftEnvironment = null;
+  scopes.draftProjectId = null;
+  scopes.openExtensionCommand.mockClear();
   scopes.sourceControl = sourceControl;
 };
 const githubAvailable = {
@@ -47,9 +53,9 @@ vi.mock("../hooks/useTheme", () => ({
 }));
 vi.mock("../hooks/useCustomThemes", () => ({ useCustomThemes: () => [] }));
 vi.mock("../hooks/useEnvironmentTheme", () => ({ useEnvironmentThemeDefinitions: () => [] }));
-vi.mock("../hooks/useSettings", async (original) => ({
-  ...(await original<typeof import("../hooks/useSettings")>()),
-  useClientSettings: () => DEFAULT_CLIENT_SETTINGS,
+vi.mock("../hooks/useSettings", () => ({
+  useClientSettings: (select?: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
+    select ? select(DEFAULT_CLIENT_SETTINGS) : DEFAULT_CLIENT_SETTINGS,
   useUpdateEnvironmentSettings: () => () => undefined,
 }));
 vi.mock("../hooks/useScratchProject", () => ({
@@ -58,7 +64,13 @@ vi.mock("../hooks/useScratchProject", () => ({
 vi.mock("../hooks/useNewProject", () => ({ useNewProject: () => async () => undefined }));
 vi.mock("../hooks/useHandleNewThread", () => ({
   useHandleNewThread: () => ({
-    activeDraftThread: null,
+    activeDraftThread: scopes.draftEnvironment
+      ? {
+          environmentId: scopes.draftEnvironment,
+          threadId: "draft-thread",
+          projectId: scopes.draftProjectId,
+        }
+      : null,
     activeThread: null,
     defaultProjectRef: null,
     handleNewThread: async () => undefined,
@@ -84,11 +96,28 @@ vi.mock("../state/environments", async (original) => ({
         connection: { phase: "connected" },
         entry: { target: { _tag: "PrimaryConnectionTarget" } },
         serverConfig: {
-          environment: { platform: { os: "linux" }, capabilities: { projectCloneTracking: true } },
+          environment: {
+            platform: { os: "linux" },
+            capabilities: { projectCloneTracking: true, extensions: true },
+          },
           settings: { addProjectBaseDirectory: "/workspace/" },
           newProjectsRoot: "/workspace/",
         },
       },
+      ...(scopes.draftEnvironment
+        ? [
+            {
+              environmentId: "remote",
+              label: "Remote",
+              entry: { target: { _tag: "BearerConnectionTarget", connectionId: "remote" } },
+              connection: { phase: "connected" },
+              serverConfig: {
+                environment: { platform: { os: "linux" }, capabilities: { extensions: true } },
+                settings: { addProjectBaseDirectory: "/workspace/" },
+              },
+            },
+          ]
+        : []),
     ],
   }),
   usePrimaryEnvironmentId: () => "local",
@@ -124,11 +153,64 @@ vi.mock("../state/filesystem", async (original) => ({
 }));
 vi.mock("../state/query", async (original) => ({
   ...(await original<typeof import("../state/query")>()),
-  useEnvironmentQuery: () => ({ data: scopes.sourceControl, isLoading: false }),
+  useEnvironmentQuery: (atom: unknown) => ({
+    data:
+      atom && typeof atom === "object" && "extensionEnvironmentId" in atom
+        ? atom.extensionEnvironmentId === "remote"
+          ? [
+              {
+                status: "running",
+                manifest: {
+                  id: "test.remote",
+                  name: "Remote extension",
+                  commands: [
+                    {
+                      id: "run",
+                      title: "Run remote extension",
+                      description: "Run on the draft host",
+                    },
+                  ],
+                },
+              },
+            ]
+          : undefined
+        : scopes.sourceControl,
+    isLoading: false,
+  }),
 }));
 vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [],
 }));
+
+vi.mock("../state/extensions", () => ({
+  extensionClientSurface: "web",
+  extensionEnvironment: {
+    state: ({ environmentId }: { environmentId: string }) => ({
+      extensionEnvironmentId: environmentId,
+    }),
+  },
+}));
+vi.mock("./ExtensionCommandHost", () => ({ openExtensionCommand: scopes.openExtensionCommand }));
+
+it("shows and opens extension commands on a draft's owning environment", async () => {
+  for (const projectId of [null, "remote-project"]) {
+    setup();
+    scopes.draftEnvironment = "remote";
+    scopes.draftProjectId = projectId;
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ query: "Run remote extension" }));
+    const command = page.getByRole("option", { name: /Run remote extension/ });
+    await expect.element(command).toBeVisible();
+    await command.click();
+    expect(scopes.openExtensionCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environmentId: "remote",
+        command: expect.objectContaining({ id: "run" }),
+        context: projectId === null ? { surface: "web" } : { surface: "web", projectId },
+      }),
+    );
+  }
+});
 
 // The real palette and Base UI input must agree that confirming composition is typing.
 describe.each(["repository", "folder", "destination"] as const)("add-project %s", (step) => {

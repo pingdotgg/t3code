@@ -17,6 +17,7 @@ import { commandLabel } from "./KeybindingsSettings.logic";
 import type { ResolvedSettingsScope } from "./settingsScope";
 
 export type SettingsPath =
+  | "/settings/extensions"
   | "/settings/projects"
   | "/settings/general"
   | "/settings/diagnostics"
@@ -52,6 +53,7 @@ export type SettingsSearchScope =
 export interface SettingsSearchItem {
   readonly id: string;
   readonly title: string;
+  readonly extensionPage?: { readonly extensionId: string; readonly pageId: string };
   readonly to: SettingsPath;
   readonly targetId?: string;
   readonly searchTerms?: ReadonlyArray<string>;
@@ -94,6 +96,7 @@ export interface SettingsSearchAvailability {
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/diagnostics": msg("Diagnostics"),
+  "/settings/extensions": msg("Extensions"),
   "/settings/projects": msg("Projects"),
   "/settings/general": msg("General"),
   "/settings/appearance": msg("Appearance"),
@@ -141,6 +144,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     heading: msg("Agents"),
     paths: [
       "/settings/providers",
+      "/settings/extensions",
       "/settings/threads",
       "/settings/browser",
       "/settings/devices",
@@ -1360,6 +1364,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/archived",
     searchTerms: ["restore reopen deleted history projects"],
   },
+  {
+    id: "extensions",
+    title: "Extensions",
+    to: "/settings/extensions",
+    scope: "environment",
+    searchTerms: ["plugins host tools commands install"],
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
@@ -1367,6 +1378,7 @@ export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
 const SEARCH_ITEMS_BY_ID = new Map(SETTINGS_SEARCH_ITEMS.map((item) => [item.id, item] as const));
 
 const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScope | null>> = {
+  "/settings/extensions": "environment",
   "/settings/diagnostics": "environment",
   "/settings/projects": "project",
   "/settings/general": null,

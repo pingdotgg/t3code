@@ -566,6 +566,14 @@
     "./provider-instance-ids": {
       "types": "./src/providerInstanceIds.ts",
       "default": "./src/providerInstanceIds.ts"
+    },
+    "./state/extensions": {
+      "types": "./src/state/extensions.ts",
+      "default": "./src/state/extensions.ts"
+    },
+    "./extension-panel": {
+      "types": "./src/extensionPanel.ts",
+      "default": "./src/extensionPanel.ts"
     }
   },
   "scripts": {

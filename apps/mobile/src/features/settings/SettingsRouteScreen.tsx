@@ -1,3 +1,6 @@
+import { useAtomValue } from "@effect/atom-react";
+import { extensionEnvironment } from "../../state/extensions";
+import { openSettings } from "./settings-navigation";
 import {
   navigationCustomizationAvailable,
   overflowNavigationTabs,
@@ -243,6 +246,46 @@ function useSettingsIndexSections(): SettingsListSection[] {
   const gt = useGT();
   const language = useLanguagePreference();
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
+  const navigation = useNavigation();
+  const activePage = useNavigationState((state) => state.routes.at(-1));
+  const catalog = useAtomValue(
+    extensionEnvironment.catalog(
+      JSON.stringify(
+        selectedTargets
+          .filter((target) => target.serverConfig.environment.capabilities.extensions)
+          .map((target) => target.environmentId),
+      ),
+    ),
+  );
+  const extensionRows: SettingsListRow[] = catalog.flatMap(({ environmentId, entry }) =>
+    entry.enabled
+      ? (entry.manifest.settingsPages ?? []).map((page) => ({
+          id: `extension:${environmentId}:${entry.manifest.id}:${page.id}`,
+          icon: "wrench.and.screwdriver",
+          label: page.title,
+          value:
+            selectedTargets.find((target) => target.environmentId === environmentId)?.label ??
+            entry.manifest.name,
+          selected:
+            activePage?.name === "SettingsExtensionPage" &&
+            (activePage.params && "environmentId" in activePage.params
+              ? activePage.params.environmentId
+              : null) === environmentId &&
+            (activePage.params && "extensionId" in activePage.params
+              ? activePage.params.extensionId
+              : null) === entry.manifest.id &&
+            (activePage.params && "pageId" in activePage.params
+              ? activePage.params.pageId
+              : null) === page.id,
+          onPress: () =>
+            openSettings(navigation, "SettingsExtensionPage", {
+              environmentId,
+              extensionId: entry.manifest.id,
+              pageId: page.id,
+            }),
+        }))
+      : [],
+  );
   const noServerTargets = selectedTargets.length === 0;
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
   const scopedProjectMembers =
@@ -290,9 +333,11 @@ function useSettingsIndexSections(): SettingsListSection[] {
       rows: [
         serverPage("SettingsProviderAccounts", "person.crop.circle", gt("Providers")),
         serverPage("SettingsThreads", "text.bubble", gt("Threads")),
+        serverPage("SettingsExtensions", "wrench.and.screwdriver", gt("Extensions")),
         page("SettingsScheduledTasks", "clock", gt("Scheduled tasks")),
       ],
     },
+    ...(extensionRows.length > 0 ? [{ title: "Installed extensions", rows: extensionRows }] : []),
     {
       title: gt("Code"),
       rows: [

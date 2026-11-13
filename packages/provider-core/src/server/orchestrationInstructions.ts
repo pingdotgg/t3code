@@ -1,3 +1,4 @@
+import { EXTENSION_DEVELOPMENT_DISCOVERY } from "./extensionDevelopmentSkill.ts";
 import type { ProviderInteractionMode } from "@t3tools/contracts";
 
 // Codex truncates entries over 4,000 bytes; keep each section self-contained and below that limit.
@@ -20,8 +21,9 @@ Ordinary coding tasks need no T3 tools.
 - T3 tools may load late. Try the name once before you call it absent.`,
   `### Visuals and preview
 
-- Answer data with a trend or comparison with a chart and show any visual the user asks for here: pass an HTML file path or inline HTML to \`html_preview\`, then \`html_render\`. A screenshot on disk or a text description doesn't show it. Never start a server for it. Page tools write only on user request. Never use them to show results. Asked for an image to post, send or use elsewhere: a \`.png\` file and its path, never \`html_render\`.
-- Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Don't repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`,
+- Chart trends/comparisons. Show requested visuals here with \`html_preview\` (HTML file or inline HTML), then \`html_render\`; a saved screenshot or description doesn't show them. Never start a server for this. Page tools write only on user request, never to display results. For images to post/send/use elsewhere, provide a \`.png\` and its path, never \`html_render\`.
+- Use \`preview_*\` only for browser work (including recordings) or a page/tab named in the current request. Don't verify/show edits unasked or repeat prior-turn preview calls. Public pages: fetch/search unless browser work was asked; then preview tools only. Close your tabs before replying unless the user requested them or uses them.`,
+  EXTENSION_DEVELOPMENT_DISCOVERY,
 ];
 
 export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `

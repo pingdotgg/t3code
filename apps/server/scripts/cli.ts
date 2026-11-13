@@ -151,7 +151,11 @@ const buildExeCmd = Command.make(
 
       // Executables reject non-builtin imports even when bundling succeeds; inspect the emitted graph.
       const bootstrapPath = path.join(serverDir, "dist-exe/bin.mjs");
-      for (const bundlePath of [bootstrapPath, cliMainPath]) {
+      for (const bundlePath of [
+        bootstrapPath,
+        cliMainPath,
+        path.join(cliAssetDir, "hostMain.mjs"),
+      ]) {
         const specifiers = findEsmImportsOfExternalPackages(yield* fs.readFileString(bundlePath));
         if (specifiers.length > 0) {
           return yield* new ServerCliExecutableImportError({ bundlePath, specifiers });
@@ -170,6 +174,7 @@ const buildExeCmd = Command.make(
         yield* injectLinuxArm64Sea({
           bundlePath: bootstrapPath,
           cliAssetPath: cliMainPath,
+          extensionHostPath: path.join(cliAssetDir, "hostMain.mjs"),
           outputPath: path.join(serverDir, "dist-exe/t3"),
           nodeVersion: rootPackageJson.engines.node,
           verbose: config.verbose,

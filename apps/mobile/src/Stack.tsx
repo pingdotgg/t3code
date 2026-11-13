@@ -1,3 +1,5 @@
+import { SettingsExtensionPageRouteScreen } from "./features/settings/SettingsExtensionPageRouteScreen";
+import { SettingsExtensionsRouteScreen } from "./features/settings/SettingsExtensionsRouteScreen";
 import { isDraftThreadRoute } from "./features/threads/thread-route-state";
 import { ComponentCatalogScreen } from "./features/development/ComponentCatalogScreen";
 import { PullRequestGuideStopScreen } from "./features/pull-requests/guide/PullRequestGuideScreen";
@@ -286,6 +288,15 @@ const SETTINGS_SCREENS = {
     screen: SettingsFollowUpRouteScreen,
     linking: "settings/follow-ups",
     options: settingsPage("Chat"),
+  }),
+  SettingsExtensionPage: createNativeStackScreen({
+    screen: SettingsExtensionPageRouteScreen,
+    options: { ...pageRoute({ title: "Extension" }) },
+  }),
+  SettingsExtensions: createNativeStackScreen({
+    screen: SettingsExtensionsRouteScreen,
+    linking: "settings/extensions",
+    options: settingsPage("Extensions"),
   }),
   SettingsScheduledTasks: createNativeStackScreen({
     screen: SettingsScheduledTasksRouteScreen,

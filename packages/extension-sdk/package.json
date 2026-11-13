@@ -1,0 +1,35 @@
+{
+  "name": "@t3tools/extension-sdk",
+  "version": "1.0.0",
+  "description": "SDK for trusted T3 Code host extensions",
+  "homepage": "https://github.com/pingdotgg/t3code/blob/main/docs/extensions.md",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pingdotgg/t3code",
+    "directory": "packages/extension-sdk"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    },
+    "./panel": {
+      "types": "./dist/panel.d.mts",
+      "import": "./dist/panel.mjs"
+    }
+  },
+  "scripts": {
+    "typecheck": "effect-tsgo tsrs --noEmit",
+    "build": "vp pack"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

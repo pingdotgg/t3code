@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import { EXTENSION_DEVELOPMENT_REFERENCE } from "../../packages/provider-core/src/server/extensionDevelopmentSkill.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
@@ -872,6 +873,21 @@ it("tells the simulator that paths the case names exist, whatever the template's
   assert.include(line, "/tmp/acmeqa/run.mjs");
   assert.include(line, "/tmp/acmeqa/login.mjs");
   assert.notInclude(line, "src/a.ts");
+  const extension = makeSample(
+    { ...testCase, area: "extensions" },
+    buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false }),
+  );
+  const [machine] =
+    shellRequest(
+      extension,
+      {
+        tool: "Read",
+        input: { file_path: "/tmp/t3/skills/t3-extension-development/references/api.md" },
+      },
+      "claude-haiku-5-5",
+    ).messages[0]?.content ?? [];
+  assert.include(machine?.text, JSON.stringify(EXTENSION_DEVELOPMENT_REFERENCE));
+  assert.include(machine?.text, '"/tmp/t3/skills/t3-extension-development/references/api.md":');
   assert.deepEqual(
     namedPathsLine({ ...testCase, setup: { role: "top", context: "No paths here." } }),
     [],
@@ -1085,6 +1101,28 @@ it.effect("fails preview calls with T3's errors when browser access is off or a 
     const status = yield* answer(unsupported, "preview_status");
     assert.isUndefined(status.is_error);
     assert.include(String(status.content), '"available":false');
+    const skill = makeSample(
+      {
+        ...childCase,
+        setup: {
+          ...childCase.setup,
+          mocks: {
+            extensions_development: { $sequence: [{ unavailable: true }, { recovered: true }] },
+          },
+        },
+      },
+      base,
+    );
+    skill.tools.push({ name: "mcp__t3-code__extensions_development" });
+    for (const expected of [{ unavailable: true }, { recovered: true }]) {
+      const result = yield* answerToolCall(skill, config, {
+        type: "tool_use",
+        id: "skill",
+        name: "mcp__t3-code__extensions_development",
+        input: {},
+      });
+      assert.deepEqual(JSON.parse(String(result.content)), expected);
+    }
     // A sequence mock answers each call with its next result, then repeats the last.
     const flow = makeSample(browserCase("br-flow-qa-missing-cli"), base);
     flow.tools.push({ name: "mcp__t3-code__preview_snapshot" });

@@ -1,3 +1,5 @@
+import * as ExtensionService from "./extensions/ExtensionService.ts";
+import * as ExtensionHostAdapter from "./extensions/ExtensionHostAdapter.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Random from "effect/Random";
@@ -831,6 +833,22 @@ const layerMakeRoutes = Layer.mergeAll(
 ).pipe(
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
+  ),
+  Layer.provide(
+    Layer.unwrap(
+      Effect.gen(function* () {
+        const host = yield* ExtensionHostAdapter.ExtensionHostAdapter;
+        const context = yield* Effect.context<never>();
+        const run = Effect.runPromiseWith(context);
+        return ExtensionService.layer({
+          platform: host.platform,
+          launch: (signal) => run(host.launch(), { signal }),
+          installPackage: (source, directory, signal) =>
+            run(host.installPackage(source, directory), { signal }),
+          hostCall: (method, input, signal) => run(host.call(method, input), { signal }),
+        });
+      }),
+    ).pipe(Layer.provide(ExtensionHostAdapter.layer)),
   ),
   // delegate_task to a linked environment, from /mcp and the follower above.
   Layer.provide(RemoteDelegation.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),

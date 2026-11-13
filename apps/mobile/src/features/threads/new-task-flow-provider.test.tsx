@@ -21,6 +21,7 @@ import type { ComposerDraft } from "../../state/use-composer-drafts";
 
 const mocks = vi.hoisted(() => ({
   projects: vi.fn(),
+  environments: vi.fn(),
   status: vi.fn(),
   refs: vi.fn(),
   readFile: vi.fn(),
@@ -106,7 +107,7 @@ vi.mock("../../state/peerLinks", () => ({ useLinkedEnvironments: () => new Map()
 vi.mock("../../state/project-has-threads", () => ({ useProjectHasThreads: () => false }));
 vi.mock("../../state/workspace", () => ({
   useConnectionsReady: () => true,
-  useWorkspaceEnvironments: () => [],
+  useWorkspaceEnvironments: mocks.environments,
 }));
 vi.mock("../../state/shell", () => ({ useEnvironmentShellReadiness: () => ({}) }));
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => 0 }));
@@ -136,6 +137,7 @@ function setup() {
   mocks.registry.mockReturnValue(registry);
   const projects = [project("one", "a"), project("one", "b"), project("two", "b")];
   mocks.projects.mockReturnValue(projects);
+  mocks.environments.mockReturnValue([]);
   mocks.presentation.mockReturnValue({
     isReady: true,
     presentation: { connection: { phase: "connected", error: null } },
@@ -245,11 +247,15 @@ function setup() {
     get current() {
       return current;
     },
-    async render(active: boolean) {
+    async render(active: boolean, routeDraftId?: string) {
       await act(async () =>
         root.render(
           <RegistryContext.Provider value={registry}>
-            <NewTaskFlowProvider active={active} flowKey="test-flow">
+            <NewTaskFlowProvider
+              active={active}
+              flowKey="test-flow"
+              {...(routeDraftId ? { routeDraftId } : {})}
+            >
               <Probe />
             </NewTaskFlowProvider>
           </RegistryContext.Provider>,
@@ -366,6 +372,19 @@ it("uses cached repository capability and branch defaults while offline", async 
   await screen.render(true);
   expect(screen.current.draftKey).toBe(draftKey);
   expect(screen.current.selectedBranchName).toBe("main");
+});
+
+it("retains the stamped environment while the route draft's project is pending", async () => {
+  using screen = setup();
+  const environmentId = EnvironmentId.make("remote");
+  mocks.environments.mockReturnValue([{ environmentId, connectionState: "connecting" }]);
+  const draftKey = mocks.createDraft({
+    environmentId,
+    projectId: ProjectId.make("loading-project"),
+  });
+  await screen.render(true, draftKey);
+  expect(screen.current.selectedProject).toBeNull();
+  expect(screen.current.stampedEnvironmentId).toBe(environmentId);
 });
 
 const playbookPrompt = (machine: string) =>

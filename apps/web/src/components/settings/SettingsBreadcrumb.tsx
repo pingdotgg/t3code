@@ -1,5 +1,6 @@
 import { msg, useMessages } from "gt-react";
 
+import { useExtensionSettingsPages, extensionSettingsPath } from "./useExtensionSettingsPages";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
@@ -22,7 +23,10 @@ function settingsBreadcrumbLabel(pathname: string): string | null {
 
 export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
   const m = useMessages();
-  const sectionLabel = settingsBreadcrumbLabel(pathname);
+  const { pages } = useExtensionSettingsPages();
+  const sectionLabel =
+    pages.find(({ entry, page }) => extensionSettingsPath(entry.manifest.id, page.id) === pathname)
+      ?.page.title ?? settingsBreadcrumbLabel(pathname);
 
   return (
     <WorkspaceBreadcrumb ariaLabel="Settings breadcrumb">

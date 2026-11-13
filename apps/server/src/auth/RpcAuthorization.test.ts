@@ -16,6 +16,7 @@ import {
   AuthTerminalOperateScope,
   WS_METHODS,
   WsRpcGroup,
+  type ExtensionInfo,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -192,6 +193,69 @@ it.effect.each([WS_METHODS.subscribeVcsBranch, WS_METHODS.subscribeVcsStatus] as
       );
       expect(handled).toBe(1);
     }),
+);
+
+it.effect(
+  "requires maintenance permission before extension snapshots or streams expose settings",
+  () =>
+    Effect.gen(function* () {
+      const methods = [WS_METHODS.extensionsList, WS_METHODS.extensionsSubscribe] as const;
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof methods)[number]> =>
+            !(methods as ReadonlyArray<string>).includes(tag),
+        ),
+      );
+      const entries: ReadonlyArray<ExtensionInfo> = [
+        {
+          manifest: {
+            id: "test.credentials",
+            name: "Credentials",
+            version: "1.0.0",
+            apiVersion: 1,
+            main: "extension.mjs",
+            description: "Fixture",
+          },
+          source: "/extensions/credentials",
+          sourceType: "local",
+          enabled: true,
+          status: "running",
+          settings: { apiKey: "fixture-secret" },
+        },
+      ];
+      let handled = 0;
+      const snapshot = Effect.sync(() => {
+        handled++;
+        return entries;
+      });
+      const handlers = Layer.mergeAll(
+        group.toLayerHandler(WS_METHODS.extensionsList, () => snapshot),
+        group.toLayerHandler(WS_METHODS.extensionsSubscribe, () => Stream.fromEffect(snapshot)),
+      );
+      const denied = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.merge(handlers, RpcAuthorization.layer([AuthOrchestrationReadScope]))),
+      );
+      expect(yield* denied[WS_METHODS.extensionsList]({}).pipe(Effect.flip)).toMatchObject({
+        requiredPermission: AuthEnvironmentMaintainScope,
+      });
+      expect(
+        yield* denied[WS_METHODS.extensionsSubscribe]({}).pipe(Stream.runCollect, Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthEnvironmentMaintainScope });
+      expect(handled).toBe(0);
+      const granted = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.merge(
+            handlers,
+            RpcAuthorization.layer([AuthOrchestrationReadScope, AuthEnvironmentMaintainScope]),
+          ),
+        ),
+      );
+      expect(yield* granted[WS_METHODS.extensionsList]({})).toEqual(entries);
+      expect(yield* granted[WS_METHODS.extensionsSubscribe]({}).pipe(Stream.runCollect)).toEqual([
+        entries,
+      ]);
+      expect(handled).toBe(2);
+    }).pipe(Effect.scoped),
 );
 
 describe("settings mutation authorization", () => {

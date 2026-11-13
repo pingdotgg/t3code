@@ -1,3 +1,5 @@
+import { ExtensionsToolkit } from "./toolkits/extensions/tools.ts";
+import * as ExtensionHandlers from "./toolkits/extensions/handlers.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -1313,6 +1315,7 @@ export const layerMcpTransport = <RA, RE, RR>(registrations: Layer.Layer<RA, RE,
 
 /** Every tool the T3 MCP server advertises. AgentContextBudget.test.ts measures this set. */
 export const layerTools = Layer.mergeAll(
+  toolkitRegistration(ExtensionsToolkit, ExtensionHandlers.layer),
   layerPreviewToolkit,
   layerOrchestratorToolkit,
   layerThreadToolkit,

@@ -1,3 +1,4 @@
+import { useExtensionSettingsPages, extensionSettingsPath } from "./useExtensionSettingsPages";
 import {
   lazy,
   Suspense,
@@ -89,6 +90,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   Record<SettingsPath, ComponentType<{ className?: string }>>
 > = {
   "/settings/general": Settings2Icon,
+  "/settings/extensions": WrenchIcon,
   "/settings/diagnostics": WrenchIcon,
   "/settings/voice": MicIcon,
   "/settings/appearance": PaletteIcon,
@@ -136,13 +138,34 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
+  const { pages: extensionPages } = useExtensionSettingsPages();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   // Below md the nav is an icon rail; searching expands it over the page.
   const [compactSearchOpen, setCompactSearchOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const searchableItems = useAvailableSettingsSearchItems();
-  const results = searchSettings(query, searchableItems, m);
+  const results = searchSettings(
+    query,
+    [
+      ...searchableItems,
+      ...extensionPages.map(({ entry, page }): SettingsSearchItem => ({
+        id: `extension:${entry.manifest.id}:${page.id}`,
+        title: page.title,
+        to: "/settings/extensions",
+        extensionPage: { extensionId: entry.manifest.id, pageId: page.id },
+        searchTerms: [
+          entry.manifest.name,
+          page.description ?? "",
+          ...(page.settings ?? []).flatMap((key) => [
+            entry.manifest.settings?.[key]?.title ?? "",
+            entry.manifest.settings?.[key]?.description ?? "",
+          ]),
+        ],
+      })),
+    ],
+    m,
+  );
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
   const maxResultIndex = Math.max(results.length - 1, 0);
@@ -212,6 +235,15 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const handleSearchResultClick = (item: SettingsSearchItem) => {
     clearSearch();
     setCompactSearchOpen(false);
+    if (item.extensionPage) {
+      void navigate({
+        to: "/settings/extension/$extensionId/$pageId",
+        params: item.extensionPage,
+        hash: "",
+        replace: true,
+      });
+      return;
+    }
     const targetId = item.targetId ?? item.id;
     revealSettingsSearchTarget(targetId);
     if (pathname === item.to && currentHash.replace(/^#/, "") === targetId) {
@@ -423,6 +455,54 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       </div>
                     </div>
                   ))}
+                  {extensionPages.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <h3
+                        id="settings-nav-extensions"
+                        className={cn(
+                          "px-2 text-xs font-medium text-sidebar-muted-foreground/80",
+                          !compactSearchOpen && "max-md:hidden",
+                        )}
+                      >
+                        <T>Installed extensions</T>
+                      </h3>
+                      <div role="group" aria-labelledby="settings-nav-extensions">
+                        <SidebarMenu>
+                          {extensionPages.map(({ entry, page }) => {
+                            const path = extensionSettingsPath(entry.manifest.id, page.id);
+                            const active = pathname === path;
+                            return (
+                              <SidebarMenuItem key={path}>
+                                <SidebarMenuButton
+                                  data-settings-section={path}
+                                  aria-current={active ? "page" : undefined}
+                                  isActive={active}
+                                  onClick={() =>
+                                    void navigate({
+                                      to: "/settings/extension/$extensionId/$pageId",
+                                      params: { extensionId: entry.manifest.id, pageId: page.id },
+                                      hash: "",
+                                      replace: true,
+                                    })
+                                  }
+                                >
+                                  <WrenchIcon />
+                                  <span
+                                    className={cn(
+                                      "truncate",
+                                      !compactSearchOpen && "max-md:sr-only",
+                                    )}
+                                  >
+                                    {page.title}
+                                  </span>
+                                </SidebarMenuButton>
+                              </SidebarMenuItem>
+                            );
+                          })}
+                        </SidebarMenu>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

@@ -1,0 +1,14 @@
+{
+  "name": "t3-extension-host-notes-example",
+  "version": "1.0.0",
+  "private": true,
+  "files": [
+    "extension.mjs",
+    "panel.html",
+    "t3-extension.json"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=22.16"
+  }
+}
