@@ -83,6 +83,12 @@ describe("AzureDevOpsCli.layer", () => {
         classifyFailure?.("TF401180: The requested pull request was not found."),
         "not-found",
       );
+      assert.strictEqual(
+        classifyFailure?.(
+          "ERROR: TF400733: The request has been canceled: Request was blocked due to exceeding usage of resource 'Global' in namespace 'User'.",
+        ),
+        "rate-limited",
+      );
       assert.deepStrictEqual(call, {
         operation: "AzureDevOpsCli.execute",
         command: "az",
