@@ -67,6 +67,13 @@ const branchBaseConfigKey = (branch: string) => `branch.${branch}.t3-merge-base`
  * CLI's key, which branches cut before then still carry instead.
  */
 const legacyBranchBaseConfigKey = (branch: string) => `branch.${branch}.gh-merge-base`;
+const supportedTextDecoder = (label: string) => {
+  try {
+    return new TextDecoder(label);
+  } catch {
+    return undefined;
+  }
+};
 const gitProcesses = Semaphore.makeUnsafe(8);
 const backgroundGitProcesses = Semaphore.makeUnsafe(2);
 const WORKTREE_INDEX_REFRESH_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
@@ -4014,21 +4021,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       repositoryRoot,
       ["check-attr", "-z", "working-tree-encoding", "--", input.newPath],
     )).split("\0");
-    // UTF-8 takes the default path, which keeps a BOM the way Git's blob does.
-    if (!["unspecified", "unset", "set"].includes(encoding) && !/^utf-?8$/i.test(encoding)) {
-      // Git also accepts e.g. UTF-16LE-BOM, and its plain UTF-16 can carry a big-endian BOM.
-      const normalized = encoding.toLowerCase().replace(/-bom$/, "");
-      const label =
-        normalized === "utf-16" && bytes[0] === 0xfe && bytes[1] === 0xff ? "utf-16be" : normalized;
-      return yield* Effect.try({
-        try: () => new TextDecoder(label).decode(bytes),
-        catch: (cause) =>
-          fileError(
-            "fs.readFile",
-            `Cannot expand '${input.newPath}' with working-tree-encoding '${encoding}'.`,
-            cause,
-          ),
-      });
+    // Git also accepts e.g. UTF-16LE-BOM, and its plain UTF-16 can carry a big-endian BOM.
+    const normalized = encoding.toLowerCase().replace(/-bom$/, "");
+    const label =
+      normalized === "utf-16" && bytes[0] === 0xfe && bytes[1] === 0xff ? "utf-16be" : normalized;
+    // Unset, UTF-8 (whose BOM Git keeps) and encodings Node cannot decode take the default path.
+    const decoder = supportedTextDecoder(label);
+    if (decoder && decoder.encoding !== "utf-8") {
+      return decoder.decode(bytes);
     }
     if (bytes.includes(0)) {
       return yield* fileError("fs.readFile", `Cannot expand binary file '${input.newPath}'.`);
