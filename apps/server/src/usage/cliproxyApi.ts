@@ -1,5 +1,6 @@
 import {
   ProviderDriverKind,
+  TrimmedNonEmptyString,
   UsageLimitSourceError,
   type ProviderConsumeResetCreditResult,
   type UsageLimitSourceAccount,
@@ -116,7 +117,14 @@ const CreditList = Schema.Struct({
   ),
 });
 
+const UsageQueueRecord = Schema.Struct({
+  session_id: TrimmedNonEmptyString,
+  auth_index: TrimmedNonEmptyString,
+});
+
 const decodeAuthFiles = Schema.decodeUnknownEffect(AuthFiles);
+const decodeUsageQueue = Schema.decodeUnknownEffect(Schema.Array(Schema.Unknown));
+const decodeUsageQueueRecord = Schema.decodeUnknownOption(UsageQueueRecord);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
@@ -483,6 +491,24 @@ export const makeCliproxyApi = Effect.gen(function* () {
     return { id: account.id, driver: provider.driver, ...reading };
   });
 
+  // Pops the hub's usage queue: records read here are gone for every other reader.
+  const readSessionAccounts = Effect.fn("CliproxyApi.readSessionAccounts")(function* (
+    config: CliproxyHub,
+  ) {
+    // Accounts first: a failed lookup after the pop would lose those records for good.
+    const accountIds = new Map(
+      (yield* authFiles(config)).map((account) => [account.auth_index, account.id]),
+    );
+    // Records without a session or account, or not JSON objects, carry nothing to match.
+    const records = (yield* decodeUsageQueue(
+      yield* management(config, "usage-queue?count=1000"),
+    )).flatMap((record) => Option.toArray(decodeUsageQueueRecord(record)));
+    return records.flatMap(({ session_id, auth_index }) => {
+      const accountId = accountIds.get(auth_index);
+      return accountId ? [{ sessionId: session_id, accountId }] : [];
+    });
+  });
+
   const readAccounts = Effect.fn("CliproxyApi.readAccounts")(function* (
     hub: CliproxyHub,
   ): Effect.fn.Return<ReadonlyArray<UsageLimitSourceAccount>, UsageLimitSourceError> {
@@ -561,5 +587,5 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ),
     );
   });
-  return { readAccounts, consume };
+  return { readAccounts, readSessionAccounts, consume };
 });

@@ -2,6 +2,8 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
 import { SecretProviderId, ServerConfigStreamEvent, UsageLimitSourceId } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as Deferred from "effect/Deferred";
+import * as TestClock from "effect/testing/TestClock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -155,3 +157,179 @@ it.effect("reads a management key from its secret provider", () => {
     ]),
   );
 });
+
+it.effect("reads routed sessions from opted-in hubs, even with no client open", () =>
+  Effect.gen(function* () {
+    const queueReads: string[] = [];
+    const http = HttpClient.make((request) =>
+      Effect.sync(() => {
+        expect(request.headers.authorization).toBe("Bearer key");
+        const url = new URL(request.url);
+        if (url.pathname.endsWith("/usage-queue")) {
+          queueReads.push(url.host);
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json([{ session_id: "thread-session", auth_index: "a" }]),
+          );
+        }
+        if (url.pathname.endsWith("/auth-files")) {
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              files: [{ id: "claude-a.json", auth_index: "a", provider: "claude" }],
+            }),
+          );
+        }
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json({ status_code: 200, body: JSON.stringify({}) }),
+        );
+      }),
+    );
+    const sources = yield* UsageLimitSources.make.pipe(
+      Effect.provideService(HttpClient.HttpClient, http),
+    );
+    yield* sources.refresh;
+    yield* TestClock.adjust("30 seconds");
+
+    const snapshots = yield* sources.current;
+    expect(queueReads).toEqual(["routed.test"]);
+    expect(
+      snapshots.map((source) => [source.id, source.accounts.map((account) => account.sessionIds)]),
+    ).toEqual([
+      ["routed", [["thread-session"]]],
+      ["observed", [undefined]],
+    ]);
+
+    // Switching Thread accounts off drops the routes on that refresh, not on the next queue read.
+    const settings = yield* ServerSettings.ServerSettingsService;
+    yield* settings.updateSettings({
+      usageLimitSources: {
+        [UsageLimitSourceId.make("routed")]: {
+          kind: "cliproxy",
+          url: "https://routed.test",
+          managementKey: "key",
+          enabled: true,
+          threadAccounts: false,
+        },
+      },
+    });
+    yield* sources.refresh;
+    const afterOff = yield* sources.current;
+    expect(afterOff.find((source) => source.id === "routed")?.accounts[0]?.sessionIds).toBe(
+      undefined,
+    );
+  }).pipe(
+    Effect.provide([
+      Layer.succeed(SecretResolver.SecretResolver, {
+        read: (references) => Effect.succeed(references.map(() => "key")),
+        invalidate: () => Effect.void,
+        label: (provider) => Effect.succeed(provider),
+      }),
+      ServerSettings.layerTest({
+        usageLimitSources: {
+          [UsageLimitSourceId.make("routed")]: {
+            kind: "cliproxy",
+            url: "https://routed.test",
+            managementKey: {
+              provider: SecretProviderId.make("homelab"),
+              reference: "cliproxy#key",
+            },
+            enabled: true,
+            threadAccounts: true,
+          },
+          [UsageLimitSourceId.make("observed")]: {
+            kind: "cliproxy",
+            url: "https://observed.test",
+            managementKey: "key",
+            enabled: true,
+          },
+        },
+      }),
+      // No client lease: a turn that ends while nobody watches must still keep its route.
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
+      NodeCrypto.layer,
+    ]),
+    Effect.scoped,
+  ),
+);
+
+it.effect("drops a queue read that lands after Thread accounts was switched off", () =>
+  Effect.gen(function* () {
+    const release = yield* Deferred.make<void>();
+    const http = HttpClient.make((request) => {
+      const url = new URL(request.url);
+      if (url.pathname.endsWith("/usage-queue")) {
+        return Deferred.await(release).pipe(
+          Effect.as(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json([{ session_id: "thread-session", auth_index: "a" }]),
+            ),
+          ),
+        );
+      }
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          url.pathname.endsWith("/auth-files")
+            ? Response.json({
+                files: [{ id: "claude-a.json", auth_index: "a", provider: "claude" }],
+              })
+            : Response.json({ status_code: 200, body: JSON.stringify({}) }),
+        ),
+      );
+    });
+    const sources = yield* UsageLimitSources.make.pipe(
+      Effect.provideService(HttpClient.HttpClient, http),
+    );
+    yield* sources.refresh;
+    // The 30-second queue read starts and waits on the hub.
+    yield* TestClock.adjust("30 seconds");
+
+    const settings = yield* ServerSettings.ServerSettingsService;
+    yield* settings.updateSettings({
+      usageLimitSources: {
+        [UsageLimitSourceId.make("routed")]: {
+          kind: "cliproxy",
+          url: "https://routed.test",
+          managementKey: "key",
+          enabled: true,
+          threadAccounts: false,
+        },
+      },
+    });
+    yield* sources.refresh;
+    yield* Deferred.succeed(release, undefined);
+    yield* TestClock.adjust("1 second");
+
+    const snapshots = yield* sources.current;
+    expect(snapshots[0]?.accounts[0]?.sessionIds).toBe(undefined);
+  }).pipe(
+    Effect.provide([
+      Layer.succeed(SecretResolver.SecretResolver, {
+        read: (references) => Effect.succeed(references.map(() => undefined)),
+        invalidate: () => Effect.void,
+        label: (provider) => Effect.succeed(provider),
+      }),
+      ServerSettings.layerTest({
+        usageLimitSources: {
+          [UsageLimitSourceId.make("routed")]: {
+            kind: "cliproxy",
+            url: "https://routed.test",
+            managementKey: "key",
+            enabled: true,
+            threadAccounts: true,
+          },
+        },
+      }),
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
+      NodeCrypto.layer,
+    ]),
+    Effect.scoped,
+  ),
+);

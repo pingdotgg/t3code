@@ -40,6 +40,31 @@ export class UsageLimitSources extends Context.Service<
   }
 >()("t3/usage/UsageLimitSources") {}
 
+const ROUTE_READ_INTERVAL = Duration.seconds(30);
+const MAX_ROUTES_PER_SOURCE = 200;
+
+function withSessionIds(
+  snapshots: ReadonlyArray<UsageLimitSourceSnapshot>,
+  routes: ReadonlyMap<UsageLimitSourceId, ReadonlyMap<string, string>>,
+): ReadonlyArray<UsageLimitSourceSnapshot> {
+  return snapshots.map((source) => {
+    const sessionIdsByAccount = new Map<string, string[]>();
+    for (const [sessionId, accountId] of routes.get(source.id) ?? []) {
+      const sessionIds = sessionIdsByAccount.get(accountId);
+      if (sessionIds) sessionIds.push(sessionId);
+      else sessionIdsByAccount.set(accountId, [sessionId]);
+    }
+    if (sessionIdsByAccount.size === 0) return source;
+    return {
+      ...source,
+      accounts: source.accounts.map((account) => {
+        const sessionIds = sessionIdsByAccount.get(account.id);
+        return sessionIds ? { ...account, sessionIds } : account;
+      }),
+    };
+  });
+}
+
 function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   if (config.label) return config.label;
   const fallback = id.trim() || "Usage limit source";
@@ -62,6 +87,11 @@ export const make = Effect.gen(function* () {
   const settingsService = yield* Settings.ServerSettingsService;
   const secrets = yield* SecretResolver.SecretResolver;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
+  const readsRef = yield* Ref.make<ReadonlyArray<UsageLimitSourceSnapshot>>([]);
+  // Per source, provider session id to hub account id, oldest route first.
+  const routesRef = yield* Ref.make<ReadonlyMap<UsageLimitSourceId, ReadonlyMap<string, string>>>(
+    new Map(),
+  );
   const readManagementKey = Effect.fn("UsageLimitSources.readManagementKey")(function* (
     config: UsageLimitSourceConfig,
   ) {
@@ -94,14 +124,28 @@ export const make = Effect.gen(function* () {
     return { ...base, accounts: accounts.success };
   });
 
+  // Its own lock, so a route read never waits on a slow quota refresh yet never publishes stale reads.
+  const publishLock = yield* Semaphore.make(1);
   const publish = Effect.fn("UsageLimitSources.publish")(function* (
-    next: ReadonlyArray<UsageLimitSourceSnapshot>,
+    reads: ReadonlyArray<UsageLimitSourceSnapshot> | undefined,
   ) {
+    if (reads) yield* Ref.set(readsRef, reads);
+    // Current settings, so no publish names routes for a hub switched out of Thread accounts,
+    // even when a queue read started before the switch lands after it.
+    const settings = yield* settingsService.getSettings.pipe(
+      Effect.orElseSucceed((): ServerSettings | null => null),
+    );
+    const routes = new Map(
+      [...(yield* Ref.get(routesRef))].filter(
+        ([id]) => settings?.usageLimitSources[id]?.threadAccounts,
+      ),
+    );
+    const next = withSessionIds(yield* Ref.get(readsRef), routes);
     const changed = yield* Ref.modify(stateRef, (previous) =>
       Equal.equals(previous, next) ? [false, previous] : [true, next],
     );
     if (changed) yield* PubSub.publish(changes, next);
-  });
+  }, publishLock.withPermits(1));
 
   // Serialize refreshes so slow old-settings reads cannot resurrect removed sources after newer refreshes.
   const refreshLock = yield* Semaphore.make(1);
@@ -143,10 +187,47 @@ export const make = Effect.gen(function* () {
       input.creditId,
     );
     const snapshot = yield* readSource(input.sourceId, config);
-    const previous = yield* Ref.get(stateRef);
+    const previous = yield* Ref.get(readsRef);
     yield* publish(previous.map((source) => (source.id === input.sourceId ? snapshot : source)));
     return result;
   }, refreshLock.withPermits(1));
+
+  // Opted-in hubs only; a failed read keeps the routes already known for that hub.
+  const readRoutes = Effect.gen(function* () {
+    const settings = yield* settingsService.getSettings.pipe(
+      Effect.orElseSucceed((): ServerSettings | null => null),
+    );
+    const entries = Object.entries(settings?.usageLimitSources ?? {}).filter(
+      ([, config]) => config.enabled && config.threadAccounts,
+    );
+    const reads = yield* Effect.forEach(
+      entries,
+      ([id, config]) =>
+        readManagementKey(config).pipe(
+          Effect.flatMap((managementKey) =>
+            managementKey.length > 0
+              ? api.readSessionAccounts({ url: config.url, managementKey })
+              : Effect.succeed([]),
+          ),
+          Effect.orElseSucceed(() => []),
+          Effect.map((routes) => [id as UsageLimitSourceId, routes] as const),
+        ),
+      { concurrency: 4 },
+    );
+    yield* Ref.update(routesRef, (previous) => {
+      const next = new Map<UsageLimitSourceId, ReadonlyMap<string, string>>();
+      for (const [id, routes] of reads) {
+        const routed = new Map(previous.get(id));
+        for (const { sessionId, accountId } of routes) {
+          routed.delete(sessionId);
+          routed.set(sessionId, accountId);
+        }
+        next.set(id, new Map([...routed].slice(-MAX_ROUTES_PER_SOURCE)));
+      }
+      return next;
+    });
+    yield* publish(undefined);
+  }).pipe(Effect.ignoreCause({ log: true }));
 
   yield* settingsService.streamChanges.pipe(
     Stream.map((settings) => settings.usageLimitSources),
@@ -174,6 +255,12 @@ export const make = Effect.gen(function* () {
       Effect.ignoreCause({ log: true }),
     ),
   ).pipe(Effect.forkScoped);
+
+  // CLIProxyAPI keeps queued usage for 60 seconds by default. Not gated on client activity:
+  // a turn that ends while no client is open would otherwise lose its route for good.
+  yield* Effect.forever(Effect.sleep(ROUTE_READ_INTERVAL).pipe(Effect.andThen(readRoutes))).pipe(
+    Effect.forkScoped,
+  );
 
   yield* refresh.pipe(Effect.forkScoped);
 

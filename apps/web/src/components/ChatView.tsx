@@ -3937,6 +3937,11 @@ export default function ChatView(props: ChatViewProps) {
                     providerInstanceId: activeProviderInstanceId,
                     providers: providerStatuses,
                     sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
+                    // The session belongs to the thread's instance, not one the composer just picked.
+                    providerSessionId:
+                      activeProviderThread?.providerInstanceId === activeProviderInstanceId
+                        ? (activeProviderThread?.nativeThreadRef?.nativeId ?? null)
+                        : null,
                     contextWindow: activeContextWindow,
                   }}
                 />

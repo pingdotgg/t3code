@@ -932,6 +932,8 @@ export const UsageLimitSourceConfig = Schema.Struct({
     secretSetting,
   ),
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Opt-in: reading the hub's usage queue removes records other readers would otherwise see.
+  threadAccounts: Schema.optional(Schema.Boolean),
 });
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 

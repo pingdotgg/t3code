@@ -60,6 +60,8 @@ function fixture(
     }>;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
     cooldownStatus?: number;
+    usageQueue?: ReadonlyArray<unknown>;
+    authFilesStatus?: number;
   } = {},
 ) {
   const requests: Array<{ path: string; body?: RequestBody }> = [];
@@ -75,8 +77,13 @@ function fixture(
       if (path.endsWith("/auth-files"))
         return HttpClientResponse.fromWeb(
           request,
-          Response.json({ files: options.accounts ?? accounts }),
+          Response.json(
+            { files: options.accounts ?? accounts },
+            { status: options.authFilesStatus ?? 200 },
+          ),
         );
+      if (path.endsWith("/usage-queue"))
+        return HttpClientResponse.fromWeb(request, Response.json(options.usageQueue ?? []));
       if (path.endsWith("/reset-quota"))
         return HttpClientResponse.fromWeb(
           request,
@@ -434,6 +441,40 @@ describe("CLIProxyAPI built-in management API", () => {
       });
       const result = yield* (yield* test.api).readAccounts(config);
       expect(result[0]?.usageLimits.windows.map((window) => window.id)).toEqual(["five_hour"]);
+    }),
+  );
+
+  it.effect("leaves the usage queue unread when the hub's accounts cannot be listed", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        authFilesStatus: 503,
+        usageQueue: [{ session_id: "session-1", auth_index: "a" }],
+      });
+      const api = yield* test.api;
+      expect((yield* api.readSessionAccounts(config).pipe(Effect.result))._tag).toBe("Failure");
+      // Reading the queue pops it, so the records must still be there for the next read.
+      expect(test.requests.map((request) => request.path)).not.toContainEqual(
+        expect.stringMatching(/usage-queue$/),
+      );
+    }),
+  );
+
+  it.effect("names the account that served each queued session by its auth index", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        usageQueue: [
+          { session_id: "session-1", auth_index: "b" },
+          { session_id: "session-2", auth_index: "unknown" },
+          { auth_index: "a" },
+          "not a record",
+          { session_id: "session-3", auth_index: "a" },
+        ],
+      });
+      const api = yield* test.api;
+      expect(yield* api.readSessionAccounts(config)).toEqual([
+        { sessionId: "session-1", accountId: "second.json" },
+        { sessionId: "session-3", accountId: "first.json" },
+      ]);
     }),
   );
 
