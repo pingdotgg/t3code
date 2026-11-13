@@ -1,6 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Schema from "effect/Schema";
 
+import { FeedbackInput, FeedbackReport } from "./FeedbackReport.ts";
 import { scrubFeedback } from "./scrubFeedback.ts";
+
+const decodeInput = Schema.decodeUnknownSync(FeedbackInput);
+const decodeReport = Schema.decodeUnknownSync(FeedbackReport);
 
 describe("scrubFeedback", () => {
   it.each([
@@ -36,15 +41,15 @@ describe("scrubFeedback", () => {
     ],
     [
       "whole absolute paths",
-      "/home/x/acme and /tmp/a/b.ts, ~/acme/app, file:///srv/acme/x.ts, C:\\Users\\x\\acme\\a.ts",
+      "/home/x/acme. /tmp/a/b.ts. ~/acme/app. file:///srv/acme/x.ts. C:\\Users\\x\\acme\\a.ts",
       [],
-      "[redacted] and [redacted], [redacted], [redacted], [redacted]",
+      "[redacted]. [redacted]. [redacted]. [redacted]. [redacted]",
     ],
     [
       "the tail of a known path",
-      "Opened /home/alice/Develop/acme and /Users/al/My Project/src/a.ts",
+      "Opened /home/alice/Develop/acme. Then /Users/al/My Project/src/a.ts",
       ["/home/alice", "/Users/al/My Project"],
-      "Opened [redacted] and [redacted]",
+      "Opened [redacted]. Then [redacted]",
     ],
     [
       "nothing that only looks like a path",
@@ -62,10 +67,37 @@ describe("scrubFeedback", () => {
       "unquoted paths with spaces",
       "Opened /home/alice/My Project/secret.txt then C:\\Users\\My Name\\a.ts today",
       [],
-      "Opened [redacted] then [redacted] today",
+      "Opened [redacted] today",
     ],
+    [
+      "a quoted path to its own closing quote",
+      `Read "/home/alice/O'Brien/secret.txt" and \`/srv/it's here/a\``,
+      [],
+      'Read "[redacted]" and `[redacted]`',
+    ],
+    [
+      "unquoted folders of several words, to the end of the clause",
+      "Read /home/alice/My Secret Project/secret.txt and C:\\Users\\My Big Folder\\a.ts. Then and/or stays",
+      [],
+      "Read [redacted]. Then and/or stays",
+    ],
+    ["a 1,200-character adversarial path", `/a/b${" x/".repeat(398)}`, [], "[redacted]"],
   ])("scrubs %s", (_, text, sensitive, expected) => {
     expect(scrubFeedback(text, sensitive)).toBe(expected);
+  });
+
+  it("keeps a valid input a valid report when redaction lengthens it", () => {
+    const input = decodeInput({
+      kind: "bug",
+      subject: "",
+      expected: "",
+      actual: `${"😀".repeat(100)}${" bob".repeat(15)}`,
+      workaround: "",
+    });
+    const actual = scrubFeedback(input.actual, ["bob"]);
+    const report = { ...input, actual, id: "r", threadId: null, createdAt: "", source: "mcp" };
+    expect(decodeReport({ ...report, sent: true }).actual).toBe(actual);
+    expect(Array.from(actual)).toHaveLength(265);
   });
 
   it("scrubs before capping at 300 characters", () => {

@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
-const FeedbackText = Schema.String.check(Schema.isMaxLength(300));
+// Code points, as the scrubber caps them, so a valid input stays a valid report after redaction.
+const FeedbackText = Schema.String.check(Schema.isMaxCodePoints(300));
 
 export const FeedbackInput = Schema.Struct({
   kind: Schema.Literals(["bug", "confusing", "missing_capability", "wrong_docs"]),
