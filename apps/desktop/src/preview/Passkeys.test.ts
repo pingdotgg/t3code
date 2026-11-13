@@ -245,6 +245,20 @@ describe("PreviewPasskeys", () => {
       const subdomain = makeGuest("http://app.localhost:3000");
       passkeys.attachGuest(subdomain.guest);
       assert.deepStrictEqual(yield* subdomain.call(PASSKEY_GET_CHANNEL, publicKey), notAllowed);
+      // WebAuthn requires a domain; IP addresses are never valid relying parties.
+      for (const [origin, rpId] of [
+        ["http://127.0.0.1:8000", "127.0.0.1"],
+        ["http://[::1]:8000", "::1"],
+        ["https://192.0.2.1", "192.0.2.1"],
+      ] as const) {
+        const ip = makeGuest(origin);
+        passkeys.attachGuest(ip.guest);
+        const ipKey = { challenge: new Uint8Array([1]), rpId };
+        assert.deepStrictEqual(yield* ip.call(PASSKEY_GET_CHANNEL, ipKey), notAllowed);
+        assert.deepStrictEqual(yield* ip.call(PASSKEY_CREATE_CHANNEL, ipKey), notAllowed);
+      }
+      assert.strictEqual(webauthn.getCredential.mock.calls.length, 0);
+      assert.strictEqual(webauthn.createCredential.mock.calls.length, 0);
 
       const page = makeGuest();
       passkeys.attachGuest(page.guest);
