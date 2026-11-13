@@ -27,6 +27,8 @@ pub struct Deps {
     /// `/mcp`; `serve.rs` builds it with `routes::mcp::service`.
     pub mcp: Option<Arc<conn_mcp::McpService>>,
     pub vcs: vcs::VcsShared,
+    /// Files, assets and attachments; without it those methods and routes are not served.
+    pub files: Option<Arc<conn_files::Files>>,
 }
 
 pub fn register_all(table: &mut MethodTable, deps: &Deps) {

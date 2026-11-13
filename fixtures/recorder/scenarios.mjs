@@ -609,6 +609,132 @@ async function rustVcs(ctx) {
   ctx.log(`memory KB ${JSON.stringify({ start, diff: ctx.memory(target, "diff-open") })}`);
 }
 
+/** A solid 24×24 PNG, built here so the fixture needs no binary file. */
+function solidPng(r, g, b) {
+  const size = 24;
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (buf) => {
+    let c = 0xffffffff;
+    for (const byte of buf) c = crcTable[(c ^ byte) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const sum = Buffer.alloc(4);
+    sum.writeUInt32BE(crc(body));
+    return Buffer.concat([len, body, sum]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(size, 0);
+  header.writeUInt32BE(size, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  const row = Buffer.concat([
+    Buffer.from([0]),
+    Buffer.from(Array.from({ length: size }, () => [r, g, b]).flat()),
+  ]);
+  const pixels = NodeZlib.deflateSync(Buffer.concat(Array(size).fill(row)));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", header),
+    chunk("IDAT", pixels),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+/** Files the `*-files` scenarios find: a favicon, source to search, an ignored file. */
+function seedFiles(project) {
+  const put = (rel, data) => {
+    NodeFS.mkdirSync(NodePath.dirname(NodePath.join(project, rel)), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(project, rel), data);
+  };
+  put(
+    "favicon.svg",
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" rx="3" fill="#e5484d"/></svg>',
+  );
+  put("src/hello.ts", 'export const greeting = "hello parity";\n');
+  put("src/helper.ts", "export const helper = 1;\n");
+  put(".gitignore", "*.log\n");
+  put("debug.log", "ignored\n");
+}
+
+/**
+ * Files, search and attachments, with no model call: the sidebar favicon, an `@` mention search,
+ * an image attached to the composer (uploaded, not sent), a project content search, and the hit
+ * opened in the file viewer. `ts-files` pairs a second TypeScript server, `rust-files` the
+ * Conn Server, so the two recordings compare call by call.
+ */
+async function filesOn(ctx, rust) {
+  const target = rust ? await ctx.startRustServer() : await ctx.startServer();
+  const projectName = rust ? "rust-project" : "project";
+  seedFiles(target.project);
+  await ctx.page.goto(`${ctx.server.origin}/settings/connections`);
+  await settle(ctx);
+  ctx.cap.only(new URL(target.origin).host);
+  await ctx.page.getByRole("button", { name: "Add environment" }).first().click();
+  const dialog = ctx.page.getByRole("dialog", { name: "Add Environment" });
+  const remoteCard = dialog.getByRole("button", { name: /Remote link/ });
+  if ((await remoteCard.getAttribute("aria-pressed")) !== "true") await remoteCard.click();
+  await dialog
+    .getByPlaceholder("backend.example.com")
+    .fill(`${target.origin}/pair#token=${target.token}`);
+  await dialog.getByRole("button", { name: "Add environment", exact: true }).click();
+  await dialog.waitFor({ state: "detached", timeout: 30_000 });
+  await settle(ctx, 3000, 30_000);
+  await ctx.page.goto(`${ctx.server.origin}/`);
+  await settle(ctx, 3000, 30_000);
+  await ctx.shotAlways("home");
+
+  await ctx.page.getByRole("button", { name: "New thread", exact: true }).first().click();
+  await ctx.page.getByRole("dialog").getByText(projectName, { exact: true }).first().click();
+  await ctx.page.waitForURL((u) => u.pathname.startsWith("/draft/"), { timeout: 15_000 });
+  await settle(ctx, 2000, 15_000);
+  await dump(ctx, "draft");
+
+  const composer = ctx.page.locator("[contenteditable=true]").first();
+  await composer.click();
+  await ctx.page.keyboard.type("@hello");
+  await ctx.page.getByText("hello.ts").first().waitFor({ timeout: 15_000 });
+  await settle(ctx, 1500, 15_000);
+  await ctx.shotAlways("mention");
+  await ctx.page.keyboard.press("Escape");
+  for (let i = 0; i < 6; i++) await ctx.page.keyboard.press("Backspace");
+
+  await ctx.page
+    .locator("input[type=file]")
+    .first()
+    .setInputFiles({ name: "red.png", mimeType: "image/png", buffer: solidPng(229, 72, 77) });
+  const deadline = Date.now() + 30_000;
+  while (
+    Date.now() < deadline &&
+    !ctx.cap.http.some((h) => h.method === "POST" && h.url.includes("/api/attachments/upload/"))
+  ) {
+    await ctx.page.waitForTimeout(200);
+  }
+  await settle(ctx, 2000, 15_000);
+  await ctx.shotAlways("attached");
+
+  // Search in project, then open the hit: `searchContents`, then `readFile`.
+  await ctx.page.keyboard.press("ControlOrMeta+Shift+F");
+  await ctx.page.getByPlaceholder(/^Search in /).fill("greeting");
+  await ctx.page.getByText("hello parity").first().waitFor({ timeout: 15_000 });
+  await settle(ctx, 1500, 15_000);
+  await ctx.shotAlways("content-search");
+  await ctx.page.keyboard.press("Enter");
+  await ctx.page.getByText("hello parity").first().waitFor({ timeout: 15_000 });
+  await settle(ctx, 2000, 15_000);
+  await ctx.shotAlways("file-open");
+  await dump(ctx, "file-open");
+}
+
+const tsFiles = (ctx) => filesOn(ctx, false);
+const rustFiles = (ctx) => filesOn(ctx, true);
+
 export const SCENARIOS = {
   pairing,
   reconnect,
@@ -631,4 +757,6 @@ export const SCENARIOS = {
   "rust-search": search.rust,
   vcs,
   "rust-vcs": rustVcs,
+  "ts-files": tsFiles,
+  "rust-files": rustFiles,
 };

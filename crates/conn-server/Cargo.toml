@@ -19,6 +19,7 @@ conn-provider-claude.workspace = true
 conn-provider-codex = { path = "../conn-provider-codex" }
 conn-mcp = { path = "../conn-mcp" }
 conn-vcs.workspace = true
+conn-files.workspace = true
 axum = { workspace = true, features = ["form"] }
 # Already in the tree through tungstenite; fills tokens from the OS random source.
 getrandom = "0.3"
@@ -26,11 +27,14 @@ getrandom = "0.3"
 sha2 = { version = "0.10", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
-# `signal`: a clean stop on SIGTERM and SIGINT.
-tokio = { workspace = true, features = ["signal"] }
+# `signal`: a clean stop on SIGTERM and SIGINT. `fs` streams asset files and uploads
+# (tokio's own spawn_blocking file I/O).
+tokio = { workspace = true, features = ["signal", "fs"] }
 # The ownership lock shared with the T3 server (`server-owner.sqlite`); already in the tree
 # through conn-engine, same version and features.
 rusqlite = { version = "0.37", default-features = false, features = ["bundled"] }
+# Already in the tree through axum: the Stream trait an asset response body implements.
+futures-core = "0.3"
 
 [dev-dependencies]
 # examples/replay_server.rs: the scripted provider instead of Claude.

@@ -131,6 +131,9 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
         engine: Some(engine.clone()),
         providers,
         environment: Some(environment.clone()),
+        files: Some(Arc::new(
+            conn_files::Files::open(&state_dir).expect("files store"),
+        )),
         ..Deps::default()
     };
     deps.mcp = crate::routes::mcp::service(&deps);

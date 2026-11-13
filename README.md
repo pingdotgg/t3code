@@ -88,6 +88,7 @@ no model. The `rust-*` scenarios spend about five Haiku turns.
 | `conn-provider-codex`   | The Codex provider over `codex app-server` (JSON-RPC on stdio)        |
 | `conn-provider-support` | Ids, line framing and the process supervisor shared by CLI providers  |
 | `conn-mcp`              | `/mcp`: T3 tools over MCP Streamable HTTP; see its README             |
+| `conn-files`            | Project files, search, asset URLs, attachments                        |
 | `conn-server`           | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
 
 Dependencies point one way: `conn-server` → `conn-engine` → `conn-provider` → `conn-contract`;
@@ -377,8 +378,7 @@ cross-compiler for bundled SQLite, such as `cargo zigbuild`.
 What a real Conn session hits that this server does not do:
 
 - **Not supported (error in that view):** VCS (`subscribeVcsStatus`, `subscribeVcsBranch`,
-  `vcs.listRefs`, `server.discoverSourceControl`), diffs (`review.getDiffPreview`), files
-  (`projects.readFile`, `assets.createUrl`, so no project favicon), previews, annotations,
+  `vcs.listRefs`, `server.discoverSourceControl`), diffs (`review.getDiffPreview`), previews, annotations,
   discovered local servers, archived and older-settled shell reads, terminals, provider
   sign-in and install flows, and every other method not listed above.
 - **No checkpoints:** turns are not captured as git refs, so no diff or restore.

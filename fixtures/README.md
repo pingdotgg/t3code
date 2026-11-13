@@ -38,6 +38,7 @@ Line format, as the workspace README fixes it, with two additions:
 | `remote`     | From Settings › Connections, pair a second fresh server as a remote environment                                                 |
 | `rust-*`     | As `remote`, with the Rust `conn-server` as the remote environment (`--rust <binary>`)                                          |
 | `ts-*`       | The same drivers as `rust-follow-up`, `rust-queue`, `rust-search`, with a paired TypeScript server, for side-by-side comparison |
+| `*-files`    | Favicon, `@` search, image upload, content search, open a file; no model call                                                   |
 
 The server starts with `--auto-bootstrap-project-from-cwd` in a scratch git repo, so it has one
 project and one empty thread before the client arrives. `pairing` therefore lands on that thread,
