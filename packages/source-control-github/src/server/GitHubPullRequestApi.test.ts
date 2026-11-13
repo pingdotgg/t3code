@@ -2182,6 +2182,43 @@ layer("GitHubPullRequestApi.layer", (it) => {
       }),
   );
 
+  it.effect(
+    "adds a ready pull request to the merge queue when the repository disallows auto-merge",
+    () =>
+      Effect.gen(function* () {
+        const state = actionState({ isMergeQueueEnabled: true, mergeStateStatus: "CLEAN" });
+        route(
+          [
+            "query PullRequestActionState",
+            { data: { repository: { ...state.data.repository, autoMergeAllowed: false } } },
+          ],
+          [
+            "enablePullRequestAutoMerge(",
+            {
+              data: { enablePullRequestAutoMerge: null },
+              errors: [
+                {
+                  type: "UNPROCESSABLE",
+                  path: ["enablePullRequestAutoMerge"],
+                  message: "Auto merge is not allowed for this repository",
+                },
+              ],
+            },
+          ],
+          [
+            "enqueuePullRequest(",
+            { data: { enqueuePullRequest: { mergeQueueEntry: { position: 1, state: "QUEUED" } } } },
+          ],
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const result = yield* Effect.result(
+          cli.runPullRequestAction({ ...pullRequestInput, action: "merge", mergeMethod: "squash" }),
+        );
+        expect(Result.isFailure(result) ? result.failure.message : null).toBeNull();
+        expect(variablesOf("enqueuePullRequest(")).toHaveLength(1);
+      }),
+  );
+
   it.effect("succeeds without a summary when GitHub's merge reply does not decode", () =>
     Effect.gen(function* () {
       route(
