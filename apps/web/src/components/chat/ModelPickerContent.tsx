@@ -41,6 +41,7 @@ import {
   ComboboxItem,
   ComboboxListVirtualized,
 } from "../ui/combobox";
+import { autoLevelsFirst, withPinnedAutoLevels } from "./ProviderModelPicker.logic";
 import { ModelEsque } from "./providerIconUtils";
 import { isAutoModelSlug } from "@t3tools/shared/autoModel";
 import type { AutoRoute } from "./autoRoute";
@@ -379,7 +380,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes this picker's mount to global keydown handlers
   useLayoutEffect(() => registerModelPickerContent(), []);
   const highlightedModelKeyRef = useRef<string | null>(null);
-  const { favorites } = useEnvironmentModelPreferences(props.environmentId);
+  const { favorites: savedFavorites } = useEnvironmentModelPreferences(props.environmentId);
+  const favorites = withPinnedAutoLevels(savedFavorites, instanceEntries, modelOptionsByInstance);
   const activeEntry = props.instanceEntries.find(
     (entry) => entry.instanceId === props.activeInstanceId,
   );
@@ -689,11 +691,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       result = result.filter((m) => m.instanceId === selectedInstanceId);
     }
 
-    return sortProviderModelItems(result, {
+    const sorted = sortProviderModelItems(result, {
       favoriteModelKeys: favoritesSet,
       groupFavorites: selectedInstanceId !== "favorites",
       instanceOrder: selectedInstanceId === "favorites" ? instanceOrder : [],
     });
+    return selectedInstanceId === "favorites" ? autoLevelsFirst(sorted) : sorted;
   })();
 
   const legacySection = (() => {
