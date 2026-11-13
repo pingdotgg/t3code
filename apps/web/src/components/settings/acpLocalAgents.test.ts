@@ -34,6 +34,14 @@ describe("isConfiguredAcpLocalAgent", () => {
             driver: "acpRegistry",
             config: { source: "local", localPresetId: "oh-my-pi" },
           },
+        },
+        ohMyPi,
+      ),
+    ).toBe(true);
+    // Separate map so the marker-only entry cannot satisfy the .some(...) check first.
+    expect(
+      isConfiguredAcpLocalAgent(
+        {
           acpRegistry_oh_my_pi_full: {
             driver: "acpRegistry",
             config: {
