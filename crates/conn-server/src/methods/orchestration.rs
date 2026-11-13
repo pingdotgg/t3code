@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use conn_contract::{Command, SubscribeShellInput, SubscribeThreadInput, ThreadId, to_json};
 use conn_engine::{Engine, EngineError, Subscription};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -40,6 +40,88 @@ fn forward<T: Serialize + Send + 'static, E: Serialize + Send + 'static>(
         }
     });
     rx
+}
+
+/// Registers a unary method the engine serves through [`Engine::call`]. The payload decodes
+/// into the contract's `P` first; the engine's answer must decode into `S` (or its error into
+/// `E`), else the client gets a defect instead of a value it cannot read.
+pub(super) fn engine_unary<P, S, E>(
+    table: &mut MethodTable,
+    engine: &Arc<dyn Engine>,
+    tag: &'static str,
+) where
+    P: DeserializeOwned + Serialize + Send + 'static,
+    S: DeserializeOwned + Serialize + 'static,
+    E: DeserializeOwned + Serialize + 'static,
+{
+    let engine = engine.clone();
+    table.unary(tag, move |_, input: P| {
+        let engine = engine.clone();
+        async move {
+            match engine.call(tag, to_json(&input)).await {
+                Ok(value) => conn_contract::from_json::<S>(value)
+                    .map_err(|e| Failure::die(format!("{tag} built an invalid result: {e}"))),
+                Err(EngineError::Rejected(error)) => match conn_contract::from_json::<E>(error) {
+                    Ok(error) => Err(Failure::fail(&error)),
+                    Err(e) => Err(Failure::die(format!("{tag} built an invalid error: {e}"))),
+                },
+                Err(EngineError::Internal(message)) => Err(Failure::die(message)),
+            }
+        }
+    });
+}
+
+/// Registers a stream method the engine serves through [`Engine::open_stream`]; items decode
+/// into `T` and a failure into `E`, as [`engine_unary`] does.
+pub(super) fn engine_stream<P, T, E>(
+    table: &mut MethodTable,
+    engine: &Arc<dyn Engine>,
+    tag: &'static str,
+) where
+    P: DeserializeOwned + Serialize + Send + 'static,
+    T: DeserializeOwned + Serialize + Send + 'static,
+    E: DeserializeOwned + Serialize + Send + 'static,
+{
+    let engine = engine.clone();
+    table.stream(tag, move |_, input: P| {
+        let engine = engine.clone();
+        async move {
+            let mut items = match engine.open_stream(tag, to_json(&input)).await {
+                Ok(items) => items,
+                Err(EngineError::Rejected(error)) => {
+                    return Err(match conn_contract::from_json::<E>(error) {
+                        Ok(error) => Failure::fail(&error),
+                        Err(e) => Failure::die(format!("{tag} built an invalid error: {e}")),
+                    });
+                }
+                Err(EngineError::Internal(message)) => return Err(Failure::die(message)),
+            };
+            let (tx, rx) = mpsc::channel(16);
+            tokio::spawn(async move {
+                loop {
+                    let item = tokio::select! {
+                        _ = tx.closed() => return,
+                        item = items.recv() => item,
+                    };
+                    let Some(item) = item else { return };
+                    let out = match item {
+                        Ok(value) => conn_contract::from_json::<T>(value)
+                            .map(|v| to_json(&v))
+                            .map_err(|e| Failure::die(format!("{tag} built an invalid item: {e}"))),
+                        Err(error) => Err(match conn_contract::from_json::<E>(error) {
+                            Ok(error) => Failure::fail(&error),
+                            Err(e) => Failure::die(format!("{tag} built an invalid error: {e}")),
+                        }),
+                    };
+                    let ended = out.is_err();
+                    if tx.send(out).await.is_err() || ended {
+                        return;
+                    }
+                }
+            });
+            Ok(rx)
+        }
+    });
 }
 
 #[derive(Deserialize)]

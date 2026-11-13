@@ -801,3 +801,225 @@ async fn a_declined_steer_waits_first_in_the_queue() {
         ]
     );
 }
+
+fn open_home(db: &TempDb) -> SqliteEngine {
+    let mut config = EngineConfig::new(db.path());
+    config.home = Some(db.0.join("home"));
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.stream_flush = Duration::from_millis(20);
+    SqliteEngine::open(config).unwrap()
+}
+
+async fn call(engine: &SqliteEngine, method: &str, input: Value) -> Result<Value, Value> {
+    match engine.call(method, input).await {
+        Ok(value) => Ok(value),
+        Err(EngineError::Rejected(error)) => Err(error),
+        Err(EngineError::Internal(e)) => panic!("internal: {e}"),
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn clients_add_rename_and_remove_projects() {
+    let db = TempDb::new("projects");
+    let engine = open_home(&db);
+    let folder = db.0.join("repo");
+    std::fs::create_dir_all(&folder).unwrap();
+    let root = folder.to_string_lossy().into_owned();
+    let mut shell = engine
+        .subscribe_shell(from_json(json!({"requestCompletionMarker": true})).unwrap())
+        .await
+        .unwrap();
+    next(&mut shell).await;
+    next(&mut shell).await;
+
+    let created = call(
+        &engine,
+        "projects.mutate",
+        json!({"type": "project.create", "commandId": "p1", "projectId": "project:new",
+               "title": "Repo", "workspaceRoot": root}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(created["title"], "Repo");
+    assert_eq!(created["deletedAt"], Value::Null);
+    let item = next(&mut shell).await;
+    assert_eq!(item["kind"], "project.updated");
+    assert_eq!(item["project"]["workspaceRoot"], root.as_str());
+
+    // The same folder twice is a conflict; a retry of the same command is not.
+    let again = call(
+        &engine,
+        "projects.mutate",
+        json!({"type": "project.create", "commandId": "p2", "projectId": "project:other",
+               "title": "Repo", "workspaceRoot": root}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(again["_tag"], "ProjectMutationError");
+    assert_eq!(again["cause"]["_tag"], "ProjectConflictError");
+    let retry = call(
+        &engine,
+        "projects.mutate",
+        json!({"type": "project.create", "commandId": "p1", "projectId": "project:new",
+               "title": "Repo", "workspaceRoot": root}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(retry["id"], "project:new");
+
+    let renamed = call(
+        &engine,
+        "projects.mutate",
+        json!({"type": "project.update", "commandId": "p3", "projectId": "project:new",
+               "title": "Renamed", "pinned": true}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(renamed["title"], "Renamed");
+    assert_eq!(renamed["hasCustomTitle"], true);
+    assert!(renamed["pinnedAt"].is_string());
+    assert_eq!(next(&mut shell).await["project"]["title"], "Renamed");
+
+    // A project with a thread is not removed without `force`.
+    let mut thread = create("t1", "c1");
+    thread["projectId"] = json!("project:new");
+    dispatch(&engine, thread).await;
+    assert_eq!(next(&mut shell).await["kind"], "thread.updated");
+    let refused = call(
+        &engine,
+        "projects.mutate",
+        json!({"type": "project.delete", "commandId": "p4", "projectId": "project:new"}),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        refused["message"]
+            .as_str()
+            .unwrap()
+            .contains("still has 1 thread")
+    );
+    call(
+        &engine,
+        "projects.mutate",
+        json!({"type": "project.delete", "commandId": "p5", "projectId": "project:new", "force": true}),
+    )
+    .await
+    .unwrap();
+    let mut kinds = vec![];
+    for _ in 0..2 {
+        kinds.push(next(&mut shell).await["kind"].clone());
+    }
+    assert_eq!(kinds, [json!("thread.removed"), json!("project.removed")]);
+    let snapshot = engine.shell_snapshot().await.unwrap();
+    assert_eq!(snapshot["projects"].as_array().unwrap().len(), 1);
+    assert_eq!(snapshot["threads"], json!([]));
+
+    // The configured folder stays removed after a restart.
+    let start = call(
+        &engine,
+        "projects.mutate",
+        json!({"type": "project.delete", "commandId": "p6", "projectId": project_id()}),
+    )
+    .await;
+    assert!(start.is_ok());
+    drop(engine);
+    let engine = open_home(&db);
+    assert_eq!(
+        engine.shell_snapshot().await.unwrap()["projects"],
+        json!([])
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn scratch_and_new_projects_get_folders_under_home() {
+    let db = TempDb::new("scratch");
+    let engine = open_home(&db);
+    let scratch = call(&engine, "projects.ensureScratch", json!({}))
+        .await
+        .unwrap();
+    let again = call(&engine, "projects.ensureScratch", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(scratch, again);
+    let snapshot = engine.shell_snapshot().await.unwrap();
+    let row = snapshot["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == scratch["projectId"])
+        .unwrap()
+        .clone();
+    assert_eq!(row["title"], "No project");
+    assert_eq!(row["projectIcon"]["name"], "message-square-dashed");
+    assert!(db.0.join("home/scratch").is_dir());
+
+    // A No-project thread with its own folder becomes a project in place.
+    let folder = db.0.join("home/scratch/2026-11-13-idea");
+    std::fs::create_dir_all(&folder).unwrap();
+    let mut thread = create("t1", "c1");
+    thread["projectId"] = scratch["projectId"].clone();
+    thread["worktreePath"] = json!(folder.to_string_lossy());
+    thread["title"] = json!("Idea");
+    dispatch(&engine, thread).await;
+    let promoted = call(
+        &engine,
+        "projects.createFromThread",
+        json!({"threadId": "t1"}),
+    )
+    .await
+    .unwrap();
+    let projection = engine.get_thread_projection("t1".into()).await.unwrap();
+    assert_eq!(projection["thread"]["projectId"], promoted["projectId"]);
+    assert_eq!(projection["thread"]["worktreePath"], Value::Null);
+    let shell = engine.shell_snapshot().await.unwrap();
+    let project = shell["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == promoted["projectId"])
+        .unwrap()
+        .clone();
+    assert_eq!(project["title"], "Idea");
+    assert_eq!(shell["threads"][0]["projectId"], promoted["projectId"]);
+    // Running it again finishes a partial move and changes nothing here.
+    let again = call(
+        &engine,
+        "projects.createFromThread",
+        json!({"threadId": "t1"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(again, promoted);
+    let mut outside = create("t2", "c2");
+    outside["title"] = json!("Elsewhere");
+    dispatch(&engine, outside).await;
+    let refused = call(
+        &engine,
+        "projects.createFromThread",
+        json!({"threadId": "t2"}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refused["_tag"], "OrchestrationDispatchCommandError");
+
+    let created = call(&engine, "projects.createNew", json!({"name": "My App"}))
+        .await
+        .unwrap();
+    let root = std::path::PathBuf::from(created["workspaceRoot"].as_str().unwrap());
+    assert_eq!(root, db.0.join("home/projects/my-app"));
+    assert!(root.join(".git").is_dir());
+    assert!(root.join("README.md").is_file());
+    let second = call(&engine, "projects.createNew", json!({"name": "My App"}))
+        .await
+        .unwrap();
+    assert!(
+        second["workspaceRoot"]
+            .as_str()
+            .unwrap()
+            .ends_with("my-app-2")
+    );
+}

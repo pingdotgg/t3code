@@ -21,7 +21,7 @@ use crate::runner::LiveThread;
 use crate::store::{Store, StoreResult, Tx};
 use crate::{BoxFuture, Engine, EngineError, Subscription, streams};
 
-/// A folder the engine offers as a project. Clients cannot create projects yet.
+/// A folder the engine offers as a project at start. Clients add more at runtime.
 #[derive(Clone, Debug)]
 pub struct ProjectConfig {
     pub title: String,
@@ -31,6 +31,9 @@ pub struct ProjectConfig {
 pub struct EngineConfig {
     /// The SQLite file. Created when missing.
     pub database: PathBuf,
+    /// Where managed folders live: `scratch/` (No project) and `projects/` (`projects.createNew`).
+    /// Defaults to the database's folder.
+    pub home: Option<PathBuf>,
     pub projects: Vec<ProjectConfig>,
     pub providers: Vec<Arc<dyn Provider>>,
     /// How long streamed assistant text may wait before it is written. Default 100 ms.
@@ -41,6 +44,7 @@ impl EngineConfig {
     pub fn new(database: impl Into<PathBuf>) -> Self {
         Self {
             database: database.into(),
+            home: None,
             projects: vec![],
             providers: vec![],
             stream_flush: Duration::from_millis(100),
@@ -60,10 +64,11 @@ pub(crate) struct Inner {
     /// Threads with an open provider session. The only per-thread state kept in memory.
     pub(crate) live: Mutex<HashMap<String, Arc<LiveThread>>>,
     pub(crate) stream_flush: Duration,
+    pub(crate) home: PathBuf,
 }
 
 /// Stable project id for a folder, so a fresh database gives clients the same ids.
-fn project_id(workspace_root: &str) -> String {
+pub(crate) fn project_id(workspace_root: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in workspace_root.as_bytes() {
         hash ^= u64::from(*byte);
@@ -76,6 +81,13 @@ impl SqliteEngine {
     /// Opens the store, adds the configured projects, and ends every run a previous process
     /// left live: no provider survives a restart, so those runs fail with a clear reason.
     pub fn open(config: EngineConfig) -> Result<Self, String> {
+        let home = config.home.clone().unwrap_or_else(|| {
+            config
+                .database
+                .parent()
+                .map(PathBuf::from)
+                .unwrap_or_default()
+        });
         let mut store = Store::open(&config.database)?;
         let unfinished = store.unfinished_runs()?;
         let mut tx = store.tx()?;
@@ -120,6 +132,7 @@ impl SqliteEngine {
                 providers: config.providers,
                 live: Mutex::new(HashMap::new()),
                 stream_flush: config.stream_flush,
+                home,
             }),
         })
     }
@@ -447,6 +460,30 @@ impl Engine for SqliteEngine {
                 Err(e) => Err(EngineError::Internal(e)),
             }
         })
+    }
+
+    fn methods(&self) -> &'static [&'static str] {
+        crate::calls::METHODS
+    }
+
+    fn call(&self, method: &str, input: Value) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
+        Box::pin(crate::calls::call(
+            self.inner.clone(),
+            method.to_owned(),
+            input,
+        ))
+    }
+
+    fn open_stream(
+        &self,
+        method: &str,
+        input: Value,
+    ) -> BoxFuture<'_, Result<Subscription<Value, Value>, EngineError<Value>>> {
+        Box::pin(crate::calls::open_stream(
+            self.inner.clone(),
+            method.to_owned(),
+            input,
+        ))
     }
 
     fn shell_snapshot(&self) -> BoxFuture<'_, Result<Value, EngineError<GetShellSnapshotError>>> {

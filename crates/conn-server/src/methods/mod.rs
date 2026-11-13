@@ -11,6 +11,7 @@ use crate::table::MethodTable;
 
 mod files;
 mod orchestration;
+mod projects;
 pub mod provider;
 pub mod server;
 mod terminal;
@@ -28,6 +29,7 @@ pub struct Deps {
 pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     server::register(table, deps);
     orchestration::register(table, deps);
+    projects::register(table, deps);
     provider::register(table, deps);
     vcs::register(table, deps);
     files::register(table, deps);

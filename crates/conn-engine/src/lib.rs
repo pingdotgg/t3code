@@ -18,12 +18,14 @@
 
 use std::{future::Future, pin::Pin};
 
+mod calls;
 mod commands;
 mod engine;
 #[cfg(test)]
 mod engine_tests;
 #[cfg(any(test, feature = "fake-provider"))]
 pub mod fake;
+mod projects;
 mod runner;
 mod shell;
 mod store;
@@ -110,6 +112,42 @@ pub trait Engine: Send + Sync {
     /// `GET /api/orchestration/shell`: `OrchestrationV2ShellSnapshot`.
     fn shell_snapshot(&self) -> BoxFuture<'_, Result<Value, EngineError<GetShellSnapshotError>>> {
         unsupported("the shell snapshot")
+    }
+
+    /// The unary and stream RPC methods [`Engine::call`] and [`Engine::open_stream`] serve, by
+    /// tag. The server registers each one; the rest answer "not supported".
+    fn methods(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// A unary method from [`Engine::methods`] (`projects.mutate`, `orchestration.searchThreads`,
+    /// ...). Input and output are the contract's JSON for that tag; `Rejected` holds the
+    /// method's typed error.
+    fn call(
+        &self,
+        method: &str,
+        _input: Value,
+    ) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
+        let method = method.to_owned();
+        Box::pin(async move {
+            Err(EngineError::Internal(format!(
+                "this engine does not support {method}"
+            )))
+        })
+    }
+
+    /// A stream method from [`Engine::methods`], with the same JSON rules as [`Engine::call`].
+    fn open_stream(
+        &self,
+        method: &str,
+        _input: Value,
+    ) -> BoxFuture<'_, Result<Subscription<Value, Value>, EngineError<Value>>> {
+        let method = method.to_owned();
+        Box::pin(async move {
+            Err(EngineError::Internal(format!(
+                "this engine does not support {method}"
+            )))
+        })
     }
 
     /// `GET /api/orchestration/threads/:threadId`: `OrchestrationV2ThreadDetailSnapshot`, or

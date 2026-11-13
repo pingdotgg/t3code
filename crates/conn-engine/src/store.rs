@@ -218,6 +218,8 @@ impl Store {
             .map_err(err)?
             .filter_map(Result::ok)
             .map(parse)
+            .filter(|project| project["deletedAt"].is_null())
+            .map(|project| shell_project(&project))
             .collect();
         Ok(json!({
             "schemaVersion": 2,
@@ -459,7 +461,7 @@ impl Tx<'_> {
             self.tx
                 .execute(
                     "INSERT INTO threads (id, project_id, deleted, activity_at, thread) VALUES (?1, ?2, ?3, ?4, ?5)
-                     ON CONFLICT(id) DO UPDATE SET deleted = ?3, activity_at = ?4, thread = ?5",
+                     ON CONFLICT(id) DO UPDATE SET project_id = ?2, deleted = ?3, activity_at = ?4, thread = ?5",
                     params![thread_id, project_id, deleted, self.now, payload.to_string()],
                 )
                 .map_err(err)?;
@@ -585,7 +587,15 @@ impl Tx<'_> {
             .map_err(err)
     }
 
+    /// A project that was not deleted.
     pub(crate) fn project(&self, project_id: &str) -> StoreResult<Option<Value>> {
+        Ok(self
+            .project_any(project_id)?
+            .filter(|p| p["deletedAt"].is_null()))
+    }
+
+    /// A project row, deleted or not.
+    pub(crate) fn project_any(&self, project_id: &str) -> StoreResult<Option<Value>> {
         self.tx
             .query_row(
                 "SELECT body FROM projects WHERE id = ?1",
@@ -597,48 +607,98 @@ impl Tx<'_> {
             .map_err(err)
     }
 
-    /// Adds a project for `workspace_root` unless one exists. Returns its id.
-    pub(crate) fn ensure_project(
-        &mut self,
-        id: &str,
-        title: &str,
-        workspace_root: &str,
-    ) -> StoreResult<String> {
-        let existing: Option<String> = self
-            .tx
+    /// The project row that owns `workspace_root`, deleted or not.
+    pub(crate) fn project_by_root(&self, workspace_root: &str) -> StoreResult<Option<Value>> {
+        self.tx
             .query_row(
-                "SELECT id FROM projects WHERE workspace_root = ?1",
+                "SELECT body FROM projects WHERE workspace_root = ?1",
                 [workspace_root],
-                |row| row.get(0),
+                |row| row.get::<_, String>(0),
             )
             .optional()
-            .map_err(err)?;
-        if let Some(id) = existing {
-            return Ok(id);
-        }
-        let project = json!({
-            "id": id,
-            "title": title,
-            "workspaceRoot": workspace_root,
-            "defaultModelSelection": null,
-            "scripts": [],
-            "createdAt": self.now,
-            "updatedAt": self.now,
-        });
+            .map(|body| body.map(parse))
+            .map_err(err)
+    }
+
+    /// Writes a project row and its shell change: `project.updated`, or `project.removed`
+    /// when the body has `deletedAt`. A deleted row that held the same folder gives way.
+    pub(crate) fn put_project(&mut self, project: &Value) -> StoreResult<u64> {
+        let id = project["id"].as_str().unwrap_or_default();
+        let root = project["workspaceRoot"].as_str().unwrap_or_default();
         self.tx
             .execute(
-                "INSERT INTO projects (id, workspace_root, body) VALUES (?1, ?2, ?3)",
-                params![id, workspace_root, project.to_string()],
+                "DELETE FROM projects WHERE workspace_root = ?1 AND id != ?2",
+                params![root, id],
+            )
+            .map_err(err)?;
+        self.tx
+            .execute(
+                "INSERT INTO projects (id, workspace_root, body) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(id) DO UPDATE SET workspace_root = ?2, body = ?3",
+                params![id, root, project.to_string()],
             )
             .map_err(err)?;
         let seq = self.alloc();
-        let item = json!({"kind": "project.updated", "sequence": seq, "project": project});
+        let item = if project["deletedAt"].is_null() {
+            json!({"kind": "project.updated", "sequence": seq, "project": shell_project(project)})
+        } else {
+            json!({"kind": "project.removed", "sequence": seq, "projectId": id})
+        };
         self.tx
             .execute(
                 "INSERT INTO shell_changes (seq, item) VALUES (?1, ?2)",
                 params![seq as i64, item.to_string()],
             )
             .map_err(err)?;
+        Ok(seq)
+    }
+
+    /// Thread ids of one project, archived included, newest first.
+    pub(crate) fn project_thread_ids(&self, project_id: &str) -> StoreResult<Vec<String>> {
+        let mut stmt = self
+            .tx
+            .prepare(
+                "SELECT id FROM threads WHERE project_id = ?1 AND deleted = 0 ORDER BY rowid DESC",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map([project_id], |row| row.get::<_, String>(0))
+            .map_err(err)?
+            .filter_map(Result::ok)
+            .collect();
+        Ok(rows)
+    }
+
+    /// Thread rows (not deleted) whose JSON field `field` equals `value`.
+    pub(crate) fn threads_where(&self, field: &str, value: &str) -> StoreResult<Vec<Value>> {
+        let mut stmt = self
+            .tx
+            .prepare("SELECT thread FROM threads WHERE deleted = 0 AND json_extract(thread, ?1) = ?2 ORDER BY rowid")
+            .map_err(err)?;
+        let rows = stmt
+            .query_map(params![format!("$.{field}"), value], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(err)?
+            .filter_map(Result::ok)
+            .map(parse)
+            .collect();
+        Ok(rows)
+    }
+
+    /// Adds a project for `workspace_root` unless a row (even a deleted one) has it, so a
+    /// project a client removed stays removed after a restart. Returns its id.
+    pub(crate) fn ensure_project(
+        &mut self,
+        id: &str,
+        title: &str,
+        workspace_root: &str,
+    ) -> StoreResult<String> {
+        if let Some(existing) = self.project_by_root(workspace_root)? {
+            return Ok(existing["id"].as_str().unwrap_or(id).to_owned());
+        }
+        let project = new_project(id, title, workspace_root, &self.now);
+        self.put_project(&project)?;
         Ok(id.to_owned())
     }
 
@@ -725,6 +785,29 @@ impl Tx<'_> {
     pub(crate) fn conn(&self) -> &Connection {
         &self.tx
     }
+}
+
+/// A new `Project` row (`packages/contracts/src/project.ts`).
+pub(crate) fn new_project(id: &str, title: &str, workspace_root: &str, now: &str) -> Value {
+    json!({
+        "id": id,
+        "title": title,
+        "workspaceRoot": workspace_root,
+        "defaultModelSelection": null,
+        "scripts": [],
+        "createdAt": now,
+        "updatedAt": now,
+        "deletedAt": null,
+    })
+}
+
+/// The shell row of a project: the `Project` without `deletedAt`.
+pub(crate) fn shell_project(project: &Value) -> Value {
+    let mut row = project.clone();
+    if let Some(map) = row.as_object_mut() {
+        map.remove("deletedAt");
+    }
+    row
 }
 
 /// Bounds the tables that only serve resumes and retries. Events and projections stay: they
