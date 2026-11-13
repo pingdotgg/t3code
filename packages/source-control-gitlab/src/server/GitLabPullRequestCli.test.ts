@@ -1342,30 +1342,40 @@ layer("GitLabPullRequestCli.layer", (it) => {
     {
       name: "drops the installation prefix a web path carries when GitLab has no such project",
       host: "prefixed.example",
-      subfolder: "gitlab",
+      settings: { subfolder: "gitlab" },
+      known: ["team/sub/project"],
+      asked: "projects/team%2Fsub%2Fproject?license=false",
+    },
+    {
+      name: "drops a prefix glab is given as a path on the API host",
+      host: "apihost.example",
+      settings: { api_host: "apihost.example/gitlab" },
       known: ["team/sub/project"],
       asked: "projects/team%2Fsub%2Fproject?license=false",
     },
     {
       name: "keeps a path GitLab knows as written, whose group is named like the prefix",
       host: "grouped.example",
-      subfolder: "/gitlab/",
+      settings: { subfolder: "/gitlab/" },
       known: ["gitlab/team/sub/project", "team/sub/project"],
       asked: "projects/gitlab%2Fteam%2Fsub%2Fproject?license=false",
     },
     {
       name: "keeps the path on a host served at its root",
       host: "root.example",
-      subfolder: "",
-      known: [],
+      settings: { api_host: "api.root.example" },
+      known: ["gitlab/team/sub/project"],
       asked: "projects/gitlab%2Fteam%2Fsub%2Fproject?license=false",
     },
-  ])("$name", ({ host, subfolder, known, asked }) =>
+  ])("$name", ({ host, settings, known, asked }) =>
     Effect.gen(function* () {
       mockedExecute.mockImplementation(({ cwd, args }) => {
-        if (args[0] === "config") return Effect.succeed(output(`${subfolder}\n`));
+        if (args[0] === "config") {
+          const setting = (settings as Record<string, string>)[args[2] ?? ""] ?? "";
+          return Effect.succeed(output(`${setting}\n`));
+        }
         const project = decodeURIComponent(args[1]?.split("/")[1]?.split("?")[0] ?? "");
-        return known.includes(project) || subfolder === ""
+        return known.includes(project)
           ? Effect.succeed(output(JSON.stringify({ merge_method: "merge" })))
           : Effect.fail(
               new GitLabCli.GitLabCliCommandError({

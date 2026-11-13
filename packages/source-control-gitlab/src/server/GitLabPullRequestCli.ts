@@ -1055,37 +1055,52 @@ export const make = Effect.gen(function* () {
       ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
     });
 
+  const hostSetting = (cwd: string, host: string, key: string) =>
+    gitlab.execute({ cwd, host, args: ["config", "get", key, "--host", host] }).pipe(
+      Effect.map((result) => result.stdout.trim()),
+      Effect.catchTags({ GitLabCliCommandError: () => Effect.succeed("") }),
+    );
+
   // A GitLab served below a URL prefix has that prefix in every web path, which is where a linked
-  // merge request's repository comes from, and in no API project path. A path GitLab knows as
-  // written is used as written, so a real group named like the prefix keeps its projects.
+  // merge request's repository comes from, and in no API project path. glab learns the prefix from
+  // `subfolder` or from a path on `api_host`. A path GitLab knows as written is used as written,
+  // so a real group named like the prefix keeps its projects.
   const apiProjects = yield* Cache.makeWith(
     (key: string) => {
       const [cwd, host, repository] = JSON.parse(key) as [string, string, string];
-      return gitlab
-        .execute({ cwd, host, args: ["config", "get", "subfolder", "--host", host] })
-        .pipe(
-          Effect.map((result) => result.stdout.trim().replace(/^\/+|\/+$/gu, "")),
-          Effect.catchTags({ GitLabCliCommandError: () => Effect.succeed("") }),
-          Effect.flatMap((subfolder) => {
-            const prefix = `${subfolder}/`;
-            if (subfolder === "" || !repository.toLowerCase().startsWith(prefix.toLowerCase())) {
-              return Effect.succeed(repository);
-            }
-            return api({
-              cwd,
-              host,
-              path: `projects/${projectPath(repository)}?license=false`,
-            }).pipe(
-              Effect.as(repository),
-              Effect.catchTags({
-                GitLabCliCommandError: (error) =>
-                  isVcsProcessExitError(error.cause) && error.cause.failureKind === "not-found"
-                    ? Effect.succeed(repository.slice(prefix.length))
-                    : Effect.fail(error),
-              }),
-            );
-          }),
-        );
+      return Effect.all([
+        hostSetting(cwd, host, "subfolder"),
+        hostSetting(cwd, host, "api_host"),
+      ]).pipe(
+        Effect.map(([subfolder, apiHost]) =>
+          (subfolder || apiHost.replace(/^[a-z]+:\/\//iu, "").replace(/^[^/]*/u, "")).replace(
+            /^\/+|\/+$/gu,
+            "",
+          ),
+        ),
+        Effect.flatMap((installationPath) => {
+          const prefix = `${installationPath}/`;
+          if (
+            installationPath === "" ||
+            !repository.toLowerCase().startsWith(prefix.toLowerCase())
+          ) {
+            return Effect.succeed(repository);
+          }
+          return api({
+            cwd,
+            host,
+            path: `projects/${projectPath(repository)}?license=false`,
+          }).pipe(
+            Effect.as(repository),
+            Effect.catchTags({
+              GitLabCliCommandError: (error) =>
+                isVcsProcessExitError(error.cause) && error.cause.failureKind === "not-found"
+                  ? Effect.succeed(repository.slice(prefix.length))
+                  : Effect.fail(error),
+            }),
+          );
+        }),
+      );
     },
     {
       capacity: API_PROJECT_CACHE_CAPACITY,
