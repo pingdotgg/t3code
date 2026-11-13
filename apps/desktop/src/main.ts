@@ -12,7 +12,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Version output must flush before Electron exits, without acquiring the runtime.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
@@ -125,6 +127,15 @@ const layerDesktopSshEnvironment = Layer.unwrap(
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     return DesktopSshEnvironment.layer({
       resolveCliRunner: Effect.succeed(resolveDesktopSshCliRunner(environment)),
+      resolveLauncherId: yield* Effect.cached(
+        DesktopSshEnvironment.readOrCreateLauncherId(
+          environment.path.join(environment.stateDir, "ssh-launcher-id"),
+        ).pipe(
+          Effect.provide(
+            yield* Effect.context<FileSystem.FileSystem | SecureRandom.SecureRandom>(),
+          ),
+        ),
+      ),
     });
   }),
 );
@@ -214,7 +225,6 @@ const layerDesktopApplication = Layer.mergeAll(
   DesktopApplicationMenu.layer,
   DesktopLinuxUrlHandler.layer,
   DesktopCliCommand.layer,
-  layerDesktopSsh,
 ).pipe(
   Layer.provideMerge(layerDesktopSnapShot),
   Layer.provideMerge(
@@ -224,6 +234,8 @@ const layerDesktopApplication = Layer.mergeAll(
       Layer.provide(DesktopManagedPolicy.layer),
     ),
   ),
+  // Updates closes the same tunnels the SSH IPC opens before quitAndInstall.
+  Layer.provideMerge(layerDesktopSsh),
   Layer.provideMerge(layerDesktopWslBackend),
   Layer.provideMerge(layerDesktopLocalEnvironmentAuth),
 );
