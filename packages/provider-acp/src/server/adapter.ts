@@ -1970,6 +1970,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const pendingLoadedSession = yield* Ref.make<{
           readonly setup: AcpSessionRuntime.AcpSessionRuntimeStartResult;
           readonly savedUsage: ThreadTokenUsageSnapshot | undefined;
+          /** A live reading that arrived before settlement; it outranks the load, a clear included. */
+          readonly liveUsage?: ThreadTokenUsageSnapshot | null;
         } | null>(null);
         /**
          * Makes a session T3 loaded, rather than created, the active one. Its load telemetry waits
@@ -1988,7 +1990,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
         });
         /**
-         * Settles a session's reading for the model about to run; undefined leaves it as it is.
+         * Settles a session's reading for the model about to run; undefined means there is none.
          * A window and threshold from another or an unknown model never carry over. A reading newer
          * than a pending load wins; an older one only outlives a load that reports nothing.
          */
@@ -2005,16 +2007,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const cached = (yield* Ref.get(contextUsageBySessionId)).get(sessionId);
           const fromOtherModel =
             cached !== undefined && contextUsageModelBySessionId.get(sessionId) !== selection.model;
-          if (pending === null && !fromOtherModel) return undefined;
+          if (pending === null && !fromOtherModel) return cached;
           const loaded =
-            pending === null
+            pending === null || (pending.liveUsage !== undefined && !fromOtherModel)
               ? undefined
               : flavor.contextUsageFromSession({ selection, session: pending.setup });
           const usage = fromOtherModel
             ? (loaded ?? null)
-            : cached !== undefined && cached !== pending?.savedUsage
-              ? cached
-              : loaded;
+            : pending?.liveUsage !== undefined
+              ? pending.liveUsage
+              : cached !== undefined && cached !== pending?.savedUsage
+                ? cached
+                : loaded;
           if (usage === undefined) return undefined;
           yield* Ref.update(contextUsageBySessionId, (current) => {
             const updated = new Map(current);
@@ -5121,6 +5125,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     return updated;
                   });
                   contextUsageModelBySessionId.set(notification.sessionId, selection.model);
+                  yield* Ref.update(pendingLoadedSession, (current) =>
+                    current?.setup.sessionId === notification.sessionId
+                      ? { ...current, liveUsage: nextContextUsage }
+                      : current,
+                  );
                   if (context?.nativeThreadId === notification.sessionId) {
                     context.contextUsage = contextUsageOverride;
                   }
@@ -5135,6 +5144,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const session = yield* Ref.get(activeSessionSetup);
               if (selection !== null && session?.sessionId === notification.sessionId) {
                 contextUsageModelBySessionId.set(notification.sessionId, selection.model);
+                yield* Ref.update(pendingLoadedSession, (current) =>
+                  current?.setup.sessionId === notification.sessionId
+                    ? { ...current, liveUsage: stateEvent.usage }
+                    : current,
+                );
               } else {
                 contextUsageModelBySessionId.delete(notification.sessionId);
               }

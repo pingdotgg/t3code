@@ -3962,7 +3962,7 @@ describe("AcpAdapterV2", () => {
         modelSelection: selection("small"),
         runtimePolicy,
       });
-      assert.isNull(resumedAgain.contextUsage);
+      assert.deepEqual(resumedAgain.contextUsage, { usedTokens: 100, maxTokens: 1_000 });
       assert.deepEqual(loads, ["persisted-session"]);
 
       yield* runtime.resumeThread({
@@ -4341,6 +4341,62 @@ describe("AcpAdapterV2", () => {
         event.type === "provider_thread.updated" ? [event.providerThread.contextUsage] : [],
       );
       assert.deepEqual(usages.at(-1), { usedTokens: 500, maxTokens: 1_000 });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("keeps a live clear that arrives before the load settles", () =>
+    Effect.gen(function* () {
+      const { runtime, runtimePolicy, selection, providerThread, update } =
+        yield* openContextUsageRuntime({
+          name: "live-clear-before-settle",
+          initialNativeThreadId: "persisted-session",
+          contextUsageFromSession: () => ({ usedTokens: 100, maxTokens: 1_000 }),
+          contextUsageFromSessionUpdate: ({ notification }) =>
+            notification.update.sessionUpdate === "session_info_update" &&
+            notification.update._meta?.clear === true
+              ? null
+              : undefined,
+        });
+      yield* update({
+        sessionId: "persisted-session",
+        update: { sessionUpdate: "session_info_update", _meta: { clear: true } },
+      });
+      const resumed = yield* runtime.resumeThread({
+        providerThread: { ...providerThread, contextUsage: { usedTokens: 50, maxTokens: 1_000 } },
+        modelSelection: selection("small"),
+        runtimePolicy,
+      });
+      assert.isNull(resumed.contextUsage);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("lets a newer usage update outrank an earlier live reading before the load settles", () =>
+    Effect.gen(function* () {
+      const { runtime, runtimePolicy, selection, providerThread, update } =
+        yield* openContextUsageRuntime({
+          name: "usage-after-live-before-settle",
+          initialNativeThreadId: "persisted-session",
+          contextUsageFromSession: () => ({ usedTokens: 100, maxTokens: 1_000 }),
+          contextUsageFromSessionUpdate: ({ notification }) =>
+            notification.update.sessionUpdate === "session_info_update" &&
+            notification.update._meta?.clear === true
+              ? null
+              : undefined,
+        });
+      yield* update({
+        sessionId: "persisted-session",
+        update: { sessionUpdate: "session_info_update", _meta: { clear: true } },
+      });
+      yield* update({
+        sessionId: "persisted-session",
+        update: { sessionUpdate: "usage_update", used: 700, size: 1_000 },
+      });
+      const resumed = yield* runtime.resumeThread({
+        providerThread,
+        modelSelection: selection("small"),
+        runtimePolicy,
+      });
+      assert.deepEqual(resumed.contextUsage, { usedTokens: 700, maxTokens: 1_000 });
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
