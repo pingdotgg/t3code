@@ -909,9 +909,8 @@ function nextQueuedRun(
   return queuedRunsInDeliveryOrder(projection).find((run) => run.queueHeld !== true);
 }
 
-// Delegated completions, monitor notifications and scheduled deliveries never choose a model,
-// so a queued one runs on the thread's current pick rather than the one frozen at queue time.
-// A scheduled delivery that named its own model is the exception: its pin wins over the thread.
+// Delegated completions, monitor notifications and unpinned scheduled deliveries never choose a
+// model, so a queued one runs on the thread's current pick rather than the one frozen at queue time.
 function followsCurrentConversation(
   message:
     | Pick<
@@ -920,15 +919,13 @@ function followsCurrentConversation(
         | "creationSource"
         | "notification"
         | "delegatedCompletion"
-        | "scheduledTaskId"
-        | "modelSelection"
+        | "followsThreadSelection"
       >
     | undefined,
 ): boolean {
-  if (message?.scheduledTaskId !== undefined && message.modelSelection !== undefined) return false;
   return (
     message?.delegatedCompletion !== undefined ||
-    message?.scheduledTaskId !== undefined ||
+    message?.followsThreadSelection === true ||
     (message?.notification?.source.kind === "monitor" && !isBufferedProviderNotification(message))
   );
 }
@@ -7457,7 +7454,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
         ...(command.linkedSender === undefined ? {} : { linkedSender: command.linkedSender }),
         ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
-        ...(command.modelSelection === undefined ? {} : { modelSelection: command.modelSelection }),
+        ...(command.scheduledTaskId !== undefined && command.modelSelection === undefined
+          ? { followsThreadSelection: true as const }
+          : {}),
         id: command.messageId,
         threadId: command.threadId,
         runId,
@@ -7870,7 +7869,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
         ...(command.linkedSender === undefined ? {} : { linkedSender: command.linkedSender }),
         ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
-        ...(command.modelSelection === undefined ? {} : { modelSelection: command.modelSelection }),
+        ...(command.scheduledTaskId !== undefined && command.modelSelection === undefined
+          ? { followsThreadSelection: true as const }
+          : {}),
         id: command.messageId,
         threadId: command.threadId,
         runId,
