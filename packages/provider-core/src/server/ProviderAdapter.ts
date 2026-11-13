@@ -101,6 +101,9 @@ export const ProviderAdapterV2Event = Schema.Union([
     /** Persist idle background snapshots before a run subscriber exists. */
     sessionScoped: Schema.optional(Schema.Boolean),
     retainedNativeTurnIds: Schema.optional(Schema.Array(Schema.String)),
+    modelSelectionChange: Schema.optional(
+      Schema.Struct({ expected: ModelSelection, next: ModelSelection }),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("provider_turn.updated"),
