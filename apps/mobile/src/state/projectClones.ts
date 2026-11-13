@@ -3,6 +3,7 @@ import { parseScopedProjectKey, scopedProjectKey } from "@t3tools/client-runtime
 import type { EnvironmentId, ProjectCloneSnapshot, ScopedProjectRef } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 
+import { appAtomRegistry } from "./atom-registry";
 import { serverEnvironment } from "./server";
 import { sourceControlEnvironment } from "./sourceControl";
 
@@ -41,6 +42,26 @@ const projectCloneAtom = Atom.family((key: string) => {
     return clones.find((clone) => clone.projectId === ref.projectId) ?? null;
   }).pipe(Atom.withLabel(`mobile-project-clone:${key}`));
 });
+
+/** Cloned projects whose ignored files are still on their way; sends wait for them. */
+const projectFileCopiesAtom = Atom.make<Readonly<Record<string, true>>>({}).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("mobile-project-file-copies"),
+);
+
+export function setProjectFilesCopying(ref: ScopedProjectRef, copying: boolean): void {
+  const { [scopedProjectKey(ref)]: _previous, ...rest } =
+    appAtomRegistry.get(projectFileCopiesAtom);
+  appAtomRegistry.set(
+    projectFileCopiesAtom,
+    copying ? { ...rest, [scopedProjectKey(ref)]: true } : rest,
+  );
+}
+
+export function useProjectFilesCopying(ref: ScopedProjectRef | null): boolean {
+  const copies = useAtomValue(projectFileCopiesAtom);
+  return ref !== null && copies[scopedProjectKey(ref)] === true;
+}
 
 export function useProjectClone(ref: ScopedProjectRef | null): ProjectCloneState {
   return useAtomValue(ref === null ? EMPTY_CLONE_ATOM : projectCloneAtom(scopedProjectKey(ref)));

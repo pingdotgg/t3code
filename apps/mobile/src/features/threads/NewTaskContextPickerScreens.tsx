@@ -2,22 +2,26 @@ import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { NavigationRow } from "../../components/ui/NavigationRow";
 import { SelectionRow } from "../../components/ui/SelectionRow";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
 import {
+  AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   resolveEnvironmentMachineKind,
   type EnvironmentId,
 } from "@t3tools/contracts";
+import { getCloneDirectoryName } from "@t3tools/client-runtime/operations/projects";
+import { projectSubdirectory } from "@t3tools/client-runtime/state/project-file-copy";
 import { LegendList } from "@legendapp/list/react-native";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Haptics from "expo-haptics";
-import { useNavigation } from "@react-navigation/native";
+import { StackActions, useNavigation } from "@react-navigation/native";
 import { useRef, useState, type ReactNode } from "react";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { Platform, Pressable, ScrollView, View } from "react-native";
@@ -30,7 +34,9 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
-import { useEnvironmentScope } from "../../state/session";
+import { useServerConfigs } from "../../state/entities";
+import { isNewTaskDraftKey } from "../../state/new-task-draft-key";
+import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
 import { useSearchToolbarInset } from "../../components/ui/useBarInset";
@@ -38,11 +44,15 @@ import type { AppBarSearch } from "../../components/ui/AppBar";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { checkoutNewTaskBranch } from "./checkout-new-task-branch";
 import { filterNewTaskBranches } from "./new-task-context-presentation";
+import { resolveAddProjectTargets } from "./new-task-project-selection";
 import { useDebouncedValue, usePaginatedBranches } from "../../state/queries";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
 
 import { useEnvironmentPresentation } from "../../state/presentation";
-import { useRemoteConnections } from "../../state/use-remote-environment-registry";
+import {
+  useRemoteConnections,
+  useRemoteConnectionStatus,
+} from "../../state/use-remote-environment-registry";
 import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
 import {
   ConnectionDiagnosisDetails,
@@ -180,6 +190,23 @@ export function NewTaskEnvironmentPickerRouteScreen() {
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const { connectedEnvironments } = useRemoteConnectionStatus();
+  const serverConfigs = useServerConfigs();
+  const canWriteSourceControl = useEnvironmentsWithScope(
+    connectedEnvironments,
+    AuthSourceControlWriteScope,
+  );
+  const canOperate = useEnvironmentsWithScope(connectedEnvironments, AuthOrchestrationOperateScope);
+  const project = flow.selectedProject;
+  const addToMachine = resolveAddProjectTargets({
+    project,
+    hostEnvironmentIds: new Set(flow.environments.map((environment) => environment.environmentId)),
+    environments: connectedEnvironments,
+    canClone: (environmentId) =>
+      serverConfigs.has(environmentId) &&
+      canWriteSourceControl.has(environmentId) &&
+      canOperate.has(environmentId),
+  });
   return (
     <View className="flex-1 bg-sheet" collapsable={false}>
       <AppBar title="Environment" hideBottomBorder onBack={() => navigation.goBack()} />
@@ -211,6 +238,55 @@ export function NewTaskEnvironmentPickerRouteScreen() {
               />
             ))}
           </PickerSurface>
+          {addToMachine && project ? (
+            <>
+              <Text className="px-4 pb-2 pt-6 text-sm text-foreground-muted">
+                Add to another machine
+              </Text>
+              <PickerSurface>
+                {addToMachine.targets.map((target, index) => (
+                  <NavigationRow
+                    key={String(target.environmentId)}
+                    className={cn(
+                      "bg-grouped-card",
+                      index < addToMachine.targets.length - 1 && "border-b border-border-subtle",
+                    )}
+                    title={target.environmentLabel}
+                    leading={
+                      <EnvironmentMachineSymbol
+                        kind={resolveEnvironmentMachineKind(
+                          serverConfigs.get(target.environmentId) ?? null,
+                        )}
+                        size={20}
+                        tintColorClassName="accent-icon-muted"
+                      />
+                    }
+                    onPress={() => {
+                      void Haptics.selectionAsync();
+                      // The clone screen picks the folder and ignored files, then moves this draft onto the new copy.
+                      navigation.dispatch(
+                        StackActions.push("AddProjectDestination", {
+                          environmentId: target.environmentId,
+                          remoteUrl: addToMachine.remoteUrl,
+                          repositoryTitle: project.repositoryIdentity?.displayName ?? project.title,
+                          repositoryName: getCloneDirectoryName(addToMachine.remoteUrl),
+                          sourceEnvironmentId: project.environmentId,
+                          sourceCwd: project.workspaceRoot,
+                          sourceSubdirectory: projectSubdirectory(
+                            project.repositoryIdentity?.rootPath,
+                            project.workspaceRoot,
+                          ),
+                          ...(flow.draftKey && isNewTaskDraftKey(flow.draftKey)
+                            ? { draftId: flow.draftKey }
+                            : {}),
+                        }),
+                      );
+                    }}
+                  />
+                ))}
+              </PickerSurface>
+            </>
+          ) : null}
         </ScrollView>
       </ScreenContent>
     </View>

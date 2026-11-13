@@ -1,5 +1,8 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
-import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
+import {
+  availableScratchWorkspaceRoot,
+  canCreateProjectInEnvironment,
+} from "@t3tools/client-runtime/operations/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { repositoryGroupingKeyOf, type EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 
@@ -73,6 +76,36 @@ export function resolveNewTaskScratchOption(input: {
     candidates.find((candidate) => candidate.environmentId === input.selectedEnvironmentId) ??
     candidates[0];
   return environment ? { environmentId: environment.environmentId, ready: ready.length > 0 } : null;
+}
+
+/**
+ * Connected machines that can clone the project and do not host it yet, with the
+ * URL to clone. A project without a git remote gets none.
+ */
+export function resolveAddProjectTargets<
+  T extends {
+    readonly environmentId: EnvironmentId;
+    readonly connectionState: EnvironmentConnectionPhase;
+  },
+>(input: {
+  readonly project: EnvironmentProject | null;
+  readonly hostEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly environments: ReadonlyArray<T>;
+  readonly canClone: (environmentId: EnvironmentId) => boolean;
+}): { readonly remoteUrl: string; readonly targets: ReadonlyArray<T> } | null {
+  const identity = input.project?.repositoryIdentity;
+  // The origin remote first, so a fork clones itself rather than its upstream.
+  const remoteUrl = identity?.origin?.remoteUrl ?? identity?.locator.remoteUrl;
+  if (!input.project || !remoteUrl) return null;
+  const sourceEnvironmentId = input.project.environmentId;
+  const targets = input.environments.filter(
+    (environment) =>
+      environment.environmentId !== sourceEnvironmentId &&
+      !input.hostEnvironmentIds.has(environment.environmentId) &&
+      canCreateProjectInEnvironment(environment.connectionState) &&
+      input.canClone(environment.environmentId),
+  );
+  return targets.length > 0 ? { remoteUrl, targets } : null;
 }
 
 export function resolveEnvironmentProjectMatch(

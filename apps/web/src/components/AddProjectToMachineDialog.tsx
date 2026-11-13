@@ -5,6 +5,11 @@ import {
   getCloneDestinationPath,
   getCloneDirectoryPath,
 } from "@t3tools/client-runtime/operations/projects";
+import {
+  COPYABLE_FILE_MAX_BYTES,
+  defaultCopiedFilePaths,
+  projectSubdirectory,
+} from "@t3tools/client-runtime/state/project-file-copy";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import {
   type EnvironmentId,
@@ -25,11 +30,7 @@ import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { useAddProjectTargets } from "../hooks/useAddProjectTargets";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useLogicalProjectEnvironments } from "../hooks/useLogicalProjectEnvironments";
-import {
-  COPYABLE_FILE_MAX_BYTES,
-  addProjectToMachine,
-  isDefaultCopiedFile,
-} from "../lib/addProjectToMachine";
+import { addProjectToMachine } from "../lib/addProjectToMachine";
 import { formatBytes } from "../lib/formatBytes";
 import { newProjectId } from "../lib/utils";
 import { readProject, subscribeProject, useProject } from "../state/entities";
@@ -132,7 +133,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   );
   const files = ignoredFiles.data?.files ?? [];
   const [selected, setSelected] = useState<ReadonlySet<string> | null>(null);
-  const selectedFiles = selected ?? defaultSelection(files);
+  const selectedFiles = selected ?? defaultCopiedFilePaths(files);
   const copyable = files.filter((file) => file.byteLength <= COPYABLE_FILE_MAX_BYTES);
   const selectedBytes = files
     .filter((file) => selectedFiles.has(file.path))
@@ -399,29 +400,6 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
         </form>
       </DialogPopup>
     </Dialog>
-  );
-}
-
-/**
- * A project can be rooted below its repository's top folder. The clone lands
- * at the top, so copied files keep the same path below it.
- */
-function projectSubdirectory(repositoryRoot: string | undefined, workspaceRoot: string) {
-  if (!repositoryRoot) return "";
-  const prefix = repositoryRoot.replace(/[\\/]+$/, "");
-  const rest = workspaceRoot.slice(prefix.length);
-  return workspaceRoot.startsWith(prefix) && /^[\\/]/.test(rest)
-    ? rest.slice(1).replaceAll("\\", "/")
-    : "";
-}
-
-function defaultSelection(files: readonly ProjectIgnoredFile[]): ReadonlySet<string> {
-  return new Set(
-    files
-      .filter(
-        (file) => file.byteLength <= COPYABLE_FILE_MAX_BYTES && isDefaultCopiedFile(file.path),
-      )
-      .map((file) => file.path),
   );
 }
 

@@ -6,6 +6,7 @@ import type { HomeProjectScope } from "../home/homeThreadList";
 import {
   getProjectScopeSelectionTarget,
   newTaskDestination,
+  resolveAddProjectTargets,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
   resolveNewTaskScratchOption,
@@ -115,6 +116,45 @@ describe("resolveEnvironmentProjectMatch", () => {
     const unindexed = makeProject("unindexed", "server", { workspaceRoot: "/srv/t3code" });
     expect(resolveEnvironmentProjectMatch([fork, unindexed], selected)).toBe(unindexed);
     expect(resolveEnvironmentProjectMatch([fork], selected)).toBe(fork);
+  });
+});
+
+describe("resolveAddProjectTargets", () => {
+  const environments = [
+    { environmentId: EnvironmentId.make("mac"), connectionState: "connected" },
+    { environmentId: EnvironmentId.make("server"), connectionState: "connected" },
+    { environmentId: EnvironmentId.make("laptop"), connectionState: "connected" },
+    { environmentId: EnvironmentId.make("asleep"), connectionState: "offline" },
+    { environmentId: EnvironmentId.make("viewer"), connectionState: "connected" },
+  ] as const;
+  const resolve = (project: EnvironmentProject | null) =>
+    resolveAddProjectTargets({
+      project,
+      hostEnvironmentIds: new Set([EnvironmentId.make("mac"), EnvironmentId.make("server")]),
+      environments,
+      canClone: (environmentId) => environmentId !== "viewer",
+    });
+
+  it("offers connected machines that can clone and do not have the project", () => {
+    const project = makeProject("t3code", "mac", { repositoryKey: "github.com/t3tools/t3code" });
+    expect(resolve(project)).toEqual({
+      remoteUrl: "https://github.com/t3tools/t3code.git",
+      targets: [environments[2]],
+    });
+    // A fork clones its own remote, not the upstream it is located by.
+    const fork = {
+      ...project,
+      repositoryIdentity: {
+        ...project.repositoryIdentity!,
+        origin: { canonicalKey: "github.com/me/t3code", remoteUrl: "git@github.com:me/t3code.git" },
+      },
+    };
+    expect(resolve(fork)?.remoteUrl).toBe("git@github.com:me/t3code.git");
+  });
+
+  it("offers nothing for a project without a git remote", () => {
+    expect(resolve(makeProject("scratch", "mac"))).toBeNull();
+    expect(resolve(null)).toBeNull();
   });
 });
 
