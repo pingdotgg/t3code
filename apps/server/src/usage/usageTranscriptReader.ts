@@ -43,6 +43,7 @@ export interface TranscriptParseResult {
 
 export const GUARD_LENGTH = 64;
 const STREAMING_THRESHOLD_BYTES = 8 * 1024 * 1024;
+const READ_CHUNK_BYTES = 256 * 1024;
 const NEWLINE = 0x0a;
 const STAT_CONCURRENCY = 32;
 const WALK_CONCURRENCY = 16;
@@ -168,6 +169,29 @@ async function guardMatches(
   }
 }
 
+/** Plain files reuse one buffer, so a chunk is only valid until the next one is requested. */
+async function* readChunks(
+  handle: NodeFSP.FileHandle,
+  start: number,
+  compressed: boolean,
+): AsyncGenerator<Buffer> {
+  if (compressed) {
+    // Compressed snapshots cache a full parse; decoded byte offsets cannot
+    // resume the compressed input.
+    yield* handle
+      .createReadStream({ start, autoClose: true, highWaterMark: READ_CHUNK_BYTES })
+      .compose(NodeZlib.createZstdDecompress());
+    return;
+  }
+  const buffer = Buffer.allocUnsafe(READ_CHUNK_BYTES);
+  for (let position = start; ;) {
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+    if (bytesRead === 0) return;
+    position += bytesRead;
+    yield buffer.subarray(0, bytesRead);
+  }
+}
+
 // Match markers in one latin1 alternation; one character per byte preserves exact ASCII offsets.
 export function transcriptLineGate(markers: readonly [string, ...string[]]) {
   if (markers.length === 1) {
@@ -244,7 +268,8 @@ export async function readTranscriptRecords<State>(
 
     const append = (segment: Buffer) => {
       if (!streaming && pendingBytes + segment.length <= streamingThresholdBytes) {
-        if (segment.length > 0) pendingChunks.push(segment);
+        // Copy: the next read overwrites the chunk this segment points into.
+        if (segment.length > 0) pendingChunks.push(Buffer.from(segment));
         pendingBytes += segment.length;
         return;
       }
@@ -275,15 +300,7 @@ export async function readTranscriptRecords<State>(
       streaming = undefined;
       decoder = undefined;
     };
-    const input = handle.createReadStream({
-      start,
-      autoClose: compressed,
-      highWaterMark: 256 * 1024,
-    });
-    // Compressed snapshots cache a full parse; decoded byte offsets cannot
-    // resume the compressed input.
-    const stream = compressed ? input.compose(NodeZlib.createZstdDecompress()) : input;
-    for await (const chunk of stream) {
+    for await (const chunk of readChunks(handle, start, compressed)) {
       let lineStart = 0;
       while (lineStart < chunk.length) {
         const newlineIndex = chunk.indexOf(NEWLINE, lineStart);
