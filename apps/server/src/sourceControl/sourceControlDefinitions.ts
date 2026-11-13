@@ -19,3 +19,9 @@ export const BUILT_IN_SOURCE_CONTROL_DRIVER_LIST = [
 ] as const;
 
 export const sourceControlDefinitions = builtInSourceControlDefinitions;
+
+/** A host CLI command that merges or closes a change request, such as `gh pr merge`. */
+export const isChangeRequestCloseCommand = (command: string) =>
+  sourceControlDefinitions.definitions.some(
+    (definition) => definition.changeRequestCloseCommand?.test(command) === true,
+  );
