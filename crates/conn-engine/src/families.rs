@@ -334,7 +334,10 @@ fn deliver(tx: &mut Tx<'_>, thread_id: &str, settled: bool) -> StoreResult<Vec<E
         tx.append(Draft::new(thread_id, "subagent.updated", row).run(run.as_deref()))?;
     }
     let dispatch = commands::handler("message.dispatch").expect("message.dispatch");
-    let command_id = format!("delegated-completion:{first}");
+    // One id per delivery: the ordinal of the run this wake creates is new in the thread, so a
+    // child's second turn never overwrites the parent's first completion message.
+    let ordinal = tx.count(thread_id, "runs")? + 1;
+    let command_id = format!("delegated-completion:{first}:{ordinal}");
     match dispatch(
         tx,
         json!({

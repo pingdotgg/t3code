@@ -18,6 +18,117 @@ const NEWEST_SETTLED_KEPT: usize = 25;
 /// database thread for long.
 const SEARCH_SCAN_LIMIT: i64 = 20_000;
 const SNIPPET_CHARS: usize = 240;
+/// `MESSAGE_CANDIDATE_LIMIT` in `ThreadSearch.ts`: the newest index hits the filters may pass
+/// over, so a common word does not read every hit.
+const SEARCH_CANDIDATE_LIMIT: i64 = 10_000;
+/// `MESSAGE_HIT_LIMIT`: rows read after the filters.
+const SEARCH_HIT_LIMIT: i64 = 2_000;
+/// `MESSAGE_TOKEN_MIN_LENGTH` in `paletteSearch.ts`: a shorter Latin word is noise.
+const MESSAGE_TOKEN_MIN_LENGTH: usize = 3;
+
+/// The filters every search shares, after `hits(rowid)` names the candidate messages, newest
+/// first. `CROSS JOIN` keeps the hits first, so the planner never scans `entities` or
+/// `threads`. Deleted, archived, subagent and side-chat threads drop out before the limit.
+macro_rules! search_sql {
+    ($hits:literal) => {
+        concat!(
+            "WITH hits AS MATERIALIZED (",
+            $hits,
+            ")
+             SELECT k.thread_id,
+                    json_object('projectId', json_extract(t.shell, '$.projectId'),
+                                'message', json(e.body))
+             FROM hits h
+             CROSS JOIN message_keys k ON k.id = h.rowid
+             CROSS JOIN threads t ON t.id = k.thread_id
+             CROSS JOIN entities e
+               ON e.thread_id = k.thread_id AND e.kind = 'messages' AND e.id = k.message_id
+             WHERE t.deleted = 0 AND t.shell IS NOT NULL
+               AND json_extract(t.shell, '$.archivedAt') IS NULL
+               AND json_extract(t.shell, '$.lineage.relationshipToParent') IS NOT 'subagent'
+               AND json_extract(t.shell, '$.lineage.sideChat') IS NOT 1
+               AND k.message_id NOT LIKE 'async-answer:%'
+               AND NOT EXISTS (
+                 SELECT 1 FROM json_each(?2) AS token
+                 WHERE instr(lower(COALESCE(json_extract(e.body, '$.text'), '')), token.value) = 0
+               )
+             ORDER BY h.rowid DESC
+             LIMIT ?5"
+        )
+    };
+}
+
+/// Long words that are all three characters or more: the trigram index answers `MATCH`.
+const SEARCH_INDEXED_SQL: &str = search_sql!(
+    "SELECT rowid FROM message_search WHERE message_search MATCH ?1
+     ORDER BY rowid DESC LIMIT ?3"
+);
+/// A two-character CJK word is too short for trigrams: scan the newest indexed messages.
+/// `?1` is unused here and bound as NULL.
+const SEARCH_SCAN_SQL: &str =
+    search_sql!("SELECT id AS rowid FROM message_keys WHERE ?1 IS NULL ORDER BY id DESC LIMIT ?4");
+
+/// The SQL inputs of one message search (`buildMessageSearch` in `ThreadSearch.ts`).
+struct MessageSearch {
+    /// Quoted long words for FTS5 `MATCH`, or `None` when the index cannot serve them.
+    fts_match: Option<String>,
+    /// Lowercase words each hit must contain as a substring.
+    substrings: Vec<String>,
+    /// The word the snippet centres on.
+    needle: String,
+}
+
+impl MessageSearch {
+    /// `None` when the query has no word long enough to search (`messageSearchTokens`).
+    fn new(query: &str) -> Option<Self> {
+        let quotes: &[char] = &[
+            '"', '\'', '`', '\u{201c}', '\u{201d}', '\u{2018}', '\u{2019}',
+        ];
+        let query = query
+            .trim()
+            .trim_matches(quotes)
+            .replace(['\u{2018}', '\u{2019}'], "'")
+            .to_lowercase();
+        let (long, short): (Vec<&str>, Vec<&str>) = query
+            .split_whitespace()
+            .partition(|token| searchable(token));
+        let needle = (*long.first()?).to_owned();
+        let indexed = long
+            .iter()
+            .all(|token| token.chars().count() >= MESSAGE_TOKEN_MIN_LENGTH);
+        let fts_match = indexed.then(|| {
+            long.iter()
+                .map(|token| format!("\"{}\"", token.replace('"', "\"\"")))
+                .collect::<Vec<_>>()
+                .join(" ")
+        });
+        let mut substrings: Vec<String> = if indexed {
+            vec![]
+        } else {
+            long.iter().map(|t| (*t).to_owned()).collect()
+        };
+        substrings.extend(short.iter().map(|t| (*t).to_owned()));
+        Some(Self {
+            fts_match,
+            substrings,
+            needle,
+        })
+    }
+}
+
+/// Three characters or more, or two when one is a CJK word character.
+fn searchable(token: &str) -> bool {
+    let length = token.chars().count();
+    length >= MESSAGE_TOKEN_MIN_LENGTH || (length == 2 && token.chars().any(is_cjk_word))
+}
+
+/// `hasCjkWord` in `paletteSearch.ts`: kana, CJK ideographs and Hangul syllables.
+fn is_cjk_word(c: char) -> bool {
+    matches!(
+        u32::from(c),
+        0x3040..=0x30ff | 0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xf900..=0xfaff | 0xac00..=0xd7af
+    )
+}
 
 fn listed(row: &Value) -> bool {
     row["lineage"]["relationshipToParent"] != "subagent" && row["lineage"]["sideChat"] != true
@@ -272,68 +383,53 @@ impl Store {
             .next())
     }
 
-    /// `searchThreads`: newest messages whose text contains the query (case-insensitive), one
-    /// match per thread, newest first. Titles are the client's to match.
+    /// `searchThreads`: the newest message of each thread that holds every search word, newest
+    /// first, as `ThreadSearch.ts`. Titles are the client's to match.
     pub(crate) fn search_threads(&self, input: &Value) -> StoreResult<Value> {
-        let query = input["query"]
-            .as_str()
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
         let limit = input["limit"].as_u64().unwrap_or(20).clamp(1, 50) as usize;
-        let needle = query.to_lowercase();
-        let shells: Vec<Value> = self
-            .shell_rows()?
-            .into_iter()
-            .filter(|row| row["archivedAt"].is_null() && listed(row))
-            .collect();
-        let project_of = |thread_id: &str| {
-            shells
-                .iter()
-                .find(|row| row["id"] == thread_id)
-                .map(|row| row["projectId"].clone())
-        };
         let mut matches: Vec<Value> = Vec::new();
+        // Messages only: the client matches titles itself, and `titlesOnly` asks for no message
+        // search at all. A query with no long word searches no messages (`buildMessageSearch`).
+        let Some(search) = (input["titlesOnly"] != true)
+            .then(|| MessageSearch::new(input["query"].as_str().unwrap_or_default()))
+            .flatten()
+        else {
+            return Ok(json!({"matches": matches}));
+        };
+        let sql = match search.fts_match {
+            Some(_) => SEARCH_INDEXED_SQL,
+            None => SEARCH_SCAN_SQL,
+        };
+        let substrings = json!(search.substrings).to_string();
+        let rows = self.query_rows(
+            sql,
+            params![
+                search.fts_match,
+                substrings,
+                SEARCH_CANDIDATE_LIMIT,
+                SEARCH_SCAN_LIMIT,
+                SEARCH_HIT_LIMIT
+            ],
+        )?;
         let mut seen: Vec<String> = Vec::new();
-        // Messages only, as `ThreadSearch.ts`: the client matches titles itself, and
-        // `titlesOnly` asks for no message search at all.
-        if input["titlesOnly"] != true {
-            let pattern = format!("%{}%", query.replace('%', "\\%").replace('_', "\\_"));
-            // Trigram FTS answers LIKE for three or more characters; shorter queries scan the
-            // newest messages only.
-            let sql = if query.chars().count() >= 3 {
-                "SELECT k.thread_id, e.body FROM message_search s
-                 JOIN message_keys k ON k.id = s.rowid
-                 JOIN entities e ON e.thread_id = k.thread_id AND e.kind = 'messages' AND e.id = k.message_id
-                 WHERE s.text LIKE ?1 ESCAPE '\\' ORDER BY e.seq DESC LIMIT ?2"
-            } else {
-                "SELECT thread_id, body FROM (
-                   SELECT thread_id, body, seq FROM entities WHERE kind = 'messages'
-                   ORDER BY seq DESC LIMIT ?2)
-                 WHERE json_extract(body, '$.text') LIKE ?1 ESCAPE '\\' ORDER BY seq DESC"
-            };
-            let rows = self.query_rows(sql, params![pattern, SEARCH_SCAN_LIMIT])?;
-            for (thread_id, message) in rows {
-                if matches.len() >= limit {
-                    break;
-                }
-                if seen.contains(&thread_id) {
-                    continue;
-                }
-                let Some(project_id) = project_of(&thread_id) else {
-                    continue;
-                };
-                let text = message["text"].as_str().unwrap_or_default();
-                matches.push(json!({
-                    "threadId": thread_id,
-                    "projectId": project_id,
-                    "source": if message["role"] == "user" { "user" } else { "assistant" },
-                    "snippet": snippet(text, &needle),
-                    "messageCreatedAt": message["createdAt"],
-                    "messageId": message["id"],
-                }));
-                seen.push(thread_id);
+        for (thread_id, hit) in rows {
+            if matches.len() >= limit {
+                break;
             }
+            if seen.contains(&thread_id) {
+                continue;
+            }
+            let message = &hit["message"];
+            let text = message["text"].as_str().unwrap_or_default();
+            matches.push(json!({
+                "threadId": thread_id,
+                "projectId": hit["projectId"],
+                "source": if message["role"] == "user" { "user" } else { "assistant" },
+                "snippet": snippet(text, &search.needle),
+                "messageCreatedAt": message["createdAt"],
+                "messageId": message["id"],
+            }));
+            seen.push(thread_id);
         }
         Ok(json!({"matches": matches}))
     }
@@ -442,19 +538,129 @@ fn count_occurrences(text: &str, needle: &str) -> u64 {
 }
 
 /// Up to 240 characters around the first match.
+///
+/// Lowercasing can make a character longer (`İ` becomes two characters), so the match is found
+/// in a lowercase copy that records, for each of its bytes, the original character it came from.
 fn snippet(text: &str, needle: &str) -> String {
-    let lower = text.to_lowercase();
-    let chars: Vec<char> = text.chars().collect();
+    let mut lower = String::with_capacity(text.len());
+    let mut origin: Vec<usize> = Vec::with_capacity(text.len());
+    for (index, c) in text.chars().enumerate() {
+        let before = lower.len();
+        lower.extend(c.to_lowercase());
+        origin.resize(origin.len() + (lower.len() - before), index);
+    }
     let at = lower
         .find(needle)
-        .map(|byte| lower[..byte].chars().count())
+        .and_then(|byte| origin.get(byte).copied())
         .unwrap_or(0);
     let start = at.saturating_sub(SNIPPET_CHARS / 3);
-    chars[start..]
-        .iter()
+    text.chars()
+        .skip(start)
         .take(SNIPPET_CHARS)
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `İ` (U+0130) lowercases to two characters, so a lowercase index is not an index into
+    /// the original text. Before the fix this panicked (`range start index 320 out of range`).
+    #[test]
+    fn snippet_survives_lowercase_expansion() {
+        let text = format!("{}abc tail", "İ".repeat(200));
+        let got = snippet(&text, "abc");
+        assert!(got.contains("abc tail"), "{got}");
+        assert!(got.starts_with('İ'), "{got}");
+        // The match sits 80 characters into the snippet, as for plain text.
+        assert_eq!(got.chars().position(|c| c == 'a'), Some(SNIPPET_CHARS / 3));
+    }
+
+    fn plan(sql: &str, fts: Option<&str>) -> Vec<String> {
+        let dir = std::env::temp_dir().join(format!(
+            "conn-engine-{}-plan-{}",
+            std::process::id(),
+            fts.is_some()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let store = Store::open(&dir.join("engine.sqlite")).unwrap();
+        let plan = store.query_plan(
+            sql,
+            params![
+                fts,
+                "[]",
+                SEARCH_CANDIDATE_LIMIT,
+                SEARCH_SCAN_LIMIT,
+                SEARCH_HIT_LIMIT
+            ],
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        plan
+    }
+
+    /// The bundled SQLite reads the trigram index through `MATCH` (an `M` plan, not the full
+    /// `INDEX 0:` scan that `LIKE ... ESCAPE` gave), and every join after it is a key lookup.
+    #[test]
+    fn search_reads_the_index_first_and_never_scans_the_store() {
+        let indexed = plan(SEARCH_INDEXED_SQL, Some("\"abc\""));
+        println!(
+            "indexed plan ({}):\n{}",
+            rusqlite::version(),
+            indexed.join("\n")
+        );
+        assert!(
+            indexed.iter().any(
+                |step| step.starts_with("SCAN message_search VIRTUAL TABLE INDEX")
+                    && step.contains(":M")
+            ),
+            "{indexed:?}"
+        );
+        let scan = plan(SEARCH_SCAN_SQL, None);
+        println!("scan plan:\n{}", scan.join("\n"));
+        for steps in [&indexed, &scan] {
+            assert!(
+                steps.iter().any(|s| s == "SCAN h"),
+                "hits come first: {steps:?}"
+            );
+            assert!(
+                !steps
+                    .iter()
+                    .any(|s| ["SCAN e", "SCAN t", "SCAN k", "SCAN entities"]
+                        .iter()
+                        .any(|table| s == table || s.starts_with(&format!("{table} ")))),
+                "{steps:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn short_words_follow_message_search_tokens() {
+        assert!(MessageSearch::new("ch").is_none());
+        assert!(MessageSearch::new("  ").is_none());
+        // Quotes around the whole query go, as `WRAPPING_QUOTES`.
+        let s = MessageSearch::new("“Snake_case is”").unwrap();
+        assert_eq!(s.fts_match.as_deref(), Some("\"snake_case\""));
+        assert_eq!(s.substrings, ["is"]);
+        let s = MessageSearch::new("東京 say\"x").unwrap();
+        assert_eq!(
+            s.fts_match, None,
+            "two CJK characters are too short for trigrams"
+        );
+        assert_eq!(s.substrings, ["東京", "say\"x"]);
+        let s = MessageSearch::new("a\"bc").unwrap();
+        assert_eq!(s.fts_match.as_deref(), Some("\"a\"\"bc\""));
+    }
+
+    #[test]
+    fn snippet_handles_every_expanding_position() {
+        for before in 0..300 {
+            let text = format!("{}needle{}", "İ".repeat(before), "İ".repeat(before));
+            assert!(snippet(&text, "needle").contains("needle"));
+            assert!(snippet(&text, "absent").chars().count() <= SNIPPET_CHARS);
+            assert_eq!(count_occurrences(&text, "needle"), 1);
+        }
+    }
 }

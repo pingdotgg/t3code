@@ -6,7 +6,7 @@
 //! When the turn ends, every row gets a final version and the streaming versions leave the log.
 
 use std::{
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, atomic::Ordering},
     time::Duration,
 };
 
@@ -29,6 +29,8 @@ use crate::store::Draft;
 /// A thread whose provider session is open.
 pub(crate) struct LiveThread {
     session: Arc<dyn Session>,
+    /// The provider instance the session belongs to. A run on another instance reopens.
+    instance: String,
     state: Mutex<LiveState>,
     /// When the session last did anything; the idle reaper closes it after `idle_session`.
     last_used: Mutex<Instant>,
@@ -199,9 +201,37 @@ impl Inner {
                         .as_str()
                         .or_else(|| project.as_ref().and_then(|p| p["workspaceRoot"].as_str()))
                         .map(str::to_owned);
-                    let provider_thread = match thread["activeProviderThreadId"].as_str() {
-                        Some(id) => tx.entity(&tid, "providerThreads", id)?,
+                    let instance = run["providerInstanceId"].as_str().unwrap_or_default();
+                    let same_instance =
+                        |pt: &Value| pt["providerInstanceId"].as_str() == Some(instance);
+                    // Never resume a provider thread of another instance. Without an active one
+                    // of this instance, take its newest root thread (`rootProviderThreadsForProvider`).
+                    let active = match thread["activeProviderThreadId"].as_str() {
+                        Some(id) => tx
+                            .entity(&tid, "providerThreads", id)?
+                            .filter(|pt| same_instance(pt)),
                         None => None,
+                    };
+                    let provider_thread = match active {
+                        Some(pt) => Some(pt),
+                        None => tx
+                            .entities_where(
+                                &tid,
+                                "providerThreads",
+                                "providerInstanceId",
+                                instance,
+                            )?
+                            .into_iter()
+                            .filter(|pt| {
+                                pt["ownerNodeId"].is_null()
+                                    && pt["appThreadId"].as_str().is_none_or(|a| a == tid)
+                            })
+                            .max_by_key(|pt| {
+                                (
+                                    pt["lastRunOrdinal"].as_u64().unwrap_or(0),
+                                    pt["updatedAt"].as_str().unwrap_or_default().to_owned(),
+                                )
+                            }),
                     };
                     Ok(Some(TurnContext {
                         thread,
@@ -231,17 +261,30 @@ impl Inner {
         }))
         .map_err(|e| e.to_string())?;
 
+        let instance = context.run["providerInstanceId"]
+            .as_str()
+            .unwrap_or_default();
+        // A live session of another instance closes; the run opens one on its own instance.
+        if let Some(live) = self.live_thread(thread_id)
+            && live.instance != instance
+        {
+            self.close_session(thread_id).await;
+        }
         let live = match self.live_thread(thread_id) {
             Some(live) => live,
+            // The run stays `starting`; the next server start picks it up (`restart.rs`).
+            None if self.shutting_down() => return Err(StartError::Abandoned),
             None => {
-                let instance = context.run["providerInstanceId"]
-                    .as_str()
-                    .unwrap_or_default();
+                // Only a run that names no instance may go to the one configured provider.
                 let provider = self
                     .providers
                     .iter()
                     .find(|p| p.instance_id().as_str() == instance)
-                    .or_else(|| (self.providers.len() == 1).then(|| &self.providers[0]))
+                    .or_else(|| {
+                        (instance.is_empty() && self.providers.len() == 1)
+                            .then(|| self.providers.first())
+                            .flatten()
+                    })
                     .cloned()
                     .ok_or_else(|| {
                         format!("No provider instance `{instance}` is configured on this server.")
@@ -274,20 +317,36 @@ impl Inner {
                 {
                     eprintln!("conn-engine: the provider takes no MCP servers: {e}");
                 }
-                let live = Arc::new(LiveThread {
-                    session,
-                    state: Mutex::new(LiveState::default()),
-                    last_used: Mutex::new(Instant::now()),
-                    closed: tokio::sync::Notify::new(),
-                    held_since: Mutex::new(None),
-                    tools_key: tools.map(|t| t.key),
-                });
-                lock(&self.live).insert(thread_id.to_owned(), live.clone());
-                tokio::spawn(
-                    self.clone()
-                        .pump(thread_id.to_owned(), live.clone(), opened.events),
-                );
-                live
+                // `open_session` and `set_mcp_servers` must not yield before the session is in
+                // `live`: on the one runtime thread, nothing else can then open a session for
+                // this thread or begin shutdown in between. Check again anyway, so a provider
+                // that does yield never leaks a session or overwrites one.
+                let raced = self.live_thread(thread_id);
+                if raced.is_some() || self.shutting_down() {
+                    self.revoke_tools(tools.as_ref().map(|t| t.key.as_str()));
+                    session.close().await;
+                    match raced {
+                        Some(live) if !self.shutting_down() && live.instance == instance => live,
+                        _ => return Err(StartError::Abandoned),
+                    }
+                } else {
+                    let live = Arc::new(LiveThread {
+                        session,
+                        instance: instance.to_owned(),
+                        state: Mutex::new(LiveState::default()),
+                        last_used: Mutex::new(Instant::now()),
+                        closed: tokio::sync::Notify::new(),
+                        held_since: Mutex::new(None),
+                        tools_key: tools.map(|t| t.key),
+                    });
+                    lock(&self.live).insert(thread_id.to_owned(), live.clone());
+                    tokio::spawn(self.clone().pump(
+                        thread_id.to_owned(),
+                        live.clone(),
+                        opened.events,
+                    ));
+                    live
+                }
             }
         };
 
@@ -333,6 +392,9 @@ impl Inner {
 
         let attempt_id = format!("{run_id}:attempt:1");
         let mut provider_thread_json = to_json(&provider_thread);
+        if provider_thread_json.is_object() {
+            provider_thread_json["providerInstanceId"] = json!(instance);
+        }
         if provider_thread_json
             .get("appThreadId")
             .is_none_or(Value::is_null)
@@ -479,9 +541,44 @@ impl Inner {
             };
             let Some(event) = event else { break };
             live.touch();
+            // Live command output goes to the hub, not the store.
+            if let ProviderEvent::CommandOutputDelta {
+                thread_id: output_thread,
+                item_id,
+                chunk,
+            } = &event
+            {
+                self.command_output
+                    .append(output_thread.as_str(), item_id.as_str(), chunk);
+                continue;
+            }
             let active = live.active();
             let run_id = active.as_ref().map(|a| a.run_id.clone());
-            match translate(&thread_id, active.as_ref(), event) {
+            let mut translated = translate(&thread_id, active.as_ref(), event);
+            // A session belongs to one instance, so its provider threads do too. The engine sets
+            // it, as `Orchestrator.ts` builds provider threads from the run's instance.
+            if let Translated::Event(draft) = &mut translated
+                && draft.event_type == "provider-thread.updated"
+                && draft.payload.is_object()
+            {
+                draft.payload["providerInstanceId"] = json!(live.instance);
+            }
+            // A settled command's stored item has its output; its live tail goes.
+            if let Translated::Event(draft) = &translated
+                && draft.event_type == "turn-item.updated"
+                && draft.payload["type"] == "command_execution"
+                && !matches!(
+                    draft.payload["status"].as_str(),
+                    Some("running" | "pending" | "waiting")
+                )
+                && let Some(item_id) = draft.payload["id"].as_str()
+            {
+                self.command_output.finish(&draft.thread_id, item_id);
+            }
+            if matches!(translated, Translated::Terminal(..)) {
+                self.command_output.finish_thread(&thread_id);
+            }
+            match translated {
                 Translated::Ignore => {}
                 Translated::ProviderTurn(id, draft) => {
                     if let Some(active) = lock(&live.state).active.as_mut() {
@@ -955,18 +1052,33 @@ impl Inner {
         }
     }
 
-    /// Closes every provider session, ending its process and what the process started. The
-    /// server calls this before it exits.
+    /// Closes every provider session, side by side, ending its process and what the process
+    /// started. The server calls this before it exits. No session opens after it began.
     pub(crate) async fn close_all_sessions(&self) {
-        let threads: Vec<String> = lock(&self.live).keys().cloned().collect();
-        for thread_id in threads {
-            self.close_session(&thread_id).await;
+        self.shutting_down.store(true, Ordering::SeqCst);
+        let closing: Vec<(String, Arc<LiveThread>)> = lock(&self.live).drain().collect();
+        let mut closes = Vec::with_capacity(closing.len());
+        for (thread_id, live) in closing {
+            self.command_output.finish_thread(&thread_id);
+            self.revoke_tools(live.tools_key.as_deref());
+            closes.push(tokio::spawn(async move {
+                live.session.close().await;
+                live.closed.notify_one();
+            }));
         }
+        for close in closes {
+            let _ = close.await;
+        }
+    }
+
+    fn shutting_down(&self) -> bool {
+        self.shutting_down.load(Ordering::SeqCst)
     }
 
     pub(crate) async fn close_session(&self, thread_id: &str) {
         let live = lock(&self.live).remove(thread_id);
         if let Some(live) = live {
+            self.command_output.finish_thread(thread_id);
             self.revoke_tools(live.tools_key.as_deref());
             live.session.close().await;
             // `notify_one` keeps a permit, so a pump not yet waiting still sees it.
@@ -1069,7 +1181,7 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
         ProviderEvent::PlanUpdated { plan } => {
             Translated::Event(scoped("plan.updated", to_json(&plan)))
         }
-        // Live command output goes to `subscribeCommandOutput`, which this engine lacks.
+        // The pump sends live command output to the hub before it translates.
         ProviderEvent::CommandOutputDelta { .. } => Translated::Ignore,
         ProviderEvent::TurnTerminal(terminal) => {
             let status = status_name(terminal.status);

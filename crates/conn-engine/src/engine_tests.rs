@@ -1085,70 +1085,12 @@ async fn scratch_and_new_projects_get_folders_under_home() {
     );
 }
 
-/// Every `type` of `OrchestrationV2Command` at the pinned contract.
-const CONTRACT_COMMANDS: [&str; 56] = [
-    "thread.stop",
-    "thread.create",
-    "thread.archive",
-    "thread.guest-share.close",
-    "thread.guest-message.dismiss",
-    "thread.unarchive",
-    "thread.delete",
-    "thread.settle",
-    "thread.auto-settle",
-    "thread.unsettle",
-    "thread.snooze",
-    "thread.unsnooze",
-    "thread.auto-settle.set",
-    "thread.pin",
-    "thread.unpin",
-    "thread.tag.set",
-    "thread.pin.reorder",
-    "thread.active.reorder",
-    "thread.visit",
-    "thread.mark-unread",
-    "thread.metadata.update",
-    "thread.pull-request.link",
-    "thread.pull-request.unlink",
-    "thread.pull-request-link.sync",
-    "thread.pull-request.watch",
-    "thread.pull-request.sync",
-    "thread.title.regeneration.complete",
-    "thread.runtime-mode.set",
-    "thread.interaction-mode.set",
-    "thread.model-selection.set",
-    "provider-session.detach",
-    "message.dispatch",
-    "prepared-run.release",
-    "notification.delivery.accept",
-    "prepared-run.progress",
-    "prepared-run.fail",
-    "prepared-run.retry",
-    "subagent.stop",
-    "run.interrupt",
-    "queued-message.promote-to-steer",
-    "queue.resume",
-    "queued-run.start",
-    "queued-run.reorder",
-    "queued-run.cancel",
-    "queued-run.edit",
-    "runtime-request.respond",
-    "thread.user-input.dismiss",
-    "checkpoint.rollback",
-    "thread.fork",
-    "thread.merge_back",
-    "delegated_task.request",
-    "delegated_task.wake-policy",
-    "delegated_task.completion-delivery.acknowledge",
-    "delegated_task.completion-delivery.dispose",
-    "thread.created.record",
-    "provider.switch",
-];
-
 #[test]
 fn every_contract_command_is_handled_or_refused_with_a_reason() {
+    // Generated from the pinned contract, so a new command fails this test until it is handled
+    // or refused with a reason.
     let mut handled = 0;
-    for command in CONTRACT_COMMANDS {
+    for command in conn_contract::COMMAND_TYPES.iter().copied() {
         if crate::commands::handler(command).is_some() {
             handled += 1;
         } else {
@@ -1160,6 +1102,7 @@ fn every_contract_command_is_handled_or_refused_with_a_reason() {
         }
     }
     assert_eq!(handled, 41);
+    assert_eq!(conn_contract::COMMAND_TYPES.len(), 56);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1420,7 +1363,7 @@ async fn orchestration_reads_answer_from_the_store() {
     .unwrap();
     assert_eq!(item["item"]["type"], "user_message");
 
-    // Search: messages only (titles are the client's), FTS for 3+ characters, a scan for two.
+    // Search: messages only (titles are the client's), through the trigram index.
     let found = call(
         &engine,
         "orchestration.searchThreads",
@@ -1445,6 +1388,7 @@ async fn orchestration_reads_answer_from_the_store() {
             .unwrap()
             .contains("Unicode quotes")
     );
+    // A two-letter Latin word searches nothing, as `messageSearchTokens` (`paletteSearch.ts`).
     let found = call(
         &engine,
         "orchestration.searchThreads",
@@ -1452,7 +1396,7 @@ async fn orchestration_reads_answer_from_the_store() {
     )
     .await
     .unwrap();
-    assert_eq!(found["matches"].as_array().unwrap().len(), 1);
+    assert_eq!(found["matches"], json!([]));
 
     // In-thread find: "the" once in the user message, once in its echo.
     let find = call(
@@ -2295,4 +2239,418 @@ async fn the_host_grants_tools_claims_attachments_and_hears_closes() {
         ]
     );
     assert_eq!(*host.revoked.lock().unwrap(), ["key:t1"]);
+}
+
+/// Two fake providers, `claudeAgent` and `codex`, as a server with both configured.
+fn open_two(db: &TempDb) -> (SqliteEngine, Arc<FakeProvider>, Arc<FakeProvider>) {
+    let claude = Arc::new(FakeProvider::new("claudeAgent"));
+    let codex = Arc::new(FakeProvider::new("codex"));
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![claude.clone(), codex.clone()];
+    config.stream_flush = Duration::from_millis(20);
+    (SqliteEngine::open(config).unwrap(), claude, codex)
+}
+
+fn count(n: &std::sync::atomic::AtomicUsize) -> usize {
+    n.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+fn model_selection_set(command: &str, instance: &str) -> Value {
+    json!({
+        "type": "thread.model-selection.set", "commandId": command, "threadId": "t1",
+        "modelSelection": {"instanceId": instance, "model": "m"},
+    })
+}
+
+/// `thread.model-selection.set` to another instance is a provider switch, as in
+/// `Orchestrator.ts`: refused while a run is active, `thread.provider-switched`, the old session
+/// closes, and the next turn runs on the new provider in its own provider thread.
+#[tokio::test(flavor = "current_thread")]
+async fn a_model_selection_on_another_instance_switches_the_provider() {
+    let db = TempDb::new("switch-selection");
+    let (engine, claude, codex) = open_two(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let busy = engine
+        .dispatch(from_json(model_selection_set("c3", "codex")).unwrap())
+        .await;
+    assert!(
+        matches!(busy, Err(EngineError::Rejected(_))),
+        "a busy thread keeps its provider"
+    );
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "c4", "threadId": "t1"}),
+    )
+    .await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+
+    // A model change on the same instance stays a model change.
+    dispatch(&engine, model_selection_set("c5", "claudeAgent")).await;
+    assert_eq!(count(&claude.closed), 0);
+
+    dispatch(&engine, model_selection_set("c6", "codex")).await;
+    let mut switched = None;
+    while switched.is_none() {
+        let item = next(&mut thread).await;
+        let ty = item["event"]["type"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        if ty.starts_with("thread.") && item["event"]["payload"]["providerInstanceId"] == "codex" {
+            switched = Some((ty, item["event"]["payload"].clone()));
+        }
+    }
+    let (ty, payload) = switched.unwrap();
+    assert_eq!(ty, "thread.provider-switched");
+    assert_eq!(payload["activeProviderThreadId"], Value::Null);
+    assert_eq!(count(&claude.closed), 1, "the old session closes");
+
+    dispatch(&engine, message("t1", "c7", "hi")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(p["runs"][1]["status"], "completed");
+    assert_eq!(p["runs"][1]["providerInstanceId"], "codex");
+    assert_eq!(p["runs"][1]["providerThreadId"], "provider-thread:codex:t1");
+    assert_eq!((count(&claude.sessions), count(&codex.sessions)), (1, 1));
+}
+
+/// A `message.dispatch` that names another instance runs there: the live session of the other
+/// instance closes, and a provider thread of the other instance is never resumed. Going back
+/// resumes the first instance's own provider thread (`rootProviderThreadsForProvider`).
+#[tokio::test(flavor = "current_thread")]
+async fn a_dispatch_on_another_instance_runs_on_that_provider() {
+    let db = TempDb::new("switch-dispatch");
+    let (engine, claude, codex) = open_two(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "hi")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+
+    let mut on_codex = message("t1", "c3", "hi");
+    on_codex["modelSelection"] = json!({"instanceId": "codex", "model": "gpt"});
+    dispatch(&engine, on_codex).await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(p["runs"][1]["status"], "completed");
+    assert_eq!(p["runs"][1]["providerThreadId"], "provider-thread:codex:t1");
+    assert_eq!((count(&claude.sessions), count(&codex.sessions)), (1, 1));
+    assert_eq!(count(&claude.closed), 1);
+
+    let mut back = message("t1", "c4", "hi");
+    back["modelSelection"] = json!({"instanceId": "claudeAgent", "model": "m"});
+    dispatch(&engine, back).await;
+    let p = run_to_end(&engine, "t1", "run:t1:3").await;
+    assert_eq!(p["runs"][2]["status"], "completed");
+    assert_eq!(p["runs"][2]["providerThreadId"], "provider-thread:t1");
+    assert_eq!((count(&claude.sessions), count(&codex.sessions)), (2, 1));
+    assert_eq!(count(&codex.closed), 1);
+}
+
+/// An instance the server does not have fails the run; it never goes to another provider.
+#[tokio::test(flavor = "current_thread")]
+async fn an_unknown_instance_fails_the_run_even_with_one_provider() {
+    let db = TempDb::new("unknown-instance");
+    let (engine, provider) = open(&db);
+    let mut c = create("t1", "c1");
+    c["modelSelection"] = json!({"instanceId": "codex", "model": "gpt"});
+    dispatch(&engine, c).await;
+    dispatch(&engine, message("t1", "c2", "hi")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(p["runs"][0]["status"], "failed");
+    assert_eq!(count(&provider.sessions), 0);
+}
+
+/// A child's second turn wakes the parent with a new message. Before the fix the wake reused
+/// the command and message id, so it overwrote the first result and two queued runs shared it.
+#[tokio::test(flavor = "current_thread")]
+async fn each_delegated_completion_wakes_with_its_own_message() {
+    let db = TempDb::new("delegate-twice");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+
+    dispatch(&engine, delegate("d1", "look", Some("always"))).await;
+    let child = "thread:delegated-task:d1";
+    run_to_end(&engine, child, &format!("run:{child}:1")).await;
+    dispatch(&engine, message(child, "c3", "again")).await;
+    run_to_end(&engine, child, &format!("run:{child}:2")).await;
+
+    let parent = projection(&engine, "t1").await;
+    let wakes: Vec<(String, String)> = parent["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["createdBy"] == "agent" && m["role"] == "user")
+        .map(|m| {
+            (
+                m["id"].as_str().unwrap().to_owned(),
+                m["text"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(wakes.len(), 2, "{wakes:?}");
+    assert!(wakes[0].1.contains("echo: look"), "{wakes:?}");
+    assert!(wakes[1].1.contains("echo: again"), "{wakes:?}");
+    let users: Vec<_> = parent["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .skip(1)
+        .map(|r| r["userMessageId"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(users, [wakes[0].0.clone(), wakes[1].0.clone()]);
+}
+
+async fn search(engine: &SqliteEngine, query: &str) -> Vec<String> {
+    let found = call(
+        engine,
+        "orchestration.searchThreads",
+        json!({"query": query}),
+    )
+    .await
+    .unwrap();
+    found["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["threadId"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// Search follows `ThreadSearch.ts`: every long word must match, `%` and `_` are plain
+/// characters, short words narrow, two CJK characters count as a word, and deleted or
+/// archived threads drop out in SQL.
+#[tokio::test(flavor = "current_thread")]
+async fn search_matches_words_and_skips_hidden_threads() {
+    let db = TempDb::new("search-words");
+    let (engine, _) = open(&db);
+    for (thread, text) in [
+        ("t1", "rate is 100% for snake_case names"),
+        ("t2", "rate is 100 for snakeXcase names"),
+        ("t3", "東京 weather report"),
+        ("t4", "deleted thread mentions zebra"),
+        ("t5", "archived thread mentions zebra"),
+    ] {
+        dispatch(&engine, create(thread, &format!("{thread}:c1"))).await;
+        dispatch(&engine, message(thread, &format!("{thread}:c2"), text)).await;
+        run_to_end(&engine, thread, &format!("run:{thread}:1")).await;
+    }
+    assert_eq!(search(&engine, "100%").await, ["t1"]);
+    assert_eq!(search(&engine, "snake_case").await, ["t1"]);
+    assert_eq!(search(&engine, "SNAKE_CASE names").await, ["t1"]);
+    assert_eq!(search(&engine, "names rate").await.len(), 2);
+    assert_eq!(search(&engine, "\"names\"").await.len(), 2);
+    // A short word only narrows the hits of the long ones.
+    assert_eq!(search(&engine, "names is").await.len(), 2);
+    assert_eq!(search(&engine, "names zz").await, Vec::<String>::new());
+    assert_eq!(search(&engine, "東京").await, ["t3"]);
+    assert_eq!(search(&engine, "zebra").await.len(), 2);
+    dispatch(
+        &engine,
+        json!({"type": "thread.delete", "commandId": "t4:c3", "threadId": "t4"}),
+    )
+    .await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.archive", "commandId": "t5:c3", "threadId": "t5"}),
+    )
+    .await;
+    assert_eq!(search(&engine, "zebra").await, Vec::<String>::new());
+}
+
+/// Codex streams command output as `command_output.delta`. It reaches
+/// `subscribeCommandOutput` live through the bounded hub, and the hub forgets the command when
+/// its run ends.
+#[tokio::test(flavor = "current_thread")]
+async fn live_command_output_reaches_subscribers() {
+    let db = TempDb::new("live-output");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "command")).await;
+    let item_id = "turn-item:cmd:run:t1:1";
+    loop {
+        let item = next(&mut thread).await;
+        if item["event"]["type"] == "turn-item.updated" && item["event"]["payload"]["id"] == item_id
+        {
+            break;
+        }
+    }
+    let mut output = engine
+        .open_stream(
+            "orchestration.subscribeCommandOutput",
+            json!({"threadId": "t1", "itemId": item_id}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        frame(&mut output).await,
+        json!({"kind": "replace", "text": "a\nb\n", "truncated": false, "running": true})
+    );
+    let hub = &engine.inner().command_output;
+    hub.append("t1", item_id, "c\n");
+    assert_eq!(
+        frame(&mut output).await,
+        json!({"kind": "append", "text": "c\n", "truncated": false, "running": true})
+    );
+    assert_eq!(hub.len(), 1);
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "c3", "threadId": "t1"}),
+    )
+    .await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(
+        hub.len(),
+        0,
+        "the hub drops a thread's commands when its run ends"
+    );
+}
+
+fn snooze(command: &str, thread: &str, until: &str) -> Value {
+    json!({"type": "thread.snooze", "commandId": command, "threadId": thread, "snoozedUntil": until})
+}
+
+async fn refused(engine: &SqliteEngine, command: Value) -> String {
+    match engine.dispatch(from_json(command).unwrap()).await {
+        Err(EngineError::Rejected(e)) => to_json(&e)["message"].as_str().unwrap_or("").to_owned(),
+        Ok(_) => panic!("expected a refusal"),
+        Err(EngineError::Internal(e)) => panic!("internal: {e}"),
+    }
+}
+
+/// `thread.snooze` as `Orchestrator.ts`: the wake time must be in the future, is stored as UTC,
+/// a pending approval refuses it, and a queued delegated-completion wake does not block it
+/// while a queued user message does.
+#[tokio::test(flavor = "current_thread")]
+async fn snooze_follows_the_upstream_rules() {
+    let db = TempDb::new("snooze-rules");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let shell_row = |shell: &Value, id: &str| {
+        shell["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == id)
+            .cloned()
+            .unwrap()
+    };
+
+    let past = refused(&engine, snooze("s1", "t1", "2020-01-01T00:00:00.000Z")).await;
+    assert!(past.contains("not in the future"), "{past}");
+    let bad = refused(&engine, snooze("s2", "t1", "2030-02-31T00:00:00.000Z")).await;
+    assert!(bad.contains("not in the future"), "{bad}");
+    dispatch(&engine, snooze("s3", "t1", "2030-01-01T02:00:00+02:00")).await;
+    let r = shell_row(&engine.shell_snapshot().await.unwrap(), "t1");
+    assert_eq!(r["snoozedUntil"], "2030-01-01T00:00:00.000Z");
+
+    // A pending approval refuses a snooze.
+    dispatch(&engine, create("t2", "c2")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t2"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t2", "c3", "ask")).await;
+    loop {
+        let item = next(&mut thread).await;
+        if item["event"]["type"] == "runtime-request.updated" {
+            break;
+        }
+    }
+    let pending = refused(&engine, snooze("s4", "t2", "2030-01-01T00:00:00Z")).await;
+    assert!(pending.contains("pending approval"), "{pending}");
+
+    // A busy parent with a queued delegated-completion wake can snooze; a queued user message
+    // blocks it.
+    dispatch(&engine, create("t3", "c4")).await;
+    let mut parent = engine
+        .subscribe_thread(from_json(json!({"threadId": "t3"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut parent).await;
+    dispatch(&engine, message("t3", "c5", "hang")).await;
+    until_provider_turn(&mut parent).await;
+    let mut task = delegate("d1", "look", Some("always"));
+    task["parentThreadId"] = json!("t3");
+    task["parentRunId"] = json!("run:t3:1");
+    task["parentNodeId"] = json!("node:run:t3:1:root");
+    dispatch(&engine, task).await;
+    let child = "thread:delegated-task:d1";
+    run_to_end(&engine, child, &format!("run:{child}:1")).await;
+    assert_eq!(
+        projection(&engine, "t3").await["runs"][1]["status"],
+        "queued"
+    );
+    dispatch(&engine, snooze("s5", "t3", "2030-01-01T00:00:00Z")).await;
+    dispatch(
+        &engine,
+        message_with(
+            "t3",
+            "c6",
+            "later",
+            json!({"type": "queue_after_active"}),
+            None,
+        ),
+    )
+    .await;
+    let queued = refused(&engine, snooze("s6", "t3", "2031-01-01T00:00:00Z")).await;
+    assert!(queued.contains("queued run"), "{queued}");
+}
+
+/// Shutdown closes sessions side by side, and no session opens once it began: a run that
+/// starts then stays for the next start to pick up.
+#[tokio::test(flavor = "current_thread")]
+async fn shutdown_closes_sessions_together_and_opens_no_more() {
+    let db = TempDb::new("shutdown");
+    let (engine, provider) = open_with(
+        &db,
+        FakeProvider::new("claudeAgent").with_close_delay(Duration::from_millis(300)),
+    );
+    for thread in ["t1", "t2", "t3"] {
+        dispatch(&engine, create(thread, &format!("{thread}:c1"))).await;
+        dispatch(&engine, message(thread, &format!("{thread}:c2"), "hi")).await;
+        run_to_end(&engine, thread, &format!("run:{thread}:1")).await;
+    }
+    assert_eq!(count(&provider.sessions), 3);
+    let started = std::time::Instant::now();
+    engine.shutdown().await;
+    let took = started.elapsed();
+    assert_eq!(count(&provider.closed), 3);
+    assert!(
+        took < Duration::from_millis(800),
+        "closed one by one: {took:?}"
+    );
+
+    dispatch(&engine, create("t4", "t4:c1")).await;
+    dispatch(&engine, message("t4", "t4:c2", "hi")).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        count(&provider.sessions),
+        3,
+        "no session opens after shutdown began"
+    );
+    assert_eq!(
+        projection(&engine, "t4").await["runs"][0]["status"],
+        "starting"
+    );
 }

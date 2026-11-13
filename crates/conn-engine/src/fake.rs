@@ -39,6 +39,7 @@ pub struct FakeProvider {
     /// Sessions closed so far.
     pub closed: Arc<AtomicUsize>,
     steering: bool,
+    close_delay: std::time::Duration,
 }
 
 impl FakeProvider {
@@ -49,7 +50,14 @@ impl FakeProvider {
             mcp_servers: Arc::new(Mutex::new(vec![])),
             closed: Arc::new(AtomicUsize::new(0)),
             steering: true,
+            close_delay: std::time::Duration::ZERO,
         }
+    }
+
+    /// A provider whose sessions take `delay` to close, as a process given time to exit.
+    pub fn with_close_delay(mut self, delay: std::time::Duration) -> Self {
+        self.close_delay = delay;
+        self
     }
 
     /// A provider whose sessions decline every steer, as one without live steering does.
@@ -69,6 +77,7 @@ struct Turn {
 
 struct FakeSession {
     id: ProviderSessionId,
+    instance: String,
     driver: String,
     events: mpsc::Sender<ProviderEvent>,
     turn: Arc<Mutex<Option<Turn>>>,
@@ -76,6 +85,7 @@ struct FakeSession {
     background: Arc<AtomicBool>,
     mcp_servers: Arc<Mutex<Vec<McpServer>>>,
     closed: Arc<AtomicUsize>,
+    close_delay: std::time::Duration,
 }
 
 impl Provider for FakeProvider {
@@ -98,6 +108,7 @@ impl Provider for FakeProvider {
             Ok(OpenedSession {
                 session: Box::new(FakeSession {
                     id: input.provider_session_id,
+                    instance: self.id.as_str().to_owned(),
                     driver: self.driver().to_owned(),
                     events: tx,
                     turn: Arc::new(Mutex::new(None)),
@@ -105,6 +116,7 @@ impl Provider for FakeProvider {
                     background: Arc::new(AtomicBool::new(false)),
                     mcp_servers: self.mcp_servers.clone(),
                     closed: self.closed.clone(),
+                    close_delay: self.close_delay,
                 }),
                 events: rx,
             })
@@ -179,9 +191,15 @@ impl Session for FakeSession {
     ) -> BoxFuture<'_, ProviderResult<ProviderThread>> {
         Box::pin(async move {
             let now = now_iso();
+            // Each instance has its own provider thread; the default instance keeps the short id.
+            let id = if self.instance == "claudeAgent" {
+                format!("provider-thread:{}", input.thread_id)
+            } else {
+                format!("provider-thread:{}:{}", self.instance, input.thread_id)
+            };
             Ok(from_json(json!({
-                "id": format!("provider-thread:{}", input.thread_id), "driver": self.driver,
-                "providerInstanceId": "claudeAgent", "providerSessionId": self.id,
+                "id": id, "driver": self.driver,
+                "providerInstanceId": self.instance, "providerSessionId": self.id,
                 "appThreadId": input.thread_id, "ownerNodeId": null,
                 "nativeThreadRef": {"driver": self.driver, "nativeId": "native-1", "strength": "strong"},
                 "nativeConversationHeadRef": null, "status": "active", "firstRunOrdinal": null,
@@ -264,6 +282,23 @@ impl Session for FakeSession {
                     started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "holding", false));
                     started.push(provider_turn(&turn, "completed"));
                     started.push(terminal(&turn, TurnStatus::Completed, None));
+                }
+                // Live output first, then the running command row; the turn stays open.
+                "command" => {
+                    let item = format!("turn-item:cmd:{}", turn.run_id);
+                    for chunk in ["a\n", "b\n"] {
+                        started.push(event(json!({"type": "command_output.delta",
+                            "threadId": turn.thread_id, "itemId": item, "chunk": chunk})));
+                    }
+                    let now = now_iso();
+                    started.push(event(json!({"type": "turn_item.updated", "turnItem": {
+                        "id": item, "threadId": turn.thread_id, "runId": turn.run_id,
+                        "nodeId": null, "providerThreadId": turn.provider_thread_id,
+                        "providerTurnId": format!("turn:{}", turn.run_id), "nativeItemRef": null,
+                        "parentItemId": null, "ordinal": 0, "status": "running", "title": null,
+                        "startedAt": now, "completedAt": null, "updatedAt": now,
+                        "type": "command_execution", "input": "ls",
+                    }})));
                 }
                 "fail" => started.push(terminal(
                     &turn,
@@ -406,6 +441,11 @@ impl Session for FakeSession {
 
     fn close(&self) -> BoxFuture<'_, ()> {
         self.closed.fetch_add(1, Ordering::SeqCst);
-        Box::pin(async {})
+        let delay = self.close_delay;
+        Box::pin(async move {
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+        })
     }
 }

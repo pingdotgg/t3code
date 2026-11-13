@@ -90,6 +90,10 @@ pub(crate) struct Inner {
     pub(crate) observer: Option<Arc<dyn crate::TurnObserver>>,
     pub(crate) host: Option<Arc<dyn crate::EngineHost>>,
     pub(crate) idle_max_hold: Duration,
+    /// Live output of running commands for `subscribeCommandOutput`; bounded, never stored.
+    pub(crate) command_output: crate::output::CommandOutputHub,
+    /// Set when shutdown begins; no provider session opens after it.
+    pub(crate) shutting_down: std::sync::atomic::AtomicBool,
 }
 
 /// Stable project id for a folder, so a fresh database gives clients the same ids.
@@ -139,6 +143,8 @@ impl SqliteEngine {
                 notify: watch::Sender::new(high),
                 providers: config.providers,
                 live: Mutex::new(HashMap::new()),
+                command_output: crate::output::CommandOutputHub::default(),
+                shutting_down: std::sync::atomic::AtomicBool::new(false),
                 stream_flush: config.stream_flush,
                 home,
                 titles: config.title_generator.clone(),
@@ -490,13 +496,31 @@ impl Inner {
     }
 }
 
-fn projection_error(thread_id: &str, message: impl Into<String>) -> GetThreadProjectionError {
-    from_json(json!({
+/// A contract error the engine builds. When the contract no longer accepts its shape, the
+/// caller gets an internal error with the reason instead of a stopped server.
+pub(crate) fn contract_error<E: serde::de::DeserializeOwned>(value: Value) -> Result<E, String> {
+    let message = value["message"].as_str().unwrap_or_default().to_owned();
+    from_json(value)
+        .map_err(|e| format!("conn-engine built an error the contract rejects ({e}): {message}"))
+}
+
+/// `Rejected` with a contract error, or `Internal` when it does not fit the contract.
+pub(crate) fn rejected<E>(built: Result<E, String>) -> EngineError<E> {
+    match built {
+        Ok(error) => EngineError::Rejected(error),
+        Err(message) => EngineError::Internal(message),
+    }
+}
+
+fn projection_error(
+    thread_id: &str,
+    message: impl Into<String>,
+) -> Result<GetThreadProjectionError, String> {
+    contract_error(json!({
         "_tag": "OrchestrationV2GetThreadProjectionError",
         "threadId": thread_id,
         "message": message.into(),
     }))
-    .expect("error shape")
 }
 
 impl Engine for SqliteEngine {
@@ -506,21 +530,18 @@ impl Engine for SqliteEngine {
     ) -> BoxFuture<'_, Result<DispatchCommandResult, EngineError<DispatchCommandError>>> {
         Box::pin(async move {
             let command = to_json(&command);
-            let rejected = |message: String| -> DispatchCommandError {
-                from_json(json!({
+            let refusal = |message: String| -> Result<DispatchCommandError, String> {
+                contract_error(json!({
                     "_tag": "OrchestrationV2DispatchCommandError",
                     "commandId": command["commandId"].as_str().unwrap_or(""),
                     "commandType": command["type"].as_str().unwrap_or(""),
                     "message": message,
                 }))
-                .expect("error shape")
             };
             match self.inner.dispatch_value(command.clone()).await {
                 Ok((sequence, _)) => from_json(json!({"sequence": sequence}))
                     .map_err(|e| EngineError::Internal(e.to_string())),
-                Err(DispatchError::Rejected(message)) => {
-                    Err(EngineError::Rejected(rejected(message)))
-                }
+                Err(DispatchError::Rejected(message)) => Err(rejected(refusal(message))),
                 Err(DispatchError::Internal(message)) => Err(EngineError::Internal(message)),
             }
         })
@@ -590,7 +611,7 @@ impl Engine for SqliteEngine {
                 .await
             {
                 Ok(Some(projection)) => Ok(projection),
-                Ok(None) => Err(EngineError::Rejected(projection_error(
+                Ok(None) => Err(rejected(projection_error(
                     thread_id.as_str(),
                     format!("Thread {thread_id} does not exist."),
                 ))),
@@ -665,5 +686,26 @@ impl Inner {
 impl SqliteEngine {
     pub(crate) fn inner(&self) -> &Arc<Inner> {
         &self.inner
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An error shape the contract rejects becomes an internal error, never a panic.
+    #[test]
+    fn a_rejected_error_shape_falls_back_to_internal() {
+        let built: Result<GetThreadProjectionError, String> = contract_error(
+            json!({"_tag": "SomethingElse", "message": "Thread t9 does not exist."}),
+        );
+        match rejected(built) {
+            EngineError::Internal(reason) => assert!(reason.contains("Thread t9"), "{reason}"),
+            EngineError::Rejected(_) => panic!("a wrong shape is not a contract error"),
+        }
+        assert!(matches!(
+            rejected(projection_error("t1", "gone")),
+            EngineError::Rejected(_)
+        ));
     }
 }

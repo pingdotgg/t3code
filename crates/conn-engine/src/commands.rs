@@ -1139,7 +1139,6 @@ struct ThreadSetting {
     thread_id: String,
     runtime_mode: Option<Value>,
     interaction_mode: Option<Value>,
-    model_selection: Option<Value>,
 }
 
 fn thread_runtime_mode_set(tx: &mut Tx<'_>, command: Value) -> Outcome {
@@ -1170,18 +1169,26 @@ fn thread_interaction_mode_set(tx: &mut Tx<'_>, command: Value) -> Outcome {
     Ok(vec![])
 }
 
+/// A model change on the thread's instance applies at the next turn. A change of instance is a
+/// provider switch, as `Orchestrator.ts` plans it for `thread.model-selection.set`.
 fn thread_model_selection_set(tx: &mut Tx<'_>, command: Value) -> Outcome {
-    let c: ThreadSetting = decode(command)?;
-    let Some(selection) = c.model_selection.as_ref().map(normalize_model_selection) else {
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    let Some(selection) = command
+        .get("modelSelection")
+        .filter(|s| s.is_object())
+        .map(normalize_model_selection)
+    else {
         return reject("modelSelection is required.");
     };
+    if live_thread(tx, &thread_id)?["providerInstanceId"] != selection["instanceId"] {
+        return switch_provider(tx, &command, selection);
+    }
     patch_thread(
         tx,
-        &c.thread_id,
+        &thread_id,
         "thread.model-selection-updated",
         true,
         |t, _| {
-            t["providerInstanceId"] = selection["instanceId"].clone();
             t["modelSelection"] = selection;
         },
     )?;
@@ -1393,26 +1400,53 @@ fn thread_unsettle(tx: &mut Tx<'_>, command: Value) -> Outcome {
     })
 }
 
+/// `thread.snooze` as `Orchestrator.ts`: the wake time must parse and be in the future, a
+/// pending approval refuses it, and only queued runs a person asked for block it. The wake time
+/// is stored as UTC in the wire form.
 fn thread_snooze(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
-    let until = command["snoozedUntil"]
-        .as_str()
-        .unwrap_or_default()
-        .to_owned();
-    if crate::time::millis_from_iso(&until).is_none() {
-        return reject(format!("snoozedUntil `{until}` is not a time."));
-    }
-    if !queued_runs(tx, &thread_id)?.is_empty() {
+    let requested = command["snoozedUntil"].as_str().unwrap_or_default();
+    let now = crate::time::millis_from_iso(tx.now()).unwrap_or(0);
+    let Some(until) = crate::time::millis_from_iso(requested).filter(|at| *at > now) else {
         return reject(format!(
-            "Thread {thread_id} has a queued run and cannot be snoozed."
+            "Thread {thread_id} snooze wake time {requested} is not in the future."
+        ));
+    };
+    let pending_approval = tx
+        .entities_where(&thread_id, "runtimeRequests", "status", "pending")?
+        .iter()
+        .any(|request| request["kind"] != "user_input");
+    if pending_approval {
+        return reject(format!(
+            "Thread {thread_id} has a pending approval and cannot be snoozed."
         ));
     }
+    for run in queued_runs(tx, &thread_id)? {
+        let message_id = run["userMessageId"].as_str().unwrap_or_default();
+        let message = tx.entity(&thread_id, "messages", message_id)?;
+        if !message.as_ref().is_some_and(is_automatic) {
+            return reject(format!(
+                "Thread {thread_id} has a queued run and cannot be snoozed."
+            ));
+        }
+    }
+    let until = crate::time::iso_from_millis(until);
     thread_patch(tx, &command, "thread.snoozed", |t, now| {
         t["snoozedUntil"] = json!(until);
         t["snoozedAt"] = json!(now);
         t["updatedAt"] = json!(now);
         Ok(())
     })
+}
+
+/// A message the server queued by itself: a notification or a delegated-task completion. This
+/// engine marks its completion wakes by their id (`families::deliver`).
+fn is_automatic(message: &Value) -> bool {
+    !is_null(message, "notification")
+        || !is_null(message, "delegatedCompletion")
+        || message["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("message:delegated-completion:"))
 }
 
 fn thread_unsnooze(tx: &mut Tx<'_>, command: Value) -> Outcome {
@@ -1625,15 +1659,27 @@ fn provider_session_detach(tx: &mut Tx<'_>, command: Value) -> Outcome {
 /// `provider.switch`: the next turn runs on another provider instance. Its history does not
 /// move to the new provider (no context handoff yet), so the new provider starts fresh.
 fn provider_switch(tx: &mut Tx<'_>, command: Value) -> Outcome {
-    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
-    if active_run(tx, &thread_id)?.is_some() {
+    let thread_id = command["threadId"].as_str().unwrap_or_default();
+    if active_run(tx, thread_id)?.is_some() {
         return reject(format!(
             "Thread {thread_id} is running; switch providers between turns."
         ));
     }
     let selection = normalize_model_selection(&command["modelSelection"]);
+    switch_provider(tx, &command, selection)
+}
+
+/// Moves the thread to `selection`. A change of instance is refused while a run is active,
+/// clears the active provider thread and closes the session.
+fn switch_provider(tx: &mut Tx<'_>, command: &Value, selection: Value) -> Outcome {
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
     let switching = live_thread(tx, &thread_id)?["providerInstanceId"] != selection["instanceId"];
-    thread_patch(tx, &command, "thread.provider-switched", |t, now| {
+    if switching && active_run(tx, &thread_id)?.is_some() {
+        return reject(format!(
+            "Thread {thread_id} is running; switch providers between turns."
+        ));
+    }
+    thread_patch(tx, command, "thread.provider-switched", |t, now| {
         t["providerInstanceId"] = selection["instanceId"].clone();
         t["modelSelection"] = selection;
         if switching {

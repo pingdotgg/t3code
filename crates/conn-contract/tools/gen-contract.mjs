@@ -215,6 +215,7 @@ const itemOrder = [];
 const rustNameOfRef = new Map(); // $ref -> rust name, or null when inlined
 const usedNames = new Set([...ID_TYPES, "Never", "JsNumber", "Json", "Opaque", "Map"]);
 const literalTypes = new Map(); // JSON literal -> lit type name
+const unionTags = new Map(); // tagged union name -> its tag values, in member order
 const usedLiteralNames = new Set();
 
 const deref = (r) => {
@@ -646,6 +647,10 @@ const unionOf = (members, hint, path, forcedName) => {
         if (values !== null)
           for (const v of values) byValue.set(v, [...(byValue.get(v) ?? []), `${vn}(${ty})`]);
       });
+      unionTags.set(
+        name,
+        disc.values.flatMap((values) => values ?? []),
+      );
       // Group values that dispatch to the same candidate list.
       const groups = new Map();
       for (const [v, cands] of byValue) {
@@ -947,6 +952,12 @@ const ALIASES = {
   ApprovalDecision: "ProviderApprovalDecision",
   UserInputAnswers: "ProviderUserInputAnswers",
 };
+// Every tag of the command union, so a check can hold the engine to the contract.
+const commandUnion = exportTypes.get(ALIASES.Command);
+const commandTags = unionTags.get(commandUnion);
+if (commandTags === undefined) throw new Error(`${commandUnion} is not a tagged union`);
+const commandTypesLine = `/// Every \`type\` of \`${ALIASES.Command}\`, in contract order.\npub const COMMAND_TYPES: &[&str] = &[${commandTags.map(strLit).join(", ")}];`;
+
 const aliasLines = [];
 for (const [alias, target] of Object.entries(ALIASES)) {
   const t = exportTypes.get(target);
@@ -1060,6 +1071,8 @@ ${body}
 
 // Placeholder names (the contract name without \`OrchestrationV2\`).
 ${aliasLines.join("\n")}
+
+${commandTypesLine}
 
 ${rpcModule}`;
 

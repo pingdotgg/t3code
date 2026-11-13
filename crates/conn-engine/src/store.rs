@@ -135,8 +135,25 @@ fn err(e: rusqlite::Error) -> String {
     format!("store: {e}")
 }
 
-fn parse(text: String) -> Value {
-    serde_json::from_str(&text).unwrap_or(Value::Null)
+/// A stored JSON column. The engine wrote it, so bad JSON is a broken store, not a value.
+fn parse(text: String) -> StoreResult<Value> {
+    serde_json::from_str(&text).map_err(|e| format!("store: a stored row is not JSON: {e}"))
+}
+
+/// Every row of a one-column JSON query; the first row error fails the read.
+fn json_rows(rows: impl Iterator<Item = rusqlite::Result<String>>) -> StoreResult<Vec<Value>> {
+    rows.map(|row| row.map_err(err).and_then(parse)).collect()
+}
+
+/// Every row of a text-and-JSON query.
+fn keyed_rows(
+    rows: impl Iterator<Item = rusqlite::Result<(String, String)>>,
+) -> StoreResult<Vec<(String, Value)>> {
+    rows.map(|row| {
+        let (key, body) = row.map_err(err)?;
+        Ok((key, parse(body)?))
+    })
+    .collect()
 }
 
 pub(crate) struct Store {
@@ -173,6 +190,18 @@ impl Store {
             next_seq: high as u64 + 1,
             generates_titles: false,
         })
+    }
+
+    /// `EXPLAIN QUERY PLAN` details, one per step, for tests that prove an index is used.
+    #[cfg(test)]
+    pub(crate) fn query_plan(&self, sql: &str, args: impl rusqlite::Params) -> Vec<String> {
+        let explain = format!("EXPLAIN QUERY PLAN {sql}");
+        let Ok(mut stmt) = self.conn.prepare(&explain) else {
+            return vec![];
+        };
+        stmt.query_map(args, |row| row.get::<_, String>(3))
+            .and_then(|rows| rows.collect())
+            .unwrap_or_default()
     }
 
     /// The sequence of the last committed change.
@@ -217,25 +246,25 @@ impl Store {
                 "SELECT shell FROM threads WHERE deleted = 0 AND shell IS NOT NULL ORDER BY rowid",
             )
             .map_err(err)?;
-        let threads: Vec<Value> = stmt
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(err)?
-            .filter_map(Result::ok)
-            .map(parse)
-            .filter(|row| row["archivedAt"].is_null())
-            .collect();
+        let threads: Vec<Value> = json_rows(
+            stmt.query_map([], |row| row.get::<_, String>(0))
+                .map_err(err)?,
+        )?
+        .into_iter()
+        .filter(|row| row["archivedAt"].is_null())
+        .collect();
         let mut stmt = self
             .conn
             .prepare("SELECT body FROM projects ORDER BY rowid")
             .map_err(err)?;
-        let projects: Vec<Value> = stmt
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(err)?
-            .filter_map(Result::ok)
-            .map(parse)
-            .filter(|project| project["deletedAt"].is_null())
-            .map(|project| shell_project(&project))
-            .collect();
+        let projects: Vec<Value> = json_rows(
+            stmt.query_map([], |row| row.get::<_, String>(0))
+                .map_err(err)?,
+        )?
+        .into_iter()
+        .filter(|project| project["deletedAt"].is_null())
+        .map(|project| shell_project(&project))
+        .collect();
         Ok(json!({
             "schemaVersion": 2,
             "snapshotSequence": self.high_water(),
@@ -267,12 +296,10 @@ impl Store {
             .conn
             .prepare("SELECT item FROM shell_changes WHERE seq > ?1 ORDER BY seq")
             .map_err(err)?;
-        let rows = stmt
-            .query_map([after as i64], |row| row.get::<_, String>(0))
-            .map_err(err)?
-            .filter_map(Result::ok)
-            .map(parse)
-            .collect();
+        let rows = json_rows(
+            stmt.query_map([after as i64], |row| row.get::<_, String>(0))
+                .map_err(err)?,
+        )?;
         Ok(rows)
     }
 
@@ -308,7 +335,7 @@ impl Store {
             return Ok(None);
         };
         let mut projection = serde_json::Map::new();
-        projection.insert("thread".into(), parse(thread));
+        projection.insert("thread".into(), parse(thread)?);
         for kind in COLLECTIONS {
             let rows = if kind == "turnItems" {
                 vec![]
@@ -362,9 +389,11 @@ impl Store {
                 Ok((row.get::<_, i64>(0)? as u64, row.get::<_, String>(1)?))
             })
             .map_err(err)?
-            .filter_map(Result::ok)
-            .map(|(seq, text)| (seq, parse(text)))
-            .collect();
+            .map(|row| {
+                let (seq, text) = row.map_err(err)?;
+                Ok((seq, parse(text)?))
+            })
+            .collect::<StoreResult<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -375,12 +404,10 @@ impl Store {
         args: impl rusqlite::Params,
     ) -> StoreResult<Vec<Value>> {
         let mut stmt = self.conn.prepare(sql).map_err(err)?;
-        let rows = stmt
-            .query_map(args, |row| row.get::<_, String>(0))
-            .map_err(err)?
-            .filter_map(Result::ok)
-            .map(parse)
-            .collect();
+        let rows = json_rows(
+            stmt.query_map(args, |row| row.get::<_, String>(0))
+                .map_err(err)?,
+        )?;
         Ok(rows)
     }
 
@@ -395,11 +422,8 @@ impl Store {
             .query_map(args, |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
-            .map_err(err)?
-            .filter_map(Result::ok)
-            .map(|(key, body)| (key, parse(body)))
-            .collect();
-        Ok(rows)
+            .map_err(err)?;
+        keyed_rows(rows)
     }
 
     /// Runs that were live when the store was last written: `(thread_id, run)`.
@@ -415,11 +439,8 @@ impl Store {
             .query_map([], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
-            .map_err(err)?
-            .filter_map(Result::ok)
-            .map(|(thread, body)| (thread, parse(body)))
-            .collect();
-        Ok(rows)
+            .map_err(err)?;
+        keyed_rows(rows)
     }
 
     #[cfg(test)]
@@ -608,8 +629,9 @@ impl Tx<'_> {
                 |row| row.get::<_, String>(0),
             )
             .optional()
-            .map(|body| body.map(parse))
-            .map_err(err)
+            .map_err(err)?
+            .map(parse)
+            .transpose()
     }
 
     pub(crate) fn entities(&self, thread_id: &str, kind: &str) -> StoreResult<Vec<Value>> {
@@ -631,15 +653,13 @@ impl Tx<'_> {
                  AND json_extract(body, ?3) = ?4 ORDER BY first_seq",
             )
             .map_err(err)?;
-        let rows = stmt
-            .query_map(
+        let rows = json_rows(
+            stmt.query_map(
                 params![thread_id, kind, format!("$.{field}"), value],
                 |row| row.get::<_, String>(0),
             )
-            .map_err(err)?
-            .filter_map(Result::ok)
-            .map(parse)
-            .collect();
+            .map_err(err)?,
+        )?;
         Ok(rows)
     }
 
@@ -654,8 +674,9 @@ impl Tx<'_> {
                 |row| row.get::<_, String>(0),
             )
             .optional()
-            .map(|body| body.map(parse))
-            .map_err(err)
+            .map_err(err)?
+            .map(parse)
+            .transpose()
     }
 
     pub(crate) fn count(&self, thread_id: &str, kind: &str) -> StoreResult<u64> {
@@ -685,8 +706,9 @@ impl Tx<'_> {
                 |row| row.get::<_, String>(0),
             )
             .optional()
-            .map(|body| body.map(parse))
-            .map_err(err)
+            .map_err(err)?
+            .map(parse)
+            .transpose()
     }
 
     /// The project row that owns `workspace_root`, deleted or not.
@@ -698,8 +720,9 @@ impl Tx<'_> {
                 |row| row.get::<_, String>(0),
             )
             .optional()
-            .map(|body| body.map(parse))
-            .map_err(err)
+            .map_err(err)?
+            .map(parse)
+            .transpose()
     }
 
     /// Writes a project row and its shell change: `project.updated`, or `project.removed`
@@ -746,8 +769,8 @@ impl Tx<'_> {
         let rows = stmt
             .query_map([project_id], |row| row.get::<_, String>(0))
             .map_err(err)?
-            .filter_map(Result::ok)
-            .collect();
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(err)?;
         Ok(rows)
     }
 
@@ -757,14 +780,12 @@ impl Tx<'_> {
             .tx
             .prepare("SELECT thread FROM threads WHERE deleted = 0 AND json_extract(thread, ?1) = ?2 ORDER BY rowid")
             .map_err(err)?;
-        let rows = stmt
-            .query_map(params![format!("$.{field}"), value], |row| {
+        let rows = json_rows(
+            stmt.query_map(params![format!("$.{field}"), value], |row| {
                 row.get::<_, String>(0)
             })
-            .map_err(err)?
-            .filter_map(Result::ok)
-            .map(parse)
-            .collect();
+            .map_err(err)?,
+        )?;
         Ok(rows)
     }
 
@@ -807,6 +828,7 @@ impl Tx<'_> {
                 let location = previous
                     .clone()
                     .map(parse)
+                    .transpose()?
                     .filter(|row| !row["archivedAt"].is_null())
                     .map_or("active", |_| "archive");
                 self.tx
@@ -908,13 +930,22 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
                 .map_err(err)?;
             stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
                 .map_err(err)?
-                .filter_map(Result::ok)
-                .collect()
+                .collect::<rusqlite::Result<_>>()
+                .map_err(err)?
         };
         for (thread_id, message_id, text) in rows {
             index_message(conn, &thread_id, &message_id, &text)?;
         }
         conn.execute_batch("PRAGMA user_version = 1").map_err(err)?;
+    }
+    if version < 2 {
+        // 2: the streaming rows a turn end deletes (`compact_streaming`), without reading the
+        // thread's other events.
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS events_streaming ON events(thread_id) WHERE streaming = 1;
+             PRAGMA user_version = 2;",
+        )
+        .map_err(err)?;
     }
     Ok(())
 }
@@ -1018,19 +1049,89 @@ fn thread(conn: &Connection, thread_id: &str) -> StoreResult<Option<Value>> {
         |row| row.get::<_, String>(0),
     )
     .optional()
-    .map(|body| body.map(parse))
-    .map_err(err)
+    .map_err(err)?
+    .map(parse)
+    .transpose()
 }
 
 fn entities(conn: &Connection, thread_id: &str, kind: &str) -> StoreResult<Vec<Value>> {
     let mut stmt = conn
         .prepare("SELECT body FROM entities WHERE thread_id = ?1 AND kind = ?2 ORDER BY first_seq")
         .map_err(err)?;
-    let rows = stmt
-        .query_map(params![thread_id, kind], |row| row.get::<_, String>(0))
-        .map_err(err)?
-        .filter_map(Result::ok)
-        .map(parse)
-        .collect();
+    let rows = json_rows(
+        stmt.query_map(params![thread_id, kind], |row| row.get::<_, String>(0))
+            .map_err(err)?,
+    )?;
     Ok(rows)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A row the engine cannot read fails the read; it never turns into `null` or vanishes.
+    #[test]
+    fn a_broken_stored_row_is_an_error() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-engine-{}-broken-row", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = Store::open(&dir.join("engine.sqlite")).unwrap();
+        store
+            .conn
+            .execute_batch(
+                "INSERT INTO threads (id, project_id, activity_at, thread, shell)
+                 VALUES ('t1', 'p', '', '{not json', '{\"id\":\"t1\"}');
+                 INSERT INTO entities (thread_id, kind, id, first_seq, seq, body)
+                 VALUES ('t1', 'runs', 'r1', 1, 1, '{\"id\":\"r1\"}'),
+                        ('t1', 'runs', 'r2', 2, 2, 'broken');",
+            )
+            .unwrap();
+        let tx = store.tx().unwrap();
+        assert!(tx.thread("t1").is_err());
+        assert!(
+            tx.entities("t1", "runs").is_err(),
+            "one bad row fails the list"
+        );
+        assert!(tx.entity("t1", "runs", "r2").is_err());
+        assert_eq!(tx.entity("t1", "runs", "r1").unwrap().unwrap()["id"], "r1");
+        tx.rollback();
+        assert!(store.query_json("SELECT body FROM entities", []).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A store from before the index gets it when it opens, and the turn-end delete uses it.
+    #[test]
+    fn the_streaming_index_serves_compaction_on_an_old_store() {
+        let dir = std::env::temp_dir().join(format!(
+            "conn-engine-{}-streaming-index",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("engine.sqlite");
+        {
+            let store = Store::open(&path).unwrap();
+            store
+                .conn
+                .execute_batch("DROP INDEX IF EXISTS events_streaming; PRAGMA user_version = 1;")
+                .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        let version: i64 = store
+            .conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 2);
+        let plan = store.query_plan(
+            "DELETE FROM events WHERE thread_id = ?1 AND streaming = 1",
+            ["t1"],
+        );
+        assert!(
+            plan.iter()
+                .any(|step| step.contains("USING INDEX events_streaming")),
+            "{plan:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
