@@ -155,11 +155,7 @@ import { readLocalApi } from "../localApi";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { cn } from "../lib/utils";
-import {
-  resolveRemoteOpenState,
-  revealInDesktopShell,
-  useRemoteOpenResolution,
-} from "../remoteOpen";
+import { resolveRemoteOpenState, useRemoteOpenResolution } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
@@ -670,14 +666,10 @@ function useChatMarkdownState({
         ),
       );
     }
-    return revealInDesktopShell(environmentId, filePath).then((revealed) =>
-      revealed
-        ? AsyncResult.success<void, never>(undefined)
-        : openInEditor({
-            environmentId,
-            input: { cwd: filePath, editor: "file-manager", reveal: true },
-          }),
-    );
+    return openInEditor({
+      environmentId,
+      input: { cwd: filePath, editor: "file-manager", reveal: true },
+    });
   };
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const handleCopy = (event: ReactClipboardEvent<HTMLElement>) => {

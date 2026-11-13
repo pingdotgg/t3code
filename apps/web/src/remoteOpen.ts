@@ -1,6 +1,5 @@
 import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
 import {
-  AuthOrchestrationOperateScope,
   REMOTE_CAPABLE_EDITOR_IDS,
   type EditorId,
   type EnvironmentId,
@@ -15,10 +14,8 @@ import { browserClientOs, type BrowserIdentity } from "~/connection/clientMetada
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
-import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentPresentations } from "~/state/presentation";
 import { hostEnvironmentIdAtom } from "~/state/primaryEnvironment";
-import { readEnvironmentScope } from "~/state/session";
 
 export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
@@ -188,22 +185,6 @@ export async function openRemoteEditorUrl(url: string): Promise<boolean> {
   }
   window.location.assign(url);
   return true;
-}
-
-/** Resolves false when this connection or the desktop app declines, so the server decides instead. */
-export async function revealInDesktopShell(
-  environmentId: EnvironmentId,
-  path: string,
-): Promise<boolean> {
-  // An unresolved connection defaults to local-exec; it may still turn out to be remote.
-  const resolution = appAtomRegistry.get(remoteOpenResolutionAtom(environmentId));
-  if (!resolution.isResolved || resolution.state.mode !== "local-exec") return false;
-  if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
-  try {
-    return (await window.desktopBridge?.revealItemInFolder?.(path)) === true;
-  } catch {
-    return false;
-  }
 }
 
 const REMOTE_OPEN_HINT_KEY = "t3code:remote-open-hint-seen";

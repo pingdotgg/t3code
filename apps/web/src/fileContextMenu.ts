@@ -11,7 +11,6 @@ import {
   revealInFileExplorerLabelForOs,
 } from "~/components/preview/fileExplorerLabel";
 import { readLocalApi } from "./localApi";
-import { revealInDesktopShell } from "./remoteOpen";
 import { serverEnvironment } from "./state/server";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
@@ -120,7 +119,6 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
         : (action.slice("editor:".length) as EditorId);
     if (action !== "open" && !reveal && !capabilities.editorIds.includes(editor)) return;
 
-    if (reveal && (await revealInDesktopShell(environmentId, absolutePath))) return;
     const result = await openInEditor({
       environmentId,
       input: { cwd: absolutePath, editor, ...(reveal ? { reveal: true } : {}) },
