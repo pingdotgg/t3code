@@ -71,7 +71,7 @@ function parseChangeRequestUrl(targetUrl: string): FrozenLink | null {
   return link === null || url.port === "" ? link : { ...link, authority: url.host.toLowerCase() };
 }
 
-function normalizeThreadPullRequestKey(
+export function normalizeThreadPullRequestKey(
   key: ThreadPullRequestKey & { readonly authority?: string },
 ): ThreadPullRequestKey {
   const canonical = canonicalRepositoryKey(
