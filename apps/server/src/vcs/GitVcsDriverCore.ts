@@ -4014,7 +4014,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       repositoryRoot,
       ["check-attr", "-z", "working-tree-encoding", "--", input.newPath],
     )).split("\0");
-    if (!["unspecified", "unset", "set"].includes(encoding)) {
+    // UTF-8 takes the default path, which keeps a BOM the way Git's blob does.
+    if (!["unspecified", "unset", "set"].includes(encoding) && !/^utf-?8$/i.test(encoding)) {
       // Git also accepts e.g. UTF-16LE-BOM, and its plain UTF-16 can carry a big-endian BOM.
       const normalized = encoding.toLowerCase().replace(/-bom$/, "");
       const label =

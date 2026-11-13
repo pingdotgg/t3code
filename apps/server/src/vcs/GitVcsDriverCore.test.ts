@@ -3353,11 +3353,17 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* initRepoWithCommit(cwd);
         const fileSystem = yield* FileSystem.FileSystem;
         const encodedPath = (yield* Path.Path).join(cwd, "encoded.txt");
-        yield* writeTextFile(cwd, ".gitattributes", "encoded.txt working-tree-encoding=UTF-16LE\n");
+        yield* writeTextFile(
+          cwd,
+          ".gitattributes",
+          "encoded.txt working-tree-encoding=UTF-16LE\nbom.txt working-tree-encoding=UTF-8\n",
+        );
         yield* fileSystem.writeFile(encodedPath, Buffer.from("old\ncontext\n", "utf16le"));
+        yield* writeTextFile(cwd, "bom.txt", "\uFEFFold\ncontext\n");
         yield* git(cwd, ["add", "."]);
         yield* git(cwd, ["commit", "-m", "add encoded file"]);
         yield* fileSystem.writeFile(encodedPath, Buffer.from("new\ncontext\n", "utf16le"));
+        yield* writeTextFile(cwd, "bom.txt", "\uFEFFnew\ncontext\n");
         const driver = yield* GitVcsDriver.GitVcsDriver;
 
         const preview = yield* driver.getReviewDiffPreview({ cwd, sourceKind: "working-tree" });
@@ -3370,6 +3376,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           oldContents: "old\ncontext\n",
           newContents: "new\ncontext\n",
         });
+        assert.deepStrictEqual(
+          yield* driver.getReviewDiffFileContents(
+            makeReviewDiffFileContentsInput(cwd, { oldPath: "bom.txt", newPath: "bom.txt" }),
+          ),
+          { oldContents: "\uFEFFold\ncontext\n", newContents: "\uFEFFnew\ncontext\n" },
+        );
       }),
     );
 
