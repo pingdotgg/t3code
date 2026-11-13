@@ -42,6 +42,7 @@ import {
   ProviderAdapterTurnStartError,
   type ProviderAdapterV2Error,
   type ProviderAdapterV2Event,
+  type ProviderAdapterV2TurnInput,
   ProviderCompactionUnsupportedError,
   ProviderAdapterV2RuntimePolicy,
 } from "@t3tools/provider-core/server/ProviderAdapter";
@@ -400,7 +401,7 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
       model: string,
       options?: ModelSelection["options"],
       text = "Say hello",
-    ) => {
+    ): ProviderAdapterV2TurnInput => {
       const suffix = `${threadId}:${ordinal}`;
       const turnSelection = { instanceId, model, ...(options === undefined ? {} : { options }) };
       return {
