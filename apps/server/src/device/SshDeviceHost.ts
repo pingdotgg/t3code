@@ -538,7 +538,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
         connectionScope = null;
         if (previousScope) yield* Scope.close(previousScope, Exit.void);
         if (!enabled) yield* provide(bootstrap(config, owner, "stop-agent"));
-        return yield* connect().pipe(
+        const connected = connect().pipe(
           Effect.onError(() =>
             Effect.gen(function* () {
               const failedScope = connectionScope;
@@ -549,6 +549,8 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
             }),
           ),
         );
+        // The daemon is already stopped; a failed hub reconnect is retried by the next ensureReady.
+        return yield* enabled ? connected : connected.pipe(Effect.orElseSucceed(() => null));
       }),
     );
   yield* Effect.addFinalizer(() => stop);
@@ -588,7 +590,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
               ),
         ),
       ),
-    stopAgent: changeAgent(false).pipe(Effect.asVoid, Effect.ignore),
+    stopAgent: changeAgent(false).pipe(Effect.asVoid),
     stop,
     platformAvailability,
   } satisfies DeviceHost.DeviceHost["Service"];

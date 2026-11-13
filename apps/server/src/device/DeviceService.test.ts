@@ -99,6 +99,7 @@ const fixture = Effect.fn("fixture")(function* (
     readonly routesStreams?: boolean;
     readonly onClose?: Effect.Effect<"ok" | "missing" | "reject" | "http_error" | "malformed">;
     readonly onPlatformAvailability?: Effect.Effect<void>;
+    readonly onStopAgent?: Effect.Effect<void, DeviceHost.DeviceHostError>;
   } = {},
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
@@ -292,7 +293,7 @@ const fixture = Effect.fn("fixture")(function* (
     ),
     stopAgent: Effect.sync(() => {
       agentStops.push("stop");
-    }),
+    }).pipe(Effect.andThen(options.onStopAgent ?? Effect.void)),
     stop: Effect.sync(() => {
       starts.push("stop");
     }),
@@ -632,7 +633,28 @@ describe("device setup consent", () => {
 
   it.effect("installs agent support only after the separate agent permission", () =>
     Effect.gen(function* () {
-      const { service, agentStarts, agentStops, settings } = yield* fixture();
+      const stopFails = yield* Ref.make(false);
+      const { service, agentStarts, agentStops, settings } = yield* fixture(
+        Effect.void,
+        undefined,
+        false,
+        undefined,
+        false,
+        undefined,
+        {
+          onStopAgent: Effect.flatMap(Ref.get(stopFails), (fails) =>
+            fails
+              ? Effect.fail(
+                  new DeviceHost.DeviceHostError({
+                    hostId: LOCAL_DEVICE_HOST_ID,
+                    step: "stopping agent tools",
+                    cause: new Error("stop failed"),
+                  }),
+                )
+              : Effect.void,
+          ),
+        },
+      );
       yield* service.configure({ enabled: true });
       expect(agentStarts).toEqual([]);
       expect(yield* service.agentReadinessIfSupported()).toBeNull();
@@ -642,8 +664,15 @@ describe("device setup consent", () => {
       expect((yield* Ref.get(settings)).enableAgentDeviceAccess).toBe(true);
       expect((yield* service.state).agentAccessEnabled).toBe(true);
 
+      yield* Ref.set(stopFails, true);
+      const failed = yield* Effect.flip(service.configure({ agentAccessEnabled: false }));
+      expect(failed._tag).toBe("DeviceHostUnavailableError");
+      expect((yield* Ref.get(settings)).enableAgentDeviceAccess).toBe(true);
+      expect((yield* service.state).agentAccessEnabled).toBe(true);
+      yield* Ref.set(stopFails, false);
+
       yield* service.configure({ agentAccessEnabled: false, onboardingCompleted: true });
-      expect(agentStops).toEqual(["stop"]);
+      expect(agentStops).toEqual(["stop", "stop"]);
       expect((yield* service.state).onboardingCompleted).toBe(true);
       expect((yield* Ref.get(settings)).deviceOnboardingCompleted).toBe(true);
     }),

@@ -702,6 +702,25 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       const nextAgentAccess = input.agentAccessEnabled ?? currentSettings.agentAccessEnabled;
       yield* lifecycleLock.withPermit(
         Effect.gen(function* () {
+          // Stop first so a daemon that keeps running leaves agent access on, not falsely off.
+          if (nextEnabled && input.agentAccessEnabled === false) {
+            yield* Effect.forEach(
+              hosts.values(),
+              (host) =>
+                host.stopAgent.pipe(
+                  Effect.mapError(
+                    (error) =>
+                      new DeviceHostUnavailableError({
+                        hostId: host.id,
+                        hostLabel: host.label,
+                        reason: `Device support failed during ${error.step}.`,
+                        cause: error,
+                      }),
+                  ),
+                ),
+              { discard: true },
+            );
+          }
           yield* settings
             .updateSettings({
               ...(input.enabled === undefined ? {} : { enableDeviceSupport: input.enabled }),
@@ -724,8 +743,6 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             );
           if (!nextEnabled) {
             yield* Effect.forEach(hosts.values(), (host) => host.stop, { discard: true });
-          } else if (input.agentAccessEnabled === false) {
-            yield* Effect.forEach(hosts.values(), (host) => host.stopAgent, { discard: true });
           }
           yield* publish((state) => ({
             ...state,

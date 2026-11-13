@@ -165,7 +165,8 @@ async function install(name, version, entry) {
       stopHub(hub);
       fs.rmSync(hubFile, { force: true });
     }
-    stopAgent();
+    const hadDaemon = Boolean(read(daemonFile));
+    if (!stopAgent() && hadDaemon && mode === 'stop-agent') throw Error('Could not stop the agent-device daemon in ' + state);
     return;
   }
   // A start without agent tools means the server holds no claims, so a daemon still here is
