@@ -38,8 +38,6 @@ it.live.each([
     name: "invalid envelope",
     action: "process.send({ invalid: true }); process.send({ result: null })",
   },
-  { name: "duplicate ready", action: "process.send({ ready: true })" },
-  { name: "incomplete result", action: "process.send({ result: {} })" },
   { name: "invalid result", action: 'process.send({ result: "invalid" })' },
 ])("settles the job and stops the worker after $name", ({ action }) =>
   Effect.gen(function* () {

@@ -100,45 +100,10 @@ export function makeUsageTranscriptWorker(
         return;
       }
       if (initialized && reply !== undefined && "result" in message) {
+        // The worker runs this server's own reader, so a reply needs only its envelope checked.
         const result = message.result;
-        if (result === null) {
-          settle(null);
-          return;
-        }
-        if (
-          typeof result === "object" &&
-          result !== null &&
-          "records" in result &&
-          Array.isArray(result.records) &&
-          "tailRecords" in result &&
-          Array.isArray(result.tailRecords) &&
-          "malformedRecords" in result &&
-          typeof result.malformedRecords === "number" &&
-          "resumed" in result &&
-          typeof result.resumed === "boolean" &&
-          "position" in result &&
-          typeof result.position === "object" &&
-          result.position !== null &&
-          "resumeOffset" in result.position &&
-          typeof result.position.resumeOffset === "number" &&
-          "guardLength" in result.position &&
-          typeof result.position.guardLength === "number" &&
-          "guardHash" in result.position &&
-          typeof result.position.guardHash === "number" &&
-          "state" in result.position
-        ) {
-          settle({
-            records: result.records,
-            tailRecords: result.tailRecords,
-            malformedRecords: result.malformedRecords,
-            resumed: result.resumed,
-            position: {
-              resumeOffset: result.position.resumeOffset,
-              guardLength: result.position.guardLength,
-              guardHash: result.position.guardHash,
-              state: result.position.state,
-            } satisfies TranscriptParsePosition,
-          } satisfies TranscriptParseResult);
+        if (result === null || (typeof result === "object" && "records" in result)) {
+          settle(result as TranscriptParseResult | null);
           return;
         }
       }

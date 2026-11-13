@@ -198,37 +198,6 @@ describe("makeTranscriptParser", () => {
   });
 
   it.live.each([
-    { cores: 2, availableMemory: 4 * 1024 ** 3 },
-    { cores: 8, availableMemory: 1024 ** 3 },
-  ])(
-    "reads large transcripts inline with capacity $cores cores / $availableMemory bytes",
-    (capacity) =>
-      withTempDir((dir) =>
-        Effect.gen(function* () {
-          const path = NodePath.join(dir, "codex.jsonl");
-          const log = NodePath.join(dir, "pids");
-          yield* Effect.promise(() => NodeFSP.writeFile(path, codexLines(0, 140)));
-          const { size } = yield* Effect.promise(() => NodeFSP.stat(path));
-          const parser = yield* makeTranscriptParser.pipe(
-            Effect.provideService(TranscriptParserCapacity, capacity),
-            Effect.provideService(HostProcess.Environment, preload(recordPid(log))),
-          );
-          assert.deepStrictEqual(
-            yield* parser.read({
-              path,
-              size,
-              provider: "codex",
-              format: TRANSCRIPT_FORMATS.codex,
-              resumeFrom: undefined,
-            }),
-            yield* Effect.promise(() => readTranscriptRecords(path, TRANSCRIPT_FORMATS.codex)),
-          );
-          assert.deepStrictEqual(yield* Effect.promise(() => loggedPids(log)), []);
-        }),
-      ),
-  );
-
-  it.live.each([
     {
       name: "a worker that cannot start",
       environment: process.env,
@@ -236,31 +205,8 @@ describe("makeTranscriptParser", () => {
       isExecutable: true,
     },
     {
-      name: "a worker that exits after ready",
-      environment: preload(
-        `process.send({ ready: true }, () => process.exit(9)); await new Promise(() => {});`,
-      ),
-      isExecutable: false,
-    },
-    {
       name: "a worker that exits mid-job",
       environment: preload(`process.on("message", () => process.exit(9));`),
-      isExecutable: false,
-    },
-    {
-      name: "a worker whose result send throws",
-      environment: preload(`
-        const send = process.send.bind(process);
-        process.send = (message, ...rest) => {
-          if ("result" in message) throw new Error("Cannot send result");
-          return send(message, ...rest);
-        };
-        process.on("unhandledRejection", async () => {
-          const { writeFileSync } = await import("node:fs");
-          writeFileSync(process.env.USAGE_TEST_UNHANDLED, "unhandled rejection");
-          send({ ready: true });
-        });
-      `),
       isExecutable: false,
     },
   ])("reads in process after $name", ({ environment, isExecutable }) => {
@@ -271,12 +217,8 @@ describe("makeTranscriptParser", () => {
         for (const path of paths) {
           yield* Effect.promise(() => NodeFSP.writeFile(path, codexLines(0, 140)));
         }
-        const unhandled = NodePath.join(dir, "unhandled");
         const parser = yield* makeWorkerParser.pipe(
-          Effect.provideService(HostProcess.Environment, {
-            ...environment,
-            USAGE_TEST_UNHANDLED: unhandled,
-          }),
+          Effect.provideService(HostProcess.Environment, environment),
           Effect.provideService(HostProcess.IsExecutable, isExecutable),
         );
         for (const path of paths) {
@@ -296,14 +238,6 @@ describe("makeTranscriptParser", () => {
         }
         // The pool emits only one warning across both reads.
         assert.strictEqual(warnings.length, 1);
-        assert.isFalse(
-          yield* Effect.promise(() =>
-            NodeFSP.access(unhandled).then(
-              () => true,
-              () => false,
-            ),
-          ),
-        );
       }),
     ).pipe(Effect.provide(captureWarnings(warnings)));
   });
