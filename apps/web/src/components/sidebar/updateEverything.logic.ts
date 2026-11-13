@@ -18,7 +18,7 @@ import {
 } from "~/versionSkew";
 import type { ServerUpdateOutcome, ServerUpdateTarget } from "../ServerUpdateAction";
 
-const DESKTOP_SSH_LAUNCH_SKIP = "updated by the desktop app when it reconnects over SSH";
+const DESKTOP_SSH_LAUNCH_SKIP = "updated to the desktop app's version when it reconnects over SSH";
 
 export interface UpdateEverythingMachine {
   readonly environmentId: EnvironmentId;

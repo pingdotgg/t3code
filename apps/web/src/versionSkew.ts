@@ -97,7 +97,7 @@ export function isDesktopSshLaunched(
 }
 
 export const DESKTOP_SSH_LAUNCH_UPDATE_NOTE =
-  "The desktop app updates this server when it reconnects over SSH.";
+  "The desktop app that launched this server over SSH updates it to its own version when it reconnects.";
 
 export function supportsDesktopAppUpdate(
   serverConfig: Pick<ServerConfig, "environment"> | null | undefined,

@@ -110,7 +110,7 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
         environmentId,
         message:
           capabilities.desktopSshLaunch === true
-            ? `The desktop app updates ${descriptor.label} when it reconnects over SSH.`
+            ? `The desktop app that launched ${descriptor.label} over SSH updates it to its own version when it reconnects.`
             : `Update T3 Code on ${descriptor.label} manually; it cannot update itself.`,
       });
     }

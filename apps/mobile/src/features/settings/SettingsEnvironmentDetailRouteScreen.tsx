@@ -268,7 +268,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                         {capabilities?.serverSelfUpdate === "desktop-managed"
                           ? "Update the desktop app on this machine."
                           : capabilities?.desktopSshLaunch === true
-                            ? "The desktop app updates this server when it reconnects over SSH."
+                            ? "The desktop app that launched this server over SSH updates it to its own version when it reconnects."
                             : "Update and restart T3 Code on this machine."}
                       </Text>
                     ) : null}
