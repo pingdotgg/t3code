@@ -78,6 +78,14 @@ describe("recallableComposerPrompt", () => {
     expect(recallableComposerPrompt(midPrompt + "\n\n" + block)).toBe(midPrompt);
   });
 
+  // The same text can be typed by the user or appended at send time; only the latter goes.
+  it.each([
+    "Ultrathink:\nKeep this prefix in my example",
+    'Example of a review block:\n\n<review_comment filePath="src/app.ts">Literal.</review_comment>',
+  ])("keeps user-typed text that resembles send-time context: %j", (typed) => {
+    expect(recallableComposerPrompt(typed)).toBe(typed);
+  });
+
   it("removes canonical references without restoring dangling chips", () => {
     const sent =
       "Look at [Terminal](t3-context://v1/terminal/term-1) please\n    indented  code\n![image](t3-context://v1/image/img-1)";
