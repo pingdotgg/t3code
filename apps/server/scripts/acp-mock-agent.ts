@@ -88,6 +88,8 @@ const openCompactionPromptOrdinals = new Set(
   (process.env.T3_ACP_OPEN_COMPACTION_PROMPT_ORDINALS ?? "").split(",").map(Number),
 );
 const failSetModeConfigOption = process.env.T3_ACP_FAIL_SET_MODE_CONFIG_OPTION === "1";
+// Announces the written value with stale dependent options, then answers only after release.
+const holdSetConfigResponse = process.env.T3_ACP_HOLD_SET_CONFIG_RESPONSE === "1";
 const emitEmptyDefaultAgentOption = process.env.T3_ACP_EMIT_EMPTY_DEFAULT_AGENT_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
@@ -499,6 +501,7 @@ const program = Effect.gen(function* () {
   const agent = yield* EffectAcpAgent.AcpAgent;
   const nativeCancelRequested = yield* Deferred.make<void>();
   const nativeCancelRelease = yield* Deferred.make<void>();
+  const setConfigResponseRelease = yield* Deferred.make<void>();
   const publishAntigravityCommands = (targetSessionId: string) =>
     agent.client.sessionUpdate({
       sessionId: targetSessionId,
@@ -538,7 +541,9 @@ const program = Effect.gen(function* () {
             }),
         );
       }
-      parameterizedModelPicker = request.capabilities?._meta?.parameterizedModelPicker === true;
+      parameterizedModelPicker =
+        request.capabilities?._meta?.parameterizedModelPicker === true ||
+        process.env.T3_ACP_PARAMETERIZED_MODEL_PICKER === "1";
       return {
         protocolVersion: 2,
         info: { name: "t3-acp-mock-agent", version: agentVersion },
@@ -823,6 +828,20 @@ const program = Effect.gen(function* () {
             params: request,
           },
         );
+      }
+      if (holdSetConfigResponse) {
+        yield* agent.client.sessionUpdate({
+          sessionId: String(request.sessionId),
+          update: {
+            sessionUpdate: "config_option_update",
+            configOptions: configOptions().map((option) =>
+              option.configId === request.configId && option.type === "select"
+                ? { ...option, currentValue: String(request.value) }
+                : option,
+            ),
+          },
+        });
+        yield* Deferred.await(setConfigResponseRelease);
       }
       if (request.configId === "mode" && typeof request.value === "string") {
         currentModeId = request.value;
@@ -1916,6 +1935,9 @@ const program = Effect.gen(function* () {
         inherited: process.env.T3_ACP_RUNTIME_AMBIENT === "sentinel",
         explicit: process.env.T3_ACP_RUNTIME_EXPLICIT === "kept",
       });
+    }
+    if (method === "_test/release-set-config-response") {
+      return Deferred.succeed(setConfigResponseRelease, undefined).pipe(Effect.as({}));
     }
     if (method === "_test/finish-cancel") {
       return Deferred.succeed(nativeCancelRelease, undefined).pipe(Effect.as({}));

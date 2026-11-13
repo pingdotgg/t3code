@@ -120,6 +120,30 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("adopts a config response that follows an earlier config notification", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: { T3_ACP_PARAMETERIZED_MODEL_PICKER: "1", T3_ACP_HOLD_SET_CONFIG_RESPONSE: "1" },
+        },
+      });
+      yield* runtime.start();
+      const write = yield* runtime.setConfigOption("model", "gpt-5.4").pipe(Effect.forkScoped);
+      yield* runtime.configOptionChanges.pipe(
+        Stream.filter((options) =>
+          options.some((option) => option.id === "model" && option.currentValue === "gpt-5.4"),
+        ),
+        Stream.runHead,
+      );
+      yield* runtime.request("_test/release-set-config-response", {});
+      const response = yield* Fiber.join(write);
+      expect(response.configOptions.some((option) => option.id === "reasoning")).toBe(true);
+      expect(yield* runtime.getConfigOptions).toEqual(response.configOptions);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("waits for native cancellation and drains final updates before another prompt", () =>
     Effect.gen(function* () {
       const toolStarted = yield* Deferred.make<void>();
