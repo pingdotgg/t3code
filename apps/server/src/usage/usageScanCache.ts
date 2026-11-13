@@ -7,6 +7,7 @@ import type {
 import * as Schema from "effect/Schema";
 
 import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
+import { type CodexScanState, hasUndatedCodexBaseline } from "../provider/Drivers/codexUsage.ts";
 import { mergeUsageCopies } from "./usageAggregation.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
@@ -309,8 +310,14 @@ export function decodeScanCache(
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;
     // Before v15 the state lacks the latest snapshot time that keeps a re-emitted older snapshot
-    // from billing twice, so a grown file re-parses whole instead of resuming.
-    const resumable = !legacy && !(entry.p === "codex" && version < 15);
+    // from billing twice, and a v15 baseline can lack it too, so a grown file re-parses whole
+    // instead of resuming.
+    const resumable =
+      !legacy &&
+      !(
+        entry.p === "codex" &&
+        (version < 15 || hasUndatedCodexBaseline(entry.cs as CodexScanState))
+      );
 
     const provider = entry.p;
     const records = decodeRecords(entry.r, provider);

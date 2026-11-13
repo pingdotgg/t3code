@@ -609,6 +609,15 @@ describe("parseCodexLine", () => {
       skipped: 1,
     },
     {
+      name: "bills a rewind that follows a request without cumulative counters",
+      lines: [
+        at("10:00:00", counted(counters(100, 20))),
+        at("10:00:10", counted(counters(20, 4), counters(60, 12))),
+      ],
+      processed: [120, 24],
+      skipped: 0,
+    },
+    {
       name: "does not bill replayed snapshots against a cached baseline of unknown age",
       lines: [
         at("10:00:00", counted(counters(100, 20), counters(100, 20))),

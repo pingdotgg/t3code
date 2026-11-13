@@ -157,6 +157,11 @@ export const CodexScanState = Schema.Struct({
 });
 export type CodexScanState = typeof CodexScanState.Type;
 
+// Requests without cumulative counters used to move the baseline without dating it.
+export function hasUndatedCodexBaseline(state: CodexScanState) {
+  return state.lastCumulativeUsage !== null && state.latestCumulativeAtMs === undefined;
+}
+
 export function initialCodexScanState(): CodexScanState {
   return {
     model: "",
