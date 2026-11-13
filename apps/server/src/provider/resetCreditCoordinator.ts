@@ -11,17 +11,21 @@ import * as Semaphore from "effect/Semaphore";
 
 interface AccountRedemptionState {
   readonly lock: Semaphore.Semaphore;
-  readonly pendingKey: Ref.Ref<string | null>;
+  readonly pendingKeys: Ref.Ref<ReadonlyMap<string, string>>;
 }
 
 export class ResetCreditCoordinator extends Context.Service<
   ResetCreditCoordinator,
   {
-    /** Reuse the idempotency key until an outcome or settled failure; timeouts keep it for retry. */
+    /**
+     * Reuse the idempotency key until an outcome or settled failure; timeouts keep it for retry.
+     * `credit` names what is redeemed when an account holds several, so each keeps its own key.
+     */
     readonly redeem: <E, R>(
       accountKey: string,
       consume: (idempotencyKey: string) => Effect.Effect<ProviderConsumeResetCreditOutcome, E, R>,
       isSettled?: (error: E) => boolean,
+      credit?: string,
     ) => Effect.Effect<ProviderConsumeResetCreditOutcome, E | PlatformError.PlatformError, R>;
   }
 >()("t3/provider/resetCreditCoordinator") {}
@@ -37,7 +41,7 @@ export const make = Effect.gen(function* () {
     if (existing) return existing;
     const candidate = {
       lock: yield* Semaphore.make(1),
-      pendingKey: yield* Ref.make<string | null>(null),
+      pendingKeys: yield* Ref.make<ReadonlyMap<string, string>>(new Map()),
     };
     return yield* Ref.modify(statesRef, (states) => {
       const current = states.get(accountKey);
@@ -50,19 +54,24 @@ export const make = Effect.gen(function* () {
 
   const redeem: ResetCreditCoordinator["Service"]["redeem"] = Effect.fn(
     "resetCreditCoordinator.redeem",
-  )(function* (accountKey, consume, isSettled) {
+  )(function* (accountKey, consume, isSettled, credit = "") {
     const state = yield* stateFor(accountKey);
+    const settle = Ref.update(state.pendingKeys, (pending) => {
+      const next = new Map(pending);
+      next.delete(credit);
+      return next;
+    });
     return yield* state.lock.withPermits(1)(
       Effect.gen(function* () {
-        const existing = yield* Ref.get(state.pendingKey);
+        const existing = (yield* Ref.get(state.pendingKeys)).get(credit);
         const idempotencyKey = existing ?? (yield* random.uuidV4());
-        yield* Ref.set(state.pendingKey, idempotencyKey);
-        const outcome = yield* consume(idempotencyKey).pipe(
-          Effect.tapError((error) =>
-            isSettled?.(error) ? Ref.set(state.pendingKey, null) : Effect.void,
-          ),
+        yield* Ref.update(state.pendingKeys, (pending) =>
+          new Map(pending).set(credit, idempotencyKey),
         );
-        yield* Ref.set(state.pendingKey, null);
+        const outcome = yield* consume(idempotencyKey).pipe(
+          Effect.tapError((error) => (isSettled?.(error) ? settle : Effect.void)),
+        );
+        yield* settle;
         return outcome;
       }),
     );

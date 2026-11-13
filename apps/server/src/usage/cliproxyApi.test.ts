@@ -748,14 +748,18 @@ describe("CLIProxyAPI built-in management API", () => {
       expect((yield* api.consume(config, "first.json", "grant_a").pipe(Effect.result))._tag).toBe(
         "Failure",
       );
+      // Another grant claimed while grant_a is unanswered must not take grant_a's request id.
+      expect(yield* api.consume(config, "first.json", "grant_b")).toEqual({ outcome: "reset" });
       expect(yield* api.consume(config, "first.json", "grant_a")).toEqual({ outcome: "reset" });
       const claimed = () =>
         test.requests.flatMap(({ body }) =>
           body?.method === "POST" ? [{ url: body.url, data: body.data }] : [],
         );
       const sent = claimed();
-      expect(sent).toHaveLength(2);
-      expect(sent[0]).toEqual(sent[1]);
+      expect(sent).toHaveLength(3);
+      expect(sent[0]).toEqual(sent[2]);
+      expect(sent[1]?.data).toContain('"grant_id":"grant_b"');
+      expect(sent[1]?.data).not.toBe(sent[0]?.data?.replace("grant_a", "grant_b"));
       expect(sent[0]?.url).toBe(
         "https://api.anthropic.com/api/organizations/org%20a/reset_rate_limits",
       );
@@ -766,10 +770,10 @@ describe("CLIProxyAPI built-in management API", () => {
         test.requests
           .filter((request) => request.path.endsWith("/reset-quota"))
           .map((request) => request.body?.auth_index),
-      ).toEqual(["a"]);
+      ).toEqual(["a", "a"]);
       const refused = yield* api.consume(config, "first.json", "Not A Grant").pipe(Effect.flip);
       expect(refused.detail).toBe("Claude returned a malformed reset credit.");
-      expect(claimed()).toHaveLength(2);
+      expect(claimed()).toHaveLength(3);
     }),
   );
 

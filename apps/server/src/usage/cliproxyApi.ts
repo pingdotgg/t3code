@@ -564,7 +564,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
   });
 
   // A grant can hold several resets, so its id cannot key the claim as a Codex credit's does:
-  // one request id per account is kept until Claude answers, as for a direct login.
+  // one request id per grant is kept until Claude answers.
   const claimClaudeGrant = Effect.fn("CliproxyApi.claimClaudeGrant")(function* (
     hub: CliproxyHub,
     account: AuthFile,
@@ -583,6 +583,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
         return yield* claudeResetClaimOutcome(response.status_code, Effect.succeed(response.body));
       }),
       isSettledClaudeResetCreditFailure,
+      grantId,
     );
   });
 
