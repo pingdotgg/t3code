@@ -207,7 +207,7 @@ function harness(input: {
         Effect.succeed(
           args.command === "ssh"
             ? processOutput(
-                `user git\nhostname ${input.sshConfig?.[args.args[1]!] ?? args.args[1]}\n`,
+                `user git\nhostname ${input.sshConfig?.[args.args[1]!.replace(/^.*@/u, "")] ?? args.args[1]!.replace(/^.*@/u, "")}\n`,
               )
             : args.args[0] === "remote"
               ? processOutput(input.remotes)

@@ -155,7 +155,7 @@ function makeRegistry(input: {
               args.command === "ssh"
                 ? Effect.succeed(
                     TestSourceControlHost.processOutput(
-                      `hostname ${input.sshConfig?.[args.args[1]!] ?? args.args[1]}\n`,
+                      `hostname ${input.sshConfig?.[args.args[1]!.replace(/^.*@/u, "")] ?? args.args[1]!.replace(/^.*@/u, "")}\n`,
                     ),
                   )
                 : run(args),

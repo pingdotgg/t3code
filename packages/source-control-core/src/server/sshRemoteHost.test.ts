@@ -10,6 +10,9 @@ const HOST_NAMES: Readonly<Record<string, string>> = {
   "github.work": "ssh.github.com",
   "code.example.com": "ssh.code.example.com",
   lan: "10.0.0.5",
+  // A `Match user` block applies to the remote's user only.
+  "deploy@forge": "github.com",
+  named: "constructor",
 };
 
 it.effect("replaces an SSH alias with the host ssh config sends it to", () =>
@@ -18,11 +21,12 @@ it.effect("replaces an SSH alias with the host ssh config sends it to", () =>
     const canonicalRemoteUrl = yield* SshRemoteHost.make({
       isPublicHost: (hostName) => hostName === "github.com",
       run: ({ args }) => {
-        const host = args[1]!;
-        asked.push(host);
+        const target = args[1]!;
+        const host = target.slice(target.lastIndexOf("@") + 1);
+        asked.push(target);
         return Effect.succeed({
           exitCode: ChildProcessSpawner.ExitCode(0),
-          stdout: `host ${host}\nuser git\nhostname ${HOST_NAMES[host] ?? host}\nport 2222\n`,
+          stdout: `host ${host}\nuser git\nhostname ${HOST_NAMES[target] ?? HOST_NAMES[host] ?? host}\nport 2222\n`,
           stderr: "",
           stdoutTruncated: false,
           stderrTruncated: false,
@@ -43,17 +47,25 @@ it.effect("replaces an SSH alias with the host ssh config sends it to", () =>
       ["git@unconfigured:owner/repo.git", "git@unconfigured:owner/repo.git"],
       ["https://gh-work/owner/repo.git", "https://gh-work/owner/repo.git"],
       ["git@-oProxyCommand=x:owner/repo.git", "git@-oProxyCommand=x:owner/repo.git"],
+      ["-oProxyCommand=x@gh-work:owner/repo.git", "-oProxyCommand=x@gh-work:owner/repo.git"],
+      ["deploy@forge:owner/repo.git", "deploy@github.com:owner/repo.git"],
+      ["git@forge:owner/repo.git", "git@forge:owner/repo.git"],
+      ["git@named:owner/repo.git", "git@constructor:owner/repo.git"],
     ] as const) {
       assert.strictEqual(yield* canonicalRemoteUrl(written), canonical, written);
     }
     // One read per host, and none for a remote that is not SSH or not a host name.
     assert.deepStrictEqual(asked, [
+      "git@gh-work",
       "gh-work",
-      "GitLab-Work",
-      "github.work",
-      "code.example.com",
-      "lan",
-      "unconfigured",
+      "git@GitLab-Work",
+      "git@github.work",
+      "git@code.example.com",
+      "git@lan",
+      "git@unconfigured",
+      "deploy@forge",
+      "git@forge",
+      "git@named",
     ]);
   }),
 );

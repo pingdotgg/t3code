@@ -6,17 +6,18 @@ import * as Effect from "effect/Effect";
 
 import type * as SourceControlHost from "./SourceControlHost.ts";
 
-// The host keeps its spelling: ssh matches `Host` patterns case-sensitively. A leading `-` would
-// be read by ssh as an option.
-const SSH_REMOTE = /^((?:ssh:\/\/)?(?:[^@/:]+@)?)([A-Za-z0-9][A-Za-z0-9._-]*)([:/].*)?$/isu;
+// The host keeps its spelling: ssh matches `Host` patterns case-sensitively. A leading `-` on the
+// user or host would be read by ssh as an option.
+const SSH_REMOTE =
+  /^((?:ssh:\/\/)?)((?:[^-@/:][^@/:]*@)?)([A-Za-z0-9][A-Za-z0-9._-]*)([:/].*)?$/isu;
 const HOST_NAME = /^[a-z0-9][a-z0-9.-]*$/u;
 const IPV4 = /^[\d.]+$/u;
 
 // The public forges' SSH endpoints on port 443.
-const SSH_ENDPOINT_HOSTS: Readonly<Record<string, string>> = {
-  "ssh.github.com": "github.com",
-  "altssh.gitlab.com": "gitlab.com",
-};
+const SSH_ENDPOINT_HOSTS: ReadonlyMap<string, string> = new Map([
+  ["ssh.github.com", "github.com"],
+  ["altssh.gitlab.com", "gitlab.com"],
+]);
 
 function hostNameOf(sshConfig: string): string | null {
   const hostName = sshConfig
@@ -26,7 +27,7 @@ function hostNameOf(sshConfig: string): string | null {
     .trim()
     .toLowerCase();
   if (hostName === undefined || !HOST_NAME.test(hostName) || IPV4.test(hostName)) return null;
-  return SSH_ENDPOINT_HOSTS[hostName] ?? hostName;
+  return SSH_ENDPOINT_HOSTS.get(hostName) ?? hostName;
 }
 
 /**
@@ -42,12 +43,13 @@ export const make = Effect.fnUntraced(function* (input: {
   const hostNames = yield* Cache.make({
     capacity: 256,
     timeToLive: Duration.minutes(5),
-    lookup: (host: string) =>
+    // Keyed by `user@host`: a `Match user` block can send one user of a host elsewhere.
+    lookup: (target: string) =>
       input
         .run({
           operation: "SourceControlHost.canonicalRemoteUrl",
           command: "ssh",
-          args: ["-G", host],
+          args: ["-G", target],
           cwd,
           allowNonZeroExit: true,
           timeoutMs: 5_000,
@@ -60,15 +62,15 @@ export const make = Effect.fnUntraced(function* (input: {
         ),
   });
   return Effect.fn("SourceControlHost.canonicalRemoteUrl")(function* (remoteUrl: string) {
-    const [, prefix, host, rest = ""] = isSshRemoteUrl(remoteUrl)
+    const [, scheme, user, host, rest = ""] = isSshRemoteUrl(remoteUrl)
       ? (SSH_REMOTE.exec(remoteUrl.trim()) ?? [])
       : [];
-    if (prefix === undefined || host === undefined) return remoteUrl;
-    const hostName = yield* Cache.get(hostNames, host);
+    if (scheme === undefined || user === undefined || host === undefined) return remoteUrl;
+    const hostName = yield* Cache.get(hostNames, `${user}${host}`);
     return hostName === null ||
       hostName === host.toLowerCase() ||
       (host.includes(".") && !input.isPublicHost(hostName))
       ? remoteUrl
-      : `${prefix}${hostName}${rest}`;
+      : `${scheme}${user}${hostName}${rest}`;
   });
 });
