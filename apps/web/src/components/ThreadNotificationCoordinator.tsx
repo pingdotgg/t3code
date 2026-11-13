@@ -148,11 +148,13 @@ export function startThreadNotifications(
           ? "Approval needed"
           : status === "limited"
             ? "Usage limit reached"
-            : status === "failed"
-              ? "Thread failed"
-              : status === "request"
-                ? "Guest request"
-                : "Input needed";
+            : status === "denied"
+              ? "Permission denied"
+              : status === "failed"
+                ? "Thread failed"
+                : status === "request"
+                  ? "Guest request"
+                  : "Input needed";
     if (hasNotificationSound(mode)) {
       void playNotificationSound(kind, () =>
         hasNotificationSound(getClientSettings().notificationMode),
@@ -177,7 +179,7 @@ export function startThreadNotifications(
               <CircleCheckIcon aria-hidden className="size-4 text-success-foreground" />
             ) : status === "approval" ? (
               <ShieldQuestionIcon aria-hidden className="size-4 text-warning-foreground" />
-            ) : status === "limited" ? (
+            ) : status === "limited" || status === "denied" ? (
               <CircleAlertIcon aria-hidden className="size-4 text-warning-foreground" />
             ) : status === "failed" ? (
               <CircleAlertIcon aria-hidden className="size-4 text-destructive-foreground" />
@@ -270,7 +272,8 @@ export function startThreadNotifications(
         status === "request" ||
         status === "approval" ||
         status === "failed" ||
-        status === "limited";
+        status === "limited" ||
+        status === "denied";
       const requestId = needsAttention ? resolveBackgroundThreadRequest(thread).requestId : null;
       // Queued messages become the latest run while a request stays pending, so a request
       // with an id is keyed by that id alone and announces once.

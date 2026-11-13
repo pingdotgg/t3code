@@ -61,6 +61,7 @@ import {
   type SDKAssistantMessage,
   type SDKAPIRetryMessage,
   type SDKMessage,
+  type SDKPermissionDenial,
   type SDKRateLimitInfo,
   type SDKResultMessage,
   type SDKUserMessage,
@@ -3814,6 +3815,29 @@ function summarizeClaudeToolRequest(toolName: string, input: ClaudeNativeToolInp
     : `${toolName}: ${serialized.slice(0, 397)}...`;
 }
 
+const CLAUDE_PERMISSION_DENIAL_NOTICE_LIMIT = 5;
+const CLAUDE_PERMISSION_DENIAL_REASON_LIMIT = 400;
+
+function claudePermissionDenialNotice(
+  denials: ReadonlyArray<SDKPermissionDenial>,
+  reasons: ReadonlyMap<string, string>,
+): string {
+  const lines = denials.slice(0, CLAUDE_PERMISSION_DENIAL_NOTICE_LIMIT).map((denial) => {
+    const summary = summarizeClaudeToolRequest(
+      denial.tool_name,
+      claudeNativeToolInputFromRecord(denial.tool_input),
+    );
+    const reason = reasons.get(denial.tool_use_id);
+    return reason === undefined ? `- ${summary}` : `- ${summary} (${reason})`;
+  });
+  const omitted = denials.length - lines.length;
+  return [
+    `Claude Code denied ${denials.length === 1 ? "1 tool call" : `${denials.length} tool calls`} this turn:`,
+    ...lines,
+    ...(omitted > 0 ? [`- and ${omitted} more`] : []),
+  ].join("\n");
+}
+
 function outputFromClaudeToolResult(
   toolResult: ClaudeToolResultContentBlock,
 ): ClaudeToolResultOutput | undefined {
@@ -4796,6 +4820,10 @@ interface ActiveClaudeTurnContext {
   >;
   // Claude may settle a turn with a result that echoes only a steer's uuid.
   readonly steerUuids: Set<string>;
+  // The result's permission_denials also lists calls T3 denied through canUseTool; only the
+  // ones the CLI denied on its own (deny rules, auto mode) get a notice.
+  readonly t3DeniedToolUseIds: Set<string>;
+  readonly permissionDenialReasons: Map<string, string>;
   // Claude can run another model than requested, such as when an organization disallows it.
   executedModel: string | undefined;
 }
@@ -10412,6 +10440,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
 
+          if (message.type === "system" && message.subtype === "permission_denied") {
+            // Sliced before stripping: stripVTControlCharacters is superlinear on long escapes.
+            const reason = NodeUtil.stripVTControlCharacters(
+              (message.decision_reason ?? message.message).slice(
+                0,
+                CLAUDE_PERMISSION_DENIAL_REASON_LIMIT * 2,
+              ),
+            )
+              .trim()
+              .slice(0, CLAUDE_PERMISSION_DENIAL_REASON_LIMIT);
+            if (reason !== "") context.permissionDenialReasons.set(message.tool_use_id, reason);
+            return;
+          }
+
           if (
             message.type === "system" &&
             (message.subtype === "model_refusal_fallback" ||
@@ -11257,6 +11299,47 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     failureHint,
                     usageLimited,
                   );
+            const cliDenials = interrupted
+              ? []
+              : (message.permission_denials ?? []).filter(
+                  (denial) => !context.t3DeniedToolUseIds.has(denial.tool_use_id),
+                );
+            if (cliDenials.length > 0) {
+              const nativeItemId = `permission-denials:${context.providerTurnId}`;
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: {
+                  id: idAllocator.derive.turnItemFromProviderItem({
+                    driver: CLAUDE_PROVIDER,
+                    nativeItemId,
+                  }),
+                  threadId: context.input.threadId,
+                  runId: context.input.runId,
+                  nodeId: context.input.rootNodeId,
+                  providerThreadId: context.input.providerThread.id,
+                  providerTurnId: context.providerTurnId,
+                  nativeItemRef: {
+                    driver: CLAUDE_PROVIDER,
+                    nativeId: nativeItemId,
+                    strength: "weak",
+                  },
+                  parentItemId: null,
+                  ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                  type: "system_notice",
+                  kind: "permission_denied",
+                  status: "completed",
+                  title: "Claude Code denied permission for a tool call",
+                  message: claudePermissionDenialNotice(
+                    cliDenials,
+                    context.permissionDenialReasons,
+                  ),
+                  startedAt: completedAt,
+                  completedAt,
+                  updatedAt: completedAt,
+                },
+              });
+            }
             const terminalFailure =
               resultFailure?.class === "usage_limit"
                 ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }
@@ -11756,7 +11839,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
 
         const canUseTool: CanUseTool = (toolName, toolInput, callbackOptions) =>
-          runPromise(canUseToolEffect(toolName, toolInput, callbackOptions));
+          runPromise(
+            Effect.gen(function* () {
+              const context = yield* Ref.get(activeTurn);
+              // Recorded before deciding, so a callback that dies stays T3's denial.
+              context?.t3DeniedToolUseIds.add(callbackOptions.toolUseID);
+              const result = yield* canUseToolEffect(toolName, toolInput, callbackOptions);
+              if (result.behavior === "allow") {
+                context?.t3DeniedToolUseIds.delete(callbackOptions.toolUseID);
+              }
+              return result;
+            }),
+          );
 
         const onElicitationEffect = Effect.fn("ClaudeAdapterV2.onElicitation")(function* (
           request: ElicitationRequest,
@@ -12519,6 +12613,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               heldRootFrames: [],
               pendingSteers: new Map(),
               steerUuids: new Set(),
+              t3DeniedToolUseIds: new Set(),
+              permissionDenialReasons: new Map(),
               executedModel: undefined,
             };
             const attachTurn = Effect.gen(function* () {

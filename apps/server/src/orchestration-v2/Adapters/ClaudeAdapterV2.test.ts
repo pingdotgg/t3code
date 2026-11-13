@@ -3271,6 +3271,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       readonly cache_read_input_tokens: number;
     };
     readonly modelUsage?: SDKResultMessage["modelUsage"];
+    readonly permissionDenials?: SDKResultMessage["permission_denials"];
   }) =>
     claudeSdkFrame({
       type: "result",
@@ -3289,7 +3290,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         cache_read_input_tokens: 0,
       },
       modelUsage: input.modelUsage ?? {},
-      permission_denials: [],
+      permission_denials: input.permissionDenials ?? [],
       uuid: input.uuid,
       session_id: WAKE_NATIVE_SESSION,
       ...(input.origin === undefined ? {} : { origin: input.origin }),
@@ -9333,6 +9334,105 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         harness.events.some(
           (event) => event.type === "message.updated" && event.message.role === "assistant",
         ),
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("lists the tool calls Claude Code denied on its own, not the ones T3 declined", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("claude-permission-denial-attempt"),
+          text: "Run the probe.",
+          attachments: [],
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            cwd: "/workspace",
+          }),
+        }),
+      );
+      // T3 owns this call from the moment the CLI asks about it, whatever the answer.
+      yield* Effect.promise(() =>
+        harness.getOpenedOptions()!.canUseTool!(
+          "Bash",
+          { command: "rm -rf build" },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "tool-t3-asked",
+            requestId: "request-t3-asked",
+          },
+        ),
+      ).pipe(Effect.forkScoped);
+      yield* Queue.take(harness.runtimeRequestReceipts);
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "system",
+          subtype: "permission_denied",
+          tool_name: "Bash",
+          tool_use_id: "tool-cli-rule",
+          decision_reason_type: "rule",
+          message: "\u001b[31mPermission to use Bash has been denied.\u001b[0m",
+          session_id: WAKE_NATIVE_SESSION,
+          uuid: "00000000-0000-4000-8000-000000000830",
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000831",
+          result: "DENIED",
+          permissionDenials: [
+            {
+              tool_name: "Bash",
+              tool_use_id: "tool-t3-asked",
+              tool_input: { command: "rm -rf build" },
+            },
+            {
+              tool_name: "Bash",
+              tool_use_id: "tool-cli-rule",
+              tool_input: { command: "printf probe" },
+            },
+            {
+              tool_name: "Read",
+              tool_use_id: "tool-cli-silent",
+              tool_input: { file_path: ".env" },
+            },
+          ],
+        }),
+      );
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+            ? [{ kind: event.turnItem.kind, message: event.turnItem.message }]
+            : [],
+        ),
+        [
+          {
+            kind: "permission_denied",
+            message: [
+              "Claude Code denied 2 tool calls this turn:",
+              "- Bash: printf probe (Permission to use Bash has been denied.)",
+              "- Read: .env",
+            ].join("\n"),
+          },
+        ],
       );
     }).pipe(
       Effect.scoped,

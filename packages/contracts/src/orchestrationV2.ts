@@ -1817,6 +1817,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("system_notice"),
     message: Schema.String,
+    /** Set on the notice that lists tool calls the provider denied on its own. */
+    kind: Schema.optional(Schema.Literal("permission_denied")),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2196,6 +2198,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   latestRunStopRequested: Schema.optional(Schema.Boolean),
   /** The latest run answers a background-work progress wake, like a Monitor line, not a terminal one. Absent from older servers. */
   latestRunBackgroundWake: Schema.optional(Schema.Boolean),
+  /** The provider denied tool calls on its own during the latest run, whose status still stands. Absent from older servers. */
+  latestRunPermissionDenied: Schema.optional(Schema.Boolean),
   activeRunId: Schema.NullOr(RunId),
   activityRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   activityRunStatus: Schema.optional(
@@ -2697,6 +2701,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("system_notice"),
     message: Schema.String,
+    /** Set on the notice that lists tool calls the provider denied on its own. */
+    kind: Schema.optional(Schema.Literal("permission_denied")),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,

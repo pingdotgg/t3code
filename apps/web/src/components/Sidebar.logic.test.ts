@@ -285,6 +285,27 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe(false);
   });
 
+  it("keeps a provider-denied turn Denied until work, a request or a failure outranks it", () => {
+    const denied = { ...idle, latestRunPermissionDenied: true };
+    expect(resolveSidebarThreadStatus(denied)).toBe("denied");
+    expect(
+      resolveSidebarThreadStatus({ ...denied, runtime: { ...runtime, status: "running" } }),
+    ).toBe("working");
+    expect(
+      resolveSidebarThreadStatus({ ...denied, runtime: { ...runtime, status: "failed" } }),
+    ).toBe("failed");
+    expect(resolveSidebarThreadStatus({ ...denied, hasPendingApprovals: true })).toBe("approval");
+    expect(
+      shouldRecedeSidebarThread({
+        status: "denied",
+        isUnread: false,
+        isWoke: false,
+        isActive: false,
+        isSelected: false,
+      }),
+    ).toBe(false);
+  });
+
   it("reports worktree setup as preparing, and failed only while the latest run failed", () => {
     expect(
       resolveSidebarThreadStatus({

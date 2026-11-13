@@ -246,6 +246,12 @@ thread** from its long-press menu on mobile.
 
 ## Inspect agent work
 
+**Denied** means the provider blocked tool calls on its own during the latest
+turn, for example through a deny rule or Claude's auto mode. The turn may still
+have finished its work, so open it to check the notice that lists each denied
+call. The thread does not settle from inactivity until you send another message
+or settle it yourself; a merged or closed pull request still settles it.
+
 **Limited** means the provider stopped on a usage or rate limit. The conversation
 keeps the provider's explanation. Retry after the limit resets, or switch to
 another provider instance.

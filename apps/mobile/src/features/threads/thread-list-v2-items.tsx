@@ -137,6 +137,12 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     className: "text-warning-foreground",
     iconTintClassName: "accent-warning-foreground",
   },
+  denied: {
+    label: "Denied",
+    icon: "exclamationmark.circle",
+    className: "text-warning-foreground",
+    iconTintClassName: "accent-warning-foreground",
+  },
 };
 const DONE_STATUS_LABEL: StatusLabel = {
   label: "Done",

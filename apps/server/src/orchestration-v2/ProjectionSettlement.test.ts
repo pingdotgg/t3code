@@ -77,6 +77,7 @@ const createRun = Effect.fn(function* (
   threadId: ThreadId,
   status: OrchestrationV2Run["status"] = "completed",
   ordinal = 1,
+  queueHeld = false,
 ) {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const runId = RunId.make(`run:${threadId}:${ordinal}`);
@@ -101,9 +102,39 @@ const createRun = Effect.fn(function* (
       completedAt: ["completed", "rolled_back", "failed"].includes(status) ? old : null,
       checkpointId: null,
       contextHandoffId: null,
+      ...(queueHeld ? { queueHeld } : {}),
     },
   });
   return runId;
+});
+
+const createDenialNotice = Effect.fn(function* (threadId: ThreadId, runId: RunId) {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  yield* store.apply({
+    id: EventId.make(`event:denial:${runId}`),
+    type: "turn-item.updated",
+    threadId,
+    occurredAt: old,
+    payload: {
+      id: TurnItemId.make(`denial:${runId}`),
+      threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 2,
+      type: "system_notice",
+      kind: "permission_denied",
+      status: "completed",
+      title: "Claude Code denied permission for a tool call",
+      message: "Claude Code denied 1 tool call this turn:\n- Bash: printf probe",
+      startedAt: old,
+      completedAt: old,
+      updatedAt: old,
+    },
+  });
 });
 
 const createItem = Effect.fn(function* (
@@ -317,6 +348,14 @@ it.effect(
           pendingBackgroundTasks: [{ taskId: "running-task", kind: "subagent" }],
         },
       });
+      const denied = yield* createThread("denied");
+      yield* createDenialNotice(denied, yield* createRun(denied));
+      const deniedBehindHeldQueue = yield* createThread("denied-behind-held-queue");
+      yield* createDenialNotice(deniedBehindHeldQueue, yield* createRun(deniedBehindHeldQueue));
+      yield* createRun(deniedBehindHeldQueue, "queued", 2, true);
+      const deniedThenAnswered = yield* createThread("denied-then-answered");
+      yield* createDenialNotice(deniedThenAnswered, yield* createRun(deniedThenAnswered));
+      yield* createRun(deniedThenAnswered, "completed", 2);
       const candidates = yield* store.getSettlementCandidates();
       const shell = yield* store.getShellSnapshot({ location: "active" });
       const eligible = candidates.filter((thread) =>
@@ -324,7 +363,18 @@ it.effect(
       );
       assert.deepEqual(
         new Set(eligible.map((thread) => thread.id)),
-        new Set([idle, completed, queued, woke, background, persistent, rolledBack]),
+        new Set([
+          idle,
+          completed,
+          queued,
+          woke,
+          background,
+          persistent,
+          rolledBack,
+          denied,
+          deniedBehindHeldQueue,
+          deniedThenAnswered,
+        ]),
       );
       assert.deepEqual(
         new Set(eligible.map((thread) => thread.id)),
@@ -352,6 +402,31 @@ it.effect(
               latestUserAuthoredMessageAt: candidate.latestUserAuthoredMessageAt,
             },
           }),
+        );
+      }
+      // A provider-side denial holds inactivity settlement until a later run presents instead.
+      for (const [threadId, expected] of [
+        [completed, false],
+        [denied, true],
+        [deniedBehindHeldQueue, true],
+        [deniedThenAnswered, false],
+      ] as const) {
+        const candidate = candidates.find((thread) => thread.id === threadId)!;
+        const memoryShell = ProjectionStore.threadShellFromProjection(
+          yield* store.getThreadProjection(threadId),
+        );
+        assert.equal(candidate.latestRunPermissionDenied, expected, threadId);
+        assert.equal(memoryShell.latestRunPermissionDenied, expected, threadId);
+        assert.equal(
+          resolveAutoSettlementAt({
+            thread: candidate,
+            pullRequest: null,
+            nowMs: DateTime.toEpochMillis(now),
+            autoSettleAfterDays: 7,
+            autoSettleOnMerge: false,
+          }) === null,
+          expected,
+          threadId,
         );
       }
       assert.equal(

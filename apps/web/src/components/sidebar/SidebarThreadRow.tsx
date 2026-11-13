@@ -778,9 +778,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   icon: "request" as const,
                   className: "text-guest-foreground",
                 }
-              : status === "limited"
+              : status === "limited" || status === "denied"
                 ? {
-                    label: "Limited",
+                    label: status === "limited" ? "Limited" : "Denied",
                     icon: "failed" as const,
                     className: "text-warning-foreground",
                   }

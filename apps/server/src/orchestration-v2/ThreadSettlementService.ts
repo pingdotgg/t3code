@@ -238,6 +238,8 @@ export function resolveAutoSettlementAt(input: {
   if (pullRequest !== null && pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) {
     return DateTime.makeUnsafe(activityAtMs);
   }
+  // The run may have ended blocked, so only the user or a finished pull request settles it.
+  if (thread.latestRunPermissionDenied === true) return null;
   const hasPullRequest =
     hasOpenLink ||
     pullRequest !== null ||
