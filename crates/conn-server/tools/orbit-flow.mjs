@@ -1,8 +1,11 @@
 #!/usr/bin/env node
-// Orbit's container flow (DROP-IN.md §1) against a Conn Server binary; one Haiku turn.
-// Usage: node orbit-flow.mjs <conn-server> [port]. The home is a temporary T3CODE_HOME.
+// Orbit's container flow (DROP-IN.md §1) against a Conn Server binary. The turn is one Haiku
+// turn with `conn-server`, and the scripted fake provider with `examples/replay_server`.
+// Usage: node orbit-flow.mjs <conn-server> [port]. The port defaults to a free one. The home is
+// a temporary T3CODE_HOME, never ~/.t3. Needs no monorepo.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -13,7 +16,15 @@ const { McpSession } = await import(
 );
 
 const binary = NodePath.resolve(process.argv[2] ?? "");
-const port = Number(process.argv[3] ?? 3797);
+const freePort = () =>
+  new Promise((resolve) => {
+    const probe = NodeNet.createServer();
+    probe.listen(0, "127.0.0.1", () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
+const port = process.argv[3] === undefined ? await freePort() : Number(process.argv[3]);
 if (!NodeFS.existsSync(binary)) throw new Error("usage: orbit-flow.mjs <conn-server> [port]");
 const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-orbit-"));
 const home = NodePath.join(root, ".t3");

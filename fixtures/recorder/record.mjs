@@ -1,10 +1,9 @@
 #!/usr/bin/env node
-// Records real web-client sessions against the TypeScript server at this checkout.
+// Records real web-client sessions against the TypeScript server in CONN_MONOREPO.
 // Usage: record.mjs [scenario ...] [--explore] [--rust <binary> | --rust-url <pairingUrl>]
-//   [--rust-sample <command>]. rust-* scenarios pair the Rust server as a remote environment.
-// See ../README.md.
+//   [--rust-sample <command>] [--out <dir>]. rust-* scenarios pair the Rust server as a remote
+//   environment. `--out` writes the recordings there instead of ../sessions. See ../README.md.
 import * as NodeChildProcess from "node:child_process";
-import * as NodeModule from "node:module";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
@@ -12,14 +11,12 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { redactText, redactValue, addSecret } from "./redact.mjs";
 import { SCENARIOS } from "./scenarios.mjs";
+import { monorepo, packageRequire } from "../../tools/monorepo.mjs";
 
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-// The Conn monorepo (web client, TypeScript server): `$CONN_MONOREPO`, else the checkout
-// this folder sits in.
-const repo = NodePath.resolve(process.env.CONN_MONOREPO ?? NodePath.resolve(here, "../../../.."));
-const sessionsDir = NodePath.resolve(here, "../sessions");
-const require = NodeModule.createRequire(NodePath.join(repo, "apps/server/package.json"));
-const { chromium } = require("playwright-core");
+// The Conn monorepo (web client, TypeScript server, Playwright).
+const repo = monorepo();
+const { chromium } = packageRequire("apps/server")("playwright-core");
 
 const args = process.argv.slice(2);
 const explore = args.includes("--explore");
@@ -31,6 +28,7 @@ const takeOption = (flag) => {
 };
 const rustUrl = takeOption("--rust-url");
 const rustSample = takeOption("--rust-sample");
+const sessionsDir = NodePath.resolve(takeOption("--out") ?? NodePath.join(here, "../sessions"));
 const wanted = args.filter((a) => !a.startsWith("--"));
 const order = Object.keys(SCENARIOS);
 const selected =

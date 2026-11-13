@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Prints a readable timeline of one recording: HTTP calls and RPC requests with their outcome.
-// Usage: node native/conn-server/fixtures/recorder/summarize.mjs <name>   (e.g. pairing)
+// Usage: node fixtures/recorder/summarize.mjs <name>   (e.g. pairing). Needs no monorepo.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";

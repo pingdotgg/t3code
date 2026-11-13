@@ -1,18 +1,16 @@
 // Drives a conn-server binary with Conn's client-runtime pairing and Effect's RpcClient.
-// From the repo root after `vp i`: `node <this file> target/debug/conn-server`, or
+// With CONN_MONOREPO set (after `vp i` there): `node <this file> target/debug/conn-server`, or
 // `node <this file> target/debug/examples/effect_fixture --fixture` for the ack window.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
-import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import * as NodeURL from "node:url";
 
-const repo = new URL("../../../../../", import.meta.url);
-const contracts = new URL("packages/contracts/", repo);
-const resolve = NodeModule.createRequire(new URL("package.json", contracts)).resolve;
-const load = (specifier) => import(NodeURL.pathToFileURL(resolve(specifier)).href);
-const source = (path) => import(new URL(path, repo).href);
+import { importSource, packageImporter } from "../../../tools/monorepo.mjs";
+
+// Packages resolve as packages/contracts sees them, so the sources share one `effect`.
+const load = packageImporter("packages/contracts");
+const source = importSource;
 
 const DateTime = await load("effect/DateTime");
 const Effect = await load("effect/Effect");

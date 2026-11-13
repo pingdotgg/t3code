@@ -1,14 +1,14 @@
 // Writes packages/shared's default keybindings to keybindings.defaults.json (compiled in) and
 // their TypeScript compile to keybindings.resolved.json (tests). `--check` fails when stale.
-// Needs a Conn checkout after `vp i`: `$CONN_MONOREPO`, else the checkout around this folder.
+// Needs a Conn checkout after `vp i` in `CONN_MONOREPO`.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import { monorepo } from "../../../tools/monorepo.mjs";
+
 const crateDir = NodeURL.fileURLToPath(new URL("../", import.meta.url));
-const repoDir = NodePath.resolve(
-  process.env.CONN_MONOREPO ?? NodePath.resolve(crateDir, "../../../.."),
-);
+const repoDir = monorepo();
 const outputs = {
   defaults: NodePath.join(crateDir, "keybindings.defaults.json"),
   resolved: NodePath.join(crateDir, "keybindings.resolved.json"),
@@ -58,3 +58,4 @@ for (const [name, path] of Object.entries(outputs)) {
   }
 }
 if (stale) process.exit(1);
+if (process.argv.includes("--check")) console.log("keybinding defaults are current");
