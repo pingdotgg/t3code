@@ -85,6 +85,21 @@ export class DesktopWslDistroListError extends Schema.TaggedError<DesktopWslDist
   }
 }
 
+export class DesktopWslPathConversionError extends Schema.TaggedError<DesktopWslPathConversionError>()(
+  "DesktopWslPathConversionError",
+  {
+    distro: Schema.String,
+    linuxPath: Schema.String,
+    stage: Schema.Literals(["spawn", "read", "exit", "conversion", "timeout"]),
+    exitCode: Schema.optionalKey(Schema.Number),
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Could not convert the WSL path ${this.linuxPath} in ${this.distro} (${this.stage}).`;
+  }
+}
+
 const isDesktopWslDistroListError = Schema.is(DesktopWslDistroListError);
 
 export class DesktopWslEnvironment extends Context.Service<
@@ -958,6 +973,61 @@ const windowsToWslPathImpl = (
     Effect.orElseSucceed(() => Option.none<string>()),
   );
 };
+
+export const wslToWindowsPath = Effect.fn("desktop.wsl.wslToWindowsPath")(function* (
+  distro: string,
+  linuxPath: string,
+): Effect.fn.Return<
+  string,
+  DesktopWslPathConversionError,
+  ChildProcessSpawner.ChildProcessSpawner
+> {
+  const converted = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const command = ChildProcess.make(
+        "wsl.exe",
+        [...buildDistroArgs(distro), "--", "wslpath", "-w", linuxPath],
+        {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+          killSignal: "SIGTERM",
+          forceKillAfter: PROCESS_TERMINATE_GRACE,
+        },
+      );
+      const failure = (stage: "spawn" | "read" | "exit", cause: unknown) =>
+        new DesktopWslPathConversionError({ distro, linuxPath, stage, cause });
+      const handle = yield* spawner
+        .spawn(command)
+        .pipe(Effect.mapError((cause) => failure("spawn", cause)));
+      const [stdout, exitCode] = yield* Effect.all(
+        [
+          Stream.runCollect(handle.stdout).pipe(Effect.mapError((cause) => failure("read", cause))),
+          handle.exitCode.pipe(Effect.mapError((cause) => failure("exit", cause))),
+        ],
+        { concurrency: 2 },
+      );
+      if (exitCode !== ChildProcessSpawner.ExitCode(0)) {
+        return yield* new DesktopWslPathConversionError({
+          distro,
+          linuxPath,
+          stage: "conversion",
+          exitCode,
+        });
+      }
+      const path = decodeUtf8(concatChunks(stdout)).replace(/\r?\n$/, "");
+      if (path.length === 0) {
+        return yield* new DesktopWslPathConversionError({ distro, linuxPath, stage: "conversion" });
+      }
+      return path;
+    }),
+  ).pipe(Effect.timeoutOption(WSLPATH_TIMEOUT));
+  return yield* Option.match(converted, {
+    onNone: () => new DesktopWslPathConversionError({ distro, linuxPath, stage: "timeout" }),
+    onSome: Effect.succeed,
+  });
+});
 
 const IPV4_PATTERN = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 

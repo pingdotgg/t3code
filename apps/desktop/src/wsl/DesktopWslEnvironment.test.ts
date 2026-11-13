@@ -1,9 +1,17 @@
 // @effect-diagnostics nodeBuiltinImport:off - the executed suite runs the generated install script through a real POSIX shell.
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { afterAll, expect } from "vite-plus/test";
 import * as NodeChildProcess from "node:child_process";
 
@@ -18,6 +26,7 @@ import {
   buildWslRuntimeProbeScript,
   parseResolvedPath,
   parseWslRuntimeRoot,
+  wslToWindowsPath,
 } from "./DesktopWslEnvironment.ts";
 
 // The install script only fails the way this file cares about when a real shell
@@ -457,5 +466,130 @@ describe("makeIsAvailable", () => {
         yield* isAvailable(new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" })),
       );
     }),
+  );
+});
+
+describe("wslToWindowsPath", () => {
+  const makeProcess = (
+    stdout: Stream.Stream<Uint8Array> = Stream.empty,
+    exitCode: Effect.Effect<ChildProcessSpawner.ExitCode> = Effect.succeed(
+      ChildProcessSpawner.ExitCode(0),
+    ),
+  ) =>
+    ChildProcessSpawner.makeHandle({
+      pid: ChildProcessSpawner.ProcessId(123),
+      stdout,
+      stderr: Stream.empty,
+      all: stdout,
+      exitCode,
+      isRunning: Effect.succeed(false),
+      kill: () => Effect.void,
+      stdin: Sink.drain,
+      getInputFd: () => Sink.drain,
+      getOutputFd: () => Stream.empty,
+      unref: Effect.succeed(Effect.void),
+    });
+
+  it.effect.each([
+    ["/mnt/c/Users/test/assets", "C:\\Users\\test\\assets\n", "C:\\Users\\test\\assets"],
+    [
+      "/windows/c/Users/test user's assets ",
+      "C:\\Users\\test user's assets \r\n",
+      "C:\\Users\\test user's assets ",
+    ],
+    [
+      "/home/test/assets",
+      "\\\\wsl.localhost\\Test Distro\\home\\test\\assets\n",
+      "\\\\wsl.localhost\\Test Distro\\home\\test\\assets",
+    ],
+  ] as const)(
+    "uses the selected distro's mount resolution for %s",
+    ([linuxPath, output, expected]) =>
+      Effect.gen(function* () {
+        let spawned: ChildProcess.Command | undefined;
+        const spawner = ChildProcessSpawner.make((command) => {
+          spawned = command;
+          return Effect.succeed(makeProcess(Stream.encodeText(Stream.make(output))));
+        });
+        const converted = yield* wslToWindowsPath("Test Distro", linuxPath).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        assert.equal(converted, expected);
+        assert.isDefined(spawned);
+        assert.equal(spawned._tag, "StandardCommand");
+        if (spawned._tag !== "StandardCommand") return;
+        assert.equal(spawned.command, "wsl.exe");
+        assert.deepEqual(spawned.args, ["-d", "Test Distro", "--", "wslpath", "-w", linuxPath]);
+      }),
+  );
+
+  it.effect.each([
+    { output: "", exitCode: 1 },
+    { output: "\n", exitCode: 0 },
+  ])("refuses an unsuccessful or empty conversion (%s)", ({ output, exitCode }) =>
+    Effect.gen(function* () {
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          makeProcess(
+            Stream.encodeText(Stream.make(output)),
+            Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
+          ),
+        ),
+      );
+      const error = yield* wslToWindowsPath("Test Distro", "/mnt/c/assets").pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.flip,
+      );
+      assert.equal(error._tag, "DesktopWslPathConversionError");
+      assert.equal(error.stage, "conversion");
+      assert.equal(error.distro, "Test Distro");
+      assert.equal(error.linuxPath, "/mnt/c/assets");
+    }),
+  );
+
+  it.effect("reports failure to start the path converter", () =>
+    Effect.gen(function* () {
+      const cause = PlatformError.systemError({
+        _tag: "NotFound",
+        module: "ChildProcess",
+        method: "spawn",
+        cause: new Error("wsl.exe missing"),
+      });
+      const error = yield* wslToWindowsPath("Test Distro", "/mnt/c/assets").pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.fail(cause)),
+        ),
+        Effect.flip,
+      );
+      assert.equal(error.stage, "spawn");
+      assert.equal(error.cause, cause);
+    }),
+  );
+
+  it.effect("closes the converter's process scope when it times out", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const released = yield* Deferred.make<void>();
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.acquireRelease(
+            Deferred.succeed(started, undefined).pipe(
+              Effect.as(makeProcess(Stream.never, Effect.never)),
+            ),
+            () => Deferred.succeed(released, undefined),
+          ),
+        );
+        const fiber = yield* wslToWindowsPath("Test Distro", "/mnt/c/assets").pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(started);
+        yield* TestClock.adjust(Duration.seconds(10));
+        const error = yield* Fiber.join(fiber).pipe(Effect.flip);
+        yield* Deferred.await(released);
+        assert.equal(error.stage, "timeout");
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
   );
 });
