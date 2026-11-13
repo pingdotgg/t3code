@@ -28,6 +28,7 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 import {
   orchestrationCommandDuration,
   orchestrationCommandsTotal,
@@ -844,6 +845,21 @@ it.effect(
         (yield* Effect.exit(projections.getThreadRecords(threadId, ["contextTransfers"])))._tag,
         "Failure",
       );
+      // A delegated task that ended and handed its result over.
+      yield* sql`INSERT INTO orchestration_v2_projection_subagents
+        (subagent_id, thread_id, run_id, parent_node_id, provider, provider_thread_id,
+          child_thread_id, origin, status, updated_at, payload_json, completion_delivery_state)
+        VALUES ('obsolete-task', ${threadId}, 'old-run', 'old-node', 'codex', 'obsolete-task-thread',
+          'old-child', 'app_owned', 'completed', ${DateTime.formatIso(now)}, '{"obsolete":true}',
+          'delivered')`;
+      yield* sql`INSERT INTO orchestration_v2_projection_nodes
+        (node_id, thread_id, run_id, root_node_id, kind, status, payload_json)
+        VALUES ('obsolete-task', ${threadId}, 'old-run', 'old-node', 'subagent', 'completed',
+          '{"obsolete":true}')`;
+      yield* sql`INSERT INTO orchestration_v2_projection_provider_threads
+        (provider_thread_id, thread_id, provider, status, updated_at, payload_json)
+        VALUES ('obsolete-task-thread', 'old-child', 'codex', 'idle', ${DateTime.formatIso(now)},
+          '{"obsolete":true}')`;
       yield* orchestrator.dispatch({
         type: "message.dispatch",
         commandId: CommandId.make("dispatch-with-old-history"),
@@ -862,6 +878,12 @@ it.effect(
       // Deletion reads transfer history separately to find side chats.
       yield* sql`DELETE FROM orchestration_v2_projection_context_transfers
         WHERE target_thread_id = ${threadId}`;
+      // Archiving reads every task of the thread to stop the ones still running.
+      yield* sql`DELETE FROM orchestration_v2_projection_subagents
+        WHERE subagent_id = 'obsolete-task'`;
+      yield* sql`DELETE FROM orchestration_v2_projection_nodes WHERE node_id = 'obsolete-task'`;
+      yield* sql`DELETE FROM orchestration_v2_projection_provider_threads
+        WHERE provider_thread_id = 'obsolete-task-thread'`;
       yield* orchestrator.dispatch({
         type: "thread.archive",
         commandId: CommandId.make("archive-with-old-history"),
@@ -2178,3 +2200,293 @@ it.effect("a user message dispatched first stays run 1 when its lineage read is 
     );
   }).pipe(Effect.provide(layerGatedLineageRead));
 });
+
+it.effect("queued-message commands read a long thread's history without walking all of it", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = ThreadId.make("thread:long-history-reads");
+    const driver = ProviderDriverKind.make("codex");
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-long-history-reads"),
+      threadId,
+      projectId: ProjectId.make("project:long-history-reads"),
+      title: "Long history",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const providerThreadId = ProviderThreadId.make("provider-thread:long-history-reads");
+    yield* projections.apply({
+      id: EventId.make("event:long-history-reads:provider-thread"),
+      type: "provider-thread.updated",
+      threadId,
+      driver,
+      providerInstanceId: instanceId,
+      occurredAt: now,
+      payload: {
+        id: providerThreadId,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        driver,
+        providerInstanceId: instanceId,
+        providerSessionId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        status: "idle",
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 4,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        pendingBackgroundTasks: [],
+      },
+    });
+    const dispatch = (name: string) =>
+      orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`dispatch:long-history-reads:${name}`),
+        threadId,
+        messageId: MessageId.make(`message:long-history-reads:${name}`),
+        // A compacting target lets promote skip it without a live provider session.
+        text: name === "active" ? "/compact" : `Request ${name}`,
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+    const nextOrdinal = Effect.gen(function* () {
+      const [row] = yield* sql<{ readonly ordinal: number }>`
+        SELECT COALESCE(MAX(ordinal), 0) + 1 AS ordinal
+        FROM orchestration_v2_projection_turn_items WHERE thread_id = ${threadId}`;
+      return row!.ordinal;
+    });
+    // Settled history: each run leaves completed leaf nodes, tool output and a reply.
+    for (const name of ["1", "2", "3", "active"]) {
+      yield* dispatch(name);
+      const run = (yield* projections.getThreadProjection(threadId)).runs.at(-1)!;
+      const active = name === "active";
+      yield* projections.apply({
+        id: EventId.make(`event:long-history-reads:${name}:run`),
+        type: "run.updated",
+        threadId,
+        runId: run.id,
+        occurredAt: now,
+        payload: {
+          ...run,
+          providerThreadId,
+          status: active ? "running" : "completed",
+          queuePosition: null,
+          startedAt: now,
+          completedAt: active ? null : now,
+        },
+      });
+      if (active) continue;
+      for (const kind of ["tool_call", "assistant_message"] as const) {
+        const nodeId = NodeId.make(`node:long-history-reads:${name}:${kind}`);
+        yield* projections.apply({
+          id: EventId.make(`event:${nodeId}`),
+          type: "node.updated",
+          threadId,
+          runId: run.id,
+          nodeId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: nodeId,
+            threadId,
+            runId: run.id,
+            rootNodeId: run.rootNodeId!,
+            parentNodeId: run.rootNodeId,
+            kind,
+            status: "completed",
+            countsForRun: false,
+            providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            runtimeRequestId: null,
+            checkpointScopeId: null,
+            startedAt: now,
+            completedAt: now,
+          },
+        });
+      }
+      const replyId = MessageId.make(`message:long-history-reads:${name}:reply`);
+      yield* projections.apply({
+        id: EventId.make(`event:${replyId}`),
+        type: "message.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: replyId,
+          threadId,
+          runId: run.id,
+          nodeId: NodeId.make(`node:long-history-reads:${name}:assistant_message`),
+          createdBy: "agent",
+          creationSource: "server",
+          role: "assistant",
+          text: `Reply ${name}`,
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      const itemBase = {
+        threadId,
+        runId: run.id,
+        providerThreadId,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        status: "completed" as const,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      };
+      for (const item of [
+        {
+          ...itemBase,
+          id: TurnItemId.make(`item:long-history-reads:${name}:command`),
+          nodeId: NodeId.make(`node:long-history-reads:${name}:tool_call`),
+          ordinal: yield* nextOrdinal,
+          title: "command",
+          type: "command_execution" as const,
+          input: "cat build.log",
+        },
+        {
+          ...itemBase,
+          id: TurnItemId.make(`item:long-history-reads:${name}:reply`),
+          nodeId: NodeId.make(`node:long-history-reads:${name}:assistant_message`),
+          ordinal: yield* nextOrdinal,
+          title: null,
+          type: "assistant_message" as const,
+          messageId: replyId,
+          text: `Reply ${name}`,
+          streaming: false,
+        },
+      ]) {
+        yield* projections.apply({
+          id: EventId.make(`event:${item.id}`),
+          type: "turn-item.updated",
+          threadId,
+          runId: run.id,
+          nodeId: item.nodeId,
+          driver,
+          occurredAt: now,
+          payload: item,
+        });
+      }
+    }
+    const activeRun = (yield* projections.getThreadProjection(threadId)).runs.at(-1)!;
+    // Stop needs a live provider turn to interrupt.
+    yield* projections.apply({
+      id: EventId.make("event:long-history-reads:active-turn"),
+      type: "provider-turn.updated",
+      threadId,
+      runId: activeRun.id,
+      occurredAt: now,
+      payload: {
+        id: ProviderTurnId.make("provider-turn:long-history-reads"),
+        providerThreadId,
+        nodeId: activeRun.rootNodeId!,
+        runAttemptId: activeRun.activeAttemptId!,
+        nativeTurnRef: { driver, nativeId: "native:long-history-reads", strength: "strong" },
+        ordinal: 4,
+        status: "running",
+        startedAt: now,
+        completedAt: null,
+      },
+    });
+
+    const statements: Array<ReturnType<Statement.Statement<unknown>["compile"]>> = [];
+    const observe: Statement.Transformer = (statement) => {
+      const compiled = statement.compile();
+      // Row reads and the message-ordering pass; a MAX(ordinal) probe reads one index entry.
+      if (/_(nodes|turn_items)\b/.test(compiled[0]) && /payload_json|GROUP BY/.test(compiled[0])) {
+        statements.push(compiled);
+      }
+      return Effect.succeed(statement);
+    };
+    const historyWalks = Effect.fnUntraced(function* (commandType: string) {
+      const walks: Array<string> = [];
+      for (const [query, params] of statements.splice(0)) {
+        const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, params);
+        for (const { detail } of plan) {
+          // A history-sized read: an ordering pass over every message item for a narrowed
+          // message read, or a node/turn-item row search bounded by nothing but the thread.
+          // Walking only a covering index's ids reads no payloads. Stop still loads every
+          // message, so its ordering pass is no larger than that read.
+          if (
+            (detail.includes("TEMP B-TREE FOR GROUP BY") && query.includes("json_each")) ||
+            (/^SEARCH .*(node|turn_item).* \(thread_id=\?\)$/.test(detail) &&
+              !detail.includes("USING COVERING INDEX")) ||
+            // Every active run in the environment, not only this thread's.
+            /^SEARCH .*runs.* \(status=\?\)$/.test(detail) ||
+            // A status-filtered read that fetches every typed row to check its status.
+            (/^SEARCH .*turn_items USING INDEX .* \(thread_id=\? AND type=\?\)$/.test(detail) &&
+              query.includes("status IN"))
+          ) {
+            walks.push(`${commandType}: ${detail}\n  in: ${query.replace(/\s+/g, " ").trim()}`);
+          }
+        }
+      }
+      return walks;
+    });
+    const observed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(Effect.provideService(Statement.CurrentTransformer, observe));
+
+    yield* observed(dispatch("queued"));
+    const walks = yield* historyWalks("message.dispatch");
+    const queuedRun = (yield* projections.getThreadProjection(threadId)).runs.at(-1)!;
+    assert.equal(queuedRun.status, "queued");
+    yield* observed(
+      orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make("edit:long-history-reads"),
+        threadId,
+        runId: queuedRun.id,
+        text: "Request queued, edited",
+      }),
+    );
+    walks.push(...(yield* historyWalks("queued-run.edit")));
+    yield* observed(
+      orchestrator.dispatch({
+        type: "queued-message.promote-to-steer",
+        commandId: CommandId.make("promote:long-history-reads"),
+        threadId,
+        queuedRunId: queuedRun.id,
+        targetRunId: activeRun.id,
+      }),
+    );
+    walks.push(...(yield* historyWalks("queued-message.promote-to-steer")));
+    yield* observed(
+      orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make("interrupt:long-history-reads"),
+        threadId,
+        runId: activeRun.id,
+      }),
+    );
+    walks.push(...(yield* historyWalks("run.interrupt")));
+
+    const after = yield* projections.getThreadProjection(threadId);
+    assert.deepEqual(
+      after.messages.filter((message) => message.role === "user").map((message) => message.text),
+      ["Request 1", "Request 2", "Request 3", "/compact", "Request queued, edited"],
+    );
+    assert.deepEqual(
+      after.providerThreads.map((providerThread) => providerThread.id),
+      [providerThreadId],
+    );
+    assert.deepEqual(walks, [], walks.join("\n"));
+  }).pipe(Effect.provide(layerTest)),
+);
