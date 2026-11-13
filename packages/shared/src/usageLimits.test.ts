@@ -13,6 +13,7 @@ import {
   displayLimitWindows,
   cursorUsageWindowDetails,
   collectProviderUsageLimits,
+  threadUsageLimits,
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
   collectLimitAccounts,
@@ -1392,6 +1393,20 @@ describe("/usage-limits", () => {
     expect(
       report?.accounts.filter((account) => account.sourceLabel).map((account) => account.label),
     ).toEqual(["CLIProxyAPI · claude-b@example.com", "CLIProxyAPI · team-seat"]);
+  });
+
+  it("gives a thread the only account when its instance reports no limits of its own", () => {
+    const signedOut = provider({ auth: { status: "unauthenticated" } });
+    const hubLimits = { ...limits, windows: [{ ...window, usedPercent: 70 }] };
+    const one = [
+      {
+        ...sources[0]!,
+        accounts: [{ id: "team", driver: selected.driver, usageLimits: hubLimits }],
+      },
+    ];
+    expect(threadUsageLimits(signedOut.instanceId, [signedOut], one, now)).toBe(hubLimits);
+    expect(threadUsageLimits(signedOut.instanceId, [signedOut], sources, now)).toBeNull();
+    expect(threadUsageLimits(selected.instanceId, [selected], one, now)).toBe(limits);
   });
 
   it("keeps unidentified custom instances separate, filtering by driver", () => {

@@ -1005,3 +1005,21 @@ export function collectProviderUsageLimits(
   }
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
 }
+
+/**
+ * The limits one instance's thread runs against. Another report entry may be a different login or
+ * workspace, so a usage-limit source account stands in only when it is the report's only account.
+ */
+export function threadUsageLimits(
+  instanceId: ProviderInstanceId,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+  now: number,
+): ServerProviderUsageLimits | null {
+  const accounts = collectProviderUsageLimits(instanceId, providers, sources, now)?.accounts ?? [];
+  return (
+    accounts.find((entry) => entry.instanceId === instanceId)?.limits ??
+    providers.find((provider) => provider.instanceId === instanceId)?.usageLimits ??
+    (accounts.length === 1 ? (accounts[0]?.limits ?? null) : null)
+  );
+}
