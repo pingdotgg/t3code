@@ -1389,17 +1389,20 @@ it.layer(
     }),
   );
 
-  it.effect("keeps text after a CSI that libghostty aborts on a non-ASCII character", () =>
+  it.effect.each([
+    // libghostty abandons the CSI at 界 and prints "�nB", so the n is text, not a DSR final byte.
+    { name: "keeps text after a CSI aborted by", output: "A\u001b[界nB", history: "A\u001b[界nB" },
+    // libghostty skips a 2-byte character and still answers the DSR query.
+    { name: "strips a DSR query containing", output: "A\u001b[é6nB", history: "AB" },
+  ])("$name a non-ASCII character", ({ output, history }) =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
       yield* manager.open(openInput());
-      const process = ptyAdapter.processes[0]!;
-      // libghostty abandons the CSI at 界 and prints "�nB", so the n is text, not a DSR final byte.
-      process.emitData("A\u001b[界nB");
+      ptyAdapter.processes[0]!.emitData(output);
       yield* manager.close({ threadId: "thread-1" });
 
-      const { history } = yield* manager.open(openInput());
-      expect(history.startsWith("A\u001b[界nB")).toBe(true);
+      const reopened = yield* manager.open(openInput());
+      expect(reopened.history.startsWith(history)).toBe(true);
     }),
   );
 

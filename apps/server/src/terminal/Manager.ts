@@ -1266,8 +1266,9 @@ function sanitizeTerminalHistoryChunk(
       if (nextCodePoint === 0x5b) {
         let cursor = index + 2;
         while (cursor < input.length) {
-          // libghostty abandons a CSI at a non-ASCII character and prints it and what follows.
-          if (input.charCodeAt(cursor) >= 0x80) {
+          // libghostty abandons a CSI at a 3- or 4-byte UTF-8 character and prints it and what
+          // follows; it skips 2-byte characters and still runs the sequence.
+          if (input.charCodeAt(cursor) >= 0x800) {
             append(input.slice(index, cursor));
             index = cursor;
             break;
