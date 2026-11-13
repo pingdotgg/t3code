@@ -42,19 +42,31 @@ const snapshot: ServerProvider = {
 };
 
 const fixture = Effect.fn("ClaudeMaintenance.test.fixture")(function* (
-  npm = false,
+  install: "native" | "xdgNative" | "npm" | "wrapper" = "native",
   platform: NodeJS.Platform = "linux",
   programFiles?: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const directory = yield* fs.makeTempDirectoryScoped();
-  const binaryPath = npm
-    ? path.join(directory, "lib/node_modules/@anthropic-ai/claude-code/cli.js")
-    : path.join(directory, ".local/bin", platform === "win32" ? "claude.exe" : "claude");
-  yield* fs.makeDirectory(path.dirname(binaryPath), { recursive: true });
-  yield* fs.writeFileString(binaryPath, "#!/bin/sh\n");
-  yield* fs.chmod(binaryPath, 0o755);
+  const binaryPath =
+    install === "npm"
+      ? path.join(directory, "lib/node_modules/@anthropic-ai/claude-code/cli.js")
+      : path.join(directory, ".local/bin", platform === "win32" ? "claude.exe" : "claude");
+  // Unix native installs link the launcher to a versioned binary; Windows places a real .exe.
+  const realBinaryPath =
+    install === "native" && platform !== "win32"
+      ? path.join(directory, ".local/share/claude/versions/2.1.314")
+      : install === "xdgNative"
+        ? path.join(directory, "xdg/data/claude/versions/2.1.314")
+        : binaryPath;
+  yield* fs.makeDirectory(path.dirname(realBinaryPath), { recursive: true });
+  yield* fs.writeFileString(realBinaryPath, "#!/bin/sh\n");
+  yield* fs.chmod(realBinaryPath, 0o755);
+  if (realBinaryPath !== binaryPath) {
+    yield* fs.makeDirectory(path.dirname(binaryPath), { recursive: true });
+    yield* fs.symlink(realBinaryPath, binaryPath);
+  }
   const configDirectory = path.join(directory, "config");
   yield* fs.makeDirectory(configDirectory);
   const settingsPath = path.join(configDirectory, "settings.json");
@@ -194,7 +206,7 @@ it.layer(NodeServices.layer)("ClaudeMaintenance", (it) => {
     },
   ])("advertises the installable version for $name", (row) =>
     Effect.gen(function* () {
-      const f = yield* fixture(row.npm);
+      const f = yield* fixture(row.npm ? "npm" : "native");
       if (row.settings) yield* f.fs.writeFileString(f.settingsPath, row.settings);
       const requests: string[] = [];
       const client = HttpClient.make((request) => {
@@ -227,7 +239,7 @@ it.layer(NodeServices.layer)("ClaudeMaintenance", (it) => {
       );
       yield* enrich;
       expect(requests).toHaveLength(1);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each([
@@ -239,7 +251,7 @@ it.layer(NodeServices.layer)("ClaudeMaintenance", (it) => {
     "separates channel caches and honors $name managed overrides and feed invalidation",
     (row) =>
       Effect.gen(function* () {
-        const f = yield* fixture(false, row.platform, row.programFiles);
+        const f = yield* fixture("native", row.platform, row.programFiles);
         const requests: string[] = [];
         const client = HttpClient.make((request) => {
           requests.push(request.url);
@@ -285,7 +297,27 @@ it.layer(NodeServices.layer)("ClaudeMaintenance", (it) => {
         );
         yield* check;
         expect(requests).toHaveLength(3);
-      }).pipe(Effect.scoped),
+      }),
+  );
+
+  it.effect.each([
+    { name: "a wrapper script", install: "wrapper", lockKey: undefined },
+    {
+      name: "a native install under XDG_DATA_HOME",
+      install: "xdgNative",
+      lockKey: "claudeAgent-native",
+    },
+  ] as const)("resolves the native launcher path for $name", (row) =>
+    Effect.gen(function* () {
+      const f = yield* fixture(row.install);
+      const resolve = yield* f.makeResolution.pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("resolution must not look up a version")),
+        ),
+      );
+      expect((yield* resolve()).update?.lockKey).toBe(row.lockKey);
+    }),
   );
 
   it.effect("automatic refresh rereads the native channel while preserving both caches", () =>
@@ -371,7 +403,7 @@ it.layer(NodeServices.layer)("ClaudeMaintenance", (it) => {
         ]);
         expect(f.installationReads()).toBe(1);
       }
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("bounds stalled feed bodies and skips disabled update checks", () =>
@@ -401,6 +433,6 @@ it.layer(NodeServices.layer)("ClaudeMaintenance", (it) => {
       yield* TestClock.adjust("4 seconds");
       expect((yield* Fiber.join(pending)).versionAdvisory?.status).toBe("unknown");
       expect(requests).toBe(1);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
