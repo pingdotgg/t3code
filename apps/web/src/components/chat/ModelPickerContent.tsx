@@ -348,6 +348,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   docked?: boolean;
   /** Right at the end of the search text moves into the popup's effort column. */
   onFocusEffort?: () => void;
+  /** Hears which provider tab the list shows, so a docked effort column can follow it. */
+  onBrowseInstance?: (instanceId: ProviderInstanceId | "favorites") => void;
   /** Closes the list column, inside the popup's fixed height. */
   listFooter?: ReactNode;
 }) {
@@ -466,6 +468,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const handleSelectInstance = (instanceId: ProviderInstanceId | "favorites") => {
     setSelectedInstanceId(instanceId);
+    props.onBrowseInstance?.(instanceId);
     window.requestAnimationFrame(() => {
       focusSearchInput();
     });

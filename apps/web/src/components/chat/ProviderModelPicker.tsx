@@ -83,8 +83,17 @@ function lockBackgroundScroll(popup: HTMLElement | null) {
   };
 }
 
+/** The thread's model in the provider tab the list shows, when that tab isn't the thread's own. */
+export interface EffortColumnBrowseTarget {
+  instanceId: ProviderInstanceId;
+  model: string;
+}
+
 /** What a docked effort column needs from its picker: the model it serves. */
-export const DockedPickerContext = createContext<{ modelLabel: string }>({ modelLabel: "" });
+export const DockedPickerContext = createContext<{
+  modelLabel: string;
+  browse: EffortColumnBrowseTarget | null;
+}>({ modelLabel: "", browse: null });
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   environmentId: EnvironmentId | null;
@@ -177,6 +186,32 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     : triggerTitle;
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
+
+  // The list can show another provider tab while the thread keeps its model. The effort column
+  // then serves that tab's copy of the model, so a level picked there switches to it.
+  const [browsedInstanceId, setBrowsedInstanceId] = useState<ProviderInstanceId | null>(null);
+  const browsedEntry =
+    docked && browsedInstanceId !== null && browsedInstanceId !== activeInstanceId
+      ? (props.instanceEntries.find((entry) => entry.instanceId === browsedInstanceId) ?? null)
+      : null;
+  const browsedModel =
+    browsedEntry && selectedModel
+      ? (props.modelOptionsByInstance.get(browsedEntry.instanceId) ?? []).find(
+          (option) =>
+            option.slug === selectedModel.slug &&
+            !option.isUnavailable &&
+            !props.disabled &&
+            !props.getModelDisabledReason?.(browsedEntry.instanceId, option.slug),
+        )
+      : undefined;
+  const effortBrowseTarget: EffortColumnBrowseTarget | null =
+    browsedEntry && browsedModel
+      ? { instanceId: browsedEntry.instanceId, model: browsedModel.slug }
+      : null;
+  // Names the provider whenever the tab shown isn't the one the levels apply to.
+  const effortColumnLabel = browsedEntry
+    ? `${triggerTitle} · ${(effortBrowseTarget ? browsedEntry : activeEntry)?.displayName ?? ""}`
+    : triggerTitle;
 
   const setIsMenuOpen = (open: boolean) => {
     props.onOpenChange?.(open);
@@ -309,6 +344,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       {...(docked
         ? {
             docked,
+            onBrowseInstance: (instanceId: ProviderInstanceId | "favorites") =>
+              setBrowsedInstanceId(instanceId === "favorites" ? null : instanceId),
             onFocusEffort: () => void focusEffort("any"),
             // Inside the fixed height, so switching to or from a ChatGPT plan never resizes it.
             ...(props.selectedModels === undefined
@@ -330,6 +367,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         setIsMenuOpen(open);
       }}
       onOpenChangeComplete={(open) => {
+        if (!open) setBrowsedInstanceId(null);
         const target = takeOpenTarget(triggerRef.current);
         if (open && docked && target) openTarget(target);
       }}
@@ -457,7 +495,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         touchBackdrop
       >
         {props.effortColumn ? (
-          <DockedPickerContext value={{ modelLabel: triggerTitle }}>
+          <DockedPickerContext
+            value={{ modelLabel: effortColumnLabel, browse: effortBrowseTarget }}
+          >
             <div className="flex max-h-(--available-height) flex-col">
               {/* One fixed height, so a model with more options never resizes the popup. Short
                   windows shrink it and keep the footer. */}

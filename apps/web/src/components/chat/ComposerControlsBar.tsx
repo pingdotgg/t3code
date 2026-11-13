@@ -21,6 +21,9 @@ import {
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { cn } from "~/lib/utils";
 import { resolveComposerTraitsInput } from "./composerProviderState";
+import type { TraitsSelectionInput } from "./TraitsPicker";
+import type { EffortColumnBrowseTarget } from "./ProviderModelPicker";
+import { useComposerDraftStore } from "../../composerDraftStore";
 import { useApplyThreadModelPick } from "./useApplyThreadModelPick";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
@@ -162,6 +165,54 @@ export function ComposerControlsBar(props: {
     onPromptEdit,
   });
   const effort = describeComposerEffort(traitsInput, props.effortDisplay, controlSize);
+  const stickyOptionsByModel = useComposerDraftStore(
+    (store) => store.stickyOptionsByModelByProvider,
+  );
+  const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
+  const composerTarget =
+    routeKind === "server" ? routeThreadRef : routeKind === "draft" ? draftId : null;
+  // The picker shows another provider tab: its levels belong to that tab's copy of the thread's
+  // model, and picking one switches to it first, the way Right Arrow picks a highlighted model.
+  const resolveBrowseTraitsInput = (
+    browse: EffortColumnBrowseTarget,
+  ): TraitsSelectionInput | null => {
+    const entry = providerInstanceEntries.find((item) => item.instanceId === browse.instanceId);
+    if (!entry || !composerTarget) return null;
+    const resolved = resolveComposerTraitsInput({
+      provider: entry.driverKind,
+      instanceId: browse.instanceId,
+      ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
+      ...(routeKind === "draft" && draftId ? { draftId } : {}),
+      model: browse.model,
+      models: entry.models,
+      // What a switch to this model starts from.
+      modelOptions: stickyOptionsByModel[browse.instanceId]?.[browse.model],
+      promptUltrathink,
+      onPromptEdit,
+    });
+    if (!resolved) return null;
+    return {
+      provider: resolved.provider,
+      instanceId: browse.instanceId,
+      model: browse.model,
+      models: resolved.models,
+      modelOptions: resolved.modelOptions,
+      promptUltrathink,
+      onPromptEdit,
+      onModelOptionsChange: (nextOptions) => {
+        onProviderModelSelect(browse.instanceId, browse.model, { focusComposer: false });
+        // A thread that can't switch providers keeps its model, and the level with it.
+        const draft = useComposerDraftStore.getState().getComposerDraft(composerTarget);
+        if (draft?.activeProvider !== browse.instanceId) return;
+        setProviderModelOptions(composerTarget, entry.driverKind, nextOptions, {
+          instanceId: browse.instanceId,
+          model: browse.model,
+          persistSticky: true,
+        });
+        if (routeKind === "server") applyRouteThreadModelPick();
+      },
+    };
+  };
   const restingBlockDefs = showModeBlock
     ? [
         {
@@ -221,7 +272,9 @@ export function ComposerControlsBar(props: {
       triggerShortcuts={
         pickerOwnsModeShortcut ? "composer.effort composer.mode" : "composer.effort"
       }
-      effortColumn={<ComposerEffortColumn traits={traitsInput} />}
+      effortColumn={
+        <ComposerEffortColumn traits={traitsInput} resolveBrowseTraits={resolveBrowseTraitsInput} />
+      }
       footer={
         <ComposerPickerFooter
           traits={traitsInput}

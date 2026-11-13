@@ -25,7 +25,7 @@ import type { ComposerControlSize } from "./ComposerControl";
 import { ComposerPermissionsSection, type RuntimeModeOption } from "./ComposerFooterControls";
 import { composerFloatingLayerProps, focusCheckedPermission } from "./composerEventScope";
 import { EffortGlyph, FastBolt, resolveEffortGlyph } from "./EffortGlyph";
-import { DockedPickerContext } from "./ProviderModelPicker";
+import { DockedPickerContext, type EffortColumnBrowseTarget } from "./ProviderModelPicker";
 import {
   getTraitsSectionVisibility,
   type TraitsSelectionInput,
@@ -489,12 +489,19 @@ function NoEffortRow() {
   );
 }
 
-/** The model picker's effort column: the selected model's levels and its other options. */
-export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | null }) {
+/**
+ * The model picker's effort column: the selected model's levels and its other options. While the
+ * list shows another provider tab that has the same model, it serves that copy instead.
+ */
+export function ComposerEffortColumn(props: {
+  traits: TraitsSelectionInput | null;
+  resolveBrowseTraits?: (browse: EffortColumnBrowseTarget) => TraitsSelectionInput | null;
+}) {
   const picker = use(DockedPickerContext);
-  const visibility = props.traits ? getTraitsSectionVisibility(props.traits) : null;
+  const traits = (picker.browse && props.resolveBrowseTraits?.(picker.browse)) ?? props.traits;
+  const visibility = traits ? getTraitsSectionVisibility(traits) : null;
   const controls =
-    props.traits && visibility
+    traits && visibility
       ? columnControls(visibility.selectDescriptors, visibility.booleanDescriptors)
       : null;
   return (
@@ -516,7 +523,7 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
         // Capture, so Up and Down on an option row move rows instead of opening its menu.
         onKeyDownCapture={moveBetweenRows}
       >
-        {props.traits ? <EffortLevels traits={props.traits} /> : <NoEffortRow />}
+        {traits ? <EffortLevels traits={traits} /> : <NoEffortRow />}
       </div>
     </>
   );
