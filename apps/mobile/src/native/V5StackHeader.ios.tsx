@@ -155,8 +155,6 @@ export function V5StackHeader(props: {
   readonly canGoBack: boolean;
   /** Workspace split columns share the vertical bar with the workspace tab bar. */
   readonly column?: "primary" | "detail";
-  /** The first screen of the detail column, which an expanded split shows without Back. */
-  readonly detailRoot?: boolean;
   /** The workspace's compose action, shown as its own group in this column's bar. */
   readonly onCompose?: () => void;
   /** UIKit morphs search items that share an identifier between bars as columns change. */
@@ -247,15 +245,14 @@ export function V5StackHeader(props: {
     trailing.push(...bottom);
     bottom.length = 0;
   }
-  const sharesVerticalBar =
-    props.column !== undefined &&
-    nativeMetrics !== null &&
+  if (
+    props.column &&
+    nativeMetrics &&
     nativeMetrics.verticalBarEdge !== "none" &&
-    (props.column !== "primary" || nativeMetrics.horizontalSizeClass === "compact");
-  if (sharesVerticalBar) {
+    nativeMetrics.horizontalSizeClass === "compact"
+  ) {
     const fitted = fitColumnVerticalBarItems(nativeMetrics, workspaceTabCount, {
       backButtonVisible: props.canGoBack && options.headerBackVisible !== false,
-      detailRoot: props.detailRoot === true,
       leading,
       trailing,
       compose: Boolean(props.onCompose),

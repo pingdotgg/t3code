@@ -103,7 +103,6 @@ function ColumnScreen(props: {
   readonly descriptor: Descriptor;
   readonly screenKey?: string;
   readonly primary?: boolean;
-  readonly detailRoot?: boolean;
   readonly attached?: boolean;
   readonly selectedThreadKey?: string | null;
   readonly selectedPullRequestKey?: string | null;
@@ -164,7 +163,6 @@ function ColumnScreen(props: {
               options={options}
               canGoBack={!props.primary}
               column={props.primary ? "primary" : "detail"}
-              detailRoot={props.detailRoot}
               onCompose={isNewTaskRoute(descriptor.route) ? undefined : props.onCompose}
             />
             <ColumnContent
@@ -441,19 +439,16 @@ function WorkspaceColumns(
               />
             </ColumnContent>
           </Split.Screen>
-          {screens.routes.map((route, index) => {
+          {screens.routes.map((route) => {
             const descriptor = props.descriptors[route.key] ?? screens.descriptors[route.key];
             const inSettingsSlot = settingsDetailIn(props.detail)?.key === route.key;
             const screenKey = inSettingsSlot ? SETTINGS_DETAIL_SCREEN : route.key;
-            const attached = props.detail.some((current) => current.key === route.key);
             return descriptor ? (
               <ColumnScreen
                 key={screenKey}
                 screenKey={screenKey}
                 descriptor={descriptor}
-                // A leaving screen keeps its old index while UIKit animates it out.
-                detailRoot={attached ? route.key === props.detail[0]?.key : index === 0}
-                attached={attached}
+                attached={props.detail.some((current) => current.key === route.key)}
                 onDismiss={handleNativeDismiss}
                 onAppearance={followCollapsedSplit}
                 onCompose={isPullRequestRoute(route) ? undefined : detailCompose}

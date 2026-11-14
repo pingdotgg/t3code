@@ -60,26 +60,18 @@ export function fitVerticalBarItems(
   ];
 }
 
-/**
- * Fits a column's trailing items between Back and its leading items above, and compose and the
- * keyboard dismiss below. A collapsed split draws Back on every detail screen; an expanded
- * split's detail column is its own stack, so only its first screen has none.
- */
 export function fitColumnVerticalBarItems(
   metrics: NativeLayoutMetrics,
   tabCount: number,
   bar: {
     readonly backButtonVisible: boolean;
-    readonly detailRoot: boolean;
     readonly leading: readonly HeaderItem[];
     readonly trailing: readonly HeaderItem[];
     readonly compose: boolean;
     readonly keyboardVisible: boolean;
   },
 ) {
-  const back =
-    bar.backButtonVisible && (metrics.horizontalSizeClass === "compact" || !bar.detailRoot);
-  const leadingGroupSizes = [back ? 1 : 0, ...verticalBarGroupSizes(bar.leading)];
+  const leadingGroupSizes = [bar.backButtonVisible ? 1 : 0, ...verticalBarGroupSizes(bar.leading)];
   return fitVerticalBarItems(bar.trailing, (groupSizes) =>
     verticalBarGroupsFitAboveTabBar(metrics, tabCount, [
       ...leadingGroupSizes,

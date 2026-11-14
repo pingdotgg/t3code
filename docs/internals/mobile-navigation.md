@@ -68,9 +68,12 @@ preserves behavior that is easy to break when changing native headers:
   Activity, but not against the tab bar, so they can run underneath it.
   `verticalBarGroupsFitAboveTabBar` in
   [`reserved-regions.ts`](../../apps/mobile/src/lib/reserved-regions.ts) models
-  that space with item and tab pitches measured on iOS 27.1. When the items do
-  not fit, [`V5StackHeader`](../../apps/mobile/src/native/V5StackHeader.ios.tsx)
-  folds them into one More menu. Measure again if UIKit's bar metrics change.
+  that space with item and tab pitches measured on iOS 27.1. When a folded
+  (compact) Duo's items do not fit,
+  [`V5StackHeader`](../../apps/mobile/src/native/V5StackHeader.ios.tsx) folds
+  them into one More menu. The open Duo's detail column has no Back on its first
+  screen and fit on device without folding, so it is left alone. Measure again if
+  UIKit's bar metrics change.
 
 The fork adds native header props that require code generation and a new binary.
 See the [fork build instructions](../operations/mobile-screens-fork.md).
