@@ -19,6 +19,7 @@ export function LabsSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="beta" title="Beta">
         <BoringSidebarRow />
+        <InboxSortBySendRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
@@ -69,6 +70,26 @@ function BoringSidebarMultilineRow() {
             updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
           }
           aria-label="Two-line folder rows"
+        />
+      }
+    />
+  );
+}
+
+function InboxSortBySendRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("inbox-sort-by-send")}
+      description="Order the inbox by the last message you sent, newest first. Agent activity does not move threads. Dragging within the inbox is off while this is on."
+      control={
+        <Switch
+          checked={settings.sidebarInboxSortBySendEnabled}
+          onCheckedChange={(checked) =>
+            updateSettings({ sidebarInboxSortBySendEnabled: Boolean(checked) })
+          }
+          aria-label="Sort inbox by last message"
         />
       }
     />
