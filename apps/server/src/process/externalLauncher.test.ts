@@ -274,6 +274,7 @@ it.effect.skipIf(windowsHost)(
               "HOME=/home/user",
               "WAYLAND_DISPLAY=wayland-1",
               "XAUTHORITY=/home/user/auth files/cookie",
+              "XDG_SESSION_TYPE=wayland",
             ],
           }),
         }),
@@ -283,6 +284,8 @@ it.effect.skipIf(windowsHost)(
           WAYLAND_DISPLAY: "wayland-1",
           // Raw, not the $'...' quoting `systemctl show-environment` would print.
           XAUTHORITY: "/home/user/auth files/cookie",
+          // Electron editors pick X11 over Wayland without it, and render at the wrong scale.
+          XDG_SESSION_TYPE: "wayland",
         },
       );
       assert.deepEqual(yield* launchEnv({ stdout: "invalid JSON" }), { PATH: binDir });
