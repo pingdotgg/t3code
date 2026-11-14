@@ -1142,7 +1142,26 @@ const make = Effect.gen(function* () {
         )
       )
         return true;
-      const following = records.runs.filter((candidate) => candidate.ordinal > run.ordinal);
+      const later = records.runs.filter((candidate) => candidate.ordinal > run.ordinal);
+      // Promoting a queued message to steer cancels its run and moves the message into the
+      // run it steered; this run already handled that message, so the cancelled run is no follow-up.
+      const cancelledMessageIds = later
+        .filter((candidate) => candidate.status === "cancelled")
+        .map((candidate) => candidate.userMessageId);
+      const steeredIntoRun =
+        cancelledMessageIds.length === 0
+          ? new Set<string>()
+          : new Set(
+              (yield* getProjectThreadRecords(input, ["messages"], {
+                messageIds: cancelledMessageIds,
+              })).messages
+                .filter((message) => message.runId === run.id)
+                .map((message) => message.id),
+            );
+      const following = later.filter(
+        (candidate) =>
+          candidate.status !== "cancelled" || !steeredIntoRun.has(candidate.userMessageId),
+      );
       if (following.length > 0) {
         const { messages } = yield* getProjectThreadRecords(input, ["messages"], {
           messageRunIds: following.map((candidate) => candidate.id),
@@ -1161,6 +1180,10 @@ const make = Effect.gen(function* () {
           messages.some((message) => !automaticMessageIds.has(message.id)) ||
           following.some((candidate) => !automaticMessageIds.has(candidate.userMessageId))
         ) {
+          yield* Effect.logInfo("Dropped a pending settle: a later message needs the agent", {
+            threadId: input.threadId,
+            runId: input.runId,
+          });
           return true;
         }
         if (
@@ -1173,8 +1196,16 @@ const make = Effect.gen(function* () {
           following.some(
             (candidate) => candidate.status !== "queued" && candidate.status !== "completed",
           )
-        )
+        ) {
+          yield* Effect.logInfo(
+            "Dropped a pending settle: a later automatic run did not complete",
+            {
+              threadId: input.threadId,
+              runId: input.runId,
+            },
+          );
           return true;
+        }
       }
       const latest = latestRun(records);
       if (latest === undefined) return true;

@@ -694,6 +694,8 @@ it.effect.each([
   { status: "completed" as const, followUp: "failed-notification", settles: false },
   { status: "completed" as const, followUp: "held-notification", settles: true },
   { status: "completed" as const, followUp: "user", settles: false },
+  { status: "completed" as const, followUp: "steered-user", settles: true },
+  { status: "completed" as const, followUp: "cancelled-user", settles: false },
   { status: "completed" as const, followUp: "steered-notification", settles: false },
 ])("settleAfterRun handles $status with $followUp follow-up", ({ status, followUp, settles }) =>
   Effect.gen(function* () {
@@ -742,7 +744,8 @@ it.effect.each([
                     { id: MessageId.make("original"), runId, role: "user" as const },
                     {
                       id: nextRun.userMessageId,
-                      runId: followUpId,
+                      // Promoting a queued message to steer moves it into the run it steered.
+                      runId: followUp === "steered-user" ? runId : followUpId,
                       role: "user" as const,
                       ...(followUp.endsWith("notification") ? { notification: {} } : {}),
                       ...(followUp === "delegated" ? { delegatedCompletion: {} } : {}),
@@ -809,7 +812,9 @@ it.effect.each([
           ? "failed"
           : followUp === "held-notification"
             ? "queued"
-            : "completed";
+            : followUp.endsWith("-user")
+              ? "cancelled"
+              : "completed";
       yield* Queue.offer(events, {
         sequence: 1,
         event: { type: "run.updated", threadId, payload: nextRun },
