@@ -557,6 +557,7 @@ describe("shared device stream readiness and recovery", () => {
       expect(Decoder.isConfigSupported.mock.lastCall?.[0]).not.toHaveProperty(
         "hardwareAcceleration",
       );
+      for (let frame = 0; frame < 210; frame++) decodedFrame();
       await overloadVideo(1);
       await configureVideo(2);
       decodedFrame();
@@ -609,7 +610,7 @@ describe("shared device stream readiness and recovery", () => {
         await configureVideo(1);
         await overloadVideo(1);
         await configureVideo(2);
-        for (let frame = 0; frame < 120; frame++) decodedFrame();
+        for (let frame = 0; frame < 1_800; frame++) decodedFrame();
 
         await overloadVideo(2);
         expect(events.onMjpegFallback).not.toHaveBeenCalled();

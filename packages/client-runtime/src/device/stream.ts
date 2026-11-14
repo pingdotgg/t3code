@@ -150,7 +150,8 @@ const SEMU_MAGIC = 0x53454d55;
 const SEMU_HEADER_BYTES = 16;
 const SEMU_FLAG_KEY = 1;
 const SOFT_DECODE_QUEUE = 8;
-const IOS_BACKLOG_RECOVERY_FRAMES = 120;
+// About 30 s at 60 fps; a decoder that cannot keep up backs up every few seconds.
+const IOS_BACKLOG_RECOVERY_FRAMES = 1_800;
 // expo-device-hub 0.15.3 serve-emu input.js MAX_TEXT_BYTES limits packets to 300 UTF-8 bytes.
 const ANDROID_MAX_TEXT_BYTES = 300;
 // The pinned hub queue depth is 128; the client does not read queue rejections.
