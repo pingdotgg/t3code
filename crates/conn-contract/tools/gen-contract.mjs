@@ -183,6 +183,40 @@ for (const m of methods) {
   }
 }
 
+// Secret fields: the contract's own `isSecretSetting` (a `settingsSecret` key annotation or a
+// password form control), a `Redacted` value, and a field named `secret` (the webhook signature
+// and the secret answer carry no mark). The IR drops annotations, so each is keyed by its
+// struct's field names; `objectType` writes a `Debug` that prints `<redacted>` for these.
+const { isSecretSetting } = await import(NodeURL.pathToFileURL(NodePath.join(srcDir, "settings.ts")).href);
+const secretFieldKeys = new Set();
+const fieldSetKey = (names, field) => `${[...names].map(String).sort().join(",")}|${String(field)}`;
+{
+  const seen = new Set();
+  const hasRedacted = (a, depth = 0) => {
+    if (!a || depth > 8) return false;
+    if (a._tag === "Declaration" && String(a.annotations?.expected ?? "").includes("Redacted")) return true;
+    if (a._tag === "Suspend") return false;
+    return [...(a.types ?? []), ...(a.typeParameters ?? [])].some((t) => hasRedacted(t, depth + 1));
+  };
+  const walk = (a) => {
+    if (!a || seen.has(a)) return;
+    seen.add(a);
+    if (a._tag === "Objects") {
+      const names = a.propertySignatures.map((ps) => ps.name);
+      for (const ps of a.propertySignatures) {
+        if (typeof ps.name === "string" && (ps.name === "secret" || isSecretSetting(Schema.make(ps.type)) || hasRedacted(ps.type)))
+          secretFieldKeys.add(fieldSetKey(names, ps.name));
+        walk(ps.type);
+      }
+      for (const sig of a.indexSignatures ?? []) walk(sig.type);
+    }
+    for (const t of [...(a.types ?? []), ...(a.typeParameters ?? []), ...(a.elements ?? []), ...(a.rest ?? [])]) walk(t);
+    if (a._tag === "Suspend") walk(a.thunk());
+    for (const link of a.encoding ?? []) walk(link.to);
+  };
+  for (const r of roots) walk(r.ast);
+}
+
 const codecAsts = roots.map((r) => codecOf(r.ast));
 codecAsts.forEach(dropPassThrough);
 const doc = SchemaRepresentation.toRepresentations(codecAsts, {
@@ -574,7 +608,25 @@ const objectType = (r, hint, path, forcedName) => {
     body += `\n    #[serde(flatten)]\n    pub extra: Map<String, ${v}>,`;
     lax(path, "struct with index signature uses serde flatten");
   }
-  emit(name, `${DERIVE}\n#[serde(rename_all = "camelCase")]\npub struct ${name} {\n${body}\n}`);
+  const keys = r.propertySignatures.map((p) => p.name);
+  const secret = fields.map((f, i) => secretFieldKeys.has(fieldSetKey(keys, r.propertySignatures[i].name)));
+  if (!secret.some(Boolean)) {
+    emit(name, `${DERIVE}\n#[serde(rename_all = "camelCase")]\npub struct ${name} {\n${body}\n}`);
+    return name;
+  }
+  // A secret never reaches a log line, an error text or a test snapshot through `Debug`.
+  const debugFields = fields
+    .map((f, i) =>
+      secret[i]
+        ? `.field(${strLit(f.rname)}, &"<redacted>")`
+        : `.field(${strLit(f.rname)}, &self.${f.rname})`,
+    )
+    .join("");
+  const extra = r.indexSignatures.length > 0 ? `.field("extra", &self.extra)` : "";
+  emit(
+    name,
+    `${DERIVE.replace("Debug, ", "")}\n#[serde(rename_all = "camelCase")]\npub struct ${name} {\n${body}\n}\n\nimpl ::std::fmt::Debug for ${name} {\n    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {\n        f.debug_struct(${strLit(name)})${debugFields}${extra}.finish()\n    }\n}`,
+  );
   return name;
 };
 

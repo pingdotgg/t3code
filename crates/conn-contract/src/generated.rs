@@ -947,7 +947,7 @@ tagged_union! {
     fallback []
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthMcpAuthorizationRequest {
     #[serde(
@@ -980,6 +980,20 @@ pub struct AuthMcpAuthorizationRequest {
     pub state: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource: Option<String>,
+}
+
+impl ::std::fmt::Debug for AuthMcpAuthorizationRequest {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.debug_struct("AuthMcpAuthorizationRequest")
+            .field("response_type", &self.response_type)
+            .field("client_id", &self.client_id)
+            .field("redirect_uri", &self.redirect_uri)
+            .field("code_challenge", &self.code_challenge)
+            .field("code_challenge_method", &self.code_challenge_method)
+            .field("state", &"<redacted>")
+            .field("resource", &self.resource)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1156,7 +1170,7 @@ pub struct AuthMcpTokenError {
     pub error_description: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthMcpTokenRequest {
     #[serde(
@@ -1183,6 +1197,19 @@ pub struct AuthMcpTokenRequest {
     pub code_verifier: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource: Option<String>,
+}
+
+impl ::std::fmt::Debug for AuthMcpTokenRequest {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.debug_struct("AuthMcpTokenRequest")
+            .field("grant_type", &self.grant_type)
+            .field("code", &"<redacted>")
+            .field("redirect_uri", &self.redirect_uri)
+            .field("client_id", &self.client_id)
+            .field("code_verifier", &"<redacted>")
+            .field("resource", &self.resource)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1318,11 +1345,20 @@ pub struct AuthWebSocketTicketParams {
     pub r#use: AuthWebSocketTicketUse,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthWebSocketTicketResult {
     pub ticket: String,
     pub expires_at: String,
+}
+
+impl ::std::fmt::Debug for AuthWebSocketTicketResult {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.debug_struct("AuthWebSocketTicketResult")
+            .field("ticket", &"<redacted>")
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -17136,7 +17172,7 @@ pub struct ScheduledTaskListResult {
     pub time_zone: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScheduledTaskUpsertScheduleWebhookSignature {
     pub header: String,
@@ -17146,6 +17182,18 @@ pub struct ScheduledTaskUpsertScheduleWebhookSignature {
     pub secret: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret_ref: Option<String>,
+}
+
+impl ::std::fmt::Debug for ScheduledTaskUpsertScheduleWebhookSignature {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.debug_struct("ScheduledTaskUpsertScheduleWebhookSignature")
+            .field("header", &self.header)
+            .field("encoding", &self.encoding)
+            .field("prefix", &self.prefix)
+            .field("secret", &"<redacted>")
+            .field("secret_ref", &self.secret_ref)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -17214,11 +17262,20 @@ pub struct ScheduledTaskUpsertInput {
     pub creation_source: Option<OrchestrationV2CreationSource>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SecretRequestAnswerInputAnswerSave {
     pub r#type: lit::Save,
     pub secret: String,
+}
+
+impl ::std::fmt::Debug for SecretRequestAnswerInputAnswerSave {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.debug_struct("SecretRequestAnswerInputAnswerSave")
+            .field("r#type", &self.r#type)
+            .field("secret", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -18601,7 +18658,7 @@ pub struct ServerSettingsStorageCleanup {
     pub logs_after_days: Option<Option<i64>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerSettingsCloudSpeechCredentials {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -18610,6 +18667,16 @@ pub struct ServerSettingsCloudSpeechCredentials {
     pub xai: Option<SettingsSecretValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openrouter: Option<SettingsSecretValue>,
+}
+
+impl ::std::fmt::Debug for ServerSettingsCloudSpeechCredentials {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.debug_struct("ServerSettingsCloudSpeechCredentials")
+            .field("openai", &"<redacted>")
+            .field("xai", &"<redacted>")
+            .field("openrouter", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -18706,6 +18773,68 @@ pub struct ServerSettingsProjectSettingsOverridesValue {
     pub provider_instances: Option<Map<String, ProjectProviderInstanceOverride>>,
     #[serde(flatten)]
     pub extra: Map<String, Json>,
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerSettingsEasDeviceHostsItem {
+    pub kind: lit::Eas,
+    pub id: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_token: Option<SettingsSecretValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_session_minutes: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_minutes: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_sessions: Option<i64>,
+}
+
+impl ::std::fmt::Debug for ServerSettingsEasDeviceHostsItem {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.debug_struct("ServerSettingsEasDeviceHostsItem")
+            .field("kind", &self.kind)
+            .field("id", &self.id)
+            .field("label", &self.label)
+            .field("app_id", &self.app_id)
+            .field("access_token", &"<redacted>")
+            .field("max_session_minutes", &self.max_session_minutes)
+            .field("idle_minutes", &self.idle_minutes)
+            .field("max_concurrent_sessions", &self.max_concurrent_sessions)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerSettingsSimlockDeviceHostsItem {
+    pub kind: lit::Simlock,
+    pub id: String,
+    pub label: String,
+    pub gateway_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_token: Option<SettingsSecretValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_leases: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_lease_minutes: Option<i64>,
+}
+
+impl ::std::fmt::Debug for ServerSettingsSimlockDeviceHostsItem {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.debug_struct("ServerSettingsSimlockDeviceHostsItem")
+            .field("kind", &self.kind)
+            .field("id", &self.id)
+            .field("label", &self.label)
+            .field("gateway_url", &self.gateway_url)
+            .field("agent_token", &"<redacted>")
+            .field("max_leases", &self.max_leases)
+            .field("max_lease_minutes", &self.max_lease_minutes)
+            .finish()
+    }
 }
 
 kind_union! {
@@ -18814,6 +18943,32 @@ kind_union! {
     }
 }
 
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerSettingsProviderInstancesValueEnvironmentItem {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sensitive: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_redacted: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<SecretReference>,
+}
+
+impl ::std::fmt::Debug for ServerSettingsProviderInstancesValueEnvironmentItem {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.debug_struct("ServerSettingsProviderInstancesValueEnvironmentItem")
+            .field("name", &self.name)
+            .field("value", &self.value)
+            .field("sensitive", &self.sensitive)
+            .field("value_redacted", &self.value_redacted)
+            .field("secret", &"<redacted>")
+            .finish()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerSettingsProviderInstancesValue {
@@ -18823,7 +18978,7 @@ pub struct ServerSettingsProviderInstancesValue {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accent_color: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub environment: Option<Vec<ProviderInstanceEnvironmentVariable>>,
+    pub environment: Option<Vec<ServerSettingsProviderInstancesValueEnvironmentItem>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -18843,12 +18998,62 @@ pub struct ServerSettingsObservability {
 
 pub type SourceControlHostSettings = Map<String, Json>;
 
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerSettingsUsageLimitSourcesValue {
+    pub kind: lit::Cliproxy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub management_key: Option<SettingsSecretValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}
+
+impl ::std::fmt::Debug for ServerSettingsUsageLimitSourcesValue {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.debug_struct("ServerSettingsUsageLimitSourcesValue")
+            .field("kind", &self.kind)
+            .field("label", &self.label)
+            .field("url", &self.url)
+            .field("management_key", &"<redacted>")
+            .field("enabled", &self.enabled)
+            .finish()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TextGeneratorKind {
     #[serde(rename = "openaiCompatible")]
     OpenaiCompatible,
     #[serde(rename = "anthropic")]
     Anthropic,
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerSettingsTextGeneratorsValue {
+    pub kind: TextGeneratorKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub base_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<SettingsSecretValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}
+
+impl ::std::fmt::Debug for ServerSettingsTextGeneratorsValue {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.debug_struct("ServerSettingsTextGeneratorsValue")
+            .field("kind", &self.kind)
+            .field("label", &self.label)
+            .field("base_url", &self.base_url)
+            .field("api_key", &"<redacted>")
+            .field("enabled", &self.enabled)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -18968,9 +19173,9 @@ pub struct ServerSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device_hosts: Option<Vec<SshDeviceHostConfig>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub eas_device_hosts: Option<Vec<EasDeviceHostConfig>>,
+    pub eas_device_hosts: Option<Vec<ServerSettingsEasDeviceHostsItem>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub simlock_device_hosts: Option<Vec<SimlockDeviceHostConfig>>,
+    pub simlock_device_hosts: Option<Vec<ServerSettingsSimlockDeviceHostsItem>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub simlock_device_hosts_enabled: Option<bool>,
     #[serde(
@@ -19084,9 +19289,9 @@ pub struct ServerSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offered_source_control_providers: Option<Map<String, bool>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub usage_limit_sources: Option<Map<String, UsageLimitSourceConfig>>,
+    pub usage_limit_sources: Option<Map<String, ServerSettingsUsageLimitSourcesValue>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub text_generators: Option<Map<String, TextGeneratorConfig>>,
+    pub text_generators: Option<Map<String, ServerSettingsTextGeneratorsValue>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret_providers: Option<Map<String, ServerSettingsSecretProvidersValue>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -20244,7 +20449,7 @@ pub struct AcpRegistryListSessionsResult {
     pub can_delete: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextGeneratorConfig {
     pub kind: TextGeneratorKind,
@@ -20255,6 +20460,18 @@ pub struct TextGeneratorConfig {
     pub api_key: Option<SettingsSecretValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+}
+
+impl ::std::fmt::Debug for TextGeneratorConfig {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.debug_struct("TextGeneratorConfig")
+            .field("kind", &self.kind)
+            .field("label", &self.label)
+            .field("base_url", &self.base_url)
+            .field("api_key", &"<redacted>")
+            .field("enabled", &self.enabled)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -21111,6 +21328,27 @@ kind_union! {
     }
 }
 
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientServerSettingsPatchCloudSpeechCredentials {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openai: Option<SettingsSecretValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xai: Option<SettingsSecretValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openrouter: Option<SettingsSecretValue>,
+}
+
+impl ::std::fmt::Debug for ClientServerSettingsPatchCloudSpeechCredentials {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.debug_struct("ClientServerSettingsPatchCloudSpeechCredentials")
+            .field("openai", &"<redacted>")
+            .field("xai", &"<redacted>")
+            .field("openrouter", &"<redacted>")
+            .finish()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SpeechModelUnloadTimeout {
     #[serde(rename = "never")]
@@ -21231,7 +21469,7 @@ pub struct ClientServerSettingsPatchProjectSettingsOverridesValue {
 
 pub type SshDeviceHostConfigs = Vec<SshDeviceHostConfig>;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EasDeviceHostConfig {
     pub kind: lit::Eas,
@@ -21249,9 +21487,24 @@ pub struct EasDeviceHostConfig {
     pub max_concurrent_sessions: Option<i64>,
 }
 
+impl ::std::fmt::Debug for EasDeviceHostConfig {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.debug_struct("EasDeviceHostConfig")
+            .field("kind", &self.kind)
+            .field("id", &self.id)
+            .field("label", &self.label)
+            .field("app_id", &self.app_id)
+            .field("access_token", &"<redacted>")
+            .field("max_session_minutes", &self.max_session_minutes)
+            .field("idle_minutes", &self.idle_minutes)
+            .field("max_concurrent_sessions", &self.max_concurrent_sessions)
+            .finish()
+    }
+}
+
 pub type EasDeviceHostConfigs = Vec<EasDeviceHostConfig>;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SimlockDeviceHostConfig {
     pub kind: lit::Simlock,
@@ -21264,6 +21517,20 @@ pub struct SimlockDeviceHostConfig {
     pub max_leases: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_lease_minutes: Option<i64>,
+}
+
+impl ::std::fmt::Debug for SimlockDeviceHostConfig {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.debug_struct("SimlockDeviceHostConfig")
+            .field("kind", &self.kind)
+            .field("id", &self.id)
+            .field("label", &self.label)
+            .field("gateway_url", &self.gateway_url)
+            .field("agent_token", &"<redacted>")
+            .field("max_leases", &self.max_leases)
+            .field("max_lease_minutes", &self.max_lease_minutes)
+            .finish()
+    }
 }
 
 pub type SimlockDeviceHostConfigs = Vec<SimlockDeviceHostConfig>;
@@ -21373,7 +21640,7 @@ pub enum SourceControlWritingStyleMode {
     Custom,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderInstanceEnvironmentVariable {
     pub name: String,
@@ -21385,6 +21652,18 @@ pub struct ProviderInstanceEnvironmentVariable {
     pub value_redacted: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret: Option<SecretReference>,
+}
+
+impl ::std::fmt::Debug for ProviderInstanceEnvironmentVariable {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.debug_struct("ProviderInstanceEnvironmentVariable")
+            .field("name", &self.name)
+            .field("value", &self.value)
+            .field("sensitive", &self.sensitive)
+            .field("value_redacted", &self.value_redacted)
+            .field("secret", &"<redacted>")
+            .finish()
+    }
 }
 
 pub type ProviderInstanceEnvironment = Vec<ProviderInstanceEnvironmentVariable>;
@@ -21405,7 +21684,7 @@ pub struct ProviderInstanceConfig {
     pub config: Option<Json>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageLimitSourceConfig {
     pub kind: lit::Cliproxy,
@@ -21416,6 +21695,18 @@ pub struct UsageLimitSourceConfig {
     pub management_key: Option<SettingsSecretValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+}
+
+impl ::std::fmt::Debug for UsageLimitSourceConfig {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.debug_struct("UsageLimitSourceConfig")
+            .field("kind", &self.kind)
+            .field("label", &self.label)
+            .field("url", &self.url)
+            .field("management_key", &"<redacted>")
+            .field("enabled", &self.enabled)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -21456,7 +21747,7 @@ pub struct ClientServerSettingsPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_autofill: Option<CredentialAutofillSettingsPatch>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cloud_speech_credentials: Option<ServerSettingsCloudSpeechCredentials>,
+    pub cloud_speech_credentials: Option<ClientServerSettingsPatchCloudSpeechCredentials>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speech_model_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
