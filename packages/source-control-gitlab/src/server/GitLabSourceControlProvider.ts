@@ -110,9 +110,7 @@ function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementIn
 
 /** The caller refines only an identity no host recognised, so its remote is on an unknown host. */
 function unknownRemoteProvider(remoteUrl: string) {
-  // Remote host parsing does not recognize userless SCP remotes.
-  const scpHost = /^([^@:/\\\s]{2,}):\/?[^/\s]+(?:\/[^/\s]+)+$/u.exec(remoteUrl.trim())?.[1];
-  const remote = parseGitRemoteHost(scpHost ? `ssh://${scpHost}` : remoteUrl);
+  const remote = parseGitRemoteHost(remoteUrl);
   return remote === null ? null : unknownHostProvider(remote);
 }
 
@@ -212,6 +210,11 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("gitlab"),
+    // GitLab lists fork merge requests by source branch with no owner filter, so read a full page.
+    headBranchProbe: ({ headSelectors }) => ({
+      headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
+      limit: 100,
+    }),
     readChangeRequestTemplate: Effect.fn("GitLabSourceControlProvider.readChangeRequestTemplate")(
       function ({ cwd, treeish }) {
         return GitLabChangeRequestTemplate.detect(cwd, treeish, git.execute);
