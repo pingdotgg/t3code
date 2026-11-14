@@ -558,8 +558,14 @@ export function markdownWithFileEmbeds(
     const linePrefixes = lines.map((line) => /^[ \t>]*/.exec(line)![0]);
     if (linePrefixes.some((linePrefix) => quoteDepth(linePrefix) !== quoteDepth(prefix))) return;
     // After a paragraph break, a line indented this far would become a code block.
-    if (linePrefixes.some((linePrefix) => /(?:^|>) ?(?: {4}| {0,3}\t)/.test(linePrefix))) return;
+    const codeIndent = /(?:^|>) ?(?: {4}| {0,3}\t)/;
+    if (linePrefixes.some((linePrefix) => codeIndent.test(linePrefix))) return;
     const blank = prefix.trimEnd();
+    // Text after an embed moves to a new line behind the paragraph's own indentation.
+    const fits = (text: string, afterEmbed: boolean) => {
+      const movedIndent = afterEmbed ? /^[ \t>]*(?=\S)/.exec(prefix + text)?.[0] : undefined;
+      return staysParagraph(text) && (movedIndent === undefined || !codeIndent.test(movedIndent));
+    };
     const breaks: MarkdownEdit[] = [];
     let cursor = first;
     for (const embed of embeds) {
@@ -567,7 +573,7 @@ export function markdownWithFileEmbeds(
       const end = embed.position?.end.offset;
       if (start === undefined || end === undefined) return;
       const between = markdown.slice(cursor, start);
-      if (!staysParagraph(between)) return;
+      if (!fits(between, cursor > first)) return;
       if (!/^\s*$/.test(between)) {
         // `between` holds text, so a line starting before it is not blank before the embed.
         const lineStart = cursor + between.lastIndexOf("\n") + 1;
@@ -588,7 +594,7 @@ export function markdownWithFileEmbeds(
       }
       cursor = end;
     }
-    if (!staysParagraph(markdown.slice(cursor, last))) return;
+    if (!fits(markdown.slice(cursor, last), true)) return;
     edits.push(...breaks);
     for (const embed of embeds) splitEmbeds.add(embed);
   };
