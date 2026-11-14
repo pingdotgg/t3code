@@ -900,7 +900,7 @@ export const AntigravitySettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "GCP project",
         description:
-          "Required for Gemini Enterprise. Agent Platform uses it when no API key is set.",
+          "Leave both GCP fields empty to select a Gemini Enterprise license during sign-in. Agent Platform uses this when no API key is set.",
         providerSettingsForm: { placeholder: "my-project-id", clearWhenEmpty: "omit" },
       }),
     ),
@@ -908,8 +908,8 @@ export const AntigravitySettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "GCP location",
-        description: "Region for Gemini Enterprise or Agent Platform.",
-        providerSettingsForm: { placeholder: "us-central1", clearWhenEmpty: "omit" },
+        description: "Gemini Enterprise location (global, us, eu) or Agent Platform region.",
+        providerSettingsForm: { placeholder: "global", clearWhenEmpty: "omit" },
       }),
     ),
     binaryPath: TrimmedString.pipe(

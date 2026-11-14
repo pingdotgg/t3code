@@ -87,7 +87,9 @@ export const forwardAntigravityCallback = (
         incoming.once("error", () => resume(Effect.fail(failed())));
         incoming.once("end", () => {
           const status = incoming.statusCode ?? 0;
-          resume(status >= 200 && status < 300 ? Effect.void : Effect.fail(failed()));
+          resume(
+            (status >= 200 && status < 300) || status === 302 ? Effect.void : Effect.fail(failed()),
+          );
         });
         incoming.resume();
       },

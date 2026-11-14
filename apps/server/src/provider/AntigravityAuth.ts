@@ -20,10 +20,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as AcpErrors from "effect-acp/errors";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
-import {
-  parseAntigravityAuthorizationUrl,
-  type AntigravityAuthorizationUrl,
-} from "./antigravityAuthSupport.ts";
+import { parseAntigravitySignInLink } from "./antigravityAuthSupport.ts";
 import {
   forwardAntigravityCallback,
   validateAntigravityCallbackUrl,
@@ -58,7 +55,12 @@ interface AuthFlow {
   readonly ownerSessionId: string;
   readonly expiresAtMillis: number;
   state: ProviderAuthState;
-  pending: AntigravityAuthorizationUrl | undefined;
+  pending:
+    | {
+        readonly authorizationUrl: string;
+        readonly callback: { readonly redirectUri: string; readonly state: string } | null;
+      }
+    | undefined;
   initialized: boolean;
   callbackSent: boolean;
   fiber: Fiber.Fiber<void> | undefined;
@@ -250,13 +252,13 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
     );
 
   const receiveAuthorizationUrl = (flow: AuthFlow, url: string) =>
-    parseAntigravityAuthorizationUrl(url).pipe(
+    parseAntigravitySignInLink(url).pipe(
       Effect.flatMap((authorization) =>
         lock.withPermits(1)(
           Effect.gen(function* () {
             if (activeFlow !== flow || operation !== "auth") return;
-            if (flow.pending) {
-              if (flow.pending.authorizationUrl === authorization.authorizationUrl) return;
+            if (flow.pending?.authorizationUrl === authorization.authorizationUrl) return;
+            if (flow.pending && !(flow.pending.callback && !authorization.callback)) {
               return yield* new AcpErrors.AcpTransportError({
                 detail: "Antigravity started more than one Google sign-in request.",
                 cause: undefined,
@@ -267,8 +269,9 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               ...flow.state,
               phase: "waiting",
               authorizationUrl: authorization.authorizationUrl,
-              message:
-                "Open the Google sign-in link. If you are remote, paste the redirect URL here.",
+              message: authorization.callback
+                ? "Open the Google sign-in link. If you are remote, paste the redirect URL here."
+                : "Choose your Gemini Enterprise license in the browser on the environment machine.",
             });
           }),
         ),
@@ -435,7 +438,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
       const pending = yield* lock.withPermits(1)(
         Effect.gen(function* () {
           const flow = yield* requireFlow(ownerSessionId, input.flowId, "complete");
-          if (!flow.pending || flow.callbackSent) {
+          if (!flow.pending?.callback || flow.callbackSent) {
             return yield* setupError(
               "complete",
               flow.callbackSent
@@ -445,7 +448,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
           }
           const callback = yield* validateAntigravityCallbackUrl(
             options.instanceId,
-            flow.pending,
+            flow.pending.callback,
             input.callbackUrl,
           );
           flow.callbackSent = true;
@@ -574,7 +577,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
                     id: state.flowId,
                     url: state.authorizationUrl,
                     requiresConsent: false,
-                    acceptsCallback: true,
+                    acceptsCallback: state.authorizationUrl.startsWith("https:"),
                   }
                 : null,
           };

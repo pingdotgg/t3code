@@ -29,9 +29,15 @@ export const ANTIGRAVITY_AUTH_BROWSER_MARKER = "__T3_ANTIGRAVITY_AUTH_URL__";
 export const ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE =
   "Sign in to Antigravity in Settings before you continue.";
 
+const licensePrompt = "Open the following link to choose your Gemini Enterprise license: ";
+
 const maxAuthorizationUrlLength = 16_384;
 const maxBrowserHelperLineLength =
-  Math.max(ANTIGRAVITY_AUTH_BROWSER_MARKER.length, ANTIGRAVITY_AUTH_STDOUT_PREFIX.length) +
+  Math.max(
+    licensePrompt.length,
+    ANTIGRAVITY_AUTH_BROWSER_MARKER.length,
+    ANTIGRAVITY_AUTH_STDOUT_PREFIX.length,
+  ) +
   maxAuthorizationUrlLength +
   2;
 const maxStdoutLineBytes = 16 * 1024 * 1024;
@@ -126,9 +132,9 @@ export function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string 
     case "oauth-personal":
       return null;
     case "oauth-business":
-      return auth.gcpProject && auth.gcpLocation
+      return !!auth.gcpProject === !!auth.gcpLocation
         ? null
-        : "Gemini Enterprise needs a GCP project and location in the Antigravity provider settings.";
+        : "Set both GCP project and location, or leave both empty to select a Gemini Enterprise license during sign-in.";
     case "gemini-api-key":
       return auth.apiKey ? null : "Enter a Gemini API key in the Antigravity provider settings.";
     case "agent-platform":
@@ -440,8 +446,25 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
         );
     }
   }
+  const settingsPath = path.join(acpDirectory, "settings.json");
+  const saved =
+    auth.authMethod === "oauth-business" && !auth.gcpProject && !auth.gcpLocation
+      ? yield* fs.readFileString(settingsPath).pipe(
+          Effect.flatMap(
+            Schema.decodeUnknownEffect(
+              Schema.fromJsonString(Schema.Struct({ gcp: ProfileSettingsFile.fields.gcp })),
+            ),
+          ),
+          Effect.map((settings) => settings.gcp),
+          Effect.orElseSucceed(() => undefined),
+        )
+      : undefined;
+  const profileAuth =
+    saved?.project && saved.location
+      ? { ...auth, gcpProject: saved.project, gcpLocation: saved.location }
+      : auth;
   yield* fs
-    .writeFileString(path.join(acpDirectory, "settings.json"), antigravityProfileSettings(auth))
+    .writeFileString(settingsPath, antigravityProfileSettings(profileAuth))
     .pipe(
       Effect.mapError(() =>
         authSupportError("The Antigravity profile settings could not be written."),
@@ -531,6 +554,21 @@ export const parseAntigravityAuthorizationUrl = Effect.fn("parseAntigravityAutho
   },
 );
 
+export const parseAntigravitySignInLink = Effect.fn("parseAntigravitySignInLink")(function* (
+  link: string,
+) {
+  if (link.startsWith("http:")) {
+    const match = /^http:\/\/127\.0\.0\.1:([1-9][0-9]{3,4})\/$/.exec(link);
+    const port = Number(match?.[1]);
+    if (!match || port < 1024 || port > 65535) {
+      return yield* authSupportError("Antigravity returned an invalid license-selection URL.");
+    }
+    return { authorizationUrl: link, callback: null };
+  }
+  const callback = yield* parseAntigravityAuthorizationUrl(link);
+  return { authorizationUrl: link, callback };
+});
+
 export function makeAntigravityStdoutTransform(
   input: {
     readonly onAuthorizationUrl?: (
@@ -610,14 +648,16 @@ export function makeAntigravityStderrHandler(
     if (message.length > maxBrowserHelperLineLength) {
       return Effect.void;
     }
-    const url = message.startsWith(ANTIGRAVITY_AUTH_STDOUT_PREFIX)
-      ? Effect.succeed(message.slice(ANTIGRAVITY_AUTH_STDOUT_PREFIX.length))
-      : message.startsWith(ANTIGRAVITY_AUTH_BROWSER_MARKER)
-        ? decodeBrowserHelperUrl(message.slice(ANTIGRAVITY_AUTH_BROWSER_MARKER.length))
-        : undefined;
+    const url = message.startsWith(licensePrompt)
+      ? Effect.succeed(message.slice(licensePrompt.length))
+      : message.startsWith(ANTIGRAVITY_AUTH_STDOUT_PREFIX)
+        ? Effect.succeed(message.slice(ANTIGRAVITY_AUTH_STDOUT_PREFIX.length))
+        : message.startsWith(ANTIGRAVITY_AUTH_BROWSER_MARKER)
+          ? decodeBrowserHelperUrl(message.slice(ANTIGRAVITY_AUTH_BROWSER_MARKER.length))
+          : undefined;
     if (url === undefined) return Effect.void;
     return url.pipe(
-      Effect.flatMap(parseAntigravityAuthorizationUrl),
+      Effect.flatMap(parseAntigravitySignInLink),
       Effect.matchEffect({
         onFailure: () => Effect.void,
         onSuccess: (request) =>
