@@ -71,6 +71,11 @@ import {
 } from "./guestStream.logic";
 import { guestTurnItemSource } from "./guestTurnItemSource";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`guest:${key}`, options);
+
 interface GuestEntry {
   /** Unspent invite from the URL hash, if this load came from a link. */
   readonly credential: string | null;
@@ -141,7 +146,7 @@ async function fetchGuestHistoryPage(
   shareId: string,
   cursor: string,
 ): Promise<OrchestrationV2ThreadHistoryPage | string> {
-  const failed = "Could not load earlier turns. Try again.";
+  const failed = td("historyFailed");
   try {
     const response = await fetch(
       `${GUEST_HISTORY_ROUTE}?${GUEST_SHARE_PARAM}=${encodeURIComponent(shareId)}&cursor=${encodeURIComponent(cursor)}`,
@@ -155,7 +160,7 @@ async function fetchGuestHistoryPage(
     }
     return Option.getOrElse(decodeHistoryPage(json), () => failed);
   } catch {
-    return "Could not reach the server.";
+    return td("serverUnreachable");
   }
 }
 
@@ -178,18 +183,18 @@ async function postGuest(
     if (response.ok) return null;
     const json: unknown = await response.json().catch(() => null);
     return Option.match(decodeErrorBody(json), {
-      onNone: () => "Something went wrong. Try again.",
+      onNone: () => td("somethingWrong"),
       onSome: ({ message }) => message,
     });
   } catch {
-    return "Could not reach the server.";
+    return td("serverUnreachable");
   }
 }
 
 const STATUS_LABEL: Record<ThreadGuestMessageStatus, string> = {
-  pending: "Waiting for approval",
-  sent: "Sent",
-  dismissed: "Not sent",
+  pending: "status.pending",
+  sent: "status.sent",
+  dismissed: "status.dismissed",
 };
 
 /** Same column as the owner's timeline, so both views wrap text at the same width. */
@@ -235,7 +240,7 @@ export function GuestPage() {
   return (
     <div className="flex h-dvh flex-col bg-background text-foreground">
       {access === "checking" ? (
-        <Notice title="Connecting..." />
+        <Notice title={td("connecting")} />
       ) : access === "name" && credential !== null ? (
         <NameForm
           credential={credential}
@@ -248,10 +253,7 @@ export function GuestPage() {
       ) : access === "session" && shareId !== null ? (
         <GuestSession shareId={shareId} />
       ) : (
-        <Notice
-          title="This link has ended or is not valid"
-          detail="Ask the owner for a new link. Each link works in one browser."
-        />
+        <Notice title={td("linkInvalidTitle")} detail={td("linkInvalidDetail")} />
       )}
     </div>
   );
@@ -317,10 +319,10 @@ function GuestSession({ shareId }: { readonly shareId: string }) {
   }, [shareId]);
 
   if (stream.ended || (rejected && stream.view !== null)) {
-    return <Notice title="This link has ended" detail="The owner stopped sharing this thread." />;
+    return <Notice title={td("linkEndedTitle")} detail={td("linkEndedDetail")} />;
   }
   if (stream.view !== null) {
-    if (stream.projection === null) return <Notice title="Connecting..." />;
+    if (stream.projection === null) return <Notice title={td("connecting")} />;
     return (
       <GuestThread
         view={stream.view}
@@ -330,13 +332,8 @@ function GuestSession({ shareId }: { readonly shareId: string }) {
       />
     );
   }
-  if (!rejected) return <Notice title="Connecting..." />;
-  return (
-    <Notice
-      title="This link has ended or is not valid"
-      detail="Ask the owner for a new link. Each link works in one browser."
-    />
-  );
+  if (!rejected) return <Notice title={td("connecting")} />;
+  return <Notice title={td("linkInvalidTitle")} detail={td("linkInvalidDetail")} />;
 }
 
 function Notice({ title, detail }: { readonly title: string; readonly detail?: string }) {
@@ -370,7 +367,7 @@ function NameForm({
   };
   return (
     <form className="m-auto flex w-full max-w-xs flex-col gap-3 p-6" onSubmit={submit}>
-      <h1 className="text-base font-medium">Join a shared thread</h1>
+      <h1 className="text-base font-medium">{td("joinTitle")}</h1>
       <label className="flex flex-col gap-1.5 text-sm" htmlFor="guest-name">
         Your name
         <Input
@@ -589,7 +586,7 @@ function UnplacedGuestMessage({
         />
         {message.text ? <span>{message.text}</span> : null}
       </div>
-      <p className="me-1 text-2xs text-muted-foreground">{STATUS_LABEL[message.status]}</p>
+      <p className="me-1 text-2xs text-muted-foreground">{td(STATUS_LABEL[message.status])}</p>
     </div>
   );
 }
@@ -723,7 +720,7 @@ function GuestComposer({
       }}
     >
       {files.length > 0 ? (
-        <ul className="flex flex-wrap gap-2" aria-label="Attached files">
+        <ul className="flex flex-wrap gap-2" aria-label={td("attachedFiles")}>
           {files.map((staged) => (
             <li
               key={staged.key}
@@ -758,8 +755,8 @@ function GuestComposer({
         </ul>
       ) : null}
       <textarea
-        aria-label="Message"
-        placeholder="Message"
+        aria-label={td("message")}
+        placeholder={td("message")}
         rows={2}
         maxLength={GUEST_MESSAGE_MAX_LENGTH}
         value={text}
@@ -774,14 +771,17 @@ function GuestComposer({
           type="file"
           multiple
           hidden
-          aria-label="Files to attach"
+          aria-label={td("filesToAttach")}
           onChange={(event) => {
             addFiles(Array.from(event.target.files ?? []));
             // The same file can be picked again after it is removed.
             event.target.value = "";
           }}
         />
-        <ComposerControl aria-label="Attach files" onClick={() => fileInputRef.current?.click()}>
+        <ComposerControl
+          aria-label={td("attachFiles")}
+          onClick={() => fileInputRef.current?.click()}
+        >
           <ComposerControlIcon icon={PaperclipIcon} />
         </ComposerControl>
         <GuestModelLabel model={model} />
@@ -796,7 +796,7 @@ function GuestComposer({
         )}
         <button
           type="submit"
-          aria-label="Send"
+          aria-label={td("send")}
           disabled={sending || (text.trim() === "" && files.length === 0)}
           className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full bg-message-action text-message-action-foreground shadow-xs hover:bg-message-action-hover focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-64"
         >

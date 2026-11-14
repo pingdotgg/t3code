@@ -1,0 +1,21 @@
+{
+  "historyFailed": "无法加载更早的对话。请重试。",
+  "serverUnreachable": "无法连接服务器。",
+  "somethingWrong": "出了点问题。请重试。",
+  "connecting": "连接中…",
+  "linkInvalidTitle": "此链接已失效或不有效",
+  "linkInvalidDetail": "请向所有者索取新链接。每个链接只能在一个浏览器中使用。",
+  "linkEndedTitle": "此链接已结束",
+  "linkEndedDetail": "所有者已停止共享此线程。",
+  "joinTitle": "加入共享线程",
+  "attachedFiles": "已附加的文件",
+  "message": "消息",
+  "filesToAttach": "要附加的文件",
+  "attachFiles": "附加文件",
+  "send": "发送",
+  "status": {
+    "pending": "等待批准",
+    "sent": "已发送",
+    "dismissed": "未发送"
+  }
+}
