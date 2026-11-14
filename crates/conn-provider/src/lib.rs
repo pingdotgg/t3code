@@ -18,11 +18,11 @@ use std::{future::Future, pin::Pin};
 
 use conn_contract::{
     AppThread, ApprovalDecision, ChatAttachment, ConversationMessage, ExecutionNode,
-    InteractionMode, MessageId, ModelSelection, NodeId, PlanArtifact, ProviderCapabilities,
-    ProviderFailure, ProviderInstanceId, ProviderRetry, ProviderSession, ProviderSessionId,
-    ProviderThread, ProviderThreadId, ProviderTurn, ProviderTurnId, RunAttemptId, RunId,
-    RuntimeMode, RuntimeRequest, RuntimeRequestId, Subagent, ThreadId, TurnItem, TurnItemId,
-    UserInputAnswers,
+    InteractionMode, MessageId, ModelSelection, NodeId, OrchestrationV2Actor,
+    OrchestrationV2CreationSource, PlanArtifact, ProviderCapabilities, ProviderFailure,
+    ProviderInstanceId, ProviderRetry, ProviderSession, ProviderSessionId, ProviderThread,
+    ProviderThreadId, ProviderTurn, ProviderTurnId, RunAttemptId, RunId, RuntimeMode,
+    RuntimeRequest, RuntimeRequestId, Subagent, ThreadId, TurnItem, TurnItemId, UserInputAnswers,
 };
 
 pub use conn_contract::AppThread as ProviderAppThread;
@@ -481,6 +481,40 @@ pub struct TurnMessage {
     pub message_id: MessageId,
     pub text: String,
     pub attachments: Vec<ChatAttachment>,
+    /// Who wrote the message. With `creation_source` `provider` and `created_by` `agent` it
+    /// is the provider's own continuation (`isClaudeProviderContinuationTurn`).
+    pub created_by: OrchestrationV2Actor,
+    pub creation_source: OrchestrationV2CreationSource,
+    pub scheduled_task_id: Option<String>,
+    pub sender_thread_id: Option<String>,
+}
+
+impl TurnMessage {
+    /// A message a person sent from the web client.
+    pub fn user(message_id: MessageId, text: String, attachments: Vec<ChatAttachment>) -> Self {
+        Self {
+            message_id,
+            text,
+            attachments,
+            created_by: OrchestrationV2Actor::User,
+            creation_source: OrchestrationV2CreationSource::Web,
+            scheduled_task_id: None,
+            sender_thread_id: None,
+        }
+    }
+
+    /// The provider's own continuation: `createdBy: agent`, `creationSource: provider`.
+    pub fn is_provider_continuation(&self) -> bool {
+        self.created_by == OrchestrationV2Actor::Agent
+            && self.creation_source == OrchestrationV2CreationSource::Provider
+    }
+}
+
+/// An `appContext` entry: text an MCP app wrote for the model, keyed by its item.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AppContextEntry {
+    pub key: String,
+    pub text: String,
 }
 
 /// `ProviderAdapterV2TurnInput`.
@@ -490,13 +524,21 @@ pub struct TurnInput {
     pub thread_id: ThreadId,
     pub run_id: RunId,
     pub run_ordinal: u32,
+    /// Whether the native thread already holds turns (`nativeThreadHasTurns`); `None` leaves
+    /// it to the provider (Claude: `providerTurnOrdinal > 1`).
+    pub native_thread_has_turns: Option<bool>,
     pub provider_turn_ordinal: u32,
+    /// The run a server restart cut short, when this turn continues it
+    /// (`restartContinuationOfRunId`). Codex then starts the native turn without input.
+    pub restart_continuation_of_run_id: Option<RunId>,
     pub attempt_id: RunAttemptId,
     pub root_node_id: NodeId,
     pub provider_thread: ProviderThread,
     pub message: TurnMessage,
     pub model_selection: ModelSelection,
     pub runtime_policy: RuntimePolicy,
+    /// `appContext`: MCP app text for the model (Codex: untrusted `additionalContext`).
+    pub app_context: Vec<AppContextEntry>,
 }
 
 /// `ProviderAdapterV2SteerInput`.
@@ -829,6 +871,9 @@ mod tests {
             .unwrap();
         session
             .start_turn(TurnInput {
+                native_thread_has_turns: None,
+                restart_continuation_of_run_id: None,
+                app_context: vec![],
                 app_thread: from_json(json!({
                     "createdBy": "user", "creationSource": "web", "id": "t1", "projectId": "p1",
                     "title": "T", "providerInstanceId": "claude",
@@ -847,6 +892,10 @@ mod tests {
                 root_node_id: "n1".into(),
                 provider_thread: thread.clone(),
                 message: TurnMessage {
+                    created_by: conn_contract::OrchestrationV2Actor::User,
+                    creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+                    scheduled_task_id: None,
+                    sender_thread_id: None,
                     message_id: "u1".into(),
                     text: "hi".into(),
                     attachments: vec![],

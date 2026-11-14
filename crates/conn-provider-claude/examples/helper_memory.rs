@@ -125,6 +125,9 @@ fn main() {
             .unwrap_or_else(|e| panic!("ensure: {e}"));
         for n in 1..=turns {
             let input = TurnInput {
+                native_thread_has_turns: None,
+                restart_continuation_of_run_id: None,
+                app_context: vec![],
                 app_thread: from_json(json!({
                     "createdBy": "user", "creationSource": "web", "id": "thread-memory",
                     "projectId": "project-memory", "title": "Memory", "providerInstanceId": "claudeAgent",
@@ -143,6 +146,10 @@ fn main() {
                 root_node_id: format!("node-{n}").as_str().into(),
                 provider_thread: thread.clone(),
                 message: TurnMessage {
+                    created_by: conn_contract::OrchestrationV2Actor::User,
+                    creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+                    scheduled_task_id: None,
+                    sender_thread_id: None,
                     message_id: format!("message-{n}").as_str().into(),
                     text: "Reply with exactly: pong".into(),
                     attachments: vec![],

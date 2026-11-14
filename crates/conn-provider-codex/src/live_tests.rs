@@ -54,6 +54,9 @@ fn selection() -> conn_contract::ModelSelection {
 
 fn turn(thread: &ProviderThread, n: u32, mode: &str, cwd: &str, text: &str) -> TurnInput {
     TurnInput {
+        native_thread_has_turns: None,
+        restart_continuation_of_run_id: None,
+        app_context: vec![],
         app_thread: from_json(json!({
             "createdBy": "user", "creationSource": "web", "id": "live-thread", "projectId": "p",
             "title": "live", "providerInstanceId": "codex", "modelSelection": to_json(&selection()),
@@ -71,6 +74,10 @@ fn turn(thread: &ProviderThread, n: u32, mode: &str, cwd: &str, text: &str) -> T
         root_node_id: format!("node-{n}").as_str().into(),
         provider_thread: thread.clone(),
         message: TurnMessage {
+            created_by: conn_contract::OrchestrationV2Actor::User,
+            creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+            scheduled_task_id: None,
+            sender_thread_id: None,
             message_id: format!("message-{n}").as_str().into(),
             text: text.into(),
             attachments: vec![],

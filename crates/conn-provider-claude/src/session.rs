@@ -840,8 +840,11 @@ impl ClaudeSession {
                 (plan, None)
             } else {
                 // A persisted turn requires resume, also after an idle release.
+                // `hasPersistedProviderTurn`: nativeThreadHasTurns ?? providerTurnOrdinal > 1.
                 let resume = state.resumable.contains(&native)
-                    || input.provider_turn_ordinal > 1
+                    || input
+                        .native_thread_has_turns
+                        .unwrap_or(input.provider_turn_ordinal > 1)
                     || conversation_head(&thread).is_some();
                 let read_only =
                     OwnedPolicyInput::new(&input.runtime_policy).sandbox == Some("readOnly");

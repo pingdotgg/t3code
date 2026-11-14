@@ -150,6 +150,10 @@ fn json<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T, String> {
 fn message(input: &Value) -> Result<TurnMessage, String> {
     let m = &input["message"];
     Ok(TurnMessage {
+        created_by: conn_contract::OrchestrationV2Actor::User,
+        creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+        scheduled_task_id: None,
+        sender_thread_id: None,
         message_id: m["messageId"].as_str().unwrap_or("m").into(),
         text: m["text"].as_str().unwrap_or_default().to_owned(),
         attachments: json(&m["attachments"]).unwrap_or_default(),
@@ -324,6 +328,9 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
                 let model_selection: ModelSelection = json(&input["modelSelection"])?;
                 let runtime_policy: RuntimePolicy = json(&input["runtimePolicy"])?;
                 s.start_turn(TurnInput {
+                    native_thread_has_turns: None,
+                    restart_continuation_of_run_id: None,
+                    app_context: vec![],
                     app_thread: json(&input["appThread"])?,
                     thread_id: input["threadId"].as_str().unwrap_or("t").into(),
                     run_id: input["runId"].as_str().unwrap_or("r").into(),

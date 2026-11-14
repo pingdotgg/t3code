@@ -101,7 +101,8 @@ process before a thread call (the TS server lists models in a separate probe pro
   - `effort` and `serviceTier`, when the model selection sets them
   - `collaborationMode: {"mode": <interaction mode>, "settings": {"model",
     "reasoning_effort"?}}`
-  - `additionalContext`, only with T3 MCP
+  - `additionalContext`: with T3 MCP, T3's entries; MCP app context as `{"kind": "untrusted"}`
+  - `input: []` for a restart continuation (`restartContinuationOfRunId`): Codex resumes
 
   The result is `{"turn": {"id", "status": "inProgress", "startedAt": null | secs, ...}}`. A
   `turn/started` notification can come before the result.

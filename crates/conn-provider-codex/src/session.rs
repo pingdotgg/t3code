@@ -594,12 +594,18 @@ impl Session for CodexSession {
                         .map(str::to_owned)
                 });
             inner.check_open()?;
-            let codex_input = launch::user_input(
-                &input.message.text,
-                &input.message.attachments,
-                inner.attachments_dir.as_deref(),
-            )
-            .map_err(|detail| ProviderError::Protocol { detail })?;
+            // A restart continuation starts the native turn without input: Codex resumes on
+            // its own (`startTurn`, `restartContinuationOfRunId`).
+            let codex_input = if input.restart_continuation_of_run_id.is_some() {
+                json!([])
+            } else {
+                launch::user_input(
+                    &input.message.text,
+                    &input.message.attachments,
+                    inner.attachments_dir.as_deref(),
+                )
+                .map_err(|detail| ProviderError::Protocol { detail })?
+            };
             // TS: `hasT3Mcp` when the thread has an MCP session; the engine passes it as the
             // `t3-code` server. Browser tools on, device tools off: the session carries no
             // finer answer (TS reads `browserToolsAvailable` and the `device` capability).
@@ -616,6 +622,7 @@ impl Session for CodexSession {
                 &input.model_selection,
                 summary.as_deref(),
                 t3_tools,
+                &input.app_context,
             );
             inner.lock().mapper.begin_turn(&native, &input);
             match inner.server.request("turn/start", params).await {
@@ -1043,6 +1050,9 @@ done
         let selection: conn_contract::ModelSelection =
             from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"})).unwrap();
         TurnInput {
+            native_thread_has_turns: None,
+            restart_continuation_of_run_id: None,
+            app_context: vec![],
             app_thread: from_json(json!({
                 "createdBy": "user", "creationSource": "web", "id": "t1", "projectId": "p1",
                 "title": "T", "providerInstanceId": "codex", "modelSelection": to_json(&selection),
@@ -1059,7 +1069,7 @@ done
             attempt_id: format!("a{n}").as_str().into(),
             root_node_id: format!("n{n}").as_str().into(),
             provider_thread: thread.clone(),
-            message: TurnMessage { message_id: "m".into(), text: text.into(), attachments: vec![] },
+            message: TurnMessage::user("m".into(), text.into(), vec![]),
             model_selection: selection,
             runtime_policy: policy(),
         }
@@ -1441,5 +1451,69 @@ done
             "the engine's failure message is T3's text alone"
         );
         session.close().await;
+    }
+
+    /// A restart continuation (`restartContinuationOfRunId`) starts the native turn with no
+    /// input: Codex continues on its own, as T3's `startTurn` does.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_restart_continuation_starts_the_turn_without_input() {
+        let dir = std::env::temp_dir().join(format!("conn-codex-restart-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("codex");
+        std::fs::write(&script, format!("#!/bin/sh\n{FAKE}")).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let log = dir.join("codex.stdin");
+        let _ = std::fs::remove_file(&log);
+        let provider = CodexProvider::new(
+            "codex".into(),
+            CodexConfig {
+                binary: script,
+                home_path: Some(dir.clone()),
+                ..CodexConfig::default()
+            },
+        );
+        let OpenedSession {
+            session,
+            mut events,
+        } = provider
+            .open_session(OpenSessionInput {
+                thread_id: "t1".into(),
+                provider_session_id: "s1".into(),
+                model_selection: from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                resume_from_session: None,
+                mcp_servers: vec![],
+                host: None,
+            })
+            .await
+            .unwrap();
+        let thread = session
+            .ensure_thread(EnsureThreadInput {
+                thread_id: "t1".into(),
+                title: None,
+                model_selection: from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                existing_provider_thread: None,
+            })
+            .await
+            .unwrap();
+        let mut input = turn(&thread, 2, "Continue where you left off.");
+        input.restart_continuation_of_run_id = Some("r1".into());
+        session.start_turn(input).await.unwrap();
+        until(&mut events, "turn.terminal").await;
+        session.close().await;
+        let starts: Vec<Value> = std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|f| f["method"] == "turn/start")
+            .map(|f| f["params"].clone())
+            .collect();
+        assert_eq!(starts.len(), 1);
+        assert_eq!(starts[0]["input"], json!([]));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

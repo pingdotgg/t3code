@@ -80,7 +80,8 @@ thread resume after a restart, rollback (`CodexThreadRevert.ts`), fork (native, 
 - **Retries:** `error` with `willRetry: true` makes no retry row; the turn keeps running.
 - **Rate limits:** `account/rateLimits/*` is ignored, so usage-limit failures have no `resetAt`.
 - **T3 context details:** browser tools are assumed on and device tools off (TS reads both
-  from the MCP session); app context entries are not sent. Snap-shot window context of image
+  from the MCP session); app context entries go in `additionalContext` as `untrusted`, but
+  the engine has no MCP apps and passes none. Snap-shot window context of image
   attachments is not added.
 - **Tool rows:** MCP presentation (titles, icons, surfaces) and MCP apps.
 - **Elicitations:** declined. `item/tool/call` and auth-refresh requests get an error reply.

@@ -39,6 +39,9 @@ fn provider_thread(native: &str) -> Value {
 fn turn_input(n: u32, thread: &Value, text: &str, runtime_mode: &str) -> TurnInput {
     let attempt = format!("attempt-{n}");
     TurnInput {
+        native_thread_has_turns: None,
+        restart_continuation_of_run_id: None,
+        app_context: vec![],
         app_thread: from_json(json!({
             "createdBy": "user", "creationSource": "web", "id": THREAD, "projectId": "project-thread-claude-wake",
             "title": "Claude attachment test", "providerInstanceId": "claudeAgent",
@@ -58,6 +61,10 @@ fn turn_input(n: u32, thread: &Value, text: &str, runtime_mode: &str) -> TurnInp
         root_node_id: format!("node-{attempt}").as_str().into(),
         provider_thread: from_json(thread.clone()).unwrap(),
         message: TurnMessage {
+            created_by: conn_contract::OrchestrationV2Actor::User,
+            creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+            scheduled_task_id: None,
+            sender_thread_id: None,
             message_id: format!("message-{attempt}").as_str().into(),
             text: text.into(),
             attachments: vec![],

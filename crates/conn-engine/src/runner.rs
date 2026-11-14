@@ -493,6 +493,13 @@ impl Inner {
         // A run the provider asked for (`continuation.requested`) shows output it already holds.
         let continuation = context.message["creationSource"] == "provider";
         let input = TurnInput {
+            // The provider decides from the turn ordinal, as before.
+            native_thread_has_turns: None,
+            restart_continuation_of_run_id: context.run["restartContinuationOfRunId"]
+                .as_str()
+                .map(Into::into),
+            // No MCP apps here, so no app model context.
+            app_context: vec![],
             app_thread: from_json(context.thread.clone()).map_err(|e| e.to_string())?,
             thread_id: thread_id.into(),
             run_id: run_id.into(),
@@ -502,6 +509,16 @@ impl Inner {
             root_node_id: root.as_str().into(),
             provider_thread,
             message: TurnMessage {
+                created_by: from_json(context.message["createdBy"].clone())
+                    .unwrap_or(conn_contract::OrchestrationV2Actor::User),
+                creation_source: from_json(context.message["creationSource"].clone())
+                    .unwrap_or(conn_contract::OrchestrationV2CreationSource::Web),
+                scheduled_task_id: context.message["scheduledTaskId"]
+                    .as_str()
+                    .map(str::to_owned),
+                sender_thread_id: context.message["senderThreadId"]
+                    .as_str()
+                    .map(str::to_owned),
                 message_id: context.run["userMessageId"]
                     .as_str()
                     .unwrap_or_default()
@@ -943,6 +960,12 @@ impl Inner {
                     provider_thread,
                     provider_turn_id,
                     message: TurnMessage {
+                        created_by: from_json(message["createdBy"].clone())
+                            .unwrap_or(conn_contract::OrchestrationV2Actor::User),
+                        creation_source: from_json(message["creationSource"].clone())
+                            .unwrap_or(conn_contract::OrchestrationV2CreationSource::Web),
+                        scheduled_task_id: message["scheduledTaskId"].as_str().map(str::to_owned),
+                        sender_thread_id: message["senderThreadId"].as_str().map(str::to_owned),
                         message_id: message_id.as_str().into(),
                         text: message["text"].as_str().unwrap_or_default().to_owned(),
                         attachments: from_json(message["attachments"].clone()).unwrap_or_default(),

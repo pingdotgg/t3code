@@ -140,6 +140,9 @@ async fn run(
         n += 1;
         let interrupt = steps.get(index).and_then(|s| s.get("interrupt")).cloned();
         let input = TurnInput {
+            native_thread_has_turns: None,
+            restart_continuation_of_run_id: None,
+            app_context: vec![],
             app_thread: from_json(json!({
                 "createdBy": "user", "creationSource": "web", "id": "thread-replay",
                 "projectId": "project-replay", "title": name, "providerInstanceId": "claudeAgent",
@@ -158,6 +161,10 @@ async fn run(
             root_node_id: format!("node-{n}").as_str().into(),
             provider_thread: thread.clone(),
             message: TurnMessage {
+                created_by: conn_contract::OrchestrationV2Actor::User,
+                creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+                scheduled_task_id: None,
+                sender_thread_id: None,
                 message_id: format!("message-{n}").as_str().into(),
                 text,
                 attachments: vec![],
