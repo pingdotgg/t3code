@@ -5,6 +5,7 @@ import * as CodexInstallation from "./CodexInstallation.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import { describe, it, assert, expect } from "@effect/vitest";
@@ -567,22 +568,23 @@ it.layer(
       }),
     );
 
-    it.effect("names the instance's CODEX_HOME in the sign-in hint for a custom home", () =>
+    it.effect("includes the configured CODEX_HOME in the login command", () =>
       Effect.gen(function* () {
-        const homePath = "/srv/codex-work-home";
         const status = yield* checkCodexProviderStatus(
-          decodeCodexSettings({ binaryPath: "codex", homePath }),
+          decodeCodexSettings({ homePath: "/srv/codex-work" }),
           () =>
             Effect.succeed(
               makeCodexProbeSnapshot({
                 account: { account: null, requiresOpenaiAuth: true },
               }),
             ),
+          {},
+        ).pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provide(NodePath.layerPosix),
         );
 
-        assert.strictEqual(status.auth.status, "unauthenticated");
-        assert.include(status.message ?? "", "CODEX_HOME");
-        assert.include(status.message ?? "", homePath);
+        assert.include(status.message ?? "", "`CODEX_HOME='/srv/codex-work' codex login`");
       }),
     );
 

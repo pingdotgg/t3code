@@ -881,11 +881,25 @@ const makePendingCodexProvider = Effect.fn("CodexProvider.makePendingCodexProvid
   });
 });
 
-const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
+function codexLoginCommand(
+  binaryPath: string,
+  codexHome: string | undefined,
+  platform: NodeJS.Platform,
+) {
+  const quote = (value: string) =>
+    `'${value.replaceAll("'", platform === "win32" ? "''" : "'\\''")}'`;
+  const binary = binaryPath === "codex" ? "codex" : quote(binaryPath);
+  if (platform === "win32") {
+    return `${codexHome ? `$env:CODEX_HOME = ${quote(codexHome)}; ` : ""}& ${binary} login`;
+  }
+  return `${codexHome ? `CODEX_HOME=${quote(codexHome)} ` : ""}${binary} login`;
+}
 
 function accountProbeStatus(
   { account, rateLimits }: CodexAppServerProviderSnapshot,
   codexHome: string | undefined,
+  binaryPath: string,
+  platform: NodeJS.Platform,
 ): {
   readonly status: Exclude<ServerProviderState, "disabled">;
   readonly auth: ServerProvider["auth"];
@@ -914,9 +928,10 @@ function accountProbeStatus(
     return {
       status: "error",
       auth: { status: "unauthenticated" },
-      message: codexHome
-        ? `Codex CLI is not authenticated. Run \`codex login\` with CODEX_HOME set to ${quotePath(codexHome)} and try again.`
-        : "Codex CLI is not authenticated. Run `codex login` and try again.",
+      message:
+        codexHome || binaryPath !== "codex"
+          ? `Codex CLI is not authenticated. Run \`${codexLoginCommand(binaryPath, codexHome, platform)}\` in ${platform === "win32" ? "PowerShell" : "a POSIX shell"} on the server and try again.`
+          : "Codex CLI is not authenticated. Run `codex login` and try again.",
     };
   }
 
@@ -1036,13 +1051,20 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   }
 
   const snapshot = probeResult.success.value;
+  const path = yield* Path.Path;
+  const codexHome = codexSettings.homePath
+    ? expandHomePath(codexSettings.homePath, yield* HostProcess.HomeDirectory)
+    : resolvedEnvironment.CODEX_HOME;
+  const binaryPath = codexSettings.binaryPath;
   const accountStatus = managedAuth
     ? { status: "ready" as const, auth: managedAuth, message: undefined }
     : accountProbeStatus(
         snapshot,
-        codexSettings.homePath
-          ? expandHomePath(codexSettings.homePath, yield* HostProcess.HomeDirectory)
-          : undefined,
+        codexHome ? path.resolve(process.cwd(), codexHome) : undefined,
+        binaryPath.includes("/") || binaryPath.includes(path.sep)
+          ? path.resolve(process.cwd(), binaryPath)
+          : binaryPath,
+        yield* HostProcess.Platform,
       );
   // Sign-in guidance still applies when Codex itself says it needs an OpenAI login.
   const usageLimits =
