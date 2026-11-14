@@ -473,6 +473,34 @@ describe("decodeNotesJson", () => {
     expect(notes.rawCount).toBe(3);
   });
 
+  it("keeps approval and withdrawal notes as reviews", () => {
+    const notes = expectSuccess(
+      decodeNotesJson(
+        JSON.stringify([
+          {
+            id: 4,
+            body: "approved this merge request",
+            system: true,
+            author: { username: "bilal" },
+            created_at: "2026-07-04T00:00:00Z",
+          },
+          {
+            id: 5,
+            body: "unapproved this merge request",
+            system: true,
+            author: { username: "bilal" },
+            created_at: "2026-07-05T00:00:00Z",
+          },
+        ]),
+      ),
+    );
+
+    expect(notes.comments).toMatchObject([
+      { id: "4", kind: "review", reviewState: "APPROVED" },
+      { id: "5", kind: "review", reviewState: "DISMISSED" },
+    ]);
+  });
+
   it("reads a line note as a review comment on its file", () => {
     const notes = expectSuccess(
       decodeNotesJson(
