@@ -46,6 +46,8 @@ export interface DesktopBrowserTabDebugger {
   readonly cookiesCleared?: () => Promise<void>;
   /** The scheme a page on System shows, which Playwright's clear of its override must keep. */
   readonly systemColorScheme?: () => string;
+  /** Runs with each media emulation the relay sends, before its System rewrite. */
+  readonly emulatedMediaSet?: (params: Record<string, unknown>) => void;
 }
 
 const withSystemColorScheme = (
@@ -352,12 +354,21 @@ export const make = Effect.gen(function* () {
 
   const relayFor = (tab: AttachedTab) => {
     if (tab.relay) return tab.relay;
-    const { webContents, debugger: debuggee, cookiesCleared, systemColorScheme } = tab.debuggee;
+    const {
+      webContents,
+      debugger: debuggee,
+      cookiesCleared,
+      systemColorScheme,
+      emulatedMediaSet,
+    } = tab.debuggee;
     const send = async (method: string, params: Record<string, unknown>, sessionId?: string) => {
-      if (method === "Emulation.setEmulatedMedia" && systemColorScheme) {
-        params = withSystemColorScheme(params, systemColorScheme);
-      }
-      const result = await sendPageCommand(webContents, debuggee, method, params, sessionId);
+      const emulatesMedia = method === "Emulation.setEmulatedMedia";
+      const sent =
+        emulatesMedia && systemColorScheme
+          ? withSystemColorScheme(params, systemColorScheme)
+          : params;
+      if (emulatesMedia) emulatedMediaSet?.(params);
+      const result = await sendPageCommand(webContents, debuggee, method, sent, sessionId);
       if (method === "Network.clearBrowserCookies") await cookiesCleared?.();
       return result;
     };

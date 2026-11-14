@@ -2373,6 +2373,69 @@ describe("PreviewManager", () => {
       }).pipe(Effect.provide(managerLayer())),
   );
 
+  effectIt.effect("keeps the agent's other media emulation when the OS scheme changes", () => {
+    const theme = makeTheme("dark");
+    return Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+      const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
+      const contents = Object.assign(
+        makeTestPreviewWebContents(async () => {
+          throw new Error("unused");
+        }, 42),
+        {
+          isDevToolsOpened: () => false,
+          getUserAgent: () => "Electron",
+          loadURL: vi.fn(async () => undefined),
+        },
+      );
+      const changes = makeChangeSignal();
+      const media: Array<unknown> = [];
+      contents.debugger.sendCommand = vi.fn(async (method: string, params?: unknown) => {
+        if (method === "Emulation.setEmulatedMedia") media.push(params);
+        changes.notify();
+      }) as unknown as typeof contents.debugger.sendCommand;
+      fromId.mockReturnValue(contents);
+      const manager = yield* PreviewManager.PreviewManager;
+      const attached = yield* Deferred.make<void>();
+      yield* host.events.pipe(
+        Stream.runForEach((line) =>
+          new TextDecoder().decode(line).includes('"type":"attached"')
+            ? Deferred.succeed(attached, undefined)
+            : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      yield* manager.createTab("tab_1", { serverTab });
+      yield* manager.registerWebview("tab_1", 42);
+      yield* Deferred.await(attached);
+      const emulated = (colorScheme: string) => ({
+        media: "print",
+        features: [
+          { name: "prefers-reduced-motion", value: "reduce" },
+          { name: "prefers-color-scheme", value: colorScheme },
+        ],
+      });
+
+      yield* host.handleCommandLine(
+        JSON.stringify({
+          type: "cdp",
+          ...serverTab,
+          message: JSON.stringify({
+            id: 1,
+            method: "Emulation.setEmulatedMedia",
+            params: emulated(""),
+            sessionId: "t3-preview-page",
+          }),
+        }),
+      );
+      const relayed = JSON.stringify(emulated("dark"));
+      yield* changes.until(() => media.some((params) => JSON.stringify(params) === relayed));
+      theme.setSystemColorScheme("light");
+      yield* changes.until(() => JSON.stringify(media.at(-1)).includes('"light"'));
+      expect(media.at(-1)).toEqual(emulated("light"));
+    }).pipe(Effect.provide(managerLayer("darwin", theme.layer)));
+  });
+
   effectIt.effect(
     "opens a new-tab link in the background only when the agent's input led to it",
     () =>

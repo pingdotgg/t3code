@@ -2505,15 +2505,32 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     return colorScheme === "system" ? ((yield* theme.systemColorScheme) ?? "") : colorScheme;
   });
 
+  // setEmulatedMedia replaces the whole emulation, so the agent's other overrides are resent.
+  const relayedMedia = new WeakMap<BrowserControlSession, Record<string, unknown>>();
+
   const sendColorScheme = Effect.fn("PreviewManager.sendColorScheme")(function (
     tabId: string,
     wc: Electron.WebContents,
     control: BrowserControlSession,
     value: string,
   ) {
+    const relayed = relayedMedia.get(control);
+    const features = Array.isArray(relayed?.["features"]) ? relayed["features"] : [];
     return attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>
       control.debugger.sendCommand("Emulation.setEmulatedMedia", {
-        features: [{ name: "prefers-color-scheme", value }],
+        ...relayed,
+        features: [
+          ...features.filter(
+            (feature: unknown) =>
+              !(
+                typeof feature === "object" &&
+                feature !== null &&
+                "name" in feature &&
+                feature.name === "prefers-color-scheme"
+              ),
+          ),
+          { name: "prefers-color-scheme", value },
+        ],
       }),
     );
   });
@@ -2564,6 +2581,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           debugger: control.debugger,
           cookiesCleared: () => runPromise(browserSession.cookiesCleared(wc.session)),
           systemColorScheme: () => runSync(emulatedColorScheme("system")),
+          emulatedMediaSet: (params) => void relayedMedia.set(control, params),
         });
         // CDP cannot recover a failure that happened before it attached.
         const { navStatus } = afterAttach;
