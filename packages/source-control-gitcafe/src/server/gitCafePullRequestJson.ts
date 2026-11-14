@@ -307,20 +307,30 @@ const ATTACHMENT_LINK =
 export function toBody(text: string | null, host: string): string {
   const body = text ?? "";
   if (!body.includes("/api/attachments/")) return body;
-  const codeRanges: Array<{ start: number; end: number }> = [];
+  type Range = { start: number; end: number };
+  const codeRanges: Array<Range> = [];
+  const htmlRanges: Array<Range> = [];
   const tree = parseMarkdownWithMath(body);
   const visit = (node: typeof tree | (typeof tree.children)[number]): void => {
-    if (node.type === "code" || node.type === "inlineCode") {
+    const ranges =
+      node.type === "code" || node.type === "inlineCode"
+        ? codeRanges
+        : node.type === "html"
+          ? htmlRanges
+          : null;
+    if (ranges !== null) {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
-      if (start !== undefined && end !== undefined) codeRanges.push({ start, end });
+      if (start !== undefined && end !== undefined) ranges.push({ start, end });
     } else if ("children" in node) {
       node.children.forEach(visit);
     }
   };
   visit(tree);
+  const inside = (ranges: Array<Range>, offset: number) =>
+    ranges.some(({ start, end }) => offset >= start && offset < end);
   return body.replace(ATTACHMENT_LINK, (match, prefix: string, offset: number) =>
-    codeRanges.some(({ start, end }) => offset >= start && offset < end)
+    inside(codeRanges, offset) || (/^src/iu.test(prefix) && !inside(htmlRanges, offset))
       ? match
       : `${prefix}https://${host}/api/attachments/`,
   );
