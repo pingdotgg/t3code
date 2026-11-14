@@ -2,6 +2,7 @@ import * as NodeOS from "node:os";
 
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -12,6 +13,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
@@ -20,6 +22,7 @@ import serverPackageJson from "../../../server/package.json" with { type: "json"
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopCliShim from "../app/DesktopCliShim.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -240,7 +243,37 @@ interface SharedBootstrapInput {
   readonly bootstrapToken: string;
   readonly bootstrapSecret: string;
   readonly observabilitySettings: BackendObservabilitySettings;
+  readonly hostScope: string;
 }
+
+// Matches the server's DESKTOP_HOST_SCOPE_ENV.
+const DESKTOP_HOST_SCOPE_ENV = "T3CODE_DESKTOP_HOST_SCOPE";
+const HOST_SCOPE_FILE_NAME = "desktop-host-scope";
+const HOST_SCOPE_PATTERN = /^[0-9a-f]{32}$/;
+
+/**
+ * Not a credential: it only tells this install's Windows and WSL servers that
+ * they run on one machine, so usage both read from one Windows directory counts
+ * once. Persisted so summaries from earlier launches still match.
+ */
+const readOrCreateHostScope = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const random = yield* SecureRandom.SecureRandom;
+  const scopePath = environment.path.join(environment.stateDir, HOST_SCOPE_FILE_NAME);
+  const existing = (yield* fileSystem
+    .readFileString(scopePath)
+    .pipe(Effect.orElseSucceed(() => ""))).trim();
+  if (HOST_SCOPE_PATTERN.test(existing)) return existing;
+  const scope = Hex.encode(yield* random.randomBytes(16).pipe(Effect.orDie));
+  yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true }).pipe(
+    Effect.andThen(fileSystem.writeFileString(scopePath, scope)),
+    Effect.catch((cause) =>
+      Effect.logWarning("Could not persist the desktop host scope.", { cause }),
+    ),
+  );
+  return scope;
+});
 
 type WslPreflightRuntime =
   | {
@@ -487,6 +520,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       readonly resourceMonitorPath: Option.Option<string>;
       readonly cliPath: Option.Option<string>;
       readonly shellEnvironmentPrepared: boolean;
+      readonly desktopAppUpdate: boolean;
     },
   ): Effect.fn.Return<
     DesktopBackendManager.DesktopBackendStartConfig,
@@ -510,6 +544,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       tailscaleServePort: backendExposure.tailscaleServePort,
       desktopTelemetryFd: 4,
       desktopTelemetryControlFd: 5,
+      desktopAppUpdate: input.desktopAppUpdate,
       desktopBrowserFd: 6,
       desktopBrowserControlFd: 7,
       ...Option.match(input.resourceMonitorPath, {
@@ -535,6 +570,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         ELECTRON_RUN_AS_NODE: "1",
         T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1",
         T3CODE_CLI_PATH: Option.getOrUndefined(input.cliPath),
+        [DESKTOP_HOST_SCOPE_ENV]: input.hostScope,
       },
       extendEnv: true,
       bootstrap,
@@ -562,6 +598,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
+  const env = yield* HostProcess.Environment;
 
   // wslhost loopback forwarding is unreliable on some Windows hosts; advertise the WSL IP instead.
   const wslBindHost = "0.0.0.0";
@@ -630,10 +667,10 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const httpBaseUrl = new URL(`http://${rendererHost}:${input.port}`);
 
   const distroArgs = distroForConfig ? ["-d", distroForConfig] : [];
-  const forwardedEnv: Record<string, string> = {};
-  const forwardedEnvNames: string[] = [];
+  const forwardedEnv: Record<string, string> = { [DESKTOP_HOST_SCOPE_ENV]: input.hostScope };
+  const forwardedEnvNames: string[] = [DESKTOP_HOST_SCOPE_ENV];
   for (const name of WSL_FORWARDED_ENV_NAMES) {
-    const value = process.env[name];
+    const value = env[name];
     if (value !== undefined && value.length > 0) {
       forwardedEnv[name] = value;
       forwardedEnvNames.push(name);
@@ -641,7 +678,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   }
 
   const parentEnvWithoutT3Home: Record<string, string | undefined> = {};
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const [key, value] of Object.entries(env)) {
     if (key === "T3CODE_HOME") continue;
     parentEnvWithoutT3Home[key] = value;
   }
@@ -658,7 +695,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
       ...forwardedEnv,
       ...(wslEnv !== undefined ? { WSLENV: wslEnv } : {}),
     },
-    // env already excludes T3CODE_HOME; merging process.env would restore it.
+    // env already excludes T3CODE_HOME; merging the host env would restore it.
     extendEnv: false,
     bootstrap,
     bootstrapDelivery: "stdin" as const,
@@ -724,10 +761,18 @@ export const make = Effect.gen(function* () {
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const wslServerTree = yield* DesktopWslServerTree.DesktopWslServerTree;
   const settings = yield* DesktopAppSettings.DesktopAppSettings;
+  const desktopState = yield* DesktopState.DesktopState;
   const mac = yield* Mac.Mac;
   const random = yield* SecureRandom.SecureRandom;
   // Random generation yields; serialize it so concurrent backends cannot capture distinct bootstrap secrets.
   const secretRef = yield* SynchronizedRef.make(Option.none<string>());
+  const hostScope = yield* Effect.cached(
+    readOrCreateHostScope.pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+      Effect.provideService(SecureRandom.SecureRandom, random),
+    ),
+  );
   const getOrCreateBootstrapSecret = SynchronizedRef.modifyEffect(secretRef, (current) =>
     Option.match(current, {
       onSome: (secret) => Effect.succeed([secret, current] as const),
@@ -755,6 +800,7 @@ export const make = Effect.gen(function* () {
       bootstrapToken,
       bootstrapSecret,
       observabilitySettings,
+      hostScope: yield* hostScope,
     } satisfies SharedBootstrapInput;
   });
 
@@ -791,6 +837,7 @@ export const make = Effect.gen(function* () {
       resourceMonitorPath,
       cliPath,
       shellEnvironmentPrepared,
+      desktopAppUpdate: yield* Ref.get(desktopState.canInstallUpdates),
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
