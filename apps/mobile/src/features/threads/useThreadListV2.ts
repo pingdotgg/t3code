@@ -7,7 +7,6 @@ import { useMemo, useSyncExternalStore } from "react";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
-import { environmentShell } from "../../state/shell";
 import { workspaceConnections } from "../../state/workspace";
 import {
   buildThreadListV2Items,
@@ -33,12 +32,7 @@ function useKeySet(newlineSeparatedKeys: string): ReadonlySet<string> {
 
 const disconnectedEnvironmentIdsAtom = Atom.make((get) =>
   get(workspaceConnections.environmentsAtom)
-    .filter((environment) =>
-      isThreadListV2EnvironmentDisconnected(
-        environment.connectionState,
-        get(environmentShell.statusAtom(environment.environmentId)),
-      ),
-    )
+    .filter((environment) => isThreadListV2EnvironmentDisconnected(environment.connectionState))
     .map((environment) => environment.environmentId)
     .sort()
     .join("\n"),

@@ -213,19 +213,13 @@ describe("resolveThreadListV2Status", () => {
 
 describe("isThreadListV2EnvironmentDisconnected", () => {
   it.each([
-    ["connected", "live", false],
-    ["connected", "synchronizing", true],
-    ["connecting", "cached", false],
-    ["reconnecting", "live", true],
-    ["offline", "cached", true],
-  ] as const)(
-    "treats %s with a %s shell as disconnected: %s",
-    (connectionState, shellStatus, disconnected) => {
-      expect(isThreadListV2EnvironmentDisconnected(connectionState, shellStatus)).toBe(
-        disconnected,
-      );
-    },
-  );
+    ["connected", false],
+    ["connecting", false],
+    ["reconnecting", true],
+    ["offline", true],
+  ] as const)("treats %s as disconnected: %s", (connectionState, disconnected) => {
+    expect(isThreadListV2EnvironmentDisconnected(connectionState)).toBe(disconnected);
+  });
 });
 
 describe("resolveThreadListV2SwipeActions", () => {
