@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   type CustomModelSetting,
   type ModelCapabilities,
@@ -9,7 +10,7 @@ import {
 import type { GrokSettings } from "../settings.ts";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import { causeErrorTag } from "@t3tools/shared/observability";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -28,7 +29,7 @@ import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
   isCommandMissingCause,
-  parseGenericCliVersion,
+  parseCliVersionResult,
   providerModelsFromSettings,
   spawnAndCollect,
   type ServerProviderDraft,
@@ -58,8 +59,11 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
 
-const VERSION_PROBE_TIMEOUT_MS = 4_000;
-const GROK_ACP_INITIALIZE_TIMEOUT_MS = 8_000;
+const VERSION_PROBE_TIMEOUT_MS = 10_000;
+// Grok writes the initialize result only after startup work (settings,
+// skill discovery, file watching). From a home directory that work measured
+// 9-14s on CLI 1.0.52, so an 8s cap records a healthy CLI as a failed probe.
+const GROK_ACP_INITIALIZE_TIMEOUT_MS = 20_000;
 const GROK_API_KEY_ENV = "XAI_API_KEY";
 
 const GROK_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
@@ -123,7 +127,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function grokReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
+const GROK_EFFORT_RANK = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+export function grokReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
   readonly options: ReadonlyArray<{
     value: string;
     label: string;
@@ -180,6 +186,11 @@ function grokReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
   const selectedDefault =
     advertisedDefaults.find((option) => option.value === currentValue)?.value ??
     advertisedDefaults[0]?.value;
+  // Grok advertises its strongest level first; pickers and effort bars read lowest to highest.
+  const rank = (option: { value: string }) => GROK_EFFORT_RANK.indexOf(option.value);
+  if (options.every((option) => rank(option) >= 0)) {
+    options.sort((left, right) => rank(left) - rank(right));
+  }
   return {
     options: options.map(({ value, label, description }) => ({
       value,
@@ -213,7 +224,7 @@ export function buildGrokModelCapabilities(model: EffectAcpSchema.ModelInfo): Mo
     : EMPTY_CAPABILITIES;
 }
 
-export function buildGrokModelsFromSessionModelState(
+function buildGrokModelsFromSessionModelState(
   modelState: EffectAcpSchema.SessionModelState | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
   if (!modelState || modelState.availableModels.length === 0) {
@@ -244,10 +255,7 @@ export interface GrokModelsCliOutput {
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
 
-/**
- * The command exits 0 whether or not the user is logged in, so the text is the
- * only signal.
- */
+/** Exit status is always 0; only output text indicates login state. */
 export function parseGrokModelsCliOutput(output: string): GrokModelsCliOutput {
   const authenticated = /you are logged in/i.test(output)
     ? true
@@ -299,6 +307,37 @@ const runGrokCliCommand = Effect.fn("GrokProviderStatus.runGrokCliCommand")(func
       shell: spawnCommand.shell,
     }),
   );
+});
+
+const probeGrokModels = Effect.fn("GrokProviderStatus.probeGrokModels")(function* (
+  grokSettings: GrokSettings,
+  environment: NodeJS.ProcessEnv,
+) {
+  const modelsResult = yield* runGrokCliCommand(grokSettings, ["models"], environment).pipe(
+    Effect.timeoutOption(resolveProviderProbeTimeoutMs("grok", AUTH_PROBE_TIMEOUT_MS, environment)),
+    Effect.result,
+  );
+  // Only a clean exit is parsed. Failed invocations print help or error text that
+  // must not be read as model slugs or as a login verdict.
+  const modelsOutput =
+    Result.isSuccess(modelsResult) &&
+    Option.isSome(modelsResult.success) &&
+    modelsResult.success.value.code === 0
+      ? modelsResult.success.value
+      : undefined;
+  const cliModels: GrokModelsCliOutput = modelsOutput
+    ? parseGrokModelsCliOutput(`${modelsOutput.stdout}\n${modelsOutput.stderr}`)
+    : { authenticated: null, models: [] };
+  if (!modelsOutput) {
+    yield* Effect.logWarning("Grok CLI model listing failed or timed out.", {
+      errorTag: Result.isFailure(modelsResult)
+        ? modelsResult.failure._tag
+        : Option.isNone(modelsResult.success)
+          ? "Timeout"
+          : `ExitCode${modelsResult.success.value.code}`,
+    });
+  }
+  return cliModels;
 });
 
 const decodeAvailableCommands = Schema.decodeUnknownOption(Schema.Array(Schema.Unknown));
@@ -363,7 +402,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = grokModelsFromSettings(grokSettings.customModels);
@@ -385,12 +424,18 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   }
 
   const probeEnvironment = grokProbeEnvironment(environment);
+  const apiKey = environment[GROK_API_KEY_ENV]?.trim();
 
   const versionResult = yield* runGrokCliCommand(
     grokSettings,
     ["--version"],
     probeEnvironment,
-  ).pipe(Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS), Effect.result);
+  ).pipe(
+    Effect.timeoutOption(
+      resolveProviderProbeTimeoutMs("grok", VERSION_PROBE_TIMEOUT_MS, environment),
+    ),
+    Effect.result,
+  );
 
   if (Result.isFailure(versionResult)) {
     const error = versionResult.failure;
@@ -431,7 +476,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   }
 
   const versionOutput = versionResult.success.value;
-  const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
+  const version = parseCliVersionResult(versionOutput);
   if (versionOutput.code !== 0) {
     yield* Effect.logWarning("Grok CLI version probe exited with a non-zero status.", {
       exitCode: versionOutput.code,
@@ -454,32 +499,17 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   }
 
   // `grok models` reports login state and model slugs without starting the agent.
-  const modelsResult = yield* runGrokCliCommand(grokSettings, ["models"], probeEnvironment).pipe(
-    Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
-    Effect.result,
-  );
-  // Only a clean exit is parsed. Failed invocations print help or error text that
-  // must not be read as model slugs or as a login verdict.
-  const modelsOutput =
-    Result.isSuccess(modelsResult) &&
-    Option.isSome(modelsResult.success) &&
-    modelsResult.success.value.code === 0
-      ? modelsResult.success.value
-      : undefined;
-  const cliModels: GrokModelsCliOutput = modelsOutput
-    ? parseGrokModelsCliOutput(`${modelsOutput.stdout}\n${modelsOutput.stderr}`)
-    : { authenticated: null, models: [] };
-  if (!modelsOutput) {
-    yield* Effect.logWarning("Grok CLI model listing failed or timed out.", {
-      errorTag: Result.isFailure(modelsResult)
-        ? modelsResult.failure._tag
-        : Option.isNone(modelsResult.success)
-          ? "Timeout"
-          : `ExitCode${modelsResult.success.value.code}`,
-    });
+  let cliModels = yield* probeGrokModels(grokSettings, probeEnvironment);
+  // An expired access token prints the logged-out line, then the CLI refreshes it in the same
+  // process. Probing again after that process exited tells a refresh from a real logout.
+  if (cliModels.authenticated === false && !apiKey) {
+    const recheck = yield* probeGrokModels(grokSettings, probeEnvironment);
+    if (recheck.authenticated !== null) {
+      cliModels = recheck;
+    }
   }
 
-  const auth: ServerProviderAuth = environment[GROK_API_KEY_ENV]?.trim()
+  const auth: ServerProviderAuth = apiKey
     ? { status: "authenticated", type: "api_key", label: "xAI API key" }
     : cliModels.authenticated === true
       ? { status: "authenticated", type: "cached_token", label: "Grok account" }
@@ -487,14 +517,15 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         ? { status: "unauthenticated" }
         : { status: "unknown" };
 
-  // Skill discovery applies the probe environment itself.
   const skills = yield* discoverGrokSkills(grokSettings, environment, cwd).pipe(
     Effect.tapError((cause) => Effect.logDebug("Grok skill discovery failed.", { cause })),
     Effect.orElseSucceed(() => []),
   );
 
   const acpExit = yield* discoverGrokMetadataViaAcpInitialize(grokSettings, probeEnvironment).pipe(
-    Effect.timeoutOption(GROK_ACP_INITIALIZE_TIMEOUT_MS),
+    Effect.timeoutOption(
+      resolveProviderProbeTimeoutMs("grok", GROK_ACP_INITIALIZE_TIMEOUT_MS, environment),
+    ),
     Effect.exit,
   );
   const acpMetadata = Exit.isSuccess(acpExit) ? Option.getOrUndefined(acpExit.value) : undefined;
@@ -511,6 +542,12 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     discoveredModels.length > 0
       ? grokModelsFromSettings(grokSettings.customModels, discoveredModels)
       : fallbackModels;
+  // The registry replaces cached models on a ready probe, so a fallback-only list must not be ready.
+  const incompleteMessage = acpFailed
+    ? "Grok CLI is installed but ACP initialize failed. Model options may be incomplete."
+    : discoveredModels.length === 0
+      ? "Grok CLI did not list any models. Model options may be incomplete."
+      : undefined;
 
   if (auth.status === "unauthenticated") {
     return buildServerProvider({
@@ -539,14 +576,9 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     probe: {
       installed: true,
       version,
-      status: acpFailed ? "warning" : "ready",
+      status: incompleteMessage ? "warning" : "ready",
       auth,
-      ...(acpFailed
-        ? {
-            message:
-              "Grok CLI is installed but ACP initialize failed. Model options may be incomplete.",
-          }
-        : {}),
+      ...(incompleteMessage ? { message: incompleteMessage } : {}),
     },
   });
 });

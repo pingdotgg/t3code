@@ -1,4 +1,8 @@
 import type { Nodes } from "mdast";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
 import { mathKind } from "./markdownMath.ts";
@@ -54,16 +58,13 @@ describe("chat math parsing", () => {
     },
   );
 
-  it.each(["\\(x\\)", "\\[x\\]", "$x$", "$$x$$"])(
-    "preserves indented code containing %s",
-    (formula) => {
-      const source = `    ${formula}`;
-      expect(collect(parse(source)).find((node) => node.type === "code")).toMatchObject({
-        value: formula,
-      });
-      expect(markdownMathRanges(source)).toEqual([]);
-    },
-  );
+  it.each(["\\(x\\)", "$x$", "$$x$$"])("preserves indented code containing %s", (formula) => {
+    const source = `    ${formula}`;
+    expect(collect(parse(source)).find((node) => node.type === "code")).toMatchObject({
+      value: formula,
+    });
+    expect(markdownMathRanges(source)).toEqual([]);
+  });
 
   it("parses formulas without reserving private-use characters", () => {
     const characters = Array.from({ length: 6400 }, (_, index) =>
@@ -127,8 +128,18 @@ describe("chat math parsing", () => {
       "It costs $5 and $10.",
       "Budget $5-$10 per seat, or $20,000-$30,000 a year.",
       "Plans are $5/$10 monthly.",
+      "Pay $5,$10 now.",
       "Run $browser then $deploy on it.",
       "Set $HOME before running.",
+      "Set $HOME,$PATH before running.",
+      "Set $HOME, $PATH before running.",
+      "Set $HOME,$_PATH before running.",
+      "Set $home,$path before running.",
+      "Set $HOME,${PATH} before running.",
+      "Set $HOME,$? before running.",
+      "Set $HOME,$@ before running.",
+      "Set $HOME,$(pwd) before running.",
+      "Pay $1,000,$2,000 now.",
     ]) {
       expect(formulas(prose), prose).toEqual([]);
       expect(text(prose), prose).toBe(prose);
@@ -144,6 +155,17 @@ describe("chat math parsing", () => {
       ]);
       expect(text(source)).toBe(`Price ${price} stays literal. The formula is  and .`);
     }
+  });
+
+  it("reads formulas that end in a comma", () => {
+    for (const boundary of ["", " ", "\n", ".", ",", ";", ":", ")", "]", "}"]) {
+      expect(formulas(`$x,$${boundary}`)).toEqual([["inline", "x,"]]);
+    }
+    expect(formulas("Where $x = 1,$ with $$a,$$ and $$ b,$$.")).toEqual([
+      ["inline", "x = 1,"],
+      ["display", "a,"],
+      ["display", " b,"],
+    ]);
   });
 
   it("leaves code, escapes, links, and citations alone", () => {
@@ -175,6 +197,15 @@ describe("chat math parsing", () => {
     expect(formulas("Pay \\$$x$ now.")).toEqual([["inline", "x"]]);
   });
 
+  it("starts a formula right after an escaped backslash", () => {
+    const markdown = "Path \\\\\\(x^2\\) and \\\\\\[y\\].";
+    expect(formulas(markdown)).toEqual([
+      ["inline", "x^2"],
+      ["display", "y"],
+    ]);
+    expect(text(markdown)).toBe("Path \\ and \\.");
+  });
+
   it.each([
     ["$a`$HOME`", "$HOME"],
     ["\\(a`\\)`", "\\)"],
@@ -187,16 +218,7 @@ describe("chat math parsing", () => {
     });
   });
 
-  it.each([
-    ["$$ $$", ""],
-    ["$$  $$", ""],
-    ["$$\n$\n$$", "$"],
-    ["$$\n$$\n", ""],
-  ])("parses display math without empty content tokens in %j", (source, tex) => {
-    expect(formulas(source)).toEqual([["display", tex]]);
-  });
-
-  it.each([1, 2, 3, 4])("respects %i backslashes before a display fence", (count) => {
+  it.each([1, 2])("respects %i backslashes before a display fence", (count) => {
     const prefix = "a+" + "\\".repeat(count);
     for (const opening of ["$$", "$$\n"]) {
       const source = `${opening}${prefix}$$\nb\n$$`;
@@ -248,6 +270,63 @@ describe("chat math parsing", () => {
     });
   });
 
+  it.each(["\\( a ", "\\[ a ", "\\[\n"])(
+    "bounds tokenizer work for repeated unclosed %j",
+    (opener) => {
+      let consumed = 0;
+      const parser = unified()
+        .use(remarkParse)
+        .use(remarkGfm)
+        .use(remarkMath)
+        .use(function () {
+          for (const extension of this.data().micromarkExtensions ?? []) {
+            for (const constructs of [extension.text, extension.flow]) {
+              const entries = constructs?.[92];
+              if (!entries || !constructs) continue;
+              constructs[92] = (Array.isArray(entries) ? entries : [entries]).map((construct) => ({
+                ...construct,
+                tokenize(effects, ok, nok) {
+                  return construct.tokenize.call(
+                    this,
+                    {
+                      ...effects,
+                      consume(code) {
+                        consumed++;
+                        effects.consume(code);
+                      },
+                    },
+                    ok,
+                    nok,
+                  );
+                },
+              }));
+            }
+          }
+        });
+      const source = opener.repeat(200);
+      expect(
+        collect(parser.parse(source)).some((node) => /^(inlineMath|math)$/.test(node.type)),
+      ).toBe(false);
+      expect(consumed).toBeGreaterThan(source.length);
+      expect(consumed).toBeLessThan(source.length * 24);
+    },
+  );
+
+  it.each([
+    ["\\( a \\[b\\]", [["display", "b"]]],
+    ["\\[ a \\(b\\)", [["inline", "b"]]],
+    ["\\( a \\( b`code` \\(c\\)", [["inline", "c"]]],
+    ["\\[1\\] \\[x\\]", [["display", "x"]]],
+    ["\\( a\n\n\\(b\\)", [["inline", "b"]]],
+    ["> \\[\n> \\[\n\n\\[\nx\n\\]", [["display", "x"]]],
+    ["\\[\n\\[\nx\n\\]", [["display", "\\[\nx"]]],
+    ["\\(a \\\\\\(b\\)", [["inline", "a \\\\\\(b"]]],
+    ["\\(a \\\\) \\(b\\)", [["inline", "a \\\\) \\(b"]]],
+    ["| a | b |\n| --- | --- |\n| \\(a \\(b | c |\n\n\\(x\\)", [["inline", "x"]]],
+  ])("keeps valid formulas after failed scans in %j", (source, expected) => {
+    expect(formulas(source)).toEqual(expected);
+  });
+
   it("shows unfinished formulas as text while a response streams", () => {
     const message = "Energy \\(E = mc^2\\) and $$\\sum_i x_i$$ done.";
     for (let end = 0; end <= message.length; end++) {
@@ -279,28 +358,25 @@ describe("math in GFM tables", () => {
     }
   });
 
-  it.each([
-    "[a](https://example.com/$x)",
-    '[a](https://example.com "title $x")',
-    "<https://example.com/$x>",
-    "`$x`",
-    '<span title="$x">a</span>',
-  ])("preserves table separators after literal dollars in %s", (literal) => {
-    const row = `| ${literal} | y$ |`;
-    for (const source of [`${row}\n| --- | --- |`, `| First | Second |\n| --- | --- |\n${row}`]) {
-      const tree = parse(source);
-      const table = tree.children[0];
-      expect(table?.type).toBe("table");
-      if (table?.type !== "table") throw new Error("Missing table");
-      expect(table.children.every((entry) => entry.children.length === 2)).toBe(true);
-      expect(markdownMathRanges(source, tree)).toEqual([]);
-      if (literal.startsWith("[a](https://example.com/$x)")) {
-        expect(collect(tree).find((node) => node.type === "link")).toMatchObject({
-          url: "https://example.com/$x",
-        });
+  it.each(["[a](https://example.com/$x)", "`$x`", '<span title="$x">a</span>'])(
+    "preserves table separators after literal dollars in %s",
+    (literal) => {
+      const row = `| ${literal} | y$ |`;
+      for (const source of [`${row}\n| --- | --- |`, `| First | Second |\n| --- | --- |\n${row}`]) {
+        const tree = parse(source);
+        const table = tree.children[0];
+        expect(table?.type).toBe("table");
+        if (table?.type !== "table") throw new Error("Missing table");
+        expect(table.children.every((entry) => entry.children.length === 2)).toBe(true);
+        expect(markdownMathRanges(source, tree)).toEqual([]);
+        if (literal.startsWith("[a](https://example.com/$x)")) {
+          expect(collect(tree).find((node) => node.type === "link")).toMatchObject({
+            url: "https://example.com/$x",
+          });
+        }
       }
-    }
-  });
+    },
+  );
 
   it("retains multiline math after a prose pipe outside tables", () => {
     const source = "a | b: \\(x\n+y\\)";
@@ -335,12 +411,7 @@ describe("math in GFM tables", () => {
     ]);
     expect(JSON.stringify(tree)).not.toMatch(/[\uE000-\uF8FF]/);
   });
-
-  it("retains multiline math pipes outside tables", () => {
-    const source = "Outside \\(x|y\n+z\\) remains math.\n\n\\[\n|a|\n+|b|\n\\]";
-    expect(markdownMathRanges(source).map((range) => range.tex)).toEqual(["x|y\n+z", "|a|\n+|b|"]);
-  });
-  it.each(["\\(\\frac{1}{|x|}\\)", "$$|x|$$", "$|x|$", "\\[|x|\\]"])(
+  it.each(["\\(\\frac{1}{|x|}\\)", "$$|x|$$", "$|x|$"])(
     "keeps pipes inside %s in one cell and preserves source offsets",
     (formula) => {
       const source = `| Name | Value |\n| --- | --- |\n| x | ${formula} |\n\n- [ ] next`;

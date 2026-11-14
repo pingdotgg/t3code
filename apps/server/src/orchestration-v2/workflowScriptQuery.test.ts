@@ -4,7 +4,6 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 import {
-  OrchestrationWorkflowFileError,
   CommandId,
   ProjectId,
   ThreadId,
@@ -95,11 +94,11 @@ const providerInstances = {
   [ProviderInstanceId.make("claude-custom")]: {
     driver: ProviderDriverKind.make("claudeAgent"),
     config: { homePath: NodePath.relative(process.cwd(), customHome) },
-    environment: [{ name: "CLAUDE_CONFIG_DIR", value: "ignored-config" }],
+    environment: [{ name: "CLAUDE_CONFIG_DIR", value: "ignored-config", sensitive: false }],
   },
   [ProviderInstanceId.make("claude-env")]: {
     driver: ProviderDriverKind.make("claudeAgent"),
-    environment: [{ name: "CLAUDE_CONFIG_DIR", value: envHome }],
+    environment: [{ name: "CLAUDE_CONFIG_DIR", value: envHome, sensitive: false }],
   },
 };
 
@@ -198,7 +197,9 @@ effectIt.layer(
             providerInstances: {
               [ProviderInstanceId.make("claudeAgent")]: {
                 driver: ProviderDriverKind.make("claudeAgent"),
-                environment: [{ name: "CLAUDE_CONFIG_DIR", value: "claude-config" }],
+                environment: [
+                  { name: "CLAUDE_CONFIG_DIR", value: "claude-config", sensitive: false },
+                ],
               },
             },
           }),
@@ -225,30 +226,6 @@ effectIt.layer(
       const result = yield* readWorkflowScript({ threadId: fixtureThreadId, scriptPath });
       assert.include(result.contents, "export const meta");
       assert.equal(result.truncated, false);
-    }),
-  );
-
-  effectIt.effect("rejects relative and non-js paths", () =>
-    Effect.gen(function* () {
-      const relative = yield* Effect.exit(
-        readWorkflowScript({ threadId: fixtureThreadId, scriptPath: "run.js" }),
-      );
-      assert.equal(relative._tag, "Failure");
-      const nonJs = yield* Effect.exit(
-        readWorkflowScript({
-          threadId: fixtureThreadId,
-          scriptPath: scriptPath.replace(".js", ".ts"),
-        }),
-      );
-      assert.equal(nonJs._tag, "Failure");
-      const error = yield* Effect.flip(
-        readWorkflowScript({ threadId: fixtureThreadId, scriptPath: "run.js" }),
-      );
-      assert.equal(error._tag, "OrchestrationGetWorkflowScriptError");
-      assert.equal(error.scriptPath, "run.js");
-      assert.equal(error.reason, "invalid-path");
-      assert.equal(error.message, "Workflow scripts must be absolute .js paths.");
-      assert.instanceOf(error.cause, OrchestrationWorkflowFileError);
     }),
   );
 

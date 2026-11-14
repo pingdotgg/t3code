@@ -1,4 +1,4 @@
-import type { GitHubSettings } from "../client/definition.ts";
+import type { GitHubSettings } from "../shared/definition.ts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 

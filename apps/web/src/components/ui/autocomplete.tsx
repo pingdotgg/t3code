@@ -1,5 +1,3 @@
-"use client";
-
 import { Autocomplete as AutocompletePrimitive } from "@base-ui/react/autocomplete";
 import { ChevronsUpDownIcon, XIcon } from "lucide-react";
 
@@ -109,7 +107,8 @@ function AutocompletePopup({
           )}
         >
           <AutocompletePrimitive.Popup
-            className="flex max-h-[min(var(--available-height),23rem)] flex-1 flex-col text-foreground"
+            // Electron drag hit-testing ignores z-index; items over a drag region would swallow clicks.
+            className="flex max-h-[min(var(--available-height),23rem)] flex-1 flex-col text-foreground [-webkit-app-region:no-drag]"
             data-slot="autocomplete-popup"
             {...props}
           >
@@ -158,7 +157,6 @@ function AutocompleteGroupLabel({ className, ...props }: AutocompletePrimitive.G
   );
 }
 
-// A group label for virtualized lists, where rows cannot be wrapped in a group.
 function AutocompleteListHeading({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div

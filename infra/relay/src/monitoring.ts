@@ -1,5 +1,5 @@
 import * as Alchemy from "alchemy";
-import * as Axiom from "alchemy/Axiom";
+import * as Axiom from "@alchemy.run/axiom";
 import * as Output from "alchemy/Output";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -14,6 +14,11 @@ const LINK_ROUTE = `"/v1/client/environment-links"`;
 const TUNNEL_ROUTES = `"/v1/environments/:environmentId/tunnel", "/v1/environments/:environmentId/tunnel/recovery"`;
 const CLOUDFLARE_API = `['attributes.url.full'] startswith "https://api.cloudflare.com"`;
 const STATUS = `toint(['attributes.http.response.status_code'])`;
+// The tunnel reaper records its counters on this span every five minutes,
+// including while cleanup is off.
+const SWEEP = `name == "relay.managed_endpoint_reaper.sweep"`;
+const sweepCounter = (field: string) =>
+  `toint(['attributes.custom']['relay.managed_endpoint_reaper.${field}'])`;
 
 // Status codes, not span errors: a request cut off by the relay deadline ends
 // as an interrupted span with no error flag, but still answers 504.
@@ -44,7 +49,7 @@ interface RelayMonitor {
 }
 
 // Thresholds come from 2026-10-16..19 prod data: the worst healthy window,
-// and the #16810 outage (Cloudflare API 429s stalling every provision).
+// and the outage (Cloudflare API 429s stalling every provision).
 // Paging monitors need two bad runs in a row; warnings catch the slow
 // degradations an outage threshold has to ignore.
 const relayMonitors: ReadonlyArray<RelayMonitor> = [
@@ -114,9 +119,9 @@ const relayMonitors: ReadonlyArray<RelayMonitor> = [
     severity: "page",
     name: "T3 Connect relay: Cloudflare API rate limited",
     description:
-      "Cloudflare API 429s per 10 min from tunnel and DNS provisioning. Sustained at this level, links and recoveries stall. Peak before #16810: 1,286; during it: ~11k.",
+      "Cloudflare API 429s, plus calls the relay refused while paused after one, per 10 min. Sustained at this level, links and recoveries stall. Peak 429s before #16810: 1,286; during it: ~11k.",
     query: (dataset) =>
-      `['${dataset}']\n| where ${CLOUDFLARE_API} and ${STATUS} == 429\n| summarize rate_limited = count()`,
+      `['${dataset}']\n| where (${CLOUDFLARE_API} and ${STATUS} == 429) or name == "relay.cloudflare_api_pause.rejected"\n| summarize rate_limited = count()`,
     operator: "AboveOrEqual",
     threshold: 500,
     rangeMinutes: 10,
@@ -140,9 +145,9 @@ const relayMonitors: ReadonlyArray<RelayMonitor> = [
     severity: "warn",
     name: "T3 Connect relay: Cloudflare API near its limit",
     description:
-      "Any sustained Cloudflare API 429s. These bursts ran for days before #16810; raise the account limit or cut call volume before they grow.",
+      "Any sustained Cloudflare API 429s or paused calls. 429 bursts ran for days before #16810; raise the account limit or cut call volume before they grow.",
     query: (dataset) =>
-      `['${dataset}']\n| where ${CLOUDFLARE_API} and ${STATUS} == 429\n| summarize rate_limited = count()`,
+      `['${dataset}']\n| where (${CLOUDFLARE_API} and ${STATUS} == 429) or name == "relay.cloudflare_api_pause.rejected"\n| summarize rate_limited = count()`,
     operator: "AboveOrEqual",
     threshold: 20,
     rangeMinutes: 10,
@@ -171,6 +176,33 @@ const relayMonitors: ReadonlyArray<RelayMonitor> = [
     operator: "Above",
     threshold: 500,
     rangeMinutes: 15,
+    triggerFromNRuns: 2,
+  },
+  {
+    id: "RelayTunnelCleanupStoppedMonitor",
+    severity: "warn",
+    name: "T3 Connect relay: tunnel cleanup stopped",
+    description:
+      "Tunnel cleanup sweeps that finished in 30 min. Healthy: 6. The cron is not running, or every sweep fails, as during the 2026-10-19 Cloudflare 429s when listing tunnels timed out. Idle tunnels pile up and are billed meanwhile.",
+    query: (dataset) =>
+      `['${dataset}']\n| where ${SWEEP} and error != true\n| summarize sweeps = count()`,
+    operator: "Below",
+    threshold: 1,
+    rangeMinutes: 30,
+    triggerFromNRuns: 2,
+    alertOnNoData: true,
+  },
+  {
+    id: "RelayTunnelCleanupFailingMonitor",
+    severity: "warn",
+    name: "T3 Connect relay: tunnel deletions failing",
+    description:
+      "Cloudflare tunnel deletions that failed in 30 min. Healthy: 0; the worst 30 min so far had 3. The relay logs a warning with the Cloudflare error for each.",
+    query: (dataset) =>
+      `['${dataset}']\n| where ${SWEEP}\n| summarize failed = sum(${sweepCounter("failed")})`,
+    operator: "Above",
+    threshold: 10,
+    rangeMinutes: 30,
     triggerFromNRuns: 2,
   },
 ];
@@ -202,8 +234,8 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
     ),
     timeSeries(
       "link-latency",
-      "Link latency (ms, 9 s deadline)",
-      `${linkRequests}\n| summarize p50 = percentile(duration, 50) / 1000000, p90 = percentile(duration, 90) / 1000000 by bin_auto(_time)`,
+      "Link latency (9 s deadline)",
+      `${linkRequests}\n| summarize p50 = percentile(duration, 50), p90 = percentile(duration, 90) by bin_auto(_time)`,
     ),
     timeSeries(
       "reachability",
@@ -218,17 +250,36 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
     timeSeries(
       "cloudflare-api",
       "Cloudflare API calls by status",
-      `${source}\n| where ${CLOUDFLARE_API}\n| summarize count() by bin_auto(_time), status = ${STATUS}`,
+      // Calls refused during a rate-limit pause never reach Cloudflare, so
+      // they are their own series or a storm would look like a quiet period.
+      `${source}\n| where ${CLOUDFLARE_API} or name == "relay.cloudflare_api_pause.rejected"\n| summarize count() by bin_auto(_time), status = case(name == "relay.cloudflare_api_pause.rejected", "paused", isnull(${STATUS}), "no response", tostring(${STATUS}))`,
+    ),
+    timeSeries(
+      "provision-paths",
+      "Tunnel provisions by path",
+      `${source}\n| where name == "relay.managed_endpoint_provider.provision"\n| summarize reused_ready_tunnel = countif(error != true and tobool(['attributes.custom']['relay.managed_endpoint.reused_ready_tunnel']) == true), full_provision = countif(error != true and isnull(['attributes.custom']['relay.managed_endpoint.reused_ready_tunnel'])), failed = countif(error == true) by bin_auto(_time)`,
     ),
     timeSeries(
       "postgres",
-      "Postgres query time (ms)",
-      `${source}\n| where name == "postgres"\n| summarize p50 = percentile(duration, 50) / 1000000, p90 = percentile(duration, 90) / 1000000 by bin_auto(_time)`,
+      "Postgres query time",
+      `${source}\n| where name == "postgres"\n| summarize p50 = percentile(duration, 50), p90 = percentile(duration, 90) by bin_auto(_time)`,
     ),
     timeSeries(
       "push",
       "Push delivery jobs",
       `${source}\n| where name in ("relay.apns_deliveries.process_signed_job", "relay.fcm.process")\n| summarize delivered = countif(error != true), failed = countif(error == true) by bin_auto(_time), service = iff(name == "relay.fcm.process", "fcm", "apns")`,
+    ),
+    timeSeries(
+      "tunnel-cleanup",
+      "Tunnel cleanup per sweep",
+      `${source}\n| where ${SWEEP}\n| summarize deleted = sum(${sweepCounter("deleted")}), deleted_legacy = sum(${sweepCounter("deletedLegacy")}), would_delete = sum(${sweepCounter("wouldDelete")}), would_delete_legacy = sum(${sweepCounter("wouldDeleteLegacy")}), failed = sum(${sweepCounter("failed")}), sweeps_failed = countif(error == true) by bin_auto(_time)`,
+    ),
+    // Cloudflare's own counts for this stage, including tunnels the reaper
+    // skips, so this is the idle tunnels still billed.
+    timeSeries(
+      "tunnel-backlog",
+      "Idle tunnels in Cloudflare",
+      `${source}\n| where ${SWEEP}\n| summarize down = max(${sweepCounter("totalDown")}), never_connected = max(${sweepCounter("totalInactive")}) by bin_auto(_time)`,
     ),
     timeSeries(
       "server-errors",
@@ -248,8 +299,8 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
     // and the host's spans. An attempt lasts until initial sync finishes.
     timeSeries(
       "connect-time",
-      "Connecting: time to connected by surface (ms)",
-      `${clientConnections}\n| summarize p50 = percentile(duration, 50) / 1000000, p90 = percentile(duration, 90) / 1000000 by bin_auto(_time), surface`,
+      "Connecting: time to connected by surface",
+      `${clientConnections}\n| summarize p50 = percentile(duration, 50), p90 = percentile(duration, 90) by bin_auto(_time), surface`,
     ),
     timeSeries(
       "connect-outcomes",
@@ -258,7 +309,7 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
     ),
     {
       id: "connect-phases",
-      name: "Connecting: where the time goes (ms)",
+      name: "Connecting: where the time goes",
       type: "Table",
       query: {
         // Failed direct route checks stay in: waiting out an unreachable LAN
@@ -279,20 +330,20 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
           `    name == "relay.connection.attempt", "Total: time to connected",`,
           `    "")`,
           `| where phase != "" and (error != true or phase startswith "0.")`,
-          `| summarize calls = count(), p50_ms = round(percentile(duration, 50) / 1000000, 0), p90_ms = round(percentile(duration, 90) / 1000000, 0) by phase`,
+          `| summarize calls = count(), p50 = percentile(duration, 50), p90 = percentile(duration, 90) by phase`,
           `| order by phase asc`,
         ].join("\n"),
       },
     },
     timeSeries(
       "relay-latency-by-continent",
-      "Relay token and connect latency by user continent (p50 ms)",
-      `${source}\n| where kind == "server" and ['attributes.http.request.method'] == "POST" and (['attributes.http.route'] == "/v1/client/dpop-token" or ['attributes.http.route'] == "/v1/environments/:environmentId/connect")\n| extend continent = tostring(['attributes.custom']['relay.edge.continent'])\n| where isnotempty(continent)\n| summarize p50 = percentile(duration, 50) / 1000000 by bin_auto(_time), continent`,
+      "Relay token and connect latency by user continent (p50)",
+      `${source}\n| where kind == "server" and ['attributes.http.request.method'] == "POST" and (['attributes.http.route'] == "/v1/client/dpop-token" or ['attributes.http.route'] == "/v1/environments/:environmentId/connect")\n| extend continent = tostring(['attributes.custom']['relay.edge.continent'])\n| where isnotempty(continent)\n| summarize p50 = percentile(duration, 50) by bin_auto(_time), continent`,
     ),
   ];
 };
 
-const notifierConfig = (name: string) =>
+export const notifierConfig = (name: string) =>
   Config.String(name).pipe(
     Config.option,
     Config.map(Option.flatMap((value) => Option.liftPredicate(value.trim(), Boolean))),

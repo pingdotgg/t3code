@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import type { SDKModel, SDKUser } from "@cursor/sdk";
 import type {
   ModelCapabilities,
@@ -171,10 +172,12 @@ export function buildCursorDiscoveredModelsFromSdk(
       return [];
     }
     seen.add(slug);
+    const aliases = model.aliases?.map((alias) => alias.trim()).filter(Boolean) ?? [];
     return [
       {
         slug,
         name,
+        ...(aliases.length > 0 ? { aliases } : {}),
         isCustom: false,
         capabilities: buildCursorCapabilitiesFromSdkModel(model),
       } satisfies ServerProviderModel,
@@ -182,9 +185,9 @@ export function buildCursorDiscoveredModelsFromSdk(
   });
 }
 
-function cursorSdkAuth(user: SDKUser, type: "api-key" | "browser"): ServerProviderAuth {
-  const email = user.userEmail?.trim();
-  const apiKeyName = user.apiKeyName.trim();
+function cursorSdkAuth(user: SDKUser | undefined, type: "api-key" | "browser"): ServerProviderAuth {
+  const email = user?.userEmail?.trim();
+  const apiKeyName = user?.apiKeyName.trim();
   return {
     status: "authenticated",
     type,
@@ -286,15 +289,37 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   }
 
   const sdkCatalog = yield* CursorSdkCatalog.CursorSdkCatalog;
-  const catalogResult = yield* sdkCatalog
-    .read(sdkApiKey)
-    .pipe(Effect.timeoutOption(CURSOR_SDK_CATALOG_TIMEOUT_MS), Effect.result);
+  const timeoutMs = resolveProviderProbeTimeoutMs(
+    "cursor",
+    CURSOR_SDK_CATALOG_TIMEOUT_MS,
+    environment,
+  );
+  const readCatalog = Effect.suspend(() => sdkCatalog.read(sdkApiKey)).pipe(
+    Effect.timeoutOption(timeoutMs),
+  );
+  // api.cursor.com latency is intermittent; one slow read should not flip the provider to error.
+  const catalogResult = yield* readCatalog.pipe(
+    Effect.filterOrElse(Option.isSome, () => readCatalog),
+    Effect.result,
+  );
 
   if (Result.isFailure(catalogResult)) {
     yield* Effect.logWarning("Cursor SDK catalog probe failed", {
       cause: catalogResult.failure.cause,
     });
-    const authenticationFailure = catalogResult.failure.authenticationFailure;
+    const failure = catalogResult.failure;
+    let message = "Cursor SDK catalog request failed. Check server logs for details.";
+    if (failure.authenticationFailure) {
+      message =
+        authenticationType === "browser"
+          ? "Cursor sign-in expired or was rejected. Sign in again in provider settings."
+          : "Cursor SDK authentication failed. Check CURSOR_API_KEY.";
+    } else if (failure.planRequired) {
+      message =
+        authenticationType === "browser"
+          ? "Cursor needs a paid plan to run in T3 Code. Upgrade this account or sign in with a different one."
+          : "Cursor needs a paid plan to run in T3 Code. Upgrade the account that owns CURSOR_API_KEY or use a key from a paid account.";
+    }
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
       enabled: cursorSettings.enabled,
@@ -304,12 +329,8 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
         installed: true,
         version: null,
         status: "error",
-        auth: { status: authenticationFailure ? "unauthenticated" : "unknown" },
-        message: authenticationFailure
-          ? authenticationType === "browser"
-            ? "Cursor sign-in expired or was rejected. Sign in again in provider settings."
-            : "Cursor SDK authentication failed. Check CURSOR_API_KEY."
-          : "Cursor SDK catalog request failed. Check server logs for details.",
+        auth: { status: failure.authenticationFailure ? "unauthenticated" : "unknown" },
+        message,
       },
     });
   }
@@ -325,7 +346,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message: `Cursor SDK catalog request timed out after ${CURSOR_SDK_CATALOG_TIMEOUT_MS}ms.`,
+        message: `Cursor SDK catalog request timed out after ${timeoutMs}ms.`,
       },
     });
   }

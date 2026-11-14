@@ -6,10 +6,7 @@ import * as Schema from "effect/Schema";
 
 import { loadWindowsForegroundApi } from "../electron/WindowsForeground.ts";
 
-/**
- * `id` is the CGWindowNumber on macOS and the HWND on Windows, which is what
- * the capture backends key on.
- */
+/** id is CGWindowNumber on macOS or HWND on Windows, matching the capture backend. */
 export type ActiveWindow = {
   readonly platform: "macos" | "windows";
   readonly id: number;
@@ -128,10 +125,16 @@ async function macActiveWindow(): Promise<ActiveWindow | undefined> {
       return (
         (bounds.x === reference.bounds.x &&
           bounds.width === reference.bounds.width &&
+          bounds.y <= reference.bounds.y &&
+          reference.bounds.y - bounds.y <=
+            reference.bounds.height * MAC_HELPER_STRIP_MAX_THICKNESS_RATIO &&
           bounds.height <= bounds.width * MAC_HELPER_STRIP_MAX_THICKNESS_RATIO &&
           bounds.height <= reference.bounds.height * MAC_HELPER_STRIP_MAX_THICKNESS_RATIO) ||
         (bounds.y === reference.bounds.y &&
           bounds.height === reference.bounds.height &&
+          bounds.x <= reference.bounds.x &&
+          reference.bounds.x - bounds.x <=
+            reference.bounds.width * MAC_HELPER_STRIP_MAX_THICKNESS_RATIO &&
           bounds.width <= bounds.height * MAC_HELPER_STRIP_MAX_THICKNESS_RATIO &&
           bounds.width <= reference.bounds.width * MAC_HELPER_STRIP_MAX_THICKNESS_RATIO)
       );

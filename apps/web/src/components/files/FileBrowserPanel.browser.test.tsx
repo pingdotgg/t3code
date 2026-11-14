@@ -1,246 +1,292 @@
-import "../../index.css";
-
 import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
-import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
+import { COMPOSER_MENTION_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
+import { dismissContextMenu } from "~/contextMenuFallback";
+import { isMacPlatform } from "~/lib/utils";
+import { render } from "../../../test/render";
 import FileBrowserPanel from "./FileBrowserPanel";
+import { dispatchPreviewAction } from "../preview/previewActionBus";
 
-const files = vi.hoisted(() => ({
-  directoryEntries: [] as ProjectEntry[],
-  directoryReady: true,
-  directoryPending: false,
-  searchEntries: [] as ProjectEntry[],
-  searchPending: false,
-  searchError: null as string | null,
-  loadingDirectories: new Set<string>() as ReadonlySet<string>,
-  load: vi.fn(async () => {}),
-  refresh: vi.fn(),
-}));
+const entries: readonly ProjectEntry[] = [
+  { path: "src", kind: "directory" },
+  { path: "README.md", kind: "file" },
+];
+const loadingDirectories: ReadonlySet<string> = new Set();
+const directory: {
+  entries: readonly ProjectEntry[];
+  load: () => Promise<void>;
+  refresh: () => void;
+  ready: boolean;
+  error: null;
+  isPending: boolean;
+  loadingDirectories: ReadonlySet<string>;
+} = {
+  entries,
+  load: () => Promise.resolve(),
+  refresh: () => {},
+  ready: true,
+  error: null,
+  isPending: false,
+  loadingDirectories,
+};
+const pathSearch = {
+  entries: [],
+  isPending: false,
+  error: null,
+  truncated: false,
+  refresh: () => {},
+};
 
-vi.mock("./useDirectoryEntries", () => ({
-  useDirectoryEntries: () => ({
-    entries: files.directoryEntries,
-    loadingDirectories: files.loadingDirectories,
-    load: files.load,
-    refresh: files.refresh,
-    ready: files.directoryReady,
-    error: null,
-    isPending: files.directoryPending,
-  }),
+vi.mock("./useDirectoryEntries", () => ({ useDirectoryEntries: () => directory }));
+vi.mock("~/state/queries", () => ({ useProjectPathSearch: () => pathSearch }));
+vi.mock("~/fileContextMenu", () => ({
+  useFileContextMenu: () => ({ buildItems: () => [], activate: () => Promise.resolve() }),
 }));
-vi.mock("~/state/queries", () => ({
-  useProjectPathSearch: () => ({
-    entries: files.searchEntries,
-    isPending: files.searchPending,
-    error: files.searchError,
-    truncated: false,
-    refresh: files.refresh,
-  }),
-}));
-vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
-vi.mock("~/hooks/useWorkspaceMutationRefresh", () => ({ useWorkspaceMutationRefresh: vi.fn() }));
-vi.mock("~/composerHandleContext", () => ({ useComposerHandleContext: () => null }));
-vi.mock("~/fileContextMenu", () => ({ useFileContextMenu: () => ({}) }));
-vi.mock("~/localApi", () => ({ readLocalApi: () => undefined }));
-vi.mock("~/components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
-vi.mock("~/components/MorphIcon", () => ({ MorphIcon: () => null }));
-vi.mock("~/components/ui/tooltip", () => ({
-  Tooltip: ({ children }: { children: ReactNode }) => children,
-  TooltipTrigger: ({ render }: { render: ReactNode }) => render,
-  TooltipPopup: () => null,
-}));
+vi.mock("~/hooks/useWorkspaceMutationRefresh", () => ({ useWorkspaceMutationRefresh: () => {} }));
 
-describe("Files panel search", () => {
-  let root: Root | undefined;
-  let container: HTMLDivElement | undefined;
-  const props = {
-    environmentId: EnvironmentId.make("test-environment"),
-    cwd: "/workspace",
-    projectName: "Test project",
-    selectedPath: null,
-    selectedPathRevealId: 0,
-    onOpenFile: vi.fn(),
-    workspaceMutationId: null,
+function findTreeRow(path: string): HTMLElement | null {
+  for (const host of document.querySelectorAll("*")) {
+    const row = host.shadowRoot?.querySelector<HTMLElement>(`[data-item-path="${path}"]`);
+    if (row) return row;
+  }
+  return null;
+}
+
+function withDirectoryListing(listing: readonly ProjectEntry[]): Disposable {
+  directory.entries = listing;
+  return {
+    [Symbol.dispose]: () => {
+      directory.entries = entries;
+    },
   };
+}
 
-  async function render() {
-    if (!container) {
-      container = document.body.appendChild(document.createElement("div"));
-      // The tree virtualizes its rows, so it needs a real viewport to render any.
-      container.style.cssText =
-        "display: flex; flex-direction: column; width: 320px; height: 480px;";
-      root = createRoot(container);
-    }
-    await act(async () => root!.render(<FileBrowserPanel {...props} />));
-  }
-
-  function searchInput() {
-    const input = container!.querySelector<HTMLInputElement>('input[type="search"]');
-    expect(input).not.toBeNull();
-    return input!;
-  }
-
-  async function search(value: string) {
-    const input = searchInput();
-    // React tracks the last value it saw on the element, so set it through the native setter.
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
-    await act(async () => {
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-  }
-
-  function visiblePaths() {
-    const tree = container!.querySelector("file-tree-container");
-    if (!tree) return [];
-    return [...tree.shadowRoot!.querySelectorAll("[data-item-path]")].map((row) =>
-      row.getAttribute("data-item-path"),
+describe("FileBrowserPanel", () => {
+  it("copies with the pointer and returns to the row after keyboard dismissal", async () => {
+    await using _screen = await render(
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />,
     );
-  }
-
-  function hasMessage(message: string) {
-    return [...container!.querySelectorAll("div")].some(
-      (node) => node.childNodes.length === 1 && node.textContent === message,
+    using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
+    using clipboard = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+    await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
+    findTreeRow("README.md")!.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        button: 2,
+      }),
     );
-  }
+    const action = page.getByRole("menuitem", { name: "Copy mention", exact: true });
+    await expect.element(action).toBeVisible();
+    await userEvent.click(action);
+    await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith("[README.md](README.md)"));
 
-  function expectVisibleLoadingStatus() {
-    const status = container!.querySelector<HTMLElement>('[role="status"]');
-    expect(status?.textContent).toBe("Loading files…");
-    expect(status!.checkVisibility()).toBe(true);
-    const bounds = status!.getBoundingClientRect();
-    expect(bounds.width).toBeGreaterThan(1);
-    expect(bounds.height).toBeGreaterThan(1);
-  }
+    const row = findTreeRow("README.md")!;
+    await userEvent.keyboard("{Tab}");
+    row.focus();
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    await expect.element(action).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    await vi.waitFor(() => expect((row.getRootNode() as ShadowRoot).activeElement).toBe(row));
+  });
 
-  function rowTop(path: string) {
-    const row = container!
-      .querySelector("file-tree-container")
-      ?.shadowRoot!.querySelector(`[data-item-path="${CSS.escape(path)}"]`);
-    expect(row, `visible row ${path}`).not.toBeNull();
-    const bounds = row!.getBoundingClientRect();
-    expect(bounds.height).toBeGreaterThan(0);
-    return bounds.top;
-  }
+  it("dragging a file row carries a composer mention without opening it, and dragend releases it", async () => {
+    const onOpenFile = vi.fn();
+    await using _screen = await render(
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={onOpenFile}
+        workspaceMutationId={null}
+      />,
+    );
+    await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
+    const row = findTreeRow("README.md")!;
 
-  beforeEach(() => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    files.directoryEntries = [
-      { path: "src", kind: "directory" },
-      { path: "src/app.ts", kind: "file" },
-      { path: "package.json", kind: "file" },
+    const dataTransfer = new DataTransfer();
+    row.dispatchEvent(
+      new DragEvent("dragstart", { bubbles: true, cancelable: true, composed: true, dataTransfer }),
+    );
+    // The tree selects the row the drag picked up; mid-drag that must not open it.
+    row.click();
+    await vi.waitFor(() => expect(row.getAttribute("aria-selected")).toBe("true"));
+
+    expect(dataTransfer.getData(COMPOSER_MENTION_DRAG_TYPE)).toContain("README.md");
+    expect(onOpenFile).not.toHaveBeenCalled();
+
+    row.dispatchEvent(new DragEvent("dragend", { bubbles: true, composed: true, dataTransfer }));
+    await vi.waitFor(() => expect(row.getAttribute("aria-selected")).not.toBe("true"));
+
+    row.click();
+    await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps an expanded folder open when a very large listing rebuilds the tree", async () => {
+    using _listing = withDirectoryListing(entries);
+    const renderPanel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo-large-folder-1"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    await using screen = await render(renderPanel());
+    await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+    findTreeRow("src/")!.click();
+    await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
+
+    directory.entries = [
+      ...entries,
+      // Out of sort order, because inserting in order hides the cost of each insert.
+      ...Array.from({ length: 2_000 }, (_, index): ProjectEntry => {
+        const name = String((index * 7_919) % 2_000).padStart(4, "0");
+        return { path: `src/generated-${name}`, kind: "directory" };
+      }),
     ];
-    files.directoryReady = true;
-    files.directoryPending = false;
-    files.searchEntries = [];
-    files.searchPending = false;
-    files.searchError = null;
+    await screen.rerender(renderPanel());
+
+    await vi.waitFor(() => expect(findTreeRow("src/generated-0000/")).not.toBeNull());
+    expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true");
   });
 
-  afterEach(async () => {
-    await act(async () => root?.unmount());
-    container?.remove();
-    root = undefined;
-    container = undefined;
-    vi.unstubAllGlobals();
+  it("keeps the selected file through a very large listing without reopening it", async () => {
+    const onOpenFile = vi.fn();
+    const renderPanel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo-large-folder-2"
+        projectName="repo"
+        selectedPath="src/aaa.ts"
+        selectedPathRevealId={1}
+        onOpenFile={onOpenFile}
+        workspaceMutationId={null}
+      />
+    );
+    using _listing = withDirectoryListing([...entries, { path: "src/aaa.ts", kind: "file" }]);
+    await using screen = await render(renderPanel());
+    await vi.waitFor(() =>
+      expect(findTreeRow("src/aaa.ts")?.getAttribute("aria-selected")).toBe("true"),
+    );
+
+    directory.entries = [
+      ...directory.entries,
+      ...Array.from({ length: 2_000 }, (_, index): ProjectEntry => {
+        const name = String((index * 7_919) % 2_000).padStart(4, "0");
+        return { path: `src/generated-${name}.ts`, kind: "file" };
+      }),
+    ];
+    await screen.rerender(renderPanel());
+
+    await vi.waitFor(() => expect(findTreeRow("src/generated-0000.ts")).not.toBeNull());
+    expect(findTreeRow("src/aaa.ts")?.getAttribute("aria-selected")).toBe("true");
+    expect(findTreeRow("src/")?.getAttribute("aria-expanded")).toBe("true");
+    expect(onOpenFile).not.toHaveBeenCalled();
   });
 
-  it("keeps visible rows stationary during loading while showing initial loading status", async () => {
-    const entries = files.directoryEntries;
-    files.directoryEntries = [];
-    files.directoryReady = false;
-    files.directoryPending = true;
-    await render();
-    expect(visiblePaths()).toEqual([]);
-    expectVisibleLoadingStatus();
+  it("keeps an open search accurate when a very large folder listing arrives", async () => {
+    const renderPanel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo-large-folder-3"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    using _listing = withDirectoryListing([
+      ...entries,
+      { path: "lib", kind: "directory" },
+      { path: "lib/generated-existing.ts", kind: "file" },
+    ]);
+    await using screen = await render(renderPanel());
+    const search = page.getByRole("searchbox", { name: "Search repo files" });
+    await userEvent.fill(search, "generated-");
+    await vi.waitFor(() => expect(findTreeRow("lib/generated-existing.ts")).not.toBeNull());
 
-    files.directoryEntries = entries;
-    files.directoryReady = true;
-    files.directoryPending = false;
-    await render();
-    expect(visiblePaths()).toEqual(["src/", "package.json"]);
-    const initialTop = rowTop("package.json");
+    directory.entries = [
+      ...directory.entries,
+      ...Array.from({ length: 2_000 }, (_, index): ProjectEntry => {
+        const name = String((index * 7_919) % 2_000).padStart(4, "0");
+        return { path: `src/generated-${name}.ts`, kind: "file" };
+      }),
+    ];
+    await screen.rerender(renderPanel());
 
-    files.directoryPending = true;
-    await render();
-    expect(rowTop("package.json")).toBe(initialTop);
-
-    files.directoryPending = false;
-    await search("pack");
-    expect(visiblePaths()).toEqual(["package.json"]);
-    const filteredTop = rowTop("package.json");
-
-    files.searchPending = true;
-    await search("package");
-    expect(visiblePaths()).toEqual(["package.json"]);
-    expect(rowTop("package.json")).toBe(filteredTop);
-
-    files.searchPending = false;
-    await render();
-    expect(rowTop("package.json")).toBe(filteredTop);
+    await vi.waitFor(() => expect(findTreeRow("src/generated-0000.ts")).not.toBeNull());
+    expect(findTreeRow("lib/generated-existing.ts")).not.toBeNull();
+    await expect.element(search).toHaveValue("generated-");
   });
 
-  it("shows no matching files instead of the full tree when a filename is absent", async () => {
-    await render();
-    expect(visiblePaths()).toEqual(["src/", "package.json"]);
+  it("mod+f from a tree row, or the panel find command, focuses the file search", async () => {
+    await using _screen = await render(
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+        answersPanelFind
+      />,
+    );
+    await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
+    findTreeRow("README.md")!.focus();
 
-    await search(".env.local");
-    expect(visiblePaths()).toEqual([]);
-    expect(hasMessage("No matching files.")).toBe(true);
+    const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    await userEvent.keyboard(`{${modifier}>}f{/${modifier}}`);
 
-    await search("package");
-    expect(visiblePaths()).toEqual(["package.json"]);
-    expect(hasMessage("No matching files.")).toBe(false);
+    const search = page.getByRole("searchbox", { name: "Search repo files" });
+    await expect.element(search).toHaveFocus();
 
-    await search("");
-    expect(visiblePaths()).toEqual(["src/", "package.json"]);
+    (search.element() as HTMLElement).blur();
+    dispatchPreviewAction("find");
+    await expect.element(search).toHaveFocus();
   });
 
-  it("still finds ignored files already loaded from a directory", async () => {
-    files.directoryEntries.push({ path: ".env.local", kind: "file", ignored: true });
-    await render();
-    await search(".env.local");
-    expect(visiblePaths()).toEqual([".env.local"]);
-    expect(hasMessage("No matching files.")).toBe(false);
-  });
+  it("keeps expanded folders when the panel remounts", async () => {
+    const panel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    {
+      await using _first = await render(panel());
+      await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+      findTreeRow("src/")!.click();
+      await vi.waitFor(() =>
+        expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"),
+      );
+    }
 
-  it("waits for remote matches without showing unrelated files or a premature empty result", async () => {
-    await render();
-    files.searchPending = true;
-    await search("settings.ts");
-    expect(visiblePaths()).toEqual([]);
-    expectVisibleLoadingStatus();
-    expect(hasMessage("No matching files.")).toBe(false);
-
-    files.searchEntries = [{ path: "config/settings.ts", kind: "file" }];
-    files.searchPending = false;
-    await render();
-    expect(visiblePaths()).toEqual(["config/", "config/settings.ts"]);
-    expect(hasMessage("No matching files.")).toBe(false);
-  });
-
-  it("restores the tree on Escape after an unsuccessful search", async () => {
-    await render();
-    await search("missing-file");
-    expect(visiblePaths()).toEqual([]);
-
-    const input = searchInput();
-    input.focus();
-    await act(async () => {
-      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    });
-    expect(document.activeElement).not.toBe(input);
-    expect(visiblePaths()).toEqual(["src/", "package.json"]);
-    expect(hasMessage("No matching files.")).toBe(false);
-  });
-
-  it("does not report an empty result when the search failed", async () => {
-    await render();
-    files.searchError = "Workspace search failed.";
-    await search("missing-file");
-    expect(visiblePaths()).toEqual([]);
-    expect(hasMessage("No matching files.")).toBe(false);
-    expect(container!.textContent).toContain("Workspace search failed.");
+    await using _second = await render(panel());
+    await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+    await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
   });
 });
