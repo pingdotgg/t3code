@@ -1693,12 +1693,16 @@ layer("GitHubPullRequestApi.layer", (it) => {
   it.effect.each([
     {
       name: "a run of equal times longer than a page",
+      limit: 2,
+      repository: "Acme/Web",
       indexed: [1, 2, 3, 4, 5].map((n) => searchItem(n, "acme/web", "2026-07-02T00:00:00Z")),
       seenAt: [1, 2],
       expected: { numbers: [3, 4], truncated: true },
     },
     {
       name: "older rows behind a page's worth of delivered ones",
+      limit: 2,
+      repository: "Acme/Web",
       indexed: [
         searchItem(1, "acme/web", "2026-07-02T00:00:00Z"),
         searchItem(2, "acme/web", "2026-07-02T00:00:00Z"),
@@ -1710,35 +1714,52 @@ layer("GitHubPullRequestApi.layer", (it) => {
     },
     {
       name: "nothing left but delivered rows",
+      limit: 2,
+      repository: "Acme/Web",
       indexed: [1, 2].map((n) => searchItem(n, "acme/web", "2026-07-02T00:00:00Z")),
       seenAt: [1, 2],
       expected: { numbers: [], truncated: false },
     },
-  ])("pages past the rows a cursor already delivered: $name", ({ indexed, seenAt, expected }) =>
-    Effect.gen(function* () {
-      searchIndex(indexed);
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+    {
+      name: "a full GitHub page of delivered ties before an older row",
+      limit: 99,
+      repository: " Acme/Web ",
+      indexed: [
+        ...Array.from({ length: 100 }, (_, i) =>
+          searchItem(i + 1, "acme/web", "2026-07-02T00:00:00Z"),
+        ),
+        searchItem(101, "acme/web", "2026-07-01T00:00:00Z"),
+      ],
+      seenAt: Array.from({ length: 100 }, (_, i) => i + 1),
+      expected: { numbers: [101], truncated: false },
+    },
+  ])(
+    "pages past the rows a cursor already delivered: $name",
+    ({ indexed, seenAt, expected, limit, repository }) =>
+      Effect.gen(function* () {
+        searchIndex(indexed);
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
-      const batch = yield* cli.searchPullRequests({
-        cwd: "/w",
-        host: "github.com",
-        repositories: ["acme/web", "pingdotgg/t3code"],
-        state: "open",
-        involvement: "all",
-        viewer: "bilal",
-        limit: 2,
-        cursor: {
-          updatedBefore: "2026-07-02T00:00:00Z",
-          delivered: seenAt.length,
-          seenAt: seenAt.map((number) => ({ repository: "Acme/Web", number })),
-        },
-      });
+        const batch = yield* cli.searchPullRequests({
+          cwd: "/w",
+          host: "github.com",
+          repositories: ["acme/web", "pingdotgg/t3code"],
+          state: "open",
+          involvement: "all",
+          viewer: "bilal",
+          limit,
+          cursor: {
+            updatedBefore: "2026-07-02T00:00:00Z",
+            delivered: seenAt.length,
+            seenAt: seenAt.map((number) => ({ repository, number })),
+          },
+        });
 
-      assert.deepStrictEqual(
-        { numbers: batch.items.map((item) => item.number), truncated: batch.truncated },
-        expected,
-      );
-    }),
+        assert.deepStrictEqual(
+          { numbers: batch.items.map((item) => item.number), truncated: batch.truncated },
+          expected,
+        );
+      }),
   );
 
   it.effect("pages a repository's listing past the rows its cursor already delivered", () =>

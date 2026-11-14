@@ -1551,7 +1551,7 @@ export const make = Effect.gen(function* () {
         ...(cursor === undefined
           ? {}
           : {
-              // A chunk shares one boundary, so every repository's rows at it are skipped there.
+              // A chunk shares one boundary; skip only rows already delivered there.
               cursor: {
                 updatedBefore: cursor.updatedBefore,
                 delivered: cursor.delivered,

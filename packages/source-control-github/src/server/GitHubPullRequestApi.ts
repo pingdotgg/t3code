@@ -406,13 +406,15 @@ function toListPage(
   cursor?: ProviderListAcrossCursor,
 ): GitHubPullRequestListPage {
   const delivered = new Set(
-    (cursor?.seenAt ?? []).map(({ repository, number }) => `${repository.toLowerCase()}#${number}`),
+    (cursor?.seenAt ?? []).map(
+      ({ repository, number }) => `${repository.trim().toLowerCase()}#${number}`,
+    ),
   );
   const rows = page.rows.filter(
     ({ item, repository }) =>
       repository === null ||
       item.updatedAt !== cursor?.updatedBefore ||
-      !delivered.has(`${repository.toLowerCase()}#${item.number}`),
+      !delivered.has(`${repository.trim().toLowerCase()}#${item.number}`),
   );
   return {
     rows,
