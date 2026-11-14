@@ -16,7 +16,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { EmptyState } from "../../components/ui/EmptyState";
 import { useAuth, useUser } from "@clerk/expo";
 import { useNavigation, useNavigationState } from "@react-navigation/native";
-import { use, type ComponentProps } from "react";
+import { use, type ComponentProps, type ReactNode } from "react";
 import { Platform, View } from "react-native";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
@@ -70,13 +70,14 @@ function useSettingsListPlacement() {
   return { sidebar, selected };
 }
 
-function SettingsListContent() {
+export function SettingsListContent() {
   return hasCloudPublicConfig() ? <ConfiguredSettingsRouteScreen /> : <LocalSettingsRouteScreen />;
 }
 
 export function SettingsListScreen(props: {
   readonly sidebar: boolean;
   readonly selected: string | null;
+  readonly children?: ReactNode;
 }) {
   return (
     <I18nProvider>
@@ -88,6 +89,7 @@ export function SettingsListScreen(props: {
 function TranslatedSettingsListScreen(props: {
   readonly sidebar: boolean;
   readonly selected: string | null;
+  readonly children?: ReactNode;
 }) {
   const gt = useGT();
   const workspace = useWorkspaceTabs();
@@ -110,7 +112,7 @@ function TranslatedSettingsListScreen(props: {
               : undefined
           }
         >
-          <SettingsListContent />
+          {props.children ?? <SettingsListContent />}
         </SettingsScreen>
       </View>
     </SettingsSidebarContext>

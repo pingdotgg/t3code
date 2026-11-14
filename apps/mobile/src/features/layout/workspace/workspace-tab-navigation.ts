@@ -22,6 +22,9 @@ export function workspaceTabColumns(
   tab: WorkspaceTab | "settings",
   columns: boolean,
 ) {
+  // Both iPad column implementations host Settings lists, so restore the detail beside either one.
+  //
+  // 两种 iPad 分栏都承载设置目录，恢复右侧设置页，避免兼容布局只显示全屏目录。
   return columns && (platform === "ios" || (platform === "android" && tab === "settings"));
 }
 

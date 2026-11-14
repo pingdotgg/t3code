@@ -55,6 +55,8 @@ import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
 import { useFabScroll } from "../home/FabScrollContext";
 import { WorkspaceListHeader } from "../layout/workspace/WorkspaceListHeader";
+import { useDeviceType } from "../../native/native-layout-metrics";
+import { workspaceDockBottomClearance } from "../layout/workspace/workspace-tabs-state";
 import { WorkspaceSidebarColumn } from "../layout/workspace/WorkspaceSidebarColumn";
 import {
   ThreadListV2PendingRow,
@@ -117,6 +119,7 @@ export function ThreadNavigationSidebar(props: ThreadNavigationSidebarProps) {
 
 function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const floatingTabsEnabled = useAndroidFloatingTabs();
+  const deviceType = useDeviceType();
   const { themeVariables: materialTheme } = useAppearancePreferences();
   const drawerColor = materialTheme["--color-drawer"];
 
@@ -621,7 +624,16 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 contentContainerStyle={[
                   styles.threadListContent,
                   {
-                    paddingBottom: Math.max(insets.bottom, 16) + 16,
+                    // The iPad dock now belongs to this column; its last row must scroll above it.
+                    //
+                    // iPad 导航现归属此侧栏，末行需能滚动到导航上方，避免底部继续被遮挡。
+                    paddingBottom:
+                      deviceType === "pad"
+                        ? workspaceDockBottomClearance({
+                            bottomInset: insets.bottom,
+                            keyboardHeight: 0,
+                          })
+                        : Math.max(insets.bottom, 16) + 16,
                     paddingTop: 6,
                   },
                 ]}

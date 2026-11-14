@@ -3,7 +3,7 @@ import {
   NAVIGATION_TAB_ICONS,
   useEnabledNavigationTabs,
 } from "./navigation-tabs";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { use, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { View, useWindowDimensions, type NativeSyntheticEvent } from "react-native";
 import { Tabs, type TabSelectedEvent, type TabSelectionRejectedEvent } from "react-native-screens";
 
@@ -16,6 +16,7 @@ import {
 } from "./workspace-tabs-state";
 import {
   NativeWorkspaceTabActivityContext,
+  NativeWorkspaceModeContext,
   WorkspaceSlotOptionsContext,
 } from "../../../native/v5-workspace-context";
 import {
@@ -83,6 +84,7 @@ export function WorkspaceNativeTabs(props: {
   const selectTab = useSelectWorkspaceTab();
   const [provenance, setProvenance] = useState(0);
   const systemTabBar = useSystemWorkspaceTabBar();
+  const nativeColumns = use(NativeWorkspaceModeContext);
   const deviceType = useDeviceType();
   const compactTabs = useCompactWorkspaceTabs();
   const { layout } = useAdaptiveWorkspaceLayout();
@@ -91,7 +93,12 @@ export function WorkspaceNativeTabs(props: {
   const hiddenWithSidebar =
     deviceType === "pad" &&
     layout.usesSplitView &&
-    workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen) &&
+    workspaceUsesColumns(
+      workspace.state.selectedTab,
+      workspace.settingsOpen,
+      nativeColumns,
+      layout.usesSplitView,
+    ) &&
     !panes.primarySidebarVisible;
   const floatingTabs = useFloatingWorkspaceTabs();
   const { width } = useWindowDimensions();
@@ -161,9 +168,17 @@ export function WorkspaceNativeTabs(props: {
       {(deviceType === "pad" ||
         compactTabs ||
         (layout.variant === "medium" &&
-          !workspaceUsesColumns(selectedTab, workspace.settingsOpen))) &&
+          !workspaceUsesColumns(selectedTab, workspace.settingsOpen, nativeColumns))) &&
       !props.hidden &&
       !props.tabsInSidebarColumn &&
+      // The legacy split sidebar owns its own tabs; this host sits in the detail column.
+      //
+      // 兼容分栏的侧栏自行绘制导航，此容器位于右侧详情，不能重复绘制。
+      !(
+        !nativeColumns &&
+        layout.usesSplitView &&
+        workspaceUsesColumns(selectedTab, workspace.settingsOpen, nativeColumns)
+      ) &&
       !hiddenWithSidebar ? (
         <View
           pointerEvents="box-none"

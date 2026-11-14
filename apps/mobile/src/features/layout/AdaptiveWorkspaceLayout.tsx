@@ -115,10 +115,15 @@ import {
   workspaceTabColumns,
   workspaceTabNavigationState,
 } from "./workspace/workspace-tab-navigation";
-import { workspaceTabOf, type WorkspaceTab } from "./workspace/workspace-tabs-state";
+import {
+  workspaceTabOf,
+  workspaceUsesColumns,
+  type WorkspaceTab,
+} from "./workspace/workspace-tabs-state";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { SettingsWorkspaceLayout } from "../settings/SettingsWorkspaceLayout";
 import { WorkspaceThreadSidebar } from "./workspace/WorkspaceThreadSidebar";
+import { WorkspaceSettingsSidebar } from "../settings/WorkspaceSettingsSidebar";
 
 export { useAdaptiveWorkspaceLayout, useWorkspacePaneState };
 
@@ -266,11 +271,11 @@ function AdaptiveWorkspaceLayoutContent(
   const { width: viewportWidth, height } = nativeMetrics ?? windowDimensions;
   const pathname = props.pathname;
   const workspace = useWorkspaceTabs();
-  // Settings and Usage occupy the workspace rather than a list/detail pair.
+  // Android workspace pages fill the viewport; legacy iPad pages retain their sidebar navigation.
+  //
+  // Android 工作区页面铺满窗口；旧版 iPad 保留侧栏导航，避免全屏内容与局部导航错位。
   const androidSettingsOpen = useAndroidWorkspaceRoot()?.settingsOpen ?? false;
   const safeAreaInsets = useSafeAreaInsets();
-  const workspacePage =
-    Platform.OS === "android" && (androidSettingsOpen || workspace?.state.selectedTab === "usage");
   const navigation = useNavigation();
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
   const [fileInspectorPreferredVisible, setFileInspectorPreferredVisible] = useState(true);
@@ -293,6 +298,18 @@ function AdaptiveWorkspaceLayoutContent(
     () => deriveLayout({ width: viewportWidth, height, nativeMetrics, nativeWorkspace }),
     [height, viewportWidth, nativeMetrics, nativeWorkspace],
   );
+  const workspacePage =
+    (Platform.OS === "android" &&
+      (androidSettingsOpen || workspace?.state.selectedTab === "usage")) ||
+    (Platform.OS === "ios" &&
+      !nativeWorkspace &&
+      workspace !== null &&
+      !workspaceUsesColumns(
+        workspace.state.selectedTab,
+        workspace.settingsOpen,
+        nativeWorkspace,
+        baseLayout.usesSplitView,
+      ));
   // The overlay sidebar closes when a page opens from it, and stays open on a list or on the
   // page a tab switch opened (`keepOpenFor`, set by that switch).
   const [overlaySidebar, setOverlaySidebar] = useState({
@@ -1036,8 +1053,15 @@ function AdaptiveWorkspaceLayoutContent(
                   />
                 )}
               >
-                {/* Without a sidebar route (iPadOS before 26) the columns draw the thread list. */}
-                {sidebar ?? <WorkspaceThreadSidebar />}
+                {/* The legacy sidebar owns its list while the root navigator owns detail pages.
+
+                    兼容侧栏承载目录，详情仍由根导航管理，切换设置时不再隐藏整列。 */}
+                {sidebar ??
+                  (Platform.OS === "ios" && workspace?.settingsOpen ? (
+                    <WorkspaceSettingsSidebar width={layout.listPaneWidth} />
+                  ) : (
+                    <WorkspaceThreadSidebar />
+                  ))}
               </RenderErrorBoundary>
             </PaneContext>
             {/* Keep the pill under the content throughout the sidebar's clipping animation. */}

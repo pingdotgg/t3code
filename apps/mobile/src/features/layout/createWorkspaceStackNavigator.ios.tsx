@@ -522,7 +522,12 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
   const descriptors = props.descriptors;
   const baseRoute = { key: `${props.state.key}:workspace`, name: "Workspace" };
   const visibleRoute = projection.detail.at(-1) ?? primaryRoute;
-  const workspacePage = !workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen);
+  const workspacePage = !workspaceUsesColumns(
+    workspace.state.selectedTab,
+    workspace.settingsOpen,
+    props.nativeColumns,
+    layout.usesSplitView,
+  );
   const baseDescriptor: Descriptor = {
     ...primaryDescriptor,
     navigation: props.descriptors[visibleRoute.key]!.navigation,
@@ -649,8 +654,13 @@ function WorkspaceStackNavigator({
   );
   return (
     <NativeWorkspaceModeContext value={usesNativeWorkspaceColumns}>
-      <NavigationContent>
-        <WorkspaceTabsProvider settingsOpen={settingsOpen}>
+      {/* The fallback sidebar is rendered by NavigationContent's layout, outside its children.
+          Share tab state above that layout so sidebar actions and detail tabs use one owner.
+
+          兼容侧栏由 NavigationContent 的布局绘制，位于其 children 外部；
+          将标签状态提升到布局之上，使侧栏入口与详情导航共用同一份状态。 */}
+      <WorkspaceTabsProvider settingsOpen={settingsOpen}>
+        <NavigationContent>
           <WorkspaceStackView
             nativeColumns={usesNativeWorkspaceColumns}
             {...rest}
@@ -659,8 +669,8 @@ function WorkspaceStackNavigator({
             descriptors={descriptors}
             navigation={navigation}
           />
-        </WorkspaceTabsProvider>
-      </NavigationContent>
+        </NavigationContent>
+      </WorkspaceTabsProvider>
     </NativeWorkspaceModeContext>
   );
 }

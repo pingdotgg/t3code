@@ -55,6 +55,16 @@ describe("Duo list clearance", () => {
 });
 
 describe("workspace root navigation", () => {
+  it("keeps every legacy iPad tab in columns while retaining native Usage layout", () => {
+    expect(workspaceUsesColumns("threads", true, false)).toBe(true);
+    expect(workspaceUsesColumns("threads", true, true)).toBe(true);
+    expect(workspaceUsesColumns("usage", true, false)).toBe(true);
+    expect(workspaceUsesColumns("usage", true, true)).toBe(true);
+    expect(workspaceUsesColumns("threads", false, false)).toBe(true);
+    expect(workspaceUsesColumns("usage", false, false)).toBe(true);
+    expect(workspaceUsesColumns("usage", false, false, false)).toBe(false);
+    expect(workspaceUsesColumns("threads", true, false, false)).toBe(false);
+  });
   it("pairs Settings, chats and pull requests with a detail column, and keeps Usage one page", () => {
     expect(workspaceUsesColumns("usage")).toBe(false);
     expect(workspaceUsesColumns("usage", true)).toBe(true);

@@ -10,7 +10,7 @@ import { NativeStackScreenOptions, useScreenOptionsWriter } from "../../native/S
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { isDuoDevice } from "../../lib/device-type";
-import { useAdaptiveWorkspaceLayout } from "../../features/layout/AdaptiveWorkspaceLayout";
+import { useAdaptiveWorkspaceLayout } from "../../features/layout/adaptive-workspace-context";
 import { useSidebarToggle } from "../../features/layout/useSidebarToggle";
 import { InspectorCloseContext } from "../../features/layout/inspector-bar-store";
 import {
