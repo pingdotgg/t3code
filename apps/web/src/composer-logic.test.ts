@@ -1,6 +1,12 @@
 import { threadPullRequestKeyOf } from "@t3tools/client-runtime/thread-pull-requests";
 import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
-import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  ProviderDriverKind,
+  ThreadId,
+  type AssistantCitation,
+} from "@t3tools/contracts";
 import {
   collectAssistantCitations,
   expandAssistantCitationsForProvider,
@@ -579,8 +585,8 @@ describe("extendReplacementRangeForTrailingSpace", () => {
   });
 });
 
-describe("side chat slash commands", () => {
-  it("are not offered after the start of a message", () => {
+describe("slash commands by prompt position", () => {
+  it("offers advertised skills inline but keeps ordinary commands at the message start", () => {
     const items = (["side", "btw", "clear", "model"] as const).map((command) => ({
       id: `slash:${command}`,
       type: "slash-command" as const,
@@ -588,8 +594,19 @@ describe("side chat slash commands", () => {
       label: `/${command}`,
       description: "",
     }));
-    expect(slashCommandItemsForPromptPosition(items, false).map((item) => item.id)).toEqual([
+    const providerItems = ["skill:logo-archive", "compact"].map((name) => ({
+      id: `provider:${name}`,
+      type: "provider-slash-command" as const,
+      provider: ProviderDriverKind.make("acpRegistry"),
+      command: { name },
+      label: `/${name}`,
+      description: "",
+    }));
+    const allItems = [...items, ...providerItems];
+    expect(slashCommandItemsForPromptPosition(allItems, true)).toEqual(allItems);
+    expect(slashCommandItemsForPromptPosition(allItems, false).map((item) => item.id)).toEqual([
       "slash:model",
+      "provider:skill:logo-archive",
     ]);
   });
 });

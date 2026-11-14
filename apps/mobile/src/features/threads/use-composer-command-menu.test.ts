@@ -105,6 +105,39 @@ describe("mobile slash commands", () => {
     expect(build(false)).toEqual(["pcmd:clear"]);
     expect(build(true, false)).toEqual([]);
   });
+
+  it.each(["Please use ", "Please use\n"])(
+    "completes an advertised skill after %j while keeping ordinary commands start-only",
+    (prefix) => {
+      const items = buildComposerSlashCommandItems({
+        query: "",
+        atMessageStart: false,
+        hasThread: true,
+        hasCompactableConversation: true,
+        offersFreshSession: true,
+        offersSideChat: true,
+        selectedProviderStatus: {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          slashCommands: [{ name: "skill:logo-archive" }, { name: "compact" }, { name: "clear" }],
+        },
+      });
+      expect(items.map((item) => item.id)).toEqual(["cmd:model", "pcmd:skill:logo-archive"]);
+      const item = items[1];
+      if (!item) throw new Error("Expected the advertised skill command");
+      const partial = "/skill:logo";
+      const replacement = "/skill:logo-archive ";
+      expect(
+        resolveComposerCommandSelection({
+          draftMessage: `${prefix}${partial}\nfor this logo`,
+          trigger: { rangeStart: prefix.length, rangeEnd: prefix.length + partial.length },
+          item,
+        }),
+      ).toEqual({
+        text: `${prefix}${replacement}\nfor this logo`,
+        cursor: prefix.length + replacement.length,
+      });
+    },
+  );
 });
 
 describe("mobile model mentions", () => {
