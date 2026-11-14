@@ -54,6 +54,7 @@ export class PeerForwarding extends Context.Service<
       tool: T,
       environmentId: EnvironmentId,
       params: Tool.Parameters<T>,
+      options?: { readonly expectedLinkIdentity: string },
     ) => Effect.Effect<Tool.Success<T>, OrchestratorMcpFailure>;
     /** `t3_thread_read` there. */
     readonly readThread: (
@@ -72,6 +73,7 @@ export class PeerForwarding extends Context.Service<
       scope: Scope,
       environmentId: EnvironmentId,
       input: OrchestratorMcpThreadWaitInput,
+      options?: { readonly expectedLinkIdentity: string },
     ) => Effect.Effect<OrchestratorMcpThreadWaitResult, OrchestratorMcpFailure>;
     /** The environments this one links to, as an agent sees them. */
     readonly links: (
@@ -129,6 +131,7 @@ const make = Effect.gen(function* () {
     success: Schema.Top,
     environmentId: EnvironmentId,
     params: unknown,
+    options?: { readonly expectedLinkIdentity: string },
   ) {
     const { caller, limits } = yield* forwardingCaller(scope);
     const encoded = (yield* Schema.encodeUnknownEffect(parameters as Schema.Encoder<unknown>)(
@@ -161,6 +164,7 @@ const make = Effect.gen(function* () {
       limits,
       ...(sender === undefined ? {} : { sender }),
       success: success as Schema.Decoder<A>,
+      ...(options === undefined ? {} : options),
     });
   });
 
@@ -190,7 +194,7 @@ const make = Effect.gen(function* () {
 
   const waitForThread: PeerForwarding["Service"]["waitForThread"] = Effect.fn(
     "PeerForwarding.waitForThread",
-  )(function* (scope, environmentId, input) {
+  )(function* (scope, environmentId, input, options) {
     let remaining = Math.min(
       MAX_WAIT_TIMEOUT_MS,
       Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
@@ -212,6 +216,7 @@ const make = Effect.gen(function* () {
             ? {}
             : { untilDelegatedWorkSettled: input.untilDelegatedWorkSettled }),
         },
+        options,
       );
       remaining -= chunk;
       if (!result.timedOut || remaining <= 0) return result;
@@ -226,7 +231,7 @@ const make = Effect.gen(function* () {
     Effect.flatMap((enabled) => (enabled ? Effect.void : Effect.fail(linkedEnvironmentsOff))),
   );
 
-  const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params) => {
+  const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params, options) => {
     const forwarded: Effect.Effect<
       Tool.Success<typeof tool>,
       OrchestratorMcpFailure
@@ -235,8 +240,17 @@ const make = Effect.gen(function* () {
           scope,
           environmentId,
           params as OrchestratorMcpThreadWaitInput,
+          options,
         ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
-      : forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, params);
+      : forward(
+          scope,
+          tool.name,
+          tool.parametersSchema,
+          tool.successSchema,
+          environmentId,
+          params,
+          options,
+        );
     return Effect.andThen(requireEnabled, forwarded);
   };
 

@@ -1934,8 +1934,27 @@ const make = Effect.gen(function* () {
       ...(task.remoteChild === undefined
         ? {}
         : {
-            remoteChild: task.remoteChild,
-            link: formatThreadLink(task.remoteChild, task.remoteChild.title),
+            ...(task.remoteChild.threadId === undefined
+              ? {}
+              : {
+                  link: formatThreadLink(
+                    {
+                      environmentId: task.remoteChild.environmentId,
+                      threadId: task.remoteChild.threadId,
+                    },
+                    task.remoteChild.title,
+                  ),
+                }),
+            remoteChild: {
+              environmentId: task.remoteChild.environmentId,
+              label: task.remoteChild.label,
+              ...(task.remoteChild.launchError === undefined
+                ? {}
+                : { launchError: task.remoteChild.launchError }),
+              ...(task.remoteChild.threadId === undefined
+                ? {}
+                : { threadId: task.remoteChild.threadId }),
+            },
           }),
       childRunId: null,
       childNodeId: task.id,

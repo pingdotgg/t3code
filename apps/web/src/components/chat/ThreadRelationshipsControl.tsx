@@ -267,6 +267,7 @@ function RemoteSubagentRow(props: {
   const navigate = useNavigate();
   const environment = useEnvironment(props.agent.remoteChild.environmentId);
   const { remoteChild } = props.agent;
+  const remoteThreadId = remoteChild.threadId;
   const status = props.agent.status;
   const failed = status === "failed";
   const title = relationshipThreadTitle({
@@ -283,13 +284,13 @@ function RemoteSubagentRow(props: {
               size="sm"
               variant="ghost"
               part="row"
-              aria-disabled={environment === null || undefined}
+              aria-disabled={environment === null || remoteThreadId === undefined || undefined}
               onClick={() => {
-                if (environment === null) return;
+                if (environment === null || remoteThreadId === undefined) return;
                 void navigate({
                   to: "/$environmentId/$threadId",
                   params: buildThreadRouteParams(
-                    scopeThreadRef(remoteChild.environmentId, remoteChild.threadId),
+                    scopeThreadRef(remoteChild.environmentId, remoteThreadId),
                   ),
                 });
               }}
@@ -312,16 +313,24 @@ function RemoteSubagentRow(props: {
             className={`flex max-w-1/2 shrink-0 gap-1 text-2xs ${failed ? "text-destructive" : "text-muted-foreground"}`}
           >
             <span className="truncate">on {remoteChild.label}</span>
-            <span className="shrink-0">· {threadRelationshipStatusLabel(status)}</span>
+            <span className="shrink-0">
+              ·{" "}
+              {remoteThreadId === undefined && props.agent.result === null
+                ? "Launching"
+                : threadRelationshipStatusLabel(status)}
+            </span>
           </span>
         </TooltipTrigger>
         <TooltipPopup side="left">
           <LineageTooltipContent
             title={title}
             hint={
-              environment === null
-                ? `Runs on ${remoteChild.label}. Connect to it to open the thread there.`
-                : `Open on ${remoteChild.label}`
+              remoteChild.launchError ??
+              (remoteThreadId === undefined
+                ? `${props.agent.result === null ? "Launching" : threadRelationshipStatusLabel(status)} on ${remoteChild.label}.`
+                : environment === null
+                  ? `Runs on ${remoteChild.label}. Connect to it to open the thread there.`
+                  : `Open on ${remoteChild.label}`)
             }
           />
         </TooltipPopup>

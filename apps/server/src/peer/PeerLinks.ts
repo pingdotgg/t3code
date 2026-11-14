@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The pinned Effect Crypto service has no digest API.
+import * as NodeCrypto from "node:crypto";
 import {
   AuthMcpClientAccess,
   AuthMcpRegistrationError,
@@ -56,6 +58,11 @@ export const probeTimeout = (origin: string) =>
 /** How long a listing waits on a link's addresses; a real call still gives a waking peer `probeTimeout`. */
 const LIST_PROBE_TIMEOUT = Duration.seconds(3);
 
+/** Server-only identity of the OAuth grant generation; contains no credential. */
+export interface StoredPeerLink extends PeerLink {
+  readonly launchIdentity: string;
+}
+
 /** Node's TLS verification code in a failed request's cause chain, if any. */
 export const certificateErrorCode = (error: unknown) => {
   let current = error;
@@ -75,7 +82,7 @@ export const certificateErrorCode = (error: unknown) => {
 
 /** A usable link: where to reach the peer and the token to send there. */
 export interface ResolvedPeerLink {
-  readonly link: PeerLink;
+  readonly link: StoredPeerLink;
   /** The first address that answered as this peer. */
   readonly url: string;
   readonly token: string;
@@ -100,7 +107,7 @@ export class PeerLinks extends Context.Service<
     /** The stored link, without asking the peer whether it answers. */
     readonly get: (
       environmentId: EnvironmentId,
-    ) => Effect.Effect<Option.Option<PeerLink>, PeerLinkError>;
+    ) => Effect.Effect<Option.Option<StoredPeerLink>, PeerLinkError>;
     /** Forgets the link here. The peer still lists the session until it is revoked there. */
     readonly unlink: (environmentId: EnvironmentId) => Effect.Effect<boolean, PeerLinkError>;
     /** An address that answers as the linked peer, with its token, ready to call. */
@@ -239,6 +246,11 @@ const make = Effect.gen(function* () {
     Effect.orDie,
   );
 
+  // Relinking replaces the destination OAuth namespace. A pending launch may
+  // replay only through its original grant, even when its environment is unchanged.
+  const launchIdentity = (secretName: string) =>
+    Effect.sync(() => NodeCrypto.createHash("sha256").update(secretName).digest("hex"));
+
   // Only the origin `peerOrigin` checked may receive a pairing code or token:
   // a redirect could forward them anywhere, including plain http.
   const peerHttpClient = HttpClient.transform(httpClient, (response) =>
@@ -279,6 +291,7 @@ const make = Effect.gen(function* () {
   const toLink = Effect.fn("PeerLinks.toLink")(function* (row: PeerLinkRow) {
     return {
       environmentId: EnvironmentId.make(row.environment_id),
+      launchIdentity: yield* launchIdentity(row.secret_name),
       label: row.label,
       urls: yield* decodeUrls(row.urls_json),
       access: yield* decodeAccess(row.access),
@@ -288,7 +301,7 @@ const make = Effect.gen(function* () {
       expiresAt: DateTime.makeUnsafe(row.fenced === 1 ? row.expires_at : row.linked_at),
       lastReachedAt: row.last_reached_at === null ? null : DateTime.makeUnsafe(row.last_reached_at),
       lastError: row.last_error,
-    } satisfies PeerLink;
+    } satisfies StoredPeerLink;
   }, Effect.catch(failStorage));
 
   const readRows = sql<PeerLinkRow>`
@@ -578,7 +591,7 @@ const make = Effect.gen(function* () {
   });
 
   /** A peer's label follows its machine name, so the link takes the one its own address answers with. */
-  const withLabel = (link: PeerLink, label: string) =>
+  const withLabel = <Link extends PeerLink>(link: Link, label: string) =>
     label === link.label
       ? Effect.succeed(link)
       : sql`

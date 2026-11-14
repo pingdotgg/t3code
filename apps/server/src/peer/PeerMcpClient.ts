@@ -19,6 +19,15 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 
+const uncertainCall = Symbol("PeerMcpClient.UncertainCall");
+
+/** No usable answer arrived, so a keyed launch may already have been accepted. */
+export class UncertainCall extends OrchestratorMcpFailure {
+  readonly [uncertainCall] = true;
+}
+
+export const isUncertainCall = (error: OrchestratorMcpFailure) => uncertainCall in error;
+
 /** The only MCP protocol version a T3 Code `/mcp` registers. */
 const PROTOCOL_VERSION = "2025-06-18";
 
@@ -48,6 +57,8 @@ export class PeerMcpClient extends Context.Service<
       /** The thread here the call is made for, sent as `T3-Sender-Thread`. */
       readonly sender?: OrchestrationV2LinkedSender;
       readonly success: S;
+      /** Refuse a launch replay through a replacement OAuth grant. */
+      readonly expectedLinkIdentity?: string;
     }) => Effect.Effect<S["Type"], OrchestratorMcpFailure>;
   }
 >()("t3/peer/PeerMcpClient") {}
@@ -73,7 +84,7 @@ const decodeFailure = Schema.decodeUnknownOption(
 
 /** A peer link problem, as the agent that asked hears it. */
 const fromLinkError = (error: PeerLinkError) =>
-  new OrchestratorMcpFailure({
+  new (error.reason === "unreachable" ? UncertainCall : OrchestratorMcpFailure)({
     code:
       error.reason === "unknown_link"
         ? "invalid_request"
@@ -90,7 +101,7 @@ const linkedEnvironmentsOffThere = new OrchestratorMcpFailure({
     "The linked environment has Linked environments turned off. Turn it on in its Settings → Labs.",
 });
 
-const stoppedAnswering = new OrchestratorMcpFailure({
+const stoppedAnswering = new UncertainCall({
   code: "orchestration_error",
   message: "The linked environment stopped answering.",
 });
@@ -169,6 +180,16 @@ const make = Effect.gen(function* () {
       const resolved = yield* links
         .resolve(input.environmentId)
         .pipe(Effect.mapError(fromLinkError));
+      if (
+        input.expectedLinkIdentity !== undefined &&
+        resolved.link.launchIdentity !== input.expectedLinkIdentity
+      ) {
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message:
+            "The destination was linked again. Its original launch identity cannot be replayed through the replacement link.",
+        });
+      }
       const limitHeader = {
         [McpInvocationContext.MODE_LIMIT_HEADER]: `${input.limits.runtimeMode}/${input.limits.interactionMode}`,
       };
@@ -235,7 +256,7 @@ const make = Effect.gen(function* () {
       ).pipe(
         Effect.mapError(
           () =>
-            new OrchestratorMcpFailure({
+            new UncertainCall({
               code: "orchestration_error",
               message: "The linked environment answered in an unexpected shape.",
             }),

@@ -490,7 +490,7 @@ export function readResponseSubagents(
       const child = { threadId: childThreadId, title };
       byTask.set(taskId, child);
       local.set(childThreadId, child);
-    } else if (remote) {
+    } else if (remote?.threadId !== undefined) {
       // A task sent to a linked environment has no thread here; its thread lives there.
       const { threadId, environmentId } = remote;
       byTask.set(taskId, { threadId, environmentId, title: title ?? remote.title });
