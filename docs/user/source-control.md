@@ -15,7 +15,13 @@ a turn's changed files are grouped by repository, and the Diff pane shows every 
 turn changed. Use the repository picker next to the source picker to narrow the diff to one of
 them. Paths in the diff start at the thread's folder, so the same file name in two repositories
 stays apart. This works when the project folder itself is not a Git repository; the branch
-comparison and Git actions still cover only the project folder.
+comparison still covers only the project folder.
+
+The thread details panel lists each repository the thread has changed, most recent first, with its
+branch and uncommitted changes. Expand one to commit, push, or open a pull request in that
+repository; a pull request opened there, or already open for its branch when a turn ends, is linked
+to the thread. **Other repositories...** adds any other tracked repository to the list until you
+reload. A thread in its own worktree does not list them.
 
 On web and desktop, open the Diff pane source picker and choose **Commits** to review one local
 commit at a time. The list shows the newest 100 commits in the branch comparison. A merge commit
