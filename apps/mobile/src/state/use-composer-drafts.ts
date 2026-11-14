@@ -58,6 +58,7 @@ import { appAtomRegistry } from "./atom-registry";
 import {
   abortComposerDraftOperations,
   abortComposerDraftOperationsWhere,
+  hasComposerDraftOperations,
 } from "./composerDraftOperations";
 import {
   isNewTaskDraftKey,
@@ -2032,6 +2033,31 @@ export function findNewTaskDraftKeys(
       (right.project?.createdAt ?? "").localeCompare(left.project?.createdAt ?? ""),
     )
     .map(([key]) => key);
+}
+
+function hasUserContent(draft: ComposerDraft): boolean {
+  return draft.text.trim().length > 0 || draft.attachments.length > 0;
+}
+
+export function findResumableNewTaskDraftKey(
+  drafts: Readonly<Record<string, ComposerDraft>>,
+  project: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
+  exclude: ReadonlySet<string>,
+): string | null {
+  return (
+    findNewTaskDraftKeys(drafts, project).find((key) => {
+      const draft = drafts[key];
+      return !exclude.has(key) && draft !== undefined && hasUserContent(draft);
+    }) ?? null
+  );
+}
+
+/** Whether the user is already working in a draft: content, or a picker or import still writing to it. */
+export function isComposerDraftInUse(draftKey: string): boolean {
+  const draft = getComposerDraftSnapshot(draftKey);
+  return (
+    draft.text.length > 0 || draft.attachments.length > 0 || hasComposerDraftOperations(draftKey)
+  );
 }
 
 export async function clearComposerDraftsEnvironment(environmentId: EnvironmentId): Promise<void> {

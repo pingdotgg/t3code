@@ -193,6 +193,8 @@ import {
   ensureComposerDraftsLoaded,
   type ComposerDraft,
   findNewTaskDraftKeys,
+  findResumableNewTaskDraftKey,
+  isComposerDraftInUse,
   flushComposerDrafts,
   getComposerDraftSnapshot,
   mergeComposerDraftContentState,
@@ -1948,6 +1950,91 @@ describe("mobile composer drafts", () => {
     });
     retargetNewTaskDraft(key, to);
     expect(getComposerDraftSnapshot(key).workspaceSelection).toBeUndefined();
+  });
+
+  it("resumes a project's newest unsent new-task draft, counting attachments and skipping settings-only ones", () => {
+    const project = {
+      environmentId: EnvironmentId.make("environment-1"),
+      projectId: ProjectId.make("project-1"),
+    };
+    const stamped = (createdAt: string) => ({ project: { ...project, createdAt } });
+    const file = {
+      type: "file" as const,
+      id: "file-1",
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 10,
+      fileUri: "file:///notes.txt",
+    };
+    const drafts: Record<string, ComposerDraft> = {
+      "new-task:older": { text: "older idea", attachments: [], ...stamped("2026-09-01T00:00:00Z") },
+      "new-task:newer": { text: "newer idea", attachments: [], ...stamped("2026-09-02T00:00:00Z") },
+      "new-task:settings-only": {
+        text: "",
+        attachments: [],
+        runtimeMode: "approval-required",
+        workspaceSelection: { mode: "worktree", branch: "feature/a", worktreePath: null },
+        ...stamped("2026-09-03T00:00:00Z"),
+      },
+      "new-task:whitespace": { text: " \n\t", attachments: [], ...stamped("2026-09-04T00:00:00Z") },
+    };
+
+    expect(findResumableNewTaskDraftKey(drafts, project, new Set())).toBe("new-task:newer");
+
+    drafts["new-task:attachment-only"] = {
+      text: "",
+      attachments: [file],
+      ...stamped("2026-09-05T00:00:00Z"),
+    };
+    expect(findResumableNewTaskDraftKey(drafts, project, new Set())).toBe(
+      "new-task:attachment-only",
+    );
+  });
+
+  it("resumes only an unbound new-task draft stamped to the same environment and project", () => {
+    const project = {
+      environmentId: EnvironmentId.make("environment-1"),
+      projectId: ProjectId.make("project-1"),
+    };
+    const draft = (environmentId: string, projectId: string, createdAt: string): ComposerDraft => ({
+      text: "unsent",
+      attachments: [],
+      project: {
+        environmentId: EnvironmentId.make(environmentId),
+        projectId: ProjectId.make(projectId),
+        createdAt,
+      },
+    });
+    const drafts: Record<string, ComposerDraft> = {
+      "new-task:other-environment": draft("environment-2", "project-1", "2026-09-05T00:00:00Z"),
+      "new-task:other-project": draft("environment-1", "project-2", "2026-09-05T00:00:00Z"),
+      "environment-1:thread-1": draft("environment-1", "project-1", "2026-09-05T00:00:00Z"),
+      "new-task:current": draft("environment-1", "project-1", "2026-09-04T00:00:00Z"),
+      "new-task:bound-elsewhere": draft("environment-1", "project-1", "2026-09-03T00:00:00Z"),
+      "new-task:free": draft("environment-1", "project-1", "2026-09-01T00:00:00Z"),
+    };
+    const exclude = new Set(["new-task:current", "new-task:bound-elsewhere"]);
+
+    expect(findResumableNewTaskDraftKey(drafts, project, exclude)).toBe("new-task:free");
+
+    const { "new-task:free": _free, ...withoutFree } = drafts;
+    expect(findResumableNewTaskDraftKey(withoutFree, project, exclude)).toBeNull();
+  });
+
+  it("keeps a fresh draft the user started in, even with a running picker or only whitespace", () => {
+    const key = createNewTaskDraft({
+      environmentId: EnvironmentId.make("environment-1"),
+      projectId: ProjectId.make("project-1"),
+    });
+    expect(isComposerDraftInUse(key)).toBe(false);
+
+    const picker = startComposerDraftOperation(key);
+    expect(isComposerDraftInUse(key)).toBe(true);
+    picker.finish();
+    expect(isComposerDraftInUse(key)).toBe(false);
+
+    setComposerDraftText(key, " ");
+    expect(isComposerDraftInUse(key)).toBe(true);
   });
 
   it("retargets a saved new-task draft only after drafts load", async () => {

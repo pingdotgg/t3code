@@ -82,6 +82,7 @@ vi.mock("../../state/use-model-option-memory", () => ({
   withRememberedModelOptions: (value: unknown) => value,
 }));
 vi.mock("../../state/use-composer-drafts", () => ({
+  composerDraftsAtom: Atom.make({}),
   composerDraftsLoadedAtom: Atom.make(true),
   useComposerDraft: mocks.drafts,
   getComposerDraftSnapshot: mocks.snapshot,
@@ -100,6 +101,11 @@ vi.mock("../../state/use-composer-drafts", () => ({
   scheduleUnusedComposerAttachmentCleanup: vi.fn(),
   isComposerDraftEmpty: (draft: ComposerDraft) =>
     draft.text === "" && draft.attachments.length === 0,
+  isComposerDraftInUse: () => false,
+  findResumableNewTaskDraftKey: () => null,
+}));
+vi.mock("../../lib/rootNavigation", () => ({
+  rootNavigationRef: { getRootState: () => undefined },
 }));
 
 vi.mock("../../state/peerLinks", () => ({ useLinkedEnvironments: () => new Map() }));
