@@ -486,7 +486,7 @@ describe("DesktopShellEnvironment", () => {
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
         SHELL: "/bin/zsh",
-        PATH: "/Users/test/.local/bin:/usr/bin",
+        PATH: " /Users/test/.local/bin:/usr/bin",
       };
       const commands: ChildProcess.Command[] = [];
 
@@ -496,7 +496,7 @@ describe("DesktopShellEnvironment", () => {
         handler: (command) => {
           commands.push(command);
           return envOutput({
-            PATH: "/opt/homebrew/bin:/usr/bin",
+            PATH: "/opt/homebrew/bin:/usr/bin:/opt/bin ",
             SSH_AUTH_SOCK: "/tmp/secretive.sock",
             HOMEBREW_PREFIX: "/opt/homebrew",
           });
@@ -505,7 +505,7 @@ describe("DesktopShellEnvironment", () => {
 
       assert.equal(commands.length, 1);
       assert.equal(commands[0]?._tag === "StandardCommand" ? commands[0].command : "", "/bin/zsh");
-      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/Users/test/.local/bin");
+      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/opt/bin : /Users/test/.local/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
       assert.equal(env.HOMEBREW_PREFIX, "/opt/homebrew");
       assert.isTrue(prepared);
@@ -577,6 +577,39 @@ describe("DesktopShellEnvironment", () => {
       assert.equal(env.SSL_CERT_FILE, "/opt/zerobrew/etc/ca-certificates/cacert.pem");
       assert.equal(env.SSL_CERT_DIR, "/etc/ssl/certs");
       assert.equal(env.NODE_EXTRA_CA_CERTS, "/Users/me/corp-root.pem");
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "hydrates both Android SDK names when neither is inherited",
+      inherited: {},
+      expected: { ANDROID_HOME: "/shell/android-home", ANDROID_SDK_ROOT: "/shell/android-root" },
+    },
+    {
+      // The device host reads ANDROID_HOME before ANDROID_SDK_ROOT, so a shell
+      // ANDROID_HOME next to an inherited ANDROID_SDK_ROOT would change the SDK.
+      name: "keeps an inherited ANDROID_SDK_ROOT selected over a login-shell ANDROID_HOME",
+      inherited: { ANDROID_SDK_ROOT: "/inherited/android-sdk" },
+      expected: { ANDROID_HOME: undefined, ANDROID_SDK_ROOT: "/inherited/android-sdk" },
+    },
+  ])("$name", ({ inherited, expected }) =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin", ...inherited };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/usr/bin",
+            ANDROID_HOME: "/shell/android-home",
+            ANDROID_SDK_ROOT: "/shell/android-root",
+          }),
+      });
+
+      assert.equal(env.ANDROID_HOME, expected.ANDROID_HOME);
+      assert.equal(env.ANDROID_SDK_ROOT, expected.ANDROID_SDK_ROOT);
     }),
   );
 

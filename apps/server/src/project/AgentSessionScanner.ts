@@ -802,10 +802,7 @@ type TranscriptIdentity = Pick<
 
 const fileIdKey = (inode: TranscriptIdentity["inode"]) => (inode === null ? null : String(inode));
 
-export function sameTranscriptIdentity(
-  left: TranscriptIdentity,
-  right: TranscriptIdentity,
-): boolean {
+function sameTranscriptIdentity(left: TranscriptIdentity, right: TranscriptIdentity): boolean {
   // Unsafe legacy numbers may already have lost file ID precision.
   if (
     (typeof left.inode === "number" && !Number.isSafeInteger(left.inode)) ||
