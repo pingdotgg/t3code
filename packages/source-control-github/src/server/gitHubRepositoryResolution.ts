@@ -158,6 +158,7 @@ export function parsePullRequestReference(
 const GITHUB_DOT_COM_SSH_ALIAS = /^github\.com-[a-z0-9_-]+$/u;
 
 function apiHostForSshAlias(host: string): string | null | undefined {
+  if (host === "ssh.github.com") return "github.com";
   if (!host.includes(".")) return host.includes("github") ? "github.com" : null;
   return GITHUB_DOT_COM_SSH_ALIAS.test(host) ? "github.com" : undefined;
 }
