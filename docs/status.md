@@ -77,26 +77,48 @@ Proven:
 - Memory on macOS arm64: the server about 3 to 5 MB private; the SDK host about 45 MB while a
   Claude session is open, and no Node process when none is open.
 
+- **On Linux** (Beast, Ubuntu, x86_64, kernel 7.0; 2026-11-13 and 2026-11-14). The whole
+  workspace test suite passed 20 times on the gnu target and 5 times on the musl target with
+  no failure, after four fixes from this pass: a busy terminal chunk now holds at most the
+  64 KiB window by T3's charge, as T3's `takeBatch` (it sent 70 KB chunks before; 2 failures
+  in 40 runs on 2 CPUs before the fix, 0 in 100 after); shells start with default signals, as
+  node-pty starts them (a server started with SIGINT ignored gave shells whose commands
+  ignored Ctrl-C: the exact symptom of the first pass's one Ctrl-C test failure, which
+  otherwise did not come back in 1,050 runs under load); the terminal label follows the
+  foreground command's name, as in T3; and the SDK host build installs esbuild from a
+  lockfile only. Also proven: the process group kill reaches grandchildren; `--bootstrap-fd`
+  reads a socket pair as Electron passes it; the musl binary is static (15.6 MB) and starts;
+  the CI command for the recordings decode passes with `--locked`; the SDK host builds as a
+  Node 26.12.1 single executable (152 MB) and exits after the last session; 10 of the 11
+  live Claude tests pass on Haiku through that executable. Memory (the table in
+  `README.md`): the server holds 4.4 MiB `Pss_Anon` after 20 turns in 3 threads on the fake
+  provider, against about 301 MiB for each of five container T3 servers at the same moments.
+
 Not proven:
 
-- **Linux, in part.** A Linux pass on Beast (Ubuntu, x86_64) was stopped half way on 2026-11-13. Proven there: all tests pass on the gnu and musl targets after two
-  fixes that are on `main` (a terminal test that assumed the macOS shell, and a clippy 1.99
-  finding); the process group kill reaches grandchildren; `--bootstrap-fd` reads a socket
-  pair as Electron passes it; the musl binary is static, 14.5 MB, and starts; the SDK host
-  builds as a Node 26.12.1 single executable (152 MB) and the provider's 42 tests pass
-  through it. **Two terminal tests fail now and then on Linux, and neither cause is found.**
-  `conn-terminal` `clears_and_reports_the_foreground_command` failed once in about 90 runs
-  on Beast (no idle event within 15 s after Ctrl-C). `conn-server`
-  `methods::terminal::tests::a_busy_terminal_stays_within_the_byte_window` failed in one of
-  two CI runs of the same code on 2026-11-13: one output chunk was 70,887 bytes, and the
-  test allows 64 KiB plus 4,096 (69,632). So a busy terminal can send a chunk slightly above
-  the byte window on Linux; whether that is a fault in the output feed or a test limit that
-  is too tight is not decided. CI on Linux is therefore not reliably green. Partial memory figures on Linux (musl,
-  `smaps_rollup`, MiB): the server 1.3 `Pss_Anon` just started, 1.9 connected, 2.8 after 4
-  turns on the fake provider; the SDK host with a stub CLI 32 `Pss_Anon` (76 Rss) in a
-  session and after 10 turns, and gone after the last session closed. Not done on Linux:
-  the full memory run, the live Claude tests, the `README.md` memory table (it still holds
-  the spike's figures), and CI changes.
+- **Linux, in part.** Two passes on Beast (Ubuntu, x86_64, kernel 7.0), on 2026-11-13 and
+  2026-11-14, proved what is listed under "On Linux" above. Not proven on Linux: the agent
+  systemd scope (not built; see below); the live permission test (it runs Claude with an
+  isolated config folder that carries only `apiKeyHelper`, and on Beast that folder cannot
+  sign in, so the turn ends without an approval); a live Codex turn; CI itself (the workflow
+  changes ran only as the same commands on Beast); Orbit in a real container; the cause of
+  the one `clears_and_reports_the_foreground_command` failure of the first pass (see above).
+- **The agent systemd scope on Linux.** The T3 server (`apps/server/src/process/agentScope.ts`,
+  `packages/shared/src/AgentScope.ts`) wraps `claude` (a native binary given as
+  `pathToClaudeCodeExecutable`), `codex app-server` (shared, `OOMPolicy=continue`) and every
+  terminal shell (`app-t3code-agents.slice`, as it survives restarts) in
+  `systemd-run --user --scope` units, when `XDG_RUNTIME_DIR`, `systemd-run` and `systemctl`
+  are there and a probe scope starts. Before the first scope it stops a populated
+  `app-t3code-agents-<sha256(stateDir)[:12]>.slice` and runs `systemctl --user set-property
+  --runtime` on `app-t3code-agents.slice` (`MemoryHigh`, `MemoryMax` from RAM) and
+  `app-t3code.slice` (`CPUWeight=10 IOWeight=10 TasksMax=25%`). It stops a scope after its
+  agent exits, kills a thread's scope through `cgroup.kill`, and reports an OOM kill. Without
+  systemd it still runs each agent through `/bin/sh -c` with `oom_score_adj` 800. None of
+  this is built here. It cannot be tested on Beast: Beast's user manager also runs the
+  owner's host T3 server, and the probe and `set-property` change the same slices that
+  server uses. A test needs a Linux host or VM whose user manager runs no T3 server; then
+  port both files, compare the wrapped argv for `claude` and `codex` with the T3 server's on
+  Linux (the conformance stub records argv), and test OOM and kill there.
 - Conn desktop and mobile against this server.
 - Orbit's flow in a real container.
 - Codex on CLI 0.166 or 0.167 (the recordings are from 0.156).
@@ -149,9 +171,7 @@ remembering: an own server brings its own defects.
    (annotations, panels, scheduled tasks, peer links, test logins, credentials, secrets, guest
    share); 68 more `/mcp` tools; Codex subagents and MCP elicitation; worktree setup scripts
    the T3 way (typed into a thread terminal, with a completion marker).
-7. **Small leftovers.** `helpers/sdk-host/.npmrc` omits optional packages, so esbuild fetches
-   its binary in an install script, outside the lockfile; limits on terminal environment
-   variables; string caps on
+7. **Small leftovers.** Limits on terminal environment variables; string caps on
    `assets.createUrl`; finished `git` children stay unreaped while the server runs;
    `t3_thread_search` on the engine's search; the Linux systemd scope for provider processes;
    a cap on the blocking pool or one store thread (measure first: each store call takes its
@@ -199,9 +219,9 @@ The check is the one to trust; several review findings did not hold.
 - `main`: verified. All checks pass on macOS.
 - `parked/rust-hygiene-step-1`: one finished commit (the generator writes one reasoned `allow`
   at the top of the generated file) and one commit marked `WIP (not proven)`.
-- `parked/linux-pass`: the Linux pass. Its four proven commits are merged into `main`. One
-  more commit, marked `WIP (not proven)`, adds `memory-flow.mjs`, a small client for memory
-  runs on Linux.
+- `parked/linux-pass`: the first Linux pass. Its four proven commits are merged into `main`.
+  Its `memory-flow.mjs` commit was finished in the second pass, which made the
+  `README.md` memory table with it.
 - In the Conn repository there are local branches only (`rust/*`, `spike/rust-*`,
   `split/conn-server*`), with the same history under `native/conn-server`. They were never
   pushed. They change nothing under `apps/` or `packages/`.
@@ -216,6 +236,9 @@ The check is the one to trust; several review findings did not hold.
    Expect a large report: the pin is from 2026-11-13.
 
 CI: on 2026-11-13 the test step passed on Linux in one run and failed in the next on the
-terminal test named above. `cargo-deny` and the musl release build pass. The nightly schedule
+terminal byte-window test, which is fixed since. The rust job now installs the SDK host first
+(Node 26.12.1, `npm ci`), so its provider tests run instead of skipping, and the recordings
+decode step runs even after a test failure. These changes have not run in CI yet; the same
+commands pass on Beast. `cargo-deny` and the musl release build pass. The nightly schedule
 is switched off until the job with the Conn checkout can run: it needs the repository secret
 `CONN_READ_TOKEN` (read access to `nckrtl/conn`).
