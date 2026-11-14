@@ -24,7 +24,7 @@ it("explains a denied clipboard write and lets the same path be copied again", a
   await page.getByRole("button", { name: "Dismiss notification" }).click();
   await copy.click();
 
-  await expect.element(page.getByText("Copied!", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Copied!", { exact: true })).not.toBeInTheDocument();
   expect(write).toHaveBeenCalledTimes(2);
   expect(write).toHaveBeenLastCalledWith("apps/web/src/index.ts");
 });

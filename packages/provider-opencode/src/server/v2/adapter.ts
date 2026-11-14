@@ -590,6 +590,17 @@ const claudeUsageLimit = (message: string | undefined) =>
     ? { resetAt: /\bResets at (\d{4}-\d\d-\d\dT[\d:.]+Z)\.?\s*$/.exec(message)?.[1] ?? null }
     : undefined;
 
+// OpenCode types an empty balance as provider.quota too, but it answers
+// that with HTTP 402 and it never resets. Usage windows and budgets are 429.
+const isUsageLimit = (error: {
+  readonly type: string;
+  readonly status?: number | undefined;
+  readonly message: string;
+}) =>
+  (error.type === "provider.quota" && error.status !== 402) ||
+  error.type === "provider.rate-limit" ||
+  claudeUsageLimit(error.message) !== undefined;
+
 const INTERRUPT_TIMEOUT = 10_000;
 const INSTRUCTIONS_KEY = "t3-code";
 const RECONNECT_ATTEMPTS = 5;
@@ -965,6 +976,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         tool?: { name: string; input: Record<string, unknown> };
         command: string;
         running: boolean;
+        awaited?: boolean;
         stopping?: boolean;
         output: string;
         cursor: number;
@@ -1464,7 +1476,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         failure: makeProviderFailure({
           message: readableProviderErrorMessage(error.message, error.status, error.response?.body),
           code: error.type,
-          class: "provider_error",
+          class: isUsageLimit(error) ? "usage_limit" : "provider_error",
           retryable: true,
         }),
         startedAt: turn.retry?.startedAt ?? (yield* DateTime.now),
@@ -1627,6 +1639,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             taskId,
             kind: "command",
             description: shell.command,
+            ...(shell.awaited === true ? { awaited: true } : {}),
             ...(shell.state.subagent === undefined
               ? {}
               : { parentTaskId: shell.state.subagent.call.nativeId }),
@@ -1646,7 +1659,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             : [],
         ),
       );
-      const allTasks = [...roster, ...imageTasks];
+      const allTasks = roster.concat(imageTasks);
       const current = state.providerThread.pendingBackgroundTasks ?? [];
       if (
         state.publishedBackgroundWork === hasBackground(state) &&
@@ -1655,6 +1668,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           (task, index) =>
             task.taskId === allTasks[index]?.taskId &&
             task.description === allTasks[index]?.description &&
+            task.awaited === allTasks[index]?.awaited &&
             (task.kind === "subagent" ? task.childThreadId : undefined) ===
               (allTasks[index]?.kind === "subagent" ? allTasks[index]?.childThreadId : undefined),
         )
@@ -1844,6 +1858,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                     tool: { name: "shell", input: { command: info.command } },
                   }),
               command: info.command,
+              awaited:
+                state.providerThread.pendingBackgroundTasks?.some(
+                  (task) => task.taskId === info.id && task.awaited === true,
+                ) === true,
               running: true,
               output: "",
               cursor: 0,
@@ -2832,20 +2850,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* endExecution(state, turn, { status: "interrupted" });
         case "session.execution.failed": {
           const { type, message, status, response } = event.data.error;
-          // OpenCode types an empty balance as provider.quota too, but it answers
-          // that with HTTP 402 and it never resets. Usage windows and budgets are 429.
-          const claudeLimit = claudeUsageLimit(message);
-          const usageLimit =
-            (type === "provider.quota" && status !== 402) ||
-            type === "provider.rate-limit" ||
-            claudeLimit !== undefined;
           return yield* endExecution(state, turn, {
             status: "failed",
             failure: makeProviderFailure({
               message: readableProviderErrorMessage(message, status, response?.body),
               code: type,
-              class: usageLimit ? "usage_limit" : "provider_error",
-              resetAt: claudeLimit?.resetAt ?? null,
+              class: isUsageLimit(event.data.error) ? "usage_limit" : "provider_error",
+              resetAt: claudeUsageLimit(message)?.resetAt ?? null,
             }),
           });
         }
@@ -4226,6 +4237,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const instructions = [
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
         t3OrchestrationSystemPrompt(mcpAvailable, mcpSession?.capabilities?.has("device") === true),
+        mcpAvailable
+          ? "To wait for a background shell you started (tests, a build), call `t3_background_wait` with its shell ID before you end your turn. Do not mark work you leave running, or PRs."
+          : undefined,
       ]
         .filter((part) => part !== undefined && part.length > 0)
         .join("\n\n");
@@ -4530,7 +4544,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const mentions = skillMentions(text);
       const skills = mentions.length === 0 ? [] : yield* skillsMentioned(location, mentions);
       const files = yield* promptFiles(turnInput.message.attachments);
-      const messageText = yield* promptText(turnInput);
+      const messageText = turnInput.resume ? "" : yield* promptText(turnInput);
       if (!sending()) return;
       return yield* client.session
         .prompt({
@@ -4694,6 +4708,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ),
       compactThread: (turnInput) =>
         runtime.startTurn({ ...turnInput, message: { ...turnInput.message, text: "/compact" } }),
+      resumeTurn: (input) => runtime.startTurn(ProviderAdapter.resumeTurnInput(input)),
       startTurn: Effect.fn("OpenCode2Adapter.startTurn")(
         function* (turnInput) {
           // Waited out before the session's gate, so a rollback or fork is not
@@ -5012,6 +5027,26 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   }),
             ),
           ),
+      ),
+      awaitBackgroundTasks: Effect.fn("OpenCode2Adapter.awaitBackgroundTasks")(
+        function* ({ providerThread, taskIds, awaited }) {
+          const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
+          const state = nativeThreadId == null ? undefined : threads.get(nativeThreadId);
+          if (state === undefined) return { matched: [] };
+          const sessions = sessionsOf(state);
+          const matched = [...new Set(taskIds)].filter((taskId) => {
+            const shell = shells.get(taskId);
+            return shell !== undefined && shell.running && sessions.includes(shell.state);
+          });
+          if (matched.length === 0) return { matched };
+          for (const taskId of matched) {
+            const shell = shells.get(taskId)!;
+            shell.awaited = awaited;
+            yield* syncRosterAncestors(shell.state);
+          }
+          return { matched };
+        },
+        (effect) => effect.pipe(lock.withPermit),
       ),
       stopTask: Effect.fn("OpenCode2Adapter.stopTask")(function* ({ providerThread, taskId }) {
         const shell = shells.get(taskId);

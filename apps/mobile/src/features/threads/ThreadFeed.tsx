@@ -236,6 +236,8 @@ import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { readEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { environmentProjects, projectEnvironment } from "../../state/projects";
 import {
+  agentWorkingDirectories,
+  findAgentDirectoryMatch,
   needsWorkspaceBasenameLookup,
   pickProjectLinkMatch,
   pickWorkspaceLinkMatch,
@@ -256,7 +258,11 @@ import { useModelMentions } from "../../state/model-mentions";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { environmentThreadShells, threadEnvironment } from "../../state/threads";
+import {
+  environmentThreadDetails,
+  environmentThreadShells,
+  threadEnvironment,
+} from "../../state/threads";
 import { ThreadWorkflowOpening, useWorkflowOpening } from "./thread-workflow-opening";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
@@ -1072,10 +1078,17 @@ function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
   return <ThreadMediaVisibleContext value={visible}>{props.children}</ThreadMediaVisibleContext>;
 }
 
+/** The reply a link sits in; a file it cites may be where the agent worked before writing it. */
+type MarkdownLinkReply = Pick<OrchestrationV2ProjectedTurnItem, "sourceThreadId" | "sourceItemId">;
+
 interface MarkdownLinkHandlers {
-  readonly onLinkPress: (href: string) => void;
+  readonly onLinkPress: (href: string, reply?: MarkdownLinkReply) => void;
   readonly fileContextMenu: (href: string) => MarkdownFileContextMenu | undefined;
-  readonly onFileContextMenuAction: (href: string, actionId: string) => void;
+  readonly onFileContextMenuAction: (
+    href: string,
+    actionId: string,
+    reply?: MarkdownLinkReply,
+  ) => void;
   readonly onImagePress?: (href: string) => void;
   readonly resolveImageSource?: MarkdownImageSourceResolver;
   readonly fileEmbedLabel?: (href: string, standalone: boolean) => string | null;
@@ -1146,6 +1159,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly environmentId: EnvironmentId;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
+  readonly reply?: MarkdownLinkReply | undefined;
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
@@ -1155,6 +1169,9 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
   const linkHandlers: MarkdownLinkHandlers = {
     ...props.linkHandlers,
+    onLinkPress: (href) => props.linkHandlers.onLinkPress(href, props.reply),
+    onFileContextMenuAction: (href, actionId) =>
+      props.linkHandlers.onFileContextMenuAction(href, actionId, props.reply),
     linkCustomization: (href) =>
       withChipIcon(props.linkHandlers.linkCustomization?.(href), threadIcons.get(href)),
   };
@@ -2289,6 +2306,7 @@ function renderFeedEntry(
               environmentId={props.environmentId}
               markdownStyles={styles}
               linkHandlers={props.markdownLinkHandlers}
+              reply={message.projectedItem}
               onUseArtifactTemplate={props.onUseArtifactTemplate}
               renderImage={props.renderMarkdownImage}
               skills={props.skills}
@@ -2878,6 +2896,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     linkPath: string,
     path: string,
     signal: AbortSignal,
+    reply: MarkdownLinkReply | undefined,
   ): Promise<string> => {
     const relativePath = resolveWorkspaceRelativeFilePath(props.workspaceRoot, path);
     if (
@@ -2909,6 +2928,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         root,
         entries: result._tag === "Success" ? result.value.entries : [],
       }));
+    const metadataOf = (target: string) =>
+      executeAtomQuery(
+        appAtomRegistry,
+        projectEnvironment.fileMetadata({
+          environmentId: props.environmentId,
+          input: { path: target },
+        }),
+        queryOptions,
+      );
     const lookup = async () => {
       const own = await searchRoot(workspaceRoot);
       let match = pickWorkspaceLinkMatch(relativePath, workspaceRoot, own.entries);
@@ -2933,15 +2961,35 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             ? null
             : pickProjectLinkMatch(relativePath, await Promise.all(otherRoots.map(searchRoot)));
       }
+      if (match === null && reply !== undefined && !signal.aborted) {
+        // No project has the file, so it opens where the agent last worked, as written.
+        const agentRoots = agentWorkingDirectories(
+          appAtomRegistry.get(
+            environmentThreadDetails.quietThreadAtom(
+              scopeThreadRef(props.environmentId, props.threadId),
+            ),
+          )?.projection.visibleTurnItems ?? [],
+          reply,
+        ).filter((root) => root !== workspaceRoot);
+        const agentPaths = agentRoots.map((root) => resolveWorkspaceFilePath(root, relativePath));
+        if (agentPaths.length === 0) return relativePath;
+        const [original, ...found] = await Promise.all(
+          [originalPath, ...agentPaths].map(metadataOf),
+        );
+        if (original?._tag !== "Success" || original.value !== null) return relativePath;
+        const index = found.findIndex(
+          (result) => result._tag === "Success" && result.value?.kind === "file",
+        );
+        const literal = agentPaths[index];
+        if (literal !== undefined || !needsWorkspaceBasenameLookup(relativePath)) {
+          return literal ?? relativePath;
+        }
+        return (
+          (await findAgentDirectoryMatch(relativePath, agentRoots, searchRoot)) ?? relativePath
+        );
+      }
       if (!match || match === relativePath || signal.aborted) return relativePath;
-      const metadata = await executeAtomQuery(
-        appAtomRegistry,
-        projectEnvironment.fileMetadata({
-          environmentId: props.environmentId,
-          input: { path: originalPath },
-        }),
-        queryOptions,
-      );
+      const metadata = await metadataOf(originalPath);
       // Another project's file never replaces a thread-local file the search missed.
       return metadata._tag === "Success" &&
         (needsWorkspaceBasenameLookup(relativePath) && !otherProject
@@ -2952,7 +3000,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     };
     return lookup().catch(() => relativePath);
   };
-  const onMarkdownLinkPress = (href: string, imageEmbed = false) => {
+  const onMarkdownLinkPress = (href: string, imageEmbed = false, reply?: MarkdownLinkReply) => {
     markdownLinkRequest.current?.abort();
     const request = new AbortController();
     markdownLinkRequest.current = request;
@@ -3019,7 +3067,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (presentation.kind === "file") {
       const path = resolveFileLinkPath(props.workspaceRoot, presentation.path);
       if (path === null) return;
-      void findFileLinkTarget(presentation.path, path, request.signal).then((target) => {
+      void findFileLinkTarget(presentation.path, path, request.signal, reply).then((target) => {
         if (request.signal.aborted) return;
         void Haptics.selectionAsync();
         navigation.navigate("ThreadFile", {
@@ -3058,7 +3106,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         },
         standalone,
       ),
-    onLinkPress: onMarkdownLinkPress,
+    onLinkPress: (href, reply) => onMarkdownLinkPress(href, false, reply),
     linkCustomization: enrichedThreadLinkCustomization,
     onImagePress: (href) => onMarkdownLinkPress(href, true),
     resolveImageSource,
@@ -3091,7 +3139,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       const target = resolveFileChipTarget(href, props.workspaceRoot);
       return target ? fileChipMenu(target) : undefined;
     },
-    onFileContextMenuAction: (href, actionId) => {
+    onFileContextMenuAction: (href, actionId, reply) => {
       const skill = enrichedSkillReference(href, props.skills);
       if (skill) {
         const instructionsPath = enrichedSkillInstructionsPath(skill);
@@ -3119,7 +3167,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           markdownLinkRequest.current?.abort();
           const request = new AbortController();
           markdownLinkRequest.current = request;
-          void findFileLinkTarget(presentation.path, path, request.signal).then((found) => {
+          void findFileLinkTarget(presentation.path, path, request.signal, reply).then((found) => {
             if (request.signal.aborted) return;
             const fullPath =
               props.workspaceRoot && !isAbsolutePath(found)
@@ -3144,7 +3192,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           return;
         }
         case "open-file":
-          onMarkdownLinkPress(href);
+          onMarkdownLinkPress(href, false, reply);
           return;
         case "save":
           shareFileChip(target);
@@ -3751,13 +3799,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   if (props.contentPresentation.kind === "unavailable" && props.queuedMessages.length === 0) {
     return (
-      <ThreadFeedPlaceholder
-        title={props.contentPresentation.title}
-        detail={props.contentPresentation.detail}
-        topInset={topContentInset}
-        bottomInset={bottomContentInset}
-        horizontalPadding={horizontalPadding}
-      />
+      <View style={{ flex: 1, marginLeft: contentLeftInset, marginRight: contentRightInset }}>
+        <ThreadFeedPlaceholder
+          title={props.contentPresentation.title}
+          detail={props.contentPresentation.detail}
+          topInset={topContentInset}
+          bottomInset={bottomContentInset}
+          horizontalPadding={horizontalPadding}
+        />
+      </View>
     );
   }
 

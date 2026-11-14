@@ -25,12 +25,18 @@ function cacheKey(channel: ReleaseChannel) {
   return `t3code-${channel}-release`;
 }
 
+async function fetchJson<T>(url: string): Promise<T> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`GitHub API responded ${response.status}`);
+  return response.json();
+}
+
 async function fetchStable(): Promise<Release> {
-  return fetch(LATEST_API_URL).then((r) => r.json());
+  return fetchJson(LATEST_API_URL);
 }
 
 async function fetchNightly(): Promise<Release> {
-  const list: Release[] = await fetch(LIST_API_URL).then((r) => r.json());
+  const list = await fetchJson<Release[]>(LIST_API_URL);
   const nightly = Array.isArray(list)
     ? list.find((release) => release.tag_name?.includes("-nightly."))
     : undefined;
