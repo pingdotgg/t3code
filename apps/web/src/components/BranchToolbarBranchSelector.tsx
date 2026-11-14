@@ -54,7 +54,7 @@ import {
   resolveBranchToolbarPrBranch,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
-  confirmSelectedRef,
+  resolveConfirmedSelectedRef,
   resolveDefaultWorktreeBaseBranch,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
@@ -428,24 +428,17 @@ export function BranchToolbarBranchSelector({
     });
   };
 
-  // The picker's list can predate a checkout an agent ran itself, so confirm a worktree
-  // claim before skipping the switch. Unconfirmed claims fall back to a real checkout,
-  // which Git refuses if the branch is checked out elsewhere.
+  // The picker's list, and the server's coalesced ref listing, can predate a checkout an agent
+  // ran itself. Only the claimed worktree's live HEAD confirms the claim; an unconfirmed one
+  // falls back to a real checkout, which Git refuses if the branch is checked out elsewhere.
   const latestSelectionIdRef = useRef(0);
-  const readSelectedRef = (cwd: string, listedRef: VcsRef): Promise<VcsRef> =>
-    confirmSelectedRef(listedRef, async (cursor) => {
-      const result = await readRefs({
-        environmentId,
-        input: {
-          cwd,
-          query: listedRef.name,
-          refKind: listedRef.isRemote ? "remote" : "local",
-          limit: 100,
-          ...(cursor === undefined ? { refresh: true } : { cursor }),
-        },
-      });
-      return result._tag === "Success" ? result.value : null;
+  const readSelectedRef = async (worktreePath: string, listedRef: VcsRef): Promise<VcsRef> => {
+    const result = await readRefs({
+      environmentId,
+      input: { cwd: worktreePath, query: listedRef.name, refKind: "local", limit: 1 },
     });
+    return resolveConfirmedSelectedRef(listedRef, result._tag === "Success" ? result.value : null);
+  };
 
   const selectBranch = async (listedRef: VcsRef) => {
     if (!canUpdateThreadBranch || !branchCwd || !activeProjectCwd || isBranchActionPending) return;
@@ -464,7 +457,7 @@ export function BranchToolbarBranchSelector({
     onComposerFocusRequest?.();
 
     const refName = listedRef.worktreePath
-      ? await readSelectedRef(branchCwd, listedRef)
+      ? await readSelectedRef(listedRef.worktreePath, listedRef)
       : listedRef;
     // A later pick made while this one was confirming its worktree wins.
     if (selectionId !== latestSelectionIdRef.current) return;
