@@ -2,11 +2,11 @@
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 import { describe, it, vi } from "vitest";
 import { mockJaegerBinding } from "../../../shared/tracing.ts";
+import type { AssetConfig } from "../../../shared/types.ts";
 import { Analytics } from "../src/analytics.ts";
 import { SEC_FETCH_MODE_NAVIGATE_HEADER_PREFERS_ASSET_SERVING } from "../src/compatibility-flags.ts";
 import { normalizeConfiguration } from "../src/configuration.ts";
 import { canFetch, handleRequest } from "../src/handler.ts";
-import type { AssetConfig } from "../../../shared/types.ts";
 
 const mockEnv = {
   JAEGER: mockJaegerBinding(),
@@ -102,9 +102,7 @@ describe("[Asset Worker] `handleRequest`", () => {
     expect(response.status).toBe(304);
   });
 
-  it("returns 200 OK responses for an invalid ETag in If-None-Match", async ({
-    expect,
-  }) => {
+  it("returns 200 OK responses for an invalid ETag in If-None-Match", async ({ expect }) => {
     const configuration: AssetConfig = normalizeConfiguration({
       html_handling: "none",
       not_found_handling: "none",
@@ -154,7 +152,7 @@ describe("[Asset Worker] `handleRequest`", () => {
           return null;
         }
       },
-      async (_: string) => ({
+      async () => ({
         readableStream: new ReadableStream(),
         contentType: "text/html",
         cacheStatus: "HIT",
@@ -178,7 +176,7 @@ describe("[Asset Worker] `handleRequest`", () => {
           return null;
         }
       },
-      async (_: string) => ({
+      async () => ({
         readableStream: new ReadableStream(),
         contentType: "text/html",
         cacheStatus: "HIT",
@@ -202,7 +200,7 @@ describe("[Asset Worker] `handleRequest`", () => {
     const exists = async (pathname: string) => {
       return assets[pathname] ?? null;
     };
-    const getByEtag = async (_: string) => ({
+    const getByEtag = async () => ({
       readableStream: new ReadableStream(),
       contentType: "text/html",
       cachesStatus: "HIT",
@@ -372,9 +370,7 @@ describe("[Asset Worker] `handleRequest`", () => {
         analytics,
       );
 
-      expect(response.headers.get("X-Custom-Foo-Header")).toBe(
-        "Custom-Foo-Value",
-      );
+      expect(response.headers.get("X-Custom-Foo-Header")).toBe("Custom-Foo-Value");
       expect(response.headers.has("X-Custom-Header")).toBeFalsy();
 
       // Placeholder header
@@ -388,9 +384,7 @@ describe("[Asset Worker] `handleRequest`", () => {
         analytics,
       );
 
-      expect(response.headers.get("X-Custom-Bang-Header")).toBe(
-        "Custom-Bang-Value baz",
-      );
+      expect(response.headers.get("X-Custom-Bang-Header")).toBe("Custom-Bang-Value baz");
 
       // Placeholder doesn't catch children
       response = await handleRequest(
@@ -504,9 +498,7 @@ describe("[Asset Worker] `handleRequest`", () => {
       );
 
       expect(response.headers.get("Location")).toBe("/foo");
-      expect(response.headers.get("X-Custom-Foo-HTML-Header")).toBe(
-        "Custom-Foo-HTML-Value",
-      );
+      expect(response.headers.get("X-Custom-Foo-HTML-Header")).toBe("Custom-Foo-HTML-Value");
 
       // Custom headers are applied even to not modified responses
       response = await handleRequest(
@@ -522,9 +514,7 @@ describe("[Asset Worker] `handleRequest`", () => {
       );
 
       expect(response.status).toBe(304);
-      expect(response.headers.get("X-Custom-Foo-Header")).toBe(
-        "Custom-Foo-Value",
-      );
+      expect(response.headers.get("X-Custom-Foo-Header")).toBe("Custom-Foo-Value");
 
       // Custom headers are applied even to custom redirect responses
       response = await handleRequest(
@@ -548,9 +538,7 @@ describe("[Asset Worker] `handleRequest`", () => {
 
       expect(response.status).toBe(301);
       expect(response.headers.get("Location")).toBe("/bar");
-      expect(response.headers.get("X-Custom-Foo-Header")).toBe(
-        "Custom-Foo-Value",
-      );
+      expect(response.headers.get("X-Custom-Foo-Header")).toBe("Custom-Foo-Value");
     });
   });
 
@@ -699,9 +687,7 @@ describe("[Asset Worker] `handleRequest`", () => {
             return {
               readableStream: new ReadableStream({
                 start(controller) {
-                  controller.enqueue(
-                    new TextEncoder().encode("hello from other asset!"),
-                  );
+                  controller.enqueue(new TextEncoder().encode("hello from other asset!"));
                   controller.close();
                 },
               }),
@@ -734,9 +720,7 @@ describe("[Asset Worker] `handleRequest`", () => {
             return {
               readableStream: new ReadableStream({
                 start(controller) {
-                  controller.enqueue(
-                    new TextEncoder().encode("hello from other asset!"),
-                  );
+                  controller.enqueue(new TextEncoder().encode("hello from other asset!"));
                   controller.close();
                 },
               }),
@@ -769,9 +753,7 @@ describe("[Asset Worker] `handleRequest`", () => {
             return {
               readableStream: new ReadableStream({
                 start(controller) {
-                  controller.enqueue(
-                    new TextEncoder().encode("hello from other asset!"),
-                  );
+                  controller.enqueue(new TextEncoder().encode("hello from other asset!"));
                   controller.close();
                 },
               }),
@@ -804,9 +786,7 @@ describe("[Asset Worker] `handleRequest`", () => {
             return {
               readableStream: new ReadableStream({
                 start(controller) {
-                  controller.enqueue(
-                    new TextEncoder().encode("hello from 404.html!"),
-                  );
+                  controller.enqueue(new TextEncoder().encode("hello from 404.html!"));
                   controller.close();
                 },
               }),
@@ -891,9 +871,7 @@ describe("[Asset Worker] `handleRequest`", () => {
       );
 
       expect(response.status).toBe(302);
-      expect(response.headers.get("Location")).toBe(
-        "/foo/new-dynamic/?with#params",
-      );
+      expect(response.headers.get("Location")).toBe("/foo/new-dynamic/?with#params");
 
       response = await handleRequest(
         new Request("https://example.com/dynamic/bar/baz/qux"),
@@ -911,9 +889,7 @@ describe("[Asset Worker] `handleRequest`", () => {
       );
 
       response = await handleRequest(
-        new Request(
-          "https://example.com/dynamic/bar/baz/qux/too/many/segments",
-        ),
+        new Request("https://example.com/dynamic/bar/baz/qux/too/many/segments"),
         // @ts-expect-error Empty config default to using mocked jaeger
         mockEnv,
         configuration,
@@ -1003,9 +979,7 @@ describe("[Asset Worker] `handleRequest`", () => {
       );
 
       expect(response.status).toBe(302);
-      expect(response.headers.get("Location")).toBe(
-        "/new-partialSplatfoo/bar/baz",
-      );
+      expect(response.headers.get("Location")).toBe("/new-partialSplatfoo/bar/baz");
 
       response = await handleRequest(
         new Request("https://example.com/partialPlaceholderfoo"),
@@ -1018,9 +992,7 @@ describe("[Asset Worker] `handleRequest`", () => {
       );
 
       expect(response.status).toBe(302);
-      expect(response.headers.get("Location")).toBe(
-        "/new-partialPlaceholderfoo",
-      );
+      expect(response.headers.get("Location")).toBe("/new-partialPlaceholderfoo");
 
       response = await handleRequest(
         new Request("https://example.com/partialPlaceholderfoo/"),
@@ -1035,9 +1007,7 @@ describe("[Asset Worker] `handleRequest`", () => {
       expect(response.status).toBe(200);
     });
 
-    it("should prevent external redirects via double slash", async ({
-      expect,
-    }) => {
+    it("should prevent external redirects via double slash", async ({ expect }) => {
       const configuration: AssetConfig = normalizeConfiguration({
         html_handling: "none",
         not_found_handling: "none",
@@ -1133,10 +1103,7 @@ describe("[Asset Worker] `canFetch`", () => {
       return null;
     };
 
-    for (const notFoundHandling of [
-      "single-page-application",
-      "404-page",
-    ] as const) {
+    for (const notFoundHandling of ["single-page-application", "404-page"] as const) {
       expect(
         await canFetch(
           new Request("https://example.com/foo"),
@@ -1189,10 +1156,7 @@ describe("[Asset Worker] `canFetch`", () => {
       return null;
     };
 
-    for (const notFoundHandling of [
-      "single-page-application",
-      "404-page",
-    ] as const) {
+    for (const notFoundHandling of ["single-page-application", "404-page"] as const) {
       for (const headers of [{}, { "Sec-Fetch-Mode": "navigate" }] as Array<
         Record<string, string>
       >) {
@@ -1284,9 +1248,7 @@ describe("[Asset Worker] `canFetch`", () => {
     ).toBeFalsy();
   });
 
-  it('should return "true" for custom redirects without underlying assets', async ({
-    expect,
-  }) => {
+  it('should return "true" for custom redirects without underlying assets', async ({ expect }) => {
     const exists = (pathname: string) => {
       if (["/404.html", "/does-exist"].includes(pathname)) {
         return "some-etag";
@@ -1620,10 +1582,7 @@ describe("[Asset Worker] `handleRequest` analytics", () => {
 
   it.for(cases)(
     "records servedBy=$expectedServedBy for $name",
-    async (
-      { request, configuration, assets, expectedServedBy },
-      { expect },
-    ) => {
+    async ({ request, configuration, assets, expectedServedBy }, { expect }) => {
       const analytics = await requestWithAnalytics({
         request,
         configuration,

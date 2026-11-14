@@ -1,4 +1,7 @@
-import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
+import {
+  acknowledgedThreadMessagesAtom,
+  pruneCaughtUpAcknowledgedThreadMessages,
+} from "./acknowledged-thread-messages";
 import {
   CommandId,
   EnvironmentId,
@@ -117,6 +120,7 @@ vi.mock("./use-thread-outbox", async () => {
   return {
     editingQueuedMessageIdsAtom: Atom.make<Record<string, boolean>>({}).pipe(Atom.keepAlive),
     dispatchingQueuedMessageIdAtom: Atom.make(null).pipe(Atom.keepAlive),
+    retryingQueuedMessageIdsAtom: Atom.make({}).pipe(Atom.keepAlive),
     threadOutboxShellStatusesAtom: Atom.make(new Map()),
   };
 });
@@ -144,6 +148,7 @@ vi.mock("./thread-outbox", async () => {
 });
 
 import * as Option from "effect/Option";
+import { scopedThreadKey } from "../lib/scopedEntities";
 import { appAtomRegistry } from "./atom-registry";
 import { pendingThreadCreationOutcomesAtom } from "./pending-thread-creation";
 import { clearThreadComposerError, threadComposerErrorsAtom } from "./thread-composer-error";
@@ -362,6 +367,32 @@ describe("thread outbox drain delivery cleanup", () => {
     expect(appAtomRegistry.get(acknowledgedThreadMessagesAtom)).toEqual([
       { ...second, sequence: 9 },
     ]);
+  });
+
+  it("drops an acknowledged row once the open thread catches up, so a reload cannot resurrect it", async () => {
+    const message = queuedMessage({ messageId: "paged-out-later", text: "Delivered" });
+    await harness.manager.enqueue(message);
+    await completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId), 7);
+
+    pruneCaughtUpAcknowledgedThreadMessages(
+      scopedThreadKey(message.environmentId, message.threadId),
+      {
+        sequence: 6,
+        messages: [],
+      },
+    );
+    expect(appAtomRegistry.get(acknowledgedThreadMessagesAtom)).toEqual([
+      { ...message, sequence: 7 },
+    ]);
+
+    pruneCaughtUpAcknowledgedThreadMessages(
+      scopedThreadKey(message.environmentId, message.threadId),
+      {
+        sequence: 7,
+        messages: [],
+      },
+    );
+    expect(appAtomRegistry.get(acknowledgedThreadMessagesAtom)).toEqual([]);
   });
 
   it("removes an acknowledged outbox item even when the sign-out archive write fails", async () => {

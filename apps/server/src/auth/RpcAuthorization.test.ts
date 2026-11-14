@@ -4,6 +4,7 @@ import {
   AuthFilesystemReadScope,
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
+  AuthAccessWriteScope,
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -68,6 +69,12 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("lets thread readers observe and refresh checkout branches", () => {
+    for (const method of [WS_METHODS.subscribeVcsBranch, WS_METHODS.vcsRefreshBranch]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(
@@ -129,9 +136,64 @@ describe("RPC scope middleware", () => {
         requiredPermission: missing,
       });
       expect(handled).toEqual([]);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
+
+it.effect.each([WS_METHODS.subscribeVcsBranch, WS_METHODS.subscribeVcsStatus] as const)(
+  "enforces read permission on stream %s",
+  (method) =>
+    Effect.gen(function* () {
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (
+            tag,
+          ): tag is Exclude<
+            keyof typeof RPC_REQUIRED_SCOPES,
+            typeof WS_METHODS.subscribeVcsBranch | typeof WS_METHODS.subscribeVcsStatus
+          > => tag !== WS_METHODS.subscribeVcsBranch && tag !== WS_METHODS.subscribeVcsStatus,
+        ),
+      );
+      let handled = 0;
+      const handlers = Layer.mergeAll(
+        group.toLayerHandler(WS_METHODS.subscribeVcsBranch, () =>
+          Stream.fromEffect(
+            Effect.sync(() => {
+              handled++;
+              return { refName: "main" };
+            }),
+          ),
+        ),
+        group.toLayerHandler(WS_METHODS.subscribeVcsStatus, () =>
+          Stream.fromEffect(
+            Effect.sync(() => {
+              handled++;
+            }),
+          ).pipe(Stream.drain),
+        ),
+      );
+      const denied = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.merge(handlers, RpcAuthorization.layer([]))),
+      );
+      expect(
+        yield* Stream.runDrain(
+          method === WS_METHODS.subscribeVcsBranch
+            ? denied[method]({ cwd: "/repo" }).pipe(Stream.drain)
+            : denied[method]({ cwd: "/repo" }).pipe(Stream.drain),
+        ).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthOrchestrationReadScope });
+      expect(handled).toBe(0);
+      const granted = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.merge(handlers, RpcAuthorization.layer([AuthOrchestrationReadScope]))),
+      );
+      yield* Stream.runDrain(
+        method === WS_METHODS.subscribeVcsBranch
+          ? granted[method]({ cwd: "/repo" }).pipe(Stream.drain)
+          : granted[method]({ cwd: "/repo" }).pipe(Stream.drain),
+      );
+      expect(handled).toBe(1);
+    }),
+);
 
 describe("settings mutation authorization", () => {
   const group = WsRpcGroup.omit(
@@ -192,39 +254,52 @@ describe("settings mutation authorization", () => {
           providerInstanceMutation,
         }).pipe(Effect.flip),
       ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
-      expect(handled).toBe(2);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("does not let a settings grant create or remove providers or secret providers", () =>
-    Effect.gen(function* () {
-      let handled = false;
-      const client = yield* RpcTest.makeClient(group).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            group.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
-              Effect.sync(() => {
-                handled = true;
-                return DEFAULT_SERVER_SETTINGS;
-              }),
-            ),
-            RpcAuthorization.layer([AuthSettingsWriteScope]),
-          ),
-        ),
-      );
-      expect(
-        yield* client[WS_METHODS.serverUpdateSettings]({
-          patch: {},
-          providerInstanceMutation,
-        }).pipe(Effect.flip),
-      ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+      // Removing a secret provider clears settings fields that read from it.
       expect(
         yield* client[WS_METHODS.serverUpdateSettings]({
           patch: { secretProviders: { [SecretProviderId.make("personal")]: null } },
         }).pipe(Effect.flip),
-      ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
-      expect(handled).toBe(false);
-    }).pipe(Effect.scoped),
+      ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+      expect(handled).toBe(2);
+    }),
+  );
+
+  it.effect(
+    "does not let a settings grant manage providers or turn off T3 Connect device approval",
+    () =>
+      Effect.gen(function* () {
+        let handled = false;
+        const client = yield* RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              group.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
+                Effect.sync(() => {
+                  handled = true;
+                  return DEFAULT_SERVER_SETTINGS;
+                }),
+              ),
+              RpcAuthorization.layer([AuthSettingsWriteScope]),
+            ),
+          ),
+        );
+        expect(
+          yield* client[WS_METHODS.serverUpdateSettings]({
+            patch: {},
+            providerInstanceMutation,
+          }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+        expect(
+          yield* client[WS_METHODS.serverUpdateSettings]({
+            patch: { secretProviders: { [SecretProviderId.make("personal")]: null } },
+          }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+        expect(
+          yield* client[WS_METHODS.serverUpdateSettings]({
+            patch: { requireConnectDeviceApproval: false },
+          }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthAccessWriteScope });
+        expect(handled).toBe(false);
+      }),
   );
 });
 
@@ -262,7 +337,7 @@ it.effect("requires task permission before attaching a prepared worktree to a th
       }).pipe(Effect.flip),
     ).toMatchObject({ requiredPermission: AuthOrchestrationOperateScope });
     expect(handled).toBe(false);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 describe("thread context authorization", () => {
@@ -314,7 +389,7 @@ describe("thread context authorization", () => {
           reader[WS_METHODS.gitRunStackedAction]({ ...withThread, actionId: "allowed" }),
         );
         expect(handled.at(-1)).toBe("allowed");
-      }).pipe(Effect.scoped),
+      }),
   );
 });
 
@@ -345,10 +420,14 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
     yield* client[WS_METHODS.assetsCreateUrl]({
       resource: { _tag: "attachment", attachmentId: "image" },
     });
+    yield* client[WS_METHODS.assetsCreateUrl]({
+      resource: { _tag: "native-app-icon", app: { _tag: "app-id", appId: "com.apple.calculator" } },
+    });
     for (const resource of [
       { _tag: "workspace-file", threadId: ThreadId.make("thread"), path: "file.txt" },
       { _tag: "media-file", threadId: ThreadId.make("thread"), path: "/repo/image.png" },
       { _tag: "draft-workspace-file", cwd: "/repo", path: "file.txt" },
+      { _tag: "native-app-icon", app: { _tag: "app-path", path: "/private/Secret.app" } },
     ] as const) {
       expect(
         yield* client[WS_METHODS.assetsCreateUrl]({ resource }).pipe(Effect.flip),
@@ -357,8 +436,8 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
         requiredPermission: AuthFilesystemReadScope,
       });
     }
-    expect(handled).toBe(1);
-  }).pipe(Effect.scoped),
+    expect(handled).toBe(2);
+  }),
 );
 
 it.effect("denies manual cleanup before the handler without settings permission", () =>
@@ -399,5 +478,5 @@ it.effect("denies manual cleanup before the handler without settings permission"
       requiredPermission: AuthSettingsWriteScope,
     });
     expect(handled).toBe(false);
-  }).pipe(Effect.scoped),
+  }),
 );

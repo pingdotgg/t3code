@@ -5,7 +5,6 @@
  */
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
-
 import type { LogEntry } from "./Model.ts";
 
 export type TestStatus = "pass" | "fail" | "skip" | "todo";
@@ -13,7 +12,7 @@ export type TestStatus = "pass" | "fail" | "skip" | "todo";
 export interface TestMeta {
   readonly tags: ReadonlyArray<string>;
   readonly optInTags: ReadonlyArray<string>;
-  /** Stable id: `<file> > <describe chain> > <name>`. */
+  /** Unique test identity, stable across retries; use titlePath for display. */
   readonly id: string;
   readonly file: string;
   readonly titlePath: ReadonlyArray<string>;
@@ -125,6 +124,14 @@ export type TestEvent =
       readonly logs?: ReadonlyArray<LogEntry>;
     }
   | {
+      /**
+       * The test holds its run lock (`exclusive`) and starts executing. Until
+       * then it is queued: an exclusive test can wait out a busy phase.
+       */
+      readonly _tag: "TestLocked";
+      readonly test: TestMeta;
+    }
+  | {
       readonly _tag: "TestEnd";
       readonly test: TestMeta;
       readonly result: TestResult;
@@ -156,9 +163,7 @@ export interface ReporterService {
    */
   readonly waitForExit: (summary: RunSummary) => Effect.Effect<void>;
   /** Called once by the runner when interactive control becomes available. */
-  readonly attachController?: (
-    controller: RunController,
-  ) => Effect.Effect<void>;
+  readonly attachController?: (controller: RunController) => Effect.Effect<void>;
 }
 
 export class Reporter extends Context.Service<Reporter, ReporterService>()(

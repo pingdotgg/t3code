@@ -11,6 +11,8 @@ const { version } = JSON.parse(
 );
 
 const SUPPORTED = ["darwin-arm64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
+// Well inside launchd's 20 s ExitTimeOut, which SIGKILLs only the launcher and orphans the runtime.
+const TERMINATE_GRACE_MS = 5_000;
 
 function t3Home() {
   const raw = (process.env.T3CODE_HOME || "").trim();
@@ -20,8 +22,20 @@ function t3Home() {
   return path.resolve(raw);
 }
 
+const isTransient = (status) => status === 408 || status === 429 || status >= 500;
+
 async function get(url) {
-  const response = await fetch(url);
+  let response;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      response = await fetch(url);
+      if (attempt === 4 || !isTransient(response.status)) break;
+      await response.body?.cancel();
+    } catch (error) {
+      if (attempt === 4) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** (attempt - 1)));
+  }
   if (response.status === 404) {
     throw new Error(
       `${url} does not exist yet. If ${version} was just released, try again in a few minutes.`,
@@ -90,6 +104,24 @@ async function install(dir, key) {
     });
     if (extract.status !== 0) throw new Error(`could not extract ${archive}`);
     fs.rmSync(file);
+    const validate = spawnSync(
+      path.join(staging, process.platform === "win32" ? "t3.exe" : "t3"),
+      ["--version"],
+      {
+        stdio: ["ignore", "ignore", "pipe"],
+        encoding: "utf8",
+        timeout: 30_000,
+        killSignal: "SIGKILL",
+      },
+    );
+    if (validate.status !== 0) {
+      throw executableError(
+        key,
+        validate.error?.message ||
+          validate.stderr?.trim() ||
+          `--version exited with ${validate.signal || validate.status}`,
+      );
+    }
     fs.writeFileSync(path.join(staging, ".install-complete"), `${version}\n`);
     publish(staging, dir);
   } finally {
@@ -169,12 +201,49 @@ async function main() {
     child.on("message", (message) => process.connected && process.send(message));
     process.on("disconnect", () => child.connected && child.disconnect());
   }
+  let force;
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-    process.on(signal, () => (ipc || signal !== "SIGINT") && child.kill(signal));
+    process.on(signal, () => {
+      if (!ipc && signal === "SIGINT") return;
+      child.kill(signal);
+      force ??= setTimeout(() => killTree(child), TERMINATE_GRACE_MS).unref();
+    });
   }
-  child.on("error", (error) => fail(error));
+  child.on("error", (error) => fail(executableError(key, error.message)));
   child.on("exit", (code, signal) =>
     process.exit(code ?? 128 + (os.constants.signals[signal] || 1)),
+  );
+}
+
+/** SIGKILL the runtime and its providers, which a runtime stuck on shutdown never stops. */
+function killTree(child) {
+  const pids = [child.pid];
+  if (process.platform !== "win32") {
+    const table =
+      spawnSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8", timeout: 2_000 }).stdout ||
+      "";
+    const rows = table
+      .trim()
+      .split("\n")
+      .map((line) => line.trim().split(/\s+/).map(Number));
+    for (let i = 0; i < pids.length; i++) {
+      for (const [pid, ppid] of rows) if (ppid === pids[i]) pids.push(pid);
+    }
+  }
+  for (const pid of pids.slice(1)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
+  }
+  child.kill("SIGKILL");
+}
+
+function executableError(key, detail) {
+  return new Error(
+    `could not run T3 Code ${version} for ${key}: ${detail}` +
+      (process.platform === "linux"
+        ? "\nThe Linux release requires glibc; musl-based systems such as Alpine are not supported. Use a glibc-based Linux environment."
+        : ""),
   );
 }
 

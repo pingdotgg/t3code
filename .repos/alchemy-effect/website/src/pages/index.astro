@@ -6,67 +6,75 @@ import ProviderMark from "../components/marketing/ProviderMark.astro";
 import HeroBgGraph from "../components/marketing/HeroBgGraph.astro";
 import Yantra from "../brand/Yantra.astro";
 import DevTuiTerminal from "../components/marketing-islands/DevTuiTerminal.tsx";
-import DeployTerminal from "../components/marketing-islands/DeployTerminal.tsx";
-import HeroDeployTerminal from "../components/marketing-islands/HeroDeployTerminal.tsx";
+import HeroHosts from "../components/marketing-islands/HeroHosts.tsx";
+import { HOSTS, hostSource } from "../components/marketing-islands/heroHosts";
+import { installSpec } from "../../plugins/preview-install.ts";
 import Sentiment from "../components/marketing/Sentiment.astro";
 import AlchemicalDivider from "../components/marketing/AlchemicalDivider.astro";
-import HeroCodeBlock from "../components/marketing/HeroCodeBlock.astro";
 import TestTerminal from "../components/marketing-islands/TestTerminal.tsx";
 import PRLifecycle from "../components/marketing-islands/PRLifecycle.tsx";
+import PreviewComment from "../components/marketing-islands/PreviewComment.tsx";
+import TypePolicy from "../components/marketing-islands/TypePolicy.tsx";
+import ObservabilityDash from "../components/marketing-islands/ObservabilityDash.tsx";
 import CopyForAgent from "../components/marketing-islands/CopyForAgent.tsx";
+import PhotosLayers from "../components/marketing-islands/PhotosLayers.tsx";
 
-// Hero: the smallest complete-looking Worker (KV only; `Sessions` and
-// `Bindings` are declared elsewhere in the file).
-const HERO_SRC = `export default Cloudflare.Worker(
-  "Api",
-  { main: import.meta.url },
-  Effect.gen(function* () {
-    const kv = yield* Cloudflare.KV.ReadWriteNamespace(Sessions);
-    return {
-      fetch: Effect.gen(function* () {
-        const user = yield* kv.get("user");
-        return yield* HttpServerResponse.json({ user });
-      }),
-    };
-  }).pipe(Effect.provide(Bindings)),
-);`;
-
-// Deploy section: the whole Worker file, minus imports.
-const STACK_SRC = `export const Photos = Cloudflare.R2.Bucket("Photos");
-export const Sessions = Cloudflare.KV.Namespace("Sessions");
-
-const Bindings = Layer.mergeAll(
-  Cloudflare.R2.ReadWriteBucketBinding,
-  Cloudflare.KV.ReadWriteNamespaceBinding,
-);
-
-export default Cloudflare.Worker(
-  "Api",
-  { main: import.meta.url },
-  Effect.gen(function* () {
-    const photos = yield* Cloudflare.R2.ReadWriteBucket(Photos);
-    const kv = yield* Cloudflare.KV.ReadWriteNamespace(Sessions);
-    return {
-      fetch: Effect.gen(function* () {
-        const { objects } = yield* photos.list();
-        const user = yield* kv.get("user");
-        return yield* HttpServerResponse.json({ user, objects });
-      }),
-    };
-  }).pipe(Effect.provide(Bindings)),
-);`;
+const alchemySpec = installSpec("alchemy");
 
 // The hero terminal covers the code card's empty bottom-right corner: it
 // starts below the last line that reaches TERM_COL, so no code is hidden.
-const TERM_COL = 38;
-const STACK_LINES = HERO_SRC.split("\n");
-const TERM_LINE =
-  STACK_LINES.findLastIndex((l) => l.trimEnd().length > TERM_COL - 2) + 1;
-const STACK_WIDTH = Math.max(...STACK_LINES.map((l) => l.length));
+// The code changes per host, so measure every host's version.
+const TERM_COL = 44;
+const HOST_LINES = HOSTS.map((h) => hostSource(h.values).split("\n"));
+const TERM_LINE = Math.max(
+  ...HOST_LINES.map(
+    (lines) => lines.findLastIndex((l) => l.trimEnd().length > TERM_COL - 2) + 1,
+  ),
+);
+const STACK_WIDTH = Math.max(...HOST_LINES.flat().map((l) => l.length));
+// Cropped to the comment logic inside the Stack.
+const PREVIEW_SRC = `const api = yield* Api;
+const pr = yield* Config.option(Config.Int("PULL_REQUEST"));
+const sha = yield* Config.String("GITHUB_SHA");
 
-const TEST_SRC = `// each suite deploys its own isolated stack
-const stack = beforeAll(deploy(Stack));   // real R2, real DynamoDB
-afterAll(destroy(Stack));                 // torn down at the end
+if (Option.isSome(pr)) {
+  yield* GitHub.Comment("Preview", {
+    owner: "acme",
+    repository: "my-app",
+    issueNumber: pr.value,
+    body: Output.interpolate\`Preview: \${api.url} (\${sha})\`,
+    allowDelete: true,
+  });
+}`;
+// The GitHub.Comment block, highlighted in the snippet above.
+const PREVIEW_COMMENT_LINES: [number, number][] = [[6, 12]];
+
+// The vertical track beside the sections that walk the full picture.
+const RAIL = [
+  {
+    label: "Your machine",
+    steps: [
+      { id: "loop-edit", title: "edit" },
+      { id: "loop-types", title: "type-check" },
+      { id: "loop-local", title: "test, emulated" },
+      { id: "loop-live", title: "test, live" },
+    ],
+  },
+  { label: "CI/CD", steps: [{ id: "loop-pr", title: "preview per PR" }] },
+  { label: "Production", steps: [{ id: "loop-prod", title: "monitoring" }] },
+];
+const railKicker = (id: string) => {
+  const group = RAIL.find((g) => g.steps.some((s) => s.id === id))!;
+  return `${group.label} · ${group.steps.find((s) => s.id === id)!.title}`;
+};
+
+const TEST_SRC = `const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
+  providers: Cloudflare.providers(),
+  dev: !!process.env.LOCAL, // emulated, or the real cloud
+});
+
+const stack = beforeAll(deploy(Stack)); // its own stage
+afterAll(destroy(Stack));
 
 test("PUT + GET round-trips through R2", Effect.gen(function* () {
   const { url } = yield* stack;
@@ -74,36 +82,13 @@ test("PUT + GET round-trips through R2", Effect.gen(function* () {
   expect(yield* res.text).toBe("hi!");
 }));`;
 
-const OTEL_SRC = `const requestsTotal = Metric.counter("requests_total");
-
-// any OTLP endpoint: Axiom, Datadog, Honeycomb, a collector…
-const Otel = Alchemy.Telemetry.layerOtlp({
-  url: "https://otlp.example.com",
-});
-
-export default Cloudflare.Worker(
-  "Api",
-  { main: import.meta.url },
-  Effect.gen(function* () {
-    yield* Effect.logInfo("request received");
-    yield* Metric.increment(requestsTotal);
-    return { fetch: handler };
-  }).pipe(Effect.provide(Otel)),
-);`;
-
-const DASH_SRC = `export const Dashboard = AWS.CloudWatch.Dashboard("ApiHealth", {
-  widgets: [
-    Widget.line({ title: "p99 latency", metric: api.metrics.p99 }),
-    Widget.line({ title: "requests/s", metric: api.metrics.rps }),
-    Widget.number({ title: "5xx", metric: api.metrics.errorRate }),
-  ],
-});
-
-export const P99Alarm = AWS.CloudWatch.Alarm("p99Latency", {
-  metric: api.metrics.p99,
-  threshold: 500,
-  alarmActions: [pagerDuty, slackWebhook],
-});`;
+/** The app's layers, bottom-up, and what the Photos module owns in each. */
+const PYRAMID = [
+  { layer: "Infrastructure", slice: "Photos bucket" },
+  { layer: "Configuration & policies", slice: "read/write binding" },
+  { layer: "APIs & business logic", slice: "upload()" },
+  { layer: "Frontend", slice: "upload button" },
+];
 
 const VITE_SRC = `import Api from "./src/api.ts";
 
@@ -142,8 +127,8 @@ const PROVIDERS = [
 ---
 
 <Marketing
-  title="Alchemy — reach for the better primitives."
-  description="Snap together cloud resources in TypeScript and let Alchemy take care of the wiring — permissions, config, and bindings — so you can focus on your product."
+  title="Alchemy · the tightest feedback loop from edit to production"
+  description="Cloud programs composed from Layers: type-checked, emulated locally, tested live, and deployed per pull request."
 >
   <!-- Hero + marquee fill the first screen so the marquee lands just above the fold. -->
   <div class="v2-fold">
@@ -161,9 +146,9 @@ const PROVIDERS = [
             data-copy
             class="alc-hero__title"
             id="hero-h1"
-            style="font-size:clamp(38px,6.4vw,60px);"
+            style="font-size:clamp(38px,3.65vw,52px);"
           >
-            Reach for the better primitives
+            The tightest feedback loop from edit to production
           </h1>
           <p
             data-copy
@@ -171,7 +156,7 @@ const PROVIDERS = [
             id="hero-sub"
             style="font-size:clamp(17px,2.2vw,22px);max-width:560px;"
           >
-            Snap together cloud resources and let Alchemy do the wiring so you can focus on your product.
+            Cloud programs composed from Layers: type-checked, emulated locally, tested live, and deployed per pull request.
           </p>
           <div class="alc-hero__cta">
             <Button variant="primary" icon="arrow" href="/getting-started">
@@ -189,12 +174,7 @@ const PROVIDERS = [
         aria-hidden="true"
         style={`--term-line:${TERM_LINE};--term-col:${TERM_COL}ch;--code-cols:${STACK_WIDTH + 1}ch`}
       >
-        <div class="v2-hero__code">
-          <HeroCodeBlock filename="src/api.ts" code={HERO_SRC} compact />
-        </div>
-        <div class="v2-hero__term">
-          <HeroDeployTerminal client:load />
-        </div>
+        <HeroHosts client:load />
       </div>
     </div>
   </section>
@@ -279,11 +259,12 @@ const PROVIDERS = [
   </script>
 
   <!-- ───────────────── THE FULL PICTURE ───────────────── -->
+  <AlchemicalDivider variant="dot" class="v2-divider" />
   <section class="v2-section v2-pat-1 v2-overview">
     <div class="v2-container">
-      <h2 class="v2-h2" data-copy>The full picture</h2>
+      <h2 class="v2-h2" data-copy>Every step is optimized</h2>
       <p class="v2-lede" data-copy>
-          Alchemy can deploy, test, and destroy your app. That's everything you need to have a full CI experience with branch previews and live test on real infratructure. Oh and the graphic below is how long it actually takes; Alchemy does all of that in ~25 seconds.
+        Iterate on your machine and then let CI deploy a preview, test it, and ship it on merge. The type checker answers in milliseconds, emulated tests in seconds, and the real cloud in about 20 seconds.
       </p>
       <p class="v2-overview__source">
         <a
@@ -299,13 +280,124 @@ const PROVIDERS = [
     </div>
   </section>
 
-  <!-- ───────────────── DEV ───────────────── -->
-  <AlchemicalDivider variant="triangle" class="v2-divider" />
-  <section class="v2-section v2-pat-2 v2-feature">
+  <nav class="v2-rail" aria-label="From an edit to production">
+    <span class="v2-rail__track" aria-hidden="true"><span class="v2-rail__fill"></span></span>
+    {RAIL.map((group) => (
+      <div class="v2-rail__group">
+        <span class="v2-rail__label">{group.label}</span>
+        <ol class="v2-rail__steps">
+          {group.steps.map((step) => (
+            <li>
+              <a class="v2-rail__step" href={`#${step.id}`} data-rail={step.id}>
+                <span class="v2-rail__dot" aria-hidden="true"></span>
+                {step.title}
+              </a>
+            </li>
+          ))}
+        </ol>
+      </div>
+    ))}
+  </nav>
+  <script>
+    // Light the rail's step for the section in the middle of the viewport,
+    // fill the track up to it, and show the rail only while those sections
+    // are on screen.
+    const rail = document.querySelector<HTMLElement>(".v2-rail")!;
+    const sections = [
+      ...document.querySelectorAll<HTMLElement>("[data-rail-section]"),
+    ];
+    const links = new Map(
+      [...rail.querySelectorAll<HTMLAnchorElement>("[data-rail]")].map((a) => [
+        a.dataset.rail!,
+        a,
+      ]),
+    );
+    const syncRail = () => {
+      const mid = innerHeight * 0.45;
+      const start = sections[0]!.getBoundingClientRect();
+      const end = sections[sections.length - 1]!.getBoundingClientRect();
+      rail.classList.toggle("is-shown", start.top < mid && end.bottom > mid);
+      const current =
+        sections.findLast((el) => el.getBoundingClientRect().top < mid) ??
+        sections[0]!;
+      let reached = true;
+      for (const [id, a] of links) {
+        a.classList.toggle("is-current", id === current.id);
+        a.classList.toggle("is-done", reached && id !== current.id);
+        if (id === current.id) reached = false;
+      }
+      // One track from the first dot to the last, filled to the current one.
+      const dots = [...rail.querySelectorAll<HTMLElement>(".v2-rail__dot")];
+      const top = rail.getBoundingClientRect().top;
+      const center = (el: HTMLElement) => {
+        const r = el.getBoundingClientRect();
+        return r.top + r.height / 2 - top;
+      };
+      const first = center(dots[0]!);
+      const track = rail.querySelector<HTMLElement>(".v2-rail__track")!;
+      track.style.top = `${first}px`;
+      track.style.height = `${center(dots[dots.length - 1]!) - first}px`;
+      const at = links.get(current.id)!.querySelector<HTMLElement>(".v2-rail__dot")!;
+      track.style.setProperty("--fill", `${center(at) - first}px`);
+    };
+    addEventListener("scroll", syncRail, { passive: true });
+    addEventListener("resize", syncRail);
+    syncRail();
+  </script>
+
+
+  <!-- ───────────────── EDIT ───────────────── -->
+  <AlchemicalDivider variant="line" class="v2-divider" />
+  <section class="v2-section v2-pat-2 v2-feature" id="loop-edit" data-rail-section>
     <div class="v2-container">
-      <h2 class="v2-h2" data-copy>Run your entire stack locally</h2>
+      <p class="v2-kicker">{railKicker("loop-edit")}</p>
+      <h2 class="v2-h2" data-copy>Infrastructure is part of your application</h2>
       <p class="v2-lede" data-copy>
-        As apps grow you have more and more services; each backend service needs to be started in a local emulator or proxy a live service, each client needs its own dev server, and you have to set up HMR. <code class="alc-code-inline">alchemy dev</code> manages all of that for you, 1 command, no extra configuration, and all your services just start.
+        Other IaC tools split an app into two programs, but every feature you build crosses that line. In Alchemy, a Layer owns its infrastructure and service implementation so that features can be decomposed.
+      </p>
+      <div class="v2-split v2-split--center">
+        <figure class="v2-pyramid" aria-label="The Photos module spans every layer of the app">
+          <div class="v2-pyramid__stack">
+            <span class="v2-pyramid__module" data-copy>PHOTOS MODULE</span>
+            <ol class="v2-pyramid__layers">
+              {PYRAMID.map((row, i) => (
+                <li class="v2-pyramid__layer" style={`--w:${100 - i * 12}%`}>
+                  <span class="v2-pyramid__name" data-copy>{row.layer}</span>
+                  <span class="v2-pyramid__slice" data-copy>{row.slice}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+          <span class="v2-pyramid__cut" aria-hidden="true"></span>
+          <span class="v2-pyramid__program v2-pyramid__program--above" data-copy>runtime program</span>
+          <span class="v2-pyramid__program v2-pyramid__program--below" data-copy>infrastructure program</span>
+        </figure>
+        <PhotosLayers client:visible />
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────── TYPE-CHECK ───────────────── -->
+  <AlchemicalDivider variant="triangle" class="v2-divider" />
+  <section class="v2-section v2-pat-3 v2-feature" id="loop-types" data-rail-section>
+    <div class="v2-container">
+      <p class="v2-kicker">{railKicker("loop-types")}</p>
+      <h2 class="v2-h2" data-copy>Type checking proves your infra is correct</h2>
+      <p class="v2-lede" data-copy>
+        Each Layer declares what it needs in its type: the resources it creates, the access it grants, and the services it calls. Leave one out and the program doesn't compile, so a broken stack fails in your editor in milliseconds, before anything deploys.
+      </p>
+      <TypePolicy client:visible />
+    </div>
+  </section>
+
+  <!-- ───────────────── EMULATED ───────────────── -->
+  <AlchemicalDivider variant="square" class="v2-divider" />
+  <section class="v2-section v2-pat-4 v2-feature" id="loop-local" data-rail-section>
+    <div class="v2-container">
+      <p class="v2-kicker">{railKicker("loop-local")}</p>
+      <h2 class="v2-h2" data-copy>Get fast feedback with local emulation</h2>
+      <p class="v2-lede" data-copy>
+        <code class="alc-code-inline">alchemy dev</code> runs Workers, Durable Objects, queues and buckets on emulated services on your machine, and the frontend reloads as you type. Set <code class="alc-code-inline">dev: true</code> in a test and the same suite runs against those services in seconds, with nothing deployed.
       </p>
       <div class="v2-split">
         <CodeBlock filename="alchemy.run.ts" code={VITE_SRC} compact />
@@ -314,13 +406,14 @@ const PROVIDERS = [
     </div>
   </section>
 
-  <!-- ───────────────── TESTING ───────────────── -->
-  <AlchemicalDivider variant="square" class="v2-divider" />
-  <section class="v2-section v2-pat-3 v2-feature">
+  <!-- ───────────────── TESTED LIVE ───────────────── -->
+  <AlchemicalDivider variant="pentagon" class="v2-divider" />
+  <section class="v2-section v2-pat-5 v2-feature" id="loop-live" data-rail-section>
     <div class="v2-container">
-      <h2 class="v2-h2" data-copy>Run tests against real infrastructre</h2>
+      <p class="v2-kicker">{railKicker("loop-live")}</p>
+      <h2 class="v2-h2" data-copy>Test a live deployment when ready to PR</h2>
       <p class="v2-lede" data-copy>
-        <code class="alc-code-inline">alchemy test</code> deploys a temporary stack, runs your tests against it, then tears it down. This way tests hit a real environment instead of mocks or local emulation, and agent loops stay accurate. In CI, tests can inherit the preview deployment stack so deploy doesn't run twice.
+        Once it works locally, run the same test without <code class="alc-code-inline">LOCAL=1</code>. It deploys the app to a stage of its own, runs against real Workers, buckets and permissions, and destroys the stage afterwards, in about 20 seconds.
       </p>
       <div class="v2-split">
         <CodeBlock filename="test/api.test.ts" code={TEST_SRC} compact />
@@ -329,39 +422,43 @@ const PROVIDERS = [
     </div>
   </section>
 
-  <!-- ───────────────── PLAN & DEPLOY ───────────────── -->
-  <AlchemicalDivider variant="pentagon" class="v2-divider" />
-  <section class="v2-section v2-pat-4 v2-feature">
+  <!-- ───────────────── PER PULL REQUEST ───────────────── -->
+  <AlchemicalDivider variant="hexagon" class="v2-divider" />
+  <section class="v2-section v2-pat-6 v2-feature" id="loop-pr" data-rail-section>
     <div class="v2-container">
-      <h2 class="v2-h2" data-copy>Dry run before you deploy</h2>
+      <p class="v2-kicker">{railKicker("loop-pr")}</p>
+      <h2 class="v2-h2" data-copy>Deploy a preview stage in CI before merging</h2>
       <p class="v2-lede" data-copy>
-        <code class="alc-code-inline">plan</code> does a dry-run and show what will change.<code class="alc-code-inline">deploy</code> updates your infrastructure to match the desired state. <code class="alc-code-inline">destroy</code> tears it all down (with safe guards to prevent accidental data deletion). Simple enough for agents, easy enough you'll choose to use it too
+        CI deploys each pull request to its own stage, runs the same tests, and comments a link to try it. The comment is a resource in the same program, so it is updated on every push and deleted with the preview. Merging deploys to production.
       </p>
-      <div class="v2-split">
-        <CodeBlock filename="src/api.ts" code={STACK_SRC} compact />
-        <DeployTerminal client:visible />
+      <div class="v2-split v2-split--preview">
+        <CodeBlock
+          filename="alchemy.run.ts"
+          code={PREVIEW_SRC}
+          compact
+          highlight={PREVIEW_COMMENT_LINES}
+        />
+        <PreviewComment client:visible />
       </div>
     </div>
   </section>
 
   <!-- ───────────────── OBSERVABILITY ───────────────── -->
-  <AlchemicalDivider variant="hexagon" class="v2-divider" />
-  <section class="v2-section v2-pat-5 v2-feature">
+  <AlchemicalDivider variant="heptagon" class="v2-divider" />
+  <section class="v2-section v2-pat-1 v2-feature" id="loop-prod" data-rail-section>
     <div class="v2-container">
-      <h2 class="v2-h2" data-copy>Wired for observability</h2>
+      <p class="v2-kicker">{railKicker("loop-prod")}</p>
+      <h2 class="v2-h2" data-copy>Disciplined monitoring on Day 1</h2>
       <p class="v2-lede" data-copy>
-        Alchemy has logs, spans, and metrics set up by default. The exporter is an Effect Layer so changing providers is a 1 line swap, whether its Axiom, Datadog, or any other OTLP endpoint.<br>Dashboards and alarms are resources themselve so you can define them right next to the resources they are responsible for.
+        Provide one Layer and every request is traced and logged with OpenTelemetry from the first deploy. Its datasets, dashboards and alert monitors are resources in the same program, so monitoring ships with the app. Swap the Layer to send telemetry to a different platform.
       </p>
-      <div class="v2-split">
-        <CodeBlock filename="src/Api.ts" code={OTEL_SRC} compact />
-        <CodeBlock filename="alchemy.run.ts" code={DASH_SRC} compact />
-      </div>
+      <ObservabilityDash client:visible />
     </div>
   </section>
 
   <!-- ───────────────── SENTIMENT ───────────────── -->
-  <AlchemicalDivider variant="heptagon" class="v2-divider" />
-  <section class="v2-section v2-pat-1" aria-labelledby="sentiment-h">
+  <AlchemicalDivider variant="octagon" class="v2-divider" />
+  <section class="v2-section v2-pat-2" aria-labelledby="sentiment-h">
     <div class="v2-container">
       <h2 class="v2-h2" id="sentiment-h" data-copy>Loved by the people shipping with it</h2>
       <p class="v2-lede" data-copy>
@@ -374,13 +471,13 @@ const PROVIDERS = [
 
   <!-- ───────────────── GET STARTED ───────────────── -->
   <AlchemicalDivider variant="circle" class="v2-divider" />
-  <section class="v2-section v2-pat-6 v2-section--last">
+  <section class="v2-section v2-pat-3 v2-section--last">
     <div class="v2-container">
       <h2 class="v2-h2" data-copy>Get started.</h2>
       <ol class="v2-steps">
         <li class="v2-steps__inline">
           <span class="v2-steps__label" data-copy>Install</span>
-          <code class="v2-steps__code">pnpm add alchemy@latest effect</code>
+          <code class="v2-steps__code">pnpm add {alchemySpec} effect</code>
         </li>
         <li id="agent-prompt">
           <span class="v2-steps__label" data-copy>Paste this into your coding agent</span>
@@ -424,10 +521,12 @@ const PROVIDERS = [
   .v2-fold > .v2-hero > .v2-hero__grid {
     width: 100%;
   }
+  /* Bottom-left, under the copy column, where nothing else sits; at the
+     top right it collided with the host reel. */
   .v2-motion-toggle {
     position: absolute;
-    right: 20px;
-    top: 12px;
+    left: 20px;
+    bottom: 12px;
     z-index: 3;
     padding: 4px 10px;
     border: 1px solid var(--alc-hairline-2);
@@ -492,10 +591,11 @@ const PROVIDERS = [
   .v2-hero__grid {
     position: relative;
     z-index: 1;
-    max-width: 1180px;
+    max-width: 1300px;
     margin: 0 auto;
     display: grid;
-    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.3fr);
+    /* Wide enough for the headline to set in two lines at its size. */
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr);
     gap: 48px;
     align-items: center;
   }
@@ -508,6 +608,10 @@ const PROVIDERS = [
   .v2-hero__copy :global(.alc-hero__mark) {
     width: fit-content;
     margin: 0 0 22px;
+  }
+  .v2-hero__copy :global(.alc-hero__title) {
+    text-wrap: balance;
+    margin-bottom: 18px;
   }
   .v2-hero__copy :global(.alc-hero__subtitle) {
     margin-inline: 0;
@@ -532,11 +636,14 @@ const PROVIDERS = [
   .v2-hero__copy :global(.alc-btn--secondary:hover) {
     border-color: var(--alc-terracotta);
   }
+  :global([data-theme="dark"]) .v2-hero__cta-arrow {
+    color: var(--alc-terracotta-deep);
+  }
   .v2-hero__cta-arrow {
-    color: var(--alc-terracotta);
+    color: #7a3a18;
   }
   /* The terminal sits over the code card's empty bottom-right corner.
-     --term-line / --term-col come from HERO_SRC (see TERM_LINE) and are
+     --term-line / --term-col come from the host sources (see TERM_LINE) and are
      in the code font's units (11px mono, 1.65 line-height). */
   .v2-hero__visual {
     --code-lh: 18.15px;
@@ -544,25 +651,35 @@ const PROVIDERS = [
     /* Code and terminal share one grid cell, so the box grows to fit the
        terminal's overhang below the code card. */
     display: grid;
+    /* A fixed-width column, so the terminal's percentage width resolves
+       against the column and stays put while its content changes. */
+    grid-template-columns: minmax(0, 1fr);
     align-items: start;
     justify-items: start;
     text-align: left;
     font-family: var(--alc-font-mono);
     font-size: 11px;
   }
-  .v2-hero__code :global(.alc-code-block__pre) {
+  /* The host reel spans the code card's width, edge to edge. */
+  .v2-hero__visual :global(.v2-hero__reel) {
+    grid-area: 1 / 1;
+    width: calc(34px + var(--code-cols));
+    max-width: 100%;
+    justify-content: space-between;
+  }
+  .v2-hero__visual :global(.v2-hero__code .alc-code-block__pre) {
     font-size: 11px;
     line-height: 1.65;
   }
-  .v2-hero__code,
-  .v2-hero__term {
-    grid-area: 1 / 1;
+  .v2-hero__visual :global(.v2-hero__code),
+  .v2-hero__visual :global(.v2-hero__term) {
+    grid-area: 2 / 1;
   }
-  .v2-hero__code {
+  .v2-hero__visual :global(.v2-hero__code) {
     width: calc(34px + var(--code-cols));
     max-width: 100%;
   }
-  .v2-hero__term {
+  .v2-hero__visual :global(.v2-hero__term) {
     position: relative;
     margin-top: calc(var(--code-header) + 12px + var(--term-line) * var(--code-lh) + 8px);
     margin-left: calc(16px + var(--term-col));
@@ -600,7 +717,9 @@ const PROVIDERS = [
       transparent 100%
     );
   }
-  @media (max-width: 1100px) {
+  /* Below this the right column is too narrow for the terminal to overlap
+     the code, so the hero stacks. */
+  @media (max-width: 1260px) {
     .v2-hero__grid {
       grid-template-columns: minmax(0, 1fr);
       gap: 40px;
@@ -613,12 +732,52 @@ const PROVIDERS = [
     .v2-hero__visual {
       justify-items: stretch;
     }
-    .v2-hero__code {
+    /* Phones show the cycling code (compact form) and drop the deploy
+       terminal, which has no room to overlap it. */
+    .v2-hero__visual :global(.v2-hero__code) {
+      width: auto;
+    }
+    .v2-hero__visual :global(.v2-hero__reel) {
+      width: auto;
+      justify-content: flex-start;
+    }
+    .v2-hero__visual :global(.v2-hero__term) {
       display: none;
     }
-    .v2-hero__term {
-      margin: 0;
-      width: auto;
+    /* The copy fills the screen width here, so the desktop halo can't fade
+       the rings at its edges. A blurred veil covering the whole copy block
+       keeps the white text readable over the animation. */
+    .v2-hero__copy::before {
+      inset: -28px -32px;
+      background: color-mix(in srgb, var(--alc-bg) 68%, transparent);
+      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(4px);
+      -webkit-mask-image: radial-gradient(
+        farthest-side at 50% 50%,
+        #000 72%,
+        transparent 100%
+      );
+      mask-image: radial-gradient(
+        farthest-side at 50% 50%,
+        #000 72%,
+        transparent 100%
+      );
+    }
+    /* Equal-width, stacked CTAs. */
+    .v2-hero__copy :global(.alc-hero__cta) {
+      flex-direction: column;
+      align-items: stretch;
+      max-width: 340px;
+    }
+    .v2-hero__copy :global(.alc-hero__cta .alc-btn) {
+      justify-content: center;
+    }
+    /* Stacked, the bottom-left spot falls on the code card. */
+    .v2-motion-toggle {
+      left: auto;
+      right: 16px;
+      bottom: auto;
+      top: 12px;
     }
   }
 
@@ -738,11 +897,20 @@ const PROVIDERS = [
     margin: 0 auto;
   }
   /* A very faint, static echo of the hero's ring geometry behind each
-     section, alternating sides. Masked so it takes the theme's text color. */
+     section, alternating sides. Masked so it takes the theme's text color.
+     Clipped horizontally only, so a pattern spills into the neighboring
+     sections instead of being cropped; without a per-section stacking
+     context it stays behind their content too. */
   .v2-section {
     position: relative;
+    overflow-x: clip;
+  }
+  /* One stacking context for all sections: patterns (z-index -1) paint above
+     the body background but below every section's content. Clipped so the
+     last section's pattern stops at the footer. */
+  :global(main) {
     isolation: isolate;
-    overflow: hidden;
+    overflow: clip;
   }
   .v2-section::before {
     content: "";
@@ -814,6 +982,11 @@ const PROVIDERS = [
   .v2-split > :global(*) {
     min-width: 0;
   }
+  /* Astro hoists a client:visible loader <script> next to the first such
+     island; as a grid child it would otherwise render as text. */
+  .v2-split > :global(script) {
+    display: none !important;
+  }
   /* Side-by-side cards always match heights: every row item stretches, the
      island wrappers pass that height down, and the shorter card's body
      grows (a terminal keeps its designed minimum). Stacked on narrow
@@ -867,6 +1040,251 @@ const PROVIDERS = [
   .v2-overview__source a:hover {
     color: var(--alc-fg-1);
     text-decoration-color: currentColor;
+  }
+
+  /* ---------- modules: the app's layers, cut by a feature ---------- */
+  .v2-split--center {
+    align-items: center !important;
+  }
+  .v2-pyramid {
+    /* Band height and gap; the cut sits between the 2nd and 3rd bands. */
+    --band: 58px;
+    --gap: 6px;
+    --cut: calc(2 * var(--band) + 1.5 * var(--gap));
+    position: relative;
+    margin: 0;
+  }
+  .v2-pyramid__stack {
+    --slice-left: 46%;
+    --slice-width: 34%;
+    position: relative;
+    width: 76%;
+    padding-top: 30px;
+  }
+  /* The module: one column through every band. */
+  .v2-pyramid__stack::after {
+    content: "";
+    position: absolute;
+    top: 26px;
+    bottom: -4px;
+    left: var(--slice-left);
+    width: var(--slice-width);
+    border: 1.5px solid var(--alc-accent);
+    border-radius: var(--alc-radius);
+    background: color-mix(in srgb, var(--alc-accent) 10%, transparent);
+    pointer-events: none;
+  }
+  .v2-pyramid__module {
+    position: absolute;
+    top: 0;
+    left: var(--slice-left);
+    width: var(--slice-width);
+    text-align: center;
+    font-family: var(--alc-font-mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: var(--alc-accent-text);
+  }
+  .v2-pyramid__layers {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: var(--gap);
+  }
+  .v2-pyramid__layer {
+    position: relative;
+    min-height: var(--band);
+    display: flex;
+    align-items: center;
+  }
+  .v2-pyramid__layer::before {
+    content: "";
+    position: absolute;
+    inset: 0 calc((100% - var(--w)) / 2);
+    border: 1px solid var(--alc-hairline-3);
+    border-radius: var(--alc-radius);
+    background: color-mix(in srgb, var(--alc-bg) 85%, transparent);
+  }
+  .v2-pyramid__name {
+    position: relative;
+    margin-left: calc((100% - var(--w)) / 2);
+    padding: 0 12px;
+    max-width: calc(var(--slice-left) - (100% - var(--w)) / 2);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.25;
+    color: var(--alc-fg-1);
+  }
+  .v2-pyramid__slice {
+    position: absolute;
+    inset: 0 auto 0 var(--slice-left);
+    width: var(--slice-width);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0 6px;
+    font-family: var(--alc-font-mono);
+    font-size: 12.5px;
+    color: var(--alc-fg-1);
+  }
+  .v2-pyramid__cut {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: var(--cut);
+    border-top: 1.5px dashed var(--alc-fg-2);
+  }
+  .v2-pyramid__program {
+    position: absolute;
+    right: 0;
+    width: 22%;
+    font-size: 12px;
+    line-height: 1.3;
+    color: var(--alc-fg-2);
+  }
+  .v2-pyramid__program--above {
+    bottom: calc(var(--cut) + 8px);
+  }
+  .v2-pyramid__program--below {
+    top: calc(100% - var(--cut) + 8px);
+  }
+  @media (max-width: 480px) {
+    .v2-pyramid__name {
+      font-size: 12px;
+      padding: 0 8px;
+    }
+    .v2-pyramid__slice {
+      font-size: 11px;
+    }
+  }
+
+  /* One card, as wide as one column of a split. */
+  .v2-split--narrow {
+    grid-template-columns: minmax(0, 720px);
+  }
+  @media (min-width: 901px) {
+    .v2-split--preview {
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+    }
+  }
+
+  /* ---------- the rail: where each section sits in the full picture ---------- */
+  .v2-rail {
+    position: fixed;
+    top: 50%;
+    left: max(16px, calc((100vw - 1080px) / 2 - 176px));
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    width: 150px;
+    translate: -8px -50%;
+    opacity: 0;
+    pointer-events: none;
+    transition:
+      opacity 240ms ease,
+      translate 240ms ease;
+  }
+  .v2-rail.is-shown {
+    opacity: 1;
+    translate: 0 -50%;
+    pointer-events: auto;
+  }
+  .v2-rail__label {
+    display: block;
+    margin-bottom: 8px;
+    padding-left: 21px;
+    font-family: var(--alc-font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--alc-fg-2);
+  }
+  .v2-rail__steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .v2-rail__step {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 5px 0;
+    font-size: 13.5px;
+    color: var(--alc-fg-2);
+    text-decoration: none;
+    transition: color 160ms ease;
+  }
+  .v2-rail__step:hover {
+    color: var(--alc-fg-1);
+  }
+  /* One track behind every dot; the fill grows to the current step. */
+  .v2-rail__track {
+    position: absolute;
+    left: 4px;
+    width: 1px;
+    background: var(--alc-hairline-3);
+  }
+  .v2-rail__fill {
+    display: block;
+    width: 100%;
+    height: var(--fill, 0px);
+    background: var(--alc-accent);
+    transition: height 240ms ease;
+  }
+  .v2-rail__dot {
+    position: relative;
+    z-index: 1;
+  }
+  .v2-rail__dot {
+    flex: none;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: 1px solid var(--alc-hairline-3);
+    background: var(--alc-bg);
+    transition:
+      background 160ms ease,
+      border-color 160ms ease,
+      box-shadow 160ms ease;
+  }
+  .v2-rail__step.is-done .v2-rail__dot {
+    border-color: var(--alc-accent);
+    background: var(--alc-accent);
+  }
+  .v2-rail__step.is-current {
+    color: var(--alc-fg-1);
+    font-weight: 600;
+  }
+  .v2-rail__step.is-current .v2-rail__dot {
+    border-color: var(--alc-accent);
+    background: var(--alc-accent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--alc-accent) 25%, transparent);
+  }
+  /* Without room beside the content, each section names its step instead. */
+  .v2-kicker {
+    margin: 0 0 10px;
+    font-family: var(--alc-font-mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--alc-accent-text);
+  }
+  @media (min-width: 1440px) {
+    .v2-kicker {
+      display: none;
+    }
+  }
+  @media (max-width: 1439px) {
+    .v2-rail {
+      display: none;
+    }
   }
 
   /* ---------- feature sections ---------- */
