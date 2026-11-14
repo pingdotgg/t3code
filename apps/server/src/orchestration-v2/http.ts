@@ -84,13 +84,14 @@ export const layer = HttpApiBuilder.group(
       function* (options: {
         readonly omitIdleSubagents: boolean;
         readonly omitOlderSettled: boolean;
+        readonly includeArchived: boolean;
       }) {
         const { snapshot } = yield* loadSubscriberShellSnapshot({
           sql,
           listShellIndex: threadManagement.listActiveShellIndex(),
           readThreads: (threadIds) =>
             threadManagement.readShellSnapshot({
-              location: "active",
+              location: options.includeArchived ? "all" : "active",
               ...(threadIds === undefined ? {} : { threadIds }),
             }),
           listProjects: projectStore.listShells(),
@@ -106,6 +107,7 @@ export const layer = HttpApiBuilder.group(
     const answerShellSnapshot = Effect.fn("http.orchestration.answerShellSnapshot")((query: {
       readonly omitIdleSubagents?: string;
       readonly omitOlderSettled?: string;
+      readonly includeArchived?: string;
       readonly resumeFrom?: string;
     }) => {
       const resumeFrom = query.resumeFrom === undefined ? Number.NaN : Number(query.resumeFrom);
@@ -115,6 +117,7 @@ export const layer = HttpApiBuilder.group(
         loadSnapshot: loadShellSnapshot({
           omitIdleSubagents: query.omitIdleSubagents === "1",
           omitOlderSettled: query.omitOlderSettled === "1",
+          includeArchived: query.includeArchived === "1",
         }),
       });
     });

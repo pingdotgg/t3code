@@ -19,6 +19,10 @@ const deps = (input: {
   readonly bundleExitCode?: number;
   readonly bundleStdout?: string;
   readonly failCopy?: boolean;
+  /** Marks this thread live on the drain's currency re-read. */
+  readonly liveAfter?: string;
+  /** Appears in the currency re-read only. */
+  readonly threadAfter?: string;
   readonly liveThread?: string;
   readonly sequences?: Readonly<Record<string, number>>;
   readonly attachmentFiles?: Readonly<Record<string, ReadonlyArray<string>>>;
@@ -65,18 +69,29 @@ const deps = (input: {
     promoted,
     now: Effect.succeed(input.now ?? 0),
     source: {
-      shell: () =>
-        input.failShell === true
-          ? Effect.fail(
-              new FleetDrainStepError({ step: "shell", message: "the worker link is unusable" }),
-            )
-          : Effect.succeed({
-              threads: input.threads.map((threadId) => ({
-                threadId,
-                live: input.liveThread === threadId,
-              })),
-              projects: (input.projects ?? []).map((workspaceRoot) => ({ workspaceRoot })),
-            }),
+      shell: (() => {
+        let calls = 0;
+        return () => {
+          calls += 1;
+          return input.failShell === true
+            ? Effect.fail(
+                new FleetDrainStepError({ step: "shell", message: "the worker link is unusable" }),
+              )
+            : Effect.succeed({
+                threads: [
+                  ...input.threads.map((threadId) => ({
+                    threadId,
+                    live:
+                      input.liveThread === threadId || (calls > 1 && input.liveAfter === threadId),
+                  })),
+                  ...(calls > 1 && input.threadAfter !== undefined
+                    ? [{ threadId: input.threadAfter, live: false }]
+                    : []),
+                ],
+                projects: (input.projects ?? []).map((workspaceRoot) => ({ workspaceRoot })),
+              });
+        };
+      })(),
       threadSequence: ({ threadId }) =>
         Effect.succeed({ snapshotSequence: input.sequences?.[threadId] ?? 1 }),
       threadHistory: ({ threadId }) => {
@@ -228,6 +243,26 @@ describe("fleet drain", () => {
           threadId: "thread:a",
         },
       ]);
+    }),
+  );
+
+  it.effect("refuses an ack when the worker starts work during the drain", () =>
+    Effect.gen(function* () {
+      const dependencies = deps({ threads: ["thread:a"], liveAfter: "thread:a" });
+      const outcome = yield* drain(dependencies);
+
+      expect(outcome.state).toBe("failed");
+      expect(outcome.warnings?.join(" ")).toContain("changed during the drain");
+    }),
+  );
+
+  it.effect("refuses an ack when a thread appears during the drain", () =>
+    Effect.gen(function* () {
+      const dependencies = deps({ threads: ["thread:a"], threadAfter: "thread:new" });
+      const outcome = yield* drain(dependencies);
+
+      expect(outcome.state).toBe("failed");
+      expect(outcome.threads.acked).toBe(1);
     }),
   );
 

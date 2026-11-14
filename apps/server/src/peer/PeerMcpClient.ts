@@ -9,7 +9,6 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -20,6 +19,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as PeerEnvironmentRegistry from "./PeerEnvironmentRegistry.ts";
 import * as PeerLinks from "./PeerLinks.ts";
+import * as PeerSessionResolve from "./PeerSessionResolve.ts";
 
 /** The only MCP protocol version a T3 Code `/mcp` registers. */
 const PROTOCOL_VERSION = "2025-06-18";
@@ -202,24 +202,12 @@ const make = Effect.gen(function* () {
    * the peer's `/mcp`, so the bridge, forwarding and delegation work the same
    * for linked environments and registered workers.
    */
-  const resolvePeer = Effect.fn("PeerMcpClient.resolvePeer")(function* (
-    environmentId: EnvironmentId,
-  ): Effect.fn.Return<
-    { readonly url: string; readonly token: string; readonly from: "link" | "registry" },
-    OrchestratorMcpFailure
-  > {
-    const fromLink = yield* Effect.result(links.resolve(environmentId));
-    if (Result.isSuccess(fromLink)) {
-      return { url: fromLink.success.url, token: fromLink.success.token, from: "link" };
-    }
-    if (Option.isNone(registry) || fromLink.failure.reason !== "unknown_link") {
-      return yield* fromLinkError(fromLink.failure);
-    }
-    const session = yield* registry.value
-      .resolveSession(environmentId)
-      .pipe(Effect.mapError(fromRegistryError));
-    return { url: session.url, token: session.token, from: "registry" };
-  });
+  const resolvePeer = (environmentId: EnvironmentId) =>
+    PeerSessionResolve.resolvePeerSession({ links, registry })(environmentId).pipe(
+      Effect.mapError((failure) =>
+        failure._tag === "link" ? fromLinkError(failure.error) : fromRegistryError(failure.error),
+      ),
+    );
 
   const call: PeerMcpClient["Service"]["call"] = Effect.fn("PeerMcpClient.call")(
     function* (input) {

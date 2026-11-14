@@ -150,11 +150,32 @@ const harness = Effect.gen(function* () {
   const attachmentsDir = yield* fs.makeTempDirectory();
   const written: WrittenEvents["writes"] = [];
   const store: FakeStoreState = { rows: new Map(), exists: new Set() };
+  let writesUntilFailure: number | undefined;
   const eventSink = {
     write: (input: { readonly events: ReadonlyArray<{ id: string; type: string }> }) =>
-      Effect.sync(() => {
-        written.push(input.events);
-        return input.events;
+      Effect.suspend(() => {
+        if (writesUntilFailure !== undefined) {
+          if (writesUntilFailure === 0) {
+            return Effect.fail(
+              new OpenShellFleetBundleImport.FleetDrainImportError({
+                operation: "record",
+                message: "the event sink is unavailable",
+              }),
+            );
+          }
+          writesUntilFailure -= 1;
+        }
+        return Effect.sync(() => {
+          written.push(input.events);
+          // The fake projection learns about the thread from its creation event,
+          // as the real event sink does.
+          for (const event of input.events as ReadonlyArray<{
+            readonly type?: string;
+            readonly threadId?: unknown;
+          }>)
+            if (event.type === "thread.created") store.exists.add(String(event.threadId));
+          return input.events;
+        });
       }),
   };
   const importer = OpenShellFleetBundleImport.makeFleetBundleImporter({
@@ -170,7 +191,6 @@ const harness = Effect.gen(function* () {
       record: (row) =>
         Effect.sync(() => {
           store.rows.set(row.threadId, row);
-          store.exists.add(row.threadId);
         }),
     },
   });
@@ -226,6 +246,9 @@ const harness = Effect.gen(function* () {
     fs,
     path,
     writeBundle,
+    failWrites: (count?: number) => {
+      writesUntilFailure = count;
+    },
   };
 });
 
@@ -389,14 +412,75 @@ describe("fleet bundle import", () => {
   );
 });
 
+describe("import resumability", () => {
+  it.effect("resumes an import that failed after claiming the thread", () =>
+    Effect.gen(function* () {
+      const { importer, store, writeBundle, failWrites, written } = yield* harness;
+      yield* writeBundle({ threadId: "thread:a", snapshotSequence: 3 });
+      // The head lands, the first transcript batch fails.
+      failWrites(1);
+      const first = yield* importer.importBundle({
+        environmentId: ENVIRONMENT,
+        drainId: DRAIN_ID,
+      });
+      expect(first.imported).toBe(0);
+      expect(first.warnings).toHaveLength(1);
+      expect(store.rows.get("thread:a")?.importedAt).toBe("");
+
+      failWrites(undefined);
+      written.length = 0;
+      const second = yield* importer.importBundle({
+        environmentId: ENVIRONMENT,
+        drainId: DRAIN_ID,
+      });
+
+      expect(second.imported).toBe(1);
+      expect(store.rows.get("thread:a")?.importedAt).not.toBe("");
+      // The retry replays the thread instead of treating its own head as a collision.
+      expect(eventTypes(written)).toContain("turn-item.updated");
+      expect(eventTypes(written)).toContain("message.updated");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses a bundle whose records belong to another thread", () =>
+    Effect.gen(function* () {
+      const { importer, store, writeBundle, written, stateDir, fs, path } = yield* harness;
+      yield* writeBundle({ threadId: "thread:a", snapshotSequence: 3 });
+      const file = path.join(
+        stateDir,
+        "fleet-drain",
+        encodeURIComponent(ENVIRONMENT),
+        encodeURIComponent(DRAIN_ID),
+        `thread-${encodeURIComponent("thread:a")}.json`,
+      );
+      const envelope = JSON.parse(yield* fs.readFileString(file)) as { body: string };
+      envelope.body = envelope.body.replaceAll("thread:a", "thread:victim");
+      yield* fs.writeFileString(file, JSON.stringify(envelope));
+
+      const result = yield* importer.importBundle({
+        environmentId: ENVIRONMENT,
+        drainId: DRAIN_ID,
+      });
+
+      expect(result.imported).toBe(0);
+      expect(result.skipped).toBe(1);
+      expect(result.warnings).toHaveLength(1);
+      expect(written).toEqual([]);
+      expect(store.rows.size).toBe(0);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
 describe("attachment restore", () => {
-  it.effect("restores manifest attachments under the thread's own segment", () =>
+  it.effect("restores manifest attachments flat, keyed by the attachment id", () =>
     Effect.gen(function* () {
       const { importer, store, attachmentsDir, fs, writeBundle } = yield* harness;
+      const segment = toSafeThreadAttachmentSegment("thread:a");
+      const name = `${segment}-1111aaaa.png`;
       yield* writeBundle({
         threadId: "thread:a",
         snapshotSequence: 2,
-        attachments: [{ name: "shot.png", bytes: base64("png-bytes") }],
+        attachments: [{ name, bytes: base64("png-bytes") }],
       });
 
       const result = yield* importer.importBundle({
@@ -405,10 +489,30 @@ describe("attachment restore", () => {
       });
 
       expect(result.imported).toBe(1);
-      const segment = toSafeThreadAttachmentSegment("thread:a");
-      const restored = yield* fs.readFile(`${attachmentsDir}/${segment}/shot.png`);
+      const restored = yield* fs.readFile(`${attachmentsDir}/${name}`);
       expect(new TextDecoder().decode(restored)).toBe("png-bytes");
       expect(store.rows.get("thread:a")?.oversizeAttachmentsSkipped).toBe(false);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses an attachment named for another thread", () =>
+    Effect.gen(function* () {
+      const { importer, store, attachmentsDir, fs, writeBundle } = yield* harness;
+      yield* writeBundle({
+        threadId: "thread:a",
+        snapshotSequence: 2,
+        attachments: [{ name: "other-thread-1111aaaa.png", bytes: base64("png-bytes") }],
+      });
+
+      const result = yield* importer.importBundle({
+        environmentId: ENVIRONMENT,
+        drainId: DRAIN_ID,
+      });
+
+      expect(result.imported).toBe(1);
+      const entries = yield* fs.readDirectory(attachmentsDir);
+      expect(entries).toEqual([]);
+      expect(store.rows.get("thread:a")?.snapshotSequence).toBe(2);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

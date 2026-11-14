@@ -391,68 +391,103 @@ describe("execDrainGitBundle", () => {
 });
 
 describe("execDrainAttachments", () => {
-  const frame = (name: string, bytes: string) => `==T3ATT ${name}\n${bytes}\n`;
+  const listLine = (name: string, size: number) => `==T3ATTL ${name} ${size}\n`;
 
-  const source = (stdout: string, exitCode = 0) =>
+  const source = (options: {
+    readonly list: string;
+    readonly listExit?: number;
+    readonly files?: Readonly<Record<string, string>>;
+    readonly readExit?: number;
+    readonly maxBytes?: number;
+    readonly commands?: Array<ReadonlyArray<string>>;
+  }) =>
     OpenShellFleetDrainAdapters.execDrainAttachments({
+      ...(options.maxBytes === undefined ? {} : { maxBytes: options.maxBytes }),
       exec: (sandboxName, command) => {
         expect(sandboxName).toBe("sandbox-1");
-        expect(command[0]).toBe("sh");
-        return Effect.succeed({ exitCode, stdout, stderr: "" });
+        options.commands?.push(command);
+        const script = command[2] ?? "";
+        if (script.includes("==T3ATTL")) {
+          return Effect.succeed({
+            exitCode: options.listExit ?? 0,
+            stdout: options.list,
+            stderr: "",
+          });
+        }
+        const name = /'([^']+)'$/.exec(script)?.[1] ?? "";
+        return Effect.succeed({
+          exitCode: options.readExit ?? 0,
+          stdout: options.files?.[name] ?? "",
+          stderr: "",
+        });
       },
     });
 
-  it.effect("parses framed base64 files from exec stdout", () =>
+  it.effect("reads each flat attachment of the thread by its id", () =>
     Effect.gen(function* () {
-      const attachments = yield* source(
-        `${frame("attach-1.png", base64Of("one"))}${frame("attach-2.bin", base64Of("two"))}`,
-      )({
+      const commands: Array<ReadonlyArray<string>> = [];
+      const attachments = yield* source({
+        list: listLine("thread-a-1111.png", 3) + listLine("thread-a-2222.bin", 3),
+        files: { "thread-a-1111.png": base64Of("one"), "thread-a-2222.bin": base64Of("two") },
+        commands,
+      })({
         environmentId: EnvironmentId.make("environment:worker"),
         sandboxName: "sandbox-1",
         threadId: "thread:a",
       });
+
       expect(attachments.oversizeSkipped).toBe(false);
-      expect(attachments.files.map((file) => file.name)).toEqual(["attach-1.png", "attach-2.bin"]);
+      expect(attachments.files.map((file) => file.name)).toEqual([
+        "thread-a-1111.png",
+        "thread-a-2222.bin",
+      ]);
       expect(Buffer.from(attachments.files[0]?.bytes ?? "", "base64").toString()).toBe("one");
+      // One listing, then one read per file: no base64 ever rides the listing.
+      expect(commands).toHaveLength(3);
+      expect(commands[1]?.join(" ")).toContain("thread-a-1111.png");
     }),
   );
 
-  it.effect("answers empty when the worker holds no attachment directory", () =>
+  it.effect("ignores files that are not this thread's attachment ids", () =>
     Effect.gen(function* () {
-      const attachments = yield* source("")({
+      const attachments = yield* source({
+        list:
+          listLine("other-a-1111.png", 3) +
+          listLine("thread-a-..%2Fescape.png", 3) +
+          listLine("thread-a-3333.png", 3),
+        files: { "thread-a-3333.png": base64Of("ok") },
+      })({
         environmentId: EnvironmentId.make("environment:worker"),
         sandboxName: "sandbox-1",
         threadId: "thread:a",
       });
-      expect(attachments.files).toEqual([]);
-      expect(attachments.oversizeSkipped).toBe(false);
+
+      expect(attachments.files.map((file) => file.name)).toEqual(["thread-a-3333.png"]);
     }),
   );
 
-  it.effect("skips the whole set above the size cap", () =>
+  it.effect("skips an oversized set from the listing, before reading any bytes", () =>
     Effect.gen(function* () {
-      const big = OpenShellFleetDrainAdapters.execDrainAttachments({
-        exec: () =>
-          Effect.succeed({ exitCode: 0, stdout: frame("a.bin", base64Of("x")), stderr: "" }),
+      const commands: Array<ReadonlyArray<string>> = [];
+      const attachments = yield* source({
+        list: listLine("thread-a-1111.png", 3) + listLine("thread-a-2222.png", 3),
         maxBytes: 2,
-      });
-      const attachments = yield* big({
+        commands,
+      })({
         environmentId: EnvironmentId.make("environment:worker"),
         sandboxName: "sandbox-1",
         threadId: "thread:a",
       });
+
+      expect(commands).toHaveLength(1);
       expect(attachments.files).toEqual([]);
-      expect(attachments.oversizeSkipped).toBe(true);
     }),
   );
 
   it.effect("fails typed when the worker cannot list attachments", () =>
     Effect.gen(function* () {
       const failure = yield* refused(
-        source(
-          "",
-          7,
-        )({
+        source({ list: "", listExit: 7 })({
           environmentId: EnvironmentId.make("environment:worker"),
           sandboxName: "sandbox-1",
           threadId: "thread:a",
@@ -461,23 +496,39 @@ describe("execDrainAttachments", () => {
       expect(failure.step).toBe("attachments");
     }),
   );
+
+  it.effect("fails typed when one attachment cannot be read", () =>
+    Effect.gen(function* () {
+      const failure = yield* refused(
+        source({ list: listLine("thread-a-1111.png", 3), readExit: 5 })({
+          environmentId: EnvironmentId.make("environment:worker"),
+          sandboxName: "sandbox-1",
+          threadId: "thread:a",
+        }),
+      );
+      expect(failure.step).toBe("attachments");
+      expect(failure.message).toContain("thread-a-1111.png");
+    }),
+  );
 });
 
 describe("linkDrainSource", () => {
   it.effect("drains archived threads like live ones", () =>
     Effect.gen(function* () {
+      const shellRequests: Array<string> = [];
       const http = HttpClient.make((request) =>
         Effect.succeed(
           HttpClientResponse.fromWeb(
             request,
             new Response(
               JSON.stringify(
-                request.url.endsWith("/api/orchestration/shell")
-                  ? {
+                request.url.includes("/api/orchestration/shell")
+                  ? (shellRequests.push(request.url),
+                    {
                       threads: [{ threadId: "thread:a", status: "idle" }],
                       archivedThreads: [{ threadId: "thread:old", status: "archived" }],
                       projects: [],
-                    }
+                    })
                   : { snapshotSequence: 1, historyCursor: null, hasMoreHistory: false },
               ),
               { status: 200, headers: { "content-type": "application/json" } },

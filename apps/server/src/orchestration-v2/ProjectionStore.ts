@@ -444,7 +444,7 @@ export interface ProjectionTimelinePage {
 }
 
 export interface ShellSnapshotOptions {
-  readonly location?: "active" | "archive";
+  readonly location?: "active" | "archive" | "all";
   readonly projectId?: ProjectId;
   readonly unsettledOnly?: boolean;
   /**
