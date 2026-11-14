@@ -88,14 +88,17 @@ const headlessSessionConfig = Config.all({
 const showDeviceAuthorizationPrompt = (prompt: CliTokenManager.DeviceAuthorizationPrompt) =>
   Console.log(formatDeviceAuthorizationPrompt(prompt));
 
-function formatDeviceAuthorizationPrompt(
+export function formatDeviceAuthorizationPrompt(
   prompt: CliTokenManager.DeviceAuthorizationPrompt,
 ): string {
   const minutes = Math.max(1, Math.round(Duration.toMinutes(prompt.expiresIn)));
   return [
     "Sign in to T3 Connect. Open on any device:",
-    `  ${prompt.verificationUriComplete ?? prompt.verificationUri}`,
-    `Code: ${prompt.userCode}`,
+    // The complete URI already carries the code; printing it too gets pasted into the sign-in page's email-code field.
+    ...(prompt.verificationUriComplete
+      ? [`  ${prompt.verificationUriComplete}`]
+      : [`  ${prompt.verificationUri}`, `Code: ${prompt.userCode}`]),
+    "If the sign-in page asks for a code it emailed you, use the one from that email.",
     `Waiting for approval. Expires in ${minutes} min. Ctrl+C cancels.`,
   ].join("\n");
 }

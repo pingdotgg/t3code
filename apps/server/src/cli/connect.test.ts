@@ -8,6 +8,7 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Console from "effect/Console";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -21,7 +22,7 @@ import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
-import { acquireRelayClientForLink } from "./connect.ts";
+import { acquireRelayClientForLink, formatDeviceAuthorizationPrompt } from "./connect.ts";
 
 const managedExecutable = {
   status: "available",
@@ -29,6 +30,25 @@ const managedExecutable = {
   source: "managed",
   version: RelayClient.CLOUDFLARED_VERSION,
 } as const;
+
+it("prints the device code only when the verification link does not carry it", () => {
+  const prompt = {
+    verificationUri: "https://accounts.example/device",
+    userCode: "ABCD-EFGH",
+    expiresIn: Duration.minutes(10),
+  };
+  const withCompleteUri = formatDeviceAuthorizationPrompt({
+    ...prompt,
+    verificationUriComplete: "https://accounts.example/device?user_code=ABCD-EFGH",
+  });
+  assert.include(withCompleteUri, "https://accounts.example/device?user_code=ABCD-EFGH");
+  assert.notInclude(withCompleteUri, "Code: ");
+  const withoutCompleteUri = formatDeviceAuthorizationPrompt({
+    ...prompt,
+    verificationUriComplete: undefined,
+  });
+  assert.include(withoutCompleteUri, "https://accounts.example/device\nCode: ABCD-EFGH");
+});
 
 it.effect("does not install the relay client when the user declines the managed download", () =>
   Effect.gen(function* () {
