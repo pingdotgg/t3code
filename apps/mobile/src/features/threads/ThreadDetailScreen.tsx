@@ -347,6 +347,8 @@ function ColumnWidth(props: { readonly width: number | null; readonly children: 
 }
 const USAGE_LIMITS_PANEL_GAP = 12;
 const USAGE_LIMITS_PANEL_MIN_HEIGHT = 44;
+// Two title lines and the environment control of the new-task hero, with its vertical padding.
+const DRAFT_HERO_ESTIMATED_HEIGHT = 160;
 
 const USER_INPUT_TOGGLE_TIMING = {
   duration: USER_INPUT_TOGGLE_DURATION_MS,
@@ -1066,6 +1068,16 @@ function ThreadDetailBody(
   };
   const screenAreaHeight = screenHeight ?? windowHeight;
   const draftViewportHeight = screenAreaHeight - navigationHeaderHeight - liveKeyboardHeight;
+  const draftHeroBottomInset = liveKeyboardHeight + estimatedOverlayHeight + 24;
+  // Anchored, not centered: the header and composer settle mid-push, which would move the hero.
+  // Only a composer grown by typing lifts it, so the hero keeps room to show above the composer.
+  const draftHeroTopInset = Math.max(
+    navigationHeaderHeight,
+    Math.min(
+      (windowHeight - liveKeyboardHeight) * 0.3,
+      screenAreaHeight - draftHeroBottomInset - DRAFT_HERO_ESTIMATED_HEIGHT,
+    ),
+  );
   // The question card reads the keyboard frame on the UI thread, in the same frame the sticky
   // view translates, so it gets the full height while the keyboard is closed and never crosses
   // the header while the keyboard moves.
@@ -1454,11 +1466,7 @@ function ThreadDetailBody(
     <View className="flex-1" onLayout={handleScreenLayout}>
       {!usesNativeWorkspaceColumns ? <NativeLayoutObserver onChange={setScreenMetrics} /> : null}
       {props.draftMode ? (
-        props.draftMode.content(
-          navigationHeaderHeight,
-          liveKeyboardHeight + estimatedOverlayHeight + 24,
-          draftViewportHeight,
-        )
+        props.draftMode.content(draftHeroTopInset, draftHeroBottomInset, draftViewportHeight)
       ) : showContent ? (
         <View
           style={{ flex: 1 }}
