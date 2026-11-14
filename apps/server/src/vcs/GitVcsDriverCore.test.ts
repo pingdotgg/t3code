@@ -7805,6 +7805,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             yield* git(originRemote, ["--git-dir=.", "rev-parse", "refs/heads/feature/push"]),
             publishedHead,
           );
+
+          const pushOnlyRemote = yield* makeTmpDir("git-push-only-remote-");
+          yield* git(pushOnlyRemote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "set-url", "--push", "origin", pushOnlyRemote]);
+          const pushedToPushUrl = yield* driver.pushCurrentBranch(cwd, null);
+          assert.deepInclude(pushedToPushUrl, { status: "pushed", branch });
+          assert.equal(
+            yield* git(pushOnlyRemote, ["--git-dir=.", "rev-parse", "refs/heads/feature/push"]),
+            head,
+          );
         }),
     );
 

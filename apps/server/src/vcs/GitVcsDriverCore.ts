@@ -3047,7 +3047,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
         // The configured diff base can contain HEAD while the publish branch is still behind.
         if (
-          yield* remoteRefContainsHead(cwd, `${destination.remoteName}/${destination.branchName}`)
+          (yield* remoteRefContainsHead(
+            cwd,
+            `${destination.remoteName}/${destination.branchName}`,
+          )) &&
+          (yield* pushesOnlyToFetchUrl(cwd, destination.remoteName))
         ) {
           return {
             status: "skipped_up_to_date" as const,
