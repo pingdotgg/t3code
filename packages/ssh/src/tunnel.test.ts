@@ -345,6 +345,80 @@ describe("ssh tunnel scripts", () => {
     }
   });
 
+  it("installs a release archive over a link too slow to fetch it within one --max-time", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-runner-"));
+    try {
+      const bin = NodePath.join(root, "bin");
+      const release = NodePath.join(root, "release");
+      const archive = `t3-${ARCHIVE.archiveVersion}-linux-x64.tar.gz`;
+      NodeFS.mkdirSync(bin);
+      NodeFS.mkdirSync(NodePath.join(root, "home"));
+      NodeFS.mkdirSync(NodePath.join(release, "t3"), { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(release, "t3", "t3"), "#!/bin/sh\necho t3-ok\n", {
+        mode: 0o755,
+      });
+      NodeFS.writeFileSync(
+        NodePath.join(release, "t3", "payload"),
+        globalThis.crypto.getRandomValues(new Uint8Array(65_536)),
+      );
+      NodeChildProcess.execFileSync("tar", ["-czf", archive, "t3"], { cwd: release });
+      NodeChildProcess.execFileSync("sh", ["-c", `sha256sum ${archive} > SHA256SUMS`], {
+        cwd: release,
+      });
+      const size = NodeFS.statSync(NodePath.join(release, archive)).size;
+      NodeFS.writeFileSync(
+        NodePath.join(bin, "uname"),
+        '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac\n',
+        { mode: 0o755 },
+      );
+      // A healthy but slow link: the whole archive takes 1000 simulated seconds,
+      // so --max-time cuts it short with curl's exit 28. Honours -C/--continue-at.
+      NodeFS.writeFileSync(
+        NodePath.join(bin, "curl"),
+        `#!/bin/sh
+rate=$(( ${size} / 1000 + 1 )); max=""; cont=""; out=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --max-time) max="$2"; shift ;;
+    -C|--continue-at) cont="$2"; shift ;;
+    -o|--output) out="$2"; shift ;;
+    http*) src="${release}/\${1##*/}" ;;
+  esac
+  shift
+done
+offset=0
+if [ "$cont" = "-" ] && [ -f "$out" ]; then offset=$(wc -c < "$out")
+elif [ -n "$cont" ]; then offset="$cont"
+else : > "$out"
+fi
+total=$(wc -c < "$src"); remaining=$((total - offset))
+if [ -n "$max" ] && [ "$remaining" -gt $((max * rate)) ]; then
+  tail -c +$((offset + 1)) "$src" | head -c $((max * rate)) >> "$out"
+  echo "curl: (28) Operation timed out after $max seconds" >&2; exit 28
+fi
+tail -c +$((offset + 1)) "$src" >> "$out"
+`,
+        { mode: 0o755 },
+      );
+      const runner = NodePath.join(root, "run-t3.sh");
+      NodeFS.writeFileSync(runner, SshTunnel.buildRemoteT3RunnerScript(ARCHIVE));
+      // Each connection attempt runs the launcher once; a user retries a few times.
+      const attempts = [1, 2, 3].map(() =>
+        NodeChildProcess.spawnSync("sh", [runner, "--version"], {
+          encoding: "utf8",
+          env: { HOME: NodePath.join(root, "home"), PATH: `${bin}:${process.env.PATH ?? ""}` },
+        }),
+      );
+      assert.include(
+        attempts.map((result) => result.stdout).join(""),
+        "t3-ok",
+        attempts.map((result) => result.stderr).join("\n"),
+      );
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it.effect("accepts launch JSON after remote shell startup noise", () => {
     const target = {
       alias: "devbox",
