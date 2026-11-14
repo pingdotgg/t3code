@@ -4601,7 +4601,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           let plan: OrchestrationV2PlanArtifact;
           if (update.kind === "removed") {
             if (planState.latest === null) return;
-            plan = { ...planState.latest, status: "superseded" };
+            // Rebase onto this turn: run routing drops plan events for another run.
+            plan = { ...planState.latest, ...base, status: "superseded" };
           } else if (update.kind === "items") {
             // A cancelled entry is not outstanding work, and plan steps have no
             // cancelled status, so drop it rather than show it as pending.
