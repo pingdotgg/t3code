@@ -4,9 +4,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
 import * as EffectNodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
-import { RelayApi } from "@t3tools/contracts/relay";
+import { RelayApi, RelayHookDeliveryProofPayload } from "@t3tools/contracts/relay";
 import * as Deferred from "effect/Deferred";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -23,6 +22,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
+import * as CloudMintSigner from "../auth/CloudMintSigner.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
@@ -108,6 +108,7 @@ function makeHarness(options: Harness = {}) {
       ));
   const layerForwarder = HookForwarder.layer.pipe(
     Layer.provideMerge(HeldHooks.layer),
+    Layer.provide(CloudMintSigner.layer),
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(RelayConfiguration.RelayConfiguration, settings),
@@ -166,8 +167,7 @@ function makeHarness(options: Harness = {}) {
       RelayHttpApi.layerCors,
     ),
   ).pipe(Effect.provideService(HttpRouter.RouterConfig, RELAY_HTTP_ROUTER_CONFIG));
-  // Goes through Effect's request handler, which applies pre-response handlers
-  // (such as CORS) to the response it sends, as the Workers runtime does.
+  // Use the Workers request path so pre-response handlers apply.
   const send = (request: Request) =>
     Effect.gen(function* () {
       const handler = yield* httpEffect;
@@ -257,14 +257,13 @@ describe("HookForwarder", () => {
         }),
       );
       const sent = harness.sent[0]!;
-      const payload = yield* verifyRelayJwt({
+      const payload = yield* verifyRelayJwt(RelayHookDeliveryProofPayload, {
         publicKey: mintKeys.publicKey,
         token: sent.headers["x-t3-relay-delivery"]!,
         typ: RELAY_HOOK_DELIVERY_TYP,
         issuer: settings.relayIssuer,
         audience: `t3-env:${environmentId}`,
-        nowEpochSeconds: Math.floor((yield* Clock.currentTimeMillis) / 1_000),
-      });
+      }).pipe(Effect.provide(EffectNodeCrypto.layerSignature));
       expect(payload).toMatchObject({
         environmentId,
         hookId: "hook-1",

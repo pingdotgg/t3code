@@ -23,23 +23,18 @@ export interface ProviderContinuationRequest {
     readonly generation: number;
     readonly messageId: MessageId;
   };
-  /**
-   * `adapter_buffered` (default) is the provider-native wake: the adapter has already buffered the
-   * CLI's wake output, and the dispatched message only triggers ingestion. `message_text` is for
-   * app-owned work with no buffered provider output, such as a delegated child finishing.
-   */
+  /** adapter_buffered (default) ingests existing CLI output; message_text delivers app-owned wake text. */
   readonly delivery?: "adapter_buffered" | "message_text";
   readonly messageId?: MessageId;
   readonly dispatchIfCurrent?: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<Option.Option<A>, E, R>;
   readonly clearIfCurrent?: () => Effect.Effect<void>;
+  /** Called when the run this request dispatched ends without starting, such as a cancelled queued run. */
+  readonly onRunEndedWithoutStarting?: () => Effect.Effect<void>;
 }
 
-/**
- * The default reference drops requests, keeping adapter construction dependency-free in tests; the
- * live layer must be shared with the ProviderContinuationService worker that drains it.
- */
+/** The default drops requests; share the live layer with the worker that drains them. */
 export class ProviderContinuationRequests extends Context.Reference<{
   readonly offer: (request: ProviderContinuationRequest) => Effect.Effect<void>;
   readonly take: Effect.Effect<ProviderContinuationRequest>;
@@ -52,8 +47,11 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const queue = yield* Queue.unbounded<ProviderContinuationRequest>();
     return {
-      offer: (request: ProviderContinuationRequest) =>
-        Queue.offer(queue, request).pipe(Effect.asVoid),
+      offer: Effect.fn("ProviderContinuationRequests.offer")(function (
+        request: ProviderContinuationRequest,
+      ) {
+        return Queue.offer(queue, request).pipe(Effect.asVoid);
+      }),
       take: Queue.take(queue),
     };
   }),

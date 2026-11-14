@@ -67,3 +67,33 @@ it("reads RPC variants from enums, never from paths or text", () => {
     feature: "terminal.open",
   });
 });
+
+it("counts the owner's guest share actions, and only guest message sends", () => {
+  const send = (guestMessageId?: string) =>
+    commandFeatureUsage(
+      command({
+        ...ids,
+        type: "message.dispatch",
+        messageId: "message-private",
+        text: "secret prompt",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        dispatchMode: { type: "start_immediately" },
+        ...(guestMessageId === undefined ? {} : { guestMessageId }),
+      }),
+    );
+  expect(send("guest-message-private")).toEqual({ feature: "guest_message.send" });
+  expect(send()).toBe(undefined);
+  expect(
+    commandFeatureUsage(
+      command({ ...ids, type: "thread.guest-message.dismiss", guestMessageId: "guest-private" }),
+    ),
+  ).toEqual({ feature: "guest_message.dismiss" });
+  expect(commandFeatureUsage(command({ ...ids, type: "thread.guest-share.close" }))).toEqual({
+    feature: "guest_share.close",
+  });
+  expect(featureUsage(WS_METHODS.guestShareCreate, { threadId: "thread-private" })).toEqual({
+    feature: "guest_share.create",
+  });
+});
