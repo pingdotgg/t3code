@@ -805,7 +805,12 @@ export const make = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     const due = new Map<
       string,
-      { readonly group: WatchGroup; readonly since: number; readonly evidence: number }
+      {
+        readonly group: WatchGroup;
+        readonly since: number;
+        readonly evidence: number;
+        readonly evidenceNumber: number | null;
+      }
     >();
     for (const group of groups) {
       const last = lastReads.get(group.key);
@@ -821,16 +826,21 @@ export const make = Effect.gen(function* () {
       due.set(repository, {
         group: prior?.group ?? group,
         since: Math.min(prior?.since ?? last.at, last.at),
-        evidence: Math.max(prior?.evidence ?? -Infinity, last.foreignRemarkAt ?? -Infinity),
+        ...((last.foreignRemarkAt ?? -Infinity) > (prior?.evidence ?? -Infinity)
+          ? { evidence: last.foreignRemarkAt!, evidenceNumber: group.targets[0]!.link.number }
+          : {
+              evidence: prior?.evidence ?? -Infinity,
+              evidenceNumber: prior?.evidenceNumber ?? null,
+            }),
       });
     }
     const checks = new Map<
       string,
       Effect.Effect<ProviderChangeRequestNotifications | null | undefined>
     >();
-    for (const [repository, { group, since, evidence }] of due) {
+    for (const [repository, { group, since, evidence, evidenceNumber }] of due) {
       // With "On GitHub" notifications off the inbox never moves, so its silence counts only
-      // once it has shown a remark someone else made on the viewer's own pull request.
+      // once it lists the pull request where someone else last remarked on the viewer's own.
       const unproven = evidence > (notificationsLiveThrough.get(repository) ?? -Infinity);
       const check = pullRequests
         .notifications({
@@ -839,7 +849,13 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.map((notifications) =>
-            unproven && notifications?.threads.length === 0 && !notifications.truncated
+            unproven &&
+            notifications !== null &&
+            !notifications.threads.some(
+              (thread) =>
+                thread.number === evidenceNumber &&
+                thread.updatedAt >= evidence - NOTIFICATION_LAG_MS,
+            )
               ? null
               : notifications,
           ),

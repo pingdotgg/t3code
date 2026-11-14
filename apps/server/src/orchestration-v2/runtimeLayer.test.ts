@@ -11961,6 +11961,13 @@ const watchCostScenarios = [
   },
   { name: "noisy inbox", inboxEveryMinute: true, saves: 45 },
   {
+    name: "inbox shows other pull requests but missed this one",
+    reviewCommentEdit: 40,
+    inboxEveryMinute: true,
+    inboxMissesPullRequest: true,
+    saves: -2,
+  },
+  {
     name: "checks swap while the pull request keeps moving",
     pullRequestInboxEveryMinute: true,
     checksSwapAt: 10,
@@ -12030,8 +12037,10 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
           if (time <= now) times.set(thread, Math.max(times.get(thread) ?? 0, time));
         };
         if (scenario.inboxOff) return times;
-        if (editAt !== null) bump(number, at(-60) + 3_000);
-        if (editAt !== null && !scenario.inboxMissesEdit) bump(number, editAt + 3_000);
+        if (editAt !== null && !scenario.inboxMissesPullRequest) bump(number, at(-60) + 3_000);
+        if (editAt !== null && !scenario.inboxMissesEdit && !scenario.inboxMissesPullRequest) {
+          bump(number, editAt + 3_000);
+        }
         if (scenario.inboxEveryMinute) {
           for (let minute = 0; at(minute) <= now; minute += 1) bump(900, at(minute) + 3_000);
         }
@@ -12117,6 +12126,8 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
                     .filter(([, updatedAt]) => updatedAt > since)
                     .map(([thread, updatedAt]) => ({ number: thread, updatedAt }));
                   if (threads.length > 0) cost.core += 1;
+                  // The watch rejects an inbox that never listed its known remark, like a refusal.
+                  if (threads.length > 0 && scenario.inboxMissesPullRequest) cost.refused += 1;
                   return { threads, truncated: false };
                 }),
             }),
