@@ -227,6 +227,9 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
         remoteUrl,
         destinationPath: destinationPath.trim(),
         files: [...selectedFiles.keys()],
+        base64:
+          capabilities?.base64FileTransfer === true &&
+          targetEnvironment?.serverConfig?.environment.capabilities.base64FileTransfer === true,
       });
       close();
       openClonedProject(scopeProjectRef(target.environmentId, projectId));

@@ -42,6 +42,8 @@ export interface AddProjectToMachineInput {
   readonly remoteUrl: string;
   readonly destinationPath: string;
   readonly files: ReadonlyArray<string>;
+  /** Both servers carry exact bytes, so binary files copy too. */
+  readonly base64: boolean;
 }
 
 function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]): string {
@@ -112,7 +114,11 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         appAtomRegistry,
         projectEnvironment.readFile({
           environmentId: input.source.environmentId,
-          input: { cwd: input.source.cwd, relativePath },
+          input: {
+            cwd: input.source.cwd,
+            relativePath,
+            ...(input.base64 ? { encoding: "base64" as const } : {}),
+          },
         }),
         { label: "Read file to copy", reportFailure: false, refresh: true },
       );
@@ -183,6 +189,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
               ? `${input.subdirectory}/${read.relativePath}`
               : read.relativePath,
             contents: read.contents,
+            ...(input.base64 ? { encoding: "base64" as const } : {}),
           },
         },
         { label: "Copy file to machine", reportFailure: false },

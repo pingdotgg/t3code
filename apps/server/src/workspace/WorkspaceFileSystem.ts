@@ -30,6 +30,7 @@ import { fileHeaderMimeType } from "./fileHeaderMimeType.ts";
 import { toWslDrivePath } from "./wslDrivePath.ts";
 
 const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
+const decodeBase64 = Schema.decodeUnknownEffect(Schema.Uint8ArrayFromBase64);
 
 // NTFS reaches .git through trailing dots/spaces, stream suffixes and GIT~1; compare uppercased names.
 const isGitMetadataName = (segment: string) => {
@@ -435,6 +436,15 @@ export const make = Effect.gen(function* () {
             offset += bytesRead;
           }
           const fileBytes = buffer.subarray(0, offset);
+          const truncated = stat.size > PROJECT_READ_FILE_MAX_BYTES;
+          if (input.encoding === "base64") {
+            return {
+              relativePath: target.relativePath,
+              contents: fileBytes.toString("base64"),
+              byteLength: stat.size,
+              truncated,
+            };
+          }
           if (fileBytes.includes(0)) {
             return yield* new WorkspaceBinaryFileError({
               workspaceRoot: input.cwd,
@@ -443,7 +453,6 @@ export const make = Effect.gen(function* () {
             });
           }
 
-          const truncated = stat.size > PROJECT_READ_FILE_MAX_BYTES;
           return {
             relativePath: target.relativePath,
             // Streaming decode drops a character the byte limit split, instead of ending in U+FFFD.
@@ -558,6 +567,22 @@ export const make = Effect.gen(function* () {
     yield* knownWorkspaces.assertContains(input.cwd);
     const target = yield* resolveWriteTarget(input);
     const realTargetPath = target.realTargetPath;
+    const contents =
+      input.encoding === "base64"
+        ? yield* decodeBase64(input.contents).pipe(
+            Effect.mapError(
+              (cause) =>
+                new WorkspaceFileSystemOperationError({
+                  workspaceRoot: input.cwd,
+                  relativePath: input.relativePath,
+                  resolvedPath: realTargetPath,
+                  operationPath: realTargetPath,
+                  operation: "write-file",
+                  cause,
+                }),
+            ),
+          )
+        : input.contents;
     const replacesFile = yield* fileSystem
       .exists(realTargetPath)
       .pipe(Effect.orElseSucceed(() => false));
@@ -578,7 +603,7 @@ export const make = Effect.gen(function* () {
     yield* Effect.tryPromise({
       // A symlink swapped in after the check is not followed. Windows lacks O_NOFOLLOW.
       try: () =>
-        NodeFSP.writeFile(realTargetPath, input.contents, {
+        NodeFSP.writeFile(realTargetPath, contents, {
           flag:
             NodeFS.constants.O_WRONLY |
             NodeFS.constants.O_CREAT |
