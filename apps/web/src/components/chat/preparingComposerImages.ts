@@ -81,3 +81,13 @@ export function removePreparingComposerImages(
   });
   return removed;
 }
+
+/** Cancels every image still preparing for the target; their compression results are dropped. */
+export function cancelPreparingComposerImages(targetKey: string): void {
+  if (!usePreparingComposerImageStore.getState().byTargetKey[targetKey]) return;
+  usePreparingComposerImageStore.setState((state) => {
+    const byTargetKey = { ...state.byTargetKey };
+    delete byTargetKey[targetKey];
+    return { byTargetKey };
+  });
+}
