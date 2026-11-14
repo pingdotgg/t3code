@@ -1,11 +1,14 @@
 import { useRef } from "react";
+import type { SidebarProjectFilterRevealBehavior } from "@t3tools/contracts";
+
+import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 
 import { observeResize } from "~/lib/observeResize";
 
 import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
 
 // AppSidebarLayout owns this so drawer and Settings remounts preserve the chosen project scope.
-// Only route changes may widen that scope; scroll position is lost on remount.
+// Only route changes may change that scope; scroll position is lost on remount.
 // Leaving Settings commits the router's location before its matches, briefly hiding thread params.
 // Ignore null keys so the same thread does not look new during that gap.
 export interface SidebarRouteReveal {
@@ -63,7 +66,7 @@ export function useActiveRowReveal(reveal: SidebarRouteReveal, routeKey: string 
 type RevealableThread = Parameters<typeof filterSidebarV2VisibleThreads>[0][number];
 
 // Render records the route before deciding, so the first render of a new route
-// already widens the scope. Only a route reveal widens: the once-per-mount
+// already reveals its project. Only a route reveal changes scope: the once-per-mount
 // scroll never changes a scope the user chose.
 export function resolveSidebarRouteReveal<T extends RevealableThread>(input: {
   readonly reveal: SidebarRouteReveal;
@@ -71,8 +74,15 @@ export function resolveSidebarRouteReveal<T extends RevealableThread>(input: {
   readonly isSearching: boolean;
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   readonly delegatedUnderParent: ReadonlySet<string>;
+  readonly projectGroups: ReadonlyArray<
+    Pick<SidebarProjectSnapshot, "projectKey" | "memberProjectRefs">
+  >;
+  readonly projectFilterRevealBehavior: SidebarProjectFilterRevealBehavior;
   readonly findThread: (key: string) => T | undefined;
-}): { readonly pendingKey: string | null; readonly widensScope: boolean } {
+}): {
+  readonly pendingKey: string | null;
+  readonly revealedProjectScopeKeys: readonly string[] | null;
+} {
   const { reveal, routeKey, isSearching, scopedProjectKeys, delegatedUnderParent, findThread } =
     input;
   const pendingKey = pendingSidebarRouteReveal(reveal, routeKey);
@@ -83,5 +93,15 @@ export function resolveSidebarRouteReveal<T extends RevealableThread>(input: {
     scopedProjectKeys !== null &&
     filterSidebarV2VisibleThreads([thread], scopedProjectKeys, delegatedUnderParent).length === 0 &&
     filterSidebarV2VisibleThreads([thread], null, delegatedUnderParent).length === 1;
-  return { pendingKey, widensScope };
+  if (!widensScope) return { pendingKey, revealedProjectScopeKeys: null };
+  const group =
+    input.projectFilterRevealBehavior === "switch-project" && thread !== undefined
+      ? input.projectGroups.find((candidate) =>
+          candidate.memberProjectRefs.some(
+            (ref) =>
+              ref.environmentId === thread.environmentId && ref.projectId === thread.projectId,
+          ),
+        )
+      : undefined;
+  return { pendingKey, revealedProjectScopeKeys: group ? [group.projectKey] : [] };
 }

@@ -919,6 +919,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const projectFilterRevealBehavior = useClientSettings(
+    (s) => s.sidebarProjectFilterRevealBehavior,
+  );
   const {
     settleThread,
     unsettleThread,
@@ -1122,17 +1125,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   // History, the palette and links can open a thread the scope hides or the list
   // scrolled away; a remount starts at the top, so each mount scrolls to the open
-  // thread once. Render decides the widening, so the first frame of the new route
+  // thread once. Render decides the scope, so the first frame of the new route
   // already lists the row; the active row's ref callback scrolls to it.
-  const { widensScope: revealWidensScope } = resolveSidebarRouteReveal({
+  const { revealedProjectScopeKeys } = resolveSidebarRouteReveal({
     reveal: routeReveal,
     routeKey: routeRowThreadKey,
     isSearching: isSearchingThreads,
     scopedProjectKeys: chosenScopeProjectKeys,
+    projectGroups: scopeGroups,
+    projectFilterRevealBehavior,
     delegatedUnderParent,
     findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
   });
-  const projectScopeKeys = revealWidensScope ? [] : chosenProjectScopeKeys;
+  const projectScopeKeys = revealedProjectScopeKeys ?? chosenProjectScopeKeys;
   const projectScopeKey = projectScopeKeys.length === 0 ? null : projectScopeKeys.join("\n");
   const toggleProjectScopeKey = (key: string) =>
     setProjectScopeKeys(
@@ -1140,16 +1145,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         ? projectScopeKeys.filter((candidate) => candidate !== key)
         : [...projectScopeKeys, key],
     );
-  // The widened scope outlives the reveal, so it is written back to the persisted
-  // scope. Route changes arrive from history, links and the palette, and only this
-  // component holds the project groups that decide a widening, so no single
-  // navigation handler can make the write.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes a route reveal's widened project scope back to the persisted sidebar scope and clears selection
+  // Links, history and first-send shells all reveal through render, so no single
+  // navigation handler can persist the resulting project scope.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persists the route reveal's project scope and clears hidden selections
   useEffect(() => {
-    if (!revealWidensScope) return;
+    if (revealedProjectScopeKeys === null) return;
     clearSelection();
-    setPersistedProjectScopeKeys([]);
-  }, [clearSelection, revealWidensScope, setPersistedProjectScopeKeys]);
+    setPersistedProjectScopeKeys(revealedProjectScopeKeys);
+  }, [clearSelection, revealedProjectScopeKeys, setPersistedProjectScopeKeys]);
   const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey);
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
   const scratchMachineLabelFor = (
@@ -1182,9 +1185,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     matches: (item, query) =>
       projectScopeFilter.contains(item, query, (candidate) => candidate.label),
   });
-  const scopedProjectGroups = revealWidensScope ? [] : chosenProjectGroups;
+  const scopedProjectGroups =
+    revealedProjectScopeKeys === null
+      ? chosenProjectGroups
+      : scopeGroups.filter((group) => revealedProjectScopeKeys.includes(group.projectKey));
   const scopedProjectRefs = scopedProjectGroups.flatMap((project) => project.memberProjectRefs);
-  const scopedProjectKeys = revealWidensScope ? null : chosenScopeProjectKeys;
+  const scopedProjectKeys =
+    revealedProjectScopeKeys === null
+      ? chosenScopeProjectKeys
+      : scopedProjectGroups.length === 0
+        ? null
+        : new Set(scopedProjectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`));
   const threadSearch = useThreadSearch(
     connectedEnvironmentIds,
     threadSearchQuery,

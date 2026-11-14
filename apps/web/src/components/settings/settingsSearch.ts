@@ -460,6 +460,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["usage quota rate limit reset recover continue"],
   },
   {
+    id: "project-filter-reveal",
+    title: msg("Open threads outside the project filter"),
+    to: "/settings/general",
+    searchTerms: ["sidebar scope reveal switch project show all filter"],
+  },
+  {
     id: "working-shelf",
     title: msg("Working section"),
     to: "/settings/general",

@@ -23,6 +23,7 @@ import {
   type ResponseStreamingMode,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
+  SidebarProjectFilterRevealBehavior,
   ScreenReaderAnnouncements,
   ToolCallVisibility,
 } from "@t3tools/contracts/settings";
@@ -143,6 +144,12 @@ const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string>
   manual: msg("Manual"),
 };
 const isSidebarProjectSortOrder = Schema.is(SidebarProjectSortOrder);
+
+const SIDEBAR_PROJECT_FILTER_REVEAL_LABELS: Record<SidebarProjectFilterRevealBehavior, string> = {
+  "show-all": msg("Show all projects"),
+  "switch-project": msg("Switch to thread's project"),
+};
+const isSidebarProjectFilterRevealBehavior = Schema.is(SidebarProjectFilterRevealBehavior);
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: msg("System default"),
@@ -493,6 +500,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarProjectSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder
       ? ["Project order"]
       : []),
+    ...(settings.sidebarProjectFilterRevealBehavior !==
+    DEFAULT_UNIFIED_SETTINGS.sidebarProjectFilterRevealBehavior
+      ? ["Open threads outside the project filter"]
+      : []),
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
@@ -676,6 +687,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
+      sidebarProjectFilterRevealBehavior:
+        DEFAULT_UNIFIED_SETTINGS.sidebarProjectFilterRevealBehavior,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
@@ -893,6 +906,53 @@ export function GeneralSettingsPanel() {
                 {SidebarProjectSortOrder.literals.map((sortOrder) => (
                   <SelectItem hideIndicator key={sortOrder} value={sortOrder}>
                     {m(SIDEBAR_PROJECT_SORT_ORDER_LABELS[sortOrder])}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          {...setting("project-filter-reveal")}
+          description={
+            <T>Choose how the sidebar reveals a thread outside the current project filter.</T>
+          }
+          resetAction={
+            settings.sidebarProjectFilterRevealBehavior !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarProjectFilterRevealBehavior ? (
+              <SettingResetButton
+                label="open threads outside the project filter"
+                onClick={() =>
+                  updateSettings({
+                    sidebarProjectFilterRevealBehavior:
+                      DEFAULT_UNIFIED_SETTINGS.sidebarProjectFilterRevealBehavior,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sidebarProjectFilterRevealBehavior}
+              onValueChange={(value) => {
+                if (isSidebarProjectFilterRevealBehavior(value)) {
+                  updateSettings({ sidebarProjectFilterRevealBehavior: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" aria-label={gt("Open threads outside the project filter")}>
+                <SelectValue>
+                  {m(
+                    SIDEBAR_PROJECT_FILTER_REVEAL_LABELS[
+                      settings.sidebarProjectFilterRevealBehavior
+                    ],
+                  )}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {SidebarProjectFilterRevealBehavior.literals.map((behavior) => (
+                  <SelectItem hideIndicator key={behavior} value={behavior}>
+                    {m(SIDEBAR_PROJECT_FILTER_REVEAL_LABELS[behavior])}
                   </SelectItem>
                 ))}
               </SelectPopup>
