@@ -724,7 +724,7 @@ function PlatformIcon(props: {
               const entry = availability(environment);
               return (
                 <div key={environment.environmentId}>
-                  <dt className="font-medium break-words">{environment.label}</dt>
+                  <dt className="break-words text-muted-foreground">{environment.label}</dt>
                   <dd className={cn("break-words", !entry?.available && "text-muted-foreground")}>
                     {entry?.available ? "Available" : (entry?.reason ?? "Not available")}
                   </dd>
