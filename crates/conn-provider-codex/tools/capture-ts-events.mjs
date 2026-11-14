@@ -2,7 +2,8 @@
 // Regenerates testdata/cli and testdata/ts from the Conn monorepo at CONN_MONOREPO (after
 // `vp i`): `node crates/conn-provider-codex/tools/capture-ts-events.mjs [name ...]`. Offline: it
 // replays recorded transcripts, no model is called. It adds one temporary test to
-// apps/server/src/orchestration-v2/testkit and deletes it.
+// apps/server/src/orchestration-v2/testkit, named with this run's PID so runs side by side on
+// one checkout do not collide, and deletes it on exit.
 
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -30,6 +31,12 @@ const FIXTURES = [
   "todo_list",
   "plan_questions",
   "proposed_plan",
+  "subagent",
+  "subagent_continue",
+  "subagent_v2",
+  "subagent_v2_approval",
+  "subagent_v2_nested",
+  "subagent_v2_nested_approval",
 ];
 
 const TEST_SOURCE = `
@@ -104,7 +111,14 @@ describe("conn codex capture", () => {
 const names = process.argv.length > 2 ? process.argv.slice(2) : FIXTURES;
 const server = NodePath.join(MONOREPO, "apps/server");
 const testkit = NodePath.join(server, "src/orchestration-v2/testkit");
-const testFile = NodePath.join(testkit, "ConnCodexCapture.tmp.test.ts");
+const testFile = NodePath.join(testkit, `ConnCodexCapture.${process.pid}.tmp.test.ts`);
+const cleanup = () => NodeFS.rmSync(testFile, { force: true });
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(signal, () => {
+    cleanup();
+    process.exit(130);
+  });
+}
 const out = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-codex-capture-"));
 const head = NodeChildProcess.execFileSync("git", ["-C", MONOREPO, "rev-parse", "--short", "HEAD"])
   .toString()
@@ -119,7 +133,7 @@ try {
     stdio: "inherit",
   });
 } finally {
-  NodeFS.rmSync(testFile, { force: true });
+  cleanup();
 }
 
 for (const name of names) {

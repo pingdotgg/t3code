@@ -2,7 +2,10 @@
 // Stands between the Claude provider and the fake SDK host of the Claude transcript replay
 // (crates/conn-provider-claude/tools/t3-replay/fake-host.mjs), for the engine replay.
 //
-//   node claude-session-shim.mjs [--task-root <dir>] <recorded session id> <fake-host.mjs> <transcript> <result.json>
+//   node claude-session-shim.mjs [--task-root <dir>] [--gate-config <file>] <recorded session id> <fake-host.mjs> <transcript> <result.json>
+//
+// --gate-config passes the replay gate's {gates, gateDir} to the host
+// (CONN_REPLAY_GATE_CONFIG in its environment).
 //
 // T3's replay harness pins the Claude session id to the recording's
 // (`allocateSessionId: nativeSessionIdFor(transcript)` in ClaudeAdapterV2.testkit.ts). Our
@@ -21,8 +24,10 @@ import { createInterface } from "node:readline";
 
 const argv = process.argv.slice(2);
 let taskRoot = null;
-if (argv[0] === "--task-root") {
-  taskRoot = argv[1];
+let gateConfig = null;
+while (argv[0] === "--task-root" || argv[0] === "--gate-config") {
+  if (argv[0] === "--task-root") taskRoot = argv[1];
+  else gateConfig = argv[1];
   argv.splice(0, 2);
 }
 const [recorded, fakeHost, ...hostArgs] = argv;
@@ -56,6 +61,7 @@ const writeTaskFiles = (sessionId) => {
 };
 const host = NodeChildProcess.spawn(process.execPath, [fakeHost, ...hostArgs], {
   stdio: ["pipe", "pipe", "inherit"],
+  env: gateConfig === null ? process.env : { ...process.env, CONN_REPLAY_GATE_CONFIG: gateConfig },
 });
 // The host stops after the last session and starts again for the next; the id we learned
 // stays in a file beside the host's result (its last argument).

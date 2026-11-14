@@ -259,8 +259,10 @@ dependencies = [
  "conn-provider",
  "conn-provider-support",
  "conn-support",
+ "rustix",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
  "tokio",
 ]
@@ -290,6 +292,7 @@ dependencies = [
  "conn-provider-acp",
  "conn-provider-claude",
  "conn-provider-codex",
+ "conn-provider-support",
  "conn-source-control",
  "conn-support",
  "conn-terminal",

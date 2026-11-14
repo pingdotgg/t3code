@@ -122,13 +122,26 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
   // The provider's stand-in: Codex gets a stub codex executable that replays the recording
   // (codex-stub.mjs); Claude gets the fake SDK host of the Claude transcript replay; Grok gets
   // a stub grok executable (acp-stub.mjs) that runs T3's own ACP replay agent on it.
-  const standIn = (driver: string, dir: string, transcript: any, workspace: string) => {
+  // T3's replay gate (makeProviderReplayGate): the labels the steps release.
+  const gateLabels = (steps: any[]) =>
+    steps.flatMap((step: any) =>
+      step.type === "release_replay_gate" || step.type === "release_replay_gate_after_waiting"
+        ? [step.label]
+        : [],
+    );
+
+  const standIn = (driver: string, dir: string, transcript: any, workspace: string, gates: string[]) => {
     if (driver === "codex") {
       fs.writeFileSync(path.join(dir, "transcript.json"), JSON.stringify(transcript));
       const stubConfig = path.join(dir, "stub-config.json");
       fs.writeFileSync(
         stubConfig,
-        JSON.stringify({ transcript: path.join(dir, "transcript.json"), log: path.join(dir, "stub.ndjson") }),
+        JSON.stringify({
+          transcript: path.join(dir, "transcript.json"),
+          log: path.join(dir, "stub.ndjson"),
+          gates,
+          gateDir: dir,
+        }),
       );
       const wrapper = path.join(dir, "codex");
       fs.writeFileSync(
@@ -148,10 +161,12 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
       // writes task output, under a CLAUDE_CODE_TMPDIR of the scenario's own
       // (writeReplayTaskOutputFiles); the shim does it once it knows our session id.
       const taskRoot = path.join(dir, "claude-tmp");
+      const gateConfig = path.join(dir, "gate-config.json");
+      fs.writeFileSync(gateConfig, JSON.stringify({ gates, gateDir: dir }));
       return {
         binary: CONFIG.node,
         helperArgs: [
-          CONFIG.claudeShim, "--task-root", taskRoot,
+          CONFIG.claudeShim, "--task-root", taskRoot, "--gate-config", gateConfig,
           recorded, CONFIG.claudeFakeHost, ndjson, path.join(dir, "host-result.json"),
         ],
         instanceEnv: { CLAUDE_CODE_TMPDIR: taskRoot },
@@ -223,7 +238,14 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
       const dir = path.join(CONFIG.work, scenario.name.replace(/[^a-zA-Z0-9_-]+/g, "-") + "-" + counter);
       fs.mkdirSync(path.join(dir, "home"), { recursive: true });
       fs.mkdirSync(path.join(dir, "state"), { recursive: true });
-      const provider = standIn(harness.driver, dir, scenario.transcript, scenario.runtimePolicyOverride?.cwd);
+      const steps = scenario.steps ?? [];
+      const provider = standIn(
+        harness.driver,
+        dir,
+        scenario.transcript,
+        scenario.runtimePolicyOverride?.cwd,
+        gateLabels(steps),
+      );
       const create = scenario.commands.find((c: any) => c.type === "thread.create");
       const out = path.join(dir, "result.json");
       const plan = {
@@ -231,6 +253,8 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
         ...provider,
         providerHome: path.join(dir, "home"),
         stateDir: path.join(dir, "state"),
+        // Where the stand-in and the driver meet for the replay gate.
+        gateDir: dir,
         workspace: scenario.runtimePolicyOverride?.cwd,
         fixtureProjectId: create?.projectId,
         runtimePolicyOverride: scenario.runtimePolicyOverride ?? {},

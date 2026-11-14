@@ -95,7 +95,7 @@ pub fn find_executable(binary: &Path, path_var: Option<&std::ffi::OsStr>) -> Opt
         .find(|candidate| candidate.is_file())
 }
 
-fn expand_home(path: &Path) -> PathBuf {
+pub(crate) fn expand_home(path: &Path) -> PathBuf {
     match (path.strip_prefix("~"), std::env::var_os("HOME")) {
         (Ok(rest), Some(home)) => PathBuf::from(home).join(rest),
         _ => path.to_path_buf(),

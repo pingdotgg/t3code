@@ -530,8 +530,66 @@ mod titles {
         settings
     }
 
+    /// An agent provider for titles: answers `generate_text` with `answer`, or does not
+    /// generate text at all (`None`), and keeps the requests it got.
+    struct AgentProvider {
+        id: conn_contract::ProviderInstanceId,
+        driver: &'static str,
+        answer: Option<Value>,
+        requests: std::sync::Mutex<Vec<conn_provider::TextGenerationRequest>>,
+    }
+
+    impl AgentProvider {
+        fn new(id: &str, driver: &'static str, answer: Option<Value>) -> Arc<Self> {
+            Arc::new(Self {
+                id: id.into(),
+                driver,
+                answer,
+                requests: std::sync::Mutex::default(),
+            })
+        }
+    }
+
+    impl conn_provider::Provider for AgentProvider {
+        fn instance_id(&self) -> &conn_contract::ProviderInstanceId {
+            &self.id
+        }
+        fn driver(&self) -> &str {
+            self.driver
+        }
+        fn capabilities(
+            &self,
+        ) -> conn_provider::BoxFuture<
+            '_,
+            conn_provider::ProviderResult<conn_contract::ProviderCapabilities>,
+        > {
+            Box::pin(async { Err(conn_provider::ProviderError::SessionStopped) })
+        }
+        fn open_session(
+            &self,
+            _input: conn_provider::OpenSessionInput,
+        ) -> conn_provider::BoxFuture<'_, conn_provider::ProviderResult<conn_provider::OpenedSession>>
+        {
+            Box::pin(async { Err(conn_provider::ProviderError::SessionStopped) })
+        }
+        fn generate_text(
+            &self,
+            request: conn_provider::TextGenerationRequest,
+        ) -> conn_provider::BoxFuture<'_, conn_provider::ProviderResult<Value>> {
+            if let Ok(mut requests) = self.requests.lock() {
+                requests.push(request);
+            }
+            let answer = self.answer.clone();
+            Box::pin(async move {
+                answer.ok_or(conn_provider::ProviderError::Unsupported {
+                    operation: "generate_text",
+                })
+            })
+        }
+    }
+
     #[tokio::test(flavor = "current_thread")]
-    async fn an_agent_title_model_is_refused_without_a_call() {
+    async fn an_agent_title_model_without_text_generation_is_refused_without_a_call() {
         let stub = Stub::start(|_| (200, "{}".into())).await;
         // The default selection is Codex; a saved Claude selection is the same.
         for settings in [
@@ -542,11 +600,67 @@ mod titles {
             ),
         ] {
             let f = fixture("agent", settings);
-            let titles = Titles::new(Arc::new(f.generators));
+            let providers: Vec<Arc<dyn conn_provider::Provider>> = vec![
+                AgentProvider::new("codex", "codex", None),
+                AgentProvider::new("claudeAgent", "claudeAgent", None),
+            ];
+            let titles = Titles::new(Arc::new(f.generators)).with_providers(providers, None);
             let error = titles.title(initial("hello")).await.unwrap_err();
             assert_eq!(error, AGENT_TITLES_NOT_SERVED);
         }
         assert!(stub.taken().is_empty(), "no request");
+    }
+
+    /// The default title model is Codex: the prompt goes to the Codex instance with T3's
+    /// schema text and the whole selection, and its answer is the title.
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_agent_title_model_asks_its_provider() {
+        let stub = Stub::start(|_| (200, "{}".into())).await;
+        let f = fixture(
+            "agent-codex",
+            settings_for(
+                &stub.base,
+                json!({"instanceId": "codex", "model": "gpt-6-luna",
+                    "options": [{"id": "reasoningEffort", "value": "high"}]}),
+            ),
+        );
+        let codex = AgentProvider::new(
+            "codex",
+            "codex",
+            Some(json!({"title": " Login Redirect Fix ", "needsRefinement": false})),
+        );
+        let titles = Titles::new(Arc::new(f.generators)).with_providers(
+            vec![codex.clone() as Arc<dyn conn_provider::Provider>],
+            None,
+        );
+        assert_eq!(
+            titles.title(initial("the login fails")).await.unwrap(),
+            "Login Redirect Fix"
+        );
+        let request = codex.requests.lock().unwrap().remove(0);
+        assert_eq!(request.operation, "generateThreadTitle");
+        assert_eq!(request.output_schema, prompts::TITLE_OUTPUT_SCHEMA);
+        assert!(request.prompt.ends_with("User message:\nthe login fails"));
+        assert_eq!(
+            conn_contract::to_json(&request.model_selection),
+            json!({"instanceId": "codex", "model": "gpt-6-luna",
+                "options": [{"id": "reasoningEffort", "value": "high"}]})
+        );
+        assert!(stub.taken().is_empty(), "no text generator call");
+
+        // An answer without a title is "invalid structured output", named by the driver.
+        let f = fixture(
+            "agent-codex-bad",
+            settings_for(&stub.base, json!({"instanceId": "codex", "model": "m"})),
+        );
+        let bad = AgentProvider::new("codex", "codex", Some(json!({"name": "x"})));
+        let titles = Titles::new(Arc::new(f.generators))
+            .with_providers(vec![bad as Arc<dyn conn_provider::Provider>], None)
+            .with_retry_delays(&[]);
+        assert_eq!(
+            titles.title(initial("x")).await.unwrap_err(),
+            "Codex returned invalid structured output."
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

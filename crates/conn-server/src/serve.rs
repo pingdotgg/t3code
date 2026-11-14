@@ -168,9 +168,10 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
     let text_generators = Arc::new(crate::text_generation::TextGenerators::for_environment(
         environment.clone(),
     ));
-    config.title_generator = Some(Arc::new(crate::text_generation::title::Titles::new(
-        text_generators.clone(),
-    )));
+    config.title_generator = Some(Arc::new(
+        crate::text_generation::title::Titles::new(text_generators.clone())
+            .with_providers(providers.clone(), Some(state_dir.join("attachments"))),
+    ));
     let engine: Arc<dyn Engine> = Arc::new(or_exit(
         SqliteEngine::open(config),
         "cannot open the engine",

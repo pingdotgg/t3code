@@ -15,7 +15,9 @@ mapping.
 | `network_gate` | The Orbit MCP network wait before the first spawn (`codexMcpNetworkGate.ts`)    |
 | `mapper`   | Pure state machine: frames → `ProviderEvent`s and replies; replay-tested            |
 | `client`   | The app-server process shared by the instance's sessions; request ids, routing      |
+| `mapper::subagents` | Subagents: `collabAgentToolCall`, `subAgentActivity`, child threads and turns |
 | `session`  | `Session`: one native thread per session, a driver task, the 50/400 ms text flushes |
+| `text_generation` | `Provider::generate_text`: `codex mcp list`, then `codex exec` (`CodexTextGeneration.ts`) |
 
 Ids, line framing and the process supervisor come from `conn-provider-support`.
 
@@ -27,7 +29,11 @@ SIGTERM to the process group, SIGKILL after 2 s (TS `forceKillAfter`). A session
 while others share the process sends `thread/unsubscribe` (TS `unloadThread`). No process
 starts once no session is registered. The process gets only what TS sends: `initialize`,
 `initialized`, then thread calls (no `model/list`; models come from Codex's model cache). The router sends
-each notification and server request to the session that owns its `threadId`. If the process
+each notification and server request to the session that owns its `threadId`. A frame of a
+routed thread that names a subagent's child thread (`subAgentActivity.agentThreadId`,
+`collabAgentToolCall.receiverThreadIds`) routes the child to the same session from that
+frame on; the child's `turn/started` and MCP start-up status that came earlier are kept (at
+most 32 frames) and delivered after it. If the process
 dies, open turns end as failed, and the next call starts a new process and resumes the thread
 (`thread/resume`).
 
@@ -73,11 +79,44 @@ persistence choices (`CodexMcpElicitation.ts`, in `src/elicitation.rs`). The eng
 thread when its load changes (`thread_load_model_selection` drops the effort, as T3's
 `normalizeCodexThreadLoadModelSelection`).
 
+**Subagents** (`src/mapper/subagents.rs`), as `CodexAdapterV2` maps them: a `spawnAgent`
+call (v1) or a `subAgentActivity` start (v2) makes a child app thread, a `subagent` node and
+row, the child's provider thread and root node, and (v1) the prompt as the child's first
+message. The child's turns are turns of their own with the same item handlers; a child's
+later turns show what the parent sent; its final answer is the subagent's result; its
+running command or tool is the parent row's progress line; `wait`, `sendInput` and
+`resumeAgent` calls and `subAgentActivity` ends update the task. An approval a child raises
+shows on the root turn under the top-level subagent's node. A child with no reported model
+gets T3's read: `thread/read` without turns, else `thread/resume` without turns (5 s). Stop
+sends `turn/interrupt` to the root turn, then to each running child turn of its lineage,
+waits for all, and ends any lineage turn Codex left open as interrupted; a child turn that
+starts under a stopped turn gets `turn/interrupt`. Bounds: 64 subagents per session (the
+oldest settled one is forgotten; with none settled a new child is skipped), 64 native turns
+per subagent, 16 child threads with early turns, 64 stopped turns.
+
+**Text generation** (`src/text_generation.rs`, `Provider::generate_text`): thread titles
+when the title model is this Codex instance, as `CodexTextGeneration.ts` runs them. First
+`codex <profile/config launch args> --config features.plugins=false --config
+features.apps=false mcp list --json` (10 s; a failure keeps the servers), then `codex exec`
+with every enabled MCP server off, the exec launch args, plugins and apps off,
+`--ephemeral --skip-git-repo-check -s read-only --model <m> --config
+model_reasoning_effort="<e>" [--config service_tier="<t>"] --output-schema <file>
+--output-last-message <file> [--image <path>]… -`, the prompt on stdin (180 s; SIGTERM, then
+SIGKILL after 1 s). The model is the requested one when the catalog lists it, else one of
+its family, else the catalog's first (then the effort is `low` and no service tier goes).
+The environment is the server's, the instance's, and `CODEX_HOME`; no originator. The schema
+and output files sit in `<tmp>/t3code-codex-{schema,output}-<pid>-XXXXXX/<12 hex>`, removed
+after. Errors carry T3's texts ("Codex CLI request timed out.", "Codex CLI command failed:
+…", "Codex returned invalid structured output.").
+
 ## Not implemented
 
-- **Subagents:** `collabAgentToolCall`, `subAgentActivity` and child threads are skipped; a
-  child thread's approval gets an error reply. The conformance check shows the gap on the
-  four `subagent_v2*` recordings.
+- **Subagent wakes:** when a child ends after its parent's turn, T3 asks for a continuation
+  turn on the parent (`continuationRequests`, "Subagent completed: …"); this crate does not,
+  as for background commands. Subagent stop (`stopTask`) is not built.
+- **Text generation:** T3's managed runtime (`resolveRuntime`), custom models
+  (`customModels`) and the catalog's `isDefault`/`isLegacy` flags in the model fallback; the
+  fallback to another provider when Codex is unusable (in the server's title code).
 - **Thread operations:** snapshots, compaction requests, history injection, goals, archive,
   feedback upload; the `additionalContext` restore after compaction (`thread/inject_items`).
 - **Retries:** `error` with `willRetry: true` makes no retry row; the turn keeps running.
@@ -146,11 +185,18 @@ CONN_MONOREPO=/path/to/conn node tools/capture-ts-events.mjs   # regenerate test
   TS replay driver's normalization. `elicitation` runs T3's approval recording with the
   command approval swapped for a form elicitation. `login` starts each side with a stand-in
   login shell (TS: `fixPath`; Rust: the start-up `hydrate`) and checks the `codex` found on its
-  `PATH` and the `PATH`, `__MISE_DIFF` and `JAVA_HOME` the child got. Known differences are
-  listed in it with their reason.
+  `PATH` and the `PATH`, `__MISE_DIFF` and `JAVA_HOME` the child got. A subagent's model
+  reads are compared as a set (both servers send them from a background task; T3's test kit
+  answers them, so recordings never hold them). `subagentStop` cuts T3's `subagent_v2`
+  recording after the child's turn started and stops the run: both send `turn/interrupt` to
+  the root, then the child. `titleListed` and `titleFallback` run T3's own
+  `makeCodexTextGeneration().generateThreadTitle` and our `generate_text` (with T3's prompt
+  and schema): the `mcp list` and `exec` argv (temp files compared by their shape),
+  environment, folder, stdin bytes, schema file and answer must be equal. Known differences
+  are listed in it with their reason.
   Rerun on every Codex CLI or pinned-commit change.
-- `src/replay_tests.rs` replays 15 of the TS test kit's 25 Codex recordings (all that do not
-  need subagents, rollback, fork or a transformed transcript) and compares every event with
+- `src/replay_tests.rs` replays 21 of the TS test kit's 25 Codex recordings (all that do not
+  need rollback, fork or a transformed transcript; the six subagent recordings included) and compares every event with
   the TS adapter's output for the same lines, after the normalizations listed there. Replies
   to approvals and questions must equal the recorded frames.
 - `session::tests` drives a whole session against a scripted fake app-server: a turn, an

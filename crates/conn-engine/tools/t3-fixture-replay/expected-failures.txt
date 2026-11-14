@@ -25,20 +25,12 @@ todo_list/grok                       engine: buffered delivery stores streaming 
 plan_questions/grok                  engine: buffered delivery stores streaming assistant rows
 grok_prompt_error/grok               engine: buffered delivery stores streaming assistant rows
 grok_auto_blocked_command/grok       engine: buffered delivery stores streaming assistant rows
-queued_turn/grok                     engine: buffered delivery stores streaming assistant rows; then clock: as queued_turn/codex
+queued_turn/grok                     engine: buffered delivery stores streaming assistant rows
 grok_subagent_lineage/grok           provider: Grok subagents are not built (crates/conn-provider-acp README)
 grok_background_bash/grok            driver: finish_held_run (no replay gate in acp-stub.mjs); provider: Grok background tasks are not built
 grok_background_bash_fast_wake/grok  driver: finish_held_run; provider: Grok background tasks are not built
 grok_background_subagent/grok        driver: finish_held_run; provider: Grok background tasks and subagents are not built
 grok_monitor/grok                    driver: finish_held_run; provider: Grok monitors are not built
-
-# --- Codex provider: subagents are not built (conn-provider-codex README) ---
-subagent/codex                      provider: Codex subagents (collabAgentToolCall, child threads) are not built
-subagent_continue/codex             provider: Codex subagents are not built
-subagent_v2/codex                   provider: Codex subagents are not built
-subagent_v2_approval/codex          provider: Codex subagents are not built (a child's approval gets an error reply)
-subagent_v2_nested/codex            provider: Codex subagents are not built
-subagent_v2_nested_approval/codex   provider: Codex subagents are not built
 
 # --- Claude provider: background roster, monitors and wakes are not built ---
 claude_background_subagent_after_root/claudeAgent    provider: no background_work.updated roster for Claude subagents; the subagent item never shows
@@ -49,11 +41,6 @@ claude_background_wake_before_queued_prompt/claudeAgent  provider: Claude backgr
 claude_compact_after_resume_wake/claudeAgent         provider: Claude background wakes are not built (the resumed wake's compaction differs)
 claude_compact_after_peer_turn/claudeAgent           provider: Claude background wakes are not built (the peer turn's run never reaches its status)
 
-# --- The replay driver: steps it cannot run yet ---
-queued_cancelled_while_active/codex           driver: release_replay_gate / finish_held_run (the stub sends frames at once; no replay gate)
-claude_background_task_after_root/claudeAgent driver: release_replay_gate (no replay gate in the fake SDK host)
-claude_background_task_wake/claudeAgent       driver: release_replay_gate (no replay gate in the fake SDK host)
-
-# --- Test clock: T3's expected order comes from ties on its TestClock ---
-queued_turn/codex         clock: T3 orders messages by createdAt then id; on its TestClock the queued message and the first answer tie and the id decides. Our providers stamp with the system clock (no clock seam in the providers)
-queued_turn/claudeAgent   clock: as queued_turn/codex
+# --- Claude provider, past the replay gate ---
+claude_background_task_after_root/claudeAgent provider: Claude background wakes are not built (the task's pending row ends before its wake run)
+claude_background_task_wake/claudeAgent       provider: Claude background wakes are not built (the wake's message text differs)
