@@ -85,6 +85,7 @@ export function resolveChatCanvasModel({
   threadRef,
   preview,
   detailsCardInlineOpen,
+  centerChatBesideDetails = false,
 }: {
   measurements: ChatCanvasMeasurements;
   detailsCardMeasurement: DetailsCardMeasurement | null;
@@ -92,6 +93,7 @@ export function resolveChatCanvasModel({
   threadRef: ScopedThreadRef | null;
   preview: ChatCanvasPreview | null;
   detailsCardInlineOpen: boolean;
+  centerChatBesideDetails?: boolean;
 }) {
   const container = { width: measurements.width, height: measurements.height };
   const { findBar } = measurements;
@@ -134,6 +136,7 @@ export function resolveChatCanvasModel({
     maxChatWidth: measurements.maxChatWidth,
     minChatWidth: measurements.minChatWidth,
     composerHeight: measurements.composerHeight,
+    centerChatBesideDetails,
     detailsCard,
     findBar,
   });

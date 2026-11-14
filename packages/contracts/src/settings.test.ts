@@ -317,6 +317,16 @@ describe("resolveIdleCompaction", () => {
   });
 });
 
+describe("ClientSettings chat centering", () => {
+  it("defaults to canvas centering and preserves an explicit opt-in", () => {
+    expect(decodeClientSettings({}).centerChatBesideDetails).toBe(false);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("centerChatBesideDetails");
+    const patch = decodeClientSettingsPatch({ centerChatBesideDetails: true });
+    expect(patch).toEqual({ centerChatBesideDetails: true });
+    expect(encodeClientSettings(decodeClientSettings(patch)).centerChatBesideDetails).toBe(true);
+  });
+});
+
 describe("ClientSettings notifications", () => {
   it("requires opt-in when existing settings omit notification preferences", () => {
     expect(decodeClientSettings({}).notificationMode).toBe("off");

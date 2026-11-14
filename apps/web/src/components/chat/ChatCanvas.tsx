@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties } from "react";
 import { useStore } from "zustand";
+import { useClientSettings } from "../../hooks/useSettings";
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import type { ChatCanvasPreview } from "./chatCanvasLayout";
 import { resolveChatCanvasModel, type ChatCanvasStore } from "./canvasStore";
@@ -24,6 +25,7 @@ export function ChatCanvas({
   composerOverlayElement: HTMLElement | null;
   detailsCardTopInset?: number;
 }) {
+  const centerChatBesideDetails = useClientSettings((settings) => settings.centerChatBesideDetails);
   const elementRef = useRef<HTMLDivElement | null>(null);
   const widthProbeRef = useRef<HTMLDivElement | null>(null);
   const [timelineElement, registerTimeline] = useState<HTMLElement | null>(null);
@@ -78,6 +80,7 @@ export function ChatCanvas({
     threadRef,
     preview,
     detailsCardInlineOpen,
+    centerChatBesideDetails,
   });
   const context = {
     container: model.container,

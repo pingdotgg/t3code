@@ -1974,6 +1974,7 @@ export default function ChatView(props: ChatViewProps) {
         threadRef: activeThreadRef,
         preview: canvasPreview,
         detailsCardInlineOpen: threadPanelInlineOpen,
+        centerChatBesideDetails: settings.centerChatBesideDetails,
       }).detailsCardMode,
   );
   const threadPanelOpen = useRightPanelStore((state) =>
