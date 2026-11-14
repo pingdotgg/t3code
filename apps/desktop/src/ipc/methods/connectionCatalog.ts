@@ -25,3 +25,13 @@ export const setConnectionCatalog = DesktopIpc.makeIpcMethod({
     return yield* store.set(catalog);
   }),
 });
+
+export const canSaveConnectionCatalog = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.CAN_SAVE_CONNECTION_CATALOG_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.connectionCatalog.canSave")(function* () {
+    const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+    return yield* store.canSave;
+  }),
+});

@@ -106,6 +106,9 @@ The AUR packages currently support x86_64 only; on ARM64, use the AppImage.
 Update AUR installs with your AUR helper, such as `yay -Syu`, instead of the
 in-app updater.
 
+The desktop app needs an unlocked Secret Service keyring, such as GNOME
+Keyring or KWallet, to save connections to other machines.
+
 ### Nix (nixpkgs)
 
 T3 Code is maintained in [nixpkgs](https://github.com/NixOS/nixpkgs/tree/nixos-unstable/pkgs/by-name/t3/t3code).

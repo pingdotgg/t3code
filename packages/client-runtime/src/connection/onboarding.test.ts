@@ -159,10 +159,18 @@ function layerPairingHttp(
   return RpcHttp.layerRemoteHttpClient(fetchFn);
 }
 
+const SAVE_ERROR = new Persistence.ConnectionPersistenceError({
+  operation: "register-connection",
+  message: "No unlocked keyring.",
+});
+
 function layerPairingOnboarding(
-  options?: Parameters<typeof layerPairingHttp>[1],
+  options?: Parameters<typeof layerPairingHttp>[1] & {
+    readonly saveError?: Persistence.ConnectionPersistenceError;
+  },
   calls: Array<{ readonly url: string; readonly init: RequestInit }> = [],
 ) {
+  const saveError = options?.saveError;
   const dependencies = Layer.mergeAll(
     layerClientPresentation,
     layerPairingHttp(calls, options),
@@ -171,7 +179,8 @@ function layerPairingOnboarding(
       listDisabled: Effect.succeed([]),
     }),
     Layer.mock(Persistence.ConnectionRegistrationStore)({
-      register: () => Effect.void,
+      assertWritable: saveError === undefined ? Effect.void : Effect.fail(saveError),
+      register: () => (saveError === undefined ? Effect.void : Effect.fail(saveError)),
       setEnabled: () => Effect.void,
     }),
     Layer.mock(Persistence.EnvironmentCacheStore)({}),
@@ -455,11 +464,12 @@ describe("connection onboarding", () => {
           unsupportedReason: UNSUPPORTED_ERROR.message,
         });
 
+        // The host owns this entry, so storage that refuses saves must not block pairing.
         const environmentId = yield* onboarding.registerPairing(PAIRING_INPUT);
 
         expect(environmentId).toBe(PAIRED_ENVIRONMENT_ID);
         expect(yield* SubscriptionRef.get(registry.entries)).toEqual(before);
-      }).pipe(Effect.provide(layerPairingOnboarding())),
+      }).pipe(Effect.provide(layerPairingOnboarding({ saveError: SAVE_ERROR }))),
   );
 
   it.effect("leaves a switched-off environment unchanged when the pairing exchange fails", () =>
@@ -481,6 +491,20 @@ describe("connection onboarding", () => {
       expect(after.get(PAIRED_ENVIRONMENT_ID)?.unsupportedReason).toBe(UNSUPPORTED_ERROR.message);
     }).pipe(Effect.provide(layerPairingOnboarding({ failExchange: true }))),
   );
+
+  it.effect("does not consume a pairing credential when the connection cannot be saved", () => {
+    const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+    return Effect.gen(function* () {
+      const onboarding = yield* Onboarding.ConnectionOnboarding;
+
+      const error = yield* onboarding.registerPairing(PAIRING_INPUT).pipe(Effect.flip);
+
+      expect(error).toEqual(SAVE_ERROR);
+      expect(calls.map((call) => call.url)).toEqual([
+        "https://remote.example.test/.well-known/t3/environment",
+      ]);
+    }).pipe(Effect.provide(layerPairingOnboarding({ saveError: SAVE_ERROR }, calls)));
+  });
 
   it.effect("rejects an incompatible server without consuming the pairing credential", () =>
     Effect.gen(function* () {

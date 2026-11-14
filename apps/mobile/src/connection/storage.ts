@@ -59,6 +59,7 @@ export const layer = Layer.effectContext(
       ),
     });
     const registrationStore = Persistence.ConnectionRegistrationStore.of({
+      assertWritable: Effect.void,
       register: Effect.fn("Persistence.ConnectionRegistrationStore.register")(
         (registration, routes) =>
           catalog
