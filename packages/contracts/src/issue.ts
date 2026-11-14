@@ -460,3 +460,44 @@ export class IssueOperationError extends Schema.TaggedError<IssueOperationError>
 }
 
 export type IssueError = IssueUnavailableError | IssueOperationError;
+
+/** Who created a thread ↔ issue link. */
+export const ThreadIssueLinkSource = Schema.Literals(["manual", "agent"]);
+export type ThreadIssueLinkSource = typeof ThreadIssueLinkSource.Type;
+
+/**
+ * Identity of an issue as a thread link sees it: tracker-level, so the same issue linked through
+ * two projects compares equal. `host` is always written here, unlike `IssueRef`, because a link
+ * outlives the project whose binding supplied the default.
+ */
+export const ThreadIssueKey = Schema.Struct({
+  tracker: IssueTrackerKind,
+  host: TrimmedNonEmptyString,
+  scope: TrimmedNonEmptyString,
+  key: TrimmedNonEmptyString,
+});
+export type ThreadIssueKey = typeof ThreadIssueKey.Type;
+
+/**
+ * An issue linked to a thread. `projectId` is the project the issue is read through, which the
+ * detail panel needs; `url` is what the agent or user handed over.
+ */
+export const ThreadIssueLink = Schema.Struct({
+  ...ThreadIssueKey.fields,
+  projectId: ProjectId,
+  url: TrimmedNonEmptyString,
+  source: ThreadIssueLinkSource,
+  linkedAt: IsoDateTime,
+  /** As the tracker named the issue when it was linked; opening it reads the live state. */
+  displayKey: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+});
+export type ThreadIssueLink = typeof ThreadIssueLink.Type;
+
+export function threadIssueKeyOf(key: ThreadIssueKey): string {
+  return `${key.tracker}\u0000${key.host.trim().toLowerCase()}\u0000${key.scope.trim().toLowerCase()}\u0000${key.key.trim()}`;
+}
+
+export function threadIssueKeysEqual(left: ThreadIssueKey, right: ThreadIssueKey): boolean {
+  return threadIssueKeyOf(left) === threadIssueKeyOf(right);
+}

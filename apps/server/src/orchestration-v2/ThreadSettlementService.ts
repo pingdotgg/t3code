@@ -756,6 +756,7 @@ export const make = Effect.gen(function* () {
         return enqueueFullSweep();
       case "thread.pull-request-link-updated":
       case "thread.pull-request-synced":
+      case "thread.issue-synced":
       case "provider-session.detached":
       case "run.background-work-cancelled":
         return enqueueThread(event.threadId);

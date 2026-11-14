@@ -28,6 +28,7 @@ import {
   type IssueTrackerSummary,
   type IssueUpdateInput,
   type OrchestrationProjectShell,
+  type ProjectId,
 } from "@t3tools/contracts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
@@ -140,6 +141,22 @@ export class IssueService extends Context.Service<
     readonly update: (input: IssueUpdateInput) => Effect.Effect<void, IssueError>;
     readonly setState: (input: IssueSetStateInput) => Effect.Effect<void, IssueError>;
     readonly react: (input: IssueReactionInput) => Effect.Effect<void, IssueError>;
+    /**
+     * The reference behind an issue URL: served by the project whose binding is that host and
+     * scope, else read-only through any project on the same tracker and host. `preferredProjectId`
+     * wins among equals, so a thread's own project serves its own issues.
+     */
+    /** The tracker and container a project's own issues live in. */
+    readonly projectScope: (
+      projectId: ProjectId,
+    ) => Effect.Effect<IssueScopeRef & { readonly host: string }, IssueError>;
+    readonly resolveUrl: (
+      url: string,
+      preferredProjectId?: ProjectId,
+    ) => Effect.Effect<
+      IssueRef & { readonly host: string; readonly writable: boolean },
+      IssueError
+    >;
   }
 >()("t3/issue/IssueService") {}
 
@@ -552,6 +569,52 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const projectScope: IssueService["Service"]["projectScope"] = Effect.fn(
+    "IssueService.projectScope",
+  )(function* (projectId) {
+    const { supported } = yield* listProjects({ projectId });
+    const [own] = supported;
+    if (own === undefined) {
+      return yield* new IssueUnavailableError({ reason: "tracker-unsupported" });
+    }
+    return { projectId, tracker: own.tracker, host: own.host, scope: own.scope };
+  });
+
+  const resolveUrl: IssueService["Service"]["resolveUrl"] = Effect.fn("IssueService.resolveUrl")(
+    function* (url, preferredProjectId) {
+      const parsed = sourceControlDefinitions.parseIssueUrl(url);
+      if (parsed === null) {
+        return yield* new IssueOperationError({
+          operation: "resolveUrl",
+          reason: "not-found",
+          detail: "This is not a recognised issue URL.",
+        });
+      }
+      const { definition, link } = parsed;
+      const { supported } = yield* listProjects({ host: link.host });
+      const onTracker = supported.filter(
+        (project) => project.tracker === IssueTrackerKind.make(definition.kind),
+      );
+      const preferFirst = (projects: ReadonlyArray<SupportedProject>) =>
+        projects.find((project) => project.project.id === preferredProjectId) ?? projects[0];
+      const own = preferFirst(
+        onTracker.filter((project) => project.scope.toLowerCase() === link.scope),
+      );
+      const lender = own ?? preferFirst(onTracker);
+      if (lender === undefined) {
+        return yield* new IssueUnavailableError({ reason: "tracker-unsupported" });
+      }
+      return {
+        projectId: lender.project.id,
+        tracker: lender.tracker,
+        host: lender.host,
+        scope: own === undefined ? link.scope : lender.scope,
+        key: link.key,
+        writable: own !== undefined,
+      };
+    },
+  );
+
   return IssueService.of({
     list,
     detail: traced("detail", detail),
@@ -563,6 +626,8 @@ const make = Effect.gen(function* () {
     update: interactive(traced("update", update)),
     setState: interactive(traced("setState", setState)),
     react: interactive(traced("react", react)),
+    projectScope,
+    resolveUrl,
   });
 });
 
