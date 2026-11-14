@@ -14,6 +14,7 @@ import * as NodePath from "node:path";
 
 import { McpSession, oauthMcpToken, pairBearer } from "./mcp-client.mjs";
 import { monorepo } from "../../../tools/monorepo.mjs";
+import { GUARD_ARG } from "../../../tools/no-outside-fetch.mjs";
 
 const argv = process.argv.slice(2);
 const noModel = !argv.includes("--model");
@@ -104,6 +105,7 @@ async function startTs() {
   const { origin, code } = await start(
     node,
     [
+      GUARD_ARG,
       NodePath.join(monorepo(), "apps/server/src/bin.ts"),
       "--no-browser",
       "--auto-bootstrap-project-from-cwd",

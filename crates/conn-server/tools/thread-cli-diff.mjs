@@ -33,6 +33,7 @@ import * as NodeURL from "node:url";
 
 import { monorepo } from "../../../tools/monorepo.mjs";
 import { copyRpc } from "./orbit-copy-rpc.mjs";
+import { GUARD_ARG } from "../../../tools/no-outside-fetch.mjs";
 
 const argv = process.argv.slice(2);
 const keep = argv.includes("--keep");
@@ -178,7 +179,8 @@ function makeSide(name) {
     CONN_CLAUDE_STATUS_PROBE: "off",
   };
   const isT3 = name === "t3";
-  const command = isT3 ? [NODE, T3_BIN] : [NodePath.resolve(binary)];
+  // The T3 server and CLI run with fetch limited to loopback (no-outside-fetch.mjs).
+  const command = isT3 ? [NODE, GUARD_ARG, T3_BIN] : [NodePath.resolve(binary)];
   let server = null;
   let port = 0;
   let output = "";

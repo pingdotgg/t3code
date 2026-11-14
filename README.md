@@ -33,6 +33,7 @@ every command.
 | `--project <dir>` (repeatable)              | the current folder in the short form; none with `serve` | Folders offered as projects, plus `projects.json` (`project add`)  |
 | `--label <name>`                            | the host name                                          | Environment label in clients                                       |
 | `--mode desktop`, `--bootstrap-fd <fd>`     | web                                                    | Conn desktop's start: reads its bootstrap line, accepts its token  |
+| `CONN_MODEL_MANIFEST_URL` (test seam)       | unset: T3 Code's manifest on GitHub                    | Where `model-manifest.json` is fetched from; `off` (or any value that is not an `http(s)` URL) never fetches. Every check sets `off` (`tools/check.sh`, `tools/sealed-env.mjs`); `orbit-flow.mjs` points it at a loopback stub |
 
 The default home is `~/.t3`, the T3 server's. To try the server next to a running T3 server,
 always pass `--base-dir` or `--state-dir` with a folder of its own.
