@@ -1,14 +1,19 @@
 import {
+  formatAssistantCitationHref,
+  parseAssistantCitationHref,
+} from "@t3tools/shared/assistantCitations";
+import {
   ASSISTANT_CITATION_MAX_TEXT_LENGTH,
   MessageId,
   type AssistantCitation,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { QuoteIcon } from "lucide-react";
-import { use, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { use, useEffectEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   captureAssistantTextSelection,
+  createCitationCommentInput,
   type AssistantCitationSourceAnchor,
 } from "~/lib/assistantTextSelection";
 import {
@@ -18,6 +23,7 @@ import {
   type SelectionActionPoint,
 } from "~/lib/selectionActions";
 import { Button } from "../ui/button";
+import { registerActiveCite } from "./composerFocusRedirect";
 import { BackgroundThreadContext } from "./backgroundThread";
 
 export function AssistantSelectionToolbar({
@@ -176,18 +182,36 @@ export function AssistantSelectionToolbar({
     };
   }, [backgroundThread, threadRef, viewport]);
 
-  if (!selection) return null;
-  const tooLong = selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH;
+  const tooLong = (selection?.citation.text.length ?? 0) > ASSISTANT_CITATION_MAX_TEXT_LENGTH;
   const dismiss = () => {
     actionsRef.current?.cancel();
     setSelection(null);
   };
-  const cite = () => {
-    if (tooLong || !onCite(selection.citation, selection.sourceAnchor)) return false;
+  const cite = (comment?: string) => {
+    if (!selection || !parseAssistantCitationHref(formatAssistantCitationHref(selection.citation)))
+      return null;
+    const anchor = {
+      ...selection.sourceAnchor,
+      ...(comment === undefined
+        ? {}
+        : {
+            initialComment: comment,
+            commentInput: createCitationCommentInput(comment),
+          }),
+    };
+    if (tooLong || !onCite(selection.citation, anchor)) return null;
     window.getSelection()?.removeAllRanges();
     dismiss();
-    return true;
+    return anchor;
   };
+  const typeToCite = useEffectEvent((text: string) => cite(text));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the foreground toolbar with the window input router
+  useEffect(() => {
+    if (backgroundThread) return;
+    return registerActiveCite(typeToCite);
+  }, [backgroundThread]);
+
+  if (!selection) return null;
   return createPortal(
     <Button
       ref={toolbarRef}
@@ -199,7 +223,7 @@ export function AssistantSelectionToolbar({
       className="fixed z-50 max-w-[calc(100vw-1rem)]"
       style={{ left: selection.position.x, top: selection.position.y }}
       onPointerDown={(event) => event.preventDefault()}
-      onClick={cite}
+      onClick={() => cite()}
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === "Escape" && !event.nativeEvent.isComposing) {

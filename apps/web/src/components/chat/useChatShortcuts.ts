@@ -80,6 +80,8 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       return;
     }
 
+    if (event.defaultPrevented && terminalFocusOwner === null) return;
+
     const command = resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
       context: shortcutContext,
     });
