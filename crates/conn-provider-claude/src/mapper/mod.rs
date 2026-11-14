@@ -568,8 +568,11 @@ impl<E: Env> Mapper<E> {
         out
     }
 
-    pub fn handle(&mut self, message: Inbound) -> Vec<Out> {
+    pub fn handle(&mut self, mut message: Inbound) -> Vec<Out> {
         let mut out = Vec::new();
+        if let Inbound::Result(result) = &mut message {
+            self.measure_ledger(result);
+        }
         // Before routing: an idle Monitor reports its task before its call replays.
         self.roster.track_monitor_calls(&message);
         if self.turn.is_none() && is_wake_frame(&message) {
@@ -1100,8 +1103,13 @@ impl<E: Env> Mapper<E> {
         }
     }
 
-    fn on_result(&mut self, msg: ResultMsg, out: &mut Vec<Out>) {
-        // Growth of the process ledger, measured once per result as it arrives.
+    /// Growth of the process ledger, measured once per result in arrival order, before a
+    /// result waits for a wake or an echo (`resultLedgerUsage` in the query reader).
+    fn measure_ledger(&mut self, msg: &mut ResultMsg) {
+        if msg.ledger_measured {
+            return;
+        }
+        msg.ledger_measured = true;
         let ledger = model_ledger(msg.model_usage.as_ref());
         let growth = ledger_delta(self.ledger.as_deref(), ledger.as_deref());
         // A ledger that went backwards cannot anchor the next turn's growth.
@@ -1110,6 +1118,14 @@ impl<E: Env> Mapper<E> {
         } else {
             ledger
         };
+        msg.ledger_growth = growth.map(|g| (g.input, g.output));
+    }
+
+    fn on_result(&mut self, mut msg: ResultMsg, out: &mut Vec<Out>) {
+        self.measure_ledger(&mut msg);
+        let growth = msg
+            .ledger_growth
+            .map(|(input, output)| Ledger { input, output });
         self.result_growth = growth;
         // A result that reports a context window not seen before refreshes the usage row.
         let mut new_window = false;
@@ -2610,6 +2626,13 @@ fn turn_token_usage(
     let mut usage = json!({"usageScope": "main_agent", "hasSubagents": has_subagents});
     if !models.is_empty() {
         usage["models"] = json!(models);
+    }
+    if result
+        .and_then(|r| r.local_command.as_ref())
+        .and_then(Value::as_str)
+        .is_some_and(|c| !c.is_empty())
+    {
+        usage["localCommand"] = json!(true);
     }
     let success = result.is_some_and(|r| r.subtype == "success");
     let Some(u) = usage_total.filter(|_| result.is_some()) else {

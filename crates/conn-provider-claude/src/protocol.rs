@@ -568,6 +568,15 @@ pub struct ResultMsg {
     /// Who started the turn: `{"kind": "human" | "task-notification" | ...}`.
     #[serde(default)]
     pub origin: Option<Value>,
+    /// Set when a local command (`/compact`, ...) ran instead of a model turn.
+    #[serde(default)]
+    pub local_command: Option<Value>,
+    /// Growth of the process's `modelUsage` ledger (input, output), measured once when the
+    /// result arrived (`resultLedgerUsage`); set by the mapper, never decoded.
+    #[serde(skip)]
+    pub ledger_growth: Option<(u64, u64)>,
+    #[serde(skip)]
+    pub ledger_measured: bool,
 }
 
 // ---- Host → CLI ----
