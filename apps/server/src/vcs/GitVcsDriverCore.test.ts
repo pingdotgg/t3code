@@ -4152,7 +4152,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         // Base config reads start only after status completes; hold every one until the rename lands.
         const spawner = ChildProcessSpawner.make((command) =>
           Effect.gen(function* () {
-            if (ChildProcess.isStandardCommand(command) && command.args[0] === "config") {
+            if (
+              ChildProcess.isStandardCommand(command) &&
+              command.args[0] === "config" &&
+              !command.args.includes("status.showUntrackedFiles")
+            ) {
               if (!(yield* Ref.getAndSet(renameClaimed, true))) {
                 yield* git(cwd, ["branch", "-m", "t3/temporary", "feature/named"]).pipe(
                   Effect.provideService(GitVcsDriver.GitVcsDriver, outer),
@@ -4668,13 +4672,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
               deletions: 0,
             });
             assert.deepStrictEqual(untrackedScanRoots, [
-              scenario === "normal" ? [":(top,literal)bulk[1]/"] : [],
+              scenario === "normal" || scenario === "no" ? [":(top,literal)bulk[1]/"] : [],
             ]);
-            if (scenario === "normal") {
+            if (scenario === "normal" || scenario === "no") {
               assert.deepStrictEqual(
                 status.workingTree.files.map((file) => file.path),
                 ["bulk[1]/"],
               );
+            } else if (scenario === "all") {
+              assert.lengthOf(status.workingTree.files, 1_001);
             }
           }
         }),
