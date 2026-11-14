@@ -51,7 +51,7 @@ describe("resolveAssistantMessageCopyState", () => {
         streaming: false,
       }),
     ).toEqual({
-      text: "Created [report.xlsx](<outputs/report.xlsx>).\n\nHello World (Document template)",
+      text: "Created [report.xlsx](<./outputs/report.xlsx>).\n\nHello World (Document template)",
       visible: true,
     });
   });

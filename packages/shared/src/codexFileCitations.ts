@@ -1,3 +1,5 @@
+import { isExplicitRelativePath, isHostPath } from "./path.ts";
+
 export interface CodexFileCitationLink {
   readonly path: string;
   readonly href: string;
@@ -18,8 +20,11 @@ function citationLabel(path: string): string {
   return normalized.slice(normalized.lastIndexOf("/") + 1) || normalized || "File";
 }
 
+// Codex's own renderer also writes `./` before a bare relative path, so it reads as a file link
+// whatever punctuation its names carry (`reports/100% #1?.md`).
 function markdownDestinationPath(path: string): string {
-  return path.replaceAll("%", "%25").replaceAll("#", "%23").replaceAll("?", "%3F");
+  const destination = isHostPath(path) || isExplicitRelativePath(path) ? path : `./${path}`;
+  return destination.replaceAll("%", "%25").replaceAll("#", "%23").replaceAll("?", "%3F");
 }
 
 export function resolveCodexFileCitationLink(
