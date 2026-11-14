@@ -1147,7 +1147,7 @@ fn every_contract_command_is_handled_or_refused_with_a_reason() {
             );
         }
     }
-    assert_eq!(handled, 41);
+    assert_eq!(handled, 43);
     assert_eq!(conn_contract::COMMAND_TYPES.len(), 56);
 }
 
@@ -1295,24 +1295,9 @@ async fn thread_lifecycle_commands_reach_the_shell_row() {
     assert_eq!(r["providerInstanceId"], "codex");
     assert_eq!(r["activeProviderThreadId"], Value::Null);
 
-    let refused = engine
-        .dispatch(
-            from_json(cmd(
-                16,
-                "checkpoint.rollback",
-                json!({"checkpointId": "x", "scopeId": "s"}),
-            ))
-            .unwrap(),
-        )
-        .await;
-    let Err(EngineError::Rejected(error)) = refused else {
-        panic!("expected a refusal")
-    };
     assert!(
-        to_json(&error)["message"]
-            .as_str()
-            .unwrap()
-            .contains("checkpoints")
+        crate::commands::refusal("thread.merge_back").contains("merge a fork back"),
+        "a refused command says why"
     );
 }
 
@@ -2980,3 +2965,6 @@ async fn shutdown_closes_sessions_together_and_opens_no_more() {
         "starting"
     );
 }
+
+#[path = "checkpoint_tests.rs"]
+mod checkpoint_tests;

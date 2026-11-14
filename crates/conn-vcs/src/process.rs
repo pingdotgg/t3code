@@ -17,6 +17,9 @@ use tokio::{
     process::Command,
 };
 
+/// What [`GitCommand::scan`] hands each stdout chunk to.
+pub type Scanner<'a> = &'a mut (dyn FnMut(&[u8]) + Send);
+
 /// `apps/server/src/vcs/VcsProcess.ts`: stderr kept for error classification.
 pub const MAX_STDERR_BYTES: usize = 64 * 1024;
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -122,7 +125,13 @@ impl GitCommand {
     }
 
     pub async fn run(self) -> Result<GitOutput, ProcessError> {
-        run(self).await
+        run(self, None).await
+    }
+
+    /// Runs and hands every stdout chunk to `scan` instead of keeping it, so a long listing
+    /// (`ls-files` of a large index) costs one chunk of memory. The output's `stdout` is empty.
+    pub async fn scan(self, scan: Scanner<'_>) -> Result<GitOutput, ProcessError> {
+        run(self, Some(scan)).await
     }
 
     /// Runs and returns stdout as text, failing on a non-zero exit.
@@ -202,7 +211,7 @@ impl ProcessError {
     }
 }
 
-async fn run(command: GitCommand) -> Result<GitOutput, ProcessError> {
+async fn run(command: GitCommand, scan: Option<Scanner<'_>>) -> Result<GitOutput, ProcessError> {
     let context = ProcessContext {
         operation: command.operation,
         command: command.command_label(),
@@ -253,6 +262,10 @@ async fn run(command: GitCommand) -> Result<GitOutput, ProcessError> {
             drop(stdin_pipe.take());
         };
         let read_stdout = async {
+            if let Some(scan) = scan {
+                read_scanned(&mut stdout, scan).await;
+                return (Vec::new(), None);
+            }
             let (out, over) = read_bounded(&mut stdout, command.max_stdout, false).await;
             if over.is_some() {
                 // Stop git now: it would block on the full pipe, and stderr would never end.
@@ -370,6 +383,17 @@ fn git_config_env(inherited: Option<&str>) -> Vec<(String, String)> {
         ),
         (format!("GIT_CONFIG_VALUE_{count}"), "explicit".into()),
     ]
+}
+
+/// Reads to EOF and hands each chunk to `scan`.
+async fn read_scanned<R: AsyncRead + Unpin>(reader: &mut R, scan: Scanner<'_>) {
+    let mut chunk = vec![0u8; 8192];
+    loop {
+        match reader.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => scan(chunk.get(..n).unwrap_or_default()),
+        }
+    }
 }
 
 /// Reads at most `limit` bytes. Returns the bytes and, when the stream had more, how many

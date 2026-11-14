@@ -11,6 +11,8 @@ rust-version.workspace = true
 conn-support.workspace = true
 conn-contract.workspace = true
 conn-provider.workspace = true
+# Git checkpoints per turn (`src/checkpoint.rs`); already in the server binary.
+conn-vcs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }

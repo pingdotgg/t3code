@@ -12,7 +12,8 @@ workspace README describes the trait's first methods and the wire.
 | `EngineConfig::home`                          | `scratch/` and `projects/` folders; defaults to the database folder |
 | `EngineConfig::idle_session`                  | Closes a provider session after 10 idle minutes (its process too)   |
 | `TitleGenerator`, `TitleRequest`, `TitleKind` | `generateTitle` and `regenerateTitle` through a small model         |
-| `TurnObserver`, `TurnPoint`                   | Turn start and end, the hook for git checkpoints                    |
+| `TurnObserver`, `TurnPoint`                   | Turn start and end (`/mcp` touch, VCS refresh)                      |
+| `EngineConfig::checkpoints`                   | Git checkpoints per turn, diffs, rollback (`src/checkpoint.rs`)     |
 
 `calls.rs` lists the tags `call` and `open_stream` serve. The server registers them with their
 contract types (`methods/orchestration.rs`, `methods/projects.rs`), so a result that does not
@@ -20,20 +21,65 @@ decode is a defect, not a broken client.
 
 ## dispatchCommand
 
-41 of the 56 command types are handled. The other 15 answer `OrchestrationV2DispatchCommandError`
+43 of the 56 command types are handled. The other 13 answer `OrchestrationV2DispatchCommandError`
 with a reason the client shows (`commands::refusal`).
 
 | Handled                                                                                                                                                             | Refused, and why                                                                             |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `thread.create`, `message.dispatch` (all five dispatch modes), `run.interrupt` (`holdQueue`), `thread.stop`, `runtime-request.respond`, `thread.user-input.dismiss` | `checkpoint.rollback`, `thread.merge_back`: no checkpoints yet                               |
-| `queued-run.start`, `.cancel`, `.reorder`, `.edit`, `queue.resume`, `queued-message.promote-to-steer`                                                               | `thread.fork`                                                                                |
+| `thread.create`, `message.dispatch` (all five dispatch modes), `run.interrupt` (`holdQueue`), `thread.stop`, `runtime-request.respond`, `thread.user-input.dismiss` | `thread.merge_back`: no portable context handoff                                             |
+| `queued-run.start`, `.cancel`, `.reorder`, `.edit`, `queue.resume`, `queued-message.promote-to-steer`                                                               | (none)                                                                                       |
 | `thread.archive`, `unarchive`, `delete`, `visit`, `mark-unread`, `metadata.update` (`regenerateTitle`), `title.regeneration.complete`                               | `prepared-run.release`, `.progress`, `.fail`, `.retry`: no worktree preparation              |
 | `thread.settle`, `auto-settle`, `unsettle`, `snooze`, `unsnooze`, `auto-settle.set`, `pin`, `unpin`, `pin.reorder`, `active.reorder`, `tag.set`                     | `thread.pull-request-link.sync`, `.pull-request.watch`, `.pull-request.sync`: no PR watching |
 | `thread.pull-request.link`, `.unlink`                                                                                                                               | `thread.guest-share.close`, `thread.guest-message.dismiss`: no guest sharing                 |
 | `thread.runtime-mode.set`, `interaction-mode.set`, `model-selection.set`, `provider.switch`, `provider-session.detach`                                              | `notification.delivery.accept`, `subagent.stop`, `thread.created.record`                     |
-| `delegated_task.request`, `.wake-policy`, `.completion-delivery.acknowledge`, `.dispose`                                                                            |                                                                                              |
+| `delegated_task.request`, `.wake-policy`, `.completion-delivery.acknowledge`, `.dispose`, `checkpoint.rollback`, `thread.fork`                                                                            |                                                                                              |
+
+## The refused commands: a map
+
+The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says otherwise.
+"Here" says which work item takes the command; "other" means another work item owns it.
+
+| Command | T3 source | What it does | Needs | Here |
+| --- | --- | --- | --- | --- |
+| `checkpoint.rollback` | `Orchestrator.ts` `dispatchCheckpointRollback`, `CheckpointRollbackService.ts`, `CheckpointRestoreSafety.ts` | Puts the workspace back to a checkpoint, marks later runs `rolled_back`, rolls the provider's native thread back | checkpoints, `Session::rollback_thread`, `conn-vcs` restore | yes |
+| `thread.fork` | `ThreadForkService.ts`, `Orchestrator.ts` `dispatchThreadFork` | A new thread from a run of another, with a `fork` context transfer and the provider's native fork | `Session::fork_thread`, `ContextHandoffService.ts` | yes |
+| `thread.merge_back` | `Orchestrator.ts` `dispatchThreadMergeBack`, `ContextHandoffService.ts` | Records a pending `merge_back` context transfer from a fork to its parent; the parent's next message carries the fork's delta | fork, context transfers (no checkpoint) | yes |
+| `prepared-run.release`, `.progress`, `.fail`, `.retry` | `ThreadLaunchService.ts`, `Orchestrator.ts` `dispatchPreparedRun*`, `ProjectSetupScriptRunner.ts` | A worktree launch's `preparing` run: progress, failure, retry, release to the provider; setup scripts typed into a `setup-<id>` terminal | `conn-terminal` prompt and marker watch, `conn-vcs` worktree | yes |
+| `thread.pull-request-link.sync`, `thread.pull-request.watch`, `thread.pull-request.sync` | `ThreadPullRequestService.ts`, `PullRequestWatchReactor.ts` | Pull request links and watches | the forge CLIs | other |
+| `thread.guest-share.close`, `thread.guest-message.dismiss` | `GuestShareDecider.ts` | Guest sharing | guest share | other |
+| `notification.delivery.accept` | `Orchestrator.ts` `dispatchNotificationAccepted`, `NotificationMailbox.ts` | Marks a background notification delivered to a run | a notification mailbox (not built) | later |
+| `subagent.stop` | `Orchestrator.ts` `dispatchSubagentStop` | Stops one subagent of a run | `Session::stop_task` in the providers (in the trait, not built) | later |
+| `thread.created.record` | `Orchestrator.ts` `dispatchCreatedThreadRecord` | Records a thread made in a linked environment | linked environments | later |
+
+`orchestration.getTurnDiff` and `orchestration.getFullThreadDiff` were the two unserved
+`orchestration.*` methods (`checkpointing/CheckpointDiffQuery.ts`); both are served now, so
+all 23 are.
 
 ## Behaviour worth knowing
+
+- **Checkpoints** (`src/checkpoint.rs`, on with `EngineConfig::checkpoints`). A thread has one
+  root scope in its run's folder. Before the provider gets a message the workspace is captured
+  as the baseline (ordinal `run - 1`, 5 s budget). A provider turn that completes leaves the
+  run `waiting`; the capture records the run's checkpoint with its changed files (capped at
+  200 with `filesTotal`, as T3's wire), a `checkpoint` turn item, and completes the run; the
+  parent's wake and the next queued run follow it. Interrupted and cancelled runs are captured
+  too. No git repository: `missing` checkpoints. A restart captures a run left `waiting`.
+  `getTurnDiff` counts completed runs with a ready checkpoint and cuts the patch at 10 MB with
+  T3's marker.
+- **Rollback** (`src/rollback.rs`). `checkpoint.rollback` checks the target as T3 does and
+  sets `rollbackRequestId`; a file restore needs the thread's own worktree
+  (`isCheckpointRestoreIsolated`), else only `restoreFiles: false` (a conversation rewind) is
+  accepted. The effect rolls the provider thread back (only when later runs exist), restores
+  the files, deletes the stale refs, then commits the provider thread, the `stale`
+  checkpoints and the `rolled_back` runs and nodes at once. A failure commits none of that and
+  sets `rollbackFailure` with T3's client message. T3 retries the effect up to 5 times; this
+  server tries once.
+- **Fork** (`src/fork.rs`). `thread.fork` makes the fork thread and a pending `fork` transfer
+  (`ThreadForkService.plan`). Its first turn forks the source's native thread from the source
+  run's turn (`Session::fork_thread`) and consumes the transfer (`native_fork`). T3's portable
+  path (a `full_thread_summary` handoff when the fork cannot be native, or after a failed
+  native fork) is not built: such a message is refused, and a failed native fork fails the
+  turn.
 
 - **Busy thread.** While a run is active, a message queues (`queue_after_active`, or any start)
   or steers (`steer_active`, or the client's `deliveryIntent` steer). A steer before the

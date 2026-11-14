@@ -180,6 +180,13 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
         "orchestration.getThreadFamily"
     );
     unary!(table, &engine, get_turn_item, "orchestration.getTurnItem");
+    unary!(table, &engine, get_turn_diff, "orchestration.getTurnDiff");
+    unary!(
+        table,
+        &engine,
+        get_full_thread_diff,
+        "orchestration.getFullThreadDiff"
+    );
     unary!(
         table,
         &engine,

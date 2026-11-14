@@ -11,6 +11,13 @@ use crate::store::{Draft, StoreResult, Tx};
 /// Work that touches a provider. Runs after the command's events are committed.
 #[derive(Debug)]
 pub(crate) enum Effect {
+    /// Rolls a thread back to a checkpoint (`provider-thread.rollback`).
+    Rollback(crate::rollback::RollbackRequest),
+    /// Captures a run's checkpoint and finishes it (`checkpoint.capture`).
+    CaptureCheckpoint {
+        thread_id: String,
+        run_id: String,
+    },
     StartTurn {
         thread_id: String,
         run_id: String,
@@ -65,7 +72,7 @@ impl From<String> for CommandError {
     }
 }
 
-fn reject<T>(message: impl Into<String>) -> Result<T, CommandError> {
+pub(crate) fn reject<T>(message: impl Into<String>) -> Result<T, CommandError> {
     Err(CommandError::Rejected(message.into()))
 }
 
@@ -111,6 +118,8 @@ pub(crate) fn handler(command_type: &str) -> Option<Handler> {
         "provider.switch" => provider_switch,
         "thread.title.regeneration.complete" => thread_title_regeneration_complete,
         "delegated_task.request" => crate::families::delegated_task_request,
+        "checkpoint.rollback" => crate::rollback::checkpoint_rollback,
+        "thread.fork" => crate::fork::thread_fork,
         "delegated_task.wake-policy" => crate::families::wake_policy,
         "delegated_task.completion-delivery.acknowledge"
         | "delegated_task.completion-delivery.dispose" => crate::families::completion_delivery,
@@ -121,10 +130,7 @@ pub(crate) fn handler(command_type: &str) -> Option<Handler> {
 /// Why a contract command this engine does not handle is refused. The client shows the text.
 pub(crate) fn refusal(command_type: &str) -> &'static str {
     match command_type {
-        "checkpoint.rollback" | "thread.merge_back" => {
-            "Conn Server has no checkpoints yet, so it cannot restore or merge a turn."
-        }
-        "thread.fork" => "Conn Server cannot fork a thread yet.",
+        "thread.merge_back" => "Conn Server cannot merge a fork back yet.",
         "prepared-run.release"
         | "prepared-run.progress"
         | "prepared-run.fail"
@@ -162,7 +168,7 @@ pub(crate) fn normalize_model_selection(selection: &Value) -> Value {
     out
 }
 
-fn live_thread(tx: &Tx<'_>, thread_id: &str) -> Result<Value, CommandError> {
+pub(crate) fn live_thread(tx: &Tx<'_>, thread_id: &str) -> Result<Value, CommandError> {
     match tx.thread(thread_id)? {
         Some(thread) => Ok(thread),
         None => reject(format!("Thread {thread_id} does not exist.")),
@@ -341,6 +347,13 @@ fn delivery(tx: &Tx<'_>, c: &MessageDispatch) -> Result<(Delivery, Option<Value>
 fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let c: MessageDispatch = decode(command)?;
     let thread = live_thread(tx, &c.thread_id)?;
+    crate::fork::ensure_native_fork(
+        tx,
+        &c.thread_id,
+        thread["modelSelection"]["instanceId"]
+            .as_str()
+            .unwrap_or_default(),
+    )?;
     if !matches!(
         c.dispatch_mode.kind.as_str(),
         "start_immediately"
@@ -1485,6 +1498,20 @@ pub(crate) fn finish_run(
     status: &str,
     failure: Option<Value>,
 ) -> StoreResult<()> {
+    finish_run_as(tx, thread_id, run_id, status, status, failure)
+}
+
+/// Ends a run's items with `status`, and the run and its root node with `persisted`: a
+/// completed provider turn whose checkpoint is still to be taken persists `waiting`, with no
+/// `completedAt` (`RunExecutionService.ts`).
+pub(crate) fn finish_run_as(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    run_id: &str,
+    status: &str,
+    persisted: &str,
+    failure: Option<Value>,
+) -> StoreResult<()> {
     let Some(mut run) = tx.entity(thread_id, "runs", run_id)? else {
         return Ok(());
     };
@@ -1574,14 +1601,23 @@ pub(crate) fn finish_run(
         attempt["completedAt"] = json!(now);
         tx.append(draft("run-attempt.updated", attempt))?;
     }
-    run["status"] = json!(status);
-    run["completedAt"] = json!(now);
+    let completed_at = if persisted == "waiting" {
+        Value::Null
+    } else {
+        json!(now)
+    };
+    run["status"] = json!(persisted);
+    run["completedAt"] = completed_at.clone();
     tx.append(draft("run.updated", run))?;
     if let Some(root) = &root
         && let Some(mut node) = tx.entity(thread_id, "nodes", root)?
     {
-        node["status"] = json!(item_status);
-        node["completedAt"] = json!(now);
+        node["status"] = json!(if persisted == "waiting" {
+            "waiting"
+        } else {
+            item_status
+        });
+        node["completedAt"] = completed_at;
         tx.append(draft("node.updated", node))?;
     }
     tx.compact_streaming(thread_id)

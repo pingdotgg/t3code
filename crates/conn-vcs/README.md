@@ -15,6 +15,7 @@ why the CLI and not `gix` or `git2`, with numbers.
 | `refs.rs`                 | `vcs.listRefs`, `createRef`, `switchRef`, `init`, `pull`                             |
 | `worktree.rs`             | `vcs.createWorktree`, `removeWorktree`, managed worktree paths                       |
 | `review.rs`               | `review.getDiffPreview`, `getDiffFileContents`, `getBranchCommits`                   |
+| `checkpoint.rs`           | Turn checkpoints: capture, restore, diff, authored paths, refs (`GitVcsDriver.ts` `checkpoints`) |
 | `setup.rs`                | Worktree setup progress (`subscribeWorktreeSetup`) and `provision` for thread launch |
 | `discovery.rs`            | The `git` and `jj` half of `server.discoverSourceControl` (hosts: `conn-source-control`) |
 
@@ -29,6 +30,17 @@ why the CLI and not `gix` or `git2`, with numbers.
   refresh (`repo::Remotes`).
 - Setup entries are in memory: a finished setup stays 30 s; a running one stays until it ends
   or is cancelled.
+
+## Checkpoints
+
+A checkpoint is a commit of the whole working tree under
+`refs/t3/orchestration-v2/checkpoints/<base64url(sha256(scope id)[:32 hex])>/ordinal/<n>` in the
+workspace's repository, built in a scratch index (`<common dir>/t3-checkpoint-index-<uuid>`)
+with `HEAD` as first parent, author "T3 Code", message `t3 checkpoint ref=<ref>`, and git's
+`fsync` settings as T3 sets them. The user's index and working tree are not touched. Git
+dedupes the objects: an unchanged tree costs one commit object. `src/checkpoint.rs` lists what
+is not ported (branch-switch second parent, hand-flagged index entries, sparse checkouts,
+ignored workspace folders, the embedded-repository retry).
 
 ## Safety
 

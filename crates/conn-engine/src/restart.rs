@@ -8,6 +8,8 @@
 //!   delivered, so sending it is not a repeat.
 //! - A run waiting on an approval or a question ends `cancelled` with no continuation: the
 //!   prompt died with the process and only the user can answer it again.
+//! - A run left `waiting` (its provider turn ended, its checkpoint was not taken) is captured
+//!   and completed (`checkpoint.capture` again).
 //! - Queued runs stay queued and start after the continuation, as after any turn.
 
 use serde_json::{Value, json};
@@ -74,6 +76,10 @@ fn may_continue(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<bool> 
 /// Recovers one live run at start. Returns the effects to run once the runtime is up.
 pub(crate) fn recover(tx: &mut Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<Vec<Effect>> {
     let run_id = run["id"].as_str().unwrap_or_default().to_owned();
+    // The provider finished; only the checkpoint capture was cut off.
+    if run["status"] == "waiting" {
+        return Ok(vec![crate::checkpoint::resume_capture(thread_id, run)]);
+    }
     if matches!(run["status"].as_str(), Some("preparing" | "starting")) {
         let mut again = run.clone();
         again["status"] = json!("starting");
