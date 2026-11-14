@@ -251,7 +251,31 @@ function codePointBefore(line: string, index: number): string | undefined {
   return codePointAt(line, previousIndex);
 }
 
+function escapeRegex(text: string): string {
+  return text.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
+
 function buildContentSearchQuery(input: Omit<ProjectSearchContentsInput, "cwd">): {
+  readonly searchQuery: string;
+  readonly regexMode: boolean;
+  readonly wholeWordPrefilter: boolean;
+} {
+  // Without a native prefilter every substring hit crosses into JS, which takes seconds on large repos.
+  // fff compiles regexes bytewise, so `\W` also accepts non-ASCII and the JS check below stays authoritative;
+  // non-ASCII queries skip this because bytewise `(?i)` may not fold them.
+  if (input.wholeWord && !input.useRegex && /^[\x20-\x7e]+$/.test(input.query)) {
+    const left = /\w/.test(input.query[0] ?? "") ? String.raw`(?:^|\W)` : "";
+    const right = /\w/.test(input.query.at(-1) ?? "") ? String.raw`(?:\W|$)` : "";
+    return {
+      searchQuery: `${input.caseSensitive ? "" : "(?i)"}${left}${escapeRegex(input.query)}${right}`,
+      regexMode: true,
+      wholeWordPrefilter: true,
+    };
+  }
+  return { ...buildPlainOrRegexQuery(input), wholeWordPrefilter: false };
+}
+
+function buildPlainOrRegexQuery(input: Omit<ProjectSearchContentsInput, "cwd">): {
   readonly searchQuery: string;
   readonly regexMode: boolean;
 } {
@@ -272,6 +296,18 @@ function mapContentMatchRanges(
   return byteRanges.map(([startByte, endByte]) => ({
     start: toStringIndex(startByte),
     end: toStringIndex(endByte),
+  }));
+}
+
+function findLiteralRanges(
+  line: string,
+  query: string,
+  caseSensitive: boolean,
+): Array<{ readonly start: number; readonly end: number }> {
+  const pattern = new RegExp(escapeRegex(query), caseSensitive ? "gu" : "giu");
+  return Array.from(line.matchAll(pattern), (match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
   }));
 }
 
@@ -996,7 +1032,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const searchContents: WorkspaceSearchIndex["Service"]["searchContents"] = Effect.fn(
     "WorkspaceSearchIndex.searchContents",
   )(function* (input) {
-    let { searchQuery, regexMode } = buildContentSearchQuery(input);
+    let { searchQuery, regexMode, wholeWordPrefilter } = buildContentSearchQuery(input);
     // Grep cursors advance per file; whole-word filtering needs enough raw candidates before advancing.
     const rawPageSize = input.wholeWord
       ? Math.max(input.limit, CONTENT_SEARCH_MAX_MATCHES_PER_FILE)
@@ -1030,15 +1066,21 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       retryLiterally = regexMode && !input.caseSensitive && result.regexFallbackError !== undefined;
       if (retryLiterally) {
         regexFallbackError = result.regexFallbackError;
-        ({ searchQuery, regexMode } = buildContentSearchQuery({ ...input, useRegex: false }));
+        ({ searchQuery, regexMode, wholeWordPrefilter } = buildContentSearchQuery({
+          ...input,
+          useRegex: false,
+          wholeWord: false,
+        }));
         continue;
       }
 
       for (const match of result.items) {
         if (isIgnoredPath(ignoredPaths, match.relativePath, hostIsWindows)) continue;
-        const matchRanges = mapContentMatchRanges(match.lineContent, match.matchRanges).filter(
-          (range) => !input.wholeWord || isWholeWordRange(match.lineContent, range),
-        );
+        const matchRanges = (
+          wholeWordPrefilter
+            ? findLiteralRanges(match.lineContent, input.query, input.caseSensitive)
+            : mapContentMatchRanges(match.lineContent, match.matchRanges)
+        ).filter((range) => !input.wholeWord || isWholeWordRange(match.lineContent, range));
         // fff reports hits past its 512-char lineContent cap with no ranges, so whole words can't be verified there.
         if (input.wholeWord && matchRanges.length === 0) continue;
         matches.push({

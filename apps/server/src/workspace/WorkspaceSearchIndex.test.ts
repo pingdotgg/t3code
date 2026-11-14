@@ -234,6 +234,7 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
         truncated: false,
       });
       expect(grep).toHaveBeenCalledTimes(2);
+      expect(grep.mock.calls[0]?.[0]).toBe(String.raw`(?:^|\W)needle(?:\W|$)`);
       expect(grep.mock.calls[1]?.[1]?.cursor).toBe(nextCursor);
     }),
   ).pipe(Effect.provide(testLayer)),
