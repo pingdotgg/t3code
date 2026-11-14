@@ -1,6 +1,6 @@
 // @effect-diagnostics globalDate:off -- Tests exercise local calendar snooze boundaries.
 import * as DateTime from "effect/DateTime";
-import { RuntimeRequestId } from "@t3tools/contracts";
+import { RunId, RuntimeRequestId } from "@t3tools/contracts";
 import { ThreadId } from "@t3tools/contracts";
 import { TurnId } from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
@@ -10,8 +10,10 @@ import {
   canSnooze,
   effectiveSnoozed,
   hasQueuedTurnStart,
+  hasUnseenRunFailure,
   pickSnoozePreset,
   resolveSnoozePresets,
+  snoozeWakeLabel,
   threadRaisedHandWhileSnoozed,
   threadWokeAt,
   isThreadWokeUnseen,
@@ -211,6 +213,31 @@ describe("effectiveSnoozed", () => {
 
     expect(effectiveSnoozed(shell, { now: NOW })).toBe(true);
     expect(threadWokeAt(shell, { now: NOW })).toBe(null);
+  });
+});
+
+describe("hasUnseenRunFailure", () => {
+  it("dates a failure by its run, falling back to the run's start when it never completed", () => {
+    const run = {
+      runId: RunId.make("run-failed"),
+      status: "failed" as const,
+      requestedAt: "2026-04-10T09:00:00.000Z",
+      startedAt: "2026-04-10T09:01:00.000Z",
+      completedAt: "2026-04-10T09:05:00.000Z",
+      assistantMessageId: null,
+    };
+    const visitedAt = "2026-04-10T09:06:00.000Z";
+
+    expect(hasUnseenRunFailure({ latestRun: run, lastVisitedAt: null })).toBe(true);
+    expect(hasUnseenRunFailure({ latestRun: run, lastVisitedAt: visitedAt })).toBe(false);
+    const failedAgain = { ...run, completedAt: "2026-04-10T09:10:00.000Z" };
+    expect(hasUnseenRunFailure({ latestRun: failedAgain, lastVisitedAt: visitedAt })).toBe(true);
+
+    const undated = { ...run, completedAt: null };
+    expect(hasUnseenRunFailure({ latestRun: undated, lastVisitedAt: visitedAt })).toBe(false);
+    expect(
+      hasUnseenRunFailure({ latestRun: undated, lastVisitedAt: "2026-04-10T09:00:30.000Z" }),
+    ).toBe(true);
   });
 });
 
@@ -475,6 +502,18 @@ describe("pickSnoozePreset", () => {
       now: localDate(2026, 8, 31, 0, 1),
     });
     expect(picked?.snoozedUntil).toBe(localDate(2026, 8, 31, 9).toISOString());
+  });
+});
+
+describe("snoozeWakeLabel", () => {
+  it("reads a one-hour snooze as 1h on minute and live clocks", () => {
+    const wake = "2026-04-10T13:00:30.000Z";
+    expect(snoozeWakeLabel(wake, { now: NOW })).toBe("1h");
+    expect(snoozeWakeLabel(wake, { now: "2026-04-10T12:00:40.000Z" })).toBe("1h");
+    expect(snoozeWakeLabel("2026-04-10T15:00:30.000Z", { now: NOW })).toBe("3h");
+    expect(snoozeWakeLabel(wake, { now: "2026-04-10T12:01:00.000Z" })).toBe("59m");
+    expect(snoozeWakeLabel(wake, { now: "2026-04-10T13:00:10.000Z" })).toBe("1m");
+    expect(snoozeWakeLabel(wake, { now: "2026-04-10T13:00:30.000Z" })).toBe("now");
   });
 });
 

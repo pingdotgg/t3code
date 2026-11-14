@@ -1254,6 +1254,7 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
       creationSource: "mcp",
     });
     const updatedParent = yield* projections.getThreadProjection(parentThreadId);
+    assert.deepEqual(updatedParent.subagents[0]!.modelSelection, modelSelection);
     const childThreadId = updatedParent.subagents[0]!.childThreadId!;
     const child = yield* projections.getThreadProjection(childThreadId);
     assert.isNull(child.thread.linkedPullRequest);
@@ -2004,6 +2005,27 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
     } as const;
     assert.deepInclude(yield* projections.getThreadShell(threadId), active);
     assert.deepInclude((yield* projections.getThreadProjection(threadId)).thread, active);
+
+    // Undo of a settle restores the cleared Active anchor instead of stamping a new one.
+    for (const restoreUnsettledAt of [DateTime.formatIso(now), null]) {
+      yield* TestClock.adjust("1 second");
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make(`settle-before-undo-${restoreUnsettledAt}`),
+        threadId,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.unsettle",
+        commandId: CommandId.make(`undo-settle-${restoreUnsettledAt}`),
+        threadId,
+        reason: "user",
+        restoreUnsettledAt,
+      });
+      assert.deepInclude(yield* projections.getThreadShell(threadId), {
+        ...active,
+        unsettledAt: restoreUnsettledAt === null ? null : now,
+      });
+    }
   }).pipe(Effect.provide(layerTest)),
 );
 

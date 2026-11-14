@@ -137,6 +137,9 @@ overrides:
   # Move this with @react-navigation/native: an older core than it requires crashes
   # every native stack at launch.
   "@react-navigation/core": 7.24.0
+  # @cloudflare/unenv-preset peers on this exact version, but alchemy's runtime
+  # takes a caret range, so lockfile-free installs drift to a newer prerelease.
+  unenv: 2.0.0-rc.24
   # The dbus-next patch drops usocket from the package, but pnpm resolves from the
   # registry manifest, so the edge has to be cut here as well.
   "dbus-next>usocket": "-"
