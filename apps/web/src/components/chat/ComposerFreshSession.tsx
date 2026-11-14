@@ -1,5 +1,6 @@
 import { EraserIcon } from "lucide-react";
 
+import { translateDynamic } from "../../i18nCore";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
 /** Shown while `/clear` is armed; dismissing it keeps the current conversation. */
@@ -8,9 +9,9 @@ export function freshSessionBannerItem(onUndo: () => void): ComposerBannerStackI
     id: "fresh-session",
     variant: "info",
     icon: <EraserIcon />,
-    title: "Your next message starts a fresh session",
-    description: "The agent won't see earlier messages in this thread.",
-    dismissLabel: "Keep the current session",
+    title: translateDynamic("composer:freshSession.title"),
+    description: translateDynamic("composer:freshSession.description"),
+    dismissLabel: translateDynamic("composer:freshSession.dismiss"),
     onDismiss: onUndo,
   };
 }

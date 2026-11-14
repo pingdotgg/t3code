@@ -2,8 +2,10 @@ import type { EnvironmentId, UsageLimitsReport } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { limitsNotice } from "@t3tools/shared/usageLimits";
 import { GaugeIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { ensureLocalApi } from "../../localApi";
+import { translateDynamic } from "../../i18nCore";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { providerClients } from "../settings/providerDriverMeta";
@@ -24,6 +26,7 @@ function accountLabel(account: UsageLimitsReport["accounts"][number]): string {
 }
 
 function AccountSummary({ account }: { readonly account: UsageLimitsReport["accounts"][number] }) {
+  const { t } = useTranslation("composer");
   const label = accountLabel(account);
   return (
     <>
@@ -31,9 +34,9 @@ function AccountSummary({ account }: { readonly account: UsageLimitsReport["acco
         <RedactedSensitiveText
           key={label}
           value={label}
-          ariaLabel="Toggle account label visibility"
-          revealTooltip="Click to reveal account"
-          hideTooltip="Click to hide account"
+          ariaLabel={t("usageLimits.toggleAccountVisibility")}
+          revealTooltip={t("usageLimits.revealAccount")}
+          hideTooltip={t("usageLimits.hideAccount")}
           className="max-w-full truncate align-bottom font-sans text-xs leading-normal"
         />
       ) : (
@@ -55,15 +58,15 @@ export function usageLimitsBannerItem(
   const summary = single ? (
     <AccountSummary account={single} />
   ) : (
-    `${report.accounts.length} accounts`
+    translateDynamic("composer:usageLimits.accounts", { count: report.accounts.length })
   );
   return {
     id,
     variant: "info",
     icon: <GaugeIcon />,
-    title: "Usage limits",
+    title: translateDynamic("composer:usageLimits.title"),
     description: summary,
-    dismissLabel: "Dismiss usage limits",
+    dismissLabel: translateDynamic("composer:usageLimits.dismiss"),
     onDismiss,
     children: <UsageLimitsBannerBody report={report} environmentId={environmentId} />,
   };
@@ -90,14 +93,19 @@ export function modelFallbackBannerItem({
     id: "fallback-model",
     variant: "info",
     icon: <GaugeIcon />,
-    title: `Using ${fallbackModelName}`,
-    description: `${defaultProviderName} is out of usage${resetsAt ? ` · resets ${formatUpcomingTimestamp(resetsAt, timestampFormat)}` : ""}`,
+    title: translateDynamic("composer:fallbackModel.using", { model: fallbackModelName }),
+    description: resetsAt
+      ? translateDynamic("composer:fallbackModel.outOfUsageResets", {
+          provider: defaultProviderName,
+          resets: formatUpcomingTimestamp(resetsAt, timestampFormat),
+        })
+      : translateDynamic("composer:fallbackModel.outOfUsage", { provider: defaultProviderName }),
     actions: (
       <Button size="xs" variant="ghost" onClick={onUseDefault}>
-        Use {defaultModelName}
+        {translateDynamic("composer:fallbackModel.use", { model: defaultModelName })}
       </Button>
     ),
-    dismissLabel: "Dismiss fallback model notice",
+    dismissLabel: translateDynamic("composer:fallbackModel.dismiss"),
     onDismiss,
   };
 }
@@ -144,7 +152,7 @@ function UsageLimitsBannerBody({
                   className="self-start"
                   onClick={() => void ensureLocalApi().shell.openExternal(externalUsage.url)}
                 >
-                  Manage usage
+                  {translateDynamic("composer:usageLimits.manageUsage")}
                 </Button>
               ) : null}
               {resetCreditInput && account.limits.resetCredits ? (

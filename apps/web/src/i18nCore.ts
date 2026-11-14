@@ -1,5 +1,7 @@
+import enComposer from "../locales/en/composer.json";
 import enPalette from "../locales/en/palette.json";
 import enSettings from "../locales/en/settings.json";
+import zhHansComposer from "../locales/zh-Hans/composer.json";
 import zhHansPalette from "../locales/zh-Hans/palette.json";
 import zhHansSettings from "../locales/zh-Hans/settings.json";
 import enSidebar from "../locales/en/sidebar.json";
@@ -18,6 +20,7 @@ declare module "i18next" {
       settings: typeof enSettings;
       sidebar: typeof enSidebar;
       palette: typeof enPalette;
+      composer: typeof enComposer;
     };
   }
 }
@@ -40,10 +43,15 @@ if (!i18next.isInitialized) {
     lng: "en",
     fallbackLng: "en",
     defaultNS: "settings",
-    ns: ["settings", "sidebar", "palette"],
+    ns: ["settings", "sidebar", "palette", "composer"],
     resources: {
-      en: { settings: enSettings, sidebar: enSidebar, palette: enPalette },
-      "zh-Hans": { settings: zhHansSettings, sidebar: zhHansSidebar, palette: zhHansPalette },
+      en: { settings: enSettings, sidebar: enSidebar, palette: enPalette, composer: enComposer },
+      "zh-Hans": {
+        settings: zhHansSettings,
+        sidebar: zhHansSidebar,
+        palette: zhHansPalette,
+        composer: zhHansComposer,
+      },
     },
     // Locale files are bundled per language, so nothing is fetched at runtime.
     // resolveUiLanguage only ever yields exact codes, so no non-explicit matching.

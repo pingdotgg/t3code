@@ -1,1 +1,5 @@
-export const DEFAULT_COMPOSER_PLACEHOLDER = "Ask anything. @ files, $ skills, / commands";
+import { translateDynamic } from "./i18nCore";
+
+export function defaultComposerPlaceholder(): string {
+  return translateDynamic("composer:placeholder.default");
+}

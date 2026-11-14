@@ -1,5 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
+import { translateDynamic } from "../i18nCore";
+
 export type ReadyAttachmentUpload = {
   readonly status: "ready";
   readonly environmentId: EnvironmentId;
@@ -40,7 +42,9 @@ export function attachmentUploadBlockReason(input: {
   }
 
   if (pending > 0) {
-    return pending === 1 ? "Attachment still uploading" : "Attachments still uploading";
+    return translateDynamic(
+      pending === 1 ? "composer:attachment.uploadingOne" : "composer:attachment.uploadingMany",
+    );
   }
   return null;
 }

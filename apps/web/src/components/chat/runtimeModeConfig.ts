@@ -11,6 +11,11 @@ import {
   ShieldOffIcon,
 } from "lucide-react";
 
+import { translateDynamic } from "../../i18nCore";
+
+// Composer surfaces read label/description through runtimeModeLabel/runtimeModeDescription so
+// they follow the UI language; the English strings below only serve consumers outside this
+// batch (settings defaults page, auth consent page) until their own localization pass.
 export const runtimeModeConfig: Record<
   RuntimeMode,
   { label: string; description: string; icon: LucideIcon }
@@ -37,6 +42,14 @@ export const runtimeModeConfig: Record<
     icon: ShieldOffIcon,
   },
 };
+
+export function runtimeModeLabel(mode: RuntimeMode): string {
+  return translateDynamic(`composer:runtimeMode.${mode}.label`);
+}
+
+export function runtimeModeDescription(mode: RuntimeMode): string {
+  return translateDynamic(`composer:runtimeMode.${mode}.description`);
+}
 
 export const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
 
