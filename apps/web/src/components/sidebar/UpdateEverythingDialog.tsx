@@ -127,26 +127,43 @@ function UpdateEverythingDialogContent({
   const restarting = new Set(restarts.map((machine) => machine.environmentId));
   const updating = rows.filter((row) => row.app !== null || row.providers.length > 0);
   const skipped = rows.filter((row) => row.skipped !== null);
+  // Updates can finish elsewhere while this is open. A track switch with no rows still saves the track.
+  const empty = title === undefined && updating.length === 0;
 
   return (
     <>
       <AlertDialogHeader className="shrink-0">
         <AlertDialogTitle>
-          {title ?? `Update ${updating.length} ${updating.length === 1 ? "machine" : "machines"}?`}
+          {empty
+            ? checking
+              ? "Checking for updates…"
+              : skipped.length > 0
+                ? "Nothing to update right now"
+                : "Everything is up to date"
+            : (title ??
+              `Update ${updating.length} ${updating.length === 1 ? "machine" : "machines"}?`)}
         </AlertDialogTitle>
         <AlertDialogDescription>
-          {version !== null ? (
+          {empty ? (
+            checking || skipped.length > 0 ? null : (
+              "Nothing is left to update."
+            )
+          ) : (
             <>
-              T3 Code <span className="font-mono text-xs">{version}</span>
+              {version !== null ? (
+                <>
+                  T3 Code <span className="font-mono text-xs">{version}</span>
+                </>
+              ) : null}
+              {version !== null && providerCount > 0 ? " · " : null}
+              {providerCount > 0
+                ? `${providerCount} provider ${providerCount === 1 ? "update" : "updates"}`
+                : null}
+              {checking
+                ? `${version !== null || providerCount > 0 ? " · " : ""}Checking for more…`
+                : null}
             </>
-          ) : null}
-          {version !== null && providerCount > 0 ? " · " : null}
-          {providerCount > 0
-            ? `${providerCount} provider ${providerCount === 1 ? "update" : "updates"}`
-            : null}
-          {checking
-            ? `${version !== null || providerCount > 0 ? " · " : ""}Checking for more…`
-            : null}
+          )}
         </AlertDialogDescription>
       </AlertDialogHeader>
       <ScrollArea scrollFade>
@@ -156,55 +173,57 @@ function UpdateEverythingDialogContent({
               {note}
             </p>
           ))}
-          {/* Machine names truncate first. Provider lists wrap between names, never inside one. */}
-          <div
-            role="table"
-            className="grid grid-cols-[minmax(4rem,max-content)_max-content_minmax(min-content,1fr)_max-content] gap-x-4 text-sm"
-          >
+          {empty ? null : (
+            // Machine names truncate first. Provider lists wrap between names, never inside one.
             <div
-              role="row"
-              className="col-span-full grid grid-cols-subgrid border-b pb-1.5 text-muted-foreground text-xs"
+              role="table"
+              className="grid grid-cols-[minmax(4rem,max-content)_max-content_minmax(min-content,1fr)_max-content] gap-x-4 text-sm"
             >
-              <span role="columnheader">Machine</span>
-              <span role="columnheader">T3 Code</span>
-              <span role="columnheader">Providers</span>
-              <span role="columnheader" />
-            </div>
-            {updating.map((row) => (
               <div
-                key={row.environmentId ?? "this-app"}
                 role="row"
-                className="col-span-full grid grid-cols-subgrid border-b border-border/50 py-1.5 last:border-b-0"
+                className="col-span-full grid grid-cols-subgrid border-b pb-1.5 text-muted-foreground text-xs"
               >
-                <span role="cell" className="max-w-32 min-w-0">
-                  <span className="sr-only">{row.label}</span>
-                  <MiddleTruncate value={row.label} aria-hidden />
-                </span>
-                <span role="cell">
-                  {row.app !== null ? APP_LABELS[row.app] : null}
-                  {row.app === null && row.skipped !== null ? (
-                    <span className="text-muted-foreground">Skipped</span>
-                  ) : null}
-                  {row.app === "this-app" ? (
-                    <span className="block text-muted-foreground text-xs">restarts last</span>
-                  ) : null}
-                </span>
-                <span role="cell">
-                  {row.providers.map((provider, index) => (
-                    <Fragment key={provider}>
-                      <span className="whitespace-nowrap">{provider}</span>
-                      {index < row.providers.length - 1 ? ", " : null}
-                    </Fragment>
-                  ))}
-                </span>
-                <span role="cell" className="text-right">
-                  {row.environmentId !== null && restarting.has(row.environmentId) ? (
-                    <RunningThreads environmentId={row.environmentId} />
-                  ) : null}
-                </span>
+                <span role="columnheader">Machine</span>
+                <span role="columnheader">T3 Code</span>
+                <span role="columnheader">Providers</span>
+                <span role="columnheader" />
               </div>
-            ))}
-          </div>
+              {updating.map((row) => (
+                <div
+                  key={row.environmentId ?? "this-app"}
+                  role="row"
+                  className="col-span-full grid grid-cols-subgrid border-b border-border/50 py-1.5 last:border-b-0"
+                >
+                  <span role="cell" className="max-w-32 min-w-0">
+                    <span className="sr-only">{row.label}</span>
+                    <MiddleTruncate value={row.label} aria-hidden />
+                  </span>
+                  <span role="cell">
+                    {row.app !== null ? APP_LABELS[row.app] : null}
+                    {row.app === null && row.skipped !== null ? (
+                      <span className="text-muted-foreground">Skipped</span>
+                    ) : null}
+                    {row.app === "this-app" ? (
+                      <span className="block text-muted-foreground text-xs">restarts last</span>
+                    ) : null}
+                  </span>
+                  <span role="cell">
+                    {row.providers.map((provider, index) => (
+                      <Fragment key={provider}>
+                        <span className="whitespace-nowrap">{provider}</span>
+                        {index < row.providers.length - 1 ? ", " : null}
+                      </Fragment>
+                    ))}
+                  </span>
+                  <span role="cell" className="text-right">
+                    {row.environmentId !== null && restarting.has(row.environmentId) ? (
+                      <RunningThreads environmentId={row.environmentId} />
+                    ) : null}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
           {skipped.length > 0 ? (
             <Collapsible>
               <CollapsibleTrigger className="flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground data-panel-open:[&_svg]:rotate-90">
@@ -242,11 +261,13 @@ function UpdateEverythingDialogContent({
           </p>
         ) : null}
         <AlertDialogClose ref={cancelRef} render={<Button variant="outline" disabled={busy} />}>
-          Cancel
+          {empty ? "Close" : "Cancel"}
         </AlertDialogClose>
-        <Button disabled={disabledReason !== null || busy} onClick={onConfirm}>
-          {confirmLabel}
-        </Button>
+        {empty ? null : (
+          <Button disabled={disabledReason !== null || busy} onClick={onConfirm}>
+            {confirmLabel}
+          </Button>
+        )}
       </AlertDialogFooter>
     </>
   );
