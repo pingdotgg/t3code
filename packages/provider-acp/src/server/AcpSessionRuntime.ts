@@ -2166,6 +2166,10 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     if (mcpCapabilities?.http === true && httpServers.length > 0) {
       return httpServers;
     }
+    // v1 replies omit `stdio` because v1 agents must support it; v2 normalizes it to a boolean.
+    if (mcpCapabilities?.stdio === false) {
+      return [];
+    }
     return activationOptions?.mcpServers ?? options.mcpServers ?? [];
   };
 

@@ -499,6 +499,41 @@ describe("AcpSessionRuntime", () => {
     );
   });
 
+  it.effect("omits stdio MCP servers when a v2 agent does not advertise stdio", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      const created = requestEvents.find(
+        (event) => event.method === "session/new" && event.status === "started",
+      );
+      const sent = (created?.payload as { mcpServers?: ReadonlyArray<{ type?: string }> })
+        ?.mcpServers;
+      expect(sent?.filter((server) => server.type === "stdio") ?? []).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: { T3_ACP_MCP_NO_STDIO: "1" },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+          mcpServers: [{ type: "stdio", name: "t3-code", command: "/usr/bin/node", args: [] }],
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    );
+  });
+
   it.effect("supports v2 session deletion and secret-safe provider management", () => {
     const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
     return Effect.gen(function* () {
