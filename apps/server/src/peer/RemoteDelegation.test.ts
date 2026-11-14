@@ -952,6 +952,15 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       expect(retried.taskId).toBe(delegated.taskId);
       expect((yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents).toHaveLength(1);
 
+      // Its provider there has not started the turn yet.
+      yield* Ref.set(thread.status, "starting");
+      const starting = yield* a.call("task_status", { taskId: delegated.taskId });
+      expect(starting.structuredContent).toMatchObject({
+        status: "starting",
+        workState: "working",
+      });
+      yield* Ref.set(thread.status, "running");
+
       const historyReads: Array<string> = [];
       const historyTracer = Tracer.make({
         span(options) {
