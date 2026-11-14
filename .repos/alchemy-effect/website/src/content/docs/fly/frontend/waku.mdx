@@ -5,7 +5,7 @@ sidebar:
   order: 13
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 export const devDeps = "@alchemy.run/frontend-frameworks";
 
@@ -26,20 +26,7 @@ The build integration is not bundled with alchemy. Install
 and `/waku/node` exports from your project at deploy time. It is only
 used at build time, so a dev dependency is enough:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add -d ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers dev={devDeps} />
 
 ## Configure Waku
 
@@ -78,7 +65,7 @@ Stack):
 
 ```typescript
 // alchemy.run.ts
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 
 export const Website = Fly.Website.Waku("Website");
 ```

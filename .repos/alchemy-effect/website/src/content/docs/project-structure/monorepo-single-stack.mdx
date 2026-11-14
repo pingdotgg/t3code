@@ -24,7 +24,7 @@ The entire Stack:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { Path } from "effect/Path";
 import Service from "./backend/src/Service.ts";
@@ -87,7 +87,7 @@ Each app declares its own Worker in its own package:
 
 ```typescript
 // backend/src/Service.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
@@ -175,7 +175,7 @@ package with an anchored `main`, import them all into the one Stack, and
 
 ```typescript
 // apps/api/Api.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const Api = Cloudflare.Worker("Api", {
   main: new URL("./src/worker.ts", import.meta.url).href,

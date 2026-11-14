@@ -149,19 +149,39 @@ const collect = <E>(stream: Stream.Stream<Uint8Array, E>) =>
       (a, b) => a + b,
     ),
   );
+/** Gradle needs the SDK location; fall back to Android Studio's default install like the device host does. */
+export const androidSdk = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const environment = yield* HostProcess.Environment;
+  const home = environment.HOME ?? environment.USERPROFILE ?? "";
+  const candidates = [
+    environment.ANDROID_HOME?.trim(),
+    environment.ANDROID_SDK_ROOT?.trim(),
+    path.join(home, "Library", "Android", "sdk"),
+    path.join(home, "Android", "Sdk"),
+    path.join(environment.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "Android", "Sdk"),
+  ];
+  for (const sdk of candidates) {
+    if (!sdk) continue;
+    const platformTools = path.join(sdk, "platform-tools");
+    if (yield* fs.exists(platformTools).pipe(Effect.orElseSucceed(() => false))) return sdk;
+  }
+  return undefined;
+});
+
 export const resolveAdb = Effect.gen(function* () {
   if (yield* isCommandAvailable("adb")) return "adb";
-  const environment = yield* HostProcess.Environment;
   const path = yield* Path.Path;
   const executable = (yield* HostProcess.Platform) === "win32" ? "adb.exe" : "adb";
-  for (const sdk of [environment.ANDROID_SDK_ROOT, environment.ANDROID_HOME]) {
-    if (!sdk) continue;
+  const sdk = yield* androidSdk;
+  if (sdk) {
     const candidate = path.join(sdk, "platform-tools", executable);
     if (yield* isCommandAvailable(candidate)) return candidate;
   }
   return yield* new NativeClientError({
     message:
-      "adb was not found on PATH or in ANDROID_SDK_ROOT/ANDROID_HOME. Install Android SDK platform-tools.",
+      "adb was not found on PATH, in ANDROID_HOME/ANDROID_SDK_ROOT, or in Android Studio's default SDK location. Install Android SDK platform-tools.",
   });
 });
 
@@ -175,17 +195,24 @@ const command = Effect.fn("nativeClient.command")(function* (
   args: string[],
   inherit = false,
   cwd?: string,
+  withoutEnvironment: ReadonlyArray<string> = [],
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const environment = yield* HostProcess.Environment;
+  const environment = Object.fromEntries(
+    Object.entries(yield* HostProcess.Environment).filter(
+      ([name]) => !withoutEnvironment.includes(name),
+    ),
+  );
   const log = inherit ? yield* BuildLog : null;
   const spawn = yield* resolveSpawnCommand(program === "adb" ? yield* resolveAdb : program, args);
+  const sdk = yield* androidSdk;
   const child = yield* spawner.spawn(
     ChildProcess.make(spawn.command, spawn.args, {
       shell: spawn.shell,
       cwd: cwd ?? (yield* roots).mobile,
       env: {
         ...environment,
+        ...(sdk ? { ANDROID_HOME: sdk } : {}),
         APP_VARIANT: "development",
         MOBILE_VERSION_POLICY: "appVersion",
         T3CODE_IOS_PERSONAL_TEAM: "0",
@@ -793,7 +820,161 @@ const prune = Effect.fn("nativeClient.prune")(
   (effect) => Effect.ignore(effect),
 );
 
-/** Local artifact, then the shared cache, then a build that is shared back when credentials allow. */
+const buildWorkflow = "mobile-dev-client.yml";
+const WorkflowRun = Schema.Struct({
+  displayTitle: Schema.String,
+  status: Schema.String,
+  conclusion: Schema.NullOr(Schema.String),
+  createdAt: Schema.String,
+});
+const decodeWorkflowRuns = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Array(WorkflowRun)),
+);
+
+/** The workflow names each run after the client it builds, which is how a waiting machine finds it. */
+export const buildRunTitle = (platform: NativePlatform, abi: string | null, fingerprint: string) =>
+  `Dev client ${platform}${abi ? ` ${abi}` : ""} ${fingerprint}`;
+
+export type RemoteBuildState = "none" | "running" | "failed" | "succeeded";
+
+/** The newest run with this title that was created at or after `sinceMs`. */
+export const remoteBuildState = (
+  runs: ReadonlyArray<typeof WorkflowRun.Type>,
+  title: string,
+  sinceMs: number,
+): RemoteBuildState => {
+  const run = runs
+    .filter((run) => run.displayTitle === title && Date.parse(run.createdAt) >= sinceMs)
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+  if (!run) return "none";
+  if (run.status !== "completed") return "running";
+  return run.conclusion === "success" ? "succeeded" : "failed";
+};
+
+const remoteBuildPollMs = 20_000;
+const remoteBuildTimeoutMs = 25 * 60_000;
+/** A run this recent for the same client is joined instead of dispatching a second one. */
+const remoteBuildJoinMs = 30 * 60_000;
+
+/**
+ * Build the client for HEAD in the `mobile-dev-client.yml` workflow (Blacksmith runners with warm
+ * Gradle and ccache state) and download it from the shared cache. False means "build here
+ * instead": no `gh`, no permission to dispatch, HEAD not on GitHub, native edits that HEAD does
+ * not have (the workflow rejects a fingerprint it does not compute), or a failed run.
+ */
+const buildOnBlacksmith = Effect.fn("nativeClient.buildOnBlacksmith")(
+  function* (
+    remote: RemoteCache,
+    platform: NativePlatform,
+    abi: string | null,
+    fingerprint: string,
+    key: string,
+    directory: string,
+  ) {
+    const environment = yield* HostProcess.Environment;
+    // The workflow itself runs this script: it must build, never dispatch.
+    if (environment.GITHUB_ACTIONS === "true" || environment.T3_NATIVE_CLIENT_BUILD === "local")
+      return false;
+    if (!(yield* isCommandAvailable("gh"))) return false;
+    const repository = environment.T3_NATIVE_CLIENT_REPOSITORY ?? "pingdotgg/t3code";
+    const { repo } = yield* roots;
+    const sha = yield* command("git", ["rev-parse", "HEAD"], false, repo);
+    const pushed = yield* command(
+      "gh",
+      ["api", `repos/${repository}/commits/${sha}`, "--jq", ".sha"],
+      false,
+      repo,
+    ).pipe(
+      Effect.map((found) => found === sha),
+      Effect.orElseSucceed(() => false),
+    );
+    if (!pushed) {
+      yield* Console.error(`HEAD ${sha.slice(0, 10)} is not on GitHub yet; building here.`);
+      return false;
+    }
+    const title = buildRunTitle(platform, abi, fingerprint);
+    const state = (sinceMs: number) =>
+      command(
+        "gh",
+        [
+          "run",
+          "list",
+          "--repo",
+          repository,
+          "--workflow",
+          buildWorkflow,
+          "--event",
+          "workflow_dispatch",
+          "--limit",
+          "30",
+          "--json",
+          "displayTitle,status,conclusion,createdAt",
+        ],
+        false,
+        repo,
+      ).pipe(
+        Effect.flatMap(decodeWorkflowRuns),
+        Effect.map((runs) => remoteBuildState(runs, title, sinceMs)),
+        // A failed listing says nothing about the build; keep waiting on the cache.
+        Effect.orElseSucceed((): RemoteBuildState => "none"),
+      );
+    const started = yield* Clock.currentTimeMillis;
+    const joined = (yield* state(started - remoteBuildJoinMs)) === "running";
+    if (!joined) {
+      const dispatched = yield* command(
+        "gh",
+        [
+          "workflow",
+          "run",
+          buildWorkflow,
+          "--repo",
+          repository,
+          "--ref",
+          "main",
+          "-f",
+          `ref=${sha}`,
+          "-f",
+          `platform=${platform}`,
+          "-f",
+          `abi=${abi ?? "x86_64"}`,
+          "-f",
+          `fingerprint=${fingerprint}`,
+        ],
+        false,
+        repo,
+      ).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!dispatched) return false;
+    }
+    yield* Console.error(
+      `${joined ? "A Blacksmith build of" : "Building"} ${key} ${joined ? "is already running" : "on Blacksmith"}; waiting for it in the shared cache...`,
+    );
+    const since = joined ? started - remoteBuildJoinMs : started - 60_000;
+    const fetched = download(remote, platform, key, directory).pipe(
+      Effect.orElseSucceed(() => false),
+    );
+    while ((yield* Clock.currentTimeMillis) - started < remoteBuildTimeoutMs) {
+      yield* Effect.sleep(remoteBuildPollMs);
+      if (yield* fetched) return true;
+      const now = yield* state(since);
+      if (now === "failed" || (now === "succeeded" && !(yield* fetched))) {
+        yield* Console.error(
+          now === "failed"
+            ? "The Blacksmith build failed (or HEAD lacks this checkout's native edits); building here."
+            : "The Blacksmith run finished without sharing this client; building here.",
+        );
+        return false;
+      }
+    }
+    yield* Console.error("The Blacksmith build did not finish in time; building here.");
+    return false;
+  },
+  Effect.orElseSucceed(() => false),
+);
+
+/** Local artifact, then the shared cache, then a Blacksmith build when this user can start one, then a build here that is shared back when credentials allow. */
 export const resolveArtifact = Effect.fn("nativeClient.resolveArtifact")(function* (
   home: string,
   platform: NativePlatform,
@@ -827,17 +1008,31 @@ export const resolveArtifact = Effect.fn("nativeClient.resolveArtifact")(functio
       return { ...artifact, source: "remote" as const, buildMs: yield* readBuildMs(directory) };
     }
   }
+  if (remote && (yield* buildOnBlacksmith(remote, platform, abi, fingerprint, key, directory))) {
+    yield* prune(path.dirname(directory), fingerprint);
+    return { ...artifact, source: "remote" as const, buildMs: yield* readBuildMs(directory) };
+  }
   const log = yield* BuildLog;
   yield* Console.error(
-    `No cached client for ${key}. Building it once for every machine (5-15 min)${log ? `. Log: ${log}` : ""}`,
+    `No cached client for ${key}. Building it here once for every machine (5-15 min)${log ? `. Log: ${log}` : ""}`,
   );
   const started = yield* Clock.currentTimeMillis;
   yield* build(platform, abi, directory, fingerprint);
   yield* writeBuildMs(directory, (yield* Clock.currentTimeMillis) - started);
   yield* prune(path.dirname(directory), fingerprint);
   if (remote && (yield* HostProcess.Environment).T3_NATIVE_CLIENT_CACHE !== "read") {
+    // The Blacksmith workflow exists to share the client: there a failed upload fails the run.
+    const required = (yield* HostProcess.Environment).T3_NATIVE_CLIENT_SHARE === "required";
     yield* upload(remote, platform, key, directory).pipe(
-      Effect.catch((error) => Console.error(`Native client was not shared (${describe(error)}).`)),
+      Effect.catch((error) =>
+        required
+          ? Effect.fail(
+              new NativeClientError({
+                message: `Native client was not shared (${describe(error)}).`,
+              }),
+            )
+          : Console.error(`Native client was not shared (${describe(error)}).`),
+      ),
     );
   }
   return { ...artifact, source: "build" as const, buildMs: 0 };
@@ -930,6 +1125,7 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
   session: string,
   abi: string,
   metro: string | undefined,
+  config: string | undefined,
 ) {
   const started = yield* Clock.currentTimeMillis;
   const path = yield* Path.Path;
@@ -940,6 +1136,13 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
   );
   // agent-device scopes session ownership to the workspace (working directory) it runs in.
   const workspace = yield* HostProcess.WorkingDirectory;
+  // A session behind a gateway (a device pool) is reachable only with the config that opened it.
+  const target = ["--session", session, ...(config ? ["--config", config] : [])];
+  // Daemon variables in the shell (a device-pool login) override the config and authenticate
+  // as someone who does not hold this lease; T3 Code's own launcher drops them the same way.
+  const agentDeviceEnvironment = config
+    ? ["AGENT_DEVICE_DAEMON_BASE_URL", "AGENT_DEVICE_DAEMON_AUTH_TOKEN", "AGENT_DEVICE_CONFIG"]
+    : [];
   const deviceAbi = platform === "android" ? abi : null;
   const task = deviceAbi ? `native-client:android-${deviceAbi}` : `native-client:${platform}`;
   const current = yield* fingerprint(platform);
@@ -950,17 +1153,10 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
   const downloadOnDevice = source
     ? command(
         node,
-        [
-          agentDevice,
-          "install-from-source",
-          source.url,
-          "--header",
-          source.header,
-          "--session",
-          session,
-        ],
+        [agentDevice, "install-from-source", source.url, "--header", source.header, ...target],
         true,
         workspace,
+        agentDeviceEnvironment,
       ).pipe(
         Effect.as(true),
         Effect.catch((error) =>
@@ -982,9 +1178,10 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
         yield* Console.error(`Installing into agent-device session ${session}...`);
         yield* command(
           node,
-          [agentDevice, "install", bundleId, local.file, "--session", session],
+          [agentDevice, "install", bundleId, local.file, ...target],
           true,
           workspace,
+          agentDeviceEnvironment,
         );
         return local;
       });
@@ -997,11 +1194,11 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
         "open",
         bundleId,
         `t3code-dev://expo-development-client/?url=${url}&disableOnboarding=1&disableFab=1&disableAutoLaunch=1`,
-        "--session",
-        session,
+        ...target,
       ],
       true,
       workspace,
+      agentDeviceEnvironment,
     );
   }
   yield* reportTelemetry(
@@ -1045,11 +1242,23 @@ const main = Command.make(
       Flag.withDescription("With --session, open the dev client against this Metro URL."),
       Flag.optional,
     ),
+    config: Flag.String("config").pipe(
+      Flag.withDescription(
+        "With --session, the agent-device config the session was opened with (T3 Code's device_open returns it in targetArgs). Needed for a device pool behind a gateway.",
+      ),
+      Flag.optional,
+    ),
     prepare: Flag.Boolean("prepare").pipe(
       Flag.withDescription(
         "Fetch or build the client for this checkout without a device (Android: for --abi). Run it before leasing a device: a build can outlast the lease.",
       ),
       Flag.withDefault(false),
+    ),
+    expectFingerprint: Flag.String("expect-fingerprint").pipe(
+      Flag.withDescription(
+        "With --prepare, fail before building unless the checkout's native fingerprint is this one.",
+      ),
+      Flag.optional,
     ),
   },
   Effect.fn("nativeClient.main")(function* ({
@@ -1059,7 +1268,9 @@ const main = Command.make(
     session,
     abi: sessionAbi,
     metro,
+    config,
     prepare,
+    expectFingerprint,
   }) {
     const started = yield* Clock.currentTimeMillis;
     if (prepare) {
@@ -1072,6 +1283,10 @@ const main = Command.make(
       if (!home)
         return yield* new NativeClientError({ message: "HOME or USERPROFILE must be set." });
       const current = yield* fingerprint(platform);
+      if (Option.isSome(expectFingerprint) && expectFingerprint.value !== current)
+        return yield* new NativeClientError({
+          message: `This checkout's ${platform} fingerprint is ${current}, not the expected ${expectFingerprint.value}: the caller has native changes this commit does not.`,
+        });
       const artifact = yield* resolveArtifact(
         home,
         platform,
@@ -1101,6 +1316,7 @@ const main = Command.make(
         session.value,
         sessionAbi,
         Option.getOrUndefined(metro),
+        Option.getOrUndefined(config),
       );
     }
     const target = yield* resolveDevice(platform, Option.getOrUndefined(requested));
