@@ -432,32 +432,35 @@ describe("t3 pair", () => {
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  // A shared $HOME makes another machine's record visible here; its pid can
-  // look alive locally, so pairing must name that machine, not mint or report
-  // "no running server".
-  it.effect("names the other machine when the only runtime record is foreign", () =>
+  // A shared $HOME makes another machine's record visible here. A live local
+  // server still pairs, since a hostname can change while it runs.
+  it.effect("names the other machine only when its record has no live local server", () =>
     withDescriptorServer((origin) =>
       Effect.gen(function* () {
         const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-foreign-test-"));
+        const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
         const state = yield* makePersistedServerRuntimeState({
           config: { host: "127.0.0.1", devUrl: undefined },
           port: Number(new URL(origin).port),
         });
-        yield* persistServerRuntimeState({
-          path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
-          state: { ...state, hostname: `${NodeOS.hostname()}-peer` },
-        });
+        const hostname = `${NodeOS.hostname()}-peer`;
 
+        yield* persistServerRuntimeState({ path: statePath, state: { ...state, hostname } });
+        const output = yield* captureStdout(runCli(["pair", "--base-dir", baseDir]));
+        assert.include(output, `Pairing URL: ${origin}/pair#token=`);
+
+        yield* persistServerRuntimeState({
+          path: statePath,
+          state: { ...state, hostname, pid: 4_194_305 },
+        });
         const error = yield* provideCliTestLayers(
           runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
         );
-
         const rendered = String(
           typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
         );
         assert.include(rendered, "running on another machine");
-        assert.include(rendered, `${NodeOS.hostname()}-peer`);
-        assert.notInclude(rendered, "No running T3 Code server found.");
+        assert.include(rendered, hostname);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
