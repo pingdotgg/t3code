@@ -47,27 +47,39 @@ const layerPairingGrantStore = (
   );
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStore.layer", (it) => {
-  it.effect("accepts lowercase one-time tokens exactly once", () =>
-    Effect.gen(function* () {
-      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
-      const issued = yield* bootstrapCredentials.issueOneTimeToken({ label: "Julius iPhone" });
-      const first = yield* bootstrapCredentials.consume(issued.credential.toLowerCase());
-      const second = yield* Effect.flip(bootstrapCredentials.consume(issued.credential));
+  it.effect.each(["aaaaaaaaaaaa", "aaaa-aaaa-aaaa", "aaaa aaaa aaaa", "\taaaa - AAAA - aaaa\n"])(
+    "accepts formatted one-time tokens exactly once: %j",
+    (credential) =>
+      Effect.gen(function* () {
+        const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+        const issued = yield* bootstrapCredentials.issueOneTimeToken({ label: "Julius iPhone" });
+        for (const invalid of [
+          `${issued.credential}A`,
+          issued.credential.slice(1),
+          issued.credential.replace("A", "I"),
+          "AAAA/AAAA/AAAA",
+          "AAAA–AAAA–AAAA",
+        ]) {
+          const rejected = yield* Effect.flip(bootstrapCredentials.consume(invalid));
+          expect(rejected._tag).toBe("UnknownBootstrapCredentialError");
+        }
+        const first = yield* bootstrapCredentials.consume(credential);
+        const second = yield* Effect.flip(bootstrapCredentials.consume(issued.credential));
 
-      expect(first.method).toBe("one-time-token");
-      expect(first.scopes).toEqual(AuthStandardClientScopes);
-      expect(first.subject).toBe("one-time-token");
-      expect(first.label).toBe("Julius iPhone");
-      expect(issued.label).toBe("Julius iPhone");
-      expect(second._tag).toBe("UnknownBootstrapCredentialError");
-      expect(second.message).toContain("Unknown bootstrap credential");
-    }).pipe(
-      Effect.provide(layerPairingGrantStore()),
-      Effect.provideService(
-        SecureRandom.SecureRandom,
-        SecureRandom.make((size) => new Uint8Array(size).fill(8)),
+        expect(first.method).toBe("one-time-token");
+        expect(first.scopes).toEqual(AuthStandardClientScopes);
+        expect(first.subject).toBe("one-time-token");
+        expect(first.label).toBe("Julius iPhone");
+        expect(issued.label).toBe("Julius iPhone");
+        expect(second._tag).toBe("UnknownBootstrapCredentialError");
+        expect(second.message).toContain("Unknown bootstrap credential");
+      }).pipe(
+        Effect.provide(layerPairingGrantStore()),
+        Effect.provideService(
+          SecureRandom.SecureRandom,
+          SecureRandom.make((size) => new Uint8Array(size).fill(8)),
+        ),
       ),
-    ),
   );
 
   it.effect("atomically consumes a one-time token when multiple requests race", () =>
@@ -75,11 +87,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const token = yield* bootstrapCredentials.issueOneTimeToken();
       const results = yield* Effect.all(
-        Array.from({ length: 8 }, () =>
+        Array.from({ length: 8 }, (_, index) =>
           Effect.result(
-            bootstrapCredentials.consume(token.credential, {
-              requestedScopes: ["orchestration:read"],
-            }),
+            bootstrapCredentials.consume(
+              index % 2 === 0
+                ? token.credential
+                : `${token.credential.slice(0, 4)}-${token.credential.slice(4, 8)}-${token.credential.slice(8)}`,
+              {
+                requestedScopes: ["orchestration:read"],
+              },
+            ),
           ),
         ),
         {
@@ -99,28 +116,32 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
     }).pipe(Effect.provide(layerPairingGrantStore())),
   );
 
-  it.effect("requires the bound proof key thumbprint when present", () =>
+  it.effect.each(["raw", "formatted"])("requires the bound proof key for %s codes", (format) =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const token = yield* bootstrapCredentials.issueOneTimeToken({
         proofKeyThumbprint: "client-proof-key-thumbprint",
         scopes: ["orchestration:read"],
       });
+      const credential =
+        format === "formatted"
+          ? `${token.credential.slice(0, 4)}-${token.credential.slice(4, 8)}-${token.credential.slice(8)}`
+          : token.credential;
 
-      const missing = yield* Effect.flip(bootstrapCredentials.consume(token.credential));
+      const missing = yield* Effect.flip(bootstrapCredentials.consume(credential));
       const wrong = yield* Effect.flip(
-        bootstrapCredentials.consume(token.credential, {
+        bootstrapCredentials.consume(credential, {
           proofKeyThumbprint: "other-proof-key-thumbprint",
           requestedScopes: ["access:write"],
         }),
       );
       const forbiddenScope = yield* Effect.flip(
-        bootstrapCredentials.consume(token.credential, {
+        bootstrapCredentials.consume(credential, {
           proofKeyThumbprint: "client-proof-key-thumbprint",
           requestedScopes: ["access:write"],
         }),
       );
-      const consumed = yield* bootstrapCredentials.consume(token.credential, {
+      const consumed = yield* bootstrapCredentials.consume(credential, {
         proofKeyThumbprint: "client-proof-key-thumbprint",
         requestedScopes: ["orchestration:read"],
       });
@@ -137,9 +158,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const exact = yield* bootstrapCredentials.consume("abcdefghjkmn");
       const otherCase = yield* Effect.flip(bootstrapCredentials.consume("ABCDEFGHJKMN"));
+      const formatted = yield* Effect.flip(bootstrapCredentials.consume("abcd-efgh-jkmn"));
 
       expect(exact.method).toBe("desktop-bootstrap");
       expect(otherCase._tag).toBe("UnknownBootstrapCredentialError");
+      expect(formatted._tag).toBe("UnknownBootstrapCredentialError");
     }).pipe(
       Effect.provide(
         layerPairingGrantStore({

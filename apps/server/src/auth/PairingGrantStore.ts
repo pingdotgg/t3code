@@ -636,9 +636,10 @@ const make = Effect.gen(function* () {
         return yield* seededResult.error;
       }
 
-      // Only credentials in the issued pairing-code formats are case-insensitive.
-      const pairingCredential = PAIRING_TOKEN_PATTERN.test(credential)
-        ? credential.toUpperCase()
+      // Only issued pairing codes tolerate case and presentation separators.
+      const unformattedCredential = credential.replace(/[-\s]/g, "");
+      const pairingCredential = PAIRING_TOKEN_PATTERN.test(unformattedCredential)
+        ? unformattedCredential.toUpperCase()
         : (parseMcpApprovalCode(credential)?.code ?? credential);
 
       // Check scopes in the UPDATE so rejected requests cannot spend one-time links.
