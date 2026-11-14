@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Orbit's container flow (DROP-IN.md §1) against a Conn Server binary. The turn is one Haiku
+// Orbit's container flow (DROP-IN.md §1) and its task-turn path (`task-copy-turn.yml`,
+// `t3_copy_rpc.mjs`) against a Conn Server binary. The turn is one Haiku
 // turn with `conn-server`, and the scripted fake provider with `examples/replay_server`.
 // Usage: node orbit-flow.mjs <conn-server> [port]. The port defaults to a free one. The home is
 // a temporary T3CODE_HOME, never ~/.t3. Needs no monorepo. The server binds 0.0.0.0 as Orbit
@@ -14,6 +15,9 @@ import * as NodeURL from "node:url";
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const { McpSession } = await import(
   NodeURL.pathToFileURL(NodePath.resolve(here, "../../conn-mcp/tools/mcp-client.mjs")).href
+);
+const { copyRpc } = await import(
+  NodeURL.pathToFileURL(NodePath.resolve(here, "orbit-copy-rpc.mjs")).href
 );
 
 const binary = NodePath.resolve(process.argv[2] ?? "");
@@ -44,6 +48,17 @@ const fail = (text) => {
 };
 const cli = (...args) =>
   NodeChildProcess.execFileSync(binary, args, { env, encoding: "utf8" }).trim();
+/** A CLI call as Orbit's playbook runs it: stdout, stderr and the exit code, never a throw. */
+const run = (args, input = "") => {
+  const result = NodeChildProcess.spawnSync(binary, args, {
+    env,
+    cwd: workspace,
+    input,
+    encoding: "utf8",
+    timeout: 120_000,
+  });
+  return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", code: result.status };
+};
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /** The pids below `pid`, from one `ps` listing. */
 const descendants = (pid) => {
@@ -192,6 +207,107 @@ try {
   const text = JSON.stringify(read);
   if (!/orbit ok/i.test(text)) fail(`the answer is not in the read: ${text.slice(0, 600)}`);
   ok(`t3_thread_read activity: ${read.items?.length} items, the answer is there`);
+
+  // `swamp/ansible/task-copy-turn.yml`, in its order, then `t3_copy_rpc.mjs`.
+  step("task turn: read settings.json and model-manifest.json, check the model");
+  const model = { instanceId: "claudeAgent", model: "claude-haiku-5-5" };
+  const settings = JSON.parse(
+    NodeFS.readFileSync(NodePath.join(home, "userdata", "settings.json"), "utf8"),
+  );
+  const driver = settings.providerInstances?.[model.instanceId]?.driver ?? model.instanceId;
+  const manifestFile = NodePath.join(home, "userdata", "model-manifest.json");
+  if (NodeFS.existsSync(manifestFile)) {
+    const cached = JSON.parse(NodeFS.readFileSync(manifestFile, "utf8"));
+    const listed = (cached.manifest?.providers?.[driver]?.models ?? []).filter(
+      (entry) => typeof entry?.slug === "string",
+    );
+    const offered = listed.flatMap((entry) => [entry.slug, ...(entry.aliases ?? [])]);
+    if (typeof cached.fetchedAtMs !== "number") fail("model-manifest.json has no fetchedAtMs");
+    if (listed.length > 0 && !offered.includes(model.model)) {
+      fail(`${model.model} is not offered by the cached manifest: ${offered.join(" ")}`);
+    }
+    ok(`model-manifest.json lists ${listed.length} ${driver} models; ${model.model} is offered`);
+  } else {
+    ok("no model-manifest.json (no fetch yet): Orbit checks no model, as with T3");
+  }
+
+  step("task turn: thread list --project <workspace> --json (settle)");
+  const listThreads = () => {
+    const listed = run(["thread", "list", "--project", workspace, "--json"]);
+    if (listed.code !== 0) fail(`thread list exited ${listed.code}: ${listed.stderr}`);
+    return JSON.parse(listed.stdout);
+  };
+  ok(`${listThreads().length} thread(s), each with title and status`);
+
+  step("task turn: thread start --provider --model --title --wait --json <workspace> -");
+  const title = "Orbit task 1 thread 1";
+  const started = run(
+    ["thread", "start", "--provider", model.instanceId, "--model", model.model, "--title", title,
+      "--wait", "--json", workspace, "-"],
+    "Reply with exactly: orbit ok",
+  );
+  if (started.code !== 0) fail(`thread start exited ${started.code}: ${started.stderr}`);
+  const start = JSON.parse(started.stdout);
+  if (Object.keys(start).join(",") !== "threadId,runId,status,reply,error") {
+    fail(`thread start printed ${started.stdout}`);
+  }
+  if (start.status !== "completed" || typeof start.reply !== "string") {
+    fail(`thread start: ${started.stdout}`);
+  }
+  ok(`exit 0, ${start.status}, reply ${JSON.stringify(start.reply)}`);
+
+  step("task turn: thread list --json, find by title; thread show --messages 200 --json");
+  const found = listThreads().filter((t) => t.title === title);
+  if (found.length !== 1 || found[0].threadId !== start.threadId) {
+    fail(`not found by title: ${JSON.stringify(found)}`);
+  }
+  const shown = run(["thread", "show", "--messages", "200", "--json", found[0].threadId]);
+  if (shown.code !== 0) fail(`thread show exited ${shown.code}: ${shown.stderr}`);
+  const show = JSON.parse(shown.stdout);
+  if (show.thread?.threadId !== start.threadId || show.messages?.length !== 2) {
+    fail(`thread show: ${shown.stdout.slice(0, 600)}`);
+  }
+  ok(`status ${found[0].status}; ${show.messages.map((m) => m.role).join(", ")}`);
+
+  step("task turn, continued: thread send --wait --json <thread> -");
+  const sent = run(["thread", "send", "--wait", "--json", start.threadId, "-"], "Once more");
+  if (sent.code !== 0) fail(`thread send exited ${sent.code}: ${sent.stderr}`);
+  const send = JSON.parse(sent.stdout);
+  if (send.status !== "completed" || send.runId === start.runId) fail(`thread send: ${sent.stdout}`);
+  ok(`exit 0, ${send.status}, reply ${JSON.stringify(send.reply)}`);
+
+  step("task turn that asks: --wait exits 2, then t3_copy_rpc.mjs read and interrupt");
+  const asked = run(
+    ["thread", "start", "--provider", model.instanceId, "--model", model.model, "--title",
+      "Orbit task 2 thread 1", "--wait", "--json", workspace, "-"],
+    "ask",
+  );
+  if (asked.code !== 2) fail(`a turn that asks exited ${asked.code}: ${asked.stdout} ${asked.stderr}`);
+  const waiting = JSON.parse(asked.stdout);
+  if (waiting.status !== "waiting" || waiting.reply !== null) fail(`asks: ${asked.stdout}`);
+  ok(`exit 2, ${waiting.status}; stderr: ${asked.stderr.trim()}`);
+  const side = {
+    env: { HOME: root },
+    cli: async (args, input = "") => run(args, input),
+  };
+  const asking = await copyRpc(side, "read", waiting.threadId);
+  if (asking.code !== 0 || !asking.revoked) fail(`copy rpc read: ${JSON.stringify(asking)}`);
+  const kinds = asking.out.requests.map((r) => r.kind).join(" ");
+  // The fake provider asks for a command approval, not a question: Orbit leaves it running.
+  if (asking.out.requests.length !== 1 || asking.out.stoppable !== false) {
+    fail(`copy rpc read: ${JSON.stringify(asking.out)}`);
+  }
+  ok(`read: ${asking.out.runs.length} live run, requests ${kinds}, stoppable ${asking.out.stoppable}; session revoked`);
+  const stop = await copyRpc(side, "interrupt", waiting.threadId, waiting.runId, "request:1");
+  if (stop.code !== 0 || !stop.revoked || stop.out.interrupted !== false) {
+    fail(`copy rpc interrupt: ${JSON.stringify(stop)}`);
+  }
+  ok(`interrupt refused as Orbit's script refuses an approval: ${stop.out.error}`);
+  const leftover = JSON.parse(cli("auth", "session", "list", "--json")).filter((s) =>
+    ["t3 thread cli", "orbit copy turn"].includes(s.client?.label),
+  );
+  if (leftover.length > 0) fail(`sessions left: ${JSON.stringify(leftover)}`);
+  ok("no thread-CLI or copy-turn session is left");
 
   step("revoke the Swamp session");
   const list = JSON.parse(cli("auth", "session", "list", "--json"));
