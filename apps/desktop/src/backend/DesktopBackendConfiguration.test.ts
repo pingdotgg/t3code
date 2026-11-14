@@ -23,6 +23,7 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
+import { pickDistroIpv4 } from "../wsl/wslPathParsing.ts";
 
 const layerShellEnvironment = (prepared = true) =>
   Layer.succeed(DesktopShellEnvironment.DesktopShellEnvironment, {
@@ -38,20 +39,23 @@ const layerBackendConfiguration = (prepared = true) =>
     Layer.provide(DesktopState.layer),
   );
 
-const layerServerExposure = Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
-  getState: Effect.die("unexpected getState"),
-  backendConfig: Effect.succeed({
-    port: 4888,
-    bindHost: "0.0.0.0",
-    httpBaseUrl: new URL("http://127.0.0.1:4888"),
-    tailscaleServeEnabled: true,
-    tailscaleServePort: 8443,
-  }),
-  configureFromSettings: () => Effect.die("unexpected configureFromSettings"),
-  setMode: () => Effect.die("unexpected setMode"),
-  setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
-  getAdvertisedEndpoints: Effect.succeed([]),
-} satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
+const makeLayerServerExposure = (bindHost: string) =>
+  Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
+    getState: Effect.die("unexpected getState"),
+    backendConfig: Effect.succeed({
+      port: 4888,
+      bindHost,
+      httpBaseUrl: new URL("http://127.0.0.1:4888"),
+      tailscaleServeEnabled: true,
+      tailscaleServePort: 8443,
+    }),
+    configureFromSettings: () => Effect.die("unexpected configureFromSettings"),
+    setMode: () => Effect.die("unexpected setMode"),
+    setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
+    getAdvertisedEndpoints: Effect.succeed([]),
+  } satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
+
+const layerServerExposure = makeLayerServerExposure("0.0.0.0");
 
 function layerEnvironment(
   baseDir: string,
@@ -763,6 +767,108 @@ describe("DesktopBackendConfiguration", () => {
           OTEL_RESOURCE_ATTRIBUTES: "deployment.environment.name=staging",
         }),
       );
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("resolveWsl binds only the address Windows dials unless network access is on", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      // `hostname -I` is the distro's full address list, as the real lookup reads it.
+      const cases = [
+        {
+          exposureBindHost: "127.0.0.1",
+          hostnameI: "",
+          url: "127.0.0.1",
+          bind: "127.0.0.1",
+        },
+        // Mirrored: the distro reports one of the host's own addresses; loopback stands in as one every runner has.
+        {
+          exposureBindHost: "127.0.0.1",
+          hostnameI: "127.0.0.1",
+          url: "127.0.0.1",
+          bind: "127.0.0.1",
+        },
+        // NAT: Windows dials the distro IP, so the backend listens there and nowhere else.
+        {
+          exposureBindHost: "127.0.0.1",
+          hostnameI: "172.27.0.99",
+          url: "172.27.0.99",
+          bind: "172.27.0.99",
+        },
+        // A tailnet address listed first is passed over for the NAT address while network access is off.
+        {
+          exposureBindHost: "127.0.0.1",
+          hostnameI: "100.101.102.103 172.27.0.99",
+          url: "172.27.0.99",
+          bind: "172.27.0.99",
+        },
+        {
+          exposureBindHost: "127.0.0.1",
+          hostnameI: "100.101.102.103",
+          url: "127.0.0.1",
+          bind: "127.0.0.1",
+        },
+        {
+          exposureBindHost: "0.0.0.0",
+          hostnameI: "",
+          url: "127.0.0.1",
+          bind: "0.0.0.0",
+        },
+        {
+          exposureBindHost: "0.0.0.0",
+          hostnameI: "127.0.0.1",
+          url: "127.0.0.1",
+          bind: "0.0.0.0",
+        },
+        {
+          exposureBindHost: "0.0.0.0",
+          hostnameI: "172.27.0.99",
+          url: "172.27.0.99",
+          bind: "0.0.0.0",
+        },
+        {
+          exposureBindHost: "0.0.0.0",
+          hostnameI: "100.101.102.103 172.27.0.99",
+          url: "100.101.102.103",
+          bind: "0.0.0.0",
+        },
+      ] as const;
+
+      for (const { exposureBindHost, hostnameI, url, bind } of cases) {
+        const config = yield* Effect.gen(function* () {
+          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+          return yield* configuration.resolveWsl({ port: 5050, distro: null });
+        }).pipe(
+          Effect.provide(
+            layerBackendConfiguration().pipe(
+              Layer.provideMerge(makeLayerServerExposure(exposureBindHost)),
+              Layer.provideMerge(DesktopAppSettings.layerTest()),
+              Layer.provideMerge(DesktopWslServerTree.layerTest()),
+              Layer.provideMerge(
+                DesktopWslEnvironment.layerTest({
+                  isAvailable: true,
+                  windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
+                  getDistroIp: (_distro, options) =>
+                    Option.fromNullishOr(pickDistroIpv4(hostnameI, options)),
+                }),
+              ),
+              Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
+            ),
+          ),
+        );
+        assert.deepEqual(
+          { url: config.httpBaseUrl.hostname, bind: config.bootstrap.host },
+          { url, bind },
+          `network access bind ${exposureBindHost}, hostname -I "${hostnameI}"`,
+        );
+        if (exposureBindHost === "127.0.0.1") {
+          // Network access off never widens past the one address Windows dials.
+          assert.equal(config.bootstrap.host, config.httpBaseUrl.hostname);
+        }
+      }
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 

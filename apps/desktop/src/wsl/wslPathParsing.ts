@@ -1,3 +1,5 @@
+import { isTailscaleIpv4Address } from "@t3tools/tailscale";
+
 export interface WslDistro {
   readonly name: string;
   readonly isDefault: boolean;
@@ -117,4 +119,21 @@ export function resolveWslPickFolderDefaultPath(
 
 export function isValidDistroName(value: string): boolean {
   return DISTRO_NAME_PATTERN.test(value);
+}
+
+const IPV4_PATTERN = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+
+// `hostname -I` lists every address, and an in-distro tailnet address can come first.
+export function pickDistroIpv4(
+  hostnameOutput: string,
+  options?: { readonly skipTailnet?: boolean },
+): string | null {
+  const candidate = hostnameOutput
+    .trim()
+    .split(/\s+/)
+    .find(
+      (part) =>
+        IPV4_PATTERN.test(part) && !(options?.skipTailnet === true && isTailscaleIpv4Address(part)),
+    );
+  return candidate ?? null;
 }

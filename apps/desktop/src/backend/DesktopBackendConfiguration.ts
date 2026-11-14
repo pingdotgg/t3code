@@ -591,31 +591,16 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   DesktopBackendManager.DesktopBackendStartConfig,
   never,
   | DesktopEnvironment.DesktopEnvironment
+  | DesktopServerExposure.DesktopServerExposure
   | DesktopWslEnvironment.DesktopWslEnvironment
   | DesktopWslServerTree.DesktopWslServerTree
   | FileSystem.FileSystem
 > {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const env = yield* HostProcess.Environment;
-
-  // wslhost loopback forwarding is unreliable on some Windows hosts; advertise the WSL IP instead.
-  const wslBindHost = "0.0.0.0";
-
-  const bootstrap = {
-    mode: "desktop" as const,
-    noBrowser: true,
-    port: input.port,
-    // Omit t3Home to keep the Linux backend from sharing the primary's Windows SQLite file.
-    host: wslBindHost,
-    desktopBootstrapToken: input.bootstrapToken,
-    desktopBootstrapSecret: input.bootstrapSecret,
-    // PortSchema rejects 0 even when Tailscale Serve is disabled.
-    tailscaleServeEnabled: false,
-    tailscaleServePort: 443,
-    ...buildObservabilityFragment(input.observabilitySettings),
-  };
 
   const archivePath = environment.path.join(environment.resourcesPath, WSL_RUNTIME_ARCHIVE_NAME);
   const archiveHashPath = environment.path.join(
@@ -656,15 +641,42 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const runningDistro = preflight._tag === "Ready" ? preflight.runningDistro : null;
   const distroForConfig = runningDistro ?? input.distro;
 
-  const distroIp = yield* wslEnvironment.getDistroIp(distroForConfig);
+  const { bindHost: exposureBindHost } = yield* serverExposure.backendConfig;
+  const networkAccessible = exposureBindHost === "0.0.0.0";
+  // With network access off, Windows must not dial an in-distro tailnet address, and the
+  // backend must not listen on one.
+  const distroIp = yield* wslEnvironment.getDistroIp(distroForConfig, {
+    skipTailnet: !networkAccessible,
+  });
   const usesSharedNetworkStack = Option.match(distroIp, {
     onNone: () => false,
     onSome: (ip) => isLocalHostIpv4(ip),
   });
+  // wslhost loopback forwarding is unreliable on some Windows hosts, so NAT setups dial the
+  // distro IP instead.
   const rendererHost = usesSharedNetworkStack
     ? "127.0.0.1"
     : Option.getOrElse(distroIp, () => "127.0.0.1");
   const httpBaseUrl = new URL(`http://${rendererHost}:${input.port}`);
+  // With network access off, listen only on the address Windows dials: loopback, or under NAT
+  // the distro's address on the host-only WSL switch, which neither the LAN nor tailnet peers
+  // reach. Anything but the explicit wildcard counts as off. A managed policy needs no case
+  // here: a managed machine runs no WSL backend (see DesktopWslEnvironment's availability).
+  const wslBindHost = networkAccessible ? "0.0.0.0" : rendererHost;
+
+  const bootstrap = {
+    mode: "desktop" as const,
+    noBrowser: true,
+    port: input.port,
+    // Omit t3Home to keep the Linux backend from sharing the primary's Windows SQLite file.
+    host: wslBindHost,
+    desktopBootstrapToken: input.bootstrapToken,
+    desktopBootstrapSecret: input.bootstrapSecret,
+    // PortSchema rejects 0 even when Tailscale Serve is disabled.
+    tailscaleServeEnabled: false,
+    tailscaleServePort: 443,
+    ...buildObservabilityFragment(input.observabilitySettings),
+  };
 
   const distroArgs = distroForConfig ? ["-d", distroForConfig] : [];
   const forwardedEnv: Record<string, string> = { [DESKTOP_HOST_SCOPE_ENV]: input.hostScope };
@@ -818,6 +830,7 @@ export const make = Effect.gen(function* () {
       distro: persistedSettings.wslDistro,
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+      Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
       Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
       Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -890,6 +903,7 @@ export const make = Effect.gen(function* () {
         const shared = yield* sharedInputs;
         return yield* resolveWslStartConfig({ ...shared, ...input }).pipe(
           Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+          Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
           Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
           Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
