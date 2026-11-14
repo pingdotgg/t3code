@@ -3,7 +3,11 @@ import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import { remarkKeepWindowsProsePaths } from "@t3tools/shared/markdownWindowsPaths";
-import { absoluteFilePathMatches, parseMarkdownFileLink } from "@t3tools/shared/markdownLinks";
+import {
+  absoluteFilePathMatches,
+  parseMarkdownFileLink,
+  rewriteSpacedFilesystemDestinations,
+} from "@t3tools/shared/markdownLinks";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 const parser = unified().use(remarkParse).use(remarkGfm).use(remarkKeepWindowsProsePaths);
@@ -489,7 +493,11 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
 
 // HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
 export function markdownForNativeParsing(markdown: string): string {
-  return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
+  const spacedPathsAngled = rewriteSpacedFilesystemDestinations(
+    markdownWithHtml(markdown),
+    (destination) => (/[<>]/.test(destination) ? destination : `<${destination}>`),
+  );
+  return markdownWithWindowsPathDestinations(spacedPathsAngled);
 }
 
 export function parseMarkdownDocument(markdown: string): Root {

@@ -407,23 +407,24 @@ function markdownLinkDestinationScanner(markdown: string) {
   };
 }
 
-// Stands in for a space inside a drive path destination while CommonMark parses it. One UTF-16
+// Stands in for a space inside a filesystem destination while CommonMark parses it. One UTF-16
 // unit, so every source offset the renderers read stays where it was.
 const DESTINATION_SPACE = "\uE020";
 
-const HAS_DRIVE_DESTINATION = /\]\([ \t]*[A-Za-z]:[\\/]/;
-const DRIVE_DESTINATION_START = new RegExp(HAS_DRIVE_DESTINATION.source, "g");
+// A drive path (`C:\`) or its WSL mount (`/mnt/c/`).
+const HAS_FILESYSTEM_DESTINATION = /\]\([ \t]*(?=[A-Za-z]:[\\/]|\/mnt\/[A-Za-z]\/)/;
+const FILESYSTEM_DESTINATION_START = new RegExp(HAS_FILESYSTEM_DESTINATION.source, "g");
 // Bounds the scan from each start so a long line stays linear; real paths are far shorter.
-const MAX_DRIVE_DESTINATION_LENGTH = 1024;
+const MAX_FILESYSTEM_DESTINATION_LENGTH = 1024;
 const CODE_FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const INLINE_CODE = /(`+)[^`]*?\1/g;
 
 const isBlank = (char: string | undefined) => char === " " || char === "\t";
 
-// End of the drive path in `C:\Jo Doe\a.png "Title")`, or -1 when no `)` closes it. Parentheses
+// End of the path in `C:\Jo Doe\a.png "Title")`, or -1 when no `)` closes it. Parentheses
 // inside the path must balance.
-function driveDestinationEnd(text: string, start: number): number {
-  const limit = Math.min(text.length, start + MAX_DRIVE_DESTINATION_LENGTH);
+function filesystemDestinationEnd(text: string, start: number): number {
+  const limit = Math.min(text.length, start + MAX_FILESYSTEM_DESTINATION_LENGTH);
   let depth = 0;
   let close = -1;
   for (let index = start; index < limit && close === -1; index += 1) {
@@ -444,38 +445,44 @@ function driveDestinationEnd(text: string, start: number): number {
   return end;
 }
 
-function protectDriveDestinations(segment: string): string {
+type DestinationRewrite = (destination: string) => string;
+
+function rewriteInSegment(segment: string, rewrite: DestinationRewrite): string {
   let result = "";
   let cursor = 0;
-  for (const match of segment.matchAll(DRIVE_DESTINATION_START)) {
-    const start = match.index + match[0].length - 3;
+  for (const match of segment.matchAll(FILESYSTEM_DESTINATION_START)) {
+    const start = match.index + match[0].length;
     if (start < cursor) continue;
-    const end = driveDestinationEnd(segment, start);
+    const end = filesystemDestinationEnd(segment, start);
     if (end === -1) continue;
-    result +=
-      segment.slice(cursor, start) + segment.slice(start, end).replaceAll(" ", DESTINATION_SPACE);
+    const destination = segment.slice(start, end);
+    if (!destination.includes(" ")) continue;
+    result += segment.slice(cursor, start) + rewrite(destination);
     cursor = end;
   }
   return result + segment.slice(cursor);
 }
 
-function protectDestinationsOutsideInlineCode(line: string): string {
+function rewriteOutsideInlineCode(line: string, rewrite: DestinationRewrite): string {
   let result = "";
   let cursor = 0;
   for (const code of line.matchAll(INLINE_CODE)) {
-    result += protectDriveDestinations(line.slice(cursor, code.index)) + code[0];
+    result += rewriteInSegment(line.slice(cursor, code.index), rewrite) + code[0];
     cursor = code.index + code[0].length;
   }
-  return result + protectDriveDestinations(line.slice(cursor));
+  return result + rewriteInSegment(line.slice(cursor), rewrite);
 }
 
 /**
  * CommonMark ends a bare destination at its first space, so `![shot](C:\Users\Jo Doe\a.png)`
- * renders as text. Agents write Windows paths that way, so a drive path destination keeps its
- * spaces until the parser has read it. Code stays as written.
+ * renders as text. Agents write Windows and WSL paths that way, so this hands each bare
+ * filesystem destination that has a space to `rewrite`. Code stays as written.
  */
-export function protectSpacedWindowsDestinations(markdown: string): string {
-  if (!HAS_DRIVE_DESTINATION.test(markdown)) return markdown;
+export function rewriteSpacedFilesystemDestinations(
+  markdown: string,
+  rewrite: DestinationRewrite,
+): string {
+  if (!HAS_FILESYSTEM_DESTINATION.test(markdown)) return markdown;
   let fence: string | null = null;
   return markdown
     .split("\n")
@@ -489,9 +496,15 @@ export function protectSpacedWindowsDestinations(markdown: string): string {
         fence = marker;
         return line;
       }
-      return line.includes("](") ? protectDestinationsOutsideInlineCode(line) : line;
+      return line.includes("](") ? rewriteOutsideInlineCode(line, rewrite) : line;
     })
     .join("\n");
+}
+
+export function protectSpacedWindowsDestinations(markdown: string): string {
+  return rewriteSpacedFilesystemDestinations(markdown, (destination) =>
+    destination.replaceAll(" ", DESTINATION_SPACE),
+  );
 }
 
 export function restoreWindowsDestinationSpaces(value: string): string {

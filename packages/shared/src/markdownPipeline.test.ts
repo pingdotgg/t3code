@@ -576,14 +576,14 @@ it("reads Windows drive path destinations that contain spaces", () => {
     type: string;
     value?: string;
     tagName?: string;
-    properties?: { href?: string; dataLocalSrc?: string };
+    properties?: { href?: string; src?: string; dataLocalSrc?: string };
     children?: Node[];
   };
   const shape = (node: Node): string =>
     node.type === "text"
       ? (node.value ?? "")
       : node.tagName === "img"
-        ? `<img ${decodeURIComponent(node.properties?.dataLocalSrc ?? "")}>`
+        ? `<img ${decodeURIComponent(node.properties?.dataLocalSrc ?? node.properties?.src ?? "")}>`
         : node.tagName === "a"
           ? `<a ${decodeURIComponent(node.properties?.href ?? "")}>`
           : (node.children ?? []).map(shape).join("");
@@ -591,6 +591,9 @@ it("reads Windows drive path destinations that contain spaces", () => {
 
   expect(render(String.raw`![Nell's line](C:\Users\Jo Doe\.claude\shot.png)`)).toBe(
     String.raw`<img C:\Users\Jo Doe\.claude\shot.png>`,
+  );
+  expect(render("![shot](/mnt/c/Users/Jo Doe/shot.png)")).toBe(
+    "<img /mnt/c/Users/Jo Doe/shot.png>",
   );
   expect(render(String.raw`[balance.html](C:\Program Files (x86)\a b\balance.html "Run")`)).toBe(
     "<a file:///C:/Program Files (x86)/a b/balance.html>",
