@@ -3180,6 +3180,87 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("replays history in order, with stable earlier snapshots", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const instanceId = ProviderInstanceId.make("acp-test-v2-replay-order");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdateHandler = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+            }),
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-v2-replay-order");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-v2-replay-order"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.isDefined(sessionUpdateHandler);
+      const replay = (
+        sessionUpdate: "user_message_chunk" | "agent_message_chunk",
+        messageId: string,
+        text: string,
+      ) =>
+        sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: { sessionUpdate, messageId, content: { type: "text", text } },
+        });
+
+      yield* replay("user_message_chunk", "u1", "hel");
+      yield* replay("user_message_chunk", "u1", "lo");
+      yield* replay("agent_message_chunk", "a1", "hi");
+      yield* replay("user_message_chunk", "u2", "next");
+      yield* replay("agent_message_chunk", "a1", " there");
+      const first = yield* runtime.readThreadSnapshot({ providerThread });
+      yield* replay("agent_message_chunk", "a2", "done");
+      yield* replay("user_message_chunk", "u2", " one");
+      const second = yield* runtime.readThreadSnapshot({ providerThread });
+
+      const texts = (snapshot: typeof first) =>
+        snapshot.messages.map((message) => `${message.role}:${message.text}`);
+      assert.deepEqual(texts(first), ["user:hello", "assistant:hi there", "user:next"]);
+      assert.deepEqual(texts(second), [
+        "user:hello",
+        "assistant:hi there",
+        "user:next one",
+        "assistant:done",
+      ]);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("persists a bounded subset of streamed root and child tool updates", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
