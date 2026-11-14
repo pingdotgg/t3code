@@ -5040,6 +5040,100 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("a ref snapshot detects branch identity, ref and ancestry changes", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(updater, ["clone", remote, "."]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const snapshot = driver.readRefSnapshot(cwd);
+
+        // Newer Git can create origin/HEAD on the first fetch.
+        yield* git(cwd, ["fetch", "origin"]);
+        const initial = yield* snapshot;
+        assert.isNotNull(initial);
+        yield* git(cwd, ["fetch", "origin"]);
+        assert.equal(yield* snapshot, initial);
+
+        yield* git(cwd, ["branch", "same-commit"]);
+        const beforeCheckout = yield* snapshot;
+        const refsBeforeCheckout = yield* git(cwd, ["show-ref", "--head"]);
+        yield* git(cwd, ["checkout", "same-commit"]);
+        assert.equal(yield* git(cwd, ["show-ref", "--head"]), refsBeforeCheckout);
+        const afterCheckout = yield* snapshot;
+        assert.isNotNull(afterCheckout);
+        assert.notEqual(afterCheckout, beforeCheckout);
+        yield* git(cwd, ["checkout", "--detach"]);
+        assert.equal(yield* git(cwd, ["show-ref", "--head"]), refsBeforeCheckout);
+        const detached = yield* snapshot;
+        assert.isNotNull(detached);
+        assert.notEqual(detached, beforeCheckout);
+        assert.notEqual(detached, afterCheckout);
+        assert.equal(yield* snapshot, detached);
+        yield* git(cwd, ["checkout", initialBranch]);
+        assert.equal(yield* snapshot, beforeCheckout);
+        yield* git(cwd, ["branch", "-d", "same-commit"]);
+
+        yield* writeTextFile(updater, "remote.txt", "remote\n");
+        yield* git(updater, ["add", "remote.txt"]);
+        yield* git(updater, ["commit", "-m", "remote commit"]);
+        yield* git(updater, ["push", "origin", initialBranch]);
+        assert.equal(yield* snapshot, initial);
+        yield* git(cwd, ["fetch", "origin"]);
+        const fetched = yield* snapshot;
+        assert.notEqual(fetched, initial);
+
+        const shallow = yield* makeTmpDir("git-vcs-driver-shallow-");
+        yield* git(shallow, ["clone", "--depth=1", NodeURL.pathToFileURL(remote).href, "."]);
+        const shallowRefs = yield* git(shallow, ["show-ref", "--head"]);
+        const shallowSnapshot = yield* driver.readRefSnapshot(shallow);
+        assert.isNotNull(shallowSnapshot);
+        const shallowWorktree = yield* makeTmpDir("git-vcs-driver-shallow-worktree-");
+        yield* git(shallow, ["worktree", "add", "--detach", shallowWorktree]);
+        const worktreeSnapshot = yield* driver.readRefSnapshot(shallowWorktree);
+        assert.isNotNull(worktreeSnapshot);
+        yield* git(shallow, ["fetch", "--unshallow", "origin"]);
+        assert.equal(yield* git(shallow, ["show-ref", "--head"]), shallowRefs);
+        const unshallowSnapshot = yield* driver.readRefSnapshot(shallow);
+        const unshallowWorktreeSnapshot = yield* driver.readRefSnapshot(shallowWorktree);
+        assert.isNotNull(unshallowSnapshot);
+        assert.isNotNull(unshallowWorktreeSnapshot);
+        assert.notEqual(unshallowSnapshot, shallowSnapshot);
+        assert.notEqual(unshallowWorktreeSnapshot, worktreeSnapshot);
+
+        yield* git(cwd, ["checkout", "--detach"]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "detached"]);
+        assert.notEqual(yield* snapshot, fetched);
+
+        const head = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* driver.execute({
+          operation: "GitVcsDriver.test.git",
+          cwd,
+          args: ["update-ref", "--stdin"],
+          stdin: Array.from(
+            { length: 16_000 },
+            (_, index) => `create refs/heads/snapshot-${String(index).padStart(5, "0")} ${head}\n`,
+          ).join(""),
+        });
+        yield* git(cwd, ["pack-refs", "--all"]);
+        const large = yield* snapshot;
+        assert.isNotNull(large);
+        assert.isAbove(Buffer.byteLength(large ?? "", "utf8"), 1_000_000);
+        assert.equal(yield* snapshot, large);
+        yield* git(cwd, ["update-ref", "refs/heads/snapshot-00000", "HEAD~1"]);
+        assert.notEqual(yield* snapshot, large);
+
+        assert.isNull(yield* driver.readRefSnapshot(yield* makeTmpDir()));
+      }),
+    );
+
     it.effect("does not start Git auto-maintenance from background upstream fetches", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
