@@ -3,6 +3,30 @@ import { peerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
 import { runtimeModeConfig } from "../chat/runtimeModeConfig";
 import type * as DateTime from "effect/DateTime";
 
+export function linkRenewalUrls(
+  knownUrls: ReadonlyArray<string>,
+  savedUrls: ReadonlyArray<string>,
+) {
+  return [...new Set([...knownUrls, ...savedUrls])];
+}
+
+export function linkedEnvironmentList(
+  links: ReadonlyArray<PeerLinkSummary>,
+  search: string,
+  attentionOnly: boolean,
+  now: DateTime.Utc,
+) {
+  const query = search.trim().toLocaleLowerCase();
+  return {
+    showFilters: links.length > 2 || query.length > 0 || attentionOnly,
+    visible: links.filter(
+      (link) =>
+        link.label.toLocaleLowerCase().includes(query) &&
+        (!attentionOnly || linkedEnvironmentStatus(link, now).attention),
+    ),
+  };
+}
+
 export function returnLinkStatus(
   sourceId: EnvironmentId,
   links: ReadonlyArray<PeerLinkSummary> | null,

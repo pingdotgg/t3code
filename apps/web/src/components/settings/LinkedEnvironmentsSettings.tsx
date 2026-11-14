@@ -27,7 +27,11 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { LinkEnvironmentAction } from "./LinkEnvironmentAction";
 import { LinkedEnvironmentEditor } from "./LinkedEnvironmentEditor";
-import { linkedEnvironmentStatus, returnLinkStatus } from "./LinkedEnvironmentsSettings.logic";
+import {
+  linkedEnvironmentList,
+  linkedEnvironmentStatus,
+  returnLinkStatus,
+} from "./LinkedEnvironmentsSettings.logic";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -89,10 +93,7 @@ function SourceLinks({
   const all = links.data?.links ?? [];
   const matches = (label: string) =>
     label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase());
-  const visible = all.filter(
-    (link) =>
-      matches(link.label) && (!attentionOnly || linkedEnvironmentStatus(link, now).attention),
-  );
+  const { visible, showFilters } = linkedEnvironmentList(all, search, attentionOnly, now);
   const available = machines.filter(
     (machine) =>
       !all.some((link) => link.environmentId === machine.environmentId) && matches(machine.label),
@@ -138,7 +139,7 @@ function SourceLinks({
             <span className="text-foreground">{source.label}</span>
           )}
         </div>
-        {all.length > 2 ? (
+        {showFilters ? (
           <div className="flex flex-wrap items-center gap-2">
             <div className="min-w-32 flex-1">
               <Input

@@ -23,6 +23,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { LinkAccessPicker } from "./LinkAccessPicker";
+import { linkRenewalUrls } from "./LinkedEnvironmentsSettings.logic";
 
 export function LinkedEnvironmentEditor({
   environmentId,
@@ -52,7 +53,7 @@ export function LinkedEnvironmentEditor({
   const inFlight = useRef(false);
   const canMint =
     Option.isSome(prepared) && mayMint && (machine?.urls.length ?? 0) > 0 && !mintFailed;
-  const urls = [...new Set([...(canMint ? machine!.urls : []), ...link.urls])];
+  const urls = linkRenewalUrls(machine?.urls ?? [], link.urls);
   const dirty = access !== link.access;
   const submit = async () => {
     if (

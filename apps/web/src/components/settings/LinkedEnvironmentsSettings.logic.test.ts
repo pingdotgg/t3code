@@ -2,7 +2,12 @@ import { EnvironmentId, type PeerLinkSummary } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { expect, it } from "vite-plus/test";
 
-import { linkedEnvironmentStatus, returnLinkStatus } from "./LinkedEnvironmentsSettings.logic";
+import {
+  linkedEnvironmentList,
+  linkedEnvironmentStatus,
+  linkRenewalUrls,
+  returnLinkStatus,
+} from "./LinkedEnvironmentsSettings.logic";
 
 const SOURCE = EnvironmentId.make("source");
 const NOW = DateTime.makeUnsafe("2026-11-14T12:00:00Z");
@@ -57,5 +62,36 @@ it("includes expiry warnings and recorded authentication failures in attention f
   expect(linkedEnvironmentStatus({ ...back, expiresAt: NOW }, NOW)).toMatchObject({
     label: "Expired",
     attention: true,
+  });
+});
+
+it("retains reachable discovered renewal addresses alongside saved fallbacks for manual pairing", () => {
+  expect(
+    linkRenewalUrls(
+      ["https://new.example.com", "https://shared.example.com"],
+      ["https://old.example.com", "https://shared.example.com"],
+    ),
+  ).toEqual(["https://new.example.com", "https://shared.example.com", "https://old.example.com"]);
+  expect(linkRenewalUrls([], back.urls)).toEqual(back.urls);
+});
+
+it("keeps active filters clearable after removing matching destinations", () => {
+  const failing = { ...back, label: "Offline", lastError: "Unreachable" };
+  const healthy = [back, { ...back, environmentId: EnvironmentId.make("second") }];
+  expect(linkedEnvironmentList([...healthy, failing], "Offline", false, NOW)).toMatchObject({
+    showFilters: true,
+    visible: [failing],
+  });
+  expect(linkedEnvironmentList(healthy, "Offline", false, NOW)).toEqual({
+    showFilters: true,
+    visible: [],
+  });
+  expect(linkedEnvironmentList(healthy, "", true, NOW)).toEqual({
+    showFilters: true,
+    visible: [],
+  });
+  expect(linkedEnvironmentList(healthy, "", false, NOW)).toEqual({
+    showFilters: false,
+    visible: healthy,
   });
 });
