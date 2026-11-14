@@ -103,6 +103,17 @@ describe("parseFileUrlHref", () => {
   it.each(["https://example.com/a.ts", "file://%", "/Users/julius/a.ts"])("rejects %s", (href) => {
     expect(parseFileUrlHref(href)).toBeNull();
   });
+
+  it("rejects one-letter schemes that Chromium on Windows reads as drive letters", () => {
+    const NativeURL = URL;
+    using _url = vi.spyOn(globalThis, "URL").mockImplementation(function (input: string | URL) {
+      const drive = /^([a-z]):/i.exec(String(input));
+      return drive
+        ? new NativeURL(`file:///${drive[1]!.toUpperCase()}:/${String(input).slice(2)}`)
+        : new NativeURL(input);
+    });
+    expect(parseFileUrlHref("d:x")).toBeNull();
+  });
 });
 
 describe("splitFilePathPosition", () => {
