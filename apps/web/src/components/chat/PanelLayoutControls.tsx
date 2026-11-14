@@ -5,11 +5,9 @@ import {
   Maximize2Icon,
   Minimize2Icon,
 } from "lucide-react";
-import type { EnvironmentId } from "@t3tools/contracts";
-import { memo, type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { memo, type ReactNode, useLayoutEffect, useRef } from "react";
 
 import { cn } from "~/lib/utils";
-import { useDiscoveredPorts } from "~/portDiscoveryState";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
@@ -31,8 +29,6 @@ export interface PanelLayoutControlsProps {
   threadPanelPresentation: ThreadPanelPresentation;
   threadPanelPopoverHandle?: ReturnType<typeof PopoverCreateHandle>;
   threadPanelShortcutLabel: string | null;
-  /** Scans this environment's servers on hover or focus, so the panel opens with them. */
-  threadPanelEnvironmentId?: EnvironmentId | null;
   rightPanelAvailable: boolean;
   rightPanelOpen: boolean;
   rightPanelShortcutLabel: string | null;
@@ -53,7 +49,6 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   threadPanelPresentation,
   threadPanelPopoverHandle,
   threadPanelShortcutLabel,
-  threadPanelEnvironmentId = null,
   rightPanelAvailable,
   rightPanelOpen,
   rightPanelShortcutLabel,
@@ -74,21 +69,9 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       <SquareMenuIcon className="size-4" />
     </Toggle>
   );
-  const [prefetchServers, setPrefetchServers] = useState(false);
   const threadPanelControl = (
     <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            className="flex shrink-0"
-            data-thread-panel-toggle
-            onPointerEnter={() => setPrefetchServers(true)}
-            onPointerLeave={() => setPrefetchServers(false)}
-            onFocus={() => setPrefetchServers(true)}
-            onBlur={() => setPrefetchServers(false)}
-          />
-        }
-      >
+      <TooltipTrigger render={<span className="flex shrink-0" data-thread-panel-toggle />}>
         {threadPanelPresentation === "popover" ? (
           <PopoverTrigger handle={threadPanelPopoverHandle} render={threadPanelToggle} />
         ) : (
@@ -99,9 +82,6 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
         Toggle thread details
         {threadPanelShortcutLabel ? ` (${threadPanelShortcutLabel})` : ""}
       </TooltipPopup>
-      {prefetchServers && threadPanelEnvironmentId !== null ? (
-        <DiscoveredServersPrefetch environmentId={threadPanelEnvironmentId} />
-      ) : null}
     </Tooltip>
   );
 
@@ -192,11 +172,6 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
     </Tooltip>
   );
 });
-
-function DiscoveredServersPrefetch(props: { readonly environmentId: EnvironmentId }) {
-  useDiscoveredPorts(props.environmentId);
-  return null;
-}
 
 /** The thread panel toggle on a header whose right side the inline right panel covers. */
 export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {

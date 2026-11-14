@@ -6,8 +6,6 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
-import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult, Atom } from "effect/reactivity";
 
 import { previewEnvironment } from "./state/preview";
 import { useEnvironmentQuery } from "./state/query";
@@ -42,25 +40,11 @@ export function boundConfiguredLocalServerUrls(
   return bounded;
 }
 
-// Stays subscribed briefly after its last reader so a reopened panel shows the live list at once.
-const discoveredServersAtom = Atom.family((environmentId: EnvironmentId) =>
-  Atom.make(
-    (get) =>
-      AsyncResult.getOrElse(
-        get(previewEnvironment.discoveredServers({ environmentId, input: {} })),
-        () => null,
-      )?.servers ?? EMPTY_PORTS,
-  ).pipe(Atom.setIdleTTL(60_000)),
-);
-
-const NO_ENVIRONMENT_SERVERS_ATOM = Atom.make(EMPTY_PORTS);
-
-export function useDiscoveredPorts(
+function useDiscoveredPorts(
   environmentId: EnvironmentId | null,
+  configuredUrls?: ReadonlyArray<string>,
 ): ReadonlyArray<DiscoveredLocalServer> {
-  return useAtomValue(
-    environmentId === null ? NO_ENVIRONMENT_SERVERS_ATOM : discoveredServersAtom(environmentId),
-  );
+  return useDiscoveredPortsState(environmentId, configuredUrls).servers;
 }
 
 export function useDiscoveredPortsState(
