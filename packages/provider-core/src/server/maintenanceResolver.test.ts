@@ -1825,6 +1825,31 @@ it.layer(
     ),
   );
 
+  it.effect("keeps manual installer lookups apart for providers behind one executable", () =>
+    Effect.gen(function* () {
+      const capabilities = (packageName: string, version: string) =>
+        makeManualOnlyProviderMaintenanceCapabilities({
+          provider: driver("packageTool"),
+          packageName,
+          installPath: "/usr/bin/mise",
+          lookupLatestVersion: Effect.succeed(version),
+        });
+
+      expect(yield* resolveLatestProviderVersion(capabilities("@example/claude", "2.1.0"))).toBe(
+        "2.1.0",
+      );
+      expect(yield* resolveLatestProviderVersion(capabilities("@example/codex", "0.9.0"))).toBe(
+        "0.9.0",
+      );
+    }).pipe(
+      Effect.provide(ProviderLatestVersions.layer),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("installer lookups should not fall back to npm")),
+      ),
+    ),
+  );
+
   it.effect(
     "refreshes installer versions without letting an older lookup overwrite the result",
     () =>

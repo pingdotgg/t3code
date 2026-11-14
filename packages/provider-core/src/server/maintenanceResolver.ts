@@ -1329,6 +1329,8 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
 /**
  * The installer's own answer is cached apart from the npm registry entry. A
  * manual-only install has no command to key on, so its executable stands in.
+ * One executable can front several providers (mise command wrappers all
+ * resolve to the `mise` binary), so the package stays part of the key.
  */
 function installerLatestVersionKey(capabilities: ProviderMaintenanceCapabilities) {
   if (!capabilities.lookupLatestVersion) return null;
@@ -1336,7 +1338,7 @@ function installerLatestVersionKey(capabilities: ProviderMaintenanceCapabilities
   const update = capabilities.update;
   if (update) return [update.lockKey, update.executable, ...update.args].join("\0");
   return capabilities.installPath
-    ? ["manual", capabilities.installPath].join("\0")
+    ? ["manual", capabilities.installPath, capabilities.packageName ?? ""].join("\0")
     : capabilities.packageName && `npm-registry\0${capabilities.packageName}`;
 }
 
