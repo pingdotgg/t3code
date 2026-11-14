@@ -68,6 +68,13 @@ impl EngineHost for Host {
         )
     }
 
+    fn response_streaming_mode(
+        &self,
+        project_id: Option<&str>,
+    ) -> conn_engine::ResponseStreamingMode {
+        crate::settings::response_streaming_mode(&self.environment.settings.raw(), project_id)
+    }
+
     fn agent_tools(&self, session: AgentSession) -> Option<AgentTools> {
         let entry = self
             .mcp

@@ -39,8 +39,6 @@ pub struct EngineConfig {
     pub home: Option<PathBuf>,
     pub projects: Vec<ProjectConfig>,
     pub providers: Vec<Arc<dyn Provider>>,
-    /// How long streamed assistant text may wait before it is written. Default 100 ms.
-    pub stream_flush: Duration,
     /// A provider session with no turn for this long is closed, ending its process (a
     /// `claude` child holds about 140 MiB). Default 30 minutes, as T3's session manager;
     /// `None` keeps sessions open.
@@ -101,7 +99,6 @@ impl std::fmt::Debug for EngineConfig {
             .field("home", &self.home)
             .field("projects", &self.projects)
             .field("providers", &self.providers.len())
-            .field("stream_flush", &self.stream_flush)
             .field("idle_session", &self.idle_session)
             .field("idle_max_hold", &self.idle_max_hold)
             .finish_non_exhaustive()
@@ -115,7 +112,6 @@ impl EngineConfig {
             home: None,
             projects: vec![],
             providers: vec![],
-            stream_flush: Duration::from_millis(100),
             idle_session: Some(DEFAULT_IDLE_SESSION),
             idle_max_hold: Duration::from_secs(4 * 60 * 60),
             host: None,
@@ -146,7 +142,6 @@ pub(crate) struct Inner {
     pub(crate) providers: Vec<Arc<dyn Provider>>,
     /// Threads with an open provider session. The only per-thread state kept in memory.
     pub(crate) live: Mutex<HashMap<String, Arc<LiveThread>>>,
-    pub(crate) stream_flush: Duration,
     pub(crate) home: PathBuf,
     pub(crate) titles: Option<Arc<dyn crate::TitleGenerator>>,
     pub(crate) observer: Option<Arc<dyn crate::TurnObserver>>,
@@ -225,7 +220,6 @@ impl SqliteEngine {
                 live: Mutex::new(HashMap::new()),
                 command_output: crate::output::CommandOutputHub::default(),
                 shutting_down: std::sync::atomic::AtomicBool::new(false),
-                stream_flush: config.stream_flush,
                 home,
                 titles: config.title_generator.clone(),
                 observer: config.turn_observer.clone(),
@@ -776,6 +770,34 @@ pub(crate) fn rejected<E>(built: Result<E, String>) -> EngineError<E> {
     }
 }
 
+/// T3's generic dispatch failure texts (`GENERIC_ERROR_PREFIXES` in `UserFacingErrors.ts`).
+const GENERIC_DISPATCH_PREFIXES: [&str; 3] = [
+    "Failed to dispatch orchestration V2 command",
+    "Failed to dispatch orchestration command ",
+    "Provider adapter failed while dispatching orchestration command ",
+];
+
+/// An `OrchestrationV2DispatchCommandError` as T3's `ws.ts` builds it: a user-facing reason
+/// is both the `message` and the `detail`; without one, the generic message and no `detail`.
+fn dispatch_error_body(command_id: &str, command_type: &str, reason: &str) -> Value {
+    let reason = reason.trim();
+    let user_facing = (!reason.is_empty()
+        && !GENERIC_DISPATCH_PREFIXES
+            .iter()
+            .any(|prefix| reason.starts_with(prefix)))
+    .then_some(reason);
+    let mut body = json!({
+        "_tag": "OrchestrationV2DispatchCommandError",
+        "commandId": command_id,
+        "commandType": command_type,
+        "message": user_facing.unwrap_or(GENERIC_DISPATCH_PREFIXES[0]),
+    });
+    if let Some(detail) = user_facing {
+        body["detail"] = json!(detail);
+    }
+    body
+}
+
 fn projection_error(
     thread_id: &str,
     message: impl Into<String>,
@@ -795,12 +817,11 @@ impl Engine for SqliteEngine {
         Box::pin(async move {
             let command = to_json(&command);
             let refusal = |message: String| -> Result<DispatchCommandError, String> {
-                contract_error(json!({
-                    "_tag": "OrchestrationV2DispatchCommandError",
-                    "commandId": command["commandId"].as_str().unwrap_or(""),
-                    "commandType": command["type"].as_str().unwrap_or(""),
-                    "message": message,
-                }))
+                contract_error(dispatch_error_body(
+                    command["commandId"].as_str().unwrap_or(""),
+                    command["type"].as_str().unwrap_or(""),
+                    &message,
+                ))
             };
             match self.inner.dispatch_value(command.clone()).await {
                 Ok((sequence, _)) => from_json(json!({"sequence": sequence}))
@@ -1009,5 +1030,40 @@ mod tests {
             rejected(projection_error("t1", "gone")),
             EngineError::Rejected(_)
         ));
+    }
+}
+
+#[cfg(test)]
+mod dispatch_error_tests {
+    use super::dispatch_error_body;
+
+    #[test]
+    fn a_reason_is_message_and_detail_as_t3_sends_it() {
+        let body = dispatch_error_body(
+            "c",
+            "message.dispatch",
+            " Provider instance \"grok\" is disabled for project p. ",
+        );
+        assert_eq!(
+            body["message"],
+            "Provider instance \"grok\" is disabled for project p."
+        );
+        assert_eq!(body["detail"], body["message"]);
+    }
+
+    #[test]
+    fn a_generic_or_empty_reason_has_no_detail() {
+        for reason in [
+            "",
+            "  ",
+            "Failed to dispatch orchestration V2 command: boom",
+        ] {
+            let body = dispatch_error_body("c", "x", reason);
+            assert_eq!(
+                body["message"],
+                "Failed to dispatch orchestration V2 command"
+            );
+            assert!(body.get("detail").is_none());
+        }
     }
 }

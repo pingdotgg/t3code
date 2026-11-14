@@ -84,7 +84,6 @@ pub(super) fn open_repo(db: &TempDb, repo: &Repo) -> (SqliteEngine, Arc<FakeProv
         workspace_root: repo.root(),
     }];
     config.providers = vec![provider.clone()];
-    config.stream_flush = Duration::from_millis(20);
     config.checkpoints = true;
     (SqliteEngine::open(config).unwrap(), provider)
 }
@@ -499,7 +498,6 @@ async fn with_turns(
         workspace_root: repo.root(),
     }];
     config.providers = vec![provider.clone()];
-    config.stream_flush = Duration::from_millis(20);
     config.checkpoints = true;
     let engine = SqliteEngine::open(config).unwrap();
     dispatch(&engine, thread).await;

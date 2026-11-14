@@ -935,6 +935,23 @@ fn restore_echoed_secrets(current: &Map<String, Value>, next: &mut Map<String, V
     );
 }
 
+/// `resolveProjectSettings(settings, projectId).settings.responseStreamingMode`: the
+/// project's override when set, else the machine-wide value, else T3's default `paragraph`.
+pub fn response_streaming_mode(
+    settings: &Map<String, Value>,
+    project_id: Option<&str>,
+) -> conn_engine::ResponseStreamingMode {
+    let project = project_id.and_then(|project| {
+        settings
+            .get("projectSettingsOverrides")?
+            .get(project)?
+            .get("responseStreamingMode")?
+            .as_str()
+    });
+    let value = project.or_else(|| settings.get("responseStreamingMode")?.as_str());
+    conn_engine::ResponseStreamingMode::from_setting(value)
+}
+
 /// `resolveProjectProviderInstanceEnabled`: the project's `providerInstances[id].enabled`
 /// override when set, else the machine-wide `resolveProviderInstanceEnabled` of the instance's
 /// entry (an explicit `false` on the envelope or in its `config` wins; then the envelope, the
@@ -1293,6 +1310,22 @@ mod tests {
         fs::write(&path, "{nope").unwrap();
         assert!(SettingsStore::open(path).raw().is_empty());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn response_streaming_mode_follows_the_project_override() {
+        use conn_engine::ResponseStreamingMode::{Paragraph, Turn};
+        let empty = Map::new();
+        assert_eq!(response_streaming_mode(&empty, Some("p")), Paragraph);
+        let Value::Object(turn) = serde_json::json!({
+            "responseStreamingMode": "turn",
+            "projectSettingsOverrides": {"q": {"responseStreamingMode": "paragraph"}},
+        }) else {
+            panic!()
+        };
+        assert_eq!(response_streaming_mode(&turn, None), Turn);
+        assert_eq!(response_streaming_mode(&turn, Some("p")), Turn);
+        assert_eq!(response_streaming_mode(&turn, Some("q")), Paragraph);
     }
 
     #[test]
