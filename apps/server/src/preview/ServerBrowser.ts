@@ -2072,19 +2072,21 @@ const make = Effect.gen(function* () {
     operation: () => Promise<A>,
     deadlineMs?: number,
   ): Promise<A> => {
-    const remainingMs = deadlineMs === undefined ? undefined : deadlineMs - performance.now();
-    if (remainingMs !== undefined && remainingMs <= 0) {
-      return Promise.reject(ServerBrowserPage.tooBusy());
+    const timeoutMs =
+      deadlineMs === undefined ? undefined : Math.round(deadlineMs - performance.now());
+    if (timeoutMs !== undefined && timeoutMs <= 0) {
+      return Promise.reject(ServerBrowserPage.snapshotTimedOut(0));
     }
-    const signal =
-      remainingMs === undefined ? undefined : AbortSignal.timeout(Math.round(remainingMs));
+    const signal = timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs);
     return tab.captureLock
       .run(() => {
         if (tab.closing) throw new Error("The preview tab closed.");
         return operation();
       }, signal)
       .catch((cause: unknown) => {
-        throw signal?.aborted && cause === signal.reason ? ServerBrowserPage.tooBusy() : cause;
+        throw timeoutMs !== undefined && signal?.aborted && cause === signal.reason
+          ? ServerBrowserPage.snapshotTimedOut(timeoutMs)
+          : cause;
       });
   };
 
