@@ -346,8 +346,7 @@ const git = (
 const [, gitMajor, gitMinor] =
   /(\d+)\.(\d+)/u.exec(NodeChildProcess.execFileSync("git", ["--version"], { encoding: "utf8" })) ??
   [];
-const gitHasRefsMigrate =
-  Number(gitMajor) > 2 || (Number(gitMajor) === 2 && Number(gitMinor) >= 46);
+const gitHasReftable = Number(gitMajor) > 2 || (Number(gitMajor) === 2 && Number(gitMinor) >= 45);
 
 const gitWithStdin = (
   cwd: string,
@@ -7194,11 +7193,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       "rejects selected-file commits during a $operation ($refs)",
       ({ operation, head, refs }, ctx) =>
         Effect.gen(function* () {
-          if (refs === "reftable" && !gitHasRefsMigrate)
-            return ctx.skip("Needs Git 2.46 or later for `git refs migrate`.");
+          if (refs === "reftable" && !gitHasReftable)
+            return ctx.skip("Needs Git 2.45 or later for reftable.");
           const cwd = yield* makeTmpDir();
-          const { initialBranch } = yield* initRepoWithCommit(cwd);
-          if (refs === "reftable") yield* git(cwd, ["refs", "migrate", "--ref-format=reftable"]);
+          if (refs === "reftable") yield* git(cwd, ["init", "--ref-format=reftable"]);
+          yield* initRepoWithCommit(cwd);
+          // Reftable leaves .git/HEAD as a stub, so ask Git for the branch.
+          const initialBranch = yield* git(cwd, ["symbolic-ref", "--short", "HEAD"]);
           const driver = yield* GitVcsDriver.GitVcsDriver;
           yield* git(cwd, ["checkout", "-b", "other"]);
           yield* writeTextFile(cwd, "README.md", "other version\n");
