@@ -41,6 +41,7 @@ import {
   isTemporaryWorktreeBranch,
 } from "@t3tools/shared/git";
 
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { parseGitCloneProgressLine } from "../project/gitCloneProgress.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -246,6 +247,7 @@ const make = Effect.gen(function* () {
   const cloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
   const terminals = yield* TerminalManager.TerminalManager;
   const git = yield* GitWorkflow.GitWorkflowService;
+  const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -437,10 +439,11 @@ const make = Effect.gen(function* () {
       .getById(projectId)
       .pipe(Effect.orElseSucceed(() => Option.none()));
     if (Option.isNone(project)) return false;
-    const root = yield* git
-      .repositoryRoot(project.value.workspaceRoot)
-      .pipe(Effect.orElseSucceed(() => undefined));
-    return root === null;
+    // Unlike `git.repositoryRoot`, this fails on a repository Git cannot read, which is not "no repository".
+    return yield* checkpointStore.isGitRepository(project.value.workspaceRoot).pipe(
+      Effect.map((isRepository) => !isRepository),
+      Effect.orElseSucceed(() => false),
+    );
   });
 
   const prepareInBackground = Effect.fn("ThreadLaunchService.prepareInBackground")(function* (

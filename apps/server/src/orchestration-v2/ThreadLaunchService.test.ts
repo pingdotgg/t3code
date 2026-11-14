@@ -3,6 +3,7 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
 import * as ServerConfig from "../config.ts";
@@ -27,6 +28,7 @@ import {
   ThreadId,
   TextGenerationError,
   ServerSettingsError,
+  VcsProcessExitError,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -135,6 +137,7 @@ interface HarnessOptions {
   readonly getLaunchSettings?: ServerSettings.ServerSettingsService["Service"]["getSettings"];
   readonly providers?: ReadonlyArray<ServerProvider>;
   readonly git?: Partial<GitWorkflow.GitWorkflowService["Service"]>;
+  readonly isGitRepository?: CheckpointStore.CheckpointStore["Service"]["isGitRepository"];
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -185,6 +188,9 @@ function makeHarness(options: HarnessOptions = {}) {
     WorktreeSetupTracker.layer,
     Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
     Layer.mock(TerminalManager.TerminalManager)({ close: closeTerminal }),
+    Layer.mock(CheckpointStore.CheckpointStore)({
+      isGitRepository: options.isGitRepository ?? (() => Effect.succeed(true)),
+    }),
     Layer.succeed(ProjectService.ProjectService, {
       create: () => Effect.die("unused"),
       bootstrap: () => Effect.die("unused"),
@@ -944,6 +950,19 @@ function scratchHarness({ scratch = true }: { readonly scratch?: boolean } = {})
         }),
     }),
     git: { repositoryRoot: (cwd) => Effect.succeed(cwd === scratchRoot ? null : cwd) },
+    // The other project is a repository Git cannot read, which must not count as none.
+    isGitRepository: (cwd) =>
+      cwd === scratchRoot
+        ? Effect.succeed(false)
+        : Effect.fail(
+            new VcsProcessExitError({
+              operation: "GitVcsDriver.probeWorkTree",
+              command: "git rev-parse",
+              cwd,
+              exitCode: 128,
+              detail: "fatal: bad config line 1",
+            }),
+          ),
     remoteExists: (input) =>
       input.cwd === scratchRoot
         ? Effect.fail(notARepository("GitWorkflowService.remoteExists", input.cwd))
