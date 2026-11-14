@@ -76,6 +76,7 @@ import { useMobileNavigationTheme } from "./lib/useMobileNavigationTheme";
 import { installUiRuntimeMemoryWarningGc } from "./lib/useUiRuntimeMemoryWarningGc";
 import { SubscriptionUsageCoordinator } from "./widgets/SubscriptionUsageCoordinator";
 import { PullRequestListWarmup } from "./features/pull-requests/PullRequestListWarmup";
+import { ConnectDeviceApprovalCoordinator } from "./features/connection/ConnectDeviceApprovalCoordinator";
 import { installSubscriptionUsageRefresh } from "./widgets/useSubscriptionUsage";
 import { GlobalVoiceInputControl } from "./features/voice-input/GlobalVoiceInputControl";
 import {
@@ -84,7 +85,10 @@ import {
   splashCanHide,
   useLaunchSplashHomeRowsPending,
 } from "./features/home/home-launch-splash";
-import { restoreSettingsLinkState } from "./features/settings/settings-navigation";
+import {
+  restoreSettingsLinkState,
+  settingsLinkAction,
+} from "./features/settings/settings-navigation";
 import {
   hydrateWorkspaceSelections,
   launchWorkspaceURL,
@@ -144,14 +148,16 @@ const appLinking = {
   getActionFromState: (
     state: Parameters<typeof getActionFromState>[0],
     options: Parameters<typeof getActionFromState>[1],
-  ): ReturnType<typeof getActionFromState> =>
-    // Our router handles the selection; React Navigation's type only lists its own actions.
-    (workspaceDetailLinkAction(state) as ReturnType<typeof getActionFromState>) ??
-    pairingFormLinkAction(
-      state,
-      rootNavigationRef.isReady() ? rootNavigationRef.getRootState() : undefined,
-    ) ??
-    getActionFromState(state, options),
+  ): ReturnType<typeof getActionFromState> => {
+    const current = rootNavigationRef.isReady() ? rootNavigationRef.getRootState() : undefined;
+    return (
+      // Our router handles the selection; React Navigation's type only lists its own actions.
+      (workspaceDetailLinkAction(state) as ReturnType<typeof getActionFromState>) ??
+      pairingFormLinkAction(state, current) ??
+      settingsLinkAction(state, current) ??
+      getActionFromState(state, options)
+    );
+  },
   getStateFromPath: getAppStateFromPath,
 };
 
@@ -278,6 +284,7 @@ function AppContent() {
       <SplashScreenCoordinator />
       <SubscriptionUsageCoordinator />
       <PullRequestListWarmup />
+      <ConnectDeviceApprovalCoordinator />
       <GestureHandlerRootView className="flex-1">
         <KeyboardProvider statusBarTranslucent>
           <SafeAreaProvider>

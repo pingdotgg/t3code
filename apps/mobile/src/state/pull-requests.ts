@@ -5,7 +5,7 @@ import {
   patchPullRequestListEntries,
   pullRequestPendingEditsAtom,
 } from "@t3tools/client-runtime/state/pull-requests";
-import type { EnvironmentId, PullRequestListInput } from "@t3tools/contracts";
+import type { EnvironmentId, PullRequestListInput, PullRequestRef } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -41,6 +41,16 @@ export const pullRequestListStatsFamily = Atom.family((_environmentId: string) =
   Atom.make<PullRequestStatsCache>(EMPTY_PULL_REQUEST_STATS_CACHE).pipe(
     Atom.setIdleTTL(5 * 60_000),
   ),
+);
+
+export const filesViewedReadsKey = (target: {
+  readonly environmentId: EnvironmentId;
+  readonly input: PullRequestRef;
+}) => JSON.stringify([target.environmentId, target.input]);
+
+/** Completed server reads of each viewed-files query; unchanged answers are structurally shared. */
+export const filesViewedReadsFamily = Atom.family((_key: string) =>
+  Atom.make(0).pipe(Atom.setIdleTTL(5 * 60_000)),
 );
 
 export const composerPullRequests = createPullRequestEnvironmentAtoms(connectionAtomRuntime, {
@@ -90,6 +100,10 @@ export const composerPullRequests = createPullRequestEnvironmentAtoms(connection
       if (Option.isSome(previous) && previous.value.headSha !== value.headSha)
         registry.refresh(composerPullRequests.filesViewed(target));
     }),
+  filesViewed: (target, _value, registry) =>
+    Effect.sync(() =>
+      registry.update(filesViewedReadsFamily(filesViewedReadsKey(target)), (reads) => reads + 1),
+    ),
   list: (target, value, registry) =>
     Effect.sync(() => {
       const statsAtom = pullRequestListStatsFamily(target.environmentId);
