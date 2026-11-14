@@ -906,6 +906,9 @@ if [ -z "$REMOTE_PORT" ]; then
     fi
     exit 1
   fi
+  # Start this launch's log empty. Unlink rather than truncate: a process from an
+  # earlier launch can still hold the old log open and keep writing to it.
+  rm -f "$LOG_FILE"
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
