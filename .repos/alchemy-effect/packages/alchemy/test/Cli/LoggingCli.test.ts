@@ -1,17 +1,25 @@
+import { stripVTControlCharacters } from "node:util";
+import { describe, expect, it, test } from "@alchemy.run/test";
+import * as Console from "effect/Console";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { LoggingCli, formatPlanLines } from "@/Cli/LoggingCli.ts";
 import { Cli } from "@/Report.ts";
 import { PlatformServices } from "@/Util/PlatformServices.ts";
-import * as Layer from "effect/Layer";
-import { describe, expect, it, test } from "alchemy-test";
-import * as Effect from "effect/Effect";
-import * as Logger from "effect/Logger";
-import {
-  createNode,
-  deleteNode,
-  planWith,
-  replaceNode,
-  updateNode,
-} from "./PlanTestNodes.ts";
+import { createNode, deleteNode, planWith, replaceNode, updateNode } from "./PlanTestNodes.ts";
+
+/**
+ * The plain renderer's printed lines, without the time and level prefix.
+ * It presents straight to the console, not through the logger.
+ */
+const capturePresented = () => {
+  const lines: string[] = [];
+  const console = Object.assign(Object.create(globalThis.console), {
+    log: (...args: unknown[]) =>
+      lines.push(stripVTControlCharacters(args.join(" ")).replace(/^\[[\d:.]+\] \w+: /, "")),
+  });
+  return { lines, provide: Effect.provideService(Console.Console, console) };
+};
 
 describe("formatPlanLines", { tags: ["unit", "local"] }, () => {
   test("keeps compact output unchanged by default", () => {
@@ -22,11 +30,7 @@ describe("formatPlanLines", { tags: ["unit", "local"] }, () => {
           replaceNode({ engine: "v1" }, { engine: "v2" }, "Second"),
         ]),
       ),
-    ).toEqual([
-      "Plan: 1 to update, 1 to replace",
-      "[First] update",
-      "[Second] replace",
-    ]);
+    ).toEqual(["Plan: 1 to update, 1 to replace", "[First] update", "[Second] replace"]);
   });
 
   test("renders detailed creates and updates as YAML", () => {
@@ -56,22 +60,16 @@ describe("formatPlanLines", { tags: ["unit", "local"] }, () => {
 });
 
 it.effect(
-  "emits plain progress through the Effect logger",
+  "presents plain progress on the console",
   () => {
-    const messages: unknown[] = [];
-    const logger = Logger.make<unknown, void>((options) => {
-      messages.push(options.message);
-    });
+    const output = capturePresented();
     return Effect.gen(function* () {
       const cli = yield* Cli;
 
       yield* cli.displayPlan(planWith([createNode({}, "Worker")]));
 
-      expect(messages).toEqual([["Plan: 1 to create"], ["[Worker] create"]]);
-    }).pipe(
-      Effect.provide(Layer.provide(LoggingCli, PlatformServices)),
-      Effect.provide(Logger.layer([logger])),
-    );
+      expect(output.lines).toEqual(["Plan: 1 to create", "[Worker] create"]);
+    }).pipe(Effect.provide(Layer.provide(LoggingCli, PlatformServices)), output.provide);
   },
   { tags: ["unit", "local"] },
 );
@@ -79,23 +77,14 @@ it.effect(
 it.effect(
   "prints dev stack outputs with the plain apply renderer",
   () => {
-    const messages: unknown[] = [];
+    const output = capturePresented();
     return Effect.gen(function* () {
       const cli = yield* Cli;
       const session = yield* cli.startApplySession(planWith([]), { dev: true });
       expect(session.setOutput).toBeDefined();
       yield* session.setOutput!({ api: "http://localhost:1337/" });
-      expect(messages).toContainEqual(["{ api: 'http://localhost:1337/' }"]);
-    }).pipe(
-      Effect.provide(Layer.provide(LoggingCli, PlatformServices)),
-      Effect.provide(
-        Logger.layer([
-          Logger.make<unknown, void>((options) => {
-            messages.push(options.message);
-          }),
-        ]),
-      ),
-    );
+      expect(output.lines).toContainEqual("{ api: 'http://localhost:1337/' }");
+    }).pipe(Effect.provide(Layer.provide(LoggingCli, PlatformServices)), output.provide);
   },
   { tags: ["unit", "local"] },
 );
@@ -103,10 +92,7 @@ it.effect(
 it.effect(
   "streams apply notes as they arrive",
   () => {
-    const messages: string[] = [];
-    const logger = Logger.make<unknown, void>((options) => {
-      messages.push(String((options.message as unknown[])[0]));
-    });
+    const output = capturePresented();
     return Effect.gen(function* () {
       const cli = yield* Cli;
       const session = yield* cli.startApplySession(
@@ -115,7 +101,7 @@ it.effect(
 
       const note = (message: string, kind?: "status" | "output") =>
         session.emit({
-          _tag: "apply.resource.note",
+          type: "apply.resource.note",
           fqn: "Website",
           id: "Website",
           message,
@@ -123,10 +109,10 @@ it.effect(
         });
       const status = (status: "updating" | "updated") =>
         session.emit({
-          _tag: "apply.resource.status",
+          type: "apply.resource.status",
           fqn: "Website",
           id: "Website",
-          type: "Cloudflare::Worker",
+          resourceType: "Cloudflare::Worker",
           status,
         });
 
@@ -140,7 +126,7 @@ it.effect(
       yield* note("Reconciling custom domains (1) ...", "status");
       yield* status("updated");
 
-      const progress = messages.slice(3); // skip plan preview + blank line
+      const progress = output.lines.slice(3); // skip plan preview + blank line
       expect(progress).toEqual([
         "[Website] updating",
         "[Website] build output line",
@@ -148,10 +134,7 @@ it.effect(
         "[Website] Uploaded 490 of 5195 assets...",
         "[Website] updated — Reconciling custom domains (1) ... (0ms)",
       ]);
-    }).pipe(
-      Effect.provide(Layer.provide(LoggingCli, PlatformServices)),
-      Effect.provide(Logger.layer([logger])),
-    );
+    }).pipe(Effect.provide(Layer.provide(LoggingCli, PlatformServices)), output.provide);
   },
   { tags: ["unit", "local"] },
 );

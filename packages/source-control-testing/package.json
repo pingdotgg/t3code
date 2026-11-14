@@ -13,7 +13,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "effect-tsgo tsrs --noEmit"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",

@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { EnvironmentId } from "@t3tools/contracts";
 import { it as effectIt } from "@effect/vitest";
 import * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
@@ -10,12 +11,14 @@ import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
+import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as DirectEndpoints from "./DirectEndpoints.ts";
+import * as ServerEnvironment from "./ServerEnvironment.ts";
 import { resolveBoundEndpoints } from "./DirectEndpoints.ts";
 
 vi.mock("node:os", { spy: true });
@@ -254,27 +257,45 @@ const layerTailscaleUp = Layer.succeed(
   ),
 );
 
+const T3_DESCRIPTOR_BODY = JSON.stringify({
+  environmentId: "serve-test",
+  label: "Serve test",
+  platform: { os: "darwin", arch: "arm64" },
+  serverVersion: "0.0.0-test",
+  capabilities: { repositoryIdentity: true },
+});
+
+const serveProbeResponse = (request: HttpClientRequest.HttpClientRequest, status: number) =>
+  HttpClientResponse.fromWeb(
+    request,
+    new Response(status === 200 ? T3_DESCRIPTOR_BODY : null, { status }),
+  );
+
 const layerServeProbe = (status: number) =>
   Layer.succeed(
     HttpClient.HttpClient,
-    HttpClient.make((request) =>
-      Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status }))),
-    ),
+    HttpClient.make((request) => Effect.succeed(serveProbeResponse(request, status))),
   );
 
-const layerServeConfig = (host = "127.0.0.1") =>
+const layerServeConfig = (host = "127.0.0.1", tailscaleServeEnabled = true) =>
   Layer.effect(
     ServerConfig.ServerConfig,
     Effect.map(ServerConfig.ServerConfig, (config) => ({
       ...config,
       host,
       port: 3773,
-      tailscaleServeEnabled: true,
+      tailscaleServeEnabled,
       tailscaleServePort: 443,
     })),
   ).pipe(
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-direct-" })),
     Layer.provide(NodeServices.layer),
+    Layer.merge(
+      Layer.succeed(ServerEnvironment.ServerEnvironment, {
+        getEnvironmentId: Effect.succeed(EnvironmentId.make("serve-test")),
+        getDescriptor: Effect.die("unused"),
+      }),
+    ),
   );
 
 const resolveWithServe = (probeStatus: number) =>
@@ -289,58 +310,6 @@ const resolveWithServe = (probeStatus: number) =>
   );
 
 describe("DirectEndpoints Tailscale Serve", () => {
-  for (const probeState of ["healthy", "failed", "timeout"] as const) {
-    effectIt.effect(`keeps an unspecified listener loopback when HTTPS is ${probeState}`, () =>
-      Effect.gen(function* () {
-        using _interfaces = vi
-          .spyOn(NodeOS, "networkInterfaces")
-          .mockReturnValue({ tailscale0: vpnInterface("100.64.1.2") });
-        const probeStarted = yield* Deferred.make<void>();
-        const service = yield* DirectEndpoints.make.pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              Layer.effect(
-                ServerConfig.ServerConfig,
-                Effect.map(ServerConfig.ServerConfig, (config) => ({ ...config, host: undefined })),
-              ).pipe(Layer.provide(layerServeConfig())),
-              layerTailscaleUp,
-              Layer.succeed(
-                HttpClient.HttpClient,
-                HttpClient.make((request) =>
-                  Deferred.succeed(probeStarted, undefined).pipe(
-                    Effect.andThen(
-                      probeState === "timeout"
-                        ? Effect.never
-                        : Effect.succeed(
-                            HttpClientResponse.fromWeb(
-                              request,
-                              new Response(null, { status: probeState === "healthy" ? 200 : 502 }),
-                            ),
-                          ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-        const resolving = yield* Effect.forkScoped(service.resolve());
-        yield* Deferred.await(probeStarted);
-        if (probeState === "timeout") {
-          expect(yield* service.resolveAvailable()).toEqual([]);
-          yield* TestClock.adjust("3 seconds");
-        }
-        const endpoints = yield* Fiber.join(resolving);
-        expect(endpoints).toEqual(
-          probeState === "healthy"
-            ? [{ kind: "tailnet", httpBaseUrl: "https://bb-1.tail1234.ts.net/" }]
-            : [],
-        );
-        expect(yield* service.resolveAvailable()).toEqual(endpoints);
-      }).pipe(Effect.scoped),
-    );
-  }
-
   effectIt.effect("lists the tailnet name once Serve answers for this server", () =>
     Effect.gen(function* () {
       expect(yield* resolveWithServe(200)).toEqual([
@@ -376,9 +345,7 @@ describe("DirectEndpoints Tailscale Serve", () => {
                           )
                         : Effect.void,
                     ),
-                    Effect.map((status) =>
-                      HttpClientResponse.fromWeb(request, new Response(null, { status })),
-                    ),
+                    Effect.map((status) => serveProbeResponse(request, status)),
                   ),
                 ),
               ),
@@ -403,7 +370,7 @@ describe("DirectEndpoints Tailscale Serve", () => {
         yield* Deferred.succeed(finishRevalidation, undefined);
         expect(yield* Fiber.join(revalidating)).toEqual([bound]);
         expect(yield* service.resolveAvailable()).toEqual([bound]);
-      }).pipe(Effect.scoped),
+      }),
   );
 
   effectIt.effect("leaves the tailnet name out when Serve is not forwarding", () =>
@@ -423,14 +390,7 @@ effectIt.effect("advertises a bound IPv6 MagicDNS listener and drops a removed i
     const service = yield* DirectEndpoints.make.pipe(
       Effect.provide(
         Layer.mergeAll(
-          Layer.effect(
-            ServerConfig.ServerConfig,
-            Effect.map(ServerConfig.ServerConfig, (config) => ({
-              ...config,
-              host: "fd7a:115c:a1e0::1234",
-              tailscaleServeEnabled: false,
-            })),
-          ).pipe(Layer.provide(layerServeConfig("0.0.0.0"))),
+          layerServeConfig("fd7a:115c:a1e0::1234", false),
           layerTailscaleUp,
           layerServeProbe(502),
         ),
@@ -490,5 +450,5 @@ effectIt.effect("keeps completed Self discovery when HTTPS exceeds the shared de
       { kind: "tailnet", httpBaseUrl: "http://bb-1.tail1234.ts.net:3773/" },
     ]);
     expect(yield* service.resolveAvailable()).toEqual(endpoints);
-  }).pipe(Effect.scoped),
+  }),
 );

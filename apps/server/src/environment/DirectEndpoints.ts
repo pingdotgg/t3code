@@ -18,16 +18,15 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isTailnetHost } from "@t3tools/shared/hostClassification";
-
-import * as ServerConfig from "../config.ts";
 import {
   formatHostForUrl,
-  isLoopbackHost,
-  isPrivateNetworkAddress,
+  isTailnetHost,
   isWildcardHost,
-  VIRTUAL_INTERFACE,
-} from "../startupAccess.ts";
+} from "@t3tools/shared/hostClassification";
+
+import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "./ServerEnvironment.ts";
+import { isLoopbackHost, isPrivateNetworkAddress, VIRTUAL_INTERFACE } from "../startupAccess.ts";
 
 type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
 
@@ -124,6 +123,7 @@ export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const platform = yield* HostProcess.Platform;
+  const environmentId = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
   // Only the service default listens on every interface without being asked,
   // so only it checks once whether it runs in a cloud. The check starts now so
   // the first client does not wait for its timeout.
@@ -167,13 +167,15 @@ export const make = Effect.gen(function* () {
       Effect.tap((status) => Ref.set(observedStatus, status)),
       Effect.flatMap((status) =>
         Effect.gen(function* () {
+          // Serve setup can fail without stopping startup; advertise only after it answers as this server.
           let servedUrl: string | null = null;
           if (config.tailscaleServeEnabled && status.magicDnsName !== null) {
             const url = buildTailscaleHttpsBaseUrl({
               magicDnsName: status.magicDnsName,
               servePort: config.tailscaleServePort,
             });
-            if (yield* probeTailscaleHttpsEndpoint({ baseUrl: url })) servedUrl = url;
+            if (yield* probeTailscaleHttpsEndpoint({ baseUrl: url, environmentId }))
+              servedUrl = url;
           }
           return servedUrl;
         }),
