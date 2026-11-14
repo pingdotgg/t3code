@@ -519,10 +519,8 @@ export const make = Effect.gen(function* () {
         const readKey = quietReadKey(reference);
         const shellClosed =
           group.filter((member) => shellClosedThreads.delete(member.id)).length > 0;
-        const readAtMs = quietOpenReadAt.get(readKey);
-        const readNowMs = DateTime.toEpochMillis(yield* DateTime.now);
         if (shellClosed) quietOpenReadAt.delete(readKey);
-        else if (readAtMs !== undefined && readNowMs - readAtMs < QUIET_SYNC_INTERVAL_MS) {
+        else if (quietOpenReadAt.has(readKey)) {
           return { state: "open", closedAt: null, mergedAt: null } satisfies SettlementPullRequest;
         }
         const summary = matchesMerge
@@ -542,9 +540,9 @@ export const make = Effect.gen(function* () {
         if (
           "updatedAt" in summary &&
           summary.state === "open" &&
-          readNowMs - Date.parse(summary.updatedAt) >= QUIET_AFTER_MS
+          nowMs - Date.parse(summary.updatedAt) >= QUIET_AFTER_MS
         ) {
-          quietOpenReadAt.set(readKey, readNowMs);
+          quietOpenReadAt.set(readKey, nowMs);
         }
         const terminal = {
           state: summary.state,
