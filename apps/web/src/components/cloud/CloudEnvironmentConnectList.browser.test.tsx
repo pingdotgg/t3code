@@ -62,16 +62,21 @@ function saved(environmentId: EnvironmentId, label: string, connectionId: string
   } as const;
 }
 
+const primaryEnvironmentId = EnvironmentId.make("primary");
+const wslEnvironmentId = EnvironmentId.make("wsl-ubuntu");
+const laptopEnvironmentId = EnvironmentId.make("laptop");
+
+function setup(discoveredEnvironments: Array<Discovery.RelayDiscoveredEnvironment>) {
+  testState.discovered = discoveredEnvironments;
+}
+
 describe("CloudEnvironmentConnectRows", () => {
   it("does not offer a T3 Connect route for the desktop's own WSL backend", async () => {
-    const primaryEnvironmentId = EnvironmentId.make("primary");
-    const wslEnvironmentId = EnvironmentId.make("wsl-ubuntu");
-    const laptopEnvironmentId = EnvironmentId.make("laptop");
-    testState.discovered = [
+    setup([
       discovered(primaryEnvironmentId, "This PC"),
       discovered(wslEnvironmentId, "Ubuntu (WSL)"),
       discovered(laptopEnvironmentId, "Laptop"),
-    ];
+    ]);
     await using screen = await render(
       <CloudEnvironmentConnectRows
         primaryEnvironmentId={primaryEnvironmentId}
@@ -85,5 +90,21 @@ describe("CloudEnvironmentConnectRows", () => {
     await expect.element(screen.getByText("Laptop")).toBeInTheDocument();
     await expect.element(screen.getByText("Ubuntu (WSL)")).not.toBeInTheDocument();
     await expect.element(screen.getByRole("button", { name: "Add route" })).toBeInTheDocument();
+  });
+
+  it("shows the empty state when the desktop's own WSL backend is the only saved environment", async () => {
+    setup([
+      discovered(primaryEnvironmentId, "This PC"),
+      discovered(wslEnvironmentId, "Ubuntu (WSL)"),
+    ]);
+    await using screen = await render(
+      <CloudEnvironmentConnectRows
+        primaryEnvironmentId={primaryEnvironmentId}
+        savedEnvironments={[saved(wslEnvironmentId, "Ubuntu (WSL)", "local:wsl:Ubuntu")]}
+        empty={<p>No environments</p>}
+      />,
+    );
+
+    await expect.element(screen.getByText("No environments")).toBeInTheDocument();
   });
 });

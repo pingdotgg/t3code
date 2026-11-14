@@ -278,7 +278,7 @@ export function CloudEnvironmentConnectRows({
     };
   }, [shouldRefreshWhileEmpty]);
 
-  const standalone = showSavedEnvironments || savedEnvironments.length === 0;
+  const standalone = showSavedEnvironments || savedEnvironments.length === desktopLocalIds.size;
 
   if (
     !refreshWhileEmpty &&
