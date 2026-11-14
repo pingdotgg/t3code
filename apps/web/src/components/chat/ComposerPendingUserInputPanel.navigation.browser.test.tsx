@@ -7,7 +7,7 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { makeThreadRequestsResolvedAnnouncer } from "@t3tools/client-runtime/state/thread-requests";
-import { useLayoutEffect, useRef, type ComponentProps } from "react";
+import { useLayoutEffect, useRef, useState, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -25,6 +25,7 @@ import {
   ComposerPendingUserInputPanel,
   type PendingQuestionKeyHandler,
 } from "./ComposerPendingUserInputPanel";
+import { BackgroundThreadContext } from "./backgroundThread";
 import { useChatShortcuts } from "./useChatShortcuts";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
 
@@ -168,7 +169,7 @@ it("tells the user when an option click moves their typed answer into the hidden
 
   await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
   // An option number is a pick, not typed text, so a click does not set it aside.
-  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "1"));
+  await act(() => requests.onAddActivePendingUserInputOptionKey("question-0", "1"));
   await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
   expect(toast).not.toHaveBeenCalled();
 
@@ -341,8 +342,10 @@ function KeyboardChat(
     onConfirm: () => void;
     onAdvance: () => void;
     insertTextAtEnd: ChatComposerHandle["insertTextAtEnd"];
+    sideChat: boolean;
   },
 ) {
+  const [composerElement, setComposerElement] = useState<HTMLDivElement | null>(null);
   const state = useProbeRequests(props);
   useLayoutEffect(() => {
     requests = state;
@@ -354,6 +357,9 @@ function KeyboardChat(
   };
   useChatShortcuts({
     enabled: true,
+    // SideChatPane embeds its ChatView, which listens on its own composer only.
+    embedded: props.sideChat,
+    composerElement,
     keybindings: [],
     scriptKeybindings: [],
     getShortcutContext: () => ({
@@ -373,35 +379,38 @@ function KeyboardChat(
     fallback: () => undefined,
   });
   return (
-    <>
-      <div data-testid="composer-editor" contentEditable suppressContentEditableWarning>
-        {state.activePendingProgress?.customAnswer}
+    <BackgroundThreadContext value={props.sideChat}>
+      <div ref={setComposerElement}>
+        <div data-testid="composer-editor" contentEditable suppressContentEditableWarning>
+          {state.activePendingProgress?.customAnswer}
+        </div>
+        <div data-chat-composer-top-drawer="true">
+          <ComposerPendingUserInputPanel
+            pendingUserInputs={state.pendingUserInputs}
+            cwd={undefined}
+            threadRef={threadRef}
+            respondingRequestIds={[]}
+            answers={state.activePendingDraftAnswers}
+            questionIndex={state.activePendingQuestionIndex}
+            keyHandlerRef={keyHandlerRef}
+            onToggleOption={state.onSelectActivePendingUserInputOption}
+            onOptionKey={state.onAddActivePendingUserInputOptionKey}
+            onRemoveOptionKey={state.onRemoveActivePendingUserInputOptionKey}
+            onAdvance={props.onAdvance}
+            onConfirm={props.onConfirm}
+            onDismiss={() => {}}
+          />
+        </div>
       </div>
-      <div data-chat-composer-top-drawer="true">
-        <ComposerPendingUserInputPanel
-          pendingUserInputs={state.pendingUserInputs}
-          cwd={undefined}
-          threadRef={threadRef}
-          respondingRequestIds={[]}
-          answers={state.activePendingDraftAnswers}
-          questionIndex={state.activePendingQuestionIndex}
-          keyHandlerRef={keyHandlerRef}
-          onToggleOption={state.onSelectActivePendingUserInputOption}
-          // ChatComposer types the number into the answer the same way.
-          onOptionKey={(questionId, key) =>
-            state.onChangeActivePendingUserInputCustomAnswer(questionId, key)
-          }
-          onRemoveOptionKey={state.onRemoveActivePendingUserInputOptionKey}
-          onAdvance={props.onAdvance}
-          onConfirm={props.onConfirm}
-          onDismiss={() => {}}
-        />
-      </div>
-    </>
+    </BackgroundThreadContext>
   );
 }
 
-async function renderKeyboardChat(name: string, questions: ReleaseQuestion[]) {
+async function renderKeyboardChat(
+  name: string,
+  questions: ReleaseQuestion[],
+  { sideChat = false } = {},
+) {
   const onConfirm = vi.fn();
   const onAdvance = vi.fn();
   const insertTextAtEnd = vi.fn(() => true);
@@ -412,6 +421,7 @@ async function renderKeyboardChat(name: string, questions: ReleaseQuestion[]) {
       onConfirm={onConfirm}
       onAdvance={onAdvance}
       insertTextAtEnd={insertTextAtEnd}
+      sideChat={sideChat}
     />,
   );
   const option = (label: string) => screen.getByRole("button", { name: new RegExp(`^${label}`) });
@@ -486,5 +496,21 @@ it("confirms on Enter after a click instead of unselecting the clicked option", 
   await userEvent.keyboard("{Enter}");
 
   await expect.element(option("Merge")).toHaveAttribute("aria-pressed", "true");
+  expect(onConfirm).toHaveBeenCalledTimes(1);
+});
+
+it("takes number keys and Enter from an option inside a side chat", async () => {
+  const { screen, option, onConfirm } = await renderKeyboardChat("side-chat", [steps], {
+    sideChat: true,
+  });
+  await using _ = screen;
+
+  (option("Push").element() as HTMLElement).focus();
+  await userEvent.keyboard("2");
+  await expect.element(option("Merge")).toHaveAttribute("aria-pressed", "true");
+
+  await userEvent.keyboard("{Enter}");
+  await expect.element(option("Merge")).toHaveAttribute("aria-pressed", "true");
+  expect(option("Push").element()).toHaveAttribute("aria-pressed", "false");
   expect(onConfirm).toHaveBeenCalledTimes(1);
 });

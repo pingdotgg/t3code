@@ -1396,6 +1396,7 @@ export default function ChatView(props: ChatViewProps) {
     onSelectActivePendingUserInputOption: onSelectActivePendingUserInputOptionStable,
     onChangeActivePendingUserInputCustomAnswer,
     onReplaceActivePendingUserInputCustomAnswer,
+    onAddActivePendingUserInputOptionKey,
     onRemoveActivePendingUserInputOptionKey,
     onAdvanceActivePendingUserInput,
     onAdvanceActivePendingUserInputStable,
@@ -3770,6 +3771,9 @@ export default function ChatView(props: ChatViewProps) {
                                 }
                                 onReplaceActivePendingUserInputCustomAnswer={
                                   onReplaceActivePendingUserInputCustomAnswer
+                                }
+                                onAddActivePendingUserInputOptionKey={
+                                  onAddActivePendingUserInputOptionKey
                                 }
                                 onRemoveActivePendingUserInputOptionKey={
                                   onRemoveActivePendingUserInputOptionKey

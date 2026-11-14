@@ -1,7 +1,6 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
 import { markdownProseDirection, textDirection } from "~/textDirection";
-import { memo, use, useEffect, useImperativeHandle, useRef, useState, type RefObject } from "react";
-import { BackgroundThreadContext } from "./backgroundThread";
+import { memo, useEffect, useImperativeHandle, useRef, useState, type RefObject } from "react";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { type PendingUserInput } from "../../session-logic";
 import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime/state/pending-user-input";
@@ -174,14 +173,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     }, 200);
   };
 
-  const backgroundThread = use(BackgroundThreadContext);
-
-  // The chat's shortcuts offer keys here before type-to-focus. While the answer field
-  // shows no text, 1-9 go into it as option keys that pick options and Backspace takes
-  // the last one back. Keyboard picks wait for Enter, which confirms like Next; only a
-  // click on a single-choice option advances by itself.
+  // The chat's shortcuts offer keys here before type-to-focus (a side chat's only from
+  // inside its composer). 1-9 in an empty answer pick options, Backspace takes one back,
+  // and Enter confirms like Next; only a click on a single choice advances by itself.
   useImperativeHandle(keyHandlerRef, () => (event, target) => {
-    if (!activeQuestion || responseDisabled || backgroundThread) return false;
+    if (!activeQuestion || responseDisabled) return false;
     if (event.key === "Enter") {
       // The answer field and other controls keep their own Enter. A focused
       // single-select option keeps its click, which picks and advances.

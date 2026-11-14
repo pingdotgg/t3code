@@ -174,18 +174,18 @@ export function derivePendingUserInputProgress<Q extends UserInputQuestion>(
   };
 }
 
-// Numbers typed into an empty answer field stay in its text but pick options: while
-// the text is only option numbers ("132") the field shows it empty and each number
-// toggles its option (picks it on a single choice). Any other character turns all of
-// it back into typed text. Only the web client reads drafts this way.
+// Number keys pressed while the answer field is empty pick options. They are kept in
+// `optionKeys`, apart from the text, so pasted or dictated digits stay text. Each key
+// toggles its option (picks it on a single choice); text typed after them turns the
+// keys into text, so "2, but later" reads as typed. Only the web client records keys.
 
-/** The answer text when it is only option numbers, or null. */
 function pendingUserInputOptionKeys(
   question: UserInputQuestion,
-  text: string | undefined,
+  draft: PendingUserInputDraftAnswer | undefined,
 ): string | null {
-  if (question.initialAnswer !== undefined || !text || !/^[1-9]+$/.test(text)) return null;
-  return [...text].every((key) => Number(key) <= question.options.length) ? text : null;
+  const keys = draft?.optionKeys;
+  if (!keys || question.initialAnswer !== undefined || draft?.customAnswer) return null;
+  return keys;
 }
 
 /** The draft as the panel shows it and the answer sends it: option keys become picks. */
@@ -193,7 +193,7 @@ export function applyPendingUserInputOptionKeys(
   question: UserInputQuestion,
   draft: PendingUserInputDraftAnswer | undefined,
 ): PendingUserInputDraftAnswer | undefined {
-  const keys = pendingUserInputOptionKeys(question, draft?.customAnswer);
+  const keys = pendingUserInputOptionKeys(question, draft);
   if (keys === null) return draft;
   let picked = normalizeSelectedOptionValues(question, draft?.selectedOptionValues);
   for (const key of keys) {
@@ -206,21 +206,27 @@ export function applyPendingUserInputOptionKeys(
         ? picked.filter((entry) => entry !== value)
         : [...picked, value];
   }
-  return { ...draft, customAnswer: "", selectedOptionValues: picked };
+  const { optionKeys: _keys, ...rest } = draft ?? {};
+  return { ...rest, customAnswer: "", selectedOptionValues: picked };
 }
 
-/** Stores the answer field's text after the option keys it hides. */
+/** Records a number key pressed while the answer field shows no text. */
+export function addPendingUserInputOptionKey(
+  draft: PendingUserInputDraftAnswer | undefined,
+  key: string,
+): PendingUserInputDraftAnswer {
+  return { ...draft, customAnswer: "", optionKeys: (draft?.optionKeys ?? "") + key };
+}
+
+/** Stores the answer field's text, after the option keys it hides once text follows them. */
 export function setPendingUserInputAnswerText(
   question: UserInputQuestion,
   draft: PendingUserInputDraftAnswer | undefined,
   text: string,
 ): PendingUserInputDraftAnswer {
-  const answer = (pendingUserInputOptionKeys(question, draft?.customAnswer) ?? "") + text;
-  // Keys keep the picks made before them; typed text replaces every pick.
-  if (pendingUserInputOptionKeys(question, answer) !== null) {
-    return { ...draft, customAnswer: answer };
-  }
-  return setPendingUserInputCustomAnswer(question, draft, answer);
+  const keys = pendingUserInputOptionKeys(question, draft);
+  if (keys !== null && text.length === 0) return draft ?? {};
+  return setPendingUserInputCustomAnswer(question, draft, (keys ?? "") + text);
 }
 
 /** Drops the last option key, or returns null when the draft holds none. */
@@ -228,6 +234,6 @@ export function removePendingUserInputOptionKey(
   question: UserInputQuestion,
   draft: PendingUserInputDraftAnswer | undefined,
 ): PendingUserInputDraftAnswer | null {
-  const keys = pendingUserInputOptionKeys(question, draft?.customAnswer);
-  return keys === null ? null : { ...draft, customAnswer: keys.slice(0, -1) };
+  const keys = pendingUserInputOptionKeys(question, draft);
+  return keys === null ? null : { ...draft, optionKeys: keys.slice(0, -1) };
 }

@@ -29,6 +29,7 @@ import {
   type PendingUserInputDraftAnswer,
 } from "@t3tools/client-runtime/state/pending-user-input";
 import {
+  addPendingUserInputOptionKey,
   applyPendingUserInputOptionKeys,
   carryDisplacedCustomAnswerIntoPrompt,
   withdrawDisplacedCustomAnswerFromPrompt,
@@ -79,7 +80,7 @@ function makePendingCustomAnswerSetter(input: {
       return;
     }
     const question = activePendingUserInput.questions.find((entry) => entry.id === questionId);
-    if (!question) {
+    if (!question || question.allowCustomAnswer === false) {
       return;
     }
     input.writePrompt(value);
@@ -501,8 +502,7 @@ export function usePendingThreadRequests(input: {
     );
     if (nextPrompt !== currentPrompt) setComposerDraftPrompt(composerDraftTarget, nextPrompt);
   });
-  // Typing continues the option keys the answer field hides; a choice-only question
-  // takes the keys and nothing else.
+  // Typed text continues the option keys the answer field hides.
   const onChangeActivePendingUserInputCustomAnswer = makePendingCustomAnswerSetter({
     activePendingUserInput,
     activePendingRequestKey,
@@ -522,6 +522,22 @@ export function usePendingThreadRequests(input: {
     setAnswer: setPendingUserInputCustomAnswer,
   });
 
+  /** Records a number key that picks one of the question's options. */
+  const onAddActivePendingUserInputOptionKey = (questionId: string, key: string) => {
+    setPendingUserInputAnswersByRequestId((existing) => ({
+      ...existing,
+      [activePendingRequestKey]: {
+        ...existing[activePendingRequestKey],
+        [questionId]: addPendingUserInputOptionKey(
+          existing[activePendingRequestKey]?.[questionId],
+          key,
+        ),
+      },
+    }));
+  };
+  const onAddActivePendingUserInputOptionKeyStable = useStableCallback(
+    onAddActivePendingUserInputOptionKey,
+  );
   /** Takes back the last option key typed for the question; false when there is none. */
   const onRemoveActivePendingUserInputOptionKey = (questionId: string) => {
     const question = activePendingUserInput?.questions.find((entry) => entry.id === questionId);
@@ -586,6 +602,7 @@ export function usePendingThreadRequests(input: {
     onSelectActivePendingUserInputOption: onSelectActivePendingUserInputOptionStable,
     onChangeActivePendingUserInputCustomAnswer,
     onReplaceActivePendingUserInputCustomAnswer,
+    onAddActivePendingUserInputOptionKey: onAddActivePendingUserInputOptionKeyStable,
     onRemoveActivePendingUserInputOptionKey: onRemoveActivePendingUserInputOptionKeyStable,
     onAdvanceActivePendingUserInput,
     onAdvanceActivePendingUserInputStable,

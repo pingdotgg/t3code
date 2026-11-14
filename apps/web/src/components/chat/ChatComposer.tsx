@@ -485,6 +485,8 @@ export interface ChatComposerProps {
   ) => void;
   /** Replaces the question's answer with text the user did not type, keeping no option numbers. */
   onReplaceActivePendingUserInputCustomAnswer: (questionId: string, value: string) => void;
+  /** Records a number key that picks one of the question's options. */
+  onAddActivePendingUserInputOptionKey: (questionId: string, key: string) => void;
   /** Takes back the last option number typed for the question; false when there is none. */
   onRemoveActivePendingUserInputOptionKey: (questionId: string) => boolean;
 
@@ -585,6 +587,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPreviousActivePendingUserInputQuestion,
     onChangeActivePendingUserInputCustomAnswer,
     onReplaceActivePendingUserInputCustomAnswer,
+    onAddActivePendingUserInputOptionKey,
     onRemoveActivePendingUserInputOptionKey,
     onProviderModelSelect,
     onOpenProviderSetup,
@@ -2196,11 +2199,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return true;
   };
   const submitComposerStable = useStableCallback(submitComposer);
-  // An option number goes into the answer field's text, which shows it only once
-  // other text follows. Focus lands in the field as any typed key would put it there.
+  // The answer field shows an option number only once other text follows it. Focus
+  // lands in the field as any typed key would put it there.
   const onPendingQuestionOptionKey = (questionId: string, key: string) => {
-    onChangeActivePendingUserInputCustomAnswer(questionId, key, 0, 0, false);
-    promptRef.current = "";
+    onAddActivePendingUserInputOptionKey(questionId, key);
     const editorRoot = composerFormRef.current?.querySelector('[data-testid="composer-editor"]');
     if (!editorRoot?.contains(document.activeElement)) composerEditorRef.current?.focusAtEnd();
   };
