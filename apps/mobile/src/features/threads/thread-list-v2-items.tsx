@@ -25,7 +25,12 @@ import {
   formatWorkingDurationLabel,
   resolveThreadWorkingStartedAt,
 } from "@t3tools/client-runtime/state/models";
-import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type EnvironmentMachineKind,
+} from "@t3tools/contracts";
+import { toServerClock } from "@t3tools/client-runtime/clock";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
@@ -74,6 +79,7 @@ import {
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozePresets,
   threadHasUnseenCompletion,
+  resolveThreadListV2RowStatus,
   resolveThreadListV2Status,
   resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
@@ -169,7 +175,11 @@ const STATUS_PILL_BY_KIND: Record<
 };
 
 /** Only this text ticks, so a running thread re-renders one Text per second, not its row. */
-function WorkingPillTimer(props: { readonly startedAt: string; readonly className: string }) {
+function WorkingPillTimer(props: {
+  readonly environmentId: EnvironmentId;
+  readonly startedAt: string;
+  readonly className: string;
+}) {
   const startedMs = Date.parse(props.startedAt);
   const nowMs = useVisibleSecondClock(Number.isFinite(startedMs));
   return (
@@ -179,12 +189,13 @@ function WorkingPillTimer(props: { readonly startedAt: string; readonly classNam
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
     >
-      {formatWorkingDurationLabel(nowMs - startedMs)}
+      {formatWorkingDurationLabel(toServerClock(props.environmentId, nowMs) - startedMs)}
     </Text>
   );
 }
 
 function ThreadListV2StatusPill(props: {
+  readonly environmentId: EnvironmentId;
   readonly kind: ThreadListV2PillKind;
   readonly label?: string | null;
   readonly workingStartedAt: string | null;
@@ -207,7 +218,11 @@ function ThreadListV2StatusPill(props: {
         {props.label ?? pill.label}
       </Text>
       {(props.kind === "working" || props.kind === "waiting") && props.workingStartedAt !== null ? (
-        <WorkingPillTimer startedAt={props.workingStartedAt} className={pill.textClassName} />
+        <WorkingPillTimer
+          environmentId={props.environmentId}
+          startedAt={props.workingStartedAt}
+          className={pill.textClassName}
+        />
       ) : null}
     </View>
   );
@@ -816,7 +831,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const selected = props.selected === true;
   const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
 
-  const status = resolveThreadListV2Status(thread);
+  const rawStatus = resolveThreadListV2Status(thread);
+  const status = resolveThreadListV2RowStatus(thread);
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
   const showsWoke = status === "ready" && props.wokeAt !== null;
   // Merged outranks Done, as on web: once the PR landed, "finished" is the
@@ -1294,6 +1310,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             </Pressable>
           ) : pillKind !== null ? (
             <ThreadListV2StatusPill
+              environmentId={thread.environmentId}
               kind={pillKind}
               label={pillLabel}
               workingStartedAt={workingStartedAt}
@@ -1323,7 +1340,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         </View>
       ) : null}
       <View className="mt-1 flex-row items-center gap-2" style={{ paddingLeft: titleTextInset }}>
-        {(status === "failed" || status === "limited") && thread.runtime?.lastError ? (
+        {(rawStatus === "failed" || rawStatus === "limited") && thread.runtime?.lastError ? (
           <Text
             className={cn(
               "flex-1 text-xs",

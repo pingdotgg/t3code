@@ -17,12 +17,15 @@ import { afterEach, vi } from "vite-plus/test";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
-import { pinnedRuntimePaths, prunePinnedRuntimes } from "../cloud/pinnedRuntime.ts";
+import {
+  pinnedRuntimePaths,
+  prunePinnedRuntimes,
+  resolveLauncherPath,
+} from "../cloud/pinnedRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   repointLauncher,
-  resolveLauncherPath,
   resolveMirrorVersion,
   resolveNewestVersion,
   runUpdate,
@@ -216,7 +219,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
 
       assert.deepStrictEqual(Option.getOrUndefined(repointed), launcher);
       assert.equal(yield* fs.readLink(launcher), newExe);
-    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect.each([
@@ -282,7 +285,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
         yield* fs.realPath(launcher),
         yield* fs.realPath(path.join(root, "runtime/versions/2.0.0/t3")),
       );
-    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   const launcherFixture = Effect.fnUntraced(function* () {
@@ -313,7 +316,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       });
 
       assert.equal(yield* fs.readFileString(launchersFile), `\n${launcher}\n`);
-    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("fails instead of repointing a launcher it cannot record", () =>
@@ -331,7 +334,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
 
       assert.isTrue(Exit.isFailure(result));
       assert.equal(yield* fs.readLink(launcher), oldExe);
-    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect.each(["recording", "repointing"] as const)(
@@ -367,7 +370,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
           .split("\n")
           .includes(launcher);
         assert.isFalse(repointed && !recorded);
-      }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+      }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("leaves a plain copy or a foreign symlink alone", () =>
@@ -400,7 +403,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       }
       assert.equal(yield* fs.readLink(foreign), elsewhere);
       assert.equal(yield* fs.readLink(otherLauncher), otherHome);
-    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("finds the launcher a bare command name resolved to on PATH", () =>
@@ -411,7 +414,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
       const launcher = path.join(root, "bin/t3");
       yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
-      yield* fs.writeFileString(launcher, "");
+      yield* fs.writeFileString(launcher, "", { mode: 0o755 });
 
       const bare = yield* resolveLauncherPath.pipe(
         Effect.provideService(HostProcess.InvokedAs, "t3"),
@@ -434,7 +437,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       assert.equal(bare, launcher);
       assert.equal(relative, launcher);
       assert.equal(absent, undefined);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
 
@@ -524,7 +527,6 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
         `Background service still running the version before ${version}. Run \`t3 service restart\` when you are ready to switch it to ${version}.`,
       );
     }).pipe(
-      Effect.scoped,
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(HostProcess.Environment, { PATH: "" }),
     ),

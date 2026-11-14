@@ -12,6 +12,7 @@ import {
   ScheduledTaskId,
   ThreadId,
   TurnItemId,
+  type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RunAttempt,
@@ -38,8 +39,29 @@ import {
   workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
 } from "./session-logic";
-import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "./test-fixtures";
+import {
+  makeStreamingTimelineFixture,
+  makeStreamingWorkTimelineFixture,
+  makeThreadProjectionFixture,
+  withStreamedText,
+} from "./test-fixtures";
 import type { ChatMessage } from "./types";
+
+function streamingPlanArtifact(
+  fixture: ReturnType<typeof makeStreamingWorkTimelineFixture>,
+  markdown: string,
+  status: "active" | "superseded",
+): OrchestrationV2PlanArtifact {
+  return {
+    id: PlanId.make("live-plan"),
+    threadId: fixture.threadId,
+    runId: fixture.runId,
+    nodeId: NodeId.make("live-node"),
+    kind: "proposed_plan",
+    markdown,
+    status,
+  };
+}
 
 describe("V2 session presentation", () => {
   it("uses run status as the settlement boundary", () => {
@@ -1370,7 +1392,30 @@ describe("HTML renders in the timeline", () => {
     ]);
   });
 
-  it("hosts a captured MCP app in place, from any provider's tool", () => {
+  it("shows a sent message in place through the turn fold, and only once sent", () => {
+    const sentMessage = "Draft reply:\n\n> Thanks, Thursday works.";
+    const send = (
+      status: OrchestrationV2TurnItem["status"],
+      output?: unknown,
+    ): OrchestrationV2TurnItem => ({
+      ...base("render", 2),
+      status,
+      type: "dynamic_tool",
+      toolName: "mcp__t3-code__send_to_user",
+      input: { message: sentMessage },
+      ...(output === undefined ? {} : { output }),
+    });
+    const entries = turn(send("completed", { structuredContent: { sentMessage }, content: [] }));
+    expect(entries.find((entry) => entry.kind === "sent-message")).toMatchObject({
+      id: "render",
+      runId,
+      text: sentMessage,
+    });
+    expect(rowsFor(entries, false)).toEqual(["message", "turn-fold", "sent-message", "message"]);
+    expect(turn(send("running")).some((entry) => entry.kind === "sent-message")).toBe(false);
+  });
+
+  it("hosts a captured MCP app after its tool row, from any provider's tool", () => {
     const mcpApp = {
       attachmentId: "render-thread-app-html",
       server: "weather",
@@ -1382,11 +1427,56 @@ describe("HTML renders in the timeline", () => {
       call.type === "dynamic_tool" ? { ...call, toolName: "weather.get_weather" } : call,
     );
     expect(entries.find((entry) => entry.kind === "mcp-app")).toMatchObject({
-      id: "render",
+      id: "mcp-app:render",
       itemId: "render",
       mcpApp,
     });
     expect(rowsFor(entries, false)).toEqual(["message", "turn-fold", "mcp-app", "message"]);
+  });
+
+  it("keeps an MCP app call's tool row and output beside its app card", () => {
+    const mcpApp = {
+      attachmentId: "render-thread-app-html",
+      server: "repro",
+      tool: "aggregate_rum_events",
+      resourceUri: "ui://repro/dataviz",
+    };
+    const result = { content: [{ type: "text", text: "Notice\nview\tcount\n/home\t42" }] };
+    const call = renderCall("completed", { t3McpApp: mcpApp, result });
+    const entries = turn(
+      call.type === "dynamic_tool" ? { ...call, toolName: "repro.aggregate_rum_events" } : call,
+    );
+    expect(entries.find((entry) => entry.kind === "mcp-app")).toMatchObject({ mcpApp });
+    const toolRows = entries.flatMap((entry) =>
+      entry.kind === "work" && entry.entry.toolTitle === "repro.aggregate_rum_events"
+        ? [entry.entry]
+        : [],
+    );
+    expect(toolRows).toMatchObject([{ toolData: { output: { result } } }]);
+  });
+
+  it("drops an MCP app card when an update removes the call's app", () => {
+    const mcpApp = {
+      attachmentId: "render-thread-app-html",
+      server: "repro",
+      tool: "aggregate_rum_events",
+      resourceUri: "ui://repro/dataviz",
+    };
+    const call = (output: unknown) => ({
+      ...renderCall("completed", output),
+      toolName: "repro.aggregate_rum_events",
+    });
+    const result = { content: [{ type: "text", text: "rows" }] };
+    const input = (output: unknown) => ({
+      visibleTurnItems: [visible(command("before", 1)), visible(call(output))],
+      optimisticMessages: [],
+    });
+    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(
+      input({ t3McpApp: mcpApp, result }),
+    );
+    const nextInput = input({ result });
+    const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(nextInput, previous);
+    expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(nextInput));
   });
 
   it("hosts an MCP app whose call failed, as a form-deferring write does", () => {
@@ -1700,6 +1790,66 @@ describe("incremental v2 timeline entries", () => {
       "live-work",
       "live-assistant",
     ]);
+  });
+
+  it("keeps every other entry when streaming plan text changes", () => {
+    const fixture = makeStreamingWorkTimelineFixture("proposed_plan");
+    // Codex emits `plan.updated` with each delta, so the artifact array is rebuilt too.
+    const plans = (markdown: string) => [streamingPlanArtifact(fixture, markdown, "active")];
+    let input = {
+      visibleTurnItems: withStreamedText(
+        fixture.visibleTurnItems,
+        fixture.streamingItemId,
+        "Let",
+        fixture.time(20),
+      ),
+      optimisticMessages: [],
+      plans: plans("Let"),
+    };
+    let projection = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
+    for (const [step, text] of ["Let me", "Let me check the tests"].entries()) {
+      input = {
+        visibleTurnItems: withStreamedText(
+          input.visibleTurnItems,
+          fixture.streamingItemId,
+          text,
+          fixture.time(21 + step),
+        ),
+        optimisticMessages: [],
+        plans: plans(text),
+      };
+      const previous = projection;
+      projection = deriveTimelineEntriesFromVisibleTurnItemsWithState(input, previous);
+      expect(projection.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(input));
+      for (const [index, entry] of previous.entries.entries()) {
+        if (entry.id !== fixture.streamingItemId) expect(projection.entries[index]).toBe(entry);
+      }
+    }
+  });
+
+  it("rebuilds the plan entry when only its artifact status changes", () => {
+    const fixture = makeStreamingWorkTimelineFixture("proposed_plan");
+    const visibleTurnItems = withStreamedText(
+      fixture.visibleTurnItems,
+      fixture.streamingItemId,
+      "Plan",
+      fixture.time(20),
+    );
+    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState({
+      visibleTurnItems,
+      optimisticMessages: [],
+      plans: [streamingPlanArtifact(fixture, "Plan", "active")],
+    });
+    const input = {
+      visibleTurnItems,
+      optimisticMessages: [],
+      plans: [streamingPlanArtifact(fixture, "Plan", "superseded")],
+    };
+    const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(input, previous);
+    expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(input));
+    expect(next.entries.find((entry) => entry.kind === "proposed-plan")).toMatchObject({
+      proposedPlan: { status: "superseded" },
+    });
   });
 });
 

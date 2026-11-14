@@ -10,6 +10,9 @@ const SANITIZED_HTML_SELECTOR = [
   ...SKIPPED_CLASS_NAMES.map((className) => `.${className}`),
 ].join(", ");
 
+const ALERT_ATTRIBUTE = "data-markdown-alert";
+const ALERT_LABEL = "data-markdown-alert-label";
+
 export interface MarkdownClipboardPayload {
   text: string;
   html: string;
@@ -45,7 +48,9 @@ function wrapInlineCode(code: string): string {
     0,
   );
   const fence = "`".repeat(Math.max(1, longestRun + (longestRun > 0 ? 1 : 0)));
-  const pad = code.startsWith("`") || code.endsWith("`") ? " " : "";
+  // CommonMark strips one edge space from content that has both and isn't all spaces.
+  const spaceEdges = code.startsWith(" ") && code.endsWith(" ") && /[^ ]/.test(code);
+  const pad = spaceEdges || code.startsWith("`") || code.endsWith("`") ? " " : "";
   return `${fence}${pad}${code}${pad}${fence}`;
 }
 
@@ -159,16 +164,32 @@ function serializeList(list: Element, ordered: boolean, inTableCell: boolean): s
     .join("\n")}\n\n`;
 }
 
-function serializeBlockquote(quote: Element, inTableCell: boolean): string {
-  const content = outsideCode(serializeChildren(quote, inTableCell), (prose) =>
-    prose.replace(/\n{3,}/g, "\n\n"),
-  ).trim();
+function serializeQuoteBody(quote: Element, inTableCell: boolean): string {
+  let content = "";
+  for (const child of quote.childNodes) {
+    // A callout's rendered label stands for the marker its serializer writes.
+    if (child.nodeType === Node.ELEMENT_NODE && (child as Element).hasAttribute(ALERT_LABEL)) {
+      continue;
+    }
+    content += serializeNode(child, inTableCell);
+  }
+  return outsideCode(content, (prose) => prose.replace(/\n{3,}/g, "\n\n")).trim();
+}
+
+function serializeBlockquote(quote: Element, inTableCell: boolean, marker = ""): string {
+  const body = serializeQuoteBody(quote, inTableCell);
+  const content = marker && body ? `${marker}\n${body}` : marker || body;
   if (!content) return "";
   const quoted = content
     .split("\n")
     .map((line) => (line.length > 0 ? `> ${line}` : ">"))
     .join("\n");
   return `${quoted}\n\n`;
+}
+
+function serializeInsight(insight: Element, inTableCell: boolean): string {
+  const body = serializeQuoteBody(insight, inTableCell);
+  return `★ Insight ${"─".repeat(37)}\n${body ? `${body}\n` : ""}${"─".repeat(49)}\n\n`;
 }
 
 function serializeDetails(details: Element): string {
@@ -185,12 +206,17 @@ function serializeAnchor(anchor: Element, inTableCell: boolean): string {
   const markdownCopy = anchor.getAttribute("data-markdown-copy");
   if (markdownCopy !== null) return escapeTablePipes(markdownCopy, inTableCell);
   const content = serializeChildren(anchor, inTableCell);
-  const href = escapeTablePipes(anchor.getAttribute("href") ?? "", inTableCell);
-  if (!/^https?:\/\//i.test(href)) return content;
+  const href = anchor.getAttribute("href") ?? "";
+  if (!/^(?:https?:\/\/|mailto:)/i.test(href)) return content;
   const label = content.trim();
   if (!label) return "";
-  if (label === href) return href;
-  return `[${label}](${href})`;
+  const cellHref = escapeTablePipes(href, inTableCell);
+  if (cellHref === label) return label;
+  // GFM autolinks a bare address only when it fits this shape.
+  if (cellHref === `mailto:${label}` && /^[\w.+-]+@[\w-]+(?:\.[\w-]+)+(?<=[a-zA-Z])$/.test(label))
+    return label;
+  const destination = escapeTablePipes(href.replace(/[\\()]/g, "\\$&"), inTableCell);
+  return `[${label}](${destination})`;
 }
 
 /**
@@ -231,6 +257,9 @@ function serializeNode(node: Node, inTableCell = false): string {
       : escapeTablePipes(markdownCopy, inTableCell);
   }
   if (isSkippedElement(element)) return "";
+  const alert = element.getAttribute(ALERT_ATTRIBUTE);
+  if (alert === "insight") return serializeInsight(element, inTableCell);
+  if (alert !== null) return serializeBlockquote(element, inTableCell, `[!${alert.toUpperCase()}]`);
 
   const headingLevel = /^H([1-6])$/.exec(element.tagName)?.[1];
   if (headingLevel) {
@@ -477,6 +506,13 @@ export function chatMarkdownClipboardPayload(
         htmls.push(sanitizedHtmlFrom(container));
       }
       continue;
+    }
+    // A range spanning exactly one callout's text clones its contents but not the callout.
+    const callout = ancestorElement?.closest(`[${ALERT_ATTRIBUTE}]`);
+    if (callout && range.toString().trim() === (callout.textContent ?? "").trim()) {
+      const wrapper = callout.cloneNode(false) as Element;
+      wrapper.append(...container.childNodes);
+      container.replaceChildren(wrapper);
     }
     const text = serializeRenderedMarkdownFragment(container);
     if (!text) continue;

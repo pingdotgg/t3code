@@ -519,6 +519,18 @@ function PoolBar({
               index={position + 1}
               showAccountName={pool.columns.length > 1}
             />
+          ) : pool.kind === "monthly" && member.account.limits.zeroSpendCap ? (
+            <div
+              key={member.account.key}
+              style={{ gridColumn: position + 1, gridRow: 1 }}
+              className="flex h-5 min-w-0 items-center justify-center gap-1.5 overflow-hidden rounded-md border border-dashed border-border text-3xs whitespace-nowrap text-muted-foreground @2xl/pool:h-8 @2xl/pool:justify-start @2xl/pool:px-2 @2xl/pool:text-xs"
+            >
+              <AccountName
+                account={member.account}
+                className="hidden min-w-0 truncate @2xl/pool:inline-flex"
+              />
+              $0 cap
+            </div>
           ) : null,
         )}
       </div>
@@ -657,7 +669,7 @@ export function UsageLimitsPooled({
                 {link.accounts.join(", ")}
               </p>
               {link.url === CHATGPT_USAGE_URL ? (
-                <p className="text-xs text-muted-foreground">
+                <p className="text-meta text-muted-foreground">
                   View usage in ChatGPT with your connected account.
                 </p>
               ) : link.message ? (

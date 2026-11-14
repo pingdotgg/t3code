@@ -72,6 +72,7 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -374,10 +375,15 @@ export function ThreadDetailsPrRow({
         : rowAction === "fix"
           ? {
               label: "Fix",
-              pendingLabel: "Preparing...",
+              pendingLabel: "Fix",
               pending: handoff === "findings",
               destructive: true,
-              suffix: newThreadSuffix,
+              suffix:
+                handoff === "findings" ? (
+                  <Spinner size="xs" aria-label="Preparing fix" />
+                ) : (
+                  newThreadSuffix
+                ),
               tooltip:
                 composerTarget === undefined
                   ? "Fix the failing checks in a new thread"

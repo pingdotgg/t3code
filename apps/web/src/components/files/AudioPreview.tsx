@@ -5,6 +5,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
 import { InlineButton } from "../ui/button";
 import { middleTruncateAttachmentName } from "../composerInlineChip";
+import { Spinner } from "../ui/spinner";
 
 export const AudioPreviewUnmountContext = createContext<((audio: HTMLAudioElement) => void) | null>(
   null,
@@ -141,7 +142,7 @@ function AudioChip(props: AudioPreviewProps) {
             });
         }}
       >
-        <Icon aria-hidden className={loading && props.src ? "animate-spin" : undefined} />
+        {loading && props.src ? <Spinner aria-hidden /> : <Icon aria-hidden />}
       </ContextChipAction>
       <ContextChipLabel className={props.variant === "bubble" ? "flex-1" : "max-w-72"}>
         {open ? (

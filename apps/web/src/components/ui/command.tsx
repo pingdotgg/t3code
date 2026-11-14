@@ -55,7 +55,7 @@ function CommandDialogViewport({
     <CommandDialogPrimitive.Viewport
       className={cn(
         // Keep palette actions above the toast stack (z-70).
-        "pointer-events-none fixed inset-0 z-[80] flex flex-col items-center px-4 pt-[max(--spacing(4),4vh,calc(var(--command-titlebar-height)+--spacing(2)))] pb-[max(--spacing(4),4vh)]",
+        "pointer-events-none fixed inset-0 z-[80] flex flex-col items-center px-4 [-webkit-app-region:no-drag] pt-[max(--spacing(4),4vh,calc(var(--command-titlebar-height)+--spacing(2)))] pb-[max(--spacing(4),4vh)]",
         size === "content"
           ? "sm:pt-[max(--spacing(22),calc(var(--command-titlebar-height)+--spacing(2)))] sm:pb-22"
           : "sm:pt-[max(--spacing(24),calc(var(--command-titlebar-height)+--spacing(2)))] sm:pb-24",

@@ -59,6 +59,12 @@ const RESTRICTED_IMPORT_PATHS = [
     message:
       "Use NativeScrollViewMarker or NativeScrollView (src/native/NativeScrollViewMarker.tsx): they carry the header's scroll-edge blur under the Duo's vertical bar.",
   },
+  {
+    name: "react-native",
+    importNames: ["RefreshControl"],
+    message:
+      "Use RefreshControl from src/components/ui/RefreshControl: Android bottom sheets own the pull at the top, so it steps aside there.",
+  },
 ];
 
 const RESTRICTED_UI_VARIANT_PATTERNS = [

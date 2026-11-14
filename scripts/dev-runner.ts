@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/cli";
 import { ChildProcess } from "effect/process";
 
+import { defaultDevMemoryLimitBytes, enforceDevMemoryLimit } from "./lib/dev-memory-limit.ts";
 import { type DevShareError, shareDevServer, unshareDevServer } from "./lib/dev-share.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 
@@ -57,6 +58,13 @@ export function isProxiableBindHost(host: string): boolean {
     normalized === "::" ||
     normalized === "[::]"
   );
+}
+
+function sharedBackendTargetHost(host: string | undefined): string {
+  const normalized = host?.trim() ?? "";
+  if (normalized === "::1" || normalized === "[::1]") return "[::1]";
+  if (normalized === "localhost") return "localhost";
+  return "127.0.0.1";
 }
 
 export const DEFAULT_T3_HOME = Effect.map(Effect.service(Path.Path), (path) =>
@@ -202,11 +210,6 @@ const optionalStringConfig = (name: string): Config.Config<string | undefined> =
   );
 const optionalBooleanConfig = (name: string): Config.Config<boolean | undefined> =>
   Config.Boolean(name).pipe(
-    Config.option,
-    Config.map((value) => Option.getOrUndefined(value)),
-  );
-const optionalPortConfig = (name: string): Config.Config<number | undefined> =>
-  Config.Port(name).pipe(
     Config.option,
     Config.map((value) => Option.getOrUndefined(value)),
   );
@@ -371,12 +374,15 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
     delete output.T3CODE_SINGLE_ORIGIN_DEV;
     delete output.T3CODE_MODE;
     delete output.T3CODE_NO_BROWSER;
-    delete output.T3CODE_HOST;
     delete output.T3CODE_DEV_AUTH_TOKEN;
   }
 
+  // Agent shells inherit the parent T3 server's bind settings; only --host widens the dev server.
+  delete output.T3CODE_LAN;
   if (!isDesktopMode && host !== undefined) {
     output.T3CODE_HOST = host;
+  } else {
+    delete output.T3CODE_HOST;
   }
 
   if (!isDesktopMode) {
@@ -683,6 +689,7 @@ interface DevRunnerCliInput {
   readonly share: boolean;
   readonly seed?: boolean | undefined;
   readonly built: boolean;
+  readonly memoryLimitGb?: number | undefined;
   readonly runArgs: ReadonlyArray<string>;
 }
 
@@ -788,12 +795,13 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
         shareDevServer({
           webPort: sharedWebPort,
           // The backend binds 127.0.0.1 unless --host changes it. A wildcard
-          // still answers there; `--host ::1` binds only the IPv6 loopback.
+          // still answers there; `--host ::1` binds only the IPv6 loopback, and
+          // `localhost` binds whichever loopback Node resolves first.
           ...(input.built
             ? {
                 localTarget: {
                   port: Number(env.T3CODE_PORT),
-                  host: ["::1", "[::1]"].includes(input.host?.trim() ?? "") ? "[::1]" : "127.0.0.1",
+                  host: sharedBackendTargetHost(input.host),
                 },
               }
             : {}),
@@ -877,10 +885,9 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     env,
     extendEnv: false,
     shell: spawnCommand.shell,
-    // Keep Vite+ in the same process group so terminal signals (Ctrl+C)
-    // reach it directly. Effect defaults to detached: true on non-Windows,
-    // which would put the runner in a new group and require manual forwarding.
-    detached: false,
+    // Its own process group: teardown signals the whole group, because vp
+    // does not pass SIGTERM on to Vite and the server.
+    detached: true,
     forceKillAfter: "1500 millis",
   }).pipe(
     Effect.mapError(
@@ -893,6 +900,10 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     ),
   );
 
+  const memoryLimitBytes =
+    input.memoryLimitGb === undefined
+      ? defaultDevMemoryLimitBytes()
+      : input.memoryLimitGb * 1024 ** 3;
   const exitCode = yield* child.exitCode.pipe(
     Effect.mapError(
       (cause) =>
@@ -902,6 +913,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
           cause,
         }),
     ),
+    Effect.raceFirst(enforceDevMemoryLimit(memoryLimitBytes)),
   );
   if (exitCode !== 0) {
     return yield* new DevRunnerProcessExitError({
@@ -910,6 +922,8 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     });
   }
 });
+
+const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
 const devRunnerCli = Command.make("dev-runner", {
   mode: Argument.Literals("mode", DEV_RUNNER_MODES).pipe(
@@ -938,13 +952,19 @@ const devRunnerCli = Command.make("dev-runner", {
     Flag.withFallbackConfig(optionalBooleanConfig("T3CODE_LOG_WS_EVENTS")),
   ),
   host: Flag.String("host").pipe(
-    Flag.withDescription("Server host/interface override (forwards to T3CODE_HOST)."),
-    Flag.withFallbackConfig(optionalStringConfig("T3CODE_HOST")),
+    Flag.withDescription(
+      "Server host/interface override (forwards to T3CODE_HOST). Ambient T3CODE_HOST is ignored: agent shells inherit it from the T3 server that spawned them.",
+    ),
+    Flag.optional,
+    Flag.map(Option.getOrUndefined),
   ),
   port: Flag.Int("port").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
-    Flag.withDescription("Server port override (forwards to T3CODE_PORT)."),
-    Flag.withFallbackConfig(optionalPortConfig("T3CODE_PORT")),
+    Flag.withDescription(
+      "Server port override (forwards to T3CODE_PORT). Ambient T3CODE_PORT is ignored: agent shells inherit it from the T3 server that spawned them.",
+    ),
+    Flag.optional,
+    Flag.map(Option.getOrUndefined),
   ),
   devUrl: Flag.String("dev-url").pipe(
     Flag.withSchema(Schema.URLFromString),
@@ -976,6 +996,18 @@ const devRunnerCli = Command.make("dev-runner", {
     ),
     Flag.withDefault(false),
   ),
+  memoryLimitGb: Flag.Int("memory-limit-gb").pipe(
+    Flag.withSchema(NonNegativeInt),
+    Flag.withDescription(
+      "Stop the dev server when it and its child processes use more than this many GiB of RAM plus swap (equivalent to T3CODE_DEV_MEMORY_LIMIT_GB). Defaults to half of RAM, at most 16. 0 turns it off. Linux only.",
+    ),
+    Flag.withFallbackConfig(
+      Config.schema(NonNegativeInt, "T3CODE_DEV_MEMORY_LIMIT_GB").pipe(
+        Config.option,
+        Config.map(Option.getOrUndefined),
+      ),
+    ),
+  ),
   runArgs: Argument.String("run-arg").pipe(
     Argument.withDescription("Additional Vite+ run args (pass after `--`)."),
     Argument.variadic(),
@@ -992,6 +1024,9 @@ const cliRuntimeLayer = Layer.mergeAll(
 );
 
 if (import.meta.main) {
+  // runMain interrupts (running finalizers such as the --share unmapping) only
+  // on SIGINT/SIGTERM; a closed terminal or dropped SSH session sends SIGHUP.
+  process.on("SIGHUP", () => process.kill(process.pid, "SIGTERM"));
   Command.run(devRunnerCli, { version: "0.0.0" }).pipe(
     Effect.scoped,
     Effect.provide(cliRuntimeLayer),

@@ -35,8 +35,15 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
-import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import {
+  withCheckpointRestoreReservation,
+  withWorkspaceLease,
+} from "../workspace/workspaceLease.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import {
+  layerThreadWorktreeRestore,
+  ThreadWorktreeRestore,
+} from "../workspace/restoreMissingWorktree.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { layerRealGit } from "./ProviderTurnStartService.testkit.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -269,9 +276,108 @@ it.each([
   expect(harness.createWorktree).toHaveBeenCalledTimes(input.recreated ? 1 : 0);
 });
 
+const restoreLeaseExists = vi.fn(() => Effect.succeed(false));
+const restoreLeaseCreateWorktree = vi.fn(() => Effect.succeed({} as never));
+const layerRestoreLeaseTest = layerThreadWorktreeRestore.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.succeed(FileSystem.FileSystem, {
+        exists: restoreLeaseExists,
+        realPath: (target: string) => Effect.succeed(normalize(target)),
+      } as never),
+      layerWorktreeLocation(),
+      Layer.mock(GitWorkflow.GitWorkflowService)({
+        pruneWorktrees: () => Effect.void,
+        createWorktree: restoreLeaseCreateWorktree,
+        listLocalBranchNames: () => Effect.succeed(["feature/restore"]),
+      }),
+      Layer.mock(ProjectService.ProjectService)({
+        getById: () =>
+          Effect.succeedSome({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
+      }),
+    ),
+  ),
+);
+
+effectIt.effect("restores a missing worktree before a send only under the workspace lease", () =>
+  Effect.gen(function* () {
+    const worktreePath = `${managedWorktreesDir}/project/feature-restore`;
+    const { restore } = yield* ThreadWorktreeRestore;
+    yield* withWorkspaceLease(
+      worktreePath,
+      Effect.gen(function* () {
+        const restoring = yield* restore({
+          id: ThreadId.make("thread_send_restore_lease"),
+          projectId: ProjectId.make("project_send_restore_lease"),
+          worktreePath,
+          branch: "feature/restore",
+        }).pipe(Effect.forkChild({ startImmediately: true }));
+        expect(restoreLeaseExists).not.toHaveBeenCalled();
+        return restoring;
+      }),
+    ).pipe(Effect.flatMap(Fiber.join));
+    expect(restoreLeaseCreateWorktree).toHaveBeenCalledTimes(1);
+  }).pipe(Effect.provide(layerRestoreLeaseTest)),
+);
+
+it.each([
+  { label: "directly in the scratch root", folder: "/tmp/t3-home/scratch/notes", recreated: true },
+  { label: "below another folder", folder: "/tmp/t3-home/scratch/notes/deep", recreated: false },
+  {
+    label: "in another project",
+    folder: "/tmp/elsewhere/notes",
+    workspaceRoot: "/tmp/elsewhere",
+    recreated: false,
+  },
+])("recreates a pruned No project folder only $label", async (input) => {
+  const makeDirectory = vi.fn(() => Effect.void);
+  await Effect.gen(function* () {
+    const { restore } = yield* ThreadWorktreeRestore;
+    yield* restore({
+      id: ThreadId.make("thread_scratch_restore"),
+      projectId: ProjectId.make("project_scratch_restore"),
+      worktreePath: input.folder,
+      branch: null,
+    });
+  }).pipe(
+    Effect.provide(
+      layerThreadWorktreeRestore.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(FileSystem.FileSystem, {
+              exists: () => Effect.succeed(false),
+              realPath: (target: string) => Effect.succeed(target),
+              makeDirectory,
+            } as never),
+            Path.layer,
+            Layer.mock(ServerConfig.ServerConfig)({
+              baseDir: "/tmp/t3-home",
+              worktreesDir: managedWorktreesDir,
+            } as ServerConfig.ServerConfig["Service"]),
+            ServerSettings.layerTest(),
+            Layer.mock(GitWorkflow.GitWorkflowService)({}),
+            Layer.mock(ProjectService.ProjectService)({
+              getById: () =>
+                Effect.succeedSome({
+                  workspaceRoot: input.workspaceRoot ?? "/tmp/t3-home/scratch",
+                } as never),
+            }),
+          ),
+        ),
+      ),
+    ),
+    Effect.runPromise,
+  );
+  expect(makeDirectory).toHaveBeenCalledTimes(input.recreated ? 1 : 0);
+});
+
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  readonly manualContinuation?: boolean;
+  readonly nativeResumeUnsupported?: boolean;
+  readonly steeringRestart?: boolean;
   readonly nativeGoals?: boolean;
+  readonly goalDriver?: "opencode" | "antigravity";
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
   readonly workspaceRoot?: string;
@@ -304,6 +410,10 @@ function makeLocalCommandHarness(input: {
    */
   readonly sideChat?: {
     readonly contextRun: "current" | "failed" | "cancelled" | "delivered";
+    readonly unsentResume?: boolean;
+    readonly repeatedResume?: boolean;
+    readonly acceptedResume?: boolean;
+    readonly restartedResume?: boolean;
     readonly nativeForkFrom?: "idle" | "busy";
     readonly switchedProvider?: boolean;
     readonly threadRuntimeMode?: OrchestrationV2ThreadProjection["thread"]["runtimeMode"];
@@ -323,6 +433,7 @@ function makeLocalCommandHarness(input: {
   const checkpointScopeId = CheckpointScopeId.make("scope-native-account-command");
   const messageId = MessageId.make("message-native-account-command");
   const run: OrchestrationV2ThreadProjection["runs"][number] = {
+    ...(input.manualContinuation ? { manualContinuationOfRunId: RunId.make("stopped-run") } : {}),
     id: runId,
     threadId,
     ordinal: 2,
@@ -341,7 +452,9 @@ function makeLocalCommandHarness(input: {
   };
   const providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] = {
     id: providerThreadId,
-    driver: ProviderDriverKind.make(input.nativeGoals === undefined ? "codex" : "opencode"),
+    driver: ProviderDriverKind.make(
+      input.nativeGoals === undefined ? "codex" : (input.goalDriver ?? "opencode"),
+    ),
     providerInstanceId: newInstanceId,
     providerSessionId,
     appThreadId: threadId,
@@ -403,7 +516,7 @@ function makeLocalCommandHarness(input: {
         providerInstanceId: newInstanceId,
         providerThreadId,
         providerTurnId: null,
-        reason: "initial",
+        reason: input.steeringRestart ? "steering_restart" : "initial",
         status: "pending",
         startedAt: null,
         completedAt: null,
@@ -654,6 +767,83 @@ function makeLocalCommandHarness(input: {
       ],
     };
   }
+  if (input.sideChat?.unsentResume) {
+    const originalMessageId = MessageId.make("original-unsent-message");
+    projection = {
+      ...projection,
+      runs: [
+        {
+          ...run,
+          id: RunId.make("stopped-run"),
+          manualContinuationOfRunId: undefined,
+          userMessageId: originalMessageId,
+          status: "interrupted",
+          ordinal: 1,
+        },
+        ...projection.runs,
+      ],
+      messages: [
+        { ...message, id: originalMessageId, text: "Original request" },
+        ...projection.messages,
+      ],
+    };
+  }
+  if (input.sideChat?.repeatedResume) {
+    const retry = RunId.make("stopped-resume");
+    projection = {
+      ...projection,
+      runs: projection.runs
+        .map((r) => (r.id === runId ? { ...r, manualContinuationOfRunId: retry } : r))
+        .concat({
+          ...run,
+          id: retry,
+          manualContinuationOfRunId: RunId.make("stopped-run"),
+          status: "interrupted",
+        }),
+    };
+  }
+  if (input.sideChat?.acceptedResume) {
+    const acceptedId = RunAttemptId.make("accepted-original");
+    projection = {
+      ...projection,
+      attempts: [
+        ...projection.attempts,
+        {
+          ...projection.attempts[0]!,
+          id: acceptedId,
+          runId: RunId.make("stopped-run"),
+          providerThreadId: oldProviderThreadId,
+          status: "interrupted",
+        },
+        ...(input.sideChat.restartedResume
+          ? [
+              {
+                ...projection.attempts[0]!,
+                id: RunAttemptId.make("unaccepted-replacement"),
+                runId: RunId.make("stopped-run"),
+                attemptOrdinal: 2,
+                reason: "steering_restart" as const,
+                status: "interrupted" as const,
+              },
+            ]
+          : []),
+      ],
+      providerTurns: [
+        ...projection.providerTurns,
+        {
+          id: ProviderTurnId.make("accepted-original-turn"),
+          runAttemptId: acceptedId,
+          providerThreadId: oldProviderThreadId,
+          nodeId: rootNodeId,
+          ordinal: 1,
+          nativeTurnRef: null,
+          status: "interrupted",
+          startedAt: now,
+          completedAt: now,
+        },
+      ],
+    };
+  }
   if ("historyReadFailureAfterFallback" in input || "resumeFailure" in input) {
     const nativeThreadRef = {
       driver: providerThread.driver,
@@ -812,6 +1002,10 @@ function makeLocalCommandHarness(input: {
     resumeThread: () => Effect.succeed(sideChatThread),
     forkThread,
     startTurn,
+    resumeTurn: input.nativeResumeUnsupported
+      ? undefined
+      : (input: ProviderAdapter.ProviderAdapterV2ResumeTurnInput) =>
+          startTurn(ProviderAdapter.resumeTurnInput(input)),
   };
   const open = vi.fn(() =>
     input.sideChat !== undefined
@@ -849,7 +1043,13 @@ function makeLocalCommandHarness(input: {
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
   >((runInput) =>
     input.sideChat !== undefined
-      ? runInput.session.startTurn(runInput as never).pipe(Effect.orDie)
+      ? (runInput.resume
+          ? runInput.session.resumeTurn!({
+              ...runInput,
+              messageId: runInput.message.messageId,
+            } as never)
+          : runInput.session.startTurn(runInput as never)
+        ).pipe(Effect.orDie)
       : input.failReadsAfterRunning === true || input.previousTurn !== undefined
         ? Effect.suspend(() =>
             providerBusy ? Effect.die("The previous provider turn is still running.") : Effect.void,
@@ -1021,7 +1221,10 @@ function makeLocalCommandHarness(input: {
             ),
         }),
         Layer.mock(ProviderAuthService.ProviderAuthService)({ tryHandlePromptCommand }),
-        Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
+        Layer.mock(RunExecutionService.RunExecutionServiceV2)({
+          startRootRun,
+          forkBaseline: () => Effect.succeed(Effect.void),
+        }),
         Layer.succeed(ProviderUsageAnalytics.ProviderTurnAnalytics, {
           runStarted: () => Effect.void,
           turnCompleted: () => Effect.void,
@@ -1121,6 +1324,8 @@ effectIt.effect(
 
       const expectedTips = {
         retained: { tip: threadTip, file: "thread.txt", upstream: null, base: "" },
+        // A failed removal can leave the folder behind with only dependencies inside.
+        leftover: { tip: threadTip, file: "thread.txt", upstream: null, base: "" },
         deleted: { tip: projectTip, file: "project.txt", upstream: null, base: "project-current" },
         pushed: {
           tip: threadTip,
@@ -1132,6 +1337,12 @@ effectIt.effect(
           tip: threadTip,
           file: "thread.txt",
           upstream: "refs/remotes/origin/feature/restore",
+          base: "",
+        },
+        "pushed-sole-remote": {
+          tip: threadTip,
+          file: "thread.txt",
+          upstream: "refs/remotes/upstream/feature/restore",
           base: "",
         },
         detached: { tip: baseTip, file: null, upstream: null, base: "main" },
@@ -1148,14 +1359,23 @@ effectIt.effect(
           yield* git(workspaceRoot, ["switch", "--detach"]);
           expect(yield* git(workspaceRoot, ["branch", "--show-current"])).toBe("");
         }
+        if (scenario === "pushed-sole-remote") {
+          yield* git(workspaceRoot, ["remote", "rename", "origin", "upstream"]);
+        }
         if (scenario === "detached") {
+          yield* git(workspaceRoot, ["remote", "rename", "upstream", "origin"]);
           yield* git(workspaceRoot, ["push", "origin", "--delete", "feature/restore"]);
         }
         if (scenario === "detached-no-remote") {
           yield* git(workspaceRoot, ["remote", "remove", "origin"]);
         }
         yield* fileSystem.remove(worktreePath, { recursive: true });
-        if (scenario !== "retained") {
+        if (scenario === "leftover") {
+          yield* fileSystem.makeDirectory(path.join(worktreePath, "node_modules"), {
+            recursive: true,
+          });
+        }
+        if (scenario !== "retained" && scenario !== "leftover") {
           yield* git(workspaceRoot, ["worktree", "prune"]);
           yield* git(workspaceRoot, ["branch", "-D", "feature/restore"]);
         }
@@ -1202,6 +1422,27 @@ effectIt.effect(
         expect(harness.projection().runs.at(-1)?.status).toBe("running");
       }
     }).pipe(Effect.scoped, Effect.provide(layerRealGit)),
+);
+
+effectIt.effect("leaves a managed worktree folder without .git that holds user files", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const worktreesDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-leftover-" });
+    const worktreePath = path.join(worktreesDir, "project", "restore");
+    yield* fileSystem.makeDirectory(path.join(worktreePath, "node_modules"), { recursive: true });
+    yield* fileSystem.writeFileString(path.join(worktreePath, "notes.md"), "keep me");
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      worktreePath,
+      worktreesDir,
+      fileSystem,
+      failReadsAfterRunning: true,
+    });
+    yield* harness.start;
+    expect(harness.createWorktree).not.toHaveBeenCalled();
+    expect(yield* fileSystem.readFileString(path.join(worktreePath, "notes.md"))).toBe("keep me");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 effectIt.effect(
@@ -1288,6 +1529,47 @@ effectIt.effect("recovers an abandoned failed turn before continuing its native 
   }),
 );
 
+effectIt.effect("sends new steering text when restarting a manual continuation", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "New steering instruction",
+      manualContinuation: true,
+      steeringRestart: true,
+      nativeResumeUnsupported: true,
+      sideChat: { contextRun: "delivered" },
+    });
+    yield* harness.start;
+    expect(harness.startTurn.mock.calls[0]?.[0].message.text).toBe("New steering instruction");
+    expect(harness.startRootRun.mock.calls[0]?.[0].resume).toBe(false);
+  }),
+);
+
+effectIt.effect("refuses unsupported resume instead of manufacturing a user prompt", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "",
+      manualContinuation: true,
+      nativeResumeUnsupported: true,
+      sideChat: { contextRun: "delivered" },
+    });
+    yield* harness.start;
+    expect(harness.startTurn).not.toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.settledRuns).toEqual(["failed"]);
+    expect(harness.projection().turnItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "error",
+          failure: expect.objectContaining({
+            message:
+              "This provider cannot resume without a new message. Send a message to continue.",
+          }),
+        }),
+      ]),
+    );
+  }),
+);
+
 effectIt.effect.each([
   { contextRun: "current", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
   { contextRun: "failed", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
@@ -1299,6 +1581,29 @@ effectIt.effect.each([
     context: "SIDE_CHAT_CONTEXT",
   },
   { contextRun: "delivered", runtimeMode: "full-access", context: "" },
+  { contextRun: "delivered", runtimeMode: "full-access", context: "", unsentResume: true },
+  {
+    contextRun: "delivered",
+    runtimeMode: "full-access",
+    context: "",
+    unsentResume: true,
+    repeatedResume: true,
+  },
+  {
+    contextRun: "delivered",
+    runtimeMode: "full-access",
+    context: "",
+    unsentResume: true,
+    acceptedResume: true,
+  },
+  {
+    contextRun: "delivered",
+    runtimeMode: "full-access",
+    context: "",
+    unsentResume: true,
+    acceptedResume: true,
+    restartedResume: true,
+  },
   {
     contextRun: "current",
     threadRuntimeMode: "approval-required",
@@ -1310,7 +1615,8 @@ effectIt.effect.each([
   ({ runtimeMode, context, ...sideChat }) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
-        text: "What is the main thread doing?",
+        text: "",
+        manualContinuation: true,
         sideChat,
       });
 
@@ -1319,9 +1625,15 @@ effectIt.effect.each([
       expect(harness.open).toHaveBeenCalledWith(
         expect.objectContaining({ runtimePolicy: expect.objectContaining({ runtimeMode }) }),
       );
+      const resendsOriginal =
+        "unsentResume" in sideChat &&
+        (!("acceptedResume" in sideChat) || "restartedResume" in sideChat);
       expect(harness.startTurn.mock.calls.map(([turn]) => turn.message.text)).toEqual([
-        withInlineContext(context, "What is the main thread doing?"),
+        withInlineContext(context, resendsOriginal ? "Original request" : ""),
       ]);
+      expect(harness.startTurn.mock.calls[0]?.[0].resume === true).toBe(
+        context === "" && !resendsOriginal,
+      );
       expect(harness.projection().contextHandoffs).toMatchObject([
         {
           id: "side-chat-context",
@@ -1366,20 +1678,47 @@ effectIt.effect.each([
     }),
 );
 
-effectIt.effect.each([false, true])(
-  "OpenCode goal prompts defer switched-provider history only with native support: %s",
-  (nativeGoals) =>
+effectIt.effect.each(
+  (
+    [
+      { goalDriver: "opencode", nativeGoals: false },
+      { goalDriver: "opencode", nativeGoals: true },
+      { goalDriver: "antigravity", nativeGoals: false },
+      { goalDriver: "antigravity", nativeGoals: true },
+    ] as const
+  ).flatMap((choice) => [
+    { ...choice, resuming: false },
+    { ...choice, resuming: true },
+  ]),
+)(
+  "$goalDriver goal prompts defer switched-provider history only with native support: $nativeGoals, resuming: $resuming",
+  ({ goalDriver, nativeGoals, resuming }) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
-        text: "/goal all tests pass",
+        text: resuming ? "" : "/goal all tests pass",
+        manualContinuation: resuming,
+        goalDriver,
         nativeGoals,
-        sideChat: { contextRun: "failed", switchedProvider: true },
+        sideChat: { contextRun: "failed", switchedProvider: true, unsentResume: resuming },
       });
+      if (resuming) {
+        const projection = harness.projection();
+        harness.setProjection({
+          ...projection,
+          messages: projection.messages.map((message) =>
+            message.id === "original-unsent-message"
+              ? { ...message, text: "/goal all tests pass" }
+              : message,
+          ),
+        });
+      }
       harness.tryHandlePromptCommand.mockReturnValue(Effect.succeed(false));
       yield* harness.start;
       expect(harness.startTurn.mock.calls[0]?.[0].message.text.includes("SIDE_CHAT_CONTEXT")).toBe(
         !nativeGoals,
       );
+      if (nativeGoals)
+        expect(harness.startTurn.mock.calls[0]?.[0].message.text).toBe("/goal all tests pass");
     }),
 );
 
@@ -1397,6 +1736,50 @@ effectIt.effect.each([
 
     expect(harness.interruptTurn).not.toHaveBeenCalled();
     expect(harness.projection().runs.at(-1)?.status).toBe("running");
+  }),
+);
+
+effectIt.effect("leaves delegated children to their own runs when the parent starts a turn", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      previousTurn: { runStatus: "completed", turnStatus: "completed" },
+    });
+    const projection = harness.projection();
+    const completedChild = (origin: "provider_native" | "app_owned") => ({
+      id: NodeId.make(`node:${origin}`),
+      threadId: projection.thread.id,
+      runId: projection.runs[0]!.id,
+      parentNodeId: NodeId.make(`node:${origin}:parent`),
+      origin,
+      createdBy: "agent" as const,
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerThreadId: ProviderThreadId.make(`provider-thread:${origin}`),
+      childThreadId: ThreadId.make(`thread:${origin}`),
+      nativeTaskRef: null,
+      prompt: "work",
+      title: null,
+      model: null,
+      status: "completed" as const,
+      result: "done",
+      startedAt: null,
+      completedAt: null,
+      updatedAt: projection.updatedAt,
+    });
+    harness.setProjection({
+      ...projection,
+      subagents: [completedChild("provider_native"), completedChild("app_owned")],
+    });
+
+    yield* harness.start;
+
+    // A delegated child thread has its own run on the shared session; a parent run that also
+    // owns it ingests every one of the child's later items a second time.
+    expect(harness.startRootRun.mock.calls[0]?.[0]).toMatchObject({
+      relatedThreadIds: [ThreadId.make("thread:provider_native")],
+      relatedProviderThreadIds: [ProviderThreadId.make("provider-thread:provider_native")],
+    });
   }),
 );
 
@@ -1544,6 +1927,92 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
         }),
       );
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+// regression: #12341 a turn start overlapping a checkpoint restore wrote into the checkout
+// The filesystem is synchronous so the turn start either reaches the provider or parks on the
+// lease before the restore is released; realPath models the symlink alias and missing worktrees.
+effectIt.effect.each([
+  {
+    overlap: "a project-root thread during a restore of the project checkout",
+    restorePath: "/tmp/native-account-project",
+    worktreePath: undefined,
+    realPaths: {},
+    missing: [],
+  },
+  {
+    overlap: "a symlink alias of the restoring checkout",
+    restorePath: "/tmp/restore-overlap/link",
+    worktreePath: "/tmp/restore-overlap/checkout",
+    realPaths: { "/tmp/restore-overlap/link": "/tmp/restore-overlap/checkout" },
+    missing: [],
+  },
+  {
+    overlap: "a directory inside the restoring checkout",
+    restorePath: "/tmp/restore-overlap/checkout",
+    worktreePath: "/tmp/restore-overlap/checkout/packages/app",
+    realPaths: {},
+    missing: [],
+  },
+  {
+    overlap: "a not-yet-recreated worktree under a symlink alias of the restoring one",
+    restorePath: "/tmp/restore-overlap/link/missing-child",
+    worktreePath: "/tmp/restore-overlap/checkout/missing-child",
+    realPaths: { "/tmp/restore-overlap/link": "/tmp/restore-overlap/checkout" },
+    missing: [
+      "/tmp/restore-overlap/link/missing-child",
+      "/tmp/restore-overlap/checkout/missing-child",
+    ],
+  },
+] as const)(
+  "does not start provider work in $overlap until the restore finishes",
+  ({ restorePath, worktreePath, realPaths, missing }) =>
+    Effect.gen(function* () {
+      const order: Array<string> = [];
+      const releaseRestore = yield* Deferred.make<void>();
+      const restoreEntered = yield* Deferred.make<void>();
+      const fileSystem = FileSystem.makeNoop({
+        exists: () => Effect.succeed(true),
+        realPath: (candidate) =>
+          (missing as ReadonlyArray<string>).includes(candidate)
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "FileSystem",
+                  method: "realPath",
+                  pathOrDescriptor: candidate,
+                }),
+              )
+            : Effect.succeed((realPaths as Record<string, string>)[candidate] ?? candidate),
+      });
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        ...(worktreePath === undefined ? {} : { worktreePath }),
+        fileSystem,
+        failReadsAfterRunning: true,
+      });
+      const open = harness.open.getMockImplementation()!;
+      harness.open.mockImplementation(() =>
+        Effect.sync(() => order.push("provider session opened")).pipe(Effect.andThen(open())),
+      );
+      // The reservation CheckpointRollbackServiceV2.execute holds around its
+      // isolation check, provider rollback, and git restore of `restorePath`.
+      const restore = yield* withCheckpointRestoreReservation(
+        fileSystem,
+        yield* Path.Path,
+        restorePath,
+        Deferred.succeed(restoreEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseRestore)),
+          Effect.andThen(Effect.sync(() => order.push("checkpoint files restored"))),
+        ),
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(restoreEntered);
+      const startup = yield* harness.start.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.succeed(releaseRestore, undefined);
+      yield* Fiber.join(restore);
+      yield* Fiber.join(startup);
+      expect(order).toEqual(["checkpoint files restored", "provider session opened"]);
+    }).pipe(Effect.provide(Path.layer)),
 );
 
 effectIt.effect("reads current startup state after waiting for the workspace lease", () =>
