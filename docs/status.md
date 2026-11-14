@@ -64,7 +64,7 @@ settings; about 140 MiB for the `claude` program alone).
 Proven:
 
 - **Claude** runs through Anthropic's official Claude Agent SDK in the SDK host
-  (`helpers/sdk-host`). In 15 scenarios (and one more with `JAVA_HOME` set) the `claude` CLI
+  (`helpers/sdk-host`). In 17 scenarios (and one more with `JAVA_HOME` set) the `claude` CLI
   gets the same argv, environment (with the login shell's `PATH`, `__MISE_DIFF` and
   `JAVA_HOME`) and stdin as from the T3 server. 18 of the T3 server's 39 Claude transcripts pass (all that the
   driver runs). 11 live tests
@@ -907,6 +907,11 @@ lane, and a Claude cold start showed "Stopping" for up to about 6.5 minutes.
   Codex: `an_abandoned_start_sends_nothing_more` (a fake app-server holds `config/read`, then
   `turn/start`). ACP: `an_abandoned_start_sends_no_prompt`. `client-check.mjs`: the client's
   reducers show the run interrupted at once and never "Stopping".
+- **Checks** (macOS, 2026-11-14): `tools/check.sh` 36 of 36, none skipped; Claude conformance
+  18 of 18 SAME in 5 runs in a row; Codex conformance 0 open differences in 40 scenarios; ACP
+  17 of 17; T3 transcript replay 18 of 18; fixture replay 69 of 159, unchanged (Claude 34,
+  Codex 25, Grok 10). Memory (`memory_load 1000 1`, release, 3 runs each): live heap at turn
+  1,000 457-466 KiB on `main`, 458-467 KiB here; after close 388 and 389 KiB.
 - **Not proven.** Codex and ACP have no T3-side comparison of a mid-start Stop (their
   conformance harnesses drive T3's fixture runner; a held response plus a Stop there is not
   built). A Stop during our SDK host's own launch has no T3 counterpart (T3 has no host); ours
