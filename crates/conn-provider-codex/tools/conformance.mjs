@@ -43,6 +43,11 @@ const SCENARIOS = {
   resume: { fixture: "provider_thread_resume", covers: "a resumed thread on a new process" },
   mcp: { fixture: "simple", mcp: true, covers: "a turn with the t3-code MCP server" },
   approval: { fixture: "tool_call_read_only_on_request", covers: "an approval and its answer" },
+  elicitation: {
+    fixture: "tool_call_read_only_on_request",
+    derive: "elicitation",
+    covers: "an MCP form elicitation shown as an approval, and its answer",
+  },
   interrupt: { fixture: "turn_interrupt", covers: "an interrupt" },
   model: {
     fixture: "multi_turn",
@@ -183,12 +188,74 @@ const wrapper = (dir) => {
   return script;
 };
 
+/**
+ * T3's approval recording with its command approval swapped for an MCP form elicitation on
+ * the same turn (no Codex recording has one). The answer both sides send is compared; the
+ * recording expects T3's reply for the fixture's `approve_next_runtime_request`.
+ */
+function deriveElicitation(fixture, dir) {
+  const source = NodePath.join(
+    MONOREPO,
+    `apps/server/src/orchestration-v2/testkit/fixtures/${fixture}/codex_transcript.ndjson`,
+  );
+  let swapped = 0;
+  const lines = NodeFS.readFileSync(source, "utf8")
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => {
+      const entry = JSON.parse(line);
+      const frame = entry.frame;
+      if (entry.type === "emit_inbound" && frame?.method === "item/commandExecution/requestApproval") {
+        swapped += 1;
+        entry.label = "mcpServer/elicitation/request";
+        entry.frame = {
+          method: "mcpServer/elicitation/request",
+          id: frame.id,
+          params: {
+            threadId: frame.params.threadId,
+            turnId: frame.params.turnId,
+            serverName: "computer-use",
+            mode: "form",
+            message: "Allow ChatGPT to use Safari?",
+            _meta: { persist: ["session", "always"] },
+            requestedSchema: {
+              type: "object",
+              properties: {
+                approval: {
+                  type: "string",
+                  oneOf: [
+                    { const: "once", title: "Allow once" },
+                    { const: "session", title: "Allow for this session" },
+                  ],
+                },
+              },
+              required: ["approval"],
+            },
+          },
+        };
+      } else if (entry.type === "expect_outbound" && entry.label === "item/commandExecution/requestApproval") {
+        entry.label = "mcpServer/elicitation/request";
+        entry.frame = { id: frame.id, result: { action: "accept", content: { approval: "once" } } };
+      }
+      return JSON.stringify(entry);
+    });
+  if (swapped !== 1) throw new Error(`${fixture}: expected one command approval to swap, found ${swapped}`);
+  const file = NodePath.join(dir, "derived_transcript.ndjson");
+  NodeFS.mkdirSync(dir, { recursive: true });
+  NodeFS.writeFileSync(file, lines.join("\n") + "\n");
+  return file;
+}
+
 const plan = selected.map((name) => {
   const dir = NodePath.join(work, name);
+  const scenario = SCENARIOS[name];
   return {
     name,
     dir,
-    ...SCENARIOS[name],
+    ...scenario,
+    ...(scenario.derive === "elicitation"
+      ? { transcriptFile: deriveElicitation(scenario.fixture, dir) }
+      : {}),
     tsCodex: wrapper(NodePath.join(dir, "ts")),
     rustCodex: wrapper(NodePath.join(dir, "rust")),
   };
@@ -360,13 +427,18 @@ describe("conn codex conformance", () => {
       // A recording without a Codex fixture entry (provider_thread_resume), or a scenario with
       // its own steps and recording, runs with the simple fixture's Codex settings and no
       // output assertions.
-      const own = scenario.transcript === undefined ? fixture.providers.find((p: any) => p.driver === "codex") : undefined;
+      const own =
+        scenario.transcript === undefined && scenario.transcriptFile === undefined
+          ? fixture.providers.find((p: any) => p.driver === "codex")
+          : undefined;
       const recording = scenario.transcript ?? scenario.fixture;
       const driver =
         own ?? {
           ...findReplayFixture("simple")!.providers.find((p: any) => p.driver === "codex")!,
           recordedScenario: recording,
-          transcriptFile: new URL(\`./fixtures/\${recording}/codex_transcript.ndjson\`, import.meta.url),
+          transcriptFile: scenario.transcriptFile
+            ? new URL(\`file://\${scenario.transcriptFile}\`)
+            : new URL(\`./fixtures/\${recording}/codex_transcript.ndjson\`, import.meta.url),
           assertOutput: () => {},
         };
       const driverWithModel = {

@@ -12,6 +12,7 @@
 
 pub mod client;
 pub mod context;
+mod elicitation;
 #[rustfmt::skip]
 pub mod instructions;
 pub mod launch;

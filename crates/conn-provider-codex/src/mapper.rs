@@ -150,6 +150,11 @@ enum PendingKind {
     Permissions {
         permissions: Value,
     },
+    /// `mcpServer/elicitation/request`: the reply is built from the request
+    /// (`toMcpElicitationResponse`).
+    Elicitation {
+        params: Value,
+    },
     UserInput {
         /// (the id the client sees, Codex's own id), in question order. The client sees the
         /// trimmed id, or `question-<n>` for an empty one (`nativeQuestionIds` in T3).
@@ -1459,11 +1464,18 @@ impl<E: Env> Mapper<E> {
                 | "item/tool/requestUserInput"
                 | "execCommandApproval"
                 | "applyPatchApproval"
+                | "mcpServer/elicitation/request"
         );
-        if method == "mcpServer/elicitation/request" {
-            // Field-less forms only in TS; not projected here, so every elicitation is declined.
+        // T3 declines at once an elicitation an approval cannot answer (a URL, or a form
+        // with required fields it cannot fill), and one with no active turn.
+        if method == "mcpServer/elicitation/request"
+            && (crate::elicitation::response(p, "accept")["action"] != "accept"
+                || native_turn.is_none())
+        {
             out.push(Out::Write(reply(&id, json!({"action": "decline"}))));
-            out.push(Out::Skipped("request mcpServer/elicitation/request".into()));
+            out.push(Out::Skipped(
+                "an MCP elicitation an approval cannot answer".into(),
+            ));
             return;
         }
         if !known {
@@ -1488,7 +1500,26 @@ impl<E: Env> Mapper<E> {
                 .get(&thread_id)
                 .is_some_and(|(_, kinds)| kinds.contains(kind))
         };
+        let mut shown = None;
         let (request_kind, item_id, native_request, prompt, kind) = match method {
+            "mcpServer/elicitation/request" => {
+                let native = if p["mode"] == "url" {
+                    p["elicitationId"].as_str().unwrap_or_default().to_owned()
+                } else {
+                    format!(
+                        "mcp-elicitation:{}",
+                        p["serverName"].as_str().unwrap_or_default()
+                    )
+                };
+                shown = Some(crate::elicitation::describe(p));
+                (
+                    "mcp-elicitation",
+                    native.clone(),
+                    native,
+                    p["message"].as_str().map(str::to_owned),
+                    PendingKind::Elicitation { params: p.clone() },
+                )
+            }
             "item/commandExecution/requestApproval" => {
                 if allowed("command") {
                     out.push(Out::Write(reply(
@@ -1645,7 +1676,7 @@ impl<E: Env> Mapper<E> {
                 &now,
             )
         } else {
-            approval_artifacts(
+            let (node, mut item, request) = approval_artifacts(
                 turn,
                 &item_id,
                 &native_request,
@@ -1654,7 +1685,12 @@ impl<E: Env> Mapper<E> {
                 prompt.as_deref(),
                 &session,
                 &now,
-            )
+            );
+            if let Some((app_name, options)) = shown {
+                item["appName"] = json!(app_name);
+                item["options"] = Value::Array(options);
+            }
+            (node, item, request)
         };
         push_event(out, json!({"type": "node.updated", "node": node}));
         push_event(out, json!({"type": "turn_item.updated", "turnItem": item}));
@@ -1732,6 +1768,10 @@ impl<E: Env> Mapper<E> {
                     _ => json!({"denied": {"rejection": "User declined the request."}}),
                 };
                 json!({ "decision": legacy })
+            }
+            PendingKind::Elicitation { params } => {
+                let decision = decision.ok_or_else(|| missing("an approval decision"))?;
+                crate::elicitation::response(params, &decision)
             }
             PendingKind::Permissions { permissions } => {
                 let decision = decision.ok_or_else(|| missing("an approval decision"))?;
