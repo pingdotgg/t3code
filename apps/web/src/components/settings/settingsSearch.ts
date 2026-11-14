@@ -348,6 +348,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["wide full width column layout messages composer monitor"],
   },
   {
+    id: "usage-icon-click-behavior",
+    title: "Usage icon action",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar quick view popover usage page limits icon click"],
+  },
+  {
     id: "thread-details-items",
     title: "Thread details",
     to: "/settings/appearance",

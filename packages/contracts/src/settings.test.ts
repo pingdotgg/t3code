@@ -326,6 +326,15 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings usage icon action", () => {
+  it("defaults to the Usage page and accepts the quick view", () => {
+    expect(decodeClientSettings({}).usageIconClickBehavior).toBe("usage-page");
+    expect(decodeClientSettingsPatch({ usageIconClickBehavior: "quick-view" })).toEqual({
+      usageIconClickBehavior: "quick-view",
+    });
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it.each([
     [true, "hold"],

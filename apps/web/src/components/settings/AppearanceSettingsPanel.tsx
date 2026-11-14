@@ -6,6 +6,7 @@ import {
   type ChatWidth,
   type EffortDisplay,
   type EnvironmentIdentificationMode,
+  type UsageIconClickBehavior,
   MAX_APPEARANCE_CONTRAST,
   MAX_GLASS_OPACITY,
   MAX_PANEL_ANIMATION_DURATION_MS,
@@ -82,6 +83,11 @@ const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
 const EFFORT_DISPLAY_LABELS: Record<EffortDisplay, string> = {
   label: "Word",
   bars: "Bars",
+};
+
+const USAGE_ICON_CLICK_BEHAVIOR_LABELS: Record<UsageIconClickBehavior, string> = {
+  "quick-view": "Quick view",
+  "usage-page": "Usage page",
 };
 
 export function AppearanceSettingsPanel() {
@@ -284,6 +290,44 @@ export function AppearanceSettingsPanel() {
                   <SelectItem value="comfortable">Comfortable (default)</SelectItem>
                   <SelectItem value="wide">Wide</SelectItem>
                   <SelectItem value="full">Full</SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("usage-icon-click-behavior")}
+          description="Choose whether the Usage icon below the thread list opens the full Usage page or the optional quick view."
+          resetAction={
+            settings.usageIconClickBehavior !== DEFAULT_UNIFIED_SETTINGS.usageIconClickBehavior ? (
+              <SettingResetButton
+                label="usage icon action"
+                onClick={() =>
+                  updateSettings({
+                    usageIconClickBehavior: DEFAULT_UNIFIED_SETTINGS.usageIconClickBehavior,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="w-full sm:w-40">
+              <Select
+                value={settings.usageIconClickBehavior}
+                onValueChange={(value) => {
+                  if (value === "quick-view" || value === "usage-page") {
+                    updateSettings({ usageIconClickBehavior: value });
+                  }
+                }}
+              >
+                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Usage icon action">
+                  <SelectValue>
+                    {USAGE_ICON_CLICK_BEHAVIOR_LABELS[settings.usageIconClickBehavior]}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="usage-page">Usage page (default)</SelectItem>
+                  <SelectItem value="quick-view">Quick view</SelectItem>
                 </SelectPopup>
               </Select>
             </div>
