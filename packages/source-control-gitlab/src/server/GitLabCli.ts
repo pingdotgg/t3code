@@ -154,6 +154,7 @@ export class GitLabCliCommandError extends Schema.TaggedError<GitLabCliCommandEr
       VcsProcessOutputLimitError: (cause) => new GitLabCliCommandError({ ...context, cause }),
       VcsProcessMissingExitCodeError: (cause) => new GitLabCliCommandError({ ...context, cause }),
       VcsRepositoryDetectionError: (cause) => new GitLabCliCommandError({ ...context, cause }),
+      VcsCheckpointStorageError: (cause) => new GitLabCliCommandError({ ...context, cause }),
       VcsUnsupportedOperationError: (cause) => new GitLabCliCommandError({ ...context, cause }),
     });
   }
@@ -196,7 +197,12 @@ export class GitLabRepositoryDecodeError extends Schema.TaggedError<GitLabReposi
   "GitLabRepositoryDecodeError",
   {
     ...gitLabCliDecodeErrorContext,
-    operation: Schema.Literals(["getRepositoryCloneUrls", "createRepository", "getDefaultBranch"]),
+    operation: Schema.Literals([
+      "getRepositoryCloneUrls",
+      "createRepository",
+      "getDefaultBranch",
+      "createMergeRequest",
+    ]),
     repository: Schema.optional(Schema.String),
   },
 ) {
@@ -332,6 +338,10 @@ const RawGitLabDefaultBranchSchema = Schema.Struct({
   default_branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 
+const decodeGitLabMergeRequestProject = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ id: Schema.Number, path: TrimmedNonEmptyString })),
+);
+
 const RawGitLabNamespaceSchema = Schema.Struct({
   id: Schema.Number,
 });
@@ -378,12 +388,6 @@ function sourceRefName(input: {
   readonly source?: SourceControlProvider.SourceControlRefSelector;
 }): string {
   return input.source?.refName ?? normalizeHeadSelector(input.headSelector);
-}
-
-function sourceProjectIdentifier(
-  source: SourceControlProvider.SourceControlRefSelector | undefined,
-): string | null {
-  return source?.repository ?? source?.owner ?? null;
 }
 
 function toSummaryWithOptionalUpdatedAt(
@@ -631,26 +635,47 @@ export const make = Effect.gen(function* () {
         Effect.map(normalizeRepositoryCloneUrls),
       );
     }),
-    createMergeRequest: Effect.fn("GitLabCli.createMergeRequest")(function (input) {
-      const sourceProject = sourceProjectIdentifier(input.source);
-      return execute({
+    createMergeRequest: Effect.fn("GitLabCli.createMergeRequest")(function* (input) {
+      let project = ":fullpath";
+      let targetProjectId: number | undefined;
+      if (input.source?.repository || input.source?.owner) {
+        const result = yield* execute({ cwd: input.cwd, args: ["api", "projects/:fullpath"] });
+        const targetProject = yield* decodeGitLabMergeRequestProject(result.stdout).pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitLabRepositoryDecodeError({
+                operation: "createMergeRequest",
+                command: "glab",
+                cwd: input.cwd,
+                cause,
+              }),
+          ),
+        );
+        project = encodeURIComponent(
+          input.source.repository ?? `${input.source.owner}/${targetProject.path}`,
+        );
+        targetProjectId = targetProject.id;
+      }
+      yield* execute({
         cwd: input.cwd,
         args: [
           "api",
           "--method",
           "POST",
-          "projects/:fullpath/merge_requests",
+          `projects/${project}/merge_requests`,
           "--raw-field",
           `source_branch=${sourceRefName(input)}`,
           "--raw-field",
           `target_branch=${input.target?.refName ?? input.baseBranch}`,
-          ...(sourceProject ? ["--raw-field", `source_project_id=${sourceProject}`] : []),
+          ...(targetProjectId === undefined
+            ? []
+            : ["--raw-field", `target_project_id=${targetProjectId}`]),
           "--raw-field",
           `title=${input.title}`,
           "--field",
           `description=@${input.bodyFile}`,
         ],
-      }).pipe(Effect.asVoid);
+      });
     }),
     getDefaultBranch: Effect.fn("GitLabCli.getDefaultBranch")(function (input) {
       return execute({

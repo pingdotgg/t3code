@@ -264,7 +264,7 @@ a deploy:
 
 ```typescript
 // src/worker.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
@@ -316,9 +316,10 @@ Platform limits to plan around:
 - A deployment splits between at most two versions, and only the last
   100 uploaded versions are deployable.
 - Each Durable Object is assigned one version by the percentages,
-  so a single object never splits across versions. Class migrations
-  cannot ride a rollout (deploy them at 100% first), and a version
-  worker cannot host DO or Workflow classes. Host them on the parent
+  so a single object never splits across versions. Durable Object class
+  changes (new, renamed, deleted or moved classes) cannot ride a
+  rollout (deploy them at 100% first), and a version worker cannot
+  host DO or Workflow classes. Host them on the parent
   and reference them
   [cross-script](/cloudflare/compute/cross-worker-durable-object).
 - Workers that implement Durable Objects do not get preview URLs.
@@ -349,6 +350,13 @@ instances roll, so keep the Worker-to-container protocol compatible
 across both images until the rollout completes. See
 [Rollouts](/cloudflare/compute/containers#rollouts) in the Containers
 guide.
+
+## Durable Objects roll out by object
+
+Each Durable Object runs one version. Raising the traffic moves more
+objects onto the new version, and each one waits to go idle before it
+switches. See
+[Gradual deployments assign objects to versions](/cloudflare/compute/code-updates#gradual-deployments-assign-objects-to-versions).
 
 ## Where next
 
