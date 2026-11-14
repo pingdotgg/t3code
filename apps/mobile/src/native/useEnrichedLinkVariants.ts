@@ -1,6 +1,6 @@
 import { modelChipIcon } from "../lib/contextChipIconSource";
-import { useMemo } from "react";
-import { Image } from "react-native";
+import { useContext, useMemo } from "react";
+import { Image, Platform, useWindowDimensions } from "react-native";
 import type { LinkPillContent, MarkdownStyle } from "react-native-enriched-markdown";
 import type { ComposerContextRecord } from "@t3tools/contracts";
 import { contextChipAccent, contextChipPresentation } from "../lib/composerChipPresentation";
@@ -23,6 +23,8 @@ import {
   enrichedThreadLinkPresentation,
 } from "../lib/enrichedLinkPresentation";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
+import { MarkdownImageAvailableWidthContext } from "../features/threads/ThreadMarkdownImage";
+import { markdownLinkChipReserves } from "../lib/markdownDocument";
 
 function chipCustomization(
   chip: ReturnType<typeof enrichedContextLinkPresentation>,
@@ -107,9 +109,31 @@ export function useEnrichedLinkVariants(
   urls: ReadonlyArray<string>,
   props: SelectableMarkdownTextProps,
   fileHrefs: ReadonlySet<string>,
+  markdown: string,
 ) {
   const { linkCustomization, skills, models, textStyle, fileEmbedLabel } = props;
   const theme = useUniwindTheme();
+  const lineWidth = useContext(MarkdownImageAvailableWidthContext);
+  const { fontScale } = useWindowDimensions();
+  // Android moves a link chip down only if it fits with the text stuck to it (a closing "."), so
+  // a chip as wide as the line runs off the edge.
+  const pillMaxWidthKey = useMemo(() => {
+    if (Platform.OS !== "android" || lineWidth <= 0 || urls.length === 0) return "[]";
+    const em = textStyle.fontSize * fontScale;
+    const reserves = markdownLinkChipReserves(markdown, urls, em);
+    return JSON.stringify(
+      urls.map((url) => {
+        const reserve = reserves.get(url) ?? 2 * em;
+        // Never zero, which the renderer reads as no cap.
+        return [url, reserve && Math.max(lineWidth - reserve, em)];
+      }),
+    );
+  }, [markdown, urls, lineWidth, textStyle.fontSize, fontScale]);
+  // Parsed from a string so a streaming tick that changes no width keeps linkVariants.
+  const pillMaxWidths = useMemo(
+    () => new Map<string, number>(JSON.parse(pillMaxWidthKey)),
+    [pillMaxWidthKey],
+  );
   const links = useMemo(() => {
     const byUrl = new Map<string, MarkdownLinkCustomization>();
     for (const url of urls) {
@@ -143,6 +167,7 @@ export function useEnrichedLinkVariants(
       Object.fromEntries(
         [...links].map(([url, link]) => {
           const chipForeground = chipForegrounds.get(url);
+          const maxWidth = pillMaxWidths.get(url) ?? 0;
           return [
             enrichedLinkVariantPattern(url),
             {
@@ -152,6 +177,7 @@ export function useEnrichedLinkVariants(
                 borderRadius: 6,
                 paddingHorizontal: 5,
                 paddingVertical: 2,
+                ...(maxWidth > 0 ? { maxWidth } : {}),
               },
               fontFamily: chipForeground ? FONT_FAMILIES.medium : textStyle.fontFamily,
               color: chipForeground ?? link.color ?? textStyle.fileTextColor,
@@ -161,7 +187,7 @@ export function useEnrichedLinkVariants(
           ];
         }),
       ),
-    [chipForegrounds, links, textStyle],
+    [chipForegrounds, links, textStyle, pillMaxWidths],
   );
   const linkPillContent = useMemo<Record<string, LinkPillContent>>(
     () =>

@@ -492,6 +492,91 @@ export function markdownForNativeParsing(markdown: string): string {
   return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
 }
 
+/**
+ * For each link, in dp, how much narrower than the message its Android chip must be for the text
+ * stuck to it (a closing ".") to fit beside it on one line: one em per stuck character, plus an
+ * overestimate of the list and quote indent. Zero when nothing is stuck to any occurrence.
+ */
+export function markdownLinkChipReserves(
+  markdown: string,
+  urls: ReadonlyArray<string>,
+  em: number,
+): Map<string, number> {
+  const targets = new Set(urls.filter(Boolean));
+  const reserves = new Map<string, number>();
+  // Measures one block of inline text by what it draws, so link destinations, titles, emphasis
+  // markers, and the block's own prefix (a quote's ">") never count as stuck text.
+  const measure = (block: MarkdownNode, indent: number) => {
+    let drawn = "";
+    const links: Array<readonly [string, number, number]> = [];
+    const flatten = (node: MarkdownNode, inLink = false) => {
+      const start = drawn.length;
+      if (node.type === "text") {
+        // Recognized text links (skills, models) are plain text in Markdown; a link's label is not.
+        for (const url of inLink ? [] : targets) {
+          for (
+            let at = node.value.indexOf(url);
+            at >= 0;
+            at = node.value.indexOf(url, at + url.length)
+          ) {
+            links.push([url, start + at, start + at + url.length]);
+          }
+        }
+        drawn += node.value;
+      } else if (node.type === "inlineCode") drawn += node.value;
+      else if (node.type === "break") drawn += "\n";
+      else if ("children" in node) {
+        const label = inLink || node.type === "link" || node.type === "linkReference";
+        for (const child of node.children) flatten(child, label);
+      }
+      const url =
+        node.type === "link"
+          ? node.url
+          : node.type === "linkReference"
+            ? definitions.get(node.identifier.toUpperCase())
+            : undefined;
+      if (url !== undefined && targets.has(url)) links.push([url, start, drawn.length]);
+    };
+    flatten(block);
+    for (const [url, start, end] of links) {
+      const stuck =
+        (drawn.slice(0, start).match(/\S*$/)?.[0].length ?? 0) +
+        (drawn.slice(end).match(/^\S*/)?.[0].length ?? 0);
+      reserves.set(url, Math.max(reserves.get(url) ?? 0, stuck && stuck * em + indent));
+    }
+  };
+  // Native indent, overestimated: 24dp per nested list level plus the innermost marker and gap,
+  // about 15dp for a bullet but up to 3 em for a number or checkbox, whose column can also widen by
+  // 0.6 em per level; and 14dp per quote.
+  const wideMarker = 3 * em;
+  const visit = (node: MarkdownNode, indent: number, marker: number) => {
+    if (node.type === "paragraph" || node.type === "heading" || node.type === "tableCell") {
+      measure(node, indent + marker);
+      return;
+    }
+    if (node.type === "blockquote") indent += 14;
+    if (node.type === "list") {
+      if (marker) indent += 24 + (marker === wideMarker ? 0.6 * em : 0);
+      const wide = node.ordered || node.children.some((item) => item.checked != null);
+      marker = wide ? wideMarker : 1.25 * em;
+    }
+    if ("children" in node) {
+      for (const child of node.children) visit(child, indent, marker);
+    }
+  };
+  const root = parser.parse(markdown);
+  const definitions = new Map<string, string>();
+  const collect = (node: MarkdownNode) => {
+    if (node.type === "definition" && !definitions.has(node.identifier.toUpperCase())) {
+      definitions.set(node.identifier.toUpperCase(), node.url);
+    }
+    if ("children" in node) node.children.forEach(collect);
+  };
+  collect(root);
+  visit(root, 0, 0);
+  return reserves;
+}
+
 export function parseMarkdownDocument(markdown: string): Root {
   return parser.parse(markdownForNativeParsing(markdown));
 }
