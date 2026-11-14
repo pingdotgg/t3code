@@ -3,5 +3,5 @@ export function pullRequestTabOffset(
   saved: number | undefined,
   headerEnd: number,
 ) {
-  return current < headerEnd ? current : Math.max(headerEnd, saved ?? headerEnd);
+  return current < headerEnd - 0.5 ? current : Math.max(headerEnd, saved ?? headerEnd);
 }

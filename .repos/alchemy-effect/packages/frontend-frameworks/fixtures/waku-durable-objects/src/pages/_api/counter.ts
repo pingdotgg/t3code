@@ -6,15 +6,13 @@ import { counterNamespace } from "../../env.ts";
 
 export const GET = async (): Promise<Response> => {
   const namespace = await counterNamespace();
-  if (!namespace)
-    return Response.json({ error: "COUNTER binding missing" }, { status: 500 });
+  if (!namespace) return Response.json({ error: "COUNTER binding missing" }, { status: 500 });
   return Response.json({ count: await namespace.getByName("fixture").get() });
 };
 
 export const POST = async (): Promise<Response> => {
   const namespace = await counterNamespace();
-  if (!namespace)
-    return Response.json({ error: "COUNTER binding missing" }, { status: 500 });
+  if (!namespace) return Response.json({ error: "COUNTER binding missing" }, { status: 500 });
   return Response.json({
     count: await namespace.getByName("fixture").increment(),
   });

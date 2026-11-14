@@ -1,10 +1,7 @@
-import * as Effect from "effect/Effect";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-  ModuleLoadError,
-  resolveProjectPackageDirectory,
-} from "../core/Loader.ts";
+import * as Effect from "effect/Effect";
+import { ModuleLoadError, resolveProjectPackageDirectory } from "../core/Loader.ts";
 
 /** Vinext exposes import-only entrypoints that require.resolve cannot resolve. */
 export const loadVinextModule = <T>(root: string, file: string) =>
@@ -15,8 +12,7 @@ export const loadVinextModule = <T>(root: string, file: string) =>
           import(
             /* @vite-ignore */ pathToFileURL(join(directory, "dist", file)).href
           ) as Promise<T>,
-        catch: (cause) =>
-          new ModuleLoadError({ root, specifier: `vinext/${file}`, cause }),
+        catch: (cause) => new ModuleLoadError({ root, specifier: `vinext/${file}`, cause }),
       }),
     ),
   );
