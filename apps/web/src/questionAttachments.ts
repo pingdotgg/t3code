@@ -8,7 +8,6 @@ import {
   userInputDraftKey,
 } from "@t3tools/client-runtime/state/thread-requests";
 import {
-  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type EnvironmentId,
   type RuntimeRequestId,
   type ScopedThreadRef,
@@ -182,7 +181,7 @@ function returnUnsentAnswersToThreadDraft(
   toastManager.add({
     type: "warning",
     title: "Some question attachments were not returned",
-    description: `${left.map((attachment) => attachment.name).join(", ")} did not fit: a message holds at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+    description: `${left.map((attachment) => attachment.name).join(", ")} could not be returned to the draft.`,
     data: { threadRef: target },
   });
 }

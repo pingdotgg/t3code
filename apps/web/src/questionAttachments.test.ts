@@ -197,10 +197,20 @@ it.each(["cancelled", "expired"] as const)(
       "Reference work",
     );
     const answer = `Purple, like ${formatInlineContextReference(threadContextReference(reference))}`;
-    store.setPrompt({ environmentId, threadId }, "Earlier draft");
-    store.setThreadContexts(first, [reference]);
     const file = textFile("notes");
-    store.addFiles(first, [file]);
+    const marker = { ...file, id: "notes-marker", file: null };
+    store.addFiles({ environmentId, threadId }, [marker]);
+    store.setPrompt(
+      { environmentId, threadId },
+      `Earlier draft ${formatInlineContextReference(fileContextReference(marker))}`,
+    );
+    store.setThreadContexts(first, [reference]);
+    const distinctFile = {
+      ...file,
+      id: "other-notes",
+      file: new File(["other"], file.name, { type: file.mimeType }),
+    };
+    store.addFiles(first, [file, distinctFile], { allowDuplicates: true });
     const image = {
       type: "image" as const,
       id: "unsent-question-image",
@@ -222,12 +232,16 @@ it.each(["cancelled", "expired"] as const)(
     makeThreadRequestsResolvedAnnouncer(environmentId, threadId)([{ id: request, status }]);
 
     expect(store.getComposerDraft({ environmentId, threadId })).toMatchObject({
-      prompt: ensureInlineContextReferences(`Earlier draft\n\n${answer}\n\nAlso this`, [
-        fileContextReference(file),
-        imageContextReference(image),
-      ]),
+      prompt: ensureInlineContextReferences(
+        `Earlier draft ${formatInlineContextReference(fileContextReference(file))}\n\n${answer}\n\nAlso this`,
+        [
+          fileContextReference(file),
+          fileContextReference(distinctFile),
+          imageContextReference(image),
+        ],
+      ),
       threadContexts: [reference],
-      files: [file],
+      files: [file, distinctFile],
       images: [image],
     });
     expect(usePendingUserInputAnswers.getState()).toEqual({});
@@ -250,6 +264,8 @@ it("names and releases the question attachments a full thread draft cannot take"
   );
   store.addFiles({ environmentId, threadId }, draftFiles);
   const [fits, overflows] = [textFile("fits"), textFile("overflows")];
+  const marker = { ...fits, id: "fits-marker", file: null };
+  store.addFiles({ environmentId, threadId }, [marker]);
   store.addFiles(question, [fits, overflows]);
 
   makeThreadRequestsResolvedAnnouncer(
@@ -266,4 +282,63 @@ it("names and releases the question attachments a full thread draft cannot take"
       description: expect.stringContaining(overflows.name),
     }),
   );
+});
+
+it.each(["duplicate", "unavailable"] as const)(
+  "handles a %s persisted question file when the thread draft has space",
+  (reason) => {
+    const store = useComposerDraftStore.getState();
+    const request = RuntimeRequestId.make("stopped");
+    const question = questionAttachmentDraftId(environmentId, threadId, request, "first");
+    const file = {
+      ...textFile("notes"),
+      file: null,
+      uploadedAttachmentId: "uploaded-notes",
+      uploadEnvironmentId:
+        reason === "unavailable" ? EnvironmentId.make("other-environment") : environmentId,
+    };
+    store.addFiles(question, [file]);
+    if (reason === "duplicate") store.addFiles({ environmentId, threadId }, [file]);
+
+    makeThreadRequestsResolvedAnnouncer(
+      environmentId,
+      threadId,
+    )([{ id: request, status: "cancelled" }]);
+
+    expect(store.getComposerDraft(question)).toBeNull();
+    if (reason === "duplicate") {
+      expect(store.getComposerDraft({ environmentId, threadId })?.files).toEqual([file]);
+      expect(release.mock.calls.flat(2)).toEqual([]);
+      expect(toast).not.toHaveBeenCalled();
+    } else {
+      expect(release).toHaveBeenCalledExactlyOnceWith([file]);
+      expect(toast).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          type: "warning",
+          description: "notes.txt could not be returned to the draft.",
+        }),
+      );
+    }
+  },
+);
+
+it("returns a persisted question file's reattach marker when the thread draft has room", () => {
+  const store = useComposerDraftStore.getState();
+  const request = RuntimeRequestId.make("stopped");
+  const question = questionAttachmentDraftId(environmentId, threadId, request, "first");
+  const marker = { ...textFile("notes"), file: null };
+  store.addFiles(question, [marker]);
+
+  makeThreadRequestsResolvedAnnouncer(
+    environmentId,
+    threadId,
+  )([{ id: request, status: "cancelled" }]);
+
+  expect(store.getComposerDraft({ environmentId, threadId })).toMatchObject({
+    files: [marker],
+    prompt: ensureInlineContextReferences("", [fileContextReference(marker)]),
+  });
+  expect(store.getComposerDraft(question)).toBeNull();
+  expect(release.mock.calls.flat(2)).toEqual([]);
+  expect(toast).not.toHaveBeenCalled();
 });

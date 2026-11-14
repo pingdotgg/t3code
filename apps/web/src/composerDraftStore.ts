@@ -1017,6 +1017,23 @@ function composerTargetEnvironmentId(
     : target.environmentId;
 }
 
+function replaceComposerFileReferences(
+  prompt: string,
+  files: ReadonlyArray<ComposerFileAttachment>,
+  replacements: ReadonlyMap<string, ComposerFileAttachment>,
+): string {
+  if (replacements.size === 0) return prompt;
+  return replaceComposerContextReferences(prompt, (occurrence) => {
+    const original = files.find(
+      (file) => fileContextReference(file).contextId === occurrence.contextId,
+    );
+    const replacement = original ? replacements.get(original.id) : undefined;
+    return replacement
+      ? formatInlineContextReference(fileContextReference(replacement))
+      : occurrence.source;
+  });
+}
+
 /**
  * Splits `source`'s images and files between it and `destination`: up to the send limit,
  * skipping files the destination already has or cannot reach. Moved images keep their
@@ -1027,34 +1044,50 @@ function transferComposerAttachments(
   destination: ComposerThreadDraftState,
   destinationEnvironmentId: EnvironmentId | null,
 ) {
-  const destinationFileIds = new Set(destination.files.map((file) => file.id));
-  const destinationFileKeys = new Set(destination.files.map(composerFileDedupKey));
-  const transferableFiles = source.files.filter(
-    (file) =>
-      (file.file !== null || file.uploadEnvironmentId === destinationEnvironmentId) &&
-      !destinationFileIds.has(file.id) &&
-      !destinationFileKeys.has(composerFileDedupKey(file)),
-  );
   const remainingAttachmentSlots = Math.max(
     0,
     PROVIDER_SEND_TURN_MAX_ATTACHMENTS - destination.images.length - destination.files.length,
   );
   const movedImages = source.images.slice(0, remainingAttachmentSlots);
   const movedImageIds = new Set(movedImages.map((image) => image.id));
-  const movedFiles = transferableFiles
-    .slice(0, remainingAttachmentSlots - movedImages.length)
-    .map((file) => {
-      // Re-upload local bytes across environments; the destination cannot reach source upload ids.
-      if (
-        file.file === null ||
-        file.uploadEnvironmentId === undefined ||
-        file.uploadEnvironmentId === destinationEnvironmentId
-      ) {
-        return file;
-      }
+  const destinationFileIds = new Set(destination.files.map((file) => file.id));
+  const replacements = new Map<string, ComposerFileAttachment>();
+  const addedFiles: ComposerFileAttachment[] = [];
+  const movedFiles: ComposerFileAttachment[] = [];
+  for (const sourceFile of source.files) {
+    if (destinationFileIds.has(sourceFile.id)) {
+      movedFiles.push(sourceFile);
+      continue;
+    }
+    if (
+      sourceFile.file === null &&
+      sourceFile.uploadedAttachmentId !== undefined &&
+      sourceFile.uploadEnvironmentId !== destinationEnvironmentId
+    ) {
+      continue;
+    }
+    let file = sourceFile;
+    // Re-upload local bytes across environments; the destination cannot reach source upload ids.
+    if (file.file !== null && file.uploadEnvironmentId !== destinationEnvironmentId) {
       const { uploadedAttachmentId: _a, uploadEnvironmentId: _e, ...rest } = file;
-      return rest;
-    });
+      file = rest;
+    }
+    const marker = destination.files.find(
+      (candidate) =>
+        composerFileNeedsReattach(candidate) &&
+        !replacements.has(candidate.id) &&
+        composerFileMatchesReattachMarker(candidate, file),
+    );
+    if (marker) {
+      replacements.set(marker.id, file);
+    } else if (movedImages.length + addedFiles.length < remainingAttachmentSlots) {
+      addedFiles.push(file);
+    } else {
+      continue;
+    }
+    movedFiles.push(file);
+    destinationFileIds.add(file.id);
+  }
   const movedFileIds = new Set(movedFiles.map((file) => file.id));
   return {
     moved: [...movedImages, ...movedFiles],
@@ -1072,7 +1105,8 @@ function transferComposerAttachments(
     destination: {
       ...destination,
       images: [...destination.images, ...movedImages],
-      files: [...destination.files, ...movedFiles],
+      prompt: replaceComposerFileReferences(destination.prompt, destination.files, replacements),
+      files: [...destination.files.map((file) => replacements.get(file.id) ?? file), ...addedFiles],
       nonPersistedImageIds: [
         ...destination.nonPersistedImageIds,
         ...source.nonPersistedImageIds.filter((imageId) => movedImageIds.has(imageId)),
@@ -3715,18 +3749,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             acceptedIds = accepted.map((file) => file.id);
             const retained = existing.files.map((file) => replacements.get(file.id) ?? file);
-            const prompt =
-              replacements.size === 0
-                ? existing.prompt
-                : replaceComposerContextReferences(existing.prompt, (occurrence) => {
-                    const original = existing.files.find(
-                      (file) => fileContextReference(file).contextId === occurrence.contextId,
-                    );
-                    const replacement = original ? replacements.get(original.id) : undefined;
-                    return replacement
-                      ? formatInlineContextReference(fileContextReference(replacement))
-                      : occurrence.source;
-                  });
+            const prompt = replaceComposerFileReferences(
+              existing.prompt,
+              existing.files,
+              replacements,
+            );
             return {
               draftsByThreadKey: {
                 ...state.draftsByThreadKey,
@@ -4505,7 +4532,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 [toKey]: {
                   ...transfer.destination,
                   prompt: ensureInlineContextReferences(
-                    destination.prompt,
+                    transfer.destination.prompt,
                     transfer.moved.map((attachment) =>
                       attachment.type === "image"
                         ? imageContextReference(attachment)
