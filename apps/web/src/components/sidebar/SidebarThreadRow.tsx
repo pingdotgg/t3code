@@ -1419,9 +1419,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       data-thread-item={threadKey}
       {...sortableRootProps}
       {...(fileDropHandlers ?? {})}
+      // The hints are the rendered heights inside py-0.5. Revealing the open thread measures rows
+      // that have not rendered yet, so a hint off by a pixel lands it a pixel short per row above.
       className={cn(
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
-        metaLineEmpty && "[contain-intrinsic-size:auto_58px]",
+        metaLineEmpty && "[contain-intrinsic-size:auto_60px]",
         sortable?.isDragging && "relative z-20",
       )}
     >
@@ -1746,6 +1748,13 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
               aria-label={accessibility.label}
               {...dragListeners}
               onMouseMove={props.onHighlight}
+              // Focus stays in the search box, as for Enter. A focused result would lose focus as
+              // the results close, and its recovery scrolls the list away from the opened thread.
+              // dnd-kit ignores a prevented press, so the drag listener runs first.
+              onPointerDown={(event) => {
+                dragListeners?.onPointerDown?.(event);
+                event.preventDefault();
+              }}
               onClick={props.onSelect}
               className={cn(
                 "group/sidebar-row group/v2-row flex min-h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1 text-left text-sm outline-none",
