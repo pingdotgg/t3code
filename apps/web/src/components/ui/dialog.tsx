@@ -86,8 +86,9 @@ function DialogBackdrop({
 function DialogViewport({ className, ...props }: DialogPrimitive.Viewport.Props) {
   return (
     <DialogPrimitive.Viewport
+      // Electron drag regions ignore z-index, so without no-drag a click over a header drag strip never reaches the page.
       className={cn(
-        "fixed inset-0 z-50 grid grid-rows-[1fr_auto_1fr] justify-items-center p-4",
+        "fixed inset-0 z-50 grid grid-rows-[1fr_auto_1fr] justify-items-center p-4 [-webkit-app-region:no-drag]",
         className,
       )}
       data-slot="dialog-viewport"
@@ -146,7 +147,7 @@ function DialogPopup({
         className={cn(
           bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12",
           variant === "media" &&
-            "z-[60] grid-rows-1 place-items-center px-4 pb-6 pt-[calc(var(--native-titlebar-height,0px)+1.5rem)] [-webkit-app-region:no-drag]",
+            "z-[60] grid-rows-1 place-items-center px-4 pb-6 pt-[calc(var(--native-titlebar-height,0px)+1.5rem)]",
         )}
       >
         {popup}

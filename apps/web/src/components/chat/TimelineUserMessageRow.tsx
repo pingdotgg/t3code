@@ -314,6 +314,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           BUBBLE_CHIP_CLASS_NAME,
           expanded && "w-full",
         )}
+        data-user-message-bubble=""
       >
         <MessageAuthorHeading>Automation</MessageAuthorHeading>
         <FoldedMessageHeader
@@ -891,6 +892,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           !folded && !mediaOnly && !fileCardsOnly && !audioOnly && "p-3",
           folded && expanded && "w-full",
         )}
+        data-user-message-bubble=""
       >
         {/* Outside the fold so a collapsed message still has a heading to navigate to. */}
         {mediaAboveText ? null : (

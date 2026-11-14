@@ -148,6 +148,7 @@ export type OrchestratorMcpTaskRole = typeof OrchestratorMcpTaskRole.Type;
 
 export const OrchestratorMcpDelegatedTaskStatus = Schema.Literals([
   "queued",
+  "starting",
   "running",
   "waiting",
   "completed",
@@ -199,8 +200,9 @@ export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTas
 
 // Set only on results for still-running tasks whose completion will wake the parent.
 export const ORCHESTRATOR_MCP_RUNNING_TASK_NEXT =
-  "Completion wakes this thread, so end your turn. Do not wait on it or poll it.";
-const OrchestratorMcpRunningTaskNext = Schema.Literal(ORCHESTRATOR_MCP_RUNNING_TASK_NEXT);
+  "Completion wakes this thread. Do not wait on it or poll it. Continue other work, and end your turn when none is left.";
+// A string, not a literal: linked environments on other versions send their own wording.
+const OrchestratorMcpRunningTaskNext = Schema.String;
 
 // Optional: linked environments on older versions omit it.
 const OrchestratorMcpExecutedModel = Schema.NullOr(Schema.String).annotate({
@@ -219,7 +221,10 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   link: Schema.optional(Schema.String),
   childRunId: Schema.NullOr(RunId),
   childNodeId: NodeId,
-  status: OrchestratorMcpDelegatedTaskStatus,
+  status: OrchestratorMcpDelegatedTaskStatus.annotate({
+    description:
+      "starting means the child's provider has not started its turn yet, so no work has begun.",
+  }),
   workState: Schema.Literals(["working", "waiting_for_children", "result_available"]),
   hasPendingChildRuns: Schema.Boolean,
   latestTerminalRunId: Schema.NullOr(RunId),
@@ -287,7 +292,6 @@ export type OrchestratorMcpCreateThreadsInput = typeof OrchestratorMcpCreateThre
 export const OrchestratorMcpCreatedThreadStatus = Schema.Union([
   Schema.Literal("idle"),
   Schema.Literal("preparing"),
-  Schema.Literal("starting"),
   OrchestratorMcpDelegatedTaskStatus,
   Schema.Literal("rolled_back"),
 ]);
