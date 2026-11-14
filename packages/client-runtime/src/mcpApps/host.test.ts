@@ -71,7 +71,8 @@ function setup(overrides: Partial<Parameters<typeof makeMcpAppHost>[0]> = {}) {
 
 describe("makeMcpAppHost", () => {
   it("initializes, then replays the tool input and result after initialized", () => {
-    const { host, sent } = setup();
+    let initializedCount = 0;
+    const { host, sent } = setup({ onInitialized: () => (initializedCount += 1) });
     host.setToolCall({
       arguments: { city: "Oslo" },
       result: { content: [{ type: "text", text: "Sunny" }] },
@@ -91,8 +92,11 @@ describe("makeMcpAppHost", () => {
       },
     });
     expect(sent).toHaveLength(1);
+    expect(initializedCount).toBe(0);
 
     host.receive({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
+    host.receive({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
+    expect(initializedCount).toBe(1);
     expect(sent.slice(1)).toEqual([
       {
         jsonrpc: "2.0",
