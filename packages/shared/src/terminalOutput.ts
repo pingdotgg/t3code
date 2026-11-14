@@ -890,7 +890,7 @@ export function terminalOutputSpans(
   return spans;
 }
 
-const SGR_PATTERN = new RegExp(`${ESC}\\[[0-9;]*m`, "gu");
+const SGR_PATTERN = new RegExp(`${ESC}\\[[0-9;:]*m`, "gu");
 
 export function terminalOutputPlainText(text: string): string {
   return text.replace(SGR_PATTERN, "");

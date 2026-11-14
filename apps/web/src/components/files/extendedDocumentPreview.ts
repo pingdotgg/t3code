@@ -3,6 +3,7 @@ import {
   IMAGE_DIMENSIONS_HEADER_BYTES,
   readImageDimensions,
 } from "@t3tools/shared/imageDimensions";
+import { terminalOutputPlainText } from "@t3tools/shared/terminalOutput";
 import { XMLParser, XMLValidator } from "fast-xml-parser";
 import { decodeHTMLAttribute, decodeHTMLStrict as decodeEntities } from "entities";
 import type JSZip from "jszip";
@@ -435,8 +436,12 @@ function notebookText(value: unknown, limit = 256_000): string {
 function tracebackLines(value: unknown): unknown {
   if (!Array.isArray(value)) return value;
   const frames = value.filter((frame): frame is string => typeof frame === "string");
-  return frames.map((frame, index) =>
-    index && !/\n(?:\u001b\[[\d;:]*m)*$/.test(frames[index - 1]!) ? `\n${frame}` : frame,
+  return terminalOutputPlainText(
+    frames
+      .map((frame, index) =>
+        index && !/\n(?:\u001b\[[\d;:]*m)*$/.test(frames[index - 1]!) ? `\n${frame}` : frame,
+      )
+      .join(""),
   );
 }
 export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
