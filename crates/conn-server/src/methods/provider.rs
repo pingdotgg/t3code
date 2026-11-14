@@ -141,10 +141,29 @@ pub async fn refresh(deps: &Deps, only: Option<&str>) {
     deps.provider_status.bump();
 }
 
+/// `FAILED_CHECK_RECHECK_DELAY`.
+const FAILED_CHECK_RECHECK: Duration = Duration::from_secs(30);
+
+/// The periodic probe: each provider on its own rule (`refreshOnInterval`); `recheck` is the
+/// probe 30 s after a deferred failure. Returns whether a provider asks for that recheck.
+async fn refresh_on_interval(deps: &Deps, recheck: bool) -> bool {
+    let mut again = false;
+    for provider in &deps.providers {
+        let id = provider.instance_id().as_str();
+        again |= provider
+            .refresh_status_on_interval(instance_settings(deps, id), !recheck)
+            .await;
+    }
+    deps.provider_status.bump();
+    again
+}
+
 /// T3's managed provider loop: probe once the server listens, again when an instance's
 /// settings entry changes, and every `providerHealthRefreshInterval` (5 minutes by default).
+/// A failed periodic check over a ready provider is rechecked after 30 s before it shows
+/// (`FAILED_CHECK_RECHECK_DELAY`), and a disabled instance is not probed on the interval.
 /// Not ported: the background-work demand gate (T3 skips the periodic probe while no client
-/// wants background work) and the 30 s recheck after a failed check.
+/// wants provider status; it needs T3's client activity leases, which this server lacks).
 pub fn start_status_refresh(deps: &Deps) {
     let deps = deps.clone();
     tokio::spawn(async move {
@@ -157,8 +176,13 @@ pub fn start_status_refresh(deps: &Deps) {
         };
         let mut last = snapshot(&deps);
         refresh(&deps, None).await;
+        let mut recheck = false;
         loop {
-            let interval = refresh_interval(&deps);
+            let interval = if recheck {
+                Some(FAILED_CHECK_RECHECK)
+            } else {
+                refresh_interval(&deps)
+            };
             let changed = async {
                 match settings.as_mut() {
                     Some(rx) => rx.changed().await.is_ok(),
@@ -185,7 +209,7 @@ pub fn start_status_refresh(deps: &Deps) {
                     }
                     last = next;
                 }
-                () = tick => refresh(&deps, None).await,
+                () = tick => recheck = refresh_on_interval(&deps, recheck).await,
             }
         }
     });
@@ -206,6 +230,87 @@ mod tests {
     use conn_provider_claude::{ClaudeConfig, ClaudeProvider};
 
     use super::*;
+
+    /// Records the periodic probes; the first one fails over a ready entry.
+    struct Flaky {
+        id: conn_contract::ProviderInstanceId,
+        calls: std::sync::Mutex<Vec<bool>>,
+    }
+
+    impl conn_provider::Provider for Flaky {
+        fn instance_id(&self) -> &conn_contract::ProviderInstanceId {
+            &self.id
+        }
+        fn driver(&self) -> &str {
+            "grok"
+        }
+        fn capabilities(
+            &self,
+        ) -> conn_provider::BoxFuture<
+            '_,
+            conn_provider::ProviderResult<conn_contract::ProviderCapabilities>,
+        > {
+            Box::pin(async {
+                Err(conn_provider::ProviderError::Unsupported {
+                    operation: "capabilities",
+                })
+            })
+        }
+        fn open_session(
+            &self,
+            _input: conn_provider::OpenSessionInput,
+        ) -> conn_provider::BoxFuture<'_, conn_provider::ProviderResult<conn_provider::OpenedSession>>
+        {
+            Box::pin(async {
+                Err(conn_provider::ProviderError::Unsupported {
+                    operation: "open_session",
+                })
+            })
+        }
+        fn refresh_status_on_interval(
+            &self,
+            _instance: Option<Value>,
+            defer: bool,
+        ) -> conn_provider::BoxFuture<'_, bool> {
+            Box::pin(async move {
+                let mut calls = self.calls.lock().unwrap();
+                calls.push(defer);
+                calls.len() == 1
+            })
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn a_failed_periodic_probe_is_rechecked_after_30_seconds() {
+        let flaky = Arc::new(Flaky {
+            id: "grok".into(),
+            calls: std::sync::Mutex::new(Vec::new()),
+        });
+        let deps = Deps {
+            engine: None,
+            providers: vec![flaky.clone()],
+            ..Deps::default()
+        };
+        start_status_refresh(&deps);
+        tokio::time::sleep(Duration::from_secs(5 * 60) + Duration::from_millis(10)).await;
+        assert_eq!(
+            *flaky.calls.lock().unwrap(),
+            vec![true],
+            "the 5-minute probe defers"
+        );
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        assert_eq!(
+            *flaky.calls.lock().unwrap(),
+            vec![true, false],
+            "the recheck publishes"
+        );
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        assert_eq!(
+            flaky.calls.lock().unwrap().len(),
+            2,
+            "then back to the interval"
+        );
+    }
 
     #[test]
     fn a_claude_instance_is_offered_ready_with_models() {

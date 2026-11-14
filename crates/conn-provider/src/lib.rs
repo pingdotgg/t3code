@@ -73,6 +73,21 @@ pub trait Provider: Send + Sync {
     fn refresh_status(&self, _instance: Option<serde_json::Value>) -> BoxFuture<'_, ()> {
         Box::pin(async {})
     }
+
+    /// The periodic probe (`ManagedServerProvider` `refreshOnInterval` with `deferFailure`):
+    /// a disabled instance is not probed, and a failed check over a ready entry keeps that
+    /// entry. `true` asks for a recheck after 30 s (`FAILED_CHECK_RECHECK_DELAY`); `defer`
+    /// `false` is that recheck, which publishes whatever it finds.
+    fn refresh_status_on_interval(
+        &self,
+        instance: Option<serde_json::Value>,
+        _defer: bool,
+    ) -> BoxFuture<'_, bool> {
+        Box::pin(async move {
+            self.refresh_status(instance).await;
+            false
+        })
+    }
 }
 
 /// `ProviderSelectionTransitionInput`.

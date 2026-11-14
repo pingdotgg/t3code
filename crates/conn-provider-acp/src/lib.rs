@@ -221,7 +221,9 @@ impl AcpProvider {
     }
 
     /// `checkGrokProviderStatus` with the given settings, and the result kept as the entry.
-    async fn probe(&self, settings: GrokSettings) {
+    /// Probes and publishes the entry. With `defer`, a failed check (`error`, not signed out)
+    /// over a ready, enabled entry keeps the old entry and returns `true`.
+    async fn probe(&self, settings: GrokSettings, defer: bool) -> bool {
         let _one = self.probing.lock().await;
         {
             // New settings take effect at once; until the probe ends the entry is T3's
@@ -248,8 +250,17 @@ impl AcpProvider {
             grok_status::check_status(self.instance_id.as_str(), &settings, &context, &checked_at)
                 .await;
         let mut status = lock(&self.status);
+        if defer
+            && entry["status"] == "error"
+            && entry["auth"]["status"] != "unauthenticated"
+            && status.entry["enabled"] == true
+            && status.entry["status"] == "ready"
+        {
+            return true;
+        }
         status.settings = settings;
         status.entry = entry;
+        false
     }
 }
 
@@ -337,7 +348,25 @@ impl Provider for AcpProvider {
     fn refresh_status(&self, instance: Option<serde_json::Value>) -> BoxFuture<'_, ()> {
         Box::pin(async move {
             let settings = GrokSettings::from_instance(instance.as_ref());
-            self.probe(settings).await;
+            self.probe(settings, false).await;
+        })
+    }
+
+    fn refresh_status_on_interval(
+        &self,
+        instance: Option<serde_json::Value>,
+        defer: bool,
+    ) -> BoxFuture<'_, bool> {
+        Box::pin(async move {
+            // `shouldRefreshOnInterval`: a disabled instance has nothing to probe.
+            if !lock(&self.status).entry["enabled"]
+                .as_bool()
+                .unwrap_or(false)
+            {
+                return false;
+            }
+            let settings = GrokSettings::from_instance(instance.as_ref());
+            self.probe(settings, defer).await
         })
     }
 
