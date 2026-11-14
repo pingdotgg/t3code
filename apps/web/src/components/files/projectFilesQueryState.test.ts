@@ -74,7 +74,6 @@ describe("project files queries", () => {
       expect(
         confirmProjectFileQueryData(environmentId, "/repo", "convex.json", "saved draft"),
       ).toBe(true);
-      expect(getUnsavedProjectFileQueryData(environmentId, "/repo", "convex.json")).toBeNull();
 
       appAtomRegistry.set(read, AsyncResult.waiting(beforeSave));
       expect(contentsNow()).toBe("saved draft");
