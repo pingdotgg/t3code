@@ -8,6 +8,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
   PullRequestActor,
+  PullRequestCheck,
   PullRequestComment,
   PullRequestMergeMethod,
   PullRequestMergeability,
@@ -101,6 +102,39 @@ const RawViewerSchema = Schema.Struct({
   user: Schema.optional(
     Schema.NullOr(Schema.Struct({ name: Schema.optional(Schema.NullOr(Schema.String)) })),
   ),
+});
+
+const RawPolicyEvaluationSchema = Schema.Struct({
+  status: Schema.String,
+  context: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        buildId: Schema.optional(Schema.NullOr(Schema.Int)),
+        buildDefinitionName: Schema.optional(Schema.NullOr(Schema.String)),
+        isExpired: Schema.optional(Schema.NullOr(Schema.Boolean)),
+      }),
+    ),
+  ),
+  configuration: Schema.Struct({
+    url: Schema.optional(Schema.NullOr(Schema.String)),
+    isBlocking: Schema.optional(Schema.NullOr(Schema.Boolean)),
+    isEnabled: Schema.optional(Schema.NullOr(Schema.Boolean)),
+    isDeleted: Schema.optional(Schema.NullOr(Schema.Boolean)),
+    type: Schema.Struct({
+      id: Schema.String,
+      displayName: Schema.optional(Schema.NullOr(Schema.String)),
+    }),
+    settings: Schema.optional(
+      Schema.NullOr(
+        Schema.Struct({
+          displayName: Schema.optional(Schema.NullOr(Schema.String)),
+          defaultDisplayName: Schema.optional(Schema.NullOr(Schema.String)),
+          statusName: Schema.optional(Schema.NullOr(Schema.String)),
+          manualQueueOnly: Schema.optional(Schema.NullOr(Schema.Boolean)),
+        }),
+      ),
+    ),
+  }),
 });
 
 export interface AzureDevOpsRepositoryLocation {
@@ -237,6 +271,7 @@ const decodePullRequest = decodeJsonResult(RawPullRequestSchema);
 const decodeThreadPage = decodeJsonResult(RawThreadPageSchema);
 const decodeThreadEntry = Schema.decodeUnknownExit(RawThreadSchema);
 const decodeViewer = decodeJsonResult(RawViewerSchema);
+const decodePolicyEvaluations = decodeJsonResult(Schema.Array(RawPolicyEvaluationSchema));
 
 type DecodeFailure = Cause.Cause<Schema.SchemaError>;
 
@@ -324,6 +359,101 @@ export function decodeThreadsJson(
   return Result.succeed(
     comments.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
   );
+}
+
+type RawPolicyEvaluation = Schema.Schema.Type<typeof RawPolicyEvaluationSchema>;
+
+const BUILD_POLICY_TYPE = "0609b952-1397-4640-95ec-e00a01b2c241";
+const STATUS_POLICY_TYPE = "cbdc66da-9728-4af8-aada-9a5a32e4a226";
+// Other policy types wait on people or restrict pushes, so they would read as checks that never end.
+const CHECK_POLICY_TYPES = new Set([BUILD_POLICY_TYPE, STATUS_POLICY_TYPE]);
+
+/** Azure reports `queued` for a build that will never start on its own, so name those apart. */
+function toPolicyCheckProgress(
+  raw: RawPolicyEvaluation,
+): Pick<PullRequestCheck, "status" | "description"> {
+  const settled = (status: PullRequestCheck["status"]) => ({ status, description: null });
+  switch (raw.status.trim().toLowerCase()) {
+    case "approved":
+      return settled("success");
+    case "rejected":
+    case "broken":
+      return settled("failure");
+    case "running":
+      return settled("pending");
+    case "notapplicable":
+      return settled("skipped");
+    case "queued":
+      break;
+    default:
+      // A watch counts anything settled as passed, so an unknown status cannot be.
+      return settled("pending");
+  }
+  const expired = raw.context?.isExpired === true;
+  if (!expired && raw.configuration.settings?.manualQueueOnly !== true) return settled("pending");
+  // Only a blocking build holds the pull request; an optional one nobody queues never runs.
+  return {
+    status: raw.configuration.isBlocking === true ? "action-required" : "skipped",
+    description: expired ? "Expired. Queue it again on Azure DevOps." : "Queue it on Azure DevOps.",
+  };
+}
+
+/** The evaluation's configuration URL opens at the project the policy belongs to. */
+function toPolicyCheckUrl(raw: RawPolicyEvaluation): string | null {
+  const buildId = raw.context?.buildId;
+  const [projectUrl, rest] = (raw.configuration.url ?? "").split("/_apis/", 2);
+  return buildId == null || rest === undefined
+    ? null
+    : `${projectUrl}/_build/results?buildId=${buildId}`;
+}
+
+function toPolicyCheck(raw: RawPolicyEvaluation, isDraft: boolean): PullRequestCheck | null {
+  const { configuration, context } = raw;
+  if (
+    !CHECK_POLICY_TYPES.has(configuration.type.id.toLowerCase()) ||
+    configuration.isEnabled === false ||
+    configuration.isDeleted === true
+  ) {
+    return null;
+  }
+  // A build Azure holds back on a draft stays out, as nothing would ever finish it.
+  if (isDraft && raw.status.trim().toLowerCase() === "queued" && context?.buildId == null) {
+    return null;
+  }
+  return {
+    name:
+      trimmed(configuration.settings?.displayName) ??
+      trimmed(configuration.settings?.defaultDisplayName) ??
+      trimmed(context?.buildDefinitionName) ??
+      trimmed(configuration.settings?.statusName) ??
+      trimmed(configuration.type.displayName) ??
+      "Policy",
+    ...toPolicyCheckProgress(raw),
+    url: toPolicyCheckUrl(raw),
+    required: configuration.isBlocking === true,
+  };
+}
+
+export interface AzureDevOpsPolicyCheckPage {
+  readonly checks: ReadonlyArray<PullRequestCheck>;
+  /** Evaluations of every policy type, so filtered rows cannot hide a next page. */
+  readonly rawCount: number;
+}
+
+/** Unlike the tolerant decoders above, one bad row fails the page: a lost required check reads as passed. */
+export function decodePolicyChecksJson(
+  raw: string,
+  input: { readonly isDraft: boolean },
+): Result.Result<AzureDevOpsPolicyCheckPage, DecodeFailure> {
+  const decoded = decodePolicyEvaluations(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  return Result.succeed({
+    checks: decoded.success.flatMap((evaluation) => {
+      const check = toPolicyCheck(evaluation, input.isDraft);
+      return check === null ? [] : [check];
+    }),
+    rawCount: decoded.success.length,
+  });
 }
 
 const RawIterationSchema = Schema.Struct({
