@@ -79,15 +79,26 @@ export interface AggregateOptions {
 export function resolveModelAliases(
   aliases: Readonly<Record<string, string>>,
 ): ReadonlyMap<string, string> {
-  const resolved = new Map<string, string>();
-  for (const model of Object.keys(aliases)) {
-    const seen = new Set([model]);
-    let target = aliases[model]!;
-    while (Object.hasOwn(aliases, target) && !seen.has(target)) {
-      seen.add(target);
+  const models = Object.keys(aliases);
+  const memo = new Map<string, string | null>();
+  for (const model of models) {
+    if (memo.has(model)) continue;
+    const path: string[] = [];
+    let target = model;
+    while (Object.hasOwn(aliases, target) && !memo.has(target)) {
+      path.push(target);
+      // Null marks both the active walk and paths that end in a cycle.
+      memo.set(target, null);
       target = aliases[target]!;
     }
-    if (!Object.hasOwn(aliases, target)) resolved.set(model, target);
+    const terminal = Object.hasOwn(aliases, target) ? (memo.get(target) ?? null) : target;
+    for (const alias of path) memo.set(alias, terminal);
+  }
+
+  const resolved = new Map<string, string>();
+  for (const model of models) {
+    const target = memo.get(model);
+    if (target !== null && target !== undefined) resolved.set(model, target);
   }
   return resolved;
 }

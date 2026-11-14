@@ -266,20 +266,71 @@ describe("UsageAggregator", () => {
 
 describe("resolveModelAliases", () => {
   it("follows chains to the final model and drops chains that enter a loop", () => {
-    expect(
-      resolveModelAliases({
-        "preview[1m]": "preview",
-        preview: "example-model",
-        loop: "back",
-        back: "loop",
-        intoLoop: "loop",
-        self: "self",
-      }),
-    ).toEqual(
-      new Map([
-        ["preview[1m]", "example-model"],
-        ["preview", "example-model"],
-      ]),
-    );
+    const aliases = Object.freeze({
+      "preview[1m]": "preview",
+      unrelated: "other-model",
+      preview: "example-model",
+      shared: "preview",
+      intoLoop: "loop",
+      loop: "back",
+      back: "loop",
+      laterIntoLoop: "back",
+      deepIntoLoop: "intoLoop",
+      self: "self",
+      intoSelf: "self",
+      validAfterLoops: "shared",
+    });
+
+    expect([...resolveModelAliases(aliases)]).toEqual([
+      ["preview[1m]", "example-model"],
+      ["unrelated", "other-model"],
+      ["preview", "example-model"],
+      ["shared", "example-model"],
+      ["validAfterLoops", "example-model"],
+    ]);
+    expect([...resolveModelAliases({})]).toEqual([]);
+  });
+
+  it("keeps Object.keys order and follows only own targets, including non-enumerable ones", () => {
+    const aliases = {
+      "10": "constructor",
+      "2": "toString",
+      first: "hidden",
+      ["__proto__"]: "hasOwnProperty",
+      constructor: "terminal",
+      hasOwnProperty: "constructor",
+      inheritedTarget: "inherited",
+    };
+    Object.setPrototypeOf(aliases, { inherited: "must-not-follow" });
+    Object.defineProperty(aliases, "hidden", { value: "constructor" });
+
+    expect([...resolveModelAliases(aliases)]).toEqual([
+      ["2", "toString"],
+      ["10", "terminal"],
+      ["first", "terminal"],
+      ["__proto__", "terminal"],
+      ["constructor", "terminal"],
+      ["hasOwnProperty", "terminal"],
+      ["inheritedTarget", "inherited"],
+    ]);
+    expect([...resolveModelAliases({ prototypeTarget: "__proto__" })]).toEqual([
+      ["prototypeTarget", "__proto__"],
+    ]);
+  });
+
+  it("preserves empty terminal strings and follows an own empty-string alias", () => {
+    expect([...resolveModelAliases({ first: "next", next: "", last: "next" })]).toEqual([
+      ["first", ""],
+      ["next", ""],
+      ["last", ""],
+    ]);
+    expect([...resolveModelAliases({ first: "", "": "terminal", last: "first" })]).toEqual([
+      ["first", "terminal"],
+      ["", "terminal"],
+      ["last", "terminal"],
+    ]);
+    expect([...resolveModelAliases({ first: "", "": "", valid: "terminal" })]).toEqual([
+      ["valid", "terminal"],
+    ]);
   });
 });
