@@ -1,0 +1,21 @@
+[package]
+name = "conn-provider-acp"
+description = "The ACP provider: Grok, Kiro, fx, Antigravity and ACP registry agents over the Agent Client Protocol on stdio."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+conn-contract.workspace = true
+conn-provider.workspace = true
+conn-provider-support.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Signals the agent's process group at close and Stop, as T3 does; already in the tree.
+rustix = { workspace = true, features = ["process"] }
+tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt", "macros"] }
+
+[lints]
+workspace = true

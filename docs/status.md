@@ -213,12 +213,17 @@ methods. Not proven: T3's recorded `thread_rollback`, `thread_fork_native*` and
    server passes none); Claude's background roster
    (`background_work.updated`, `stopTask`, `awaitBackgroundTasks`: in the trait, not built in
    the provider).
-3. **Other providers.** One ACP provider for Grok, Kiro, fx, Antigravity and the ACP registry.
-   The T3 server offers ACP protocol version 2 with version 1 as fallback and uses a
-   hand-written client. The official Rust crate (`agent-client-protocol` 5.2.0) runs on a
-   current-thread runtime but defaults to version 1 and adds about 525 KiB: use its schema
-   crate for types and our own JSON-RPC, and start with a trial that replays one of the T3
-   server's Grok transcripts. Cursor, OpenCode and Muse go in the SDK host as driver modules.
+3. **Other providers.** One ACP provider for Grok, Kiro, fx, Antigravity and the ACP registry:
+   `crates/conn-provider-acp`, **Grok built (2026-11-14), not yet offered by the server.** The
+   trial ruled out the official schema crate: it cannot express T3's negotiating `initialize`
+   and costs 565 KiB on the release binary; the crate uses its own JSON-RPC with T3's key order.
+   Proven: 10 of the 15 Grok transcripts replay with every frame and event equal to T3's (the 5
+   others need background tasks, monitors and subagents, listed); a stub agent sees the same
+   argv, environment, stdin bytes and shutdown from T3's Grok adapter and ours in all 10
+   scenarios. Next, in order: Grok's server entry (T3 probes the CLI), its background work and
+   subagents, ACP protocol 2 replies for Kiro, then fx, Antigravity, the registry and its 11
+   `server.*` methods, and the file and terminal host (`ProviderHost`). See the crate README.
+   Cursor, OpenCode and Muse go in the SDK host as driver modules.
 4. **Replay of the T3 server's `testkit` fixtures** (172 transcripts) through our providers and
    engine, Codex first. Upstream's own assertions ran by hand on a projection from our engine
    and passed. It needs an event export without pruning and a clock seam in the engine.

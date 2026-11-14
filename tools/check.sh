@@ -90,6 +90,8 @@ monorepo_checks=(
   "claude catalog --check"
   "claude conformance"
   "claude t3-replay"
+  "acp instructions --check"
+  "acp conformance"
 )
 
 if [ -z "${CONN_MONOREPO:-}" ]; then
@@ -136,6 +138,9 @@ else
   fi
   # Exactly the scenarios in expected-failures.txt may fail; any other change fails the check.
   run "claude t3-replay" node crates/conn-provider-claude/tools/t3-replay/check.mjs
+  # The T3 Grok adapter and conn-provider-acp against one stub agent (no agent, no model).
+  run "acp instructions --check" node crates/conn-provider-acp/tools/gen-instructions.mjs --check
+  run "acp conformance" node crates/conn-provider-acp/tools/conformance.mjs
 fi
 # orbit-flow needs no monorepo.
 run "orbit-flow (fake provider)" \
