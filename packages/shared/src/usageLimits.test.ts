@@ -743,6 +743,96 @@ describe("pools", () => {
     ]);
   });
 
+  it("reports unreadable hub accounts alongside usable limits", () => {
+    const account = {
+      id: "claude.json",
+      driver: claude,
+      email: "account@example.com",
+      workspaceId: "org-a",
+      usageLimits: { checkedAt, windows: [window] },
+    };
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [{ ...source, accounts: [account] }],
+          },
+        },
+      ],
+    ]);
+    expect(collectLimitNotices(input)).toEqual([]);
+    for (const unavailable of [
+      { reason: "probeFailed" as const, message: "The hub could not read this account's usage." },
+      { reason: "probeFailed" as const },
+    ]) {
+      const failed = {
+        ...account,
+        usageLimits: {
+          checkedAt: "2026-09-03T11:01:00.000Z",
+          windows: [],
+          unavailable,
+        },
+      };
+      input.set(EnvironmentId.make("env-b"), {
+        entry: { target: { label: "Desktop" } },
+        serverConfig: {
+          providers: [],
+          usageLimitSources: [
+            {
+              ...source,
+              accounts: [failed, { ...failed, id: "other.json", workspaceId: "org-b" }],
+            },
+          ],
+        },
+      });
+      const collected = collectLimitAccounts(input);
+      expect(collected).toHaveLength(2);
+      expect(collected.map((entry) => entry.limits.windows.length)).toEqual([1, 0]);
+      expect(collectLimitPools(collected, Date.parse(checkedAt))[0]?.accounts).toHaveLength(2);
+      expect(collectLimitNotices(input)).toEqual([
+        `Desktop · hub · Claude: ${unavailable.message ?? "Could not read limits."}`,
+      ]);
+      input.delete(EnvironmentId.make("env-a"));
+      expect(collectLimitAccounts(input)).toHaveLength(2);
+      expect(
+        collectLimitPools(collectLimitAccounts(input), Date.parse(checkedAt))[0]?.windows,
+      ).toEqual([]);
+      input.set(EnvironmentId.make("env-a"), {
+        ...laptop,
+        serverConfig: {
+          providers: [],
+          usageLimitSources: [{ ...source, accounts: [account] }],
+        },
+      });
+    }
+    input.clear();
+    const stale = {
+      ...account,
+      usageLimits: {
+        ...account.usageLimits,
+        unavailable: { reason: "probeFailed" as const },
+      },
+    };
+    input.set(EnvironmentId.make("env-a"), {
+      ...laptop,
+      serverConfig: {
+        providers: [],
+        usageLimitSources: [
+          {
+            ...source,
+            accounts: [stale],
+          },
+        ],
+      },
+    });
+    const retained = collectLimitPools(collectLimitAccounts(input), Date.parse(checkedAt));
+    expect(retained[0]?.windows[0]?.members[0]?.window).toMatchObject(window);
+    expect(collectLimitNotices(input)).toHaveLength(1);
+  });
+
   it("keys a hub account without an email by hub, so two environments on one hub share it", () => {
     const seat = {
       id: "claude-team-seat.json",

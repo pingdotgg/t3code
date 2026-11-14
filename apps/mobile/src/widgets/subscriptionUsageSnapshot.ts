@@ -57,7 +57,11 @@ function subscriptionUsageProps(
 ): SubscriptionUsageSnapshot {
   const pools = collectLimitPools(accounts, now);
   const checked = accounts
-    .filter((account) => account.driver === "codex" || account.driver === "claudeAgent")
+    .filter(
+      (account) =>
+        account.limits.windows.length > 0 &&
+        (account.driver === "codex" || account.driver === "claudeAgent"),
+    )
     .map((account) => Date.parse(account.limits.checkedAt));
   return {
     checkedAt: checked.length > 0 && checked.every(Number.isFinite) ? Math.min(...checked) : 0,
@@ -69,7 +73,7 @@ function subscriptionUsageProps(
       .map((driver) => {
         const pool = pools.find((candidate) => candidate.driver === driver);
         const name = driver === "codex" ? "Codex" : "Claude";
-        if (!pool)
+        if (!pool || pool.windows.length === 0)
           return {
             name,
             detail: "No limits available",
@@ -77,7 +81,11 @@ function subscriptionUsageProps(
             expiresAt: 0,
             totalWindows: 0,
           };
-        const checkedAt = Math.min(...pool.accounts.map((a) => Date.parse(a.limits.checkedAt)));
+        const checkedAt = Math.min(
+          ...pool.accounts
+            .filter((account) => account.limits.windows.length > 0)
+            .map((account) => Date.parse(account.limits.checkedAt)),
+        );
         const expiresAt = Math.min(
           checkedAt + SNAPSHOT_MAX_AGE,
           ...pool.windows.flatMap((window) =>
@@ -98,13 +106,20 @@ function subscriptionUsageProps(
           .filter((window) => window !== undefined)
           .slice(0, maxWindowsPerProvider)
           .sort((a, b) => a.remainingPercent - b.remainingPercent);
+        const failed = pool.accounts.filter(
+          (account) => account.limits.unavailable?.reason === "probeFailed",
+        );
         return {
           name,
           detail: !fresh
             ? "Open T3 to refresh"
-            : pool.accounts.length > 1
-              ? `${pool.accounts.length} accounts · pooled`
-              : "Subscription remaining",
+            : failed.some((account) => account.limits.windows.length === 0)
+              ? "Partial limits"
+              : failed.length > 0
+                ? "Last known limits"
+                : pool.accounts.length > 1
+                  ? `${pool.accounts.length} accounts · pooled`
+                  : "Subscription remaining",
           expiresAt: fresh ? expiresAt : 0,
           totalWindows: fresh ? pool.windows.length : 0,
           windows: fresh
