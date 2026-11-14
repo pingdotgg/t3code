@@ -1,3 +1,4 @@
+import { serializeComposerTray } from "./composerSubmission";
 import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 import { armFreshSession, disarmFreshSession, readFreshSessionArm } from "./freshSessionArms";
 import {
@@ -98,6 +99,7 @@ import { useClientSettingsHydrated } from "../../hooks/useSettings";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { environmentPresentations } from "../../state/presentation";
 import {
+  composerDraftChangedSinceSend,
   approvalRedirectNotice,
   loadBalancingSendWarning,
   multipleModelSendBlock,
@@ -486,6 +488,10 @@ export function useComposerSend(input: ComposerSendInput) {
       });
       return;
     }
+    const trayCitations = [
+      ...(useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.trayCitations ??
+        []),
+    ];
     // Where side chats are unavailable, `/side` text can still be a literal answer.
     if (sideChatDisabledReason !== null && sideChatCommand && !answeringQuestion) {
       toastManager.add(
@@ -499,6 +505,7 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     if (onSideChat && sendCtx && sideChatCommand && sideChatDisabledReason === null) {
       if (
+        trayCitations.length > 0 ||
         sendCtx.images.length > 0 ||
         sendCtx.files.length > 0 ||
         filterTerminalContextsWithText(sendCtx.terminalContexts).length > 0 ||
@@ -597,19 +604,19 @@ export function useComposerSend(input: ComposerSendInput) {
       });
     // A direct "send annotation" writes the draft and sends in the same tick; the reference
     // must be in the text now, not after the next render.
-    const draftPrompt = directAnnotation
-      ? ensureInlineContextReferences(promptRef.current, [
+    const serializedPrompt = directAnnotation
+      ? ensureInlineContextReferences(sendCtx.prompt, [
           previewAnnotationContextReference(directAnnotation.annotation),
         ])
-      : promptRef.current;
+      : sendCtx.prompt;
     const replyTo =
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo ?? null;
     // The reply leads the message, so its card sits above the text it is about. Text that
     // already points at that response, from a pasted card, keeps its one reference.
     const promptForSend =
-      replyTo && !collectInlineContextIds(draftPrompt).includes(replyTo.contextId)
-        ? `${formatInlineContextReference(responseContextReference(replyTo))} ${draftPrompt}`
-        : draftPrompt;
+      replyTo && !collectInlineContextIds(serializedPrompt).includes(replyTo.contextId)
+        ? `${formatInlineContextReference(responseContextReference(replyTo))} ${serializedPrompt}`
+        : serializedPrompt;
     const strandedThread = threadContextsOutsideEnvironment({
       text: promptForSend,
       records: composerThreadContexts,
@@ -663,8 +670,27 @@ export function useComposerSend(input: ComposerSendInput) {
         composerThreadContexts.length +
         composerEnvironmentContexts.length,
     });
+    const commandText = directAnnotation ? trimmed : promptAtSend.trim();
+    if (
+      trayCitations.length > 0 &&
+      ((freshSessionAvailable && isClearComposerCommand(commandText)) ||
+        (ctxSelectedProvider === "codex" &&
+          multipleModelSelections === null &&
+          parseCodexFeedbackCommand(commandText) !== null))
+    ) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "This command takes text only",
+          description: "Remove the tray citations, then send the command again.",
+        }),
+      );
+      return;
+    }
     const feedbackCommand =
       ctxSelectedProvider === "codex" &&
+      trayCitations.length === 0 &&
+      replyTo === null &&
       composerImages.length === 0 &&
       composerFiles.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
@@ -672,7 +698,7 @@ export function useComposerSend(input: ComposerSendInput) {
       composerReviewComments.length === 0 &&
       composerThreadContexts.length === 0 &&
       composerEnvironmentContexts.length === 0
-        ? parseCodexFeedbackCommand(trimmed)
+        ? parseCodexFeedbackCommand(commandText)
         : null;
     if (feedbackCommand && multipleModelSelections === null) {
       if (!isServerThread || activeThread.activeProviderThreadId === null) {
@@ -689,7 +715,7 @@ export function useComposerSend(input: ComposerSendInput) {
       await submitCodexFeedback({
         submission: {
           id: newMessageId(),
-          command: trimmed,
+          command: commandText,
           createdAt: new Date().toISOString(),
         },
         clearDraft: () => {
@@ -721,6 +747,7 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     const composerHoldsOnlyText =
+      trayCitations.length === 0 &&
       composerImages.length === 0 &&
       composerFiles.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
@@ -729,7 +756,7 @@ export function useComposerSend(input: ComposerSendInput) {
       composerThreadContexts.length === 0 &&
       composerEnvironmentContexts.length === 0 &&
       replyTo === null;
-    if (freshSessionAvailable && composerHoldsOnlyText && isClearComposerCommand(trimmed)) {
+    if (freshSessionAvailable && composerHoldsOnlyText && isClearComposerCommand(commandText)) {
       armFreshSession(routeThreadKey);
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
@@ -766,6 +793,12 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     const threadIdForSend = activeThread.id;
     const sendSnapshot = snapshotComposerSend({
+      draftPrompt: directAnnotation
+        ? ensureInlineContextReferences(promptAtSend, [
+            previewAnnotationContextReference(directAnnotation.annotation),
+          ])
+        : promptAtSend,
+      trayCitations,
       prompt: promptForSend,
       images: composerImages,
       files: composerFiles,
@@ -955,6 +988,44 @@ export function useComposerSend(input: ComposerSendInput) {
         return;
       }
     }
+    // A draft edited since send, or a paste still landing in it, is no longer the message
+    // the user sent.
+    const attachmentIdsAtSend = composerAttachmentsSnapshot.map((attachment) => attachment.id);
+    // A direct annotation send writes its image and reference into the draft as it sends,
+    // so the live draft may still lack them; anything else differing is a real edit.
+    const annotationImageId = directAnnotation?.image?.id;
+    const attachmentIdsBeforeAnnotation = attachmentIdsAtSend.filter(
+      (id) => id !== annotationImageId,
+    );
+    const draftChangedSinceSend = () => {
+      if (composerRef.current?.hasPendingAttachments() === true) return true;
+      const sendContext = composerRef.current?.getSendContext();
+      const attachmentIds = sendContext
+        ? [...sendContext.images, ...sendContext.files].map((attachment) => attachment.id)
+        : attachmentIdsAtSend;
+      return composerDraftChangedSinceSend({
+        prompt: promptRef.current,
+        promptAtSend,
+        promptForSend,
+        attachmentIds,
+        attachmentIdsAtSend,
+        attachmentIdsBeforeAnnotation,
+        annotationImageId,
+        trayCitations,
+        replyTo,
+        liveReplyTo:
+          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo ?? null,
+        liveTrayCitations:
+          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.trayCitations ??
+          [],
+      });
+    };
+    if (currentRouteThreadKeyRef.current === routeThreadKey && draftChangedSinceSend()) {
+      sendInFlightRef.current = false;
+      setThreadError(threadIdForSend, "Your message changed, so it wasn't sent.");
+      return;
+    }
+
     // A message sent while approvals are pending redirects the agent. They are declined only
     // here, after everything above has accepted the send, so local commands and rejected
     // drafts leave them alone. After navigating away during an upload, the shown approvals
@@ -966,34 +1037,6 @@ export function useComposerSend(input: ComposerSendInput) {
           )
         : [];
     if (approvalsToDecline.length > 0 || approvalFeedbackTarget !== undefined) {
-      // A draft edited since send, or a paste still landing in it, is no longer the message
-      // the user sent.
-      const attachmentIdsAtSend = composerAttachmentsSnapshot.map((attachment) => attachment.id);
-      // A direct annotation send writes its image and reference into the draft as it sends,
-      // so the live draft may still lack them; anything else differing is a real edit.
-      const annotationImageId = directAnnotation?.image?.id;
-      const attachmentIdsBeforeAnnotation = attachmentIdsAtSend.filter(
-        (id) => id !== annotationImageId,
-      );
-      const sameIds = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
-        left.length === right.length && left.every((id, index) => id === right[index]);
-      const draftChangedSinceSend = () => {
-        if (composerRef.current?.hasPendingAttachments() === true) return true;
-        const sendContext = composerRef.current?.getSendContext();
-        const attachmentIds = sendContext
-          ? [...sendContext.images, ...sendContext.files].map((attachment) => attachment.id)
-          : attachmentIdsAtSend;
-        const promptUnchanged =
-          promptRef.current === promptAtSend || promptRef.current === promptForSend;
-        const attachmentsUnchanged =
-          sameIds(attachmentIds, attachmentIdsAtSend) ||
-          (annotationImageId !== undefined &&
-            sameIds(attachmentIds, attachmentIdsBeforeAnnotation));
-        // The reply is not in the prompt, so cancelling or changing it is checked on its own.
-        const liveReply =
-          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo ?? null;
-        return !promptUnchanged || !attachmentsUnchanged || liveReply !== replyTo;
-      };
       const draftBeforeDecline = useComposerDraftStore
         .getState()
         .getComposerDraft(composerDraftTarget);
@@ -1406,7 +1449,10 @@ export function useComposerSend(input: ComposerSendInput) {
         )
       ) {
         // A draft typed meanwhile keeps the composer, so the failed text stays reachable here.
-        const failedText = sendSnapshot.draftText;
+        const failedText = serializeComposerTray(
+          sendSnapshot.draftPrompt,
+          sendSnapshot.trayCitations,
+        );
         if (failedText.trim().length > 0) {
           toastManager.add(
             stackedThreadToast({
@@ -1430,16 +1476,16 @@ export function useComposerSend(input: ComposerSendInput) {
       } else {
         const retryComposerImages = restoreComposerDraft(composerDraftTarget, sendSnapshot);
         if (currentRouteThreadKeyRef.current === routeThreadKey) {
-          promptRef.current = sendSnapshot.draftText;
+          promptRef.current = sendSnapshot.draftPrompt;
           composerImagesRef.current = retryComposerImages;
           composerFilesRef.current = composerFilesSnapshot;
           composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
           composerRef.current?.resetCursorState({
             cursor: collapseExpandedComposerCursor(
-              sendSnapshot.draftText,
-              sendSnapshot.draftText.length,
+              sendSnapshot.draftPrompt,
+              sendSnapshot.draftPrompt.length,
             ),
-            prompt: sendSnapshot.draftText,
+            prompt: sendSnapshot.draftPrompt,
             detectTrigger: true,
           });
         }

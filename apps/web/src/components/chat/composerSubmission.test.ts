@@ -11,7 +11,12 @@ import {
 } from "@t3tools/shared/assistantCitations";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { isComposerSubmissionBlocked, submitComposerDraft } from "./composerSubmission";
+import {
+  isComposerSubmissionBlocked,
+  getComposerPromptLengthValidationMessage,
+  serializeComposerTray,
+  submitComposerDraft,
+} from "./composerSubmission";
 
 const assistantCitation = {
   version: 1 as const,
@@ -207,6 +212,34 @@ describe("submitComposerDraft", () => {
     expect(result).toEqual({ validationMessage: null, didDispatch: true });
     expect(onSend).toHaveBeenCalledOnce();
   });
+});
+
+it("serializes ordered tray citations before inline citations and text", () => {
+  const second = { ...assistantCitation, comment: "Second" };
+  const inline = serializeAssistantCitation({ ...assistantCitation, comment: "Inline" });
+  expect(serializeComposerTray(`Reply ${inline}`, [assistantCitation, second])).toBe(
+    `${serializeAssistantCitation(assistantCitation)}\n${serializeAssistantCitation(second)}\nReply ${inline}`,
+  );
+  expect(serializeComposerTray("Draft")).toBe("Draft");
+  expect(serializeComposerTray("", [assistantCitation])).toBe(
+    serializeAssistantCitation(assistantCitation),
+  );
+});
+
+it("retains tray-inclusive limit errors until the tray is shortened", () => {
+  const prompt = "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - 1);
+  const combined = serializeComposerTray(prompt, [assistantCitation]);
+  const result = submitComposerDraft({
+    prompt: combined,
+    submissionTarget: "provider-turn",
+    event: undefined,
+    onSend: vi.fn(),
+  });
+  expect(result.validationMessage).not.toBeNull();
+  expect(getComposerPromptLengthValidationMessage(prompt, [assistantCitation])).toBe(
+    result.validationMessage,
+  );
+  expect(getComposerPromptLengthValidationMessage(prompt, [])).toBeNull();
 });
 
 describe("isComposerSubmissionBlocked", () => {

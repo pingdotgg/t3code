@@ -1,3 +1,4 @@
+import { AssistantCitation } from "@t3tools/contracts";
 import {
   composerFileAttachmentMimeType,
   composerImageDedupKey,
@@ -337,6 +338,7 @@ type PersistedTerminalContextDraft = typeof PersistedTerminalContextDraft.Type;
 
 const PersistedComposerThreadDraftState = Schema.Struct({
   prompt: Schema.String,
+  trayCitations: Schema.optionalKey(Schema.Array(AssistantCitation)),
   attachments: Schema.Array(PersistedComposerImageAttachment),
   files: Schema.optionalKey(Schema.Array(PersistedComposerDraftFileAttachment)),
   terminalContexts: Schema.optionalKey(Schema.Array(PersistedTerminalContextDraft)),
@@ -463,6 +465,7 @@ const contextInsertionHandlers = new Map<string, ComposerContextInsertionHandler
 
 export interface ComposerThreadDraftState {
   prompt: string;
+  trayCitations?: ReadonlyArray<AssistantCitation>;
   images: ComposerImageAttachment[];
   files: ComposerFileAttachment[];
   nonPersistedImageIds: string[];
@@ -488,6 +491,7 @@ export function composerDraftHasUserContent(
     return false;
   }
   return (
+    (draft.trayCitations?.length ?? 0) > 0 ||
     draft.prompt.trim().length > 0 ||
     draft.images.length > 0 ||
     draft.files.length > 0 ||
@@ -634,6 +638,10 @@ interface ComposerDraftStoreState {
   finalizePromotedDraftThread: (threadRef: ComposerThreadTarget) => void;
   clearDraftThread: (threadRef: ComposerThreadTarget) => void;
   setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
+  setTrayCitations: (
+    threadRef: ComposerThreadTarget,
+    citations: ReadonlyArray<AssistantCitation>,
+  ) => void;
   setPrompt: (threadRef: ComposerThreadTarget, prompt: string) => void;
   setTerminalContexts: (threadRef: ComposerThreadTarget, contexts: TerminalContextDraft[]) => void;
   setModelSelection: (
@@ -895,6 +903,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
 
 function createEmptyThreadDraft(): ComposerThreadDraftState {
   return {
+    trayCitations: [],
     prompt: "",
     images: [],
     files: [],
@@ -1010,6 +1019,7 @@ function normalizeTerminalContextsForThread(
 
 function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
   return (
+    (draft.trayCitations?.length ?? 0) === 0 &&
     draft.prompt.length === 0 &&
     draft.images.length === 0 &&
     draft.files.length === 0 &&
@@ -2177,6 +2187,7 @@ function normalizePersistedDraftsByThreadId(
     const hasModelData =
       Object.keys(modelSelectionByProvider).length > 0 || activeProvider !== null;
     if (
+      !draftCandidate.trayCitations?.length &&
       promptCandidate.length === 0 &&
       attachments.length === 0 &&
       files.length === 0 &&
@@ -2206,6 +2217,9 @@ function normalizePersistedDraftsByThreadId(
             })();
     nextDraftsByThreadKey[normalizedThreadKey] = {
       prompt,
+      trayCitations: Array.isArray(draftCandidate.trayCitations)
+        ? draftCandidate.trayCitations.filter(Schema.is(AssistantCitation))
+        : [],
       attachments,
       ...(files.length > 0 ? { files } : {}),
       ...(terminalContexts.length > 0 ? { terminalContexts } : {}),
@@ -2231,6 +2245,7 @@ function normalizePersistedDraftsByThreadId(
 
 function persistedComposerDraftHasUserContent(draft: PersistedComposerThreadDraftState): boolean {
   return (
+    (draft.trayCitations?.length ?? 0) > 0 ||
     draft.prompt.trim().length > 0 ||
     draft.attachments.length > 0 ||
     (draft.files?.length ?? 0) > 0 ||
@@ -2311,6 +2326,7 @@ export function partializeComposerDraftStoreState(
     const hasModelData =
       Object.keys(draft.modelSelectionByProvider).length > 0 || draft.activeProvider !== null;
     if (
+      (draft.trayCitations?.length ?? 0) === 0 &&
       draft.prompt.length === 0 &&
       draft.persistedAttachments.length === 0 &&
       draft.files.length === 0 &&
@@ -2328,6 +2344,7 @@ export function partializeComposerDraftStoreState(
     }
     const persistedDraft: DeepMutable<PersistedComposerThreadDraftState> = {
       prompt: draft.prompt,
+      ...(draft.trayCitations?.length ? { trayCitations: [...draft.trayCitations] } : {}),
       attachments: draft.persistedAttachments,
       ...(draft.files.length > 0
         ? {
@@ -2635,6 +2652,7 @@ function toHydratedThreadDraft(
     })) ?? [];
 
   return {
+    trayCitations: persistedDraft.trayCitations ?? [],
     prompt: ensureInlineContextReferences(persistedDraft.prompt, [
       ...(persistedDraft.reviewComments ?? []).map(reviewCommentContextReference),
       ...(persistedDraft.previewAnnotations ?? []).map(previewAnnotationContextReference),
@@ -3179,6 +3197,20 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftsByThreadKey[threadKey] = nextDraft;
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        setTrayCitations: (threadRef, citations) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return;
+          set((state) => {
+            const nextDraft = {
+              ...(state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft()),
+              trayCitations: citations,
+            };
+            const draftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) delete draftsByThreadKey[threadKey];
+            else draftsByThreadKey[threadKey] = nextDraft;
+            return { draftsByThreadKey };
           });
         },
         setPrompt: (threadRef, prompt) => {
@@ -4326,6 +4358,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             const nextDraft: ComposerThreadDraftState = {
               ...current,
+              trayCitations: [],
               prompt: ensureInlineContextReferences("", [
                 ...current.terminalContexts.map(terminalContextReference),
                 ...current.reviewComments.map(reviewCommentContextReference),

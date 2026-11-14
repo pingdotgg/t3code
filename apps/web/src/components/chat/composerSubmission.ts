@@ -1,3 +1,5 @@
+import type { AssistantCitation } from "@t3tools/contracts";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 
@@ -9,8 +11,11 @@ type ComposerSubmissionInput = {
   submissionTarget: "provider-turn" | "pending-user-input";
 };
 
-export function getComposerPromptLengthValidationMessage(prompt: string): string | null {
-  const normalizedPrompt = prompt.trim();
+export function getComposerPromptLengthValidationMessage(
+  prompt: string,
+  citations: ReadonlyArray<AssistantCitation> = [],
+): string | null {
+  const normalizedPrompt = serializeComposerTray(prompt, citations).trim();
   const inputLength = Math.max(
     normalizedPrompt.length,
     expandAssistantCitationsForProvider(normalizedPrompt).length,
@@ -61,4 +66,11 @@ export function submitComposerDraft(
     return { validationMessage: null, didDispatch: false };
   }
   return { validationMessage: null, didDispatch: true };
+}
+
+export function serializeComposerTray(
+  prompt: string,
+  citations: ReadonlyArray<AssistantCitation> = [],
+): string {
+  return [...citations.map(serializeAssistantCitation), prompt].filter(Boolean).join("\n");
 }

@@ -23,6 +23,8 @@ import {
   assistantCitationRoute,
 } from "../../lib/assistantCitationNavigation";
 import { cn } from "~/lib/utils";
+import { observeResize } from "~/lib/observeResize";
+import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { useQuietThreadShell } from "~/state/entities";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -186,6 +188,7 @@ export function AssistantCitationChip({
     sourceAnchor?: AssistantCitationSourceAnchor | undefined;
     onOpenChange: (open: boolean) => void;
     onCancel?: () => void;
+    onMoveToTray?: ((comment: string) => void) | undefined;
     onSave: (comment: string) => boolean;
     onSaveAndSend?: (comment: string) => boolean;
     onDraftChange?: (comment: string) => void;
@@ -331,6 +334,8 @@ export function AssistantCitationChip({
               <AssistantCitationCommentEditor
                 key={serializeAssistantCitation(citation)}
                 citation={citation}
+                onMove={commentEditor.onMoveToTray}
+                moveLabel="Move to tray"
                 inputRef={commentInputRef}
                 onVoiceSetupOpenChange={setVoiceSetupOpen}
                 onDraftChange={(comment) => {
@@ -364,5 +369,36 @@ export function AssistantCitationChip({
         </Popover>
       ) : null}
     </ContextChip>
+  );
+}
+
+export function AssistantCitationQuote({ citation }: { citation: AssistantCitation }) {
+  const [fade, setFade] = useState({ top: false, bottom: false });
+  const updateFade = (element: HTMLElement) => {
+    const top = element.scrollTop > 1;
+    const bottom = element.scrollHeight - element.clientHeight - element.scrollTop > 1;
+    setFade((current) =>
+      current.top === top && current.bottom === bottom ? current : { top, bottom },
+    );
+  };
+  const observeFade = (element: HTMLDivElement | null) =>
+    element ? observeResize(element, () => updateFade(element)) : undefined;
+  return (
+    <div
+      ref={observeFade}
+      onScroll={(event) => updateFade(event.currentTarget)}
+      className={cn(
+        "max-h-64 min-h-0 space-y-3 self-stretch overflow-y-auto whitespace-pre-wrap wrap-break-word",
+        getVirtualizedScrollFadeClassName(fade),
+      )}
+    >
+      <blockquote
+        className="border-l-2 border-border pl-3 text-muted-foreground"
+        dir={textDirection(citation.text)}
+      >
+        {citation.text}
+      </blockquote>
+      {citation.comment ? <p dir={textDirection(citation.comment)}>{citation.comment}</p> : null}
+    </div>
   );
 }

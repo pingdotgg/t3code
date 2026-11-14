@@ -1,5 +1,9 @@
 import { toServerClock } from "@t3tools/client-runtime/clock";
-import { type OrchestrationV2ProviderTurn, type RunAttemptId } from "@t3tools/contracts";
+import {
+  type AssistantCitation,
+  type OrchestrationV2ProviderTurn,
+  type RunAttemptId,
+} from "@t3tools/contracts";
 import {
   deriveLatestThreadRun,
   deriveThreadRuntime,
@@ -723,6 +727,7 @@ export function cloneComposerImageForRetry(
 export function deriveComposerSendState(options: {
   prompt: string;
   imageCount: number;
+  citationCount?: number;
   existingAttachmentCount?: number;
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
   elementContextCount?: number;
@@ -744,6 +749,7 @@ export function deriveComposerSendState(options: {
     hasSendableContent:
       trimmedPrompt.length > 0 ||
       options.imageCount > 0 ||
+      (options.citationCount ?? 0) > 0 ||
       (options.existingAttachmentCount ?? 0) > 0 ||
       sendableTerminalContexts.length > 0 ||
       elementContextCount > 0,
@@ -1244,6 +1250,8 @@ export function makeModelDisabledReason(
 
 /** What the composer held when the user pressed send, after a direct annotation merged in. */
 export interface ComposerSendContents {
+  readonly draftPrompt?: string;
+  readonly trayCitations?: ReadonlyArray<AssistantCitation>;
   readonly prompt: string;
   readonly images: ReadonlyArray<ComposerImageAttachment>;
   readonly files: ReadonlyArray<ComposerFileAttachment>;
@@ -1266,15 +1274,18 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
   const images = [...contents.images];
   const files = [...contents.files];
   const terminalContexts = [...contents.sendableTerminalContexts];
-  const messageText = contents.terminalContexts
-    .filter((context) => !terminalContexts.includes(context))
-    .reduce(
-      (text, context) =>
-        removeInlineContextReference(text, terminalContextReference(context).contextId).prompt,
-      contents.prompt,
-    )
-    .trim();
+  const cleanPrompt = (prompt: string) =>
+    contents.terminalContexts
+      .filter((context) => !terminalContexts.includes(context))
+      .reduce(
+        (text, context) =>
+          removeInlineContextReference(text, terminalContextReference(context).contextId).prompt,
+        prompt,
+      )
+      .trim();
   return {
+    draftPrompt: cleanPrompt(contents.draftPrompt ?? contents.prompt),
+    trayCitations: [...(contents.trayCitations ?? [])],
     images,
     files,
     attachments: [...images, ...files],
@@ -1284,11 +1295,7 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
     threadContexts: [...contents.threadContexts],
     environmentContexts: [...contents.environmentContexts],
     replyTo: contents.replyTo,
-    messageText,
-    /** What a failed send puts back in the composer: the reply returns above it, not in the text. */
-    draftText: contents.replyTo
-      ? removeInlineContextReference(messageText, contents.replyTo.contextId).prompt.trimStart()
-      : messageText,
+    messageText: cleanPrompt(contents.prompt),
   };
 }
 

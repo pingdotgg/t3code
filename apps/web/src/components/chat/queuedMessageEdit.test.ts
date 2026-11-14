@@ -76,7 +76,18 @@ describe("queued message file edits", () => {
     ).rejects.toThrow("Retry or remove");
   });
 
-  it("keeps file-only edits when another client starts the queued run", () => {
+  const citation = {
+    version: 1 as const,
+    environmentId,
+    threadId: threadTarget.threadId,
+    messageId: MessageId.make("message"),
+    text: "Quote",
+    start: 0,
+    end: 5,
+    prefix: "",
+    suffix: "",
+  };
+  it.each(["file", "citation"])("keeps %s-only edits when the queued run leaves", (kind) => {
     const store = useComposerDraftStore.getState();
     store.setPrompt(editTarget, "Original message");
     const elsewhere: ComposerFileAttachment = {
@@ -87,14 +98,20 @@ describe("queued message file edits", () => {
       uploadedAttachmentId: "upload:elsewhere",
       uploadEnvironmentId: EnvironmentId.make("other-environment"),
     };
-    store.addFiles(editTarget, [file, elsewhere]);
+    if (kind === "file") store.addFiles(editTarget, [file, elsewhere]);
+    else store.setTrayCitations(editTarget, [citation]);
     expect(
       recoverQueuedMessageEdit({ editTarget, threadTarget, originalText: "Original message" }),
     ).toBe("kept");
     expect(store.getComposerDraft(threadTarget)?.prompt).toBe("Original message");
     // An upload this environment cannot reach comes back as a file to reattach, not a dropped chip.
     const { uploadedAttachmentId: _id, uploadEnvironmentId: _env, ...reattach } = elsewhere;
-    expect(store.getComposerDraft(threadTarget)?.files).toEqual([file, reattach]);
+    expect(store.getComposerDraft(threadTarget)?.files).toEqual(
+      kind === "file" ? [file, reattach] : [],
+    );
+    expect(store.getComposerDraft(threadTarget)?.trayCitations ?? []).toEqual(
+      kind === "citation" ? [citation] : [],
+    );
     expect(store.getComposerDraft(editTarget)).toBeNull();
   });
 

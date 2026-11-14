@@ -1,9 +1,10 @@
-import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import { AssistantCitationTray } from "./chat/AssistantCitationTray";
+import { type AssistantCitation, EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import {
   serializeAssistantCitation,
   withAssistantCitationComment,
 } from "@t3tools/shared/assistantCitations";
-import { createRef, useState } from "react";
+import { createRef, useRef, useState } from "react";
 import { expect, it } from "vite-plus/test";
 
 import { page, userEvent } from "vite-plus/test/browser";
@@ -106,6 +107,137 @@ it("keeps an unsaved citation comment when a question takes the composer", async
   );
   await expect.element(page.getByLabelText("Edit citation comment")).toBeInTheDocument();
 });
+
+function TrayComposer({ question = false }: { question?: boolean }) {
+  const editorRef = useRef<ComposerPromptEditorHandle>(null);
+  const [prompt, setPrompt] = useState(promptBefore);
+  const [answer, setAnswer] = useState("");
+  const [tray, setTray] = useState<ReadonlyArray<AssistantCitation>>([]);
+  return (
+    <>
+      <div data-assistant-citation-viewport="">
+        <p
+          data-assistant-citation-source={citation.messageId}
+          data-assistant-citation-environment={citation.environmentId}
+          data-assistant-citation-thread={citation.threadId}
+        >
+          hello world
+        </p>
+      </div>
+      <button
+        onClick={() => {
+          const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
+          if (!sourceAnchor) throw new Error("Citation source did not resolve");
+          if (question) setAnswer(promptBefore);
+          else setPrompt(promptBefore);
+          editorRef.current?.requestCitationComment({
+            previousValue: "See ",
+            value: promptBefore,
+            citationStart: 4,
+            sourceAnchor,
+            insertedSpaces: { before: false, after: true },
+            destination: "tray",
+          });
+        }}
+      >
+        Cite to tray
+      </button>
+      <output data-tray-count={tray.length} data-prompt={prompt} data-answer={answer} />
+      <AssistantCitationTray
+        citations={tray}
+        onChange={setTray}
+        onInsertInline={
+          question
+            ? undefined
+            : (item) => {
+                setPrompt((text) => `${text}${serializeAssistantCitation(item)}`);
+                return true;
+              }
+        }
+      />
+      <ComposerPromptEditor
+        editorRef={editorRef}
+        value={question ? answer : prompt}
+        cursor={0}
+        contextRecords={new Map()}
+        skills={[]}
+        disabled={false}
+        placeholder=""
+        onChange={question ? setAnswer : setPrompt}
+        onPaste={() => {}}
+        onMoveCitationToTray={question ? undefined : (item) => setTray((items) => [...items, item])}
+      />
+    </>
+  );
+}
+
+it("opens a source comment for tray citations and preserves saved and cancelled citations", async () => {
+  await using screen = await render(<TrayComposer />);
+  await page.getByRole("button", { name: "Cite to tray", exact: true }).click();
+  await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
+  await page.getByLabelText("Comment on selected text").fill("Keep this comment");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  const state = () => screen.container.querySelector("output")?.dataset;
+  expect(state()?.trayCount).toBe("1");
+  expect(state()?.prompt).not.toContain("t3-citation");
+  await page.getByRole("button", { name: "1 annotation", exact: true }).click();
+  await page.getByRole("button", { name: "Edit annotation 1", exact: true }).click();
+  await page.getByLabelText("Comment on selected text").fill("Keep the dismissed edit");
+  await page.getByText("hello world", { exact: true }).click();
+  await page.getByRole("button", { name: "1 annotation", exact: true }).click();
+  await expect.element(page.getByText("User comment: Keep the dismissed edit")).toBeVisible();
+  await page.getByRole("button", { name: "Edit annotation 1", exact: true }).click();
+  await page.getByLabelText("Comment on selected text").fill("Discard the cancelled edit");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect.element(page.getByText("User comment: Keep the dismissed edit")).toBeVisible();
+  await page.getByRole("button", { name: "Cite to tray", exact: true }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.getByRole("button", { name: "2 annotations", exact: true }).click();
+  await page.getByRole("button", { name: "Edit annotation 1", exact: true }).click();
+  await page.getByLabelText("Comment on selected text").fill("Keep the edit after deletion");
+  await page.getByRole("button", { name: "Delete annotation 2", exact: true }).click();
+  await expect.element(page.getByText("User comment: Keep the edit after deletion")).toBeVisible();
+  await screen.rerender(<TrayComposer question />);
+  await expect
+    .element(page.getByRole("button", { name: "Insert annotation 1 inline", exact: true }))
+    .not.toBeInTheDocument();
+  expect(state()?.trayCount).toBe("1");
+  await screen.rerender(<TrayComposer />);
+  await page.getByRole("button", { name: "Insert annotation 1 inline", exact: true }).click();
+  expect(state()?.trayCount).toBe("0");
+  expect(state()?.prompt).toContain(
+    serializeAssistantCitation(
+      withAssistantCitationComment(citation, "Keep the edit after deletion"),
+    ),
+  );
+  await page.getByRole("button", { name: "Cite to tray", exact: true }).click();
+  await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
+  await page.getByLabelText("Comment on selected text").fill("Discard this comment");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(state()?.trayCount).toBe("1");
+  expect(state()?.prompt).toBe("See ");
+  await page.getByRole("button", { name: "1 annotation", exact: true }).click();
+  await page.getByRole("button", { name: "Insert annotation 1 inline", exact: true }).click();
+  expect(state()?.prompt).toContain(serializeAssistantCitation(citation));
+  expect(state()?.prompt).not.toContain("Discard this comment");
+});
+
+it.each(["Save", "dismiss"])(
+  "keeps question citations inline on %s when tray transfer is unavailable",
+  async (action) => {
+    await using screen = await render(<TrayComposer question />);
+    await page.getByRole("button", { name: "Cite to tray", exact: true }).click();
+    await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
+    await page.getByLabelText("Comment on selected text").fill("Question comment");
+    if (action === "Save") await page.getByRole("button", { name: "Save", exact: true }).click();
+    else await page.getByText("hello world", { exact: true }).click();
+    const state = screen.container.querySelector("output")?.dataset;
+    expect(state?.trayCount).toBe("0");
+    expect(state?.answer).toContain(
+      serializeAssistantCitation(withAssistantCitationComment(citation, "Question comment")),
+    );
+  },
+);
 
 it("clears the sent prompt when an empty citation comment sends it", async () => {
   const editorRef = createRef<ComposerPromptEditorHandle>();

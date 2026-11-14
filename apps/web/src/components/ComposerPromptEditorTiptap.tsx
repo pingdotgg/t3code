@@ -192,6 +192,7 @@ export interface ComposerPromptEditorProps {
   onPageScrollKeyDown?: (key: "PageUp" | "PageDown") => void;
   onPageScrollKeyUp?: (key: string) => void;
   onPageScrollRelease?: () => void;
+  onMoveCitationToTray?: ((citation: AssistantCitation) => void) | undefined;
   onCitationSubmitAndSend?: () => boolean;
   /** Saves unsaved citation text into replacedValue when a controlled rewrite replaces the document. */
   onCitationDraftSave?: (replacedValue: string, savedValue: string) => void;
@@ -200,6 +201,7 @@ export interface ComposerPromptEditorProps {
 }
 
 export type ComposerCitationCommentRequest = {
+  destination?: "inline" | "tray" | undefined;
   previousValue: string;
   value: string;
   citationStart: number;
@@ -211,6 +213,7 @@ type CitationInsertedSpaces = { before: boolean; after: boolean };
 
 type OpenCitationComment = {
   key: string;
+  destination?: "inline" | "tray" | undefined;
   sourceAnchor?: AssistantCitationSourceAnchor;
   removeOnCancel?: CitationInsertedSpaces;
 };
@@ -219,6 +222,7 @@ const ComposerCitationCommentContext = createContext<{
   openComment: OpenCitationComment | null;
   onOpenChange: (citeKey: string, open: boolean) => void;
   onDraftChange: (citeKey: string, comment: string) => void;
+  onMoveToTray?: ((citation: AssistantCitation) => void) | undefined;
   onSubmitAndSend: () => boolean;
 }>({
   openComment: null,
@@ -452,6 +456,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     return typeof pos === "number" ? pos : null;
   };
 
+  const destination = commentContext.onMoveToTray ? commentTarget?.destination : "inline";
   const onSaveComment = (comment: string): boolean => {
     if (!editor.isEditable) return false;
     const pos = nodePos();
@@ -460,6 +465,11 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     if (!current || current.type.name !== "composer-citation") return false;
     const currentCitation = current.attrs.citation as AssistantCitation;
     const next = withAssistantCitationComment(currentCitation, comment);
+    if (destination === "tray" && commentContext.onMoveToTray) {
+      commentContext.onMoveToTray(next);
+      onRemove();
+      return true;
+    }
     const tr = editor.state.tr.setNodeMarkup(pos, undefined, {
       ...current.attrs,
       citation: next,
@@ -535,9 +545,36 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
           sourceAnchor: commentTarget?.sourceAnchor,
           onOpenChange: (open) => {
             if (open && !editor.isEditable) return;
+            if (!open && destination === "tray" && commentContext.onMoveToTray) {
+              const pos = nodePos();
+              const current = pos === null ? null : editor.state.doc.nodeAt(pos);
+              if (current?.type.name === "composer-citation" && current.attrs.citeKey === citeKey) {
+                commentContext.onMoveToTray(current.attrs.citation as AssistantCitation);
+                onRemove();
+              }
+            }
             commentContext.onOpenChange(citeKey, open);
           },
-          ...(removeOnCancel ? { onCancel: onRemove } : {}),
+          ...(removeOnCancel
+            ? {
+                onCancel: () => {
+                  if (destination === "tray") commentContext.onMoveToTray?.(citation);
+                  onRemove();
+                },
+              }
+            : {}),
+          onMoveToTray: commentContext.onMoveToTray
+            ? (comment) => {
+                const pos = nodePos();
+                if (pos === null || !editor.isEditable) return;
+                commentContext.onMoveToTray?.(withAssistantCitationComment(citation, comment));
+                editor
+                  .chain()
+                  .focus()
+                  .deleteRange({ from: pos, to: pos + node.nodeSize })
+                  .run();
+              }
+            : undefined,
           onSave: onSaveComment,
           onDraftChange: (comment) => commentContext.onDraftChange(citeKey, comment),
           onSaveAndSend: (comment) => {
@@ -947,6 +984,7 @@ function ComposerPromptEditorTiptapInner(
     onPageScrollKeyDown,
     onPageScrollKeyUp,
     onPageScrollRelease,
+    onMoveCitationToTray,
     onCitationSubmitAndSend,
     onCitationDraftSave,
     onPaste,
@@ -1000,6 +1038,7 @@ function ComposerPromptEditorTiptapInner(
 
   const citationCommentActions = {
     openComment: openCitation,
+    onMoveToTray: onMoveCitationToTray,
     onOpenChange: (nodeKey: string, open: boolean) => {
       if (!open && citationDraftRef.current?.key === nodeKey) citationDraftRef.current = null;
       setOpenCitation((current) => {
@@ -1642,6 +1681,7 @@ function ComposerPromptEditorTiptapInner(
             key: citeKey,
             sourceAnchor: pendingCitation.sourceAnchor,
             removeOnCancel: pendingCitation.insertedSpaces,
+            destination: pendingCitation.destination,
           });
         }
       }
@@ -1761,6 +1801,7 @@ function ComposerPromptEditorTiptapInner(
             key: citeKey,
             sourceAnchor: request.sourceAnchor,
             removeOnCancel: request.insertedSpaces,
+            destination: request.destination,
           });
         }
       },

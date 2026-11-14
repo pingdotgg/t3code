@@ -1,4 +1,5 @@
 import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
+import { ArchiveIcon, TextCursorInputIcon } from "lucide-react";
 import { use, useEffect, useRef, useState, type RefObject } from "react";
 
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
@@ -6,12 +7,16 @@ import { textDirection } from "~/textDirection";
 
 import { ComposerContextActionsContext } from "../composerContextActions";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export function AssistantCitationCommentEditor({
   citation,
   inputRef,
   onSubmit,
   onSubmitAndSend,
+  onMove,
+  moveLabel,
+  moveAriaLabel,
   onCancel,
   onDraftChange,
   onVoiceSetupOpenChange,
@@ -19,6 +24,9 @@ export function AssistantCitationCommentEditor({
   citation: AssistantCitation;
   inputRef?: RefObject<HTMLTextAreaElement | null>;
   onSubmit: (comment: string) => boolean;
+  onMove?: ((comment: string) => void) | undefined;
+  moveLabel?: string;
+  moveAriaLabel?: string;
   onSubmitAndSend?: (comment: string) => boolean;
   onCancel: () => void;
   onDraftChange?: (comment: string) => void;
@@ -114,6 +122,24 @@ export function AssistantCitationCommentEditor({
       ) : null}
       <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
         <TextFieldSpeechControls speech={speech} />
+        {onMove ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  disabled={speech.blocksSubmission || commentTooLong}
+                  aria-label={moveAriaLabel ?? moveLabel}
+                  onClick={() => onMove(comment)}
+                />
+              }
+            >
+              {moveLabel === "Insert inline" ? <TextCursorInputIcon /> : <ArchiveIcon />}
+            </TooltipTrigger>
+            <TooltipPopup>{moveLabel}</TooltipPopup>
+          </Tooltip>
+        ) : null}
         <Button
           variant="outline"
           size="xs"

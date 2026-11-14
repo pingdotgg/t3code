@@ -20,7 +20,10 @@ export function recoverQueuedMessageEdit(input: {
     editChanged:
       input.removedExistingAttachment === true ||
       (draft !== null &&
-        (draft.prompt !== input.originalText || draft.images.length > 0 || draft.files.length > 0)),
+        (draft.prompt !== input.originalText ||
+          draft.images.length > 0 ||
+          draft.files.length > 0 ||
+          (draft.trayCitations?.length ?? 0) > 0)),
     // A cleared edit has nothing to put back, so it can only be discarded.
     threadDraftEmpty:
       composerDraftHasUserContent(draft) &&
