@@ -2925,7 +2925,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   )(function* (cwd, current) {
     const destination = yield* resolvePushDestination(cwd, current.branch, current.hasUpstream);
     return destination
-      ? { remoteName: destination.remoteName, branchName: destination.branchName }
+      ? {
+          remoteName: destination.remoteName,
+          branchName: destination.branchName,
+          viaPushRemote: destination.pushRemote !== null,
+        }
       : null;
   });
 

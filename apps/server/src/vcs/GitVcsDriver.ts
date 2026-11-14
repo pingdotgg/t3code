@@ -185,6 +185,8 @@ export interface GitPushResult {
 export interface GitPushTarget {
   remoteName: string;
   branchName: string;
+  /** The tracked upstream is current, yet pushes go to this configured push remote. */
+  viaPushRemote: boolean;
 }
 
 export interface GitRangeContext {
