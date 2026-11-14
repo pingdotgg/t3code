@@ -50,7 +50,7 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 27 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14).
+`main` is in a working state. `tools/check.sh` passes 27 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14). Branch `t3/29ccb596` (engine part 2) passes 28: the 27 and the fixture replay.
 
 | Part | State |
 | --- | --- |
@@ -264,6 +264,10 @@ fix belongs in `conn-provider-claude` (emit the turn before the settings call, o
 host earlier), where another worker is busy. Runs already pass through `waiting` (the
 checkpoint capture).
 
+Memory (macOS, `memory_load` 1,000 fake turns, release): live heap 365 KiB on `main` and
+366 KiB on this branch; RSS at the end 55.2 and 57.5 MiB (the whole-snapshot peak; the
+allocator keeps those pages). The new state is one gate per running rollback.
+
 Not done from the brief: merge-back and the portable fork path (`ContextHandoffService`),
 prepared runs and setup scripts the T3 way, rollback recovery (T3 retries the effect up to 5
 times), the remaining 13 commands.
@@ -374,6 +378,8 @@ The check is the one to trust; several review findings did not hold.
 - Open: the `interrupt` scenario of `claude conformance` failed once under load on
   2026-11-14. The T3 adapter closes the Claude query after an interrupt; our provider does
   not, and the check's reference depends on timing. Branch `t3/claude-interrupt-match-t3`.
+- `t3/29ccb596`: engine part 2 (the fixture replay, `freshContext`), not merged. All 28
+  checks pass on macOS (2026-11-14).
 - In the Conn repository there are local branches only (`rust/*`, `spike/rust-*`,
   `split/conn-server*`), with the same history under `native/conn-server`. They were never
   pushed. They change nothing under `apps/` or `packages/`.
