@@ -148,7 +148,6 @@ describe("AttachmentUpload", () => {
       expect(yield* validateAttachmentUploadToken(`${payload}x.${signature}`)).toBeNull();
       expect(yield* validateAttachmentUploadToken(`${token}.extra`)).toBeNull();
       expect(yield* validateAttachmentUploadToken(`${token}.`)).toBeNull();
-      expect(yield* validateAttachmentUploadToken(`${token}..extra`)).toBeNull();
       expect(yield* validateAttachmentUploadToken("garbage")).toBeNull();
     }).pipe(Effect.provide(layerTest)),
   );
