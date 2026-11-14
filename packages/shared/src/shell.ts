@@ -209,6 +209,12 @@ function envCaptureEnd(name: string): string {
 }
 
 const DEBUG_TRAP_SHELLS = new Set(["bash", "zsh", "sh", "ksh", "ksh93"]);
+const POSIX_CAPTURE_SYNTAX = { assignment: "__T3CODE_PRINTENV=$(", orElse: " || " };
+const PRINTENV_CAPTURE_SYNTAX = new Map(
+  [...DEBUG_TRAP_SHELLS, "dash", "ash"].map((shell) => [shell, POSIX_CAPTURE_SYNTAX] as const),
+).set("fish", { assignment: "set -l __T3CODE_PRINTENV (", orElse: "; or " });
+// Network PATH entries must be probed inside the shell's deadline, away from the desktop thread.
+const PRINTENV_LOOKUP_COMMAND = `/bin/sh -c 'command -v printenv || { [ -n "$1" ] && PATH="$1" command -v printenv; } || printf %s /usr/bin/printenv' t3`;
 
 export function buildEnvironmentCaptureCommand(
   shell: string,
@@ -216,6 +222,16 @@ export function buildEnvironmentCaptureCommand(
 ): string {
   const executableName = NodePath.basename(shell).toLowerCase();
   const isNushell = executableName.startsWith("nu");
+  const syntax = PRINTENV_CAPTURE_SYNTAX.get(executableName);
+  const supportsFallback = syntax !== undefined;
+  const inheritedPath = resolvePathEnvironmentVariable(process.env)
+    .split(POSIX_PATH_DELIMITER)
+    .filter(Boolean)
+    .map((entry) => NodePath.posix.resolve(entry))
+    .join(POSIX_PATH_DELIMITER);
+  const lookupPrintenv = `${PRINTENV_LOOKUP_COMMAND} '${inheritedPath.replaceAll("'", "'\\''")}'`;
+  const { assignment, orElse } = syntax ?? POSIX_CAPTURE_SYNTAX;
+  const resolvePrintenv = `${assignment}${lookupPrintenv}); `;
 
   const capture = names
     .map((name) => {
@@ -246,7 +262,9 @@ export function buildEnvironmentCaptureCommand(
 
       return [
         `printf '%s\\n' '${envCaptureStart(name)}'`,
-        `printenv ${name} || true`,
+        supportsFallback
+          ? `printenv ${name}${orElse}"$__T3CODE_PRINTENV" ${name}${orElse}true`
+          : `printenv ${name} || true`,
         `printf '%s\\n' '${envCaptureEnd(name)}'`,
       ].join("; ");
     })
@@ -254,9 +272,10 @@ export function buildEnvironmentCaptureCommand(
 
   // A DEBUG trap that echoes each command (e.g. into the terminal title) would print the markers.
   // OpenBSD ksh (also its /bin/sh) exits on `trap - DEBUG`, so try it in a subshell first.
+  const command = supportsFallback ? resolvePrintenv + capture : capture;
   return DEBUG_TRAP_SHELLS.has(executableName)
-    ? `(trap - DEBUG) 2>/dev/null && trap - DEBUG; ${capture}`
-    : capture;
+    ? `(trap - DEBUG) 2>/dev/null && trap - DEBUG; ${command}`
+    : command;
 }
 
 function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {

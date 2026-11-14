@@ -119,16 +119,26 @@ describe("readEnvironmentFromLoginShell", () => {
   );
 
   it.runIf(NodeFS.existsSync("/bin/bash"))(
-    "ignores probe markers a bash DEBUG trap echoes into the terminal title",
+    "captures values when the profile replaces PATH and a DEBUG trap echoes commands",
     () => {
       const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-bash-env-"));
       try {
-        const shellPath = `${NodePath.join(home, "bin")}:/usr/bin:/bin`;
+        const tools = NodePath.join(home, "tools 'quoted $dir");
+        NodeFS.mkdirSync(tools);
+        const printenv = NodeChildProcess.execFileSync("/bin/bash", ["-c", "type -P printenv"], {
+          encoding: "utf8",
+          env: { PATH: process.env.PATH },
+        }).trim();
+        NodeFS.copyFileSync(printenv, NodePath.join(tools, "printenv"));
+        vi.stubEnv("PATH", tools);
+        const shellPath = NodePath.join(home, "bin");
         const bashEnv = NodePath.join(home, "env.bash");
         NodeFS.writeFileSync(
           bashEnv,
           [
-            `export PATH=${JSON.stringify(shellPath)}`,
+            `export PATH='${shellPath.replaceAll("'", "'\\''")}'`,
+            // Simulate a non-FHS host while retaining the real executable in its private prefix.
+            "function /usr/bin/printenv { return 127; }",
             `trap 'echo -ne "\\033]0;\${BASH_COMMAND}\\007"' DEBUG`,
           ].join("\n"),
         );
@@ -141,11 +151,12 @@ describe("readEnvironmentFromLoginShell", () => {
             (file, [, command = ""], options) =>
               NodeChildProcess.execFileSync(file, ["-c", command], {
                 ...options,
-                env: { HOME: home, PATH: "/usr/bin:/bin", TERM: "dumb", BASH_ENV: bashEnv },
+                env: { HOME: home, PATH: tools, TERM: "dumb", BASH_ENV: bashEnv },
               }),
           ),
         ).toEqual({ PATH: shellPath });
       } finally {
+        vi.unstubAllEnvs();
         NodeFS.rmSync(home, { recursive: true, force: true });
       }
     },
