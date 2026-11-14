@@ -40,6 +40,10 @@ describe("reading qualifiers out of a typed query", () => {
     const parsed = parsePullRequestQuery("milestone:v2 draft:maybe status: parser");
     expect(parsed.filters).toEqual({ labels: [["milestone:v2"]] });
     expect(parsed.text).toBe("draft:maybe status: parser");
+    expect(parsePullRequestQuery("review:constructor checks:__proto__ Status:toString")).toEqual({
+      text: "review:constructor checks:__proto__ Status:toString",
+      filters: {},
+    });
   });
 
   it("reads a quoted name holding a comma as the one label it is", () => {
