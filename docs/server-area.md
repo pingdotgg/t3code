@@ -180,10 +180,11 @@ that list.
 
 - **Payload limits.** The generated contract types carry no schema checks. `limits.rs` now
   applies the length, pattern, range and entry-count checks of `assets.createUrl`,
+  `server.listTextGeneratorModels` (the `ProviderInstanceId` of `id`, the base URL's length),
   `terminal.open` and `terminal.attach`, generated from the schema AST by
   `tools/gen-upstream.mjs`. A terminal env entry with a bad key (`1FOO`) is dropped, as
   Effect's `Record` decode drops it; more than 128 entries, a key over 128 or a value over
-  8,192 UTF-16 units fail. Proof: `tools/limits-cases.json` (37 cases) through the T3
+  8,192 UTF-16 units fail. Proof: `tools/limits-cases.json` (43 cases) through the T3
   contract's decode (`limits-diff.mjs`, a check step) and through `limits::check` (a test).
   Add a method tag to `LIMITED_METHODS` to cover it. The hand limits in `methods/files.rs`
   could move to this table. Difference left: Effect trims a `TrimmedNonEmptyString` before it

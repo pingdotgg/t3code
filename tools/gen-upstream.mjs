@@ -356,7 +356,12 @@ const upstreamRs = rustfmt(
 // before decode, as Effect's decode does. Only the methods in LIMITED_METHODS: add a tag here
 // to cover one more.
 
-const LIMITED_METHODS = ["assets.createUrl", "terminal.attach", "terminal.open"];
+const LIMITED_METHODS = [
+  "assets.createUrl",
+  "server.listTextGeneratorModels",
+  "terminal.attach",
+  "terminal.open",
+];
 const rpcGroups = [rpc.OfficialWsRpcGroup, rpc.ForkWsRpcGroup];
 const payloadOf = (tag) => {
   for (const group of rpcGroups) {
