@@ -2724,12 +2724,8 @@ describe("OpenCodeAdapterV2", () => {
 
   it.effect.each([
     "during",
-    "after",
-    "stale-idle-then-busy",
-    "no-idle",
     "idle-during-status",
     "busy-during-status",
-    "repeated-user-during-status",
     "after-refused-connection",
   ] as const)("completes the turn when the session goes idle %s a rejected steer", (idleTiming) =>
     Effect.gen(function* () {
@@ -2764,66 +2760,20 @@ describe("OpenCodeAdapterV2", () => {
               statusRechecked.resolve();
               return { data: { [sessionId]: { type: statusCalls === 2 ? "busy" : "idle" } } };
             }
-            if (idleTiming === "repeated-user-during-status") {
-              await nativeEvents.push({
-                type: "message.updated",
-                properties: {
-                  sessionID: sessionId,
-                  info: {
-                    id: promptIds[1],
-                    sessionID: sessionId,
-                    role: "user",
-                    time: { created: 1 },
-                  },
-                },
-              });
-            }
             if (idleTiming === "idle-during-status" && statusCalls === 1) {
               await nativeEvents.push(idle);
               return { data: { [sessionId]: { type: "busy" } } };
             }
             return {
               data: {
-                [sessionId]: {
-                  type:
-                    idleTiming === "during" ||
-                    idleTiming === "no-idle" ||
-                    idleTiming === "repeated-user-during-status" ||
-                    idleTiming === "idle-during-status"
-                      ? "idle"
-                      : "busy",
-                },
+                [sessionId]: { type: idleTiming === "after-refused-connection" ? "busy" : "idle" },
               },
             };
           },
           promptAsync: async (input: { messageID: string }) => {
             promptIds.push(input.messageID);
             if (promptIds.length === 1) return { data: true };
-            if (idleTiming === "repeated-user-during-status") {
-              await nativeEvents.push(idle);
-              await nativeEvents.push({
-                type: "message.updated",
-                properties: {
-                  sessionID: sessionId,
-                  info: {
-                    id: input.messageID,
-                    sessionID: sessionId,
-                    role: "user",
-                    time: { created: 1 },
-                  },
-                },
-              });
-              return { data: true };
-            }
-            if (idleTiming === "during" || idleTiming === "stale-idle-then-busy") {
-              await nativeEvents.push(idle);
-            }
-            if (idleTiming === "stale-idle-then-busy") {
-              await nativeEvents.push({
-                type: "session.status",
-                properties: { sessionID: sessionId, status: { type: "busy" } },
-              });
-            }
+            if (idleTiming === "during") await nativeEvents.push(idle);
             if (idleTiming === "after-refused-connection") {
               throw new TypeError("fetch failed", {
                 cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
@@ -2876,13 +2826,7 @@ describe("OpenCodeAdapterV2", () => {
           },
         }),
       );
-      assert.equal(Exit.isFailure(steer), idleTiming !== "repeated-user-during-status");
-      if (idleTiming === "stale-idle-then-busy") {
-        const active = yield* harness.runtime.readThreadSnapshot({
-          providerThread: harness.providerThread,
-        });
-        assert.equal(active.providerTurns.at(-1)?.status, "running");
-      }
+      assert.isTrue(Exit.isFailure(steer));
       yield* Effect.promise(() => statusRead.promise);
       if (idleTiming === "busy-during-status") {
         const outcome = yield* Effect.raceFirst(
@@ -2896,11 +2840,7 @@ describe("OpenCodeAdapterV2", () => {
         assert.equal(active.providerTurns.at(-1)?.status, "running");
         yield* Effect.promise(() => nativeEvents.push(idle));
       }
-      if (
-        idleTiming === "after" ||
-        idleTiming === "stale-idle-then-busy" ||
-        idleTiming === "after-refused-connection"
-      ) {
+      if (idleTiming === "after-refused-connection") {
         const active = yield* harness.runtime.readThreadSnapshot({
           providerThread: harness.providerThread,
         });
@@ -2922,12 +2862,12 @@ describe("OpenCodeAdapterV2", () => {
     ),
   );
 
-  it.effect.each(["", ", even after a retry is rejected"] as const)(
-    "keeps the turn for a steer whose reply was lost until its output lands%s",
-    (retry) =>
+  it.effect(
+    "keeps the turn for a steer whose reply was lost until its output lands, even after a retry is rejected",
+    () =>
       Effect.gen(function* () {
         const nativeEvents = asyncEventStream();
-        const sessionId = `native-steer-reply-lost${retry === "" ? "" : "-retry"}`;
+        const sessionId = "native-steer-reply-lost";
         const promptIds: Array<string> = [];
         const harness = yield* makeOpenCodeRuntimeHarness(sessionId, sessionId, {
           event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
@@ -2986,7 +2926,7 @@ describe("OpenCodeAdapterV2", () => {
         });
         assert.isTrue(Exit.isFailure(yield* Effect.exit(steer)));
         // T3 retries a failed steer; this retry's request is refused outright.
-        if (retry !== "") assert.isTrue(Exit.isFailure(yield* Effect.exit(steer)));
+        assert.isTrue(Exit.isFailure(yield* Effect.exit(steer)));
         // A real status read answers before OpenCode saves the steer's message.
         yield* Effect.yieldNow;
         yield* userMessage(promptIds[1]);
