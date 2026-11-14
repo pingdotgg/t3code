@@ -60,6 +60,17 @@ import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
+import * as ManagedEndpointRuntime from "../cloud/ManagedEndpointRuntime.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
+import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -11603,4 +11614,144 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
         }),
     );
   },
+);
+
+const agentAccessProjectId = ProjectId.make("project:agent-access");
+const agentAccessOtherProjectId = ProjectId.make("project:agent-access-other");
+
+const layerAgentAccessProduction = (
+  issued: Deferred.Deferred<ReadonlySet<string> | undefined>,
+  settings: Parameters<typeof ServerSettings.layerTest>[0],
+) =>
+  RuntimeLayer.layerProduction.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(AnalyticsService.AnalyticsService)({}),
+        Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({}),
+        Layer.mock(TextGeneration.TextGeneration)({}),
+        Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
+        Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        Layer.mock(SecretResolver.SecretResolver)({}),
+        Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
+        Layer.mock(PreviewManager.PreviewManager)({}),
+        Layer.mock(TerminalManager.TerminalManager)({}),
+        Layer.mock(DeviceService.DeviceService)({}),
+        Layer.mock(WorkspacePaths.WorkspacePaths)({
+          normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),
+        }),
+        Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({
+          getAvailable: () =>
+            Effect.succeed({
+              repositoryIdentity: null,
+              faviconPath: null,
+              repositoryIdentityResolved: false,
+            }),
+          invalidate: () => Effect.void,
+        }),
+        ServerSecretStore.layer,
+        ManagedPolicy.layerTest(),
+        ProjectStore.layer,
+        McpProviderSessions.layer,
+        Layer.effect(
+          McpSessionRegistry.McpSessionRegistry,
+          Effect.map(McpSessionRegistry.McpSessionRegistry, (registry) => ({
+            ...registry,
+            issue: (request) =>
+              Deferred.succeed(issued, request.capabilities).pipe(
+                Effect.andThen(registry.issue(request)),
+              ),
+          })),
+        ).pipe(Layer.provide(McpSessionRegistryTestkit.layer)),
+      ),
+    ),
+    Layer.provide(SqlitePersistence.layerMemory),
+    Layer.provide(layerCheckpointStoreTest),
+    Layer.provide(layerServerConfig),
+    Layer.provide(ServerSettings.layerTest(settings)),
+    Layer.provide(layerTestProviderInstanceRegistry),
+    Layer.provide(layerGitWorkflowTest),
+    Layer.provide(layerPlatformTest),
+  );
+
+const issuedCapabilitiesForProjectThread = (
+  settings: Parameters<typeof ServerSettings.layerTest>[0],
+) =>
+  Effect.gen(function* () {
+    const issued = yield* Deferred.make<ReadonlySet<string> | undefined>();
+    yield* Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const threadId = ThreadId.make("thread:agent-access");
+      yield* projects.create({
+        commandId: CommandId.make("agent-access-project-create"),
+        projectId: agentAccessProjectId,
+        title: "Agent access",
+        workspaceRoot: "/tmp/agent-access",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("agent-access-thread-create"),
+        threadId,
+        projectId: agentAccessProjectId,
+        title: "Agent access",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      // The fixture adapter refuses to open; the credential is issued before that.
+      yield* manager
+        .open({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session:agent-access"),
+          modelSelection,
+          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: "/tmp" },
+        })
+        .pipe(Effect.exit);
+    }).pipe(Effect.provide(layerAgentAccessProduction(issued, settings)));
+    return yield* Deferred.await(issued);
+  });
+
+it.effect(
+  "production wiring inherits global browser access beside another project's override",
+  () =>
+    Effect.gen(function* () {
+      const capabilities = yield* issuedCapabilitiesForProjectThread({
+        enableAgentBrowserAccess: true,
+        projectSettingsOverrides: {
+          [agentAccessOtherProjectId]: { enableAgentBrowserAccess: true },
+        },
+      });
+      assert.isTrue(capabilities?.has("preview"));
+    }),
+);
+
+it.effect("production wiring gives a thread its project's browser access override", () =>
+  Effect.gen(function* () {
+    const capabilities = yield* issuedCapabilitiesForProjectThread({
+      enableAgentBrowserAccess: false,
+      projectSettingsOverrides: {
+        [agentAccessProjectId]: { enableAgentBrowserAccess: true },
+      },
+    });
+    assert.isTrue(capabilities?.has("preview"));
+  }),
+);
+
+it.effect("production wiring gives a thread its project's device access override", () =>
+  Effect.gen(function* () {
+    const capabilities = yield* issuedCapabilitiesForProjectThread({
+      enableAgentDeviceAccess: false,
+      projectSettingsOverrides: {
+        [agentAccessProjectId]: { enableAgentDeviceAccess: true },
+      },
+    });
+    assert.isTrue(capabilities?.has("device"));
+  }),
 );

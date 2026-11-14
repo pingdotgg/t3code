@@ -415,5 +415,7 @@ export const layerProduction = Layer.mergeAll(
   Layer.provide(ResourceCleanupService.layer.pipe(Layer.provide(layerScheduledTaskProvided))),
   Layer.provideMerge(layerProjectService),
   Layer.provide(Scheduler.layer),
+  // Below the whole group: memoized layers that read ProjectService optionally must all see it.
+  Layer.provideMerge(layerProjectService),
   Layer.provideMerge(layerEventInfrastructure),
 );
