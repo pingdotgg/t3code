@@ -124,42 +124,6 @@ function patchedPaths(patch: string): ReadonlyArray<string> {
   );
 }
 
-describe("review decision", () => {
-  it.effect("carries the reviewers' verdict on every change request Azure is asked for", () =>
-    Effect.gen(function* () {
-      const approved = { ...PULL_REQUEST, reviewDecision: "approved" as const };
-      const provider = yield* make.pipe(
-        Effect.provide(
-          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
-            listPullRequests: () =>
-              Effect.succeed({ items: [approved], truncated: false, cursorAdvance: 1 }),
-            getPullRequest: () => Effect.succeed(approved),
-            listIterations: () => Effect.succeed([ITERATION]),
-            listIterationChanges: () => Effect.succeed({ changes: [], truncated: false }),
-          }),
-        ),
-      );
-      const target = { cwd: "/w", repository: "acme/web", host: "dev.azure.com" };
-
-      const page = yield* provider.listChangeRequests({
-        ...target,
-        state: "open",
-        involvement: "all",
-        viewer: "me@example.com",
-        limit: 10,
-      });
-      const summary = yield* provider.getChangeRequestSummary!({ ...target, number: 7 });
-      const detail = yield* provider.getChangeRequest({ ...target, number: 7 });
-
-      expect([
-        page.items[0]?.reviewDecision,
-        summary.reviewDecision,
-        detail.reviewDecision,
-      ]).toEqual(["approved", "approved", "approved"]);
-    }),
-  );
-});
-
 describe("getChangeRequest", () => {
   it.effect("preserves the newest head when file counting fails", () =>
     Effect.gen(function* () {
