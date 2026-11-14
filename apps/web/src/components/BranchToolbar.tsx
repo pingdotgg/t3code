@@ -18,6 +18,7 @@ import {
 import { flushSync } from "react-dom";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
+import { EnvironmentHostSummary } from "./EnvironmentHostSummary";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject, useThreadShellsForProjectRefs } from "../state/entities";
 import {
@@ -349,9 +350,15 @@ const RunContextSelector = memo(function RunContextSelector({
                     value={env.environmentId}
                     closeOnClick
                   >
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      <EnvironmentMachineIcon kind={env.machine} className="size-3" />
-                      <span className="min-w-0 truncate">{env.label}</span>
+                    <span className="flex min-w-0 flex-col">
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <EnvironmentMachineIcon kind={env.machine} className="size-3" />
+                        <span className="min-w-0 truncate">{env.label}</span>
+                      </span>
+                      <EnvironmentHostSummary
+                        environmentId={env.environmentId}
+                        className="ps-4.5 text-muted-foreground text-xs"
+                      />
                     </span>
                   </MenuRadioItem>
                 ))}
@@ -370,9 +377,15 @@ const RunContextSelector = memo(function RunContextSelector({
                         key={target.environmentId}
                         onClick={() => onAddToMachine(target.environmentId)}
                       >
-                        <span className="flex min-w-0 items-center gap-1.5">
-                          <EnvironmentMachineIcon kind={target.machine} className="size-3" />
-                          <span className="min-w-0 truncate">{target.label}</span>
+                        <span className="flex min-w-0 flex-col">
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <EnvironmentMachineIcon kind={target.machine} className="size-3" />
+                            <span className="min-w-0 truncate">{target.label}</span>
+                          </span>
+                          <EnvironmentHostSummary
+                            environmentId={target.environmentId}
+                            className="ps-4.5 text-muted-foreground text-xs"
+                          />
                         </span>
                       </MenuItem>
                     ))}

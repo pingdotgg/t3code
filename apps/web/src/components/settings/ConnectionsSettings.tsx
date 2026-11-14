@@ -76,6 +76,7 @@ import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
+import { EnvironmentHostSummary } from "../EnvironmentHostSummary";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { type ServerClientSessionRecord } from "~/environments/primary";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
@@ -163,6 +164,19 @@ function LocalVersionStatusLabel() {
     <span className="text-xs text-muted-foreground">
       {resolveLocalVersionStatusLabel(updateState)}
     </span>
+  );
+}
+
+function HostSystemRow({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const { data } = useEnvironmentQuery(
+    serverEnvironment.hostResources({ environmentId, input: {} }),
+  );
+  if (!data) return null;
+  return (
+    <SettingsRow
+      title="System"
+      description={<EnvironmentHostSummary environmentId={environmentId} />}
+    />
   );
 }
 
@@ -1243,6 +1257,7 @@ function ConnectionsSettingsContent({
                 <ManagedByOrganization policy={accessServerConfig.managedPolicy} />
               </div>
             ) : null}
+            <HostSystemRow environmentId={accessEnvironmentId} />
             {canManageLocalBackend ? (
               <SettingsRow
                 title="Version"

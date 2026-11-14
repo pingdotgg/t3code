@@ -12,6 +12,19 @@ export const HostResourcesSnapshot = Schema.Struct({
   cpuCount: NonNegativeInt,
   availableMemoryBytes: NonNegativeInt,
   totalMemoryBytes: NonNegativeInt,
+  /** The volume holding the server user's home directory. */
+  disk: Schema.optionalKey(
+    Schema.Struct({ availableBytes: NonNegativeInt, totalBytes: NonNegativeInt }),
+  ),
+  /** Read from the OS's own last background check; absent where the OS keeps no record. */
+  osUpdates: Schema.optionalKey(
+    Schema.Struct({
+      available: NonNegativeInt,
+      security: Schema.optionalKey(NonNegativeInt),
+      names: Schema.optionalKey(Schema.Array(Schema.String)),
+    }),
+  ),
+  rebootRequired: Schema.optionalKey(Schema.Boolean),
 });
 export type HostResourcesSnapshot = typeof HostResourcesSnapshot.Type;
 

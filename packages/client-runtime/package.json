@@ -63,6 +63,10 @@
       "types": "./src/load-balancing.ts",
       "default": "./src/load-balancing.ts"
     },
+    "./host-summary": {
+      "types": "./src/hostSummary.ts",
+      "default": "./src/hostSummary.ts"
+    },
     "./project-favicon-cache": {
       "types": "./src/projectFaviconCache.ts",
       "default": "./src/projectFaviconCache.ts"

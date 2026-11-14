@@ -25,6 +25,7 @@ import * as Option from "effect/Option";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
+import { EnvironmentHostSummary } from "../EnvironmentHostSummary";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
@@ -306,6 +307,12 @@ export function SavedBackendListRow({
       }
       below={
         <>
+          {enabled && isConnected ? (
+            <EnvironmentHostSummary
+              environmentId={environmentId}
+              className="text-muted-foreground text-xs"
+            />
+          ) : null}
           {diagnosis ? (
             <ConnectionDiagnosisSummary
               diagnosis={diagnosis}
