@@ -143,7 +143,9 @@ list, open that Claude instance in **Settings > Providers** and add its full mod
 ID with **Add custom model**. Then select it in the chat model picker.
 `ANTHROPIC_DEFAULT_*_MODEL` variables map Claude Code aliases such as `sonnet`; they
 do not replace the explicit model ID selected in T3 Code. Custom models may have
-fewer effort, thinking, or context controls than built-in models.
+fewer effort, thinking, or context controls than built-in models. A custom model ID
+ending in `[1m]` gets a Context Window choice between 1M and 200K. Choosing 200K
+sends the same ID without the suffix.
 
 Verify the model used in OpenRouter's activity dashboard. For current compatibility
 requirements, use the
