@@ -589,13 +589,12 @@ pub(super) async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let id = thread_id(args);
     cx.writes_threads(&[str_arg(args, "threadId")]).await?;
     let projection = cx.projection(id).await?;
-    let mode = str_arg(args, "mode").unwrap_or("auto");
-    if bool_arg(args, "freshContext") == Some(true) {
-        return Err(fail(
-            "thread_not_sendable",
-            "Conn Server cannot start a fresh provider session on send yet.",
-        ));
-    }
+    let fresh = bool_arg(args, "freshContext") == Some(true);
+    // A fresh send never joins a running turn, so it needs none to steer or restart.
+    let mode = match str_arg(args, "mode").unwrap_or("auto") {
+        "steer" | "restart" if fresh => "queue",
+        mode => mode,
+    };
     let key = Cx::request_key(args);
     let message_id = cx.stable_id("message", "thread-send", &key);
     let command_id = cx.stable_id("command", "thread-send", &key);
@@ -633,6 +632,9 @@ pub(super) async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
     });
     if let Some(sender) = sender {
         command["senderThreadId"] = json!(sender);
+    }
+    if fresh {
+        command["freshContext"] = json!(true);
     }
     cx.dispatch(command).await?;
     let projection = cx.projection(id).await?;

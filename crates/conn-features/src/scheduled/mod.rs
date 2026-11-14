@@ -186,6 +186,8 @@ pub struct SendRequest {
     pub text: String,
     pub created_by: Value,
     pub creation_source: Value,
+    /// A `fresh_session` task: the run starts a new provider conversation (`freshContext`).
+    pub fresh_context: bool,
 }
 
 /// Why a send failed.
@@ -485,13 +487,6 @@ impl ScheduledTasks {
             .into());
         }
         let thread_mode = resolve_thread_mode(&input, existing.as_ref());
-        if thread_mode == ScheduledTaskThreadMode::FreshSession {
-            return Err(TaskError::new(
-                "This server cannot start a fresh provider session for each run yet.",
-                Some(&id),
-            )
-            .into());
-        }
         let kept_thread = input
             .thread_id
             .clone()
@@ -866,6 +861,7 @@ impl ScheduledTasks {
                     text: task.prompt.clone(),
                     created_by: to_json(&task.created_by),
                     creation_source: to_json(&task.creation_source),
+                    fresh_context: thread_mode_of(task) == ScheduledTaskThreadMode::FreshSession,
                 })
                 .await;
             match sent {

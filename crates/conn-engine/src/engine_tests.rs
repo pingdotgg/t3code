@@ -3028,3 +3028,126 @@ async fn shutdown_closes_sessions_together_and_opens_no_more() {
 
 #[path = "checkpoint_tests.rs"]
 mod checkpoint_tests;
+
+fn fresh_message(thread: &str, command: &str, text: &str, extra: Value) -> Value {
+    let mut command = message(thread, command, text);
+    command["freshContext"] = json!(true);
+    if let (Some(fields), Some(extra)) = (command.as_object_mut(), extra.as_object()) {
+        fields.extend(extra.clone());
+    }
+    command
+}
+
+/// `freshContext` (T3's `dispatchMessage`): the run starts a new provider conversation in a
+/// new session; the old session's row says it stopped; the next message continues the new one.
+#[tokio::test(flavor = "current_thread")]
+async fn a_fresh_message_starts_a_new_provider_conversation() {
+    let db = TempDb::new("fresh");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "first")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    dispatch(&engine, fresh_message("t1", "c3", "second", json!({}))).await;
+    run_to_end(&engine, "t1", "run:t1:2").await;
+    dispatch(&engine, message("t1", "c4", "third")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:3").await;
+
+    let runs = p["runs"].as_array().unwrap();
+    assert_eq!(runs[1]["freshContext"], true, "{}", runs[1]);
+    assert!(runs[0].get("freshContext").is_none());
+    assert_ne!(runs[1]["providerThreadId"], runs[0]["providerThreadId"]);
+    assert_eq!(
+        runs[2]["providerThreadId"], runs[1]["providerThreadId"],
+        "the fresh one goes on"
+    );
+    assert_eq!(
+        p["thread"]["activeProviderThreadId"],
+        runs[1]["providerThreadId"]
+    );
+    assert_eq!(
+        provider.sessions.load(std::sync::atomic::Ordering::SeqCst),
+        2
+    );
+    let item = p["turnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["messageId"] == "message:c3")
+        .unwrap();
+    assert_eq!(item["freshContext"], true, "{item}");
+    assert_eq!(
+        p["providerSessions"][0]["status"], "stopped",
+        "the old session was released"
+    );
+    let threads = p["providerThreads"].as_array().unwrap();
+    let ordinals: Vec<_> = threads
+        .iter()
+        .map(|t| (t["firstRunOrdinal"].clone(), t["lastRunOrdinal"].clone()))
+        .collect();
+    assert_eq!(ordinals, [(json!(1), json!(1)), (json!(2), json!(3))]);
+}
+
+/// A fresh start never joins a running turn: a steer becomes a queued run.
+#[tokio::test(flavor = "current_thread")]
+async fn a_fresh_message_never_steers() {
+    let db = TempDb::new("fresh-steer");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(
+        &engine,
+        fresh_message(
+            "t1",
+            "c3",
+            "fresh",
+            json!({"dispatchMode": {"type": "steer_active", "targetRunId": "run:t1:1"}}),
+        ),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["runs"][1]["status"], "queued", "{}", p["runs"]);
+    assert_eq!(p["runs"][1]["freshContext"], true);
+    assert!(p["runs"][1]["providerThreadId"].is_null());
+}
+
+/// A schedule's fresh run is a side conversation: the next plain message continues the
+/// thread's own provider thread (`conversationProviderThread`).
+#[tokio::test(flavor = "current_thread")]
+async fn a_scheduled_fresh_run_is_a_side_conversation() {
+    let db = TempDb::new("fresh-scheduled");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "first")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    dispatch(
+        &engine,
+        fresh_message(
+            "t1",
+            "c3",
+            "triage",
+            json!({"scheduledTaskId": "task:triage", "dispatchMode": {"type": "queue_after_active"}}),
+        ),
+    )
+    .await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_ne!(
+        p["runs"][1]["providerThreadId"],
+        p["runs"][0]["providerThreadId"]
+    );
+    dispatch(&engine, message("t1", "c4", "back to the thread")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:3").await;
+    assert_eq!(
+        p["runs"][2]["providerThreadId"], p["runs"][0]["providerThreadId"],
+        "the thread's own conversation goes on past the schedule's"
+    );
+    assert_eq!(
+        provider.sessions.load(std::sync::atomic::Ordering::SeqCst),
+        3
+    );
+}

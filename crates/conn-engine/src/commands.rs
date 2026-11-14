@@ -286,6 +286,8 @@ struct MessageDispatch {
     notification: Option<Value>,
     /// The scheduled task whose run sent this message.
     scheduled_task_id: Option<String>,
+    /// Start a new provider conversation without the thread's earlier context. Never steers.
+    fresh_context: Option<bool>,
 }
 
 /// How a message reaches the thread, after the busy-thread rules.
@@ -346,8 +348,22 @@ fn delivery(tx: &Tx<'_>, c: &MessageDispatch) -> Result<(Delivery, Option<Value>
 }
 
 fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
-    let c: MessageDispatch = decode(command)?;
+    let mut c: MessageDispatch = decode(command)?;
     let thread = live_thread(tx, &c.thread_id)?;
+    let fresh = c.fresh_context == Some(true);
+    if fresh {
+        fresh_context_allowed(tx, &c, &thread)?;
+        // A fresh start never joins a running turn (`dispatchMessage`).
+        if matches!(
+            c.dispatch_mode.kind.as_str(),
+            "steer_active" | "restart_active"
+        ) {
+            c.dispatch_mode = DispatchMode {
+                kind: "queue_after_active".into(),
+                target_run_id: None,
+            };
+        }
+    }
     crate::fork::ensure_native_fork(
         tx,
         &c.thread_id,
@@ -385,7 +401,12 @@ fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
             .as_ref()
             .unwrap_or(&thread["modelSelection"]),
     );
-    let provider_thread_id = thread["activeProviderThreadId"].clone();
+    // A fresh run starts a new provider thread when it runs.
+    let provider_thread_id = if fresh {
+        Value::Null
+    } else {
+        thread["activeProviderThreadId"].clone()
+    };
     let now = tx.now().to_owned();
     let cid = Some(c.command_id.as_str());
     let draft = |event_type, payload| {
@@ -443,6 +464,9 @@ fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     });
     if held {
         run["queueHeld"] = json!(true);
+    }
+    if fresh {
+        run["freshContext"] = json!(true);
     }
     // An explicit steer into a turn whose provider turn is not running yet waits as a queued
     // run and becomes a steer once it runs (`deliverDeferredSteers`).
@@ -600,6 +624,12 @@ fn user_message_item(
     if let Some(context) = &c.context {
         item["context"] = context.clone();
     }
+    if let Some(task) = &c.scheduled_task_id {
+        item["scheduledTaskId"] = json!(task);
+    }
+    if c.fresh_context == Some(true) {
+        item["freshContext"] = json!(true);
+    }
     match &c.notification {
         Some(notification) => as_notice(item, notification),
         None => item,
@@ -627,6 +657,53 @@ fn as_notice(mut item: Value, notification: &Value) -> Value {
         }
     }
     item
+}
+
+/// The provider thread a queued run starts on: none for a fresh run (it makes a new one).
+fn queued_provider_thread(run: &Value, thread: &Value) -> Value {
+    if run["freshContext"] == true {
+        Value::Null
+    } else {
+        thread["activeProviderThreadId"].clone()
+    }
+}
+
+/// T3's refusals of a fresh start (`dispatchMessage`): not while a fork is still being
+/// applied, and not while the current session runs background work that a new session would
+/// end, unless a schedule sent it (nobody is there to wait or press Stop).
+fn fresh_context_allowed(
+    tx: &Tx<'_>,
+    c: &MessageDispatch,
+    thread: &Value,
+) -> Result<(), CommandError> {
+    if crate::fork::pending_fork(tx, &c.thread_id)?.is_some() {
+        return reject("A fresh session can't start while a fork or merge is still being applied.");
+    }
+    if c.scheduled_task_id.is_some() {
+        return Ok(());
+    }
+    let Some(active) = thread["activeProviderThreadId"].as_str() else {
+        return Ok(());
+    };
+    let Some(active) = tx.entity(&c.thread_id, "providerThreads", active)? else {
+        return Ok(());
+    };
+    let session = &active["providerSessionId"];
+    let busy = tx
+        .entities(&c.thread_id, "providerThreads")?
+        .iter()
+        .filter(|pt| !session.is_null() && pt["providerSessionId"] == *session)
+        .any(|pt| {
+            pt["pendingBackgroundTasks"]
+                .as_array()
+                .is_some_and(|tasks| !tasks.is_empty())
+        });
+    if busy {
+        return reject(
+            "The current session is still running background agents or commands, and a fresh session would end them. Wait for them to finish, or press Stop, then send the message again.",
+        );
+    }
+    Ok(())
 }
 
 /// Writes the message into the running turn (`dispatchSteerIntoRun`): no new run.
@@ -764,9 +841,15 @@ pub(crate) fn start_next_queued(
         if message["context"].is_object() {
             item["context"] = message["context"].clone();
         }
+        if let Some(task) = message["scheduledTaskId"].as_str() {
+            item["scheduledTaskId"] = json!(task);
+        }
+        if run["freshContext"] == true {
+            item["freshContext"] = json!(true);
+        }
         item["runId"] = json!(run_id);
         item["nodeId"] = json!(root);
-        item["providerThreadId"] = thread["activeProviderThreadId"].clone();
+        item["providerThreadId"] = queued_provider_thread(&run, &thread);
         item["inputIntent"] = json!("queued_turn");
         item["status"] = json!("completed");
         item["completedAt"] = json!(now);
@@ -779,7 +862,7 @@ pub(crate) fn start_next_queued(
     run["status"] = json!("starting");
     run["queuePosition"] = Value::Null;
     run["queueHeld"] = json!(false);
-    run["providerThreadId"] = thread["activeProviderThreadId"].clone();
+    run["providerThreadId"] = queued_provider_thread(&run, &thread);
     tx.append(draft("run.updated", run))?;
     Ok(Some(Effect::StartTurn {
         thread_id: thread_id.to_owned(),
@@ -970,6 +1053,7 @@ fn queued_message_promote_to_steer(tx: &mut Tx<'_>, command: Value) -> Outcome {
             .filter(|v| v.is_object())
             .cloned(),
         scheduled_task_id: message["scheduledTaskId"].as_str().map(str::to_owned),
+        fresh_context: None,
     };
     let mut effects = steer_into(tx, &dispatch, &target)?;
     // The item records that it came from the queue.

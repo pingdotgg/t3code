@@ -120,6 +120,11 @@ struct TurnContext {
     provider_thread: Option<Value>,
     /// The source to fork natively, on a fork's first turn.
     fork: Option<crate::fork::NativeFork>,
+    /// The run starts a new provider conversation (`freshContext`).
+    fresh: bool,
+    /// The run goes back to the thread's own conversation past a scheduled fresh run's, so
+    /// the session that holds the schedule's conversation is released first.
+    leaves_side_conversation: bool,
 }
 
 enum StartError {
@@ -357,13 +362,28 @@ impl Inner {
                         |pt: &Value| pt["providerInstanceId"].as_str() == Some(instance);
                     // Never resume a provider thread of another instance. Without an active one
                     // of this instance, take its newest root thread (`rootProviderThreadsForProvider`).
+                    let fresh = run["freshContext"] == true;
                     let active = match thread["activeProviderThreadId"].as_str() {
                         Some(id) => tx
                             .entity(&tid, "providerThreads", id)?
                             .filter(|pt| same_instance(pt)),
                         None => None,
                     };
+                    // A wake acts on the active session; a message continues the conversation,
+                    // past a scheduled fresh run's side conversation (`dispatchProviderThread`).
+                    let wake = message["notification"].is_object()
+                        || message["delegatedCompletion"].is_object();
+                    let active_id = thread["activeProviderThreadId"].clone();
+                    let active = match active {
+                        Some(pt) if !wake => {
+                            Some(crate::fresh::conversation_thread(&tx, &tid, pt)?)
+                        }
+                        other => other,
+                    };
+                    let leaves_side_conversation =
+                        !fresh && active.as_ref().is_some_and(|pt| pt["id"] != active_id);
                     let provider_thread = match active {
+                        _ if fresh => None,
                         Some(pt) => Some(pt),
                         None => tx
                             .entities_where(
@@ -386,6 +406,7 @@ impl Inner {
                     };
                     let fork = match provider_thread {
                         Some(_) => None,
+                        None if fresh => None,
                         None => crate::fork::native_fork_input(&tx, &tid)?,
                     };
                     Ok(Some(TurnContext {
@@ -395,6 +416,8 @@ impl Inner {
                         cwd,
                         provider_thread,
                         fork,
+                        fresh,
+                        leaves_side_conversation,
                     }))
                 })();
                 tx.rollback();
@@ -427,8 +450,10 @@ impl Inner {
             .as_str()
             .unwrap_or_default();
         // A live session of another instance closes; the run opens one on its own instance.
+        // A fresh run releases the session too: each holds one native conversation
+        // (`sessionsReleasedByFreshContext`).
         if let Some(live) = self.live_thread(thread_id)
-            && live.instance != instance
+            && (live.instance != instance || context.fresh || context.leaves_side_conversation)
         {
             self.close_session(thread_id).await;
         }
@@ -499,6 +524,27 @@ impl Inner {
             .as_str()
             .unwrap_or_default()
             .to_owned();
+        let attempt_id = format!("{run_id}:attempt:1");
+        let mut provider_thread_json = to_json(&provider_thread);
+        if provider_thread_json.is_object() {
+            provider_thread_json["providerInstanceId"] = json!(instance);
+            // `runningProviderThread` in T3's `ProviderTurnStartService`.
+            let ordinal = context.run["ordinal"].clone();
+            if provider_thread_json["firstRunOrdinal"].is_null() {
+                provider_thread_json["firstRunOrdinal"] = ordinal.clone();
+            }
+            provider_thread_json["lastRunOrdinal"] = ordinal;
+            provider_thread_json["status"] = json!("active");
+        }
+        if provider_thread_json
+            .get("appThreadId")
+            .is_none_or(Value::is_null)
+        {
+            provider_thread_json["appThreadId"] = json!(thread_id);
+        }
+        // The provider gets the running row and echoes it, as T3's `startTurn` input.
+        let provider_thread: ProviderThread =
+            from_json(provider_thread_json.clone()).unwrap_or(provider_thread);
         {
             let mut state = lock(&live.state);
             state.provider_thread = Some(provider_thread.clone());
@@ -507,18 +553,6 @@ impl Inner {
                 root_node_id: root.clone(),
                 provider_turn_id: None,
             });
-        }
-
-        let attempt_id = format!("{run_id}:attempt:1");
-        let mut provider_thread_json = to_json(&provider_thread);
-        if provider_thread_json.is_object() {
-            provider_thread_json["providerInstanceId"] = json!(instance);
-        }
-        if provider_thread_json
-            .get("appThreadId")
-            .is_none_or(Value::is_null)
-        {
-            provider_thread_json["appThreadId"] = json!(thread_id);
         }
         let (tid, rid, aid, root_id) = (
             thread_id.to_owned(),

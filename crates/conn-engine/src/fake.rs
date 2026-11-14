@@ -48,6 +48,9 @@ pub struct FakeProvider {
     pub rollbacks: Arc<Mutex<Vec<String>>>,
     /// Forks asked for: `<target thread> <provider turn id or "-">`.
     pub forks: Arc<Mutex<Vec<String>>>,
+    /// Provider threads made per app thread (`ensure_thread`); the second and later get a
+    /// numbered id, as a real provider gives each new conversation its own.
+    ensured: Arc<Mutex<std::collections::HashMap<String, usize>>>,
     fail_rollback: bool,
     steering: bool,
     close_delay: std::time::Duration,
@@ -74,6 +77,7 @@ impl FakeProvider {
             applied_selections: Arc::new(Mutex::new(vec![])),
             rollbacks: Arc::new(Mutex::new(vec![])),
             forks: Arc::new(Mutex::new(vec![])),
+            ensured: Arc::default(),
             fail_rollback: false,
             steering: true,
             close_delay: std::time::Duration::ZERO,
@@ -129,6 +133,7 @@ struct FakeSession {
     applied_selections: Arc<Mutex<Vec<Value>>>,
     rollbacks: Arc<Mutex<Vec<String>>>,
     forks: Arc<Mutex<Vec<String>>>,
+    ensured: Arc<Mutex<std::collections::HashMap<String, usize>>>,
     fail_rollback: bool,
     close_delay: std::time::Duration,
 }
@@ -184,6 +189,7 @@ impl Provider for FakeProvider {
                     applied_selections: self.applied_selections.clone(),
                     rollbacks: self.rollbacks.clone(),
                     forks: self.forks.clone(),
+                ensured: self.ensured.clone(),
                     fail_rollback: self.fail_rollback,
                     close_delay: self.close_delay,
                 }),
@@ -294,16 +300,25 @@ impl Session for FakeSession {
         Box::pin(async move {
             let now = now_iso();
             // Each instance has its own provider thread; the default instance keeps the short id.
-            let id = if self.instance == "claudeAgent" {
+            let base = if self.instance == "claudeAgent" {
                 format!("provider-thread:{}", input.thread_id)
             } else {
                 format!("provider-thread:{}:{}", self.instance, input.thread_id)
             };
+            let n = {
+                let mut ensured = crate::lock(&self.ensured);
+                let n = ensured
+                    .entry(input.thread_id.as_str().to_owned())
+                    .or_insert(0);
+                *n += 1;
+                *n
+            };
+            let id = if n == 1 { base } else { format!("{base}:{n}") };
             Ok(from_json(json!({
                 "id": id, "driver": self.driver,
                 "providerInstanceId": self.instance, "providerSessionId": self.id,
                 "appThreadId": input.thread_id, "ownerNodeId": null,
-                "nativeThreadRef": {"driver": self.driver, "nativeId": "native-1", "strength": "strong"},
+                "nativeThreadRef": {"driver": self.driver, "nativeId": format!("native-{n}"), "strength": "strong"},
                 "nativeConversationHeadRef": null, "status": "active", "firstRunOrdinal": null,
                 "lastRunOrdinal": null, "handoffIds": [], "forkedFrom": null,
                 "createdAt": now, "updatedAt": now,

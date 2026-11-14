@@ -1,0 +1,52 @@
+# T3 testkit fixture variants that fail through this engine today, with the reason.
+# `<fixture>/<driver> reason`; `*/<driver>` covers every variant of a provider this server
+# does not offer. check.mjs fails when a variant not listed here fails, and when a listed one
+# passes (then remove it). Grouped by cause.
+
+# --- Providers this server does not offer (no provider, or not offered yet) ---
+*/grok          provider: conn-provider-acp has Grok, but the server does not offer it yet
+*/kiro          provider: not built (ACP)
+*/acpRegistry   provider: not built (ACP registry)
+*/fx            provider: not built (ACP)
+*/cursor        provider: not built (Cursor SDK in the SDK host)
+*/opencode      provider: not built (OpenCode SDK in the SDK host)
+*/muse          provider: not built (Muse SDK in the SDK host)
+*/pi            provider: out of scope (AGENTS.md)
+
+# --- Codex provider: subagents are not built (conn-provider-codex README) ---
+subagent/codex                      provider: Codex subagents (collabAgentToolCall, child threads) are not built
+subagent_continue/codex             provider: Codex subagents are not built
+subagent_v2/codex                   provider: Codex subagents are not built
+subagent_v2_approval/codex          provider: Codex subagents are not built (a child's approval gets an error reply)
+subagent_v2_nested/codex            provider: Codex subagents are not built
+subagent_v2_nested_approval/codex   provider: Codex subagents are not built
+
+# --- Claude provider: background roster, monitors and wakes are not built ---
+claude_background_subagent_after_root/claudeAgent    provider: no background_work.updated roster for Claude subagents; the subagent item never shows
+claude_background_monitor_wake/claudeAgent           provider: Claude Monitor wakes are not built
+claude_nested_background_subagent_wake/claudeAgent   provider: no Claude background roster for nested subagents
+claude_background_subagent_lifecycle/claudeAgent     provider: no Claude background roster; the subagent statuses differ
+claude_background_task_interrupt/claudeAgent         provider: no Claude background roster ("the background task must reach the roster before interrupt")
+claude_background_wake_before_queued_prompt/claudeAgent  provider: Claude background wakes are not built; the wake and queued prompt order differs
+claude_compact_after_resume_wake/claudeAgent         provider: Claude background wakes are not built (the resumed wake's compaction differs)
+claude_compact_after_peer_turn/claudeAgent           provider: Claude background wakes are not built (the peer turn's run never reaches its status)
+claude_idle_resume/claudeAgent                       provider: Claude background wakes after an idle release are not built
+
+# --- Claude provider: event mapping differs from T3's ClaudeAdapterV2 ---
+claude_nested_subagent_model/claudeAgent   provider: a subagent's model is the CLI's dated id (claude-haiku-4-5-20251001); T3 shows claude-haiku-4-5
+claude_mcp_tool_presentation/claudeAgent   provider: MCP tool items have no title; T3 titles them ("Firecrawl scrape")
+web_search/claudeAgent                     provider: the web_search item has no `patterns`; T3 fills them from the query
+command_output_streaming/claudeAgent       provider: Claude emits no live command output (command_output.delta)
+turn_interrupt_restart/claudeAgent         provider: after a restarted turn completes, Claude's last thread update says active; T3's says idle
+
+# --- Engine: differences found, not fixed yet ---
+thread_rollback_after_restart/codex   engine: T3 calls resumeThread at every turn start (ProviderTurnStartService); after a rollback on a new process Codex gets thread/resume again before turn/start. Ours resumes only on a new session; matching it needs the Codex provider to skip a loaded thread, as T3's adapter does
+
+# --- The replay driver: steps it cannot run yet ---
+queued_cancelled_while_active/codex           driver: release_replay_gate / finish_held_run (the stub sends frames at once; no replay gate)
+claude_background_task_after_root/claudeAgent driver: release_replay_gate (no replay gate in the fake SDK host)
+claude_background_task_wake/claudeAgent       driver: release_replay_gate (no replay gate in the fake SDK host)
+
+# --- Test clock: T3's expected order comes from ties on its TestClock ---
+queued_turn/codex         clock: T3 orders messages by createdAt then id; on its TestClock the queued message and the first answer tie and the id decides. Our providers stamp with the system clock (no clock seam in the providers)
+queued_turn/claudeAgent   clock: as queued_turn/codex

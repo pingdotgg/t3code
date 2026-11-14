@@ -305,6 +305,9 @@ try {
       "--reporter=json",
       `--outputFile=${reportFile}`,
       "--testTimeout=120000",
+      // Each fixture has its own folder, engine and stub process: four at a time.
+      "--sequence.concurrent",
+      "--maxConcurrency=4",
     ],
     { cwd: server, stdio: ["ignore", "ignore", "inherit"] },
   );
@@ -352,7 +355,8 @@ for (const variant of variants) {
   const passed = result.status === "passed";
   if (passed) counts.passed += 1;
   byDriver.set(driver, counts);
-  const listed = expected.has(variant);
+  // `*/<driver>` lists every variant of a provider this server does not offer.
+  const listed = expected.has(variant) || expected.has(`*/${driver}`);
   if (passed && listed) {
     open += 1;
     lines.push(`PASSES BUT LISTED  ${variant}: remove it from expected-failures.txt`);
@@ -364,7 +368,8 @@ for (const variant of variants) {
   }
 }
 for (const name of expected.keys()) {
-  if (!variants.includes(name)) {
+  const wildcard = name.startsWith("*/") && variants.some((v) => v.endsWith(name.slice(1)));
+  if (!wildcard && !variants.includes(name)) {
     open += 1;
     lines.push(`LISTED, NO SUCH VARIANT  ${name}: T3 removed or renamed it`);
   }
