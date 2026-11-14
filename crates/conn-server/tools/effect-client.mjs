@@ -213,6 +213,33 @@ function decodeCall(client, tag, payload) {
   });
 }
 
+/** A stub `grok` that answers the status probe as a healthy, signed-in CLI. */
+function grokStub() {
+  const dir = NodePath.join(work, "grok-stub");
+  NodeFS.mkdirSync(dir, { recursive: true });
+  const stub = NodePath.resolve(import.meta.dirname, "../../conn-provider-acp/tools/grok-cli-stub.mjs");
+  const config = NodePath.join(dir, "config.json");
+  NodeFS.writeFileSync(
+    config,
+    JSON.stringify({
+      log: NodePath.join(dir, "log.ndjson"),
+      behaviour: {
+        version: { code: 0, stdout: "grok 1.0.52\n" },
+        models: [{ code: 0, stdout: "You are logged in with grok.com.\n  * grok-4.6 (default)\n" }],
+        inspect: { code: 0, stdout: JSON.stringify({ skills: [] }) },
+        agent: { mode: "ok", initialize: { protocolVersion: 1, _meta: { modelState: { currentModelId: "grok-4.6", availableModels: [{ modelId: "grok-4.6", name: "Grok 4.6" }] } } } },
+      },
+    }),
+  );
+  const script = NodePath.join(dir, "grok");
+  NodeFS.writeFileSync(
+    script,
+    `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(stub)} --stub-config ${JSON.stringify(config)} "$@"\n`,
+    { mode: 0o755 },
+  );
+  return script;
+}
+
 /** Methods that no recording reaches: one call each, on temp folders. */
 const decodeEach = (client) =>
   Effect.gen(function* () {
@@ -300,6 +327,23 @@ const decodeEach = (client) =>
     yield* call("provider.auth.subscribe", { instanceId: "codex" });
     yield* call("provider.install.subscribe", { instanceId: "codex" });
     yield* call("server.getConfig", {});
+    // Grok, switched on with a stub CLI (crates/conn-provider-acp/tools/grok-cli-stub.mjs; no
+    // real CLI runs): the server probes it as T3 does, and the entry decodes as "ready".
+    yield* call("server.updateSettings", {
+      patch: {},
+      providerInstanceMutation: {
+        operation: "create",
+        instanceId: "grok",
+        instance: { driver: "grok", enabled: true, config: { binaryPath: grokStub() } },
+      },
+    });
+    const grok = yield* call("server.refreshProviders", { instanceId: "grok" });
+    const grokEntry = Exit.isSuccess(grok) ? grok.value.providers.find((p) => p.instanceId === "grok") : undefined;
+    check(
+      "Grok entry from the probe",
+      grokEntry?.status === "ready" && grokEntry.models.some((m) => m.slug === "grok-4.6"),
+      `${grokEntry?.status} ${grokEntry?.message ?? ""}`,
+    );
     yield* call("server.getHostResources", {});
     yield* call("server.getProcessDiagnostics", {});
     yield* call("server.upsertKeybinding", { key: "mod+shift+f12", command: "sidebar.toggle" });

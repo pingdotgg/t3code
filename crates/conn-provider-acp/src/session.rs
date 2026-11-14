@@ -147,6 +147,50 @@ fn failed(operation: &'static str, error: &CallError) -> ProviderError {
     }
 }
 
+/// The `initialize` params of `AcpSessionRuntime.initializeOnce` and effect-acp's negotiating
+/// request: the v2 fields, then the v1 ones. The provider probe sends the same with its own
+/// client name (`t3-code-provider-probe`) and no elicitation handler, so without the
+/// elicitation capability.
+pub(crate) fn initialize_params(
+    flavor: &Flavor,
+    client_name: &str,
+    client_version: &str,
+    elicitation: bool,
+) -> J {
+    let client_info = || {
+        obj()
+            .with("name", client_name.to_owned())
+            .with("version", client_version.to_owned())
+    };
+    let capabilities = obj()
+        .with(
+            "fs",
+            obj()
+                .with("readTextFile", false)
+                .with("writeTextFile", false),
+        )
+        .with("terminal", false)
+        .with(
+            "session",
+            obj().with("notices", obj()).with("compaction", obj()),
+        )
+        .with_opt(
+            "elicitation",
+            elicitation.then(|| obj().with("form", obj())),
+        );
+    let v2_capabilities = obj().with_opt(
+        "elicitation",
+        elicitation.then(|| obj().with("form", obj())),
+    );
+    obj()
+        .with("protocolVersion", 2)
+        .with("info", client_info())
+        .with("capabilities", v2_capabilities)
+        .with_opt("_meta", flavor.initialize_meta.map(|meta| meta()))
+        .with("clientCapabilities", capabilities)
+        .with("clientInfo", client_info())
+}
+
 impl AcpSession {
     /// Starts the agent, `initialize`, then `session/new` (T3's `openSession` start).
     pub(crate) async fn open(
@@ -252,33 +296,12 @@ impl Inner {
     /// `initialize`, as `AcpSessionRuntime.initializeOnce` and effect-acp's negotiating
     /// request send it: the v2 fields, then the v1 ones.
     async fn initialize(&self, connection: &Connection) -> ProviderResult<Value> {
-        let flavor = self.config.flavor;
-        let client_info = || {
-            obj()
-                .with("name", "t3-code")
-                .with("version", self.config.client_version.clone())
-        };
-        let capabilities = obj()
-            .with(
-                "fs",
-                obj()
-                    .with("readTextFile", false)
-                    .with("writeTextFile", false),
-            )
-            .with("terminal", false)
-            .with(
-                "session",
-                obj().with("notices", obj()).with("compaction", obj()),
-            )
-            .with("elicitation", obj().with("form", obj()));
-        let v2_capabilities = obj().with("elicitation", obj().with("form", obj()));
-        let params = obj()
-            .with("protocolVersion", 2)
-            .with("info", client_info())
-            .with("capabilities", v2_capabilities)
-            .with_opt("_meta", flavor.initialize_meta.map(|meta| meta()))
-            .with("clientCapabilities", capabilities)
-            .with("clientInfo", client_info());
+        let params = initialize_params(
+            self.config.flavor,
+            "t3-code",
+            &self.config.client_version,
+            true,
+        );
         connection
             .call("initialize", params)
             .await

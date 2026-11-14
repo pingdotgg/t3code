@@ -14,11 +14,13 @@ mod connection;
 mod diff;
 pub mod flavor;
 mod grok;
+mod grok_status;
 #[rustfmt::skip]
 mod instructions;
 mod mapper;
 mod ordered;
 mod policy;
+mod probe;
 mod prompt;
 mod protocol;
 mod session;
@@ -78,6 +80,32 @@ async fn stop_process(process: Process, kind: session::StopKind) {
     process.shutdown().await;
 }
 
+/// The ACP `initialize` probe (`discoverGrokMetadataViaAcpInitialize`): starts
+/// `<binary> agent stdio` in `cwd` with the probe environment, sends `initialize` as client
+/// `t3-code-provider-probe`, and ends the agent as the runtime's scope does (SIGKILL to its
+/// process group). `None` when the agent cannot start, fails or misses the timeout.
+pub(crate) async fn initialize_probe(
+    binary: &str,
+    environment: &[(String, String)],
+    cwd: &std::path::Path,
+    timeout: Duration,
+) -> Option<serde_json::Value> {
+    let launch = (GROK.launch)(binary, None, environment);
+    let spawned = process_spawner(launch, cwd.display().to_string())().ok()?;
+    let (connection, mut incoming) =
+        connection::Connection::start(spawned.writer, spawned.events, session::EVENT_CAPACITY);
+    // Nothing is served during the probe; agent frames are read and dropped.
+    let drain = tokio::spawn(async move { while incoming.recv().await.is_some() {} });
+    let params = session::initialize_params(&GROK, "t3-code-provider-probe", "0.0.0", false);
+    let result = tokio::time::timeout(timeout, connection.call("initialize", params)).await;
+    (spawned.stop)(session::StopKind::Kill).await;
+    drain.abort();
+    match result {
+        Ok(Ok(value)) => Some(value),
+        _ => None,
+    }
+}
+
 /// One configured ACP agent instance.
 #[derive(Clone, Debug)]
 pub struct AcpConfig {
@@ -85,12 +113,38 @@ pub struct AcpConfig {
     pub binary: String,
     /// The instance's own environment entries, added to the inherited environment.
     pub environment: Vec<(String, String)>,
+    /// The server's working folder (`process.cwd()`), where status probes run.
+    pub server_cwd: PathBuf,
+    /// The server's workspace (`host.paths.cwd`), where `grok inspect` looks for skills.
+    pub workspace_cwd: Option<PathBuf>,
+}
+
+impl Default for AcpConfig {
+    fn default() -> Self {
+        Self {
+            binary: String::new(),
+            environment: Vec::new(),
+            server_cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
+            workspace_cwd: None,
+        }
+    }
+}
+
+pub use grok_status::GrokSettings;
+
+/// The instance's settings and its last `ServerProvider` entry.
+struct Status {
+    settings: GrokSettings,
+    entry: serde_json::Value,
 }
 
 pub struct AcpProvider {
     instance_id: ProviderInstanceId,
     flavor: &'static Flavor,
     config: AcpConfig,
+    status: std::sync::Mutex<Status>,
+    /// One probe at a time (`refreshSemaphore`).
+    probing: tokio::sync::Mutex<()>,
 }
 
 impl std::fmt::Debug for AcpProvider {
@@ -103,21 +157,112 @@ impl std::fmt::Debug for AcpProvider {
 }
 
 impl AcpProvider {
+    /// An enabled provider for the given binary and environment (examples and tests). Until
+    /// the first [`Provider::refresh_status`] its entry is T3's initial snapshot.
     pub fn new(
         instance_id: ProviderInstanceId,
         flavor: &'static Flavor,
         config: AcpConfig,
     ) -> Self {
+        let settings = GrokSettings {
+            binary_path: if config.binary.trim().is_empty() {
+                flavor.driver.to_owned()
+            } else {
+                config.binary.trim().to_owned()
+            },
+            environment: config.environment.clone(),
+            enabled: true,
+            ..GrokSettings::default()
+        };
+        Self::with_settings(instance_id, flavor, config, settings)
+    }
+
+    /// A provider with explicit settings (the server reads them from `providerInstances`).
+    pub fn with_settings(
+        instance_id: ProviderInstanceId,
+        flavor: &'static Flavor,
+        config: AcpConfig,
+        settings: GrokSettings,
+    ) -> Self {
+        let entry = grok_status::initial_entry(
+            instance_id.as_str(),
+            &settings,
+            &conn_support::time::iso_from_ms(conn_support::time::now_ms()),
+        );
         Self {
             instance_id,
             flavor,
             config,
+            status: std::sync::Mutex::new(Status { settings, entry }),
+            probing: tokio::sync::Mutex::new(()),
         }
     }
 
-    /// The launch for a runtime mode (Grok: `grokLaunchRuntimeMode` of the policy).
+    fn settings(&self) -> GrokSettings {
+        lock(&self.status).settings.clone()
+    }
+
+    /// The launch for a runtime mode (Grok: `grokLaunchRuntimeMode` of the policy), from the
+    /// instance's current settings.
     pub fn launch(&self, runtime_mode: Option<&str>) -> Launch {
-        (self.flavor.launch)(&self.config.binary, runtime_mode, &self.config.environment)
+        let settings = self.settings();
+        (self.flavor.launch)(&settings.binary_path, runtime_mode, &settings.environment)
+    }
+
+    /// `checkGrokProviderStatus` with the given settings, and the result kept as the entry.
+    async fn probe(&self, settings: GrokSettings) {
+        let _one = self.probing.lock().await;
+        {
+            // New settings take effect at once; until the probe ends the entry is T3's
+            // initial snapshot for them.
+            let mut status = lock(&self.status);
+            if status.settings != settings {
+                status.entry = grok_status::initial_entry(
+                    self.instance_id.as_str(),
+                    &settings,
+                    &conn_support::time::iso_from_ms(conn_support::time::now_ms()),
+                );
+                status.settings = settings.clone();
+            }
+        }
+        let base: Vec<(String, String)> = std::env::vars().collect();
+        let context = grok_status::ProbeContext {
+            base_env: &base,
+            server_cwd: &self.config.server_cwd,
+            workspace_cwd: self.config.workspace_cwd.clone(),
+        };
+        let checked_at = conn_support::time::iso_from_ms(conn_support::time::now_ms());
+        let entry =
+            grok_status::check_status(self.instance_id.as_str(), &settings, &context, &checked_at)
+                .await;
+        let mut status = lock(&self.status);
+        status.settings = settings;
+        status.entry = entry;
+    }
+}
+
+#[doc(hidden)]
+pub mod status_testing {
+    //! For `examples/grok_probe`: T3's `checkGrokProviderStatus` inputs as ours.
+    use std::path::Path;
+
+    pub use crate::grok_status::GrokSettings;
+
+    /// Runs the probe with an explicit base environment and folders.
+    pub async fn check(
+        instance_id: &str,
+        settings: &GrokSettings,
+        base_env: &[(String, String)],
+        server_cwd: &Path,
+        workspace_cwd: Option<&Path>,
+        checked_at: &str,
+    ) -> serde_json::Value {
+        let context = crate::grok_status::ProbeContext {
+            base_env,
+            server_cwd,
+            workspace_cwd: workspace_cwd.map(Path::to_path_buf),
+        };
+        crate::grok_status::check_status(instance_id, settings, &context, checked_at).await
     }
 }
 
@@ -173,11 +318,29 @@ impl Provider for AcpProvider {
         })
     }
 
+    fn server_provider_entry(&self, _checked_at: &str) -> Option<serde_json::Value> {
+        Some(lock(&self.status).entry.clone())
+    }
+
+    fn refresh_status(&self, instance: Option<serde_json::Value>) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            let settings = GrokSettings::from_instance(instance.as_ref());
+            self.probe(settings).await;
+        })
+    }
+
     fn open_session(
         &self,
         input: OpenSessionInput,
     ) -> BoxFuture<'_, ProviderResult<OpenedSession>> {
         Box::pin(async move {
+            if !lock(&self.status).settings.enabled {
+                // T3 refuses a turn on a disabled instance before any adapter call.
+                return Err(ProviderError::Failed {
+                    operation: "open_session",
+                    detail: "This provider is disabled.".into(),
+                });
+            }
             let cwd = input.runtime_policy.cwd.clone().unwrap_or_else(|| {
                 std::env::current_dir()
                     .map(|d| d.display().to_string())

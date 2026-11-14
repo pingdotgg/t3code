@@ -66,6 +66,13 @@ pub trait Provider: Send + Sync {
     fn server_provider_entry(&self, _checked_at: &str) -> Option<serde_json::Value> {
         None
     }
+
+    /// Probes the provider again (`ManagedServerProvider.refresh`) with the instance's
+    /// `providerInstances[id]` settings entry (`None`: no entry), so the next
+    /// [`Provider::server_provider_entry`] reports it. Providers with a fixed entry do nothing.
+    fn refresh_status(&self, _instance: Option<serde_json::Value>) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
 }
 
 /// `ProviderSelectionTransitionInput`.

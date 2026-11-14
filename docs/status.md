@@ -50,7 +50,7 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 27 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14).
+`main` is in a working state. `tools/check.sh` passes 28 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14).
 
 | Part | State |
 | --- | --- |
@@ -58,7 +58,7 @@ settings; about 140 MiB for the `claude` program alone).
 | Engine commands | 43 of 56 |
 | HTTP routes | 13 of 57 |
 | `/mcp` tools | 28 of 87 |
-| Providers | Claude and Codex, of the 10 the T3 server has without Pi |
+| Providers | Claude, Codex and Grok, of the 10 the T3 server has without Pi |
 
 Proven:
 
@@ -231,16 +231,23 @@ call the provider without a running turn).
    (`background_work.updated`, `stopTask`, `awaitBackgroundTasks`: in the trait, not built in
    the provider).
 3. **Other providers.** One ACP provider for Grok, Kiro, fx, Antigravity and the ACP registry:
-   `crates/conn-provider-acp`, **Grok built (2026-11-14), not yet offered by the server.** The
-   trial ruled out the official schema crate: it cannot express T3's negotiating `initialize`
-   and costs 565 KiB on the release binary; the crate uses its own JSON-RPC with T3's key order.
-   Proven: 10 of the 15 Grok transcripts replay with every frame and event equal to T3's (the 5
-   others need background tasks, monitors and subagents, listed); a stub agent sees the same
-   argv, environment, stdin bytes and shutdown from T3's Grok adapter and ours in all 10
-   scenarios. Next, in order: Grok's server entry (T3 probes the CLI), its background work and
-   subagents, ACP protocol 2 replies for Kiro, then fx, Antigravity, the registry and its 11
-   `server.*` methods, and the file and terminal host (`ProviderHost`). See the crate README.
-   Cursor, OpenCode and Muse go in the SDK host as driver modules.
+   `crates/conn-provider-acp`. **Grok is offered by the server (2026-11-14):** T3's default
+   `grok` instance, off until `providerInstances.grok` enables it, probed as T3 probes the CLI
+   (`--version`, `models`, `inspect --json`, an ACP `initialize`) at start, on a settings change,
+   every 5 minutes and on `server.refreshProviders`, with `providerStatuses` on config streams.
+   The trial ruled out the official schema crate: it cannot express T3's negotiating
+   `initialize` and costs 565 KiB on the release binary; the crate uses its own JSON-RPC with
+   T3's key order. Proven: 10 of the 15 Grok transcripts replay with every frame and event
+   equal to T3's; a stub agent sees the same argv, environment, stdin bytes and shutdown from
+   T3's Grok adapter and ours in all 10 scenarios; T3's status probe and ours give the same
+   entry and the same CLI runs in 14 of 14 stub scenarios (missing, hanging, failing, old,
+   logged out, ready, …); the real client decodes the probed entry. Not ported on purpose:
+   T3's Grok account and usage read (credentials and xAI's API) and the version advisory (a
+   registry lookup). Next, in order: Grok's background work and subagents (the 5 failing
+   transcripts; the crate README has a map of T3's mechanism), ACP protocol 2 replies for
+   Kiro, then fx, Antigravity, the registry and its 11 `server.*` methods, and the file and
+   terminal host (`ProviderHost`; in T3 only Antigravity's files and the registry's terminals
+   use it). Cursor, OpenCode and Muse go in the SDK host as driver modules.
 4. **Replay of the T3 server's `testkit` fixtures** (172 transcripts) through our providers and
    engine, Codex first. Upstream's own assertions ran by hand on a projection from our engine
    and passed. It needs an event export without pruning and a clock seam in the engine.
