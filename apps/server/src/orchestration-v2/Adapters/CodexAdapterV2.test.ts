@@ -1519,6 +1519,81 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       };
     });
 
+  it.effect.each(["native", "ordinary"] as const)(
+    "resumes Codex without a prompt only for an existing conversation (%s)",
+    (mode) =>
+      Effect.gen(function* () {
+        const nativeThreadId = `resume-${mode}`;
+        const nativeTurnId = `resume-turn-${mode}`;
+        const preamble = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId,
+          prompt: "Hello",
+        });
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: `manual-resume-${mode}`,
+            entries: [
+              ...preamble.map((entry) =>
+                mode === "native" &&
+                entry.type === "expect_outbound" &&
+                Predicate.isObject(entry.frame) &&
+                Predicate.isObject(entry.frame.params) &&
+                entry.frame.method === "turn/start"
+                  ? {
+                      ...entry,
+                      frame: {
+                        ...entry.frame,
+                        params: {
+                          ...entry.frame.params,
+                          input: [],
+                        },
+                      },
+                    }
+                  : entry,
+              ),
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        const input = {
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`resume-${mode}`),
+            text: "Hello",
+          }),
+          nativeThreadHasTurns: true,
+        };
+        const { message, ...resumeInput } = input;
+        if (mode === "native")
+          yield* harness.runtime.resumeTurn!({ ...resumeInput, messageId: message.messageId });
+        else yield* harness.runtime.startTurn(input);
+        yield* harness.firstTerminal;
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect("keeps native image views available to the clients", () =>
     Effect.gen(function* () {
       const nativeThreadId = "image-view-thread";
