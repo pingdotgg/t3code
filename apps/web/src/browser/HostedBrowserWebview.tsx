@@ -13,6 +13,7 @@ import {
 } from "~/components/preview/thumbButtons";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
+import { useViewportSize } from "~/hooks/useViewportSize";
 import { cn, isMacPlatform } from "~/lib/utils";
 
 import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
@@ -79,6 +80,7 @@ export function HostedBrowserWebview(props: {
     serverRendering,
   } = props;
   const clientSettingsHydrated = useClientSettingsHydrated();
+  const windowSize = useViewportSize();
   const config = usePreviewWebviewConfig(threadRef.environmentId, profileId);
   const [initialSrc] = useState(() => initialUrl ?? "about:blank");
   const tabLeaseRef = useRef<AcquiredDesktopTab | null>(null);
@@ -331,6 +333,7 @@ export function HostedBrowserWebview(props: {
     zIndex: presentation.zIndex,
     rect: lastRect,
     hiddenSize: { width: hiddenWidth, height: hiddenHeight },
+    windowSize,
   });
 
   return (
