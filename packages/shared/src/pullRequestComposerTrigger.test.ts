@@ -16,6 +16,8 @@ describe("detectPullRequestComposerTrigger", () => {
     ["cc @ju", 3, "@", "ju"],
     ["line one\n@first.last", 9, "@", "first.last"],
     ["@jane-doe more", 0, "@", "jane-doe"],
+    ["cc @김철", 3, "@", "김철"],
+    ["@ㄱ", 0, "@", "ㄱ"],
     ["fixes #", 6, "#", ""],
     ["see #12", 4, "#", "12"],
     ["after !5", 6, "!", "5"],
