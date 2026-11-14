@@ -2173,11 +2173,12 @@ it.effect("routes matching HTTP authorities and rejects a different web port", (
         .pipe(Effect.flip);
       assert.strictEqual(failure._tag, "PullRequestUnavailableError");
       if (kind === "forgejo") continue;
-      // An SSH checkout names no web port, so it serves its hostname's links on any port.
-      assert.strictEqual(
-        (yield* service.preview({ ...ref, projectId: "ssh" as ProjectId })).number,
-        42,
-      );
+      // An SSH checkout names no web port: a checkout naming the requested one wins, else the
+      // SSH checkout serves its hostname.
+      const fromSsh = { ...ref, projectId: "ssh" as ProjectId };
+      yield* service.preview(fromSsh);
+      assert.strictEqual(reads.at(-1), "code.example:4000");
+      yield* service.preview({ ...fromSsh, host: "code.example:5000" });
       assert.strictEqual(reads.at(-1), "code.example");
     }
   }),
