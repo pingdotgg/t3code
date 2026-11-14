@@ -100,7 +100,9 @@ export function useWorktreeSetup(input: {
   const worktreeSetup = resolveVisibleWorktreeSetup({
     live: liveSnapshot,
     recorded: null,
-    runs: serverProjection?.runs ?? [],
+    // A clean setup stays as its turn's first row until a turn ends; any ended run counts, so a
+    // new run from an edited first message does not bring it back.
+    runs: (serverProjection?.runs ?? []).filter((run) => run.completedAt !== null),
     followUpSent,
   });
   // After agent handoff, sends queue behind setup without awaiting its scripts.
