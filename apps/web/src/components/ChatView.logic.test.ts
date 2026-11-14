@@ -1246,6 +1246,9 @@ describe("resolveQueuedComposerSubmit", () => {
     expect(resolveQueuedComposerSubmit(ready)).toBe("send");
     expect(resolveQueuedComposerSubmit({ ...ready, sendBlocked: true })).toBe("wait");
     expect(resolveQueuedComposerSubmit({ ...ready, pendingRequest: true })).toBe("cancel");
+    expect(resolveQueuedComposerSubmit({ ...ready, ready: false, pendingRequest: true })).toBe(
+      "cancel",
+    );
     expect(resolveQueuedComposerSubmit({ ...ready, draftUnchanged: false })).toBe("cancel");
     expect(resolveQueuedComposerSubmit({ ...ready, ready: false, leftThread: true })).toBe("drop");
   });

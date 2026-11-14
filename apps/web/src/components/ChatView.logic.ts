@@ -1357,8 +1357,10 @@ export function resolveQueuedComposerSubmit(input: {
   readonly draftUnchanged: boolean;
 }): "wait" | "send" | "drop" | "cancel" {
   if (input.leftThread) return "drop";
+  // Cancel as soon as a request shows up: another client may answer it before this one is ready.
+  if (input.pendingRequest) return "cancel";
   if (!input.ready || input.sendBlocked) return "wait";
-  return input.draftUnchanged && !input.pendingRequest ? "send" : "cancel";
+  return input.draftUnchanged ? "send" : "cancel";
 }
 
 /**
