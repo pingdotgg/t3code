@@ -28,6 +28,7 @@ import { deriveComposerSendState } from "../ChatView.logic";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
 import { useQueuedRunEdit } from "./useQueuedRunEdit";
+import { readAttachmentUpload, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
 
 interface RunStatus {
   readonly id: RunId;
@@ -150,6 +151,7 @@ function view(
 
 function setup() {
   mocks.editQueuedRun.mockReset();
+  useAttachmentUploadStore.setState({ uploadsByImageId: {} });
   useComposerDraftStore.setState({ draftsByThreadKey: {}, draftThreadsByThreadKey: {} });
   setRuns(THREAD_A, "queued");
   setRuns(THREAD_B, "queued");
@@ -405,6 +407,78 @@ describe("useQueuedRunEdit", () => {
     expect(requireHook(hook).isEditing).toBe(false);
     expect(promptOf(THREAD_A)).toBe("");
   });
+
+  it.each([
+    { transition: "cancel", result: "Success" },
+    { transition: "recover", result: "Failure" },
+    { transition: "replace", result: "Success" },
+  ] as const)(
+    "settles saved attachments after $transition and $result",
+    async ({ transition, result }) => {
+      const { hook } = setup();
+      let finishSave!: (result: { readonly _tag: "Success" | "Failure" }) => void;
+      let started!: () => void;
+      const saving = new Promise<{ readonly _tag: "Success" | "Failure" }>((resolve) => {
+        finishSave = resolve;
+      });
+      const requested = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      mocks.editQueuedRun.mockImplementation(() => {
+        started();
+        return saving;
+      });
+      await using _screen = await render(view(THREAD_A, "queued", hook));
+      await beginChangedEdit(hook);
+      const image = {
+        type: "image" as const,
+        id: "saved-image",
+        name: "image.png",
+        mimeType: "image/png",
+        sizeBytes: 5,
+        file: new File(["image"], "image.png", { type: "image/png" }),
+        previewUrl: "blob:saved-image",
+      };
+      using revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+      await act(() =>
+        useComposerDraftStore.getState().addImage(requireHook(hook).draftTarget, image),
+      );
+      useAttachmentUploadStore.setState({
+        uploadsByImageId: {
+          [image.id]: { status: "ready", environmentId: ENV, attachmentId: "saved-upload" },
+        },
+      });
+      const target = requireHook(hook).draftTarget;
+      const saved = requireHook(hook).saveEdit(
+        { ...savedContent("changed"), images: [image] },
+        () => {},
+      );
+      await act(() => requested);
+      expect(requireHook(hook).isSaving).toBe(true);
+      if (transition === "cancel") await act(() => requireHook(hook).cancelEdit());
+      if (transition === "recover") await act(() => setRuns(THREAD_A, "running"));
+      if (transition === "replace") {
+        await beginChangedEdit(hook);
+        await act(() =>
+          useComposerDraftStore.getState().addImage(requireHook(hook).draftTarget, image),
+        );
+      }
+      expect(readAttachmentUpload(image.id)).toBeDefined();
+      expect(revoke).not.toHaveBeenCalled();
+      finishSave({ _tag: result });
+      await act(() => saved);
+      if (transition === "cancel") {
+        expect(readAttachmentUpload(image.id)).toBeUndefined();
+        expect(revoke).toHaveBeenCalledWith(image.previewUrl);
+        expect(useComposerDraftStore.getState().getComposerDraft(target)).toBeNull();
+      } else {
+        expect(readAttachmentUpload(image.id)).toBeDefined();
+        expect(revoke).not.toHaveBeenCalled();
+        const owner = transition === "recover" ? THREAD_A : target;
+        expect(useComposerDraftStore.getState().getComposerDraft(owner)?.images).toEqual([image]);
+      }
+    },
+  );
 
   it("leaves a newer edit alone when a save from before navigation finishes", async () => {
     const { hook } = setup();
