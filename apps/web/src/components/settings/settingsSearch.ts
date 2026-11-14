@@ -854,6 +854,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "history-swipe-navigation",
+    title: msg("Swipe to navigate"),
+    to: "/settings/general",
+    searchTerms: [
+      "two-finger horizontal trackpad gesture mouse wheel back forward thread history navigation",
+    ],
+    desktopOnly: true,
+    macOnly: true,
+  },
+  {
     id: "text-generation-model",
     title: "Text generation model",
     to: "/settings/threads",
