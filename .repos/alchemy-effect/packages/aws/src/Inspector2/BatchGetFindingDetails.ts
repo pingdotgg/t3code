@@ -1,0 +1,38 @@
+import type * as inspector2 from "@distilled.cloud/aws/inspector2";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `inspector2:BatchGetFindingDetails`.
+ *
+ * Gets vulnerability details for findings.
+ *
+ * Provide the implementation with
+ * `Effect.provide(AWS.Inspector2.BatchGetFindingDetailsHttp)`.
+ * ### Querying Findings
+ * **Example:** Get Finding Details
+ * ```typescript
+ * // init
+ * const batchGetFindingDetails = yield* AWS.Inspector2.BatchGetFindingDetails();
+ *
+ * // runtime
+ * const { findingDetails } = yield* batchGetFindingDetails({ findingArns: [findingArn] });
+ * ```
+ *
+ * @binding
+ */
+export interface BatchGetFindingDetails extends Binding.Service<
+  BatchGetFindingDetails,
+  "AWS.Inspector2.BatchGetFindingDetails",
+  () => Effect.Effect<
+    (
+      request: inspector2.BatchGetFindingDetailsRequest,
+    ) => Effect.Effect<
+      inspector2.BatchGetFindingDetailsResponse,
+      inspector2.BatchGetFindingDetailsError
+    >
+  >
+> {}
+export const BatchGetFindingDetails = Binding.Service<BatchGetFindingDetails>(
+  "AWS.Inspector2.BatchGetFindingDetails",
+);

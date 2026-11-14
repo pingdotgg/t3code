@@ -19,12 +19,15 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
 
+import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
 import * as KnownWorkspaces from "./KnownWorkspaces.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import { fileHeaderMimeType } from "./fileHeaderMimeType.ts";
+import { toWslDrivePath } from "./wslDrivePath.ts";
 
 const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
 
@@ -139,14 +142,25 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const knownWorkspaces = yield* KnownWorkspaces.KnownWorkspaces;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+  const isServerInternalPath = yield* makeIsServerInternalPath;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
+  const toHostPath = (requestedPath: string) =>
+    toWslDrivePath(requestedPath).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
 
   const metadataForPath = Effect.fnUntraced(function* (requestedPath: string) {
-    const expandedPath = expandHomePath(requestedPath, yield* HostProcess.HomeDirectory);
+    const expandedPath = expandHomePath(
+      yield* toHostPath(requestedPath),
+      yield* HostProcess.HomeDirectory,
+    );
     // Chips ask as soon as an agent's message renders, and touching a network
     // path makes Windows sign in to its host with the user's NTLM credentials.
     if (!path.isAbsolute(expandedPath) || isNetworkPath(expandedPath)) return null;
     const stat = yield* fileSystem.stat(expandedPath).pipe(Effect.option);
-    if (stat._tag === "None") return null;
+    // Server state files answer like missing paths, as readFile refuses them.
+    if (stat._tag === "None" || (yield* isServerInternalPath(expandedPath))) return null;
     if (stat.value.type === "Directory") return { kind: "directory" } as const;
     if (stat.value.type !== "File") return { kind: "other" } as const;
     let mimeType: string | undefined;
@@ -224,10 +238,10 @@ export const make = Effect.gen(function* () {
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
   ) {
-    const requestedPath = input.relativePath.trim();
+    const requestedPath = input.relativePath;
     const hostPath = requestedPath.startsWith("~/")
       ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
-      : requestedPath;
+      : yield* toHostPath(requestedPath);
     if (
       isNetworkPath(hostPath) &&
       !KnownWorkspaces.isWithinRoot(path, path.resolve(hostPath), path.resolve(input.cwd))
@@ -347,6 +361,12 @@ export const make = Effect.gen(function* () {
     };
     const realTargetPath = target.realTargetPath;
     if (realTargetPath === null) return absentResult;
+    if (yield* isServerInternalPath(realTargetPath)) {
+      return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+      });
+    }
 
     return yield* Effect.acquireUseRelease(
       Effect.tryPromise({
@@ -397,19 +417,24 @@ export const make = Effect.gen(function* () {
 
           const bytesToRead = Math.min(stat.size, PROJECT_READ_FILE_MAX_BYTES);
           const buffer = Buffer.alloc(bytesToRead);
-          const { bytesRead } = yield* Effect.tryPromise({
-            try: () => handle.read(buffer, 0, bytesToRead, 0),
-            catch: (cause) =>
-              new WorkspaceFileSystemOperationError({
-                workspaceRoot: input.cwd,
-                relativePath: input.relativePath,
-                resolvedPath: realTargetPath,
-                operationPath: realTargetPath,
-                operation: "read",
-                cause,
-              }),
-          });
-          const fileBytes = buffer.subarray(0, bytesRead);
+          let offset = 0;
+          while (offset < bytesToRead) {
+            const { bytesRead } = yield* Effect.tryPromise({
+              try: () => handle.read(buffer, offset, bytesToRead - offset, offset),
+              catch: (cause) =>
+                new WorkspaceFileSystemOperationError({
+                  workspaceRoot: input.cwd,
+                  relativePath: input.relativePath,
+                  resolvedPath: realTargetPath,
+                  operationPath: realTargetPath,
+                  operation: "read",
+                  cause,
+                }),
+            });
+            if (bytesRead <= 0) break;
+            offset += bytesRead;
+          }
+          const fileBytes = buffer.subarray(0, offset);
           if (fileBytes.includes(0)) {
             return yield* new WorkspaceBinaryFileError({
               workspaceRoot: input.cwd,
@@ -418,11 +443,13 @@ export const make = Effect.gen(function* () {
             });
           }
 
+          const truncated = stat.size > PROJECT_READ_FILE_MAX_BYTES;
           return {
             relativePath: target.relativePath,
-            contents: new TextDecoder("utf-8").decode(fileBytes),
+            // Streaming decode drops a character the byte limit split, instead of ending in U+FFFD.
+            contents: new TextDecoder("utf-8").decode(fileBytes, { stream: truncated }),
             byteLength: stat.size,
-            truncated: stat.size > PROJECT_READ_FILE_MAX_BYTES,
+            truncated,
           };
         }),
       (handle) =>

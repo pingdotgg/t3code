@@ -5,9 +5,12 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { HomeProjectScope } from "../home/homeThreadList";
 import {
   getProjectScopeSelectionTarget,
+  isSameRepository,
   newTaskDestination,
+  newTaskFilteredProject,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
+  resolveNewTaskScratchOption,
 } from "./new-task-project-selection";
 
 function makeProject(
@@ -51,6 +54,8 @@ function makeScope(projects: ReadonlyArray<EnvironmentProject>): HomeProjectScop
       environmentId: project.environmentId,
       projectId: project.id,
     })),
+    pinned: false,
+    archived: false,
   };
 }
 
@@ -74,6 +79,37 @@ describe("getProjectScopeSelectionTarget", () => {
   });
 });
 
+describe("newTaskFilteredProject", () => {
+  it("never starts in an archived copy of the filtered project", () => {
+    const mac = { ...makeProject("t3code", "mac"), archivedAt: "2026-01-01T00:00:00.000Z" };
+    const server = makeProject("t3code", "server");
+    expect(
+      newTaskFilteredProject(
+        makeScope([mac, server]),
+        null,
+        new Set([mac.environmentId, server.environmentId]),
+        { environmentId: "mac", projectId: "t3code" },
+      ),
+    ).toEqual({ environmentId: "server", projectId: "t3code" });
+  });
+
+  it("prefers the remembered copy of the filtered project", () => {
+    const mac = makeProject("t3code", "mac");
+    const server = makeProject("t3code", "server");
+    const connected = new Set([mac.environmentId, server.environmentId]);
+    const filtered = (last?: { readonly environmentId: string; readonly projectId: string }) =>
+      newTaskFilteredProject(makeScope([mac, server]), null, connected, last);
+    expect(filtered({ environmentId: "server", projectId: "t3code" })).toEqual({
+      environmentId: "server",
+      projectId: "t3code",
+    });
+    expect(filtered({ environmentId: "server", projectId: "other" })).toEqual({
+      environmentId: "mac",
+      projectId: "t3code",
+    });
+  });
+});
+
 describe("resolveEnvironmentProjectMatch", () => {
   it("follows the same repository onto the target machine", () => {
     const selected = makeProject("t3code", "mac", { repositoryKey: "github.com/t3tools/t3code" });
@@ -82,6 +118,7 @@ describe("resolveEnvironmentProjectMatch", () => {
       makeProject("t3code-clone", "server", { repositoryKey: "github.com/t3tools/t3code" }),
     ];
     expect(resolveEnvironmentProjectMatch(target, selected)).toBe(target[1]);
+    expect(isSameRepository(target[1]!, selected)).toBe(true);
   });
 
   it("falls back to workspace basename, then title, for unindexed projects", () => {
@@ -91,6 +128,7 @@ describe("resolveEnvironmentProjectMatch", () => {
       makeProject("srv", "server", { workspaceRoot: "/home/me/t3code" }),
     ];
     expect(resolveEnvironmentProjectMatch(byBasename, selected)).toBe(byBasename[1]);
+    expect(isSameRepository(byBasename[1]!, selected)).toBe(false);
 
     const byTitle = [
       makeProject("other", "server"),
@@ -112,6 +150,7 @@ describe("resolveEnvironmentProjectMatch", () => {
     const unindexed = makeProject("unindexed", "server", { workspaceRoot: "/srv/t3code" });
     expect(resolveEnvironmentProjectMatch([fork, unindexed], selected)).toBe(unindexed);
     expect(resolveEnvironmentProjectMatch([fork], selected)).toBe(fork);
+    expect(isSameRepository(fork, selected)).toBe(false);
   });
 });
 
@@ -170,6 +209,7 @@ describe("newTaskDestination", () => {
     readonly useLastProject: boolean | undefined;
     readonly projects: ReadonlyArray<EnvironmentProject>;
     readonly current?: EnvironmentProject;
+    readonly filtered?: EnvironmentProject;
     readonly last?: { readonly environmentId: string; readonly projectId: string };
   }) {
     return newTaskDestination({
@@ -180,21 +220,54 @@ describe("newTaskDestination", () => {
         environmentId: options.current.environmentId,
         projectId: options.current.id,
       },
+      filteredProject: options.filtered && {
+        environmentId: options.filtered.environmentId,
+        projectId: options.filtered.id,
+      },
       lastProject: options.last,
     });
   }
 
-  it("starts in the current thread's project ahead of the remembered one", () => {
+  it("starts in the current thread's project ahead of the filtered and remembered ones", () => {
     const projects = [makeProject("remembered"), makeProject("current", "other-environment")];
     expect(
       destination({
         useLastProject: true,
         projects,
         current: projects[1],
+        filtered: projects[0],
         last: { environmentId: "environment", projectId: "remembered" },
       }),
     ).toEqual({
       draft: { requestId: "request", environmentId: "other-environment", projectId: "current" },
+    });
+  });
+
+  it("starts in the thread list's filtered project ahead of the remembered one", () => {
+    const projects = [makeProject("bravo"), makeProject("alpha")];
+    expect(
+      destination({
+        useLastProject: true,
+        projects,
+        filtered: projects[1],
+        last: { environmentId: "environment", projectId: "bravo" },
+      }),
+    ).toEqual({
+      draft: { requestId: "request", environmentId: "environment", projectId: "alpha" },
+    });
+  });
+
+  it("opens the picker for an archived last project, but keeps an archived current one", () => {
+    const archived = { ...makeProject("archived"), archivedAt: "2026-01-01T00:00:00.000Z" };
+    expect(
+      destination({
+        useLastProject: true,
+        projects: [archived],
+        last: { environmentId: "environment", projectId: "archived" },
+      }),
+    ).toEqual(picker);
+    expect(destination({ useLastProject: true, projects: [archived], current: archived })).toEqual({
+      draft: { requestId: "request", environmentId: "environment", projectId: "archived" },
     });
   });
 
@@ -245,8 +318,84 @@ describe("newTaskDestination", () => {
         useLastProject: false,
         projects: [only],
         current: only,
+        filtered: only,
         last: { environmentId: "environment", projectId: "only" },
       }),
     ).toEqual(picker);
+  });
+});
+
+describe("resolveNewTaskScratchOption", () => {
+  const environmentId = EnvironmentId.make("environment");
+  const otherId = EnvironmentId.make("other");
+  const configs = new Map([[environmentId, { scratchWorkspaceRoot: "/scratch" }]]);
+
+  it("offers the option from the cached config while the environment is still connecting", () => {
+    expect(
+      resolveNewTaskScratchOption({
+        environments: [{ environmentId, connectionState: "connecting" }],
+        serverConfigs: configs,
+        selectedEnvironmentId: null,
+      }),
+    ).toEqual({ environmentId, ready: false });
+  });
+
+  it("becomes ready without changing environment once connected", () => {
+    expect(
+      resolveNewTaskScratchOption({
+        environments: [{ environmentId, connectionState: "connected" }],
+        serverConfigs: configs,
+        selectedEnvironmentId: null,
+      }),
+    ).toEqual({ environmentId, ready: true });
+  });
+
+  it("hides the option when no environment reports a scratch root", () => {
+    expect(
+      resolveNewTaskScratchOption({
+        environments: [{ environmentId, connectionState: "connected" }],
+        serverConfigs: new Map([[environmentId, {}]]),
+        selectedEnvironmentId: null,
+      }),
+    ).toBeNull();
+    expect(
+      resolveNewTaskScratchOption({
+        environments: [{ environmentId, connectionState: "connected" }],
+        serverConfigs: new Map(),
+        selectedEnvironmentId: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("prefers a connected environment over the selected one that is still reconnecting", () => {
+    expect(
+      resolveNewTaskScratchOption({
+        environments: [
+          { environmentId, connectionState: "reconnecting" },
+          { environmentId: otherId, connectionState: "connected" },
+        ],
+        serverConfigs: new Map([
+          [environmentId, { scratchWorkspaceRoot: "/scratch" }],
+          [otherId, { scratchWorkspaceRoot: "/other-scratch" }],
+        ]),
+        selectedEnvironmentId: environmentId,
+      }),
+    ).toEqual({ environmentId: otherId, ready: true });
+  });
+
+  it("keeps the selected environment when every offering environment is connected", () => {
+    expect(
+      resolveNewTaskScratchOption({
+        environments: [
+          { environmentId: otherId, connectionState: "connected" },
+          { environmentId, connectionState: "connected" },
+        ],
+        serverConfigs: new Map([
+          [environmentId, { scratchWorkspaceRoot: "/scratch" }],
+          [otherId, { scratchWorkspaceRoot: "/other-scratch" }],
+        ]),
+        selectedEnvironmentId: environmentId,
+      }),
+    ).toEqual({ environmentId, ready: true });
   });
 });
