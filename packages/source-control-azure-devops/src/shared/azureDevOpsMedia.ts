@@ -1,21 +1,25 @@
-/** Only PR attachment endpoints may use the environment's Azure DevOps credentials. */
-export function azureDevOpsMediaLocation(source: string) {
-  let url: URL;
-  try {
-    url = new URL(source);
-  } catch {
-    return null;
-  }
+const MODERN_ATTACHMENT_PATH =
+  /^\/([^/]+)\/([^/]+)\/_apis\/git\/repositories\/([^/]+)\/pullRequests\/(\d+)\/attachments\/([^/]+)$/iu;
+const LEGACY_ATTACHMENT_PATH =
+  /^\/(?:DefaultCollection\/)?([^/]+)\/_apis\/git\/repositories\/([^/]+)\/pullRequests\/(\d+)\/attachments\/([^/]+)$/iu;
+
+export interface AzureDevOpsAttachment {
+  readonly organizationUrl: string;
+  readonly project: string;
+  readonly repositoryId: string;
+  readonly pullRequestId: string;
+  readonly fileName: string;
+  readonly fetchUrl: string;
+}
+
+/** Only pull request attachments may be fetched with the environment's Azure DevOps credential. */
+export function azureDevOpsAttachment(url: URL): AzureDevOpsAttachment | null {
   if (url.protocol !== "https:" || url.username || url.password || url.port) return null;
   const host = url.hostname.toLowerCase();
   const modern = host === "dev.azure.com";
   const legacy = /^([\w-]+)\.visualstudio\.com$/u.exec(host);
   if (!modern && !legacy) return null;
-  const match = (
-    modern
-      ? /^\/([^/]+)\/([^/]+)\/_apis\/git\/repositories\/([^/]+)\/pullRequests\/(\d+)\/attachments\/([^/]+)$/iu
-      : /^\/(?:DefaultCollection\/)?([^/]+)\/_apis\/git\/repositories\/([^/]+)\/pullRequests\/(\d+)\/attachments\/([^/]+)$/iu
-  ).exec(url.pathname);
+  const match = (modern ? MODERN_ATTACHMENT_PATH : LEGACY_ATTACHMENT_PATH).exec(url.pathname);
   if (!match) return null;
   let parts: string[];
   try {

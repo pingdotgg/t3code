@@ -27,8 +27,7 @@ export type MediaVideoPreviewSource = {
             | "attachment"
             | "media-file"
             | "draft-workspace-file"
-            | typeof SOURCE_CONTROL_MEDIA_ASSET
-            | "azure-devops-media";
+            | typeof SOURCE_CONTROL_MEDIA_ASSET;
         }
       >;
     }
@@ -57,15 +56,14 @@ export function mediaVideoThumbnailKey(source: MediaVideoPreviewSource): string 
               source.resource.path,
               source.srcFragment ?? "",
             ]
-          : source.resource._tag === SOURCE_CONTROL_MEDIA_ASSET ||
-              source.resource._tag === "azure-devops-media"
+          : source.resource._tag === SOURCE_CONTROL_MEDIA_ASSET
             ? [
                 "media-video",
-                source.resource._tag,
+                SOURCE_CONTROL_MEDIA_ASSET,
                 source.environmentId,
                 source.resource.cwd,
                 source.resource.url,
-                ("repository" in source.resource ? source.resource.repository : undefined) ?? "",
+                source.resource.repository ?? "",
               ]
             : [
                 "media-video",

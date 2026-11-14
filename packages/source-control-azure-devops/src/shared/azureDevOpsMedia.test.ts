@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
-import { azureDevOpsMediaLocation } from "./azureDevOpsMedia.ts";
+import { azureDevOpsAttachment } from "./azureDevOpsMedia.ts";
+
+const parse = (url: string) => azureDevOpsAttachment(new URL(url));
 
 const attachment = "/project/_apis/git/repositories/repo/pullRequests/42/attachments/demo.gif";
 
 describe("Azure DevOps media endpoints", () => {
   it("resolves modern and legacy attachment URLs without forwarding query credentials", () => {
-    const modern = azureDevOpsMediaLocation(
-      `https://dev.azure.com/org${attachment}?api-version=7.1#preview`,
-    );
+    const modern = parse(`https://dev.azure.com/org${attachment}?api-version=7.1#preview`);
     expect(modern).toEqual({
       organizationUrl: "https://dev.azure.com/org",
       project: "project",
@@ -16,14 +16,12 @@ describe("Azure DevOps media endpoints", () => {
       fileName: "demo.gif",
       fetchUrl: `https://dev.azure.com/org${attachment}`,
     });
-    expect(
-      azureDevOpsMediaLocation(`https://org.visualstudio.com/DefaultCollection${attachment}`),
-    ).toEqual({
+    expect(parse(`https://org.visualstudio.com/DefaultCollection${attachment}`)).toEqual({
       ...modern,
       organizationUrl: "https://org.visualstudio.com/DefaultCollection",
       fetchUrl: `https://org.visualstudio.com/DefaultCollection${attachment}`,
     });
-    expect(azureDevOpsMediaLocation(`https://org.visualstudio.com${attachment}`)).toEqual({
+    expect(parse(`https://org.visualstudio.com${attachment}`)).toEqual({
       ...modern,
       organizationUrl: "https://org.visualstudio.com",
       fetchUrl: `https://org.visualstudio.com${attachment}`,
@@ -32,7 +30,7 @@ describe("Azure DevOps media endpoints", () => {
 
   it("decodes route parameters once and keeps filenames out of filesystem paths", () => {
     expect(
-      azureDevOpsMediaLocation(
+      parse(
         `https://dev.azure.com/org${attachment.replace("project", "My%20Project").replace("demo.gif", "demo%20%231.mp4")}`,
       ),
     ).toMatchObject({ project: "My Project", fileName: "demo #1.mp4" });
@@ -49,6 +47,6 @@ describe("Azure DevOps media endpoints", () => {
     "https://dev.azure.com/org/project/_git/repo/pullrequest/42",
     "https://example.test/demo.mp4",
   ])("rejects non-attachment or unsafe endpoint %s", (url) => {
-    expect(azureDevOpsMediaLocation(url)).toBeNull();
+    expect(parse(url)).toBeNull();
   });
 });
