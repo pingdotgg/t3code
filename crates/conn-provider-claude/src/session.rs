@@ -721,15 +721,8 @@ impl ClaudeSession {
         let config = self.inner.config.clone();
         let thread_id = thread_id.to_string();
         let built = tokio::task::spawn_blocking(move || {
-            let mut host: Vec<(String, String)> = std::env::vars().collect();
             // The login shell's PATH reaches the CLI as T3's `process.env` does.
-            for (key, value) in conn_support::login_env::vars() {
-                let value = value.to_string_lossy().into_owned();
-                match host.iter_mut().find(|(k, _)| k == key) {
-                    Some(entry) => entry.1 = value,
-                    None => host.push((key.to_owned(), value)),
-                }
-            }
+            let host = conn_support::login_env::child_env();
             let draft = launch::query_env(&config, &thread_id, resume, host.clone(), None);
             let entry = launch::settings_entrypoint(&launch::config_dir(&config, &draft));
             launch::query_env(&config, &thread_id, resume, host, entry)

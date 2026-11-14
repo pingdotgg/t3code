@@ -225,7 +225,8 @@ impl AcpProvider {
                 status.settings = settings.clone();
             }
         }
-        let base: Vec<(String, String)> = std::env::vars().collect();
+        // The login shell's PATH reaches the probe as T3's `process.env` does.
+        let base = conn_support::login_env::child_env();
         let context = grok_status::ProbeContext {
             base_env: &base,
             server_cwd: &self.config.server_cwd,

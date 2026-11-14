@@ -60,6 +60,37 @@ pub fn var_os(name: &str) -> Option<OsString> {
     overlaid.or_else(|| std::env::var_os(name))
 }
 
+/// The whole environment a child starts from: the server's own variables with the login
+/// shell's values on top, as text.
+///
+/// A name or value that is not valid Unicode is converted lossily, as Node does for
+/// `process.env`. `std::env::vars` would panic on one, and a panic stops the server.
+pub fn child_env() -> Vec<(String, String)> {
+    overlay_onto(std::env::vars_os(), vars())
+}
+
+fn overlay_onto(
+    base: impl Iterator<Item = (OsString, OsString)>,
+    overlay: Vec<(&'static str, OsString)>,
+) -> Vec<(String, String)> {
+    let mut env: Vec<(String, String)> = base
+        .map(|(name, value)| {
+            (
+                name.to_string_lossy().into_owned(),
+                value.to_string_lossy().into_owned(),
+            )
+        })
+        .collect();
+    for (name, value) in overlay {
+        let value = value.to_string_lossy().into_owned();
+        match env.iter_mut().find(|(n, _)| n == name) {
+            Some(entry) => entry.1 = value,
+            None => env.push((name.to_owned(), value)),
+        }
+    }
+    env
+}
+
 /// `mergePathEntries`: the preferred entries first, then the inherited ones, each once, blank
 /// entries dropped.
 pub fn merge_path_entries(preferred: Option<&str>, inherited: Option<&str>) -> Option<String> {
@@ -318,6 +349,31 @@ pub fn hydrate() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn child_env_takes_the_overlay_and_survives_bytes_that_are_not_unicode() {
+        use std::os::unix::ffi::OsStringExt;
+        let base = vec![
+            (OsString::from("PATH"), OsString::from("/usr/bin")),
+            (OsString::from("ODD"), OsString::from_vec(vec![b'a', 0xff])),
+        ];
+        let env = overlay_onto(
+            base.into_iter(),
+            vec![
+                ("PATH", OsString::from("/login:/usr/bin")),
+                ("JAVA_HOME", OsString::from("/jdk")),
+            ],
+        );
+        assert_eq!(
+            env,
+            [
+                ("PATH".to_owned(), "/login:/usr/bin".to_owned()),
+                ("ODD".to_owned(), "a\u{fffd}".to_owned()),
+                ("JAVA_HOME".to_owned(), "/jdk".to_owned()),
+            ]
+        );
+    }
 
     #[test]
     fn merges_like_merge_path_entries() {
