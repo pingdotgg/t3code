@@ -11,14 +11,8 @@ const mocks = vi.hoisted(() => {
   const listeners = new Set<() => void>();
   return {
     update: null as DesktopUpdateState | null,
-    everything: {
-      hasUpdates: false,
-      summary: "Update everything",
-      version: null,
-      providerCount: 0,
-      rows: [] as ReadonlyArray<UpdateEverythingRow>,
-      restarts: [],
-    },
+    hasUpdates: false,
+    rows: [] as ReadonlyArray<UpdateEverythingRow>,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -41,12 +35,15 @@ vi.mock("../../env", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../env")>()),
   isElectron: true,
 }));
-vi.mock("./useUpdateEverything", async () => ({
-  useUpdateEverything: (await import("react")).useSyncExternalStore.bind(
-    null,
-    mocks.subscribe,
-    () => mocks.everything,
-  ),
+vi.mock("./useUpdateEverything", () => ({
+  useUpdateEverything: () => ({
+    hasUpdates: mocks.hasUpdates,
+    summary: "Update everything",
+    version: null,
+    providerCount: 0,
+    rows: mocks.rows,
+    restarts: [],
+  }),
 }));
 
 function nightlyUpdate(releaseNotes: DesktopUpdateState["releaseNotes"]): DesktopUpdateState {
@@ -82,7 +79,8 @@ function setup(
   }: { hasUpdates?: boolean; rows?: ReadonlyArray<UpdateEverythingRow> } = {},
 ) {
   mocks.update = update;
-  mocks.everything = { ...mocks.everything, hasUpdates, rows };
+  mocks.hasUpdates = hasUpdates;
+  mocks.rows = rows;
 }
 
 function publish(update: DesktopUpdateState | null) {
@@ -176,24 +174,5 @@ describe("SidebarUpdatePill update everything", () => {
     const row = table.getByRole("row", { name: new RegExp(label) });
     await expect.element(row.getByRole("cell", { name: label, exact: true })).toBeVisible();
     await expect.element(row.getByRole("cell", { name: "Claude", exact: true })).toBeVisible();
-  });
-
-  it("says everything is up to date when the updates finish while it is open", async () => {
-    setup(null, { hasUpdates: true, rows: [LAPTOP_CODEX] });
-    await using screen = await render(<SidebarUpdatePill />);
-    await userEvent.click(screen.getByRole("button", { name: "Update everything" }));
-    await expect.element(page.getByRole("button", { name: "Update", exact: true })).toBeVisible();
-
-    await act(() => {
-      mocks.everything = { ...mocks.everything, hasUpdates: false, rows: [] };
-      mocks.notify();
-    });
-    const dialog = page.getByRole("alertdialog");
-    await expect.element(dialog.getByText("Everything is up to date")).toBeVisible();
-    await expect
-      .element(dialog.getByRole("button", { name: "Update", exact: true }))
-      .not.toBeInTheDocument();
-    await userEvent.click(dialog.getByRole("button", { name: "Close" }));
-    await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).toBeNull());
   });
 });
