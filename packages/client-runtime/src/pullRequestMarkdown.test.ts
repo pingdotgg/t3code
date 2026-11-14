@@ -132,6 +132,25 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
+  // CommonMark: a backtick fence's info string cannot hold a backtick, so this line is inline code.
+  it("does not open a fence on a line of inline triple-backtick code", () => {
+    const code = "```\nhttps://example.com/b.png\n```";
+    expect(
+      splitPullRequestBody(
+        `\`\`\`npm test\`\`\` passes.\n\nhttps://example.com/demo.mp4\n\n${code}`,
+      ),
+    ).toEqual([
+      { id: "markdown:0", kind: "markdown", text: "```npm test``` passes." },
+      {
+        id: "attachment:1",
+        kind: "attachment",
+        url: "https://example.com/demo.mp4",
+        media: "video",
+      },
+      { id: "markdown:2", kind: "markdown", text: code },
+    ]);
+  });
+
   it("leaves an indented code line alone even when it is only a video link", () => {
     const body = "    https://example.com/demo.mp4";
     expect(splitPullRequestBody(body)).toEqual([
