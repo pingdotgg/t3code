@@ -140,7 +140,7 @@ describe("DesktopClerk", () => {
       name: "development",
       isDevelopment: true,
       platform: "win32" as const,
-      userData: "/tmp/app-data/t3code-dev",
+      userData: NodePath.join(clerkStateDir, "electron"),
     },
   ])(
     "creates the bridge before startup can yield to the event loop ($name)",
