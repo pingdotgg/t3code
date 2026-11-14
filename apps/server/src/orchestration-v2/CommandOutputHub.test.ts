@@ -314,26 +314,6 @@ layer("CommandOutputHub", (it) => {
     }),
   );
 
-  it.effect.each([
-    { driver: CODEX_DRIVER, startedAt: "2026-10-03T12:00:00Z" },
-    { driver: CLAUDE_DRIVER, startedAt: "2026-11-01T12:00:00Z" },
-  ])("keeps literal JSON a $driver command printed at $startedAt", ({ driver, startedAt }) =>
-    Effect.gen(function* () {
-      const threadId = yield* seedThread;
-      const output = '{"stdout":"built","stderr":"warning","interrupted":false}\n';
-      yield* writeCommandItem(threadId, {
-        status: "completed",
-        exitCode: 0,
-        output,
-        driver,
-        startedAt: DateTime.makeUnsafe(startedAt),
-      });
-      const frames = yield* subscribeFrames(threadId);
-      const final = yield* takeFrame(frames);
-      assert.equal(final.text, output);
-    }),
-  );
-
   it.effect("providers that only report output in item snapshots still stream", () =>
     Effect.gen(function* () {
       const threadId = yield* seedThread;

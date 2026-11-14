@@ -26,6 +26,7 @@ function storesRawClaudeBashResult(item: CommandExecutionItem): boolean {
 export function commandItemOutput(item: CommandExecutionItem): string | undefined {
   const output = item.output;
   if (output === undefined || !storesRawClaudeBashResult(item)) return output;
+  if (!output.trimStart().startsWith('{"stdout"')) return output;
   const parsed = decodeClaudeBashResult(output);
   if (Option.isNone(parsed)) return output;
   const out = parsed.value.stdout.trim().length > 0 ? parsed.value.stdout : "";
