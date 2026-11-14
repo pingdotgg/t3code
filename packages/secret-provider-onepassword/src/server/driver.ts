@@ -26,7 +26,7 @@ const runOnePassword = Effect.fn("OnePasswordDriver.runOnePassword")(function* (
 });
 
 // A secret is passed on verbatim; surrounding whitespace can be part of it.
-const nonEmpty = (value: string) => (value.trim().length > 0 ? value : undefined);
+const nonEmpty = (value: string) => (value.length > 0 ? value : undefined);
 
 const readOne = Effect.fn("OnePasswordDriver.readOne")(function* (
   account: OnePasswordAccount,

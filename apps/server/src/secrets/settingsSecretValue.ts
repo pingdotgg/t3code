@@ -24,7 +24,7 @@ export const resolveSettingsSecrets = Effect.fn("SettingsSecrets.resolve")(funct
     settings,
     pending.flatMap((slot, index) => {
       const value = values[index];
-      return value === undefined || value.trim() === "" ? [] : [{ ...slot, value }];
+      return value === undefined || value === "" ? [] : [{ ...slot, value }];
     }),
   );
 });
@@ -40,7 +40,7 @@ export const requireSettingsSecret = Effect.fn("SettingsSecrets.require")(functi
 ) {
   if (!isSecretReference(value)) return value;
   const [secret] = yield* resolver.read([value]);
-  if (secret === undefined || secret.trim() === "") {
+  if (secret === undefined || secret === "") {
     return yield* new SettingsSecretUnresolvedError({
       provider: yield* resolver.label(value.provider),
     });

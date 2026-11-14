@@ -996,7 +996,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
   // An empty secret must not let a driver fall back to a credential the server inherited.
   it.effect.each([
     ["missing", {}],
-    ["empty", { [secret.reference]: " " }],
+    ["empty", { [secret.reference]: "" }],
   ] as const)("marks an instance unavailable when its secret is %s", ([, initial]) => {
     const fixture = setup(initial);
     return Effect.gen(function* () {
