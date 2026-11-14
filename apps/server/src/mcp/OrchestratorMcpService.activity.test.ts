@@ -125,6 +125,15 @@ function makeRun(input: {
 
 it("readThread preserves caller access errors and prefers activity-run status over a newer cancelled queued run", async () => {
   let callerUnavailable = false;
+  let pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"] = [
+    {
+      taskId: "task-subagent",
+      kind: "subagent",
+      parentTaskId: "task-parent",
+      providerInstanceId: parentInstanceId,
+      childThreadId,
+    },
+  ];
   const pullRequestLink = (number: number, state: "open" | "merged", watched: boolean) => ({
     host: "github.com",
     repository: "acme/web",
@@ -202,15 +211,7 @@ it("readThread preserves caller access errors and prefers activity-run status ov
                     ? ({
                         ...projection.thread,
                         blockedOnThreadWait: true,
-                        pendingBackgroundTasks: [
-                          {
-                            taskId: "task-subagent",
-                            kind: "subagent",
-                            parentTaskId: "task-parent",
-                            providerInstanceId: parentInstanceId,
-                            childThreadId,
-                          },
-                        ],
+                        pendingBackgroundTasks,
                       } as unknown as OrchestrationV2ThreadShell)
                     : null,
                 ),
@@ -262,6 +263,28 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     });
     expect(laterPage.thread.pullRequests).toBeUndefined();
     expect(laterPage.thread.pullRequestCount).toBe(8);
+
+    Object.assign(projection, {
+      runs: [makeRun({ id: activeRunId, ordinal: 1, status: "completed" })],
+    });
+    const awaiting = yield* service.readThread(makeScope(), { threadId: parentThreadId });
+    expect(awaiting.thread.pendingBackgroundTasks).toEqual([
+      { taskId: "task-subagent", kind: "subagent", childThreadId },
+    ]);
+    expect(awaiting.thread.status).toBe("waiting");
+
+    // Commands and monitors hold only when awaited; finished background work releases the thread.
+    for (const [tasks, status] of [
+      [[{ taskId: "dev-server", kind: "command" }], "completed"],
+      [[{ taskId: "watchdog", kind: "monitor" }], "completed"],
+      [[{ taskId: "tests", kind: "command", awaited: true }], "waiting"],
+      [[{ taskId: "build-log", kind: "monitor", awaited: true }], "waiting"],
+      [[], "completed"],
+    ] as const) {
+      pendingBackgroundTasks = tasks;
+      const read = yield* service.readThread(makeScope(), { threadId: parentThreadId });
+      expect(read.thread.status).toBe(status);
+    }
 
     callerUnavailable = true;
     const denied = yield* service
