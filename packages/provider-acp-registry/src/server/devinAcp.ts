@@ -54,3 +54,12 @@ export function extractDevinSubagentUpdate(
     result: typeof completed?.summary === "string" ? completed.summary : null,
   };
 }
+
+// Devin also marks persistent and bypass grants allow_always; only allow_session is session-scoped.
+export function devinSessionPermissionOptionId(
+  options: ReadonlyArray<AcpSchema.PermissionOption>,
+): string | undefined {
+  return options.find(
+    (option) => option.optionId === "allow_session" && option.kind === "allow_always",
+  )?.optionId;
+}
