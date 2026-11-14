@@ -13130,21 +13130,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               providerTurnId: turnInput.providerTurnId,
             });
             if (turnInput.endOnTimeout === true) {
-              const completedAt = yield* DateTime.now;
               const ownedLiveQuery = yield* Ref.modify(queryContext, (current) =>
                 current?.query === existing.query ? [true, null] : [false, current],
               );
-              if (ownedLiveQuery) {
-                existing.stopping = true;
-                yield* finalizeActiveTurnAfterQueryExit(existing);
-                yield* endSubagentCallsOfClosedQuery(existing.nativeThreadId, "interrupted");
-              } else if ((yield* Ref.get(activeTurn)) === currentTurn) {
-                yield* finalizeActiveTurn({
-                  context: currentTurn,
-                  status: "interrupted",
-                  completedAt,
-                });
+              if (!ownedLiveQuery) {
+                // Whoever claimed the query settles its turn, then signals closed.
+                if ((yield* Ref.get(activeTurn)) === currentTurn) {
+                  yield* Deferred.await(existing.closed);
+                }
+                return;
               }
+              existing.stopping = true;
+              yield* finalizeActiveTurnAfterQueryExit(existing);
+              yield* endSubagentCallsOfClosedQuery(existing.nativeThreadId, "interrupted");
               yield* Deferred.succeed(existing.closed, undefined);
               return;
             }
