@@ -12,6 +12,7 @@ import {
   paceOf,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
+import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -72,6 +73,7 @@ export function ThreadDetailsUsage({
             fill={null}
             tone={null}
             value="Unavailable"
+            opensUsagePage
             tooltip={<span className="text-foreground">{notice}</span>}
           />
         ) : (
@@ -156,6 +158,7 @@ function LimitRow({
       tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
       value={`${left}%`}
       ariaValue={`${left}% left`}
+      opensUsagePage
       tooltip={
         <>
           <span className="text-foreground">
@@ -184,6 +187,7 @@ function UsageRow({
   ariaValue = value,
   tooltip,
   muted = false,
+  opensUsagePage = false,
 }: {
   readonly label: string;
   /** Bar fill from 0 to 100. Null hides the bar. */
@@ -195,16 +199,25 @@ function UsageRow({
   readonly ariaValue?: string;
   readonly tooltip: ReactNode;
   readonly muted?: boolean;
+  readonly opensUsagePage?: boolean;
 }) {
+  const rowClassName = cn(
+    "col-span-3 grid h-6 grid-cols-subgrid items-center rounded-lg px-2.5 outline-none hover:bg-black/[0.035] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-black/[0.035] dark:hover:bg-white/[0.08] dark:data-popup-open:bg-white/[0.08]",
+    opensUsagePage ? "cursor-pointer" : "cursor-default",
+  );
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          <div
-            tabIndex={0}
-            aria-label={`${label}: ${ariaValue}`}
-            className="col-span-3 grid h-6 cursor-default grid-cols-subgrid items-center rounded-lg px-2.5 outline-none hover:bg-black/[0.035] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-black/[0.035] dark:hover:bg-white/[0.08] dark:data-popup-open:bg-white/[0.08]"
-          />
+          opensUsagePage ? (
+            <Link
+              to="/usage"
+              aria-label={`${label}: ${ariaValue}. Open usage`}
+              className={rowClassName}
+            />
+          ) : (
+            <div tabIndex={0} aria-label={`${label}: ${ariaValue}`} className={rowClassName} />
+          )
         }
       >
         <span className="max-w-28 truncate text-muted-foreground">{label}</span>
