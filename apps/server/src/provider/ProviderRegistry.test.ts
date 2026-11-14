@@ -46,6 +46,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import { collectLimitAccounts } from "@t3tools/shared/usageLimits";
 
 import {
   checkCodexProviderStatus,
@@ -53,7 +54,7 @@ import {
   type CodexAppServerProviderSnapshot,
 } from "./CodexProvider.ts";
 import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
-import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { checkClaudeProviderStatus, type ClaudeCapabilitiesProbe } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -75,7 +76,10 @@ import {
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
 } from "./providerStatusCache.ts";
-import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
+import {
+  COMPACT_SLASH_COMMAND,
+  type ServerProviderDraft,
+} from "@t3tools/provider-core/server/snapshotProbe";
 import type {
   ProviderInstance,
   ProviderWorkspaceSnapshot,
@@ -188,6 +192,8 @@ type TestClaudeCapabilities = {
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   readonly models?: ReadonlyArray<ModelInfo>;
+  readonly workspaceId?: ClaudeCapabilitiesProbe["workspaceId"];
+  readonly usage?: NonNullable<ClaudeCapabilitiesProbe["usage"]>;
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -4261,6 +4267,97 @@ it.layer(
         );
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.auth.status, "authenticated");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("keeps separate Claude logins that share a config directory apart in Limits", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-config-",
+        });
+        const storageDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-login-",
+        });
+        // Reset credits come from the shared config's login, so only that login's row may offer them.
+        const configLoginCredits = () => Effect.succeed({ availableCount: 1 });
+        const probe = (subscriptionType: string, utilization: number) =>
+          claudeCapabilities({
+            email: "account-b@example.com",
+            workspaceId: "11111111-1111-1111-1111-111111111111",
+            subscriptionType,
+            tokenSource: "claude.ai",
+            apiProvider: "firstParty",
+            usage: {
+              rate_limits_available: true,
+              rate_limits: { five_hour: { utilization, resets_at: null } },
+            },
+          });
+        const settings = { ...defaultClaudeSettings, homePath: configDir };
+        const separateStorage = { CLAUDE_SECURESTORAGE_CONFIG_DIR: storageDir };
+        const check = (subscriptionType: string, utilization: number, environment = {}) =>
+          checkClaudeProviderStatus(
+            settings,
+            probe(subscriptionType, utilization),
+            environment,
+            undefined,
+            undefined,
+            undefined,
+            configLoginCredits,
+          );
+        const provider = (instanceId: string, draft: ServerProviderDraft) => ({
+          ...draft,
+          instanceId: ProviderInstanceId.make(instanceId),
+          driver: ProviderDriverKind.make("claudeAgent"),
+        });
+        // Another machine can use the same storage path for a different login.
+        const accounts = collectLimitAccounts(
+          new Map([
+            [
+              EnvironmentId.make("environment-local"),
+              {
+                entry: { target: { label: "Local" } },
+                serverConfig: {
+                  providers: [
+                    provider("claude-max", yield* check("max", 10)),
+                    provider("claude-pro", yield* check("pro", 70, separateStorage)),
+                  ],
+                },
+              },
+            ],
+            [
+              EnvironmentId.make("environment-remote"),
+              {
+                entry: { target: { label: "Remote" } },
+                serverConfig: {
+                  providers: [provider("claude-pro", yield* check("pro", 80, separateStorage))],
+                },
+              },
+            ],
+          ]),
+        );
+
+        assert.deepStrictEqual(
+          accounts
+            .map((account) => [
+              account.limits.windows[0]?.usedPercent,
+              account.limits.resetCredits?.availableCount,
+            ])
+            .toSorted(([left = 0], [right = 0]) => left - right),
+          [
+            [10, 1],
+            [70, undefined],
+            [80, undefined],
+          ],
+        );
       }).pipe(
         Effect.provide(
           layerMockSpawner((args) => {

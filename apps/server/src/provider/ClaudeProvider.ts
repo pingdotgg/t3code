@@ -857,7 +857,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
           response: capabilities.usage,
           checkedAt: usageCheckedAt,
         }).limits;
+  // Claude Code reports the shared config's account, not this login's, so Limits keys it by instance.
+  const separateLogin = Boolean(resolvedEnvironment.CLAUDE_SECURESTORAGE_CONFIG_DIR?.trim());
+  // Reset credits read the shared config's token, which belongs to a different login.
   const resetCredits =
+    !separateLogin &&
     resolveResetCredits &&
     capabilities.subscriptionType &&
     !usageLimits.unavailable &&
@@ -878,8 +882,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       status: "ready",
       auth: {
         status: "authenticated",
-        ...(capabilities.email ? { email: capabilities.email } : {}),
-        ...(capabilities.workspaceId ? { workspaceId: capabilities.workspaceId } : {}),
+        ...(capabilities.email && !separateLogin ? { email: capabilities.email } : {}),
+        ...(capabilities.workspaceId && !separateLogin
+          ? { workspaceId: capabilities.workspaceId }
+          : {}),
         ...(authMetadata ? authMetadata : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
