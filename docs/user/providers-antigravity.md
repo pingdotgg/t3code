@@ -61,6 +61,9 @@ Install [Antigravity CLI](https://antigravity.google/docs/getting-started) on th
 Set **Binary path** to its `agy` executable and update it yourself.
 Leave the field blank to use the managed runtime, or a compatible executable on
 `PATH` if no managed runtime is installed.
+On Windows, **Binary path** can also be a `.cmd` or `.bat` script that only sets
+variables and then runs `agy_acp_server.exe` by its full path or a `%~dp0`-relative
+path; keep `localharness_external.exe` beside that executable.
 
 ## Update the managed runtime
 

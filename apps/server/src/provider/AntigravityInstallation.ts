@@ -58,6 +58,19 @@ const UPDATE_CHECK_INTERVAL = 60 * 60 * 1000;
 const FREE_SPACE_MARGIN = 256 * 1024 * 1024;
 const RECORD_MAX_BYTES = 8 * 1024;
 const RELEASE_RECORD = ".install-complete.json";
+const LAUNCHER_SETUP =
+  /^[\s@]*(?:|::[^&|<>]*|rem(?:\s[^&|<>]*|$)|set\s+"[^"=&|<>]+=[^"&|<>]*"\s*|(?:echo|set|setlocal|endlocal)(?:\s[^&|<>()]*)?)$/iu;
+const LAUNCHER_COMMAND =
+  /^[\s@]*(?:"([^"]*agy_acp_server\.exe)"|([^\s"&|<>()@]*agy_acp_server\.exe))(?:\s[^&|<>()]*)?$/iu;
+
+// The launcher runs in the project directory, so a target like `\x\agy_acp_server.exe`
+// whose drive comes from the working directory may not be the file resolved here.
+export const launcherTargetPath = (path: Path.Path, launcher: string, written: string) => {
+  const target = written.replace(/%~dp0/giu, () => `${path.dirname(launcher)}${path.sep}`);
+  if (/[%!]/u.test(target)) return null;
+  const resolved = path.resolve(target);
+  return path.parse(path.normalize(target)).root === path.parse(resolved).root ? resolved : null;
+};
 const LARGE_PAGE_KERNEL_MESSAGE =
   "Google's linux-arm64 Antigravity runtime needs a kernel with 4 KiB memory pages, and this kernel uses larger pages (as on Asahi Linux or Raspberry Pi 5). Use a remote environment or a custom Antigravity executable.";
 
@@ -308,24 +321,49 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     } satisfies AntigravityExecutable;
   });
 
+  // Infer helper pairing only from a plain launcher with one literal executable path.
+  const launcherTarget = Effect.fn("AntigravityInstallation.launcherTarget")(function* (
+    launcher: string,
+  ) {
+    if (platform !== "win32" || !/\.(?:bat|cmd)$/iu.test(launcher)) return null;
+    const contents = yield* fs.readFileString(launcher);
+    const targets = new Set<string>();
+    for (const line of contents.split(/\r?\n/u)) {
+      if (line.includes("^")) return null;
+      if (/^[\s@]*exit(?:\s+\/b)?(?:\s+-?\d+)?\s*$/iu.test(line)) break;
+      if (LAUNCHER_SETUP.test(line)) continue;
+      const match = LAUNCHER_COMMAND.exec(line);
+      if (!match) return null;
+      const target = launcherTargetPath(path, launcher, match[1] ?? match[2] ?? "");
+      if (target === null) return null;
+      targets.add(target);
+    }
+    const [target] = targets;
+    if (targets.size !== 1 || !target || !(yield* executableFile(target))) return null;
+    return yield* fs.realPath(target);
+  });
+
   const fromExternal = Effect.fn("AntigravityInstallation.fromExternal")(function* (
     candidate: string,
     source: "override" | "path",
   ) {
     if (!(yield* executableFile(candidate))) return null;
     const executablePath = yield* fs.realPath(candidate);
+    const launched = yield* launcherTarget(executablePath);
     const realVersions = yield* fs.realPath(versionsDirectory).pipe(Effect.option);
-    const directory = path.dirname(executablePath);
+    const directory = path.dirname(launched ?? executablePath);
     if (
       Option.isSome(realVersions) &&
       path.dirname(directory) === realVersions.value &&
       /^[a-f0-9]{64}$/u.test(path.basename(directory))
     ) {
       const installed = yield* completedRelease(path.basename(directory));
-      return { ...installed, source };
+      return launched === null
+        ? { ...installed, source }
+        : { ...installed, executablePath, source };
     }
     // Keep launcher symlinks intact: version-manager shims dispatch by their invoked name.
-    if (isAntigravityCli(candidate, executablePath)) {
+    if (launched === null && isAntigravityCli(candidate, executablePath)) {
       return {
         executablePath: candidate,
         harnessPath: null,
