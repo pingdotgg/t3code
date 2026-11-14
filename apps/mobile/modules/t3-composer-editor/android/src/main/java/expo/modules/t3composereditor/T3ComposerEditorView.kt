@@ -26,6 +26,7 @@ import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.KeyEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
@@ -40,6 +41,7 @@ import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
 import org.json.JSONObject
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
 
@@ -640,6 +642,10 @@ internal class SelectionAwareEditText(
   private var touchDownScrollX = 0
   private var touchDownScrollY = 0
   private var touchDownCaret = -1
+  private var touchDownX = 0f
+  private var touchDownY = 0f
+  private var touchDragged = false
+  private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
 
   // Keeps autofill services such as SMS verification codes from writing into the draft.
   override fun getAutofillType(): Int = View.AUTOFILL_TYPE_NONE
@@ -818,7 +824,10 @@ internal class SelectionAwareEditText(
       touchDownScrollX = scrollX
       touchDownScrollY = scrollY
       touchDownCaret = if (selectionStart == selectionEnd) selectionStart else -1
+      touchDownX = event.x
+      touchDownY = event.y
     }
+    updateTouchDragged(event)
     val releasesScroll =
       event.actionMasked == MotionEvent.ACTION_UP &&
         event.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER &&
@@ -833,6 +842,21 @@ internal class SelectionAwareEditText(
       super.onTouchEvent(cancel)
     } finally {
       cancel.recycle()
+    }
+  }
+
+  // Touch drops a pending long press only if a drag scrolls, so at a scroll limit it would select.
+  override fun performLongClick(): Boolean = !touchDragged && super.performLongClick()
+
+  // Latched until the touch ends, so a second finger's pointer events cannot reopen the long press.
+  private fun updateTouchDragged(event: MotionEvent) {
+    touchDragged = when (event.actionMasked) {
+      MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> false
+      MotionEvent.ACTION_MOVE -> touchDragged || (
+        event.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER &&
+          (abs(event.x - touchDownX) >= touchSlop || abs(event.y - touchDownY) >= touchSlop)
+        )
+      else -> touchDragged
     }
   }
 
