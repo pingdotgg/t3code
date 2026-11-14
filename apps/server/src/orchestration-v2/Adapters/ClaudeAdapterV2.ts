@@ -7503,6 +7503,63 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : new Map(current).set(nativeThreadId, { ...entry, messages });
           });
 
+        // Claude Code records the effort a subagent ran at only in its transcript.
+        const readSubagentTranscriptEffort = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          taskId: string,
+          completed: boolean,
+        ) {
+          const cwd = context.input.runtimePolicy.cwd;
+          if (cwd === null) return undefined;
+          const configured = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim();
+          const configDir = configured ? path.resolve(cwd, configured) : undefined;
+          const projectsDir = path.join(
+            configDir ?? path.join(yield* HostProcess.HomeDirectory, ".claude"),
+            "projects",
+          );
+          // Claude names the project folder after the resolved, possibly hashed, cwd; find the session instead.
+          let found: string | undefined;
+          for (const project of yield* fileSystem
+            .readDirectory(projectsDir)
+            .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))) {
+            const candidate = path.join(projectsDir, project, context.nativeThreadId, "subagents");
+            if (
+              yield* fileSystem
+                .exists(path.join(candidate, `agent-${taskId}.jsonl`))
+                .pipe(Effect.orElseSucceed(() => false))
+            ) {
+              found = candidate;
+              break;
+            }
+          }
+          if (found === undefined) return undefined;
+          const transcriptDir = found;
+          let metadata: WorkflowAgentMetadata = {};
+          let cursor = initialWorkflowAgentTranscriptCursor;
+          const read = Effect.fnUntraced(function* () {
+            while (metadata.messageId === undefined) {
+              const next = yield* readWorkflowAgentTranscript({
+                transcriptDir,
+                agentId: taskId,
+                cursor,
+                ...(configDir === undefined ? {} : { configDir }),
+              }).pipe(Effect.option);
+              if (Option.isNone(next)) return false;
+              metadata = mergeWorkflowAgentMetadata(next.value.lines, metadata);
+              const advanced = next.value.cursor.offset !== cursor.offset;
+              cursor = next.value.cursor;
+              if (!next.value.truncated || !advanced) break;
+            }
+            return true;
+          });
+          // A completed subagent can settle before its first reply is flushed; wait out the flush once.
+          if ((yield* read()) && completed && metadata.messageId === undefined) {
+            yield* Effect.sleep(WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS);
+            yield* read();
+          }
+          return metadata.effort;
+        });
+
         const updateClaudeSubagentNode = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly taskId: string;
@@ -7606,8 +7663,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             workflow === undefined
               ? undefined
               : withWorkflowMemberThreadIds(workflow, childThreadId);
-          // Unstated effort stays unknown: a custom agent definition may override the owner's.
-          const effort = existingSubagent === undefined ? input.effort : existingSubagent.effort;
+          // Unstated effort stays unknown until the transcript reports it: a custom agent definition may override the owner's.
+          // Read it before the settle: a run stops consuming events once its subagents settle.
+          const effort =
+            existingSubagent === undefined
+              ? input.effort
+              : (existingSubagent.effort ??
+                (lifecycleChanged &&
+                input.status !== "running" &&
+                existingSubagent.task.modelSelection !== undefined &&
+                (input.nativeTaskType ?? existingSubagent.nativeTaskType) !==
+                  CLAUDE_WORKFLOW_TASK_TYPE
+                  ? yield* readSubagentTranscriptEffort(
+                      input.context,
+                      input.taskId,
+                      input.status === "completed",
+                    )
+                  : undefined));
           const model = input.model ?? priorTask?.model ?? null;
           const task = {
             ...(priorTask ?? {
