@@ -178,8 +178,9 @@ test(
 );
 ```
 
-`t3.project` and `t3.thread` are the same. `t3.open()` installs the dev client for the checkout's
-native fingerprint, loads it from Metro, and pairs it with the scenario's server. `device` is
+`t3.project` and `t3.thread` are the same. The run fetches or builds the dev client for the
+checkout's native fingerprint before it leases a device; `t3.open()` installs it, loads it from
+Metro, and pairs it with the scenario's server. `device` is
 e2e's [device fixture](https://e2e.com/docs/mobile#the-device-fixture) for system actions.
 
 The run leases an iPhone 18 Pro from the Simlock pool, so it needs `SIMLOCK_AGENT_DEVICE_URL`
