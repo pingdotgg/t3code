@@ -343,6 +343,7 @@ function getAutoUpdateDisabledReason(args: {
   platform: NodeJS.Platform;
   appImage?: string | undefined;
   isDebPackage: boolean;
+  isReadOnlyMacBundle: boolean;
   disabledByEnv: boolean;
   hasUpdateFeedConfig: boolean;
 }): string | null {
@@ -360,6 +361,9 @@ function getAutoUpdateDisabledReason(args: {
   }
   if (args.platform === "linux" && !args.appImage && !args.isDebPackage) {
     return "Automatic updates on Linux require the AppImage or the .deb package.";
+  }
+  if (args.isReadOnlyMacBundle) {
+    return "Automatic updates are off because T3 Code is running from a read-only location, such as a disk image. Move T3 Code to the Applications folder and open it from there.";
   }
   return null;
 }
@@ -460,6 +464,27 @@ export const make = Effect.gen(function* () {
           )
       : false;
 
+  // Squirrel.Mac refuses to install over a bundle on a read-only volume (a disk image or App
+  // Translocation), and only says so after the download, inside quitAndInstall.
+  const isReadOnlyMacBundle =
+    environment.platform === "darwin" && environment.isPackaged
+      ? yield* fileSystem
+          .access(environment.path.resolve(environment.resourcesPath, "..", ".."), {
+            writable: true,
+          })
+          .pipe(
+            Effect.as(false),
+            Effect.catch(({ reason: { cause } }) =>
+              Effect.succeed(
+                typeof cause === "object" &&
+                  cause !== null &&
+                  "code" in cause &&
+                  cause.code === "EROFS",
+              ),
+            ),
+          )
+      : false;
+
   const hasUpdateFeedConfig = Ref.get(appUpdateYmlConfigRef).pipe(
     Effect.map(
       (appUpdateYmlConfig) =>
@@ -477,6 +502,7 @@ export const make = Effect.gen(function* () {
         platform: environment.platform,
         appImage: Option.getOrUndefined(config.appImagePath),
         isDebPackage,
+        isReadOnlyMacBundle,
         disabledByEnv: config.disableAutoUpdate,
         hasUpdateFeedConfig: hasFeedConfig,
       }),
