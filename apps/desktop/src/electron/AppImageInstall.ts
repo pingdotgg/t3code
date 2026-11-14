@@ -5,8 +5,6 @@ import * as NodePath from "node:path";
 
 import type { AppImageUpdater } from "electron-updater";
 
-type CopyFile = (from: string, to: string) => void;
-
 function syncPath(path: string): void {
   const fd = NodeFS.openSync(path, "r");
   try {
@@ -44,7 +42,6 @@ export function installAppImageUpdate(input: {
   readonly sha512: string;
   readonly size?: number | undefined;
   readonly logger?: NonNullable<AppImageUpdater["logger"]> | undefined;
-  readonly copyFile?: CopyFile;
 }): string {
   const installedName = NodePath.basename(input.appImageFile);
   // Match electron-updater: retain custom names, but advance versioned filenames.
@@ -88,11 +85,7 @@ export function installAppImageUpdate(input: {
   );
   const staged = NodePath.join(stageDirectory, "update.AppImage");
   try {
-    if (input.copyFile) {
-      input.copyFile(input.installerPath, staged);
-    } else {
-      NodeFS.copyFileSync(input.installerPath, staged, NodeFS.constants.COPYFILE_EXCL);
-    }
+    NodeFS.copyFileSync(input.installerPath, staged, NodeFS.constants.COPYFILE_EXCL);
     verifyAndSyncStage(staged, sourceSize, input.sha512);
     NodeFS.renameSync(staged, destination);
   } finally {
