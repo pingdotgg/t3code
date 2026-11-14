@@ -2,16 +2,12 @@ import {
   resolveConnectionSource,
   staticConnectionSource,
   type ConnectionSource,
-} from "alchemy/SQL/ConnectionSource";
+} from "@alchemy.run/sql/ConnectionSource";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import type * as Scope from "effect/Scope";
-import {
-  Database,
-  type DatabaseService,
-  type DirectDatabase,
-} from "./Database.ts";
+import { Database, type DatabaseService, type DirectDatabase } from "./Database.ts";
 import { makeMigrateSupport, type SqlLayerOptions } from "./Postgres.ts";
 
 export interface NeonOptions extends SqlLayerOptions {}
@@ -20,27 +16,19 @@ export interface NeonOptions extends SqlLayerOptions {}
 // duck-types it as a Postgres pool via its `connect` method) but speaks
 // WebSocket instead of TCP — no `pg`, no Hyperdrive, no nodejs socket
 // APIs. Loaded dynamically so the driver stays an optional peer.
-const loadNeonPool = Effect.promise(
-  () => import("@neondatabase/serverless"),
-).pipe(
+const loadNeonPool = Effect.promise(() => import("@neondatabase/serverless")).pipe(
   Effect.map((mod) =>
     (mod as { default?: { Pool?: unknown } }).default?.Pool !== undefined
       ? (
           mod as unknown as {
             default: {
-              Pool: new (config: {
-                connectionString: string;
-                max?: number;
-              }) => unknown;
+              Pool: new (config: { connectionString: string; max?: number }) => unknown;
             };
           }
         ).default.Pool
       : (
           mod as unknown as {
-            Pool: new (config: {
-              connectionString: string;
-              max?: number;
-            }) => unknown;
+            Pool: new (config: { connectionString: string; max?: number }) => unknown;
           }
         ).Pool,
   ),
@@ -78,7 +66,7 @@ const openPool = (
  * ```typescript
  * import { BetterAuth } from "@alchemy.run/better-auth";
  * import { Neon as NeonDatabase } from "@alchemy.run/better-auth/Neon";
- * import * as Neon from "alchemy/Neon";
+ * import * as Neon from "@alchemy.run/neon";
  *
  * export const AuthDb = Neon.Project("AuthDb");
  *
@@ -107,10 +95,7 @@ const openPool = (
  * @peer @neondatabase/serverless
  * @product Neon
  */
-export const Neon = (
-  url: ConnectionSource,
-  options?: NeonOptions,
-): Layer.Layer<Database> =>
+export const Neon = (url: ConnectionSource, options?: NeonOptions): Layer.Layer<Database> =>
   Layer.effect(
     Database,
     Effect.gen(function* () {

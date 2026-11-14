@@ -1,5 +1,5 @@
+import * as GCP from "@alchemy.run/gcp";
 import * as Alchemy from "alchemy";
-import * as GCP from "alchemy/GCP";
 import * as Effect from "effect/Effect";
 import Api from "./src/Api.ts";
 import Indexer from "./src/Indexer.ts";

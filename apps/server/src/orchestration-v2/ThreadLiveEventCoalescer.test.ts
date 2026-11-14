@@ -36,6 +36,7 @@ function makeToolActivity(
     readonly kind?: "tool.updated" | "tool.completed";
     readonly toolCallId?: string;
     readonly turnId?: RunId;
+    readonly output?: string;
   } = {},
 ): ThreadEvent {
   const itemRunId = options.turnId ?? runId;
@@ -66,7 +67,7 @@ function makeToolActivity(
         completedAt: status === "completed" ? now : null,
         updatedAt: now,
         input: "echo app.ts",
-        output: `output-${sequence}`,
+        output: options.output ?? `output-${sequence}`,
       },
     },
   };
@@ -155,6 +156,56 @@ function makeTextItem(
 }
 
 describe("ThreadLiveEventCoalescer", () => {
+  it.effect.each(["items", "bytes"] as const)(
+    "replaces superseded tool output before charging the %s budget",
+    (limit) =>
+      Effect.gen(function* () {
+        const updates = Array.from({ length: 1_100 }, (_, index) => makeToolActivity(index + 1));
+        const latest = updates.at(-1)!;
+        const coalescer = yield* makeThreadLiveEventCoalescer(
+          limit === "items"
+            ? { maxItems: 1 }
+            : { maxSerializedBytes: Buffer.byteLength(encodeEvent(latest)) },
+        );
+        yield* coalescer.offerAll(updates);
+        expect(yield* coalescer.usage).toEqual({
+          retainedItems: 1,
+          retainedSerializedBytes: Buffer.byteLength(encodeEvent(latest)),
+        });
+        yield* coalescer.end;
+        expect(yield* coalescer.stream.pipe(Stream.runCollect)).toEqual([latest]);
+        expect(yield* coalescer.usage).toEqual({ retainedItems: 0, retainedSerializedBytes: 0 });
+      }),
+  );
+
+  it.effect("handles a tool output burst larger than the default 8 MiB buffer", () =>
+    Effect.gen(function* () {
+      const coalescer = yield* makeThreadLiveEventCoalescer();
+      const updates = Array.from({ length: 150 }, (_, index) =>
+        makeToolActivity(index + 1, { output: "x".repeat(64 * 1024) }),
+      );
+      yield* coalescer.offerAll(updates);
+      yield* coalescer.end;
+      expect(yield* coalescer.stream.pipe(Stream.runCollect)).toEqual([updates.at(-1)]);
+    }),
+  );
+
+  it.effect("still fails when a single replacement exceeds the byte budget", () =>
+    Effect.gen(function* () {
+      const first = makeToolActivity(1);
+      const coalescer = yield* makeThreadLiveEventCoalescer({
+        maxSerializedBytes: Buffer.byteLength(encodeEvent(first)),
+      });
+      yield* coalescer.offer(first);
+      const overflow = yield* coalescer
+        .offer(makeToolActivity(2, { output: "x".repeat(2_000) }))
+        .pipe(Effect.result);
+      expect(overflow._tag).toBe("Failure");
+      yield* coalescer.closed;
+      expect(yield* coalescer.usage).toEqual({ retainedItems: 0, retainedSerializedBytes: 0 });
+    }),
+  );
+
   it("preserves tool-call identity switches as insertion-order boundaries", () => {
     const events = [
       makeToolActivity(1, { toolCallId: "call-a" }),
@@ -356,119 +407,107 @@ describe("ThreadLiveEventCoalescer", () => {
   );
 
   it.effect("flushes text at synchronization and completion boundaries", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const coalescer = yield* makeThreadLiveEventCoalescer();
-        const events = [
-          makeStreamingMessage(1),
-          makeTextItem(2, { type: "reasoning" }),
-          makeStreamingMessage(3),
-          makeTextItem(4, { type: "reasoning" }),
-          { kind: "synchronized" } as const,
-          makeStreamingMessage(5),
-          makeTextItem(6, { type: "reasoning" }),
-          makeStreamingMessage(7, { streaming: false, text: "Final answer" }),
-          makeTextItem(8, {
-            type: "reasoning",
-            streaming: false,
-            status: "completed",
-            text: "Final answer",
-          }),
-          makeStreamingMessage(9),
-          makeTextItem(10, { type: "reasoning" }),
-        ];
-        yield* coalescer.offerAll(events);
-        yield* coalescer.end;
-        expect(yield* Stream.runCollect(coalescer.stream)).toEqual(events.slice(2));
-        expect(yield* coalescer.usage).toEqual({ retainedItems: 0, retainedSerializedBytes: 0 });
-      }),
-    ),
+    Effect.gen(function* () {
+      const coalescer = yield* makeThreadLiveEventCoalescer();
+      const events = [
+        makeStreamingMessage(1),
+        makeTextItem(2, { type: "reasoning" }),
+        makeStreamingMessage(3),
+        makeTextItem(4, { type: "reasoning" }),
+        { kind: "synchronized" } as const,
+        makeStreamingMessage(5),
+        makeTextItem(6, { type: "reasoning" }),
+        makeStreamingMessage(7, { streaming: false, text: "Final answer" }),
+        makeTextItem(8, {
+          type: "reasoning",
+          streaming: false,
+          status: "completed",
+          text: "Final answer",
+        }),
+        makeStreamingMessage(9),
+        makeTextItem(10, { type: "reasoning" }),
+      ];
+      yield* coalescer.offerAll(events);
+      yield* coalescer.end;
+      expect(yield* Stream.runCollect(coalescer.stream)).toEqual(events.slice(2));
+      expect(yield* coalescer.usage).toEqual({ retainedItems: 0, retainedSerializedBytes: 0 });
+    }),
   );
 
   it.effect(
     "flushes growing text on the fixed window and charges only unacknowledged survivors",
     () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const coalescer = yield* makeThreadLiveEventCoalescer();
-          const first = [makeStreamingMessage(1, { text: "é" }), makeTextItem(2, { text: "é" })];
-          const latest = [makeStreamingMessage(3, { text: "éé" }), makeTextItem(4, { text: "éé" })];
-          const serializedBytes = (events: ReadonlyArray<ThreadEvent>) =>
-            events.reduce((sum, event) => sum + Buffer.byteLength(encodeEvent(event)), 0);
-          yield* coalescer.offerAll(first);
-          yield* TestClock.adjust("40 millis");
-          yield* coalescer.offerAll(latest);
-          expect(yield* coalescer.usage).toEqual({
-            retainedItems: 4,
-            retainedSerializedBytes: serializedBytes([...first, ...latest]),
-          });
-          yield* TestClock.adjust("10 millis");
-          const expectedUsage = {
-            retainedItems: 2,
-            retainedSerializedBytes: serializedBytes(latest),
-          };
-          expect(yield* coalescer.usage).toEqual(expectedUsage);
-          const pull = yield* Stream.toPull(coalescer.stream);
-          expect(yield* pull).toEqual(latest);
-          expect(yield* coalescer.usage).toEqual(expectedUsage);
+      Effect.gen(function* () {
+        const coalescer = yield* makeThreadLiveEventCoalescer();
+        const first = [makeStreamingMessage(1, { text: "é" }), makeTextItem(2, { text: "é" })];
+        const latest = [makeStreamingMessage(3, { text: "éé" }), makeTextItem(4, { text: "éé" })];
+        const serializedBytes = (events: ReadonlyArray<ThreadEvent>) =>
+          events.reduce((sum, event) => sum + Buffer.byteLength(encodeEvent(event)), 0);
+        yield* coalescer.offerAll(first);
+        yield* TestClock.adjust("40 millis");
+        yield* coalescer.offerAll(latest);
+        expect(yield* coalescer.usage).toEqual({
+          retainedItems: 2,
+          retainedSerializedBytes: serializedBytes(latest),
+        });
+        yield* TestClock.adjust("10 millis");
+        const expectedUsage = {
+          retainedItems: 2,
+          retainedSerializedBytes: serializedBytes(latest),
+        };
+        expect(yield* coalescer.usage).toEqual(expectedUsage);
+        const pull = yield* Stream.toPull(coalescer.stream);
+        expect(yield* pull).toEqual(latest);
+        expect(yield* coalescer.usage).toEqual(expectedUsage);
 
-          const next = [makeStreamingMessage(5), makeTextItem(6)];
-          yield* coalescer.offerAll(next);
-          yield* TestClock.adjust("50 millis");
-          expect(yield* pull).toEqual(next);
-          yield* coalescer.end;
-          yield* pull.pipe(Effect.result);
-          expect(yield* coalescer.usage).toEqual({ retainedItems: 0, retainedSerializedBytes: 0 });
-        }),
-      ),
+        const next = [makeStreamingMessage(5), makeTextItem(6)];
+        yield* coalescer.offerAll(next);
+        yield* TestClock.adjust("50 millis");
+        expect(yield* pull).toEqual(next);
+        yield* coalescer.end;
+        yield* pull.pipe(Effect.result);
+        expect(yield* coalescer.usage).toEqual({ retainedItems: 0, retainedSerializedBytes: 0 });
+      }),
   );
 
   it.effect("keeps the flush timer alive when an offer's shorter scope closes", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const coalescer = yield* makeThreadLiveEventCoalescer();
-        yield* Effect.scoped(coalescer.offer(makeToolActivity(1)));
-        yield* TestClock.adjust("50 millis");
-        const items = yield* coalescer.stream.pipe(Stream.take(1), Stream.runCollect);
-        expect(items.map((item) => (item.kind === "event" ? item.sequence : item.kind))).toEqual([
-          1,
-        ]);
-      }),
-    ),
+    Effect.gen(function* () {
+      const coalescer = yield* makeThreadLiveEventCoalescer();
+      yield* Effect.scoped(coalescer.offer(makeToolActivity(1)));
+      yield* TestClock.adjust("50 millis");
+      const items = yield* coalescer.stream.pipe(Stream.take(1), Stream.runCollect);
+      expect(items.map((item) => (item.kind === "event" ? item.sequence : item.kind))).toEqual([1]);
+    }),
   );
 
   it.effect("keeps an unacknowledged batch charged and clears later events on overflow", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const coalescer = yield* makeThreadLiveEventCoalescer({ maxItems: 3 });
-        const first = makeMessage(1, "é".repeat(1_024));
-        yield* coalescer.offer(first);
+    Effect.gen(function* () {
+      const coalescer = yield* makeThreadLiveEventCoalescer({ maxItems: 3 });
+      const first = makeMessage(1, "é".repeat(1_024));
+      yield* coalescer.offer(first);
 
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const pull = yield* Stream.toPull(coalescer.stream);
-            const batch = yield* pull;
-            expect(batch.map((item) => (item.kind === "event" ? item.sequence : null))).toEqual([
-              1,
-            ]);
-            yield* coalescer.offer(makeMessage(2));
-            yield* coalescer.offer(makeToolActivity(3));
-            expect((yield* coalescer.usage).retainedItems).toBe(3);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const pull = yield* Stream.toPull(coalescer.stream);
+          const batch = yield* pull;
+          expect(batch.map((item) => (item.kind === "event" ? item.sequence : null))).toEqual([1]);
+          yield* coalescer.offer(makeMessage(2));
+          yield* coalescer.offer(makeToolActivity(3));
+          expect((yield* coalescer.usage).retainedItems).toBe(3);
 
-            const overflow = yield* coalescer
-              .offer(makeToolActivity(4, { kind: "tool.completed" }))
-              .pipe(Effect.result);
-            expect(overflow._tag).toBe("Failure");
-            yield* coalescer.closed;
-            expect(yield* coalescer.usage).toEqual({
-              retainedItems: 1,
-              retainedSerializedBytes: Buffer.byteLength(encodeEvent(first)),
-            });
-          }),
-        );
-        expect(yield* coalescer.usage).toEqual({ retainedItems: 0, retainedSerializedBytes: 0 });
-      }),
-    ),
+          const overflow = yield* coalescer
+            .offer(makeToolActivity(4, { kind: "tool.completed" }))
+            .pipe(Effect.result);
+          expect(overflow._tag).toBe("Failure");
+          yield* coalescer.closed;
+          expect(yield* coalescer.usage).toEqual({
+            retainedItems: 1,
+            retainedSerializedBytes: Buffer.byteLength(encodeEvent(first)),
+          });
+        }),
+      );
+      expect(yield* coalescer.usage).toEqual({ retainedItems: 0, retainedSerializedBytes: 0 });
+    }),
   );
 });
 

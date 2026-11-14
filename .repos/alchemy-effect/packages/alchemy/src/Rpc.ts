@@ -1,15 +1,17 @@
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import * as Result from "effect/Result";
-import * as Sink from "effect/Sink";
-import * as Stream from "effect/Stream";
+import * as Exit from "effect/Exit";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import * as Scope from "effect/Scope";
+import * as Sink from "effect/Sink";
 import * as Socket from "effect/socket/Socket";
+import * as Stream from "effect/Stream";
 import type { HttpEffect } from "./Http.ts";
 
 export type Rpc<Shape> = {
@@ -68,9 +70,7 @@ export class RpcDecodeError extends Data.TaggedError("RpcDecodeError")<{
   readonly cause: unknown;
 }> {
   override get message() {
-    return this.cause instanceof Error
-      ? this.cause.message
-      : String(this.cause);
+    return this.cause instanceof Error ? this.cause.message : String(this.cause);
   }
 }
 
@@ -85,15 +85,11 @@ export class RpcCallError extends Data.TaggedError("RpcCallError")<{
   }
 }
 
-export class RpcRemoteStreamError extends Data.TaggedError(
-  "RpcRemoteStreamError",
-)<{
+export class RpcRemoteStreamError extends Data.TaggedError("RpcRemoteStreamError")<{
   readonly error: unknown;
 }> {}
 
-export const isRpcStreamErrorMarker = (
-  value: unknown,
-): value is RpcStreamErrorMarker =>
+export const isRpcStreamErrorMarker = (value: unknown): value is RpcStreamErrorMarker =>
   typeof value === "object" &&
   value !== null &&
   "_tag" in value &&
@@ -107,9 +103,7 @@ export const isRpcErrorEnvelope = (value: unknown): value is RpcErrorEnvelope =>
   value._tag === ErrorTag &&
   "error" in value;
 
-export const isRpcStreamEnvelope = (
-  value: unknown,
-): value is RpcStreamEnvelope =>
+export const isRpcStreamEnvelope = (value: unknown): value is RpcStreamEnvelope =>
   typeof value === "object" &&
   value !== null &&
   "_tag" in value &&
@@ -185,18 +179,15 @@ export const decodeRpcByteStream = <E>(
 export const fromRpcReadableStream = (
   body: ReadableStream<Uint8Array>,
   encoding: StreamEncoding,
-): Stream.Stream<
-  any,
-  Socket.SocketError | RpcDecodeError | RpcRemoteStreamError
-> =>
+): Stream.Stream<any, Socket.SocketError | RpcDecodeError | RpcRemoteStreamError> =>
   decodeRpcByteStream(
     Stream.fromReadableStream({
       evaluate: () => body,
       onError: (cause) =>
         Socket.isSocketError(cause)
           ? cause
-          : new Socket.SocketError({
-              reason: new Socket.SocketReadError({ cause }),
+          : Socket.SocketError.make({
+              reason: Socket.SocketReadError.make({ cause }),
             }),
     }),
     encoding,
@@ -204,10 +195,8 @@ export const fromRpcReadableStream = (
 
 export const fromRpcStreamEnvelope = (
   envelope: RpcStreamEnvelope,
-): Stream.Stream<
-  any,
-  Socket.SocketError | RpcDecodeError | RpcRemoteStreamError
-> => fromRpcReadableStream(envelope.body, envelope.encoding);
+): Stream.Stream<any, Socket.SocketError | RpcDecodeError | RpcRemoteStreamError> =>
+  fromRpcReadableStream(envelope.body, envelope.encoding);
 
 export const decodeRpcValue = (value: unknown) => {
   if (isRpcStreamEnvelope(value)) {
@@ -279,9 +268,7 @@ export const decodeRpcResult = (
   revive?: (error: unknown) => unknown,
 ): Effect.Effect<unknown, unknown> => {
   if (isRpcErrorEnvelope(value)) {
-    return Effect.fail(
-      revive === undefined ? value.error : revive(value.error),
-    );
+    return Effect.fail(revive === undefined ? value.error : revive(value.error));
   }
   return Effect.succeed(decodeRpcValue(value));
 };
@@ -303,56 +290,63 @@ const encodeStreamErrorMarker = (cause: Cause.Cause<unknown>): string => {
 };
 
 const appendStreamErrors = <R>(s: Stream.Stream<string, unknown, R>) =>
-  s.pipe(
-    Stream.catchCause((cause) =>
-      Stream.succeed(encodeStreamErrorMarker(cause)),
-    ),
-  );
+  s.pipe(Stream.catchCause((cause) => cause.pipe(encodeStreamErrorMarker, Stream.succeed)));
 
 export const toRpcStream = (stream: Stream.Stream<any, any, any>) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const [head, rest] = yield* Stream.peel(stream, Sink.head());
+  Effect.suspend(() => {
+    // A peeled remainder is only valid while its scope is open. Transfer
+    // that scope to the response body instead of closing it on return.
+    const scope = Scope.makeUnsafe();
+    const toBody = (body: Stream.Stream<Uint8Array, any>) =>
+      body.pipe(
+        Stream.onExit((exit) => Scope.close(scope, exit)),
+        Stream.toReadableStream(),
+      );
+    return Effect.gen(function* () {
+      const [head, rest] = yield* Stream.peel(stream, Sink.head()).pipe(
+        Effect.provideService(Scope.Scope, scope),
+      );
 
       if (Option.isSome(head) && head.value instanceof Uint8Array) {
         return {
           _tag: StreamTag,
           encoding: "bytes",
-          body: Stream.toReadableStream(
-            rest.pipe(Stream.prepend([head.value])),
-          ),
+          body: toBody(rest.pipe(Stream.prepend([head.value]))),
         } satisfies RpcStreamEnvelope;
       }
 
-      const body = Option.isSome(head)
-        ? rest.pipe(Stream.prepend([head.value]))
-        : rest;
+      const body = Option.isSome(head) ? rest.pipe(Stream.prepend([head.value])) : rest;
 
       return {
         _tag: StreamTag,
         encoding: "jsonl",
-        body: Stream.toReadableStream(
-          appendStreamErrors(
-            body.pipe(Stream.map((value) => JSON.stringify(value) + "\n")),
-          ).pipe(Stream.encodeText),
+        body: toBody(
+          body.pipe(
+            Stream.map((value) => JSON.stringify(value) + "\n"),
+            appendStreamErrors,
+            Stream.encodeText,
+          ),
         ),
       } satisfies RpcStreamEnvelope;
-    }),
-  ).pipe(
+    }).pipe(
+      Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void)),
+    );
+  }).pipe(
     Effect.catchCause((cause) => {
       const failReason = cause.reasons.find(Cause.isFailReason);
       if (failReason) {
         return Effect.succeed({
           _tag: StreamTag,
           encoding: "jsonl",
-          body: Stream.toReadableStream(
-            Stream.succeed(encodeStreamErrorMarker(cause)).pipe(
-              Stream.encodeText,
-            ),
+          body: cause.pipe(
+            encodeStreamErrorMarker,
+            Stream.succeed,
+            Stream.encodeText,
+            Stream.toReadableStream(),
           ),
         } satisfies RpcStreamEnvelope);
       }
-      return Effect.die(Cause.squash(cause));
+      return cause.pipe(Cause.squash, Effect.die);
     }),
   );
 
@@ -379,12 +373,27 @@ const isRpcBytesChunk = (value: unknown): value is RpcBytesChunk =>
   "b64" in value;
 
 const toBase64 = (bytes: Uint8Array): string => {
+  const encode = (bytes as Uint8Array & { toBase64?: () => string }).toBase64;
+  if (typeof encode === "function") return encode.call(bytes);
+
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
 };
 
 const fromBase64 = (b64: string): Uint8Array => {
+  const decode = (
+    Uint8Array as Uint8ArrayConstructor & { fromBase64?: (value: string) => Uint8Array }
+  ).fromBase64;
+  if (typeof b64 === "string" && typeof decode === "function") {
+    try {
+      return decode.call(Uint8Array, b64);
+    } catch {
+      // Preserve atob's InvalidCharacterError and coercion semantics for bad
+      // wire values; fromBase64 uses SyntaxError instead. Valid input stays
+      // on the native path without an intermediate binary string.
+    }
+  }
   const binary = atob(b64);
   const out = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
@@ -431,9 +440,7 @@ export const decodeRpcResponseStream = <E>(
     Stream.flatMap((value) =>
       isRpcStreamErrorMarker(value)
         ? Stream.fail(new RpcRemoteStreamError({ error: value.error }))
-        : Stream.succeed(
-            isRpcBytesChunk(value) ? fromBase64(value.b64) : value,
-          ),
+        : Stream.succeed(isRpcBytesChunk(value) ? fromBase64(value.b64) : value),
     ),
   );
 
@@ -457,9 +464,7 @@ export const asEffectOrStream = (
   call: Effect.Effect<unknown, unknown>,
 ): Effect.Effect<unknown, unknown> => {
   const streamForm = Stream.unwrap(
-    Effect.map(call, (value) =>
-      Stream.isStream(value) ? value : Stream.succeed(value),
-    ),
+    Effect.map(call, (value) => (Stream.isStream(value) ? value : Stream.succeed(value))),
   );
   return Object.assign(call, {
     [StreamTypeId]: (streamForm as any)[StreamTypeId],
@@ -506,32 +511,18 @@ export const makeFetchRpcStub = <Shape>(options: {
           Effect.gen(function* () {
             const request = HttpClientRequest.post(
               `${baseUrl}${RPC_PATH_PREFIX}${encodeURIComponent(prop)}`,
-            ).pipe(
-              HttpClientRequest.bodyText(
-                JSON.stringify(args),
-                "application/json",
-              ),
-            );
+            ).pipe(HttpClientRequest.bodyText(JSON.stringify(args), "application/json"));
             const response = yield* options
               .fetch(request)
-              .pipe(
-                Effect.mapError(
-                  (cause) => new RpcCallError({ method: prop, cause }),
-                ),
-              );
+              .pipe(Effect.mapError((cause) => new RpcCallError({ method: prop, cause })));
 
-            const headers = response.headers as Record<
-              string,
-              string | undefined
-            >;
+            const headers = response.headers as Record<string, string | undefined>;
             if (headers[RPC_STREAM_HEADER] !== undefined) {
               return decodeRpcResponseStream(response.stream);
             }
 
             const value = yield* response.json.pipe(
-              Effect.mapError(
-                (cause) => new RpcCallError({ method: prop, cause }),
-              ),
+              Effect.mapError((cause) => new RpcCallError({ method: prop, cause })),
             );
             return yield* decodeRpcResult(value);
           }),
@@ -610,9 +601,7 @@ export const serveRpc = <Req = never>(
       return streamResponse(invoked);
     }
 
-    const result = yield* Effect.result(
-      invoked as Effect.Effect<unknown, unknown>,
-    );
+    const result = yield* Effect.result(invoked as Effect.Effect<unknown, unknown>);
     if (Result.isSuccess(result)) {
       // The resolved value may itself be a `Stream` (e.g. a forwarded nested
       // *streaming* RPC, where the inner call resolves to a `Stream`) — encode
