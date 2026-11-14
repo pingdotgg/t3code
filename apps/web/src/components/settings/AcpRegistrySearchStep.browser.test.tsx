@@ -47,6 +47,7 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
 }));
 
 import { AcpRegistrySearchStep, useAcpRegistrySearch } from "./AcpRegistrySearchStep";
+import type { AcpLocalAgentPreset } from "./acpLocalAgents";
 
 const environmentId = EnvironmentId.make("remote-device");
 const gemini: AcpRegistrySearchAgent = {
@@ -65,28 +66,39 @@ const gemini: AcpRegistrySearchAgent = {
 
 function Step({
   configured = false,
+  configuredPreset = false,
   onPrepared = vi.fn(),
+  onLocalPreset,
 }: {
   readonly configured?: boolean;
+  readonly configuredPreset?: boolean;
   readonly onPrepared?: (agent: AcpRegistrySearchAgent) => void;
+  readonly onLocalPreset?: (preset: AcpLocalAgentPreset) => void;
 }) {
   const registry = useAcpRegistrySearch(environmentId, true);
+  const providerInstances = configured
+    ? {
+        acpRegistry_gemini: {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          config: { agentId: "gemini" },
+        },
+      }
+    : configuredPreset
+      ? {
+          acpRegistry_oh_my_pi: {
+            driver: ProviderDriverKind.make("acpRegistry"),
+            config: { source: "local", commandPath: "omp", commandArgs: ["acp"] },
+          },
+        }
+      : {};
   return (
     <AcpRegistrySearchStep
       environmentId={environmentId}
       registry={registry}
-      providerInstances={
-        configured
-          ? {
-              acpRegistry_gemini: {
-                driver: ProviderDriverKind.make("acpRegistry"),
-                config: { agentId: "gemini" },
-              },
-            }
-          : {}
-      }
+      providerInstances={providerInstances}
       onPrepared={onPrepared}
       onManualConfiguration={vi.fn()}
+      {...(onLocalPreset === undefined ? {} : { onLocalPreset })}
     />
   );
 }
@@ -124,4 +136,42 @@ it("leaves out Registry agents that T3 Code supports as their own providers", as
 
   expect(page.getByRole("button", { name: "Add Gemini CLI" }).query()).not.toBeNull();
   expect(page.getByRole("button", { name: "Add Codex" }).query()).toBeNull();
+});
+
+it("offers a known local ACP agent for a matching query", async () => {
+  setup();
+  state.result = { agents: [] };
+  const onLocalPreset = vi.fn();
+  await using _screen = await render(<Step onLocalPreset={onLocalPreset} />);
+
+  await page.getByRole("searchbox", { name: "Search ACP Registry" }).fill("oh-my-pi");
+
+  await expect.element(page.getByText("No compatible agents found")).not.toBeInTheDocument();
+  await page.getByRole("button", { name: "Add Oh My Pi" }).click();
+  expect(onLocalPreset).toHaveBeenCalledWith(
+    expect.objectContaining({ id: "oh-my-pi", executable: "omp", args: ["acp"] }),
+  );
+});
+
+it("keeps the empty state when no local agent matches", async () => {
+  setup();
+  state.result = { agents: [] };
+  await using _screen = await render(<Step onLocalPreset={vi.fn()} />);
+
+  await page.getByRole("searchbox", { name: "Search ACP Registry" }).fill("kilo");
+
+  await expect.element(page.getByRole("button", { name: "Add Oh My Pi" })).not.toBeInTheDocument();
+  await expect.element(page.getByText("No compatible agents found")).toBeInTheDocument();
+});
+
+it("marks a local preset that is already configured as added", async () => {
+  setup();
+  state.result = { agents: [] };
+  await using _screen = await render(<Step configuredPreset onLocalPreset={vi.fn()} />);
+
+  await page.getByRole("searchbox", { name: "Search ACP Registry" }).fill("omp");
+
+  await expect
+    .element(page.getByRole("button", { name: "Already added Oh My Pi" }))
+    .toBeInTheDocument();
 });

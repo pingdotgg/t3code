@@ -56,6 +56,14 @@ vi.mock(import("./AcpRegistrySearchStep"), async (original) => ({
     onPrepared: (agent: AcpRegistrySearchAgent) => void;
     onManualConfiguration: () => void;
     onLocalConfiguration: () => void;
+    onLocalPreset: (preset: {
+      readonly id: string;
+      readonly name: string;
+      readonly description: string;
+      readonly executable: string;
+      readonly args: readonly string[];
+      readonly website: string;
+    }) => void;
   }) => (
     <div>
       <button type="button" onClick={() => props.onPrepared(preparedAgent)}>
@@ -66,6 +74,21 @@ vi.mock(import("./AcpRegistrySearchStep"), async (original) => ({
       </button>
       <button type="button" onClick={props.onLocalConfiguration}>
         Use local command
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          props.onLocalPreset({
+            id: "oh-my-pi",
+            name: "Oh My Pi",
+            description: "Oh My Pi coding agent",
+            executable: "omp",
+            args: ["acp"],
+            website: "https://omp.sh/",
+          })
+        }
+      >
+        Use Oh My Pi
       </button>
     </div>
   )) as never,
@@ -242,6 +265,32 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(settingsHooks.mutate).toHaveBeenCalledTimes(1);
     await click("Finish sign-in");
     expect(actions.onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("adds a curated local ACP agent without a sign-in step", async () => {
+    setup();
+    await using _screen = await render(dialog());
+    await click("Show more");
+    await click("Use Oh My Pi");
+    await click("Add instance");
+
+    expect(settingsHooks.mutate).toHaveBeenCalledWith({
+      operation: "create",
+      instanceId: "acpRegistry_oh_my_pi",
+      instance: {
+        driver: "acpRegistry",
+        enabled: true,
+        displayName: "Oh My Pi",
+        config: {
+          source: "local",
+          commandPath: "omp",
+          commandArgs: ["acp"],
+          localPresetId: "oh-my-pi",
+        },
+      },
+    });
+    expect(actions.onOpenChange).toHaveBeenCalledWith(false);
+    await vi.waitFor(() => expect(signInStep()).toBeNull());
   });
 
   it("creates a local command in the selected environment without a sign-in step", async () => {

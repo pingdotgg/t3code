@@ -7,6 +7,7 @@ import {
 } from "@t3tools/client-runtime/state/provider-instance-display";
 
 import { ProviderDriverKind } from "@t3tools/contracts";
+import type { ProviderIcon } from "@t3tools/provider-core/client";
 import {
   AnthropicIcon,
   AntigravityIcon,
@@ -92,6 +93,8 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   accentColor?: string | undefined;
   acpRegistryAgentId?: string | undefined;
   acpRegistryIconUrl?: string | undefined;
+  /** Bundled logo that outranks the driver glyph, e.g. a curated local ACP agent. */
+  iconOverride?: ProviderIcon | undefined;
   showBadge?: boolean;
   badgeContent?: "initials" | "none";
   size?: "default" | "compact";
@@ -130,7 +133,13 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       style={accentStyle}
       data-provider-accent-color={accentColor}
     >
-      {isAcpRegistry ? (
+      {props.iconOverride ? (
+        <ProviderPackageIcon
+          icon={props.iconOverride}
+          className={cn("size-5 shrink-0", iconClassName)}
+          aria-hidden
+        />
+      ) : isAcpRegistry ? (
         <AcpRegistryAgentIcon
           className={cn("size-5 rounded-none bg-transparent", iconClassName)}
           fallbackClassName="size-full"
