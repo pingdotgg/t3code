@@ -98,18 +98,35 @@ describe("CursorAdapterV2", () => {
         });
         const adapter = yield* makeCursorAdapterV2({
           instanceId,
-          environment: { HOME: workspace },
+          environment: {
+            HOME: workspace,
+            T3CODE_CURSOR_MCP_CONFIG_COMMAND: JSON.stringify([
+              process.execPath,
+              "-e",
+              `process.stdout.write(JSON.stringify({mcpServers:{ditto:{type:'http',url:'https://example.test/ditto'},'ditto-backroom':{type:'http',url:'https://example.test/backroom'}}}))`,
+            ]),
+          },
         }).pipe(
           Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
             assertComplete: Effect.void,
-            open: () =>
-              Effect.succeed({
+            open: (input) => {
+              assert.deepEqual(Object.keys(input.options.mcpServers ?? {}).sort(), [
+                "ditto",
+                "ditto-backroom",
+                "t3-code",
+              ]);
+              return Effect.succeed({
                 agentId: "native-cursor-lifecycle",
                 listMessages: Effect.succeed([]),
                 close: Effect.void,
                 send: (input) =>
                   Effect.gen(function* () {
                     sentWithMcpOverride = Object.hasOwn(input.options ?? {}, "mcpServers");
+                    assert.deepEqual(Object.keys(input.options?.mcpServers ?? {}).sort(), [
+                      "ditto",
+                      "ditto-backroom",
+                      "t3-code",
+                    ]);
                     // Recorded tasks stream partial args before start, then end without completion; live runs cannot force this.
                     const taskToolCall = {
                       type: "task" as const,
@@ -183,7 +200,8 @@ describe("CursorAdapterV2", () => {
                       cancel: Effect.void,
                     };
                   }).pipe(Effect.orDie),
-              }),
+              });
+            },
           }),
           Effect.provide(TestProviderHost.layer({ cwd: workspace })),
         );
@@ -2228,6 +2246,15 @@ describe("CursorAdapterV2", () => {
       platform: "linux",
     });
     assert.deepEqual(options.mcpServers, cursorMcpServers(mcpSession));
+    const additional = {
+      ditto: { type: "http" as const, url: "https://example.test/ditto" },
+      "ditto-backroom": { type: "http" as const, url: "https://example.test/backroom" },
+      "t3-code": { type: "http" as const, url: "https://wrong.test" },
+    };
+    assert.deepEqual(cursorMcpServers(mcpSession, additional), {
+      ...additional,
+      "t3-code": options.mcpServers!["t3-code"]!,
+    });
 
     const logged = JSON.stringify(CursorAgentSdk.loggedCursorAgentOptions(options));
     assert.notInclude(logged, "secret-cursor-api-key");
@@ -2320,7 +2347,15 @@ describe("CursorAdapterV2", () => {
           authorizationHeader: "Bearer synthetic-cursor-token",
           browserToolsAvailable: false,
         });
-        const t3Servers = cursorMcpServers(yield* mcpSessions.read(threadId));
+        const commandServers = {
+          ditto: { type: "http" as const, url: "https://example.test/ditto" },
+        };
+        const commandConfig = path.join(scratch, "command-mcp.json");
+        yield* fileSystem.writeFileString(
+          commandConfig,
+          JSON.stringify({ mcpServers: commandServers }),
+        );
+        const inlineServers = cursorMcpServers(yield* mcpSessions.read(threadId), commandServers);
         const modelSelection = { instanceId, model: "composer-2.5" };
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "full-access",
@@ -2336,6 +2371,12 @@ describe("CursorAdapterV2", () => {
             CURSOR_DATA_DIR: path.join(scratch, "override"),
             DOCS_TOKEN: "docs-token",
             MCP_TYPE: "stdio",
+            T3CODE_CURSOR_MCP_CONFIG_COMMAND: JSON.stringify([
+              process.execPath,
+              "-e",
+              "process.stdout.write(require('node:fs').readFileSync(process.argv[1], 'utf8'))",
+              commandConfig,
+            ]),
           },
         }).pipe(
           Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
@@ -2431,10 +2472,10 @@ describe("CursorAdapterV2", () => {
           },
           "cwd-only": { command: "node", args: ["server.mjs"], cwd: projectRoot },
         };
-        // The agent is created with T3's server only; the resolved servers go with each turn.
-        assert.deepEqual(openedWith?.mcpServers, t3Servers);
+        // Workspace expansion stays send-only; command servers accompany T3 at open and send.
+        assert.deepEqual(openedWith?.mcpServers, inlineServers);
         yield* sendTurn(1);
-        assert.deepEqual(sentWith[0], { ...expectedServers, ...t3Servers });
+        assert.deepEqual(sentWith[0], { ...expectedServers, ...inlineServers });
         // A server switched off between turns stays off on the next one.
         yield* fileSystem.writeFileString(
           path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
@@ -2442,20 +2483,24 @@ describe("CursorAdapterV2", () => {
         );
         yield* sendTurn(2);
         const { repro: _disabled, ...stillEnabled } = expectedServers;
-        assert.deepEqual(sentWith[1], { ...stillEnabled, ...t3Servers });
+        assert.deepEqual(sentWith[1], { ...stillEnabled, ...inlineServers });
         // Unreadable disabled state starts none of the overrides, and the turn still goes out.
         yield* fileSystem.writeFileString(
           path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
           "[",
         );
         yield* sendTurn(3);
-        assert.deepEqual(sentWith[2], t3Servers);
+        assert.deepEqual(sentWith[2], inlineServers);
         yield* fileSystem.writeFileString(
           path.join(workspace, ".cursor", "mcp.json"),
           JSON.stringify({ mcpServers: { plain: { command: "node", args: ["server.mjs"] } } }),
         );
         yield* fileSystem.remove(path.join(home, ".cursor", "mcp.json"));
         assert.deepEqual(yield* loadServers(), {});
+        yield* mcpSessions.clear(threadId);
+        yield* fileSystem.writeFileString(commandConfig, JSON.stringify({ mcpServers: {} }));
+        yield* sendTurn(4);
+        assert.deepEqual(sentWith[3], {});
       }).pipe(
         Effect.scoped,
         Effect.provide(
