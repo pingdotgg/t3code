@@ -1630,6 +1630,124 @@ describe("orchestration v2 provider switching", () => {
       }),
   );
 
+  it.live("names a goal's replaced owner after a failed resume and a later provider switch", () =>
+    Effect.gen(function* () {
+      const name = "resume-fallback-goal-owner";
+      const cwd = yield* checkpointWorkspace(name);
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const failResumeOnce = yield* Ref.make(false);
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          driver: CLAUDE_DRIVER,
+          capabilities: ClaudeProviderCapabilitiesV2,
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          responseByRunOrdinal: {},
+          capturedTurns,
+          failResumeOnce,
+          nativeThreadGeneration: yield* Ref.make(0),
+        }),
+        makeTestAdapter({
+          instanceId: CODEX_MODEL_SELECTION.instanceId,
+          driver: CODEX_DRIVER,
+          capabilities: CodexProviderCapabilitiesV2,
+          modelSelection: CODEX_MODEL_SELECTION,
+          responseByRunOrdinal: {},
+          capturedTurns,
+        }),
+      ]);
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const run = Effect.fn("run")(function* (
+          ordinal: number,
+          text: string,
+          modelSelection: ModelSelection,
+        ) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`goal-owner:${ordinal}`),
+            threadId,
+            messageId: MessageId.make(`goal-owner:${ordinal}`),
+            createdBy: "user",
+            creationSource: "web",
+            text,
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* orchestrator.streamStoredEvents.pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.type === "run.updated" &&
+                event.payload.ordinal === ordinal &&
+                (event.payload.status === "completed" || event.payload.status === "failed"),
+            ),
+            Stream.runHead,
+          );
+          yield* worker.drain();
+          return (yield* Ref.get(capturedTurns)).at(-1)!.text;
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("goal-owner:create"),
+          threadId,
+          projectId,
+          createdBy: "user",
+          creationSource: "web",
+          title: "Goal owner",
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* run(1, "Request 1", CLAUDE_MODEL_SELECTION);
+        const owner = (yield* orchestrator.getThreadProjection(threadId)).providerThreads[0]!;
+        yield* (yield* EventSink.EventSinkV2).write({
+          events: [
+            {
+              id: EventId.make("goal-owner:goal"),
+              type: "provider-thread.updated",
+              threadId,
+              occurredAt: yield* DateTime.now,
+              payload: { ...owner, goal: { objective: "Ship ZEBRA", status: "active" } },
+            },
+          ],
+        });
+        yield* orchestrator.dispatch({
+          type: "provider-session.detach",
+          commandId: CommandId.make("goal-owner:detach"),
+          threadId,
+          providerSessionId: owner.providerSessionId!,
+        });
+        yield* worker.drain();
+        yield* Ref.set(failResumeOnce, true);
+        const replacedOwner = `provider-thread=${owner.id} native-session=${owner.nativeThreadRef!.nativeId} (replaced after a failed resume); status=active;`;
+        assert.include(yield* run(2, "Request 2", CLAUDE_MODEL_SELECTION), replacedOwner);
+        const replacement = (yield* orchestrator.getThreadProjection(threadId)).providerThreads[0]!;
+        assert.notEqual(replacement.nativeThreadRef?.nativeId, owner.nativeThreadRef?.nativeId);
+        assert.include(yield* run(3, "Request 3", CODEX_MODEL_SELECTION), replacedOwner);
+        yield* run(4, "/goal clear", CLAUDE_MODEL_SELECTION);
+        assert.notInclude(yield* run(5, "Request 5", CODEX_MODEL_SELECTION), "ZEBRA");
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name,
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: { type: "readOnly" },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    }),
+  );
+
   it.live.each([
     ["background work", new ClaudeBackgroundWorkBlocksQueryReplacementError()],
     ["an unreadable append file", new ClaudeAppendSystemPromptFileError({ path: "missing.md" })],

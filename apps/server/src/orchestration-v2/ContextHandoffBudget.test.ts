@@ -26,7 +26,7 @@ import {
   historicalMessage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { projectContextHandoffForWire } from "./WireProjection.ts";
-import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
+import { deliverContextHandoffs, type GoalOwnershipSources } from "./ContextHandoffDelivery.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeHandoff = Schema.decodeUnknownSync(OrchestrationV2ContextHandoff);
@@ -92,6 +92,14 @@ const handoff: OrchestrationV2ContextHandoff = {
   createdAt: now,
   updatedAt: now,
 };
+
+const goalSources = (sources: Partial<GoalOwnershipSources>): GoalOwnershipSources => ({
+  providerThreads: [],
+  contextHandoffs: [],
+  runs: [],
+  messages: [],
+  ...sources,
+});
 
 describe("handoff budget", () => {
   it("keeps old preview handoffs readable and delivery history off the wire", () => {
@@ -647,6 +655,179 @@ describe("handoff delivery", () => {
       assert.notInclude(serialized, "Preserve every line");
       assert.equal(serialized.split("Partial work").length - 1, 1);
       assert.include(serialized, "Latest result");
+    }),
+  );
+
+  it.effect("names an unfinished goal's owner at any budget that delivers, or fails", () =>
+    Effect.gen(function* () {
+      const owner: OrchestrationV2ProviderThread = {
+        ...providerThread,
+        id: ProviderThreadId.make("provider-thread:source"),
+        nativeThreadRef: { ...providerThread.nativeThreadRef!, nativeId: "native:source" },
+        goal: {
+          objective: `ZEBRA ${"o".repeat(1_990)}`,
+          status: "paused",
+          tokensUsed: 25_909,
+          tokenBudget: 50_000,
+        },
+      };
+      let delivered = 0;
+      for (let budget = 0; budget <= 3_000; budget += 100) {
+        let durable = handoff;
+        let context: string | undefined;
+        const result = yield* deliverContextHandoffs({
+          handoffs: [handoff],
+          providerThread,
+          goalSources: goalSources({ providerThreads: [providerThread, owner] }),
+          budget,
+          alreadyDeliveredItemIds: new Set(),
+          inject: (value) =>
+            Effect.sync(() => {
+              context = value.context;
+              return true;
+            }),
+          persist: (value) =>
+            Effect.sync(() => {
+              durable = value;
+            }),
+        }).pipe(Effect.result);
+        if (result._tag === "Failure") {
+          assert.isUndefined(context);
+          assert.isUndefined(durable.delivery);
+          continue;
+        }
+        delivered++;
+        assert.equal(durable.delivery?.status, "injected");
+        assert.include(context, "objective: ZEBRA ");
+        assert.include(
+          context,
+          "owner=codex provider-thread=provider-thread:source native-session=native:source; status=paused; tokens-used=25909 of 50000;",
+        );
+        assert.isAtMost(historyCost([], context!), budget);
+      }
+      assert.isAbove(delivered, 0);
+    }),
+  );
+
+  it.effect("names only goals that are unfinished now and held by another native session", () =>
+    Effect.gen(function* () {
+      const goal = { objective: "Ship ZEBRA", status: "active" as const };
+      const context = (
+        sources: Partial<GoalOwnershipSources>,
+        handoffs: ReadonlyArray<OrchestrationV2ContextHandoff> = [handoff],
+      ) =>
+        deliverContextHandoffs({
+          handoffs,
+          providerThread,
+          goalSources: goalSources(sources),
+          budget: 16_000,
+          alreadyDeliveredItemIds: new Set(),
+          persist: () => Effect.void,
+        }).pipe(Effect.map((result) => result.context));
+      const other = { ...providerThread, id: ProviderThreadId.make("provider-thread:source") };
+      // A goal cleared or finished after an earlier handoff is not repeated.
+      assert.notInclude(yield* context({ providerThreads: [{ ...other, goal: null }] }), "ZEBRA");
+      assert.notInclude(
+        yield* context({ providerThreads: [{ ...other, goal: { ...goal, status: "complete" } }] }),
+        "ZEBRA",
+      );
+      assert.notInclude(
+        yield* context({ providerThreads: [{ ...providerThread, goal }] }),
+        "ZEBRA",
+      );
+
+      // A failed resume replaced the owner's native session and rewrote its row without the goal.
+      const recovery: OrchestrationV2ContextHandoff = {
+        ...handoff,
+        id: ContextHandoffId.make("handoff:recovery"),
+        targetRunId: RunId.make("run:recovery"),
+        toProviderThreadId: other.id,
+        displacedGoal: {
+          driver: other.driver,
+          nativeThreadId: "native:lost",
+          goal,
+          asOf: "2026-09-16T00:00:00.000Z",
+        },
+      };
+      const run = (id: string, ordinal: number, status = "completed") =>
+        ({
+          id: RunId.make(id),
+          ordinal,
+          status,
+          providerThreadId: other.id,
+        }) as GoalOwnershipSources["runs"][number];
+      const goalMessage = (text: string) =>
+        ({
+          role: "user",
+          text,
+          attachments: [],
+          runId: RunId.make("run:later"),
+        }) as unknown as GoalOwnershipSources["messages"][number];
+      const replaced = {
+        providerThreads: [{ ...other, goal: null }],
+        runs: [run("run:recovery", 2), run("run:later", 3)],
+      };
+      const displacedOwner =
+        "provider-thread=provider-thread:source native-session=native:lost (replaced after a failed resume); status=active; as-of=2026-09-16T00:00:00.000Z; objective: Ship ZEBRA";
+      // The recovery turn itself, then a later switch to another provider.
+      assert.include(yield* context(replaced, [recovery]), displacedOwner);
+      assert.include(yield* context({ ...replaced, contextHandoffs: [recovery] }), displacedOwner);
+      assert.include(
+        yield* context({
+          ...replaced,
+          contextHandoffs: [recovery],
+          messages: [goalMessage("/goal pause")],
+        }),
+        displacedOwner,
+      );
+      for (const text of ["/goal clear", "/goal Ship something else"]) {
+        assert.notInclude(
+          yield* context({
+            ...replaced,
+            contextHandoffs: [recovery],
+            messages: [goalMessage(text)],
+          }),
+          "ZEBRA",
+        );
+        // The provider refused the command, so the displaced goal was never decided.
+        assert.include(
+          yield* context({
+            providerThreads: replaced.providerThreads,
+            runs: [run("run:recovery", 2), run("run:later", 3, "failed")],
+            contextHandoffs: [recovery],
+            messages: [goalMessage(text)],
+          }),
+          displacedOwner,
+        );
+      }
+      // A goal the replacement session started on its own is named beside the displaced one.
+      const both = yield* context({
+        ...replaced,
+        providerThreads: [{ ...other, goal: { ...goal, objective: "Ship YAK" } }],
+        contextHandoffs: [recovery],
+      });
+      assert.include(both, displacedOwner);
+      assert.include(both, "native-session=native:target; status=active;");
+      assert.include(both, "objective: Ship YAK");
+      // A second recovery of the same provider thread displaces that goal too, and both stay named.
+      const twice = yield* context({
+        ...replaced,
+        contextHandoffs: [
+          recovery,
+          {
+            ...recovery,
+            id: ContextHandoffId.make("handoff:recovery-2"),
+            targetRunId: RunId.make("run:later"),
+            displacedGoal: {
+              ...recovery.displacedGoal!,
+              nativeThreadId: "native:lost-2",
+              goal: { ...goal, objective: "Ship YAK" },
+            },
+          },
+        ],
+      });
+      assert.include(twice, displacedOwner);
+      assert.include(twice, "native-session=native:lost-2 (replaced after a failed resume)");
     }),
   );
 
