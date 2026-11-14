@@ -29,7 +29,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
 
       yield* Deferred.succeed(releaseForeground, undefined);
       yield* Fiber.join(foreground);
-    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
+    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 
   it.effect("interrupts an active background probe when foreground startup begins", () =>
@@ -57,7 +57,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
 
       yield* Deferred.succeed(releaseForeground, undefined);
       yield* Fiber.join(foreground);
-    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
+    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 
   it.effect("serializes native session mutations across callers", () =>
@@ -84,7 +84,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       yield* Fiber.join(first);
       yield* Fiber.join(second);
       expect(Option.isSome(yield* Deferred.poll(secondEntered))).toBe(true);
-    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
+    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 
   it.effect("replays and replaces late command advertisements per provider instance", () =>
@@ -132,7 +132,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       );
       yield* coordinator.clearAvailableCommands(codex);
       expect(Option.isNone(yield* coordinator.getAvailableCommands(codex))).toBe(true);
-    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
+    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 
   it.effect("requires matching user consent before accepting URL authentication", () =>
@@ -174,7 +174,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       expect(yield* Fiber.join(request)).toBe(true);
       expect(Option.isNone(yield* coordinator.getUrlAuthAction(instanceId))).toBe(true);
       yield* Fiber.interrupt(consumer);
-    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
+    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 
   it.effect("publishes a replacement URL action before retiring the previous request", () =>
@@ -226,7 +226,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       ).toBe(true);
       expect(yield* Fiber.join(replacement)).toBe(true);
       yield* Fiber.interrupt(consumer);
-    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
+    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 
   it.effect("clears a published URL action when its request is interrupted", () =>
@@ -255,6 +255,6 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       yield* Deferred.await(cleared);
       expect(Option.isNone(yield* coordinator.getUrlAuthAction(instanceId))).toBe(true);
       yield* Fiber.interrupt(consumer);
-    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
+    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 });

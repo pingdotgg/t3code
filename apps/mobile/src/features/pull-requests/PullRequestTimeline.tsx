@@ -6,14 +6,18 @@ import { PullRequestEntryRow } from "./PullRequestEntryRow";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import IconGitCommit from "@tabler/icons-react-native/IconGitCommit";
-import type { PullRequestActivity, PullRequestComment } from "@t3tools/contracts";
+import {
+  pullRequestConversationThreads,
+  type PullRequestActivity,
+  type PullRequestComment,
+} from "@t3tools/contracts";
 import { StackActions, type NavigationProp } from "@react-navigation/native";
 import { useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { parseMarkdownDocument } from "../../lib/markdownDocument";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
-import { relativeTime } from "../../lib/time";
+import { byTimestamp, relativeTime } from "../../lib/time";
 import { PullRequestAvatar } from "./PullRequestPresentation";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentFooter } from "./PullRequestReactions";
@@ -214,10 +218,12 @@ export function pullRequestTimelineRows(
   params: PullRequestParams,
   navigation: Pick<NavigationProp<ReactNavigation.RootParamList>, "navigate" | "dispatch">,
   actions: CommentActions,
+  newestFirst: boolean,
 ) {
   const linkTarget = parsePullRequestAnchor(params.navigationUrl);
+  const threads = pullRequestConversationThreads(activity);
   const discussionIds = new Set(
-    activity.reviewThreads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
+    threads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
   );
   const events = [
     ...activity.comments
@@ -239,7 +245,7 @@ export function pullRequestTimelineRows(
           />
         ),
       })),
-    ...activity.reviewThreads.map((thread) => ({
+    ...threads.map((thread) => ({
       key: `discussion:${thread.id}`,
       date: thread.comments[0]?.createdAt ?? "",
       content: (
@@ -260,18 +266,24 @@ export function pullRequestTimelineRows(
           </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Open ${thread.isResolved ? "resolved" : "unresolved"} discussion in ${thread.path}`}
+            accessibilityLabel={`Open ${thread.isResolved ? "resolved" : "unresolved"} discussion in ${thread.path ?? "the overview"}`}
             onPress={() =>
               navigation.navigate("PullRequestDiscussion", { ...params, discussionId: thread.id })
             }
             className="gap-2 rounded-2xl bg-grouped-card p-3 active:opacity-70"
           >
             <View className="flex-row items-center gap-2">
-              <SymbolView name="doc.text" size={14} tintColorClassName="accent-icon-muted" />
-              <Text className="flex-1 font-mono text-xs" numberOfLines={2}>
-                {thread.path}
-                {thread.line ? `:${thread.line}` : ""}
-              </Text>
+              {thread.path === null ? (
+                <Text className="flex-1 text-xs">Overview</Text>
+              ) : (
+                <>
+                  <SymbolView name="doc.text" size={14} tintColorClassName="accent-icon-muted" />
+                  <Text className="flex-1 font-mono text-xs" numberOfLines={2}>
+                    {thread.path}
+                    {thread.line ? `:${thread.line}` : ""}
+                  </Text>
+                </>
+              )}
               <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-muted" />
             </View>
             <Text className="text-xs text-foreground-muted">
@@ -309,7 +321,7 @@ export function pullRequestTimelineRows(
         </TimelineEvent>
       ),
     })),
-  ].sort((a, b) => a.date.localeCompare(b.date));
+  ].sort(byTimestamp(newestFirst));
   if (activity.commentsTruncated || activity.reviewThreadsTruncated)
     events.push({
       key: "truncated",
