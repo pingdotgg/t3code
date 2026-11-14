@@ -332,6 +332,8 @@ export default function DiffPanel({
       : (orderedTurnDiffSummaries.find((summary) => summary.runId === selectedRunId) ??
         orderedTurnDiffSummaries[0]);
   const selectedCheckpointTurnCount = selectedTurn?.checkpointTurnCount;
+  // A moved thread's turns diff in the folder they ran in, which may be git when the current one isn't.
+  const canDiffSelectedTurn = isGitRepo || selectedTurn?.status === "ready";
   const latestTurn = orderedTurnDiffSummaries[0];
   const reviewSectionId = toolCallSelection
     ? `tool-call:${toolCallSelection.threadId}:${toolCallSelection.itemId}`
@@ -360,8 +362,7 @@ export default function DiffPanel({
       ignoreWhitespace: diffIgnoreWhitespace,
       cacheScope: selectedTurn ? `turn:${selectedTurn.runId}` : null,
     },
-    // Checkpoints diff in the folder each turn ran in, which a moved thread's current one may not be.
-    { enabled: selectedTurn !== undefined },
+    { enabled: canDiffSelectedTurn && selectedTurn !== undefined },
   );
   const branchDiffPreviewInput =
     canReadFiles && isGitSelection && activeThread && activeCwd
@@ -1300,7 +1301,7 @@ export default function DiffPanel({
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
         </div>
-      ) : !isGitRepo && !toolCallSelection && selectedTurn === undefined ? (
+      ) : !canDiffSelectedTurn && !toolCallSelection ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Turn diffs are unavailable because this project is not a git repository.
         </div>
