@@ -403,21 +403,6 @@ export function AttachmentFilePreview(props: {
             </span>
           ) : null}
         </div>
-        {renderedMode ? (
-          <FileSurfaceAction
-            label={renderedToggleLabel(renderedMode, rendered)}
-            pressed={rendered}
-            onPress={() => setRendered((value) => !value)}
-          >
-            {rendered ? (
-              <Code2Icon className="size-3.5" />
-            ) : renderedMode === "table" ? (
-              <Table2Icon className="size-3.5" />
-            ) : (
-              <EyeIcon className="size-3.5" />
-            )}
-          </FileSurfaceAction>
-        ) : null}
         {showsRawText ? (
           <FileSurfaceAction
             label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
@@ -456,6 +441,21 @@ export function AttachmentFilePreview(props: {
             }}
           >
             {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+          </FileSurfaceAction>
+        ) : null}
+        {renderedMode ? (
+          <FileSurfaceAction
+            label={renderedToggleLabel(renderedMode, rendered)}
+            pressed={rendered}
+            onPress={() => setRendered((value) => !value)}
+          >
+            {rendered ? (
+              <Code2Icon className="size-3.5" />
+            ) : renderedMode === "table" ? (
+              <Table2Icon className="size-3.5" />
+            ) : (
+              <EyeIcon className="size-3.5" />
+            )}
           </FileSurfaceAction>
         ) : null}
         {url ? (
