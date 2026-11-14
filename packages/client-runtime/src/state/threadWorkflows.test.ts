@@ -165,16 +165,29 @@ describe("thread workflows", () => {
   });
 
   it.each([
-    ["codex", undefined, null],
-    ["opencode", true, null],
-    ["opencode", false, "Goal commands must run as a separate turn."],
-    ["pi", undefined, "Goal commands must run as a separate turn."],
+    ["codex", undefined, "codex", null],
+    ["opencode", true, "opencode", null],
+    ["opencode", false, "opencode", "Goal commands must run as a separate turn."],
+    ["pi", undefined, "pi", "Goal commands must run as a separate turn."],
+    ["pi", undefined, "codex", null],
   ])(
-    "lets a queued goal steer a %s session (native goals %s)",
-    (driver, supportsNativeGoals, reason) => {
+    "lets a queued goal steer a %s session (native goals %s) when queued for %s",
+    (driver, supportsNativeGoals, queuedInstanceId, reason) => {
       const state = deriveThreadQueueWorkflowState({
-        thread: { id: "thread", activeProviderThreadId: null },
-        runs: [{ id: "goal", status: "queued", userMessageId: "message-goal", ordinal: 1 }],
+        thread: {
+          id: "thread",
+          activeProviderThreadId: null,
+          modelSelection: { instanceId: queuedInstanceId },
+        },
+        runs: [
+          {
+            id: "goal",
+            status: "queued",
+            userMessageId: "message-goal",
+            ordinal: 1,
+            modelSelection: { instanceId: queuedInstanceId },
+          },
+        ],
         messages: [{ id: "message-goal", text: "/goal finish the refactor", attachments: [] }],
         providerTurns: [],
         providerThreads: [],
@@ -182,6 +195,7 @@ describe("thread workflows", () => {
           {
             id: "session",
             driver,
+            providerInstanceId: driver,
             status: "running",
             capabilities: { turns: { supportsNativeGoals } },
           },

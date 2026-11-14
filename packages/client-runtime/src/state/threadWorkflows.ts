@@ -154,12 +154,17 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
   const session = resolveThreadProviderSession(projection);
   const capabilities = session?.capabilities.turns;
   // Mirrors the server's goalDriverFor: elsewhere a goal cannot stop the turn, so it cannot steer.
-  const runsNativeGoals =
+  const sessionRunsNativeGoals =
     session === null ||
     session.driver === "codex" ||
     session.driver === "claudeAgent" ||
     ((session.driver === "opencode" || session.driver === "antigravity") &&
       capabilities?.supportsNativeGoals === true);
+  // The server checks the queued run's own provider; one the session does not show is left to it.
+  const runsNativeGoals = (run: Run) =>
+    sessionRunsNativeGoals ||
+    run.modelSelection?.instanceId !== session?.providerInstanceId ||
+    projection.thread.modelSelection?.instanceId !== session?.providerInstanceId;
   const activeMessage = projection.messages.find(
     (message) => message.id === activeRun?.userMessageId,
   );
@@ -188,7 +193,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
           ? "Queued message is still loading."
           : steerRejectionReason(
               { text: message.text, attachments: message.attachments ?? [] },
-              runsNativeGoals,
+              runsNativeGoals(run),
             ),
       messageId: run.userMessageId,
       ...(message?.context ? { context: message.context } : {}),
