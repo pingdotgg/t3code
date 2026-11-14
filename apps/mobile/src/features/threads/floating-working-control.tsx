@@ -174,7 +174,7 @@ export function FloatingWorkingControl(props: {
     hasQueue ||
     (props.devicePreview !== null && props.browserPreview !== null);
   const statusInteractive =
-    props.status?.kind === "connection" ||
+    (props.status?.kind === "connection" && props.status.onPress !== undefined) ||
     props.status?.kind === "extension" ||
     props.status?.kind === "child-input" ||
     props.status?.kind === "background";
@@ -467,10 +467,11 @@ function FloatingStatusLabel(props: {
       <StatusLabelRow
         key="connection"
         accessibilityLabel={props.status.label}
-        accessibilityRole="button"
+        {...(props.status.onPress
+          ? { accessibilityRole: "button", onPress: props.status.onPress }
+          : {})}
         className="gap-2"
         onLayout={props.onLayout}
-        onPress={props.status.onPress}
       >
         {props.status.tone === "reconnecting" ? (
           <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />

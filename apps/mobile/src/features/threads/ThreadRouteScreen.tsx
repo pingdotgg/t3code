@@ -1044,6 +1044,9 @@ function ThreadRouteContent(
           connectionStateLabel={routeConnectionState}
           connectionAwaitingApproval={routeEnvironmentRuntime?.connectionAwaitingApproval === true}
           threadSyncStatus={selectedThreadDetailState.status}
+          threadSyncError={
+            creationState === null ? Option.getOrNull(selectedThreadDetailState.error) : null
+          }
           historyControls={historyControls}
           activeThreadBusy={composer.activeThreadBusy}
           canStopThread={awaitingBootstrapTurn || composer.interruptibleRunId !== null}
