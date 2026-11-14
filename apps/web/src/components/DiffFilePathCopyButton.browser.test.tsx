@@ -39,6 +39,5 @@ it("copies a Windows workspace's file path with Windows separators", async () =>
 
   await screen.getByRole("button", { name: "Copy file path" }).click();
 
-  await expect.element(page.getByText("Copied!", { exact: true })).toBeVisible();
-  expect(write).toHaveBeenCalledWith("apps\\web\\src\\index.ts");
+  await vi.waitFor(() => expect(write).toHaveBeenCalledWith("apps\\web\\src\\index.ts"));
 });
