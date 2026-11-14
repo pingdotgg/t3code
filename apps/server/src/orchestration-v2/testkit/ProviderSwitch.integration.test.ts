@@ -1506,6 +1506,151 @@ describe("orchestration v2 provider switching", () => {
       }),
   );
 
+  it.live("tells the next provider about the goal the previous provider still owns", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("provider-switch-goal-owner");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const failResumeOnce = yield* Ref.make(false);
+        const generation = yield* Ref.make(0);
+        const codexFailResumeOnce = yield* Ref.make(false);
+        const codexGeneration = yield* Ref.make(0);
+        const registry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            failResumeOnce: codexFailResumeOnce,
+            nativeThreadGeneration: codexGeneration,
+          }),
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            failResumeOnce,
+            nativeThreadGeneration: generation,
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const run = Effect.fn("run")(function* (ordinal: number, selection: ModelSelection) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`goal-owner:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`goal-owner:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text: `Request ${ordinal}`,
+              attachments: [],
+              modelSelection: selection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("goal-owner:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Goal owner",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* run(1, CODEX_MODEL_SELECTION);
+          const owner = (yield* orchestrator.getThreadProjection(threadId)).providerThreads[0]!;
+          yield* (yield* EventSink.EventSinkV2).write({
+            events: [
+              {
+                id: EventId.make("event:goal-owner-paused"),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: yield* DateTime.now,
+                payload: {
+                  ...owner,
+                  goal: {
+                    objective: "Finish the ZEBRA-42 migration",
+                    status: "paused",
+                    tokensUsed: 25909,
+                  },
+                },
+              },
+            ],
+          });
+          yield* run(2, CLAUDE_MODEL_SELECTION);
+
+          const target = (yield* Ref.get(capturedTurns)).at(-1)!;
+          assert.equal(target.driver, CLAUDE_DRIVER);
+          // The goal was set natively, so no history message names it.
+          assert.include(target.text, "Finish the ZEBRA-42 migration");
+          assert.include(target.text, "paused");
+          assert.include(target.text, owner.id);
+          assert.include(target.text, "25909 tokens");
+
+          // A replacement native session after a failed resume is told again.
+          const claude = (yield* orchestrator.getThreadProjection(threadId)).providerThreads.find(
+            (thread) => thread.id !== owner.id,
+          )!;
+          yield* orchestrator.dispatch({
+            type: "provider-session.detach",
+            commandId: CommandId.make("goal-owner:detach"),
+            threadId,
+            providerSessionId: claude.providerSessionId!,
+          });
+          yield* worker.drain();
+          yield* Ref.set(failResumeOnce, true);
+          yield* run(3, CLAUDE_MODEL_SELECTION);
+          const recovered = (yield* Ref.get(capturedTurns)).at(-1)!;
+          assert.notEqual(recovered.nativeThreadId, target.nativeThreadId);
+          assert.include(recovered.text, "Finish the ZEBRA-42 migration");
+
+          // Back on the owner's provider thread, a replacement native session no longer holds it.
+          yield* Ref.set(codexFailResumeOnce, true);
+          yield* run(4, CODEX_MODEL_SELECTION);
+          const reclaimed = (yield* Ref.get(capturedTurns)).at(-1)!;
+          assert.equal(reclaimed.driver, CODEX_DRIVER);
+          assert.equal(yield* Ref.get(codexGeneration), 2);
+          assert.include(reclaimed.text, "Finish the ZEBRA-42 migration");
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "provider-switch-goal-owner",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              registry,
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
   it.live.each(["an older handoff", "a missed request"] as const)(
     "keeps the latest turn when a resume fallback also delivers %s",
     (older) =>

@@ -592,6 +592,57 @@ describe("handoff delivery", () => {
     }),
   );
 
+  it.effect("delivers a source provider's goal when it fits and never fails without it", () =>
+    Effect.gen(function* () {
+      const goal = `Thread goal (paused), owned by provider thread codex: ${"x".repeat(3_900)}`;
+      const withGoal = { ...handoff, history: { ...handoff.history!, goal } };
+      const injected: Array<ProviderAdapter.ProviderAdapterV2HistoricalContext> = [];
+      const deliver = (budget: number) =>
+        deliverContextHandoffs({
+          handoffs: [withGoal],
+          providerThread,
+          budget,
+          alreadyDeliveredItemIds: new Set(),
+          inject: (history) =>
+            Effect.sync(() => {
+              injected.push(history);
+              return true;
+            }),
+          persist: () => Effect.void,
+        });
+      yield* deliver(3_000);
+      assert.notInclude(injected[0]?.context, goal);
+      yield* deliver(16_000);
+      assert.include(injected[1]?.context, goal);
+
+      // Omitted item IDs are listed after admission; a goal near the edge must still not fail.
+      const omittedItemIds = Array.from({ length: 30 }, (_, index) =>
+        TurnItemId.make(`item:omitted-${index}-${"0".repeat(36)}`),
+      );
+      for (let size = 0; size <= 3_000; size++) {
+        yield* deliverContextHandoffs({
+          handoffs: [
+            {
+              ...handoff,
+              history: {
+                ...handoff.history!,
+                messages: [],
+                omittedItems: omittedItemIds.length,
+                omittedItemIds,
+                goal: "g".repeat(size),
+              },
+            },
+          ],
+          providerThread,
+          budget: 3_000,
+          alreadyDeliveredItemIds: new Set(),
+          inject: () => Effect.succeed(true),
+          persist: () => Effect.void,
+        });
+      }
+    }),
+  );
+
   it.effect("does not redeliver after ambiguous injection failure", () =>
     Effect.gen(function* () {
       let durable = handoff;

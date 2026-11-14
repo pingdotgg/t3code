@@ -1200,6 +1200,8 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
       coverage: Schema.String,
       omittedItems: NonNegativeInt,
       omittedItemIds: Schema.optional(Schema.Array(TurnItemId)),
+      /** A goal a source provider thread still owns; delivered whole even when coverage is collapsed. */
+      goal: Schema.optional(Schema.String),
     }),
   ),
   delivery: Schema.optional(

@@ -1,6 +1,7 @@
 import {
   type OrchestrationV2AppThread,
   OrchestrationV2ContextHandoff,
+  type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
@@ -79,6 +80,8 @@ export interface ContextHandoffServiceV2Shape {
     readonly toProviderInstanceId: ProviderInstanceId;
     readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
     readonly runs?: ReadonlyArray<OrchestrationV2Run>;
+    /** The thread's provider threads, so a goal a source thread still owns reaches the target. */
+    readonly providerThreads?: ReadonlyArray<OrchestrationV2ProviderThread>;
     readonly strategy: Extract<
       OrchestrationV2ContextHandoff["strategy"],
       "delta_since_target_last_seen" | "full_thread_summary"
@@ -286,6 +289,48 @@ export function makeSideChatContext(input: {
 export const isSideChatContextHandoff = (handoff: OrchestrationV2ContextHandoff): boolean =>
   handoff.strategy === "manual_context" && handoff.transferId != null;
 
+const GOAL_OBJECTIVE_MAX_CHARS = 2_000;
+
+/**
+ * A native goal stays with the native session that set it; whichever provider thread runs next
+ * has to be told. Any earlier owner counts, so a later switch or a resume fallback still carries it.
+ * The target counts too when it is also a source: the handoff then rebuilds its native session.
+ */
+function sourceGoalNotice(input: {
+  readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
+  readonly toProviderThreadId: ProviderThreadId;
+  readonly providerThreads?: ReadonlyArray<OrchestrationV2ProviderThread>;
+}): string | null {
+  const owner = (input.providerThreads ?? [])
+    .filter(
+      (thread) =>
+        (thread.id !== input.toProviderThreadId ||
+          input.fromProviderThreadIds.includes(thread.id)) &&
+        thread.ownerNodeId === null &&
+        thread.goal != null &&
+        thread.goal.status !== "complete",
+    )
+    .toSorted((left, right) => (right.lastRunOrdinal ?? 0) - (left.lastRunOrdinal ?? 0))[0];
+  const goal = owner?.goal;
+  if (owner === undefined || goal == null) return null;
+  const usage = [
+    goal.tokensUsed === undefined
+      ? null
+      : `${goal.tokensUsed} tokens${goal.tokenBudget == null ? "" : ` of a ${goal.tokenBudget} token budget`}`,
+    goal.timeUsedSeconds === undefined ? null : `${goal.timeUsedSeconds}s`,
+    goal.checks === undefined ? null : `${goal.checks} checks`,
+  ].filter((part) => part !== null);
+  return [
+    `Thread goal (${goal.status}), owned by provider thread ${owner.id} (${owner.providerInstanceId}${owner.providerSessionId === null ? "" : `, session ${owner.providerSessionId}`}); it was not transferred to your native goal state: ${
+      goal.objective.length > GOAL_OBJECTIVE_MAX_CHARS
+        ? `${goal.objective.slice(0, GOAL_OBJECTIVE_MAX_CHARS)}… (objective truncated)`
+        : goal.objective
+    }`,
+    ...(usage.length === 0 ? [] : [`Goal usage so far: ${usage.join(", ")}.`]),
+    ...(goal.lastCheck === undefined ? [] : [`Last goal check: ${goal.lastCheck}`]),
+  ].join("\n");
+}
+
 function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>): string {
   const sections = items.flatMap((item) => {
     switch (item.type) {
@@ -487,24 +532,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
 
     const prepareProviderHandoff = Effect.fn(
       "orchestrationV2.contextHandoff.prepareProviderHandoff",
-    )(function* (input: {
-      readonly threadId: ThreadId;
-      readonly sourceThreadId?: ThreadId;
-      readonly targetRunId: RunId;
-      readonly transferId: OrchestrationV2ContextHandoff["transferId"];
-      readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
-      readonly toProviderThreadId: ProviderThreadId;
-      readonly fromProviderInstanceId: ProviderInstanceId;
-      readonly toProviderInstanceId: ProviderInstanceId;
-      readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
-      readonly runs?: ReadonlyArray<OrchestrationV2Run>;
-      readonly strategy: Extract<
-        OrchestrationV2ContextHandoff["strategy"],
-        "delta_since_target_last_seen" | "full_thread_summary"
-      >;
-      readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
-      readonly createdAt: DateTime.Utc;
-    }) {
+    )(function* (input: Parameters<ContextHandoffServiceV2Shape["prepareProviderHandoff"]>[0]) {
       const handoffId = yield* idAllocator.allocate
         .contextHandoff({
           threadId: input.threadId,
@@ -524,6 +552,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           ),
         );
       const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
+      const goal = sourceGoalNotice(input);
       const coverage = handoffCoverage({
         ...input,
         threadId: input.sourceThreadId ?? input.threadId,
@@ -540,7 +569,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
                 },
               ];
         }),
-        coverage,
+        coverage: goal === null ? coverage : `${coverage}\n${goal}`,
         budget: tokenCap,
       });
       return {
@@ -560,6 +589,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           coverage,
           omittedItems: selected.omittedItems,
           omittedItemIds: selected.omittedItemIds,
+          ...(goal === null ? {} : { goal }),
         },
         createdByProviderInstanceId: null,
         createdAt: input.createdAt,
