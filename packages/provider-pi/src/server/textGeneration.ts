@@ -16,9 +16,14 @@ const PI_TIMEOUT_MS = 180_000;
 const isTextGenerationError = Schema.is(TextGenerationError);
 
 // Pi's `errorMessage` is the provider's raw response text and can echo
-// credentials, so only a leading HTTP status reaches the error detail.
+// credentials, so only its HTTP status reaches the error detail. Most SDKs lead
+// with it; Mistral's follows "Mistral API error (", and Gemini's is the body's `error.code`.
+const PI_ERROR_STATUS =
+  /^(?:Mistral API error \()?([45]\d\d)\b|^\{"error":\{.*?"code":([45]\d\d)[,}]/;
+
 const piTurnErrorDetail = (errorMessage: string | undefined) => {
-  const status = errorMessage?.match(/^([45]\d\d)\b/)?.[1];
+  const match = errorMessage?.match(PI_ERROR_STATUS);
+  const status = match?.[1] ?? match?.[2];
   return status === undefined
     ? "Pi could not generate text: the model provider reported an error."
     : `Pi could not generate text: the model provider returned HTTP ${status}.`;
