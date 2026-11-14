@@ -913,7 +913,7 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
   };
 }
 
-/** A draft's user content: everything but its model and mode selections. */
+/** Keep these content fields aligned with composerDraftHasUserContent. */
 function composerDraftContent({
   modelSelectionByProvider: _modelSelectionByProvider,
   activeProvider: _activeProvider,
