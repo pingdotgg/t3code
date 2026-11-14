@@ -162,6 +162,15 @@ function workspaceModelsFor(
     : { models: cwdModels.value, workspaceModels: cwdModels.value };
 }
 
+// An unread agent list keeps the machine catalog's agent picker.
+function workspaceAgentsFor(
+  agents: Parameters<typeof openCodeAgentOptionDescriptor>[0] | undefined,
+) {
+  if (agents === undefined) return {};
+  const descriptor = openCodeAgentOptionDescriptor(agents);
+  return descriptor.options.length === 0 ? {} : { optionDescriptors: [descriptor] };
+}
+
 // Hot reads use the last successful probe; session opens await it to select the correct protocol.
 function selectOpenCodeRuntimeAdapter(input: {
   readonly probe: OpenCodeRuntimeProbe;
@@ -747,26 +756,16 @@ export const OpenCodeDriver: ProviderDriver<
                     ],
                     { concurrency: "unbounded" },
                   ).pipe(
-                    Effect.map(([machineSnapshot, cwdModels, { agents, skills, commands }]) => {
-                      const agentDescriptor =
-                        agents === undefined || agents.length === 0
-                          ? undefined
-                          : openCodeAgentOptionDescriptor(
-                              agents.map((agent) => ({ ...agent, name: agent.id })),
-                            );
-                      return {
-                        ...machineSnapshot,
-                        ...workspaceModelsFor(machineSnapshot.models, cwdModels),
-                        ...(agentDescriptor === undefined || agentDescriptor.options.length === 0
-                          ? {}
-                          : { optionDescriptors: [agentDescriptor] }),
-                        skills: openCode2SkillsToServerProviderSkills(skills),
-                        slashCommands: openCode2CommandsToServerProviderSlashCommands(commands),
-                        // A finished scan lists at least the built-ins. None means it
-                        // timed out, so the registry decides from the provider's health.
-                        slashCommandsPending: commands.length > 0 ? false : undefined,
-                      };
-                    }),
+                    Effect.map(([machineSnapshot, cwdModels, { agents, skills, commands }]) => ({
+                      ...machineSnapshot,
+                      ...workspaceModelsFor(machineSnapshot.models, cwdModels),
+                      ...workspaceAgentsFor(agents?.map((agent) => ({ ...agent, name: agent.id }))),
+                      skills: openCode2SkillsToServerProviderSkills(skills),
+                      slashCommands: openCode2CommandsToServerProviderSlashCommands(commands),
+                      // A finished scan lists at least the built-ins. None means it
+                      // timed out, so the registry decides from the provider's health.
+                      slashCommandsPending: commands.length > 0 ? false : undefined,
+                    })),
                   ),
                   v1: Effect.all([
                     snapshot.getSnapshot,
@@ -781,22 +780,14 @@ export const OpenCodeDriver: ProviderDriver<
                       ([
                         machineSnapshot,
                         { agents, skills, models, commands, slashCommandsPending },
-                      ]) => {
-                        const agentDescriptor =
-                          agents === undefined || agents.length === 0
-                            ? undefined
-                            : openCodeAgentOptionDescriptor(agents);
-                        return {
-                          ...machineSnapshot,
-                          ...workspaceModelsFor(machineSnapshot.models, models),
-                          ...(agentDescriptor === undefined || agentDescriptor.options.length === 0
-                            ? {}
-                            : { optionDescriptors: [agentDescriptor] }),
-                          skills: openCodeSkillsToServerProviderSkills(skills),
-                          slashCommands: openCodeCommandsToServerProviderSlashCommands(commands),
-                          slashCommandsPending,
-                        };
-                      },
+                      ]) => ({
+                        ...machineSnapshot,
+                        ...workspaceModelsFor(machineSnapshot.models, models),
+                        ...workspaceAgentsFor(agents),
+                        skills: openCodeSkillsToServerProviderSkills(skills),
+                        slashCommands: openCodeCommandsToServerProviderSlashCommands(commands),
+                        slashCommandsPending,
+                      }),
                     ),
                     Effect.mapError(
                       (cause) =>
