@@ -33,75 +33,29 @@ import {
   buildAntigravityAcpSpawnInput,
   prepareAntigravityProfile,
 } from "./antigravityAuthSupport.ts";
+import { resolveAntigravityReleaseAsset, type AntigravityReleaseAsset } from "./antigravityRelease.ts";
 import {
-  resolveAntigravityReleaseAsset,
-  type AntigravityReleaseAsset,
-} from "./antigravityRelease.ts";
-
-const DRIVER = ProviderDriverKind.make("antigravity");
-const DOWNLOAD_TIMEOUT = "45 minutes";
-const VALIDATION_TIMEOUT = "90 seconds";
-const FREE_SPACE_MARGIN = 256 * 1024 * 1024;
-const RECORD_MAX_BYTES = 8 * 1024;
-const RELEASE_RECORD = ".install-complete.json";
-
-const ReleaseId = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
-const ActiveRelease = Schema.Struct({ releaseId: ReleaseId });
-const InstalledRelease = Schema.Struct({
-  releaseId: ReleaseId,
-  version: Schema.String,
-  executable: Schema.Struct({ name: Schema.String, bytes: Schema.Number }),
-  harness: Schema.Struct({ name: Schema.String, bytes: Schema.Number }),
-});
-type InstalledRelease = typeof InstalledRelease.Type;
-const encodeActiveRelease = Schema.encodeEffect(Schema.fromJsonString(ActiveRelease));
-const encodeInstalledRelease = Schema.encodeEffect(Schema.fromJsonString(InstalledRelease));
-
-export class AntigravityInstallationError extends Schema.TaggedError<AntigravityInstallationError>()(
-  "AntigravityInstallationError",
-  {
-    operation: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message() {
-    return this.detail;
-  }
-}
-const isInstallationError = Schema.is(AntigravityInstallationError);
-const isAcpProcessExitedError = Schema.is(EffectAcpErrors.AcpProcessExitedError);
-
-export interface AntigravityExecutable {
-  readonly executablePath: string;
-  readonly harnessPath: string;
-  readonly source: "override" | "managed" | "path";
-  readonly version: string | null;
-  readonly managedVersionDirectory: string | null;
-}
-
-interface AntigravityInstallationService {
-  readonly managedDirectory: string;
-  readonly resolve: (
-    binaryPath?: string,
-    environment?: NodeJS.ProcessEnv,
-  ) => Effect.Effect<AntigravityExecutable, AntigravityInstallationError>;
-  /** Hold the lease until the spawned process has exited. */
-  readonly acquire: (
-    binaryPath?: string,
-    environment?: NodeJS.ProcessEnv,
-  ) => Effect.Effect<AntigravityExecutable, AntigravityInstallationError, Scope.Scope>;
-  readonly start: Effect.Effect<ProviderInstallState, AntigravityInstallationError>;
-  readonly cancel: (
-    operationId: string,
-  ) => Effect.Effect<ProviderInstallState, AntigravityInstallationError>;
-  readonly state: Effect.Effect<ProviderInstallState>;
-  readonly changes: Stream.Stream<ProviderInstallState>;
-  readonly remove: (
-    protectedBinaryPaths?: ReadonlyArray<string>,
-  ) => Effect.Effect<void, AntigravityInstallationError>;
-}
-
+  ActiveRelease,
+  AntigravityInstallationError,
+  DOWNLOAD_TIMEOUT,
+  DRIVER,
+  FREE_SPACE_MARGIN,
+  RECORD_MAX_BYTES,
+  RELEASE_RECORD,
+  VALIDATION_TIMEOUT,
+  encodeActiveRelease,
+  encodeInstalledRelease,
+  executableNames,
+  installationError,
+  isAcpProcessExitedError,
+  isInstallationError,
+  isRunning,
+  wrapFailure,
+  type AntigravityExecutable,
+  type AntigravityInstallationOptions,
+  type AntigravityInstallationService,
+  InstalledRelease,
+} from "./AntigravityInstallationParts.ts";
 export class AntigravityInstallation extends Context.Service<
   AntigravityInstallation,
   AntigravityInstallationService
@@ -112,37 +66,6 @@ export class AntigravityInstallation extends Context.Service<
       const config = yield* ServerConfig.ServerConfig;
       return yield* makeAntigravityInstallation({ baseDir: config.baseDir });
     }),
-  );
-}
-
-export interface AntigravityInstallationOptions {
-  readonly baseDir: string;
-  readonly releaseAsset?: AntigravityReleaseAsset | null;
-  readonly validate?: (
-    executable: AntigravityExecutable,
-    expectedVersion: string,
-  ) => Effect.Effect<void, AntigravityInstallationError, Scope.Scope>;
-}
-
-const installationError = (operation: string, detail: string, cause?: unknown) =>
-  new AntigravityInstallationError({
-    operation,
-    detail,
-    ...(cause === undefined ? {} : { cause }),
-  });
-
-const wrapFailure = (operation: string, detail: string) => (cause: unknown) =>
-  isInstallationError(cause) ? cause : installationError(operation, detail, cause);
-
-function executableNames(platform: NodeJS.Platform) {
-  return platform === "win32"
-    ? { executable: "agy_acp_server.exe", harness: "localharness_external.exe" }
-    : { executable: "agy_acp_server.par", harness: "localharness_external" };
-}
-
-function isRunning(state: ProviderInstallState) {
-  return (
-    state.phase === "downloading" || state.phase === "extracting" || state.phase === "verifying"
   );
 }
 
@@ -871,3 +794,4 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     remove,
   });
 });
+export * from "./AntigravityInstallationParts.ts";
