@@ -79,6 +79,7 @@ export function useComposerMenuItems({
   selectedProviderSkills,
   selectedProviderSlashCommands,
   showSkillsInSlashMenu,
+  hideSettledThreadMentions,
   workspaceSkillsScanning,
   questionAttachmentTarget,
   modelMentions,
@@ -99,6 +100,7 @@ export function useComposerMenuItems({
   readonly selectedProviderSkills: ServerProvider["skills"];
   readonly selectedProviderSlashCommands: ServerProvider["slashCommands"];
   readonly showSkillsInSlashMenu: boolean;
+  readonly hideSettledThreadMentions: boolean;
   readonly workspaceSkillsScanning: boolean;
   readonly questionAttachmentTarget: DraftId | null;
   readonly modelMentions: {
@@ -124,7 +126,11 @@ export function useComposerMenuItems({
   const isPathTrigger = composerTriggerKind === "path";
   const environmentThreadShells = useVisibleThreadShells(isPathTrigger);
   // Mounts older settled threads matching the mention, which shells may leave out.
-  useThreadSearch(isPathTrigger ? [environmentId] : [], pathTriggerQuery, { titlesOnly: true });
+  useThreadSearch(
+    isPathTrigger && !hideSettledThreadMentions ? [environmentId] : [],
+    pathTriggerQuery,
+    { titlesOnly: true },
+  );
   // The user's machines feed `@` machine matches; the catalog summary is cheap and stable.
   const environmentIdentities = useEnvironmentIdentities();
   const environmentMachines = useEnvironmentMachines();
@@ -206,6 +212,7 @@ export function useComposerMenuItems({
           environmentId,
           linkedEnvironments,
           excludeThreadId: activeThreadId,
+          hideSettled: hideSettledThreadMentions,
           query: composerTrigger.query,
           now,
         }),
