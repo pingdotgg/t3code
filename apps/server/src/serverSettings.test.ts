@@ -1,3 +1,4 @@
+import { deriveProviderInstanceConfigMap } from "./provider/ProviderInstanceRegistryHydration.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -8,6 +9,7 @@ import {
   ProjectId,
   ProjectScript,
   ProviderDriverKind,
+  type ProviderInstanceEnvironment,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
   SecretProviderId,
@@ -538,6 +540,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           (yield* serverSettings.getSettings).providerInstances[instanceId]?.displayName ?? "",
         ),
       );
+
+      // An inherited Object.prototype member is not an instance that already exists.
+      for (const name of ["constructor", "toString", "valueOf"]) {
+        const prototypeNamedId = ProviderInstanceId.make(name);
+        const created = yield* serverSettings.updateProviderInstance({
+          operation: "create",
+          instanceId: prototypeNamedId,
+          instance: { driver: ProviderDriverKind.make("codex") },
+        });
+        assert.isTrue(Object.hasOwn(created.providerInstances, prototypeNamedId));
+      }
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
@@ -1282,6 +1295,115 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect.each(
+    [
+      { label: "redacted then empty sensitive", duplicate: { value: "", sensitive: true } },
+      {
+        label: "empty sensitive then redacted",
+        duplicate: { value: "", sensitive: true },
+        redactedLast: true,
+      },
+      { label: "redacted then plain", duplicate: { value: "plain-foo", sensitive: false } },
+      {
+        label: "plain then redacted",
+        duplicate: { value: "plain-foo", sensitive: false },
+        redactedLast: true,
+      },
+      {
+        label: "secret reference then redacted",
+        duplicate: {
+          value: { provider: SecretProviderId.make("personal"), reference: "op://Private/FOO" },
+          sensitive: true,
+        },
+        redactedLast: true,
+      },
+      {
+        label: "inline seed, redacted then empty sensitive",
+        duplicate: { value: "", sensitive: true },
+        inline: '[{"name":"FOO","value":"stored-foo","sensitive":true}]',
+      },
+      {
+        label: "inline seed with an empty duplicate, redacted then empty sensitive",
+        duplicate: { value: "", sensitive: true },
+        inline:
+          '[{"name":"FOO","value":"stored-foo","sensitive":true},{"name":"FOO","value":"","sensitive":true}]',
+      },
+      {
+        label: "inline seed with an empty duplicate, new value then redacted",
+        duplicate: { value: "new-foo", sensitive: true },
+        redactedLast: true,
+        inline:
+          '[{"name":"FOO","value":"stored-foo","sensitive":true},{"name":"FOO","value":"","sensitive":true}]',
+        expected: "new-foo",
+      },
+    ].map((testCase) => [testCase.label, testCase] as const),
+  )(
+    "keeps a stored secret a redacted row still claims when a duplicate name is saved (%s)",
+    ([, { duplicate, redactedLast, inline, expected = "stored-foo" }]) =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const instanceId = ProviderInstanceId.make("codex_personal");
+        const save = (environment: ProviderInstanceEnvironment) =>
+          service.updateSettings({
+            providerInstances: {
+              [instanceId]: { driver: ProviderDriverKind.make("codex"), environment, config: {} },
+            },
+          });
+        if (inline) {
+          const config = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.writeFileString(
+            config.settingsPath,
+            `{"providerInstances":{"codex_personal":{"driver":"codex","environment":${inline},"config":{}}}}`,
+          );
+          yield* service.getSettings;
+        } else {
+          yield* save([{ name: "FOO", value: "stored-foo", sensitive: true }]);
+        }
+        const redacted = { name: "FOO", value: "", sensitive: true, valueRedacted: true };
+        const copy = { name: "FOO", ...duplicate };
+        yield* save(redactedLast ? [copy, redacted] : [redacted, copy]);
+
+        const reloaded = yield* Effect.gen(function* () {
+          const fresh = yield* ServerSettingsModule.ServerSettingsService;
+          return yield* fresh.getSettings;
+        }).pipe(
+          Effect.provide(
+            Layer.fresh(ServerSettingsModule.layer).pipe(
+              Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layerTest())),
+            ),
+          ),
+        );
+        assert.equal(
+          reloaded.providerInstances[instanceId]?.environment?.[redactedLast ? 1 : 0]?.value,
+          expected,
+        );
+      }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("removes a kept secret once every row with its name is deleted", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const store = yield* ServerSecretStore.ServerSecretStore;
+      const instanceId = ProviderInstanceId.make("codex_personal");
+      const save = (environment: ProviderInstanceEnvironment) =>
+        service.updateSettings({
+          providerInstances: {
+            [instanceId]: { driver: ProviderDriverKind.make("codex"), environment, config: {} },
+          },
+        });
+      yield* save([{ name: "FOO", value: "stored-foo", sensitive: true }]);
+      yield* save([
+        { name: "FOO", value: "", sensitive: true, valueRedacted: true },
+        { name: "FOO", value: "plain-foo", sensitive: false },
+      ]);
+      const secretName = "provider-env-Y29kZXhfcGVyc29uYWw-Rk9P";
+      assert.isTrue(Option.isSome(yield* store.get(secretName)));
+      yield* save([]);
+      assert.isTrue(Option.isNone(yield* store.get(secretName)));
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
   it.effect.each([true, false])(
     "preserves duplicate secret operation order (sensitive last: %s)",
     (sensitiveLast) =>
@@ -1641,8 +1763,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const antigravity = ProviderInstanceId.make("antigravity");
         const openCode = ProviderInstanceId.make("opencode");
         const hub = UsageLimitSourceId.make("hub");
+        const router = ProviderInstanceId.make("openrouter");
         const withUsage = yield* serverSettings.updateSettings({
           cloudSpeechCredentials: { openai: usageReference, xai: "literal-fixture" },
+          textGenerators: {
+            [router]: {
+              kind: "openaiCompatible",
+              baseUrl: "https://openrouter.ai/api/v1",
+              apiKey: usageReference,
+              enabled: true,
+            },
+          },
           usageLimitSources: {
             [hub]: {
               kind: "cliproxy",
@@ -1695,6 +1826,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         });
         assert.equal(legacy.sourceControlHosts.bitbucket?.accessToken, SECRET_REDACTED);
         assert.equal(legacy.usageLimitSources[hub]?.managementKey, SECRET_REDACTED);
+        assert.equal(legacy.textGenerators[router]?.apiKey, SECRET_REDACTED);
         assert.equal(legacy.easDeviceHosts[0]?.accessToken, SECRET_REDACTED);
         assert.equal(legacy.simlockDeviceHosts[0]?.agentToken, SECRET_REDACTED);
         const configOf = (settings: ServerSettings, id: ProviderInstanceId) =>
@@ -1705,6 +1837,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           cloudSpeechCredentials: legacy.cloudSpeechCredentials,
           sourceControlHosts: legacy.sourceControlHosts,
           usageLimitSources: legacy.usageLimitSources,
+          textGenerators: legacy.textGenerators,
           easDeviceHosts: legacy.easDeviceHosts,
           simlockDeviceHosts: legacy.simlockDeviceHosts,
           providerInstances: legacy.providerInstances,
@@ -1715,6 +1848,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           "ghe.acme.test": "ghp_ghe",
         });
         assert.deepEqual(echoed.usageLimitSources[hub]?.managementKey, usageReference);
+        assert.deepEqual(echoed.textGenerators[router]?.apiKey, usageReference);
         assert.deepEqual(echoed.cloudSpeechCredentials, {
           openai: usageReference,
           xai: "literal-fixture",
@@ -1820,6 +1954,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         "easDeviceHosts.[].accessToken",
         "simlockDeviceHosts.[].agentToken",
         "usageLimitSources.*.managementKey",
+        "textGenerators.*.apiKey",
       ]);
     }),
   );
@@ -1940,6 +2075,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       });
 
       const environment = yield* resolveProviderInstanceTerminalEnvironment({
+        deriveProviderInstanceConfigMap,
         serverSettings,
         path,
         rawProviderInstanceId: instanceId,

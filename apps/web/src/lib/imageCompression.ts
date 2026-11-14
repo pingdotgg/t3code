@@ -227,24 +227,37 @@ export function createComposerImageThumbnail(file: File): Promise<string | null>
 /**
  * Pasted images are re-encoded after their placeholder already shows the source's thumbnail.
  * Reusing it keeps the tile from flashing back to its fallback while the new file is decoded.
+ * Resolves once the target's thumbnail is readable, so a tile swapped to it paints at once even
+ * when compression finished before the source's thumbnail did.
  */
-export function inheritComposerImageThumbnail(source: File, target: File): void {
+export async function inheritComposerImageThumbnail(source: File, target: File): Promise<void> {
   const sourceThumbnail = composerThumbnails.get(source);
   if (source === target || !sourceThumbnail || composerThumbnails.has(target)) return;
-  const settled = settledComposerThumbnails.get(source);
-  if (settled) settledComposerThumbnails.set(target, settled);
   cacheComposerImageThumbnail(
     target,
     sourceThumbnail.then((src) => src ?? renderComposerImageThumbnail(target)),
   );
+  const src = await sourceThumbnail;
+  if (src) settledComposerThumbnails.set(target, src);
 }
 
 async function renderComposerImageThumbnail(file: File): Promise<string | null> {
+  if (isHeicImageFile(file)) return prepareHeicImage(file).thumbnail;
   // Placeholders thumbnail the uncompressed source, which can be big enough to OOM the decode.
   if (!canRecompress() || file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) return null;
   let bitmap: ImageBitmap | undefined;
   try {
     bitmap = await createImageBitmap(file);
+    return await renderComposerImageThumbnailFromBitmap(bitmap);
+  } catch {
+    return null;
+  } finally {
+    bitmap?.close();
+  }
+}
+
+async function renderComposerImageThumbnailFromBitmap(bitmap: ImageBitmap): Promise<string | null> {
+  try {
     const side = Math.min(bitmap.width, bitmap.height);
     if (side <= 0) return null;
     const dimension = Math.min(256, side);
@@ -265,8 +278,6 @@ async function renderComposerImageThumbnail(file: File): Promise<string | null> 
     return blob ? await readFileAsDataUrl(blob) : null;
   } catch {
     return null;
-  } finally {
-    bitmap?.close();
   }
 }
 
@@ -454,35 +465,90 @@ export async function compressImageToByteLimit(
   };
 }
 
-export async function prepareImageForAttachment(
-  file: File,
-  maxBytes: number,
-): Promise<CompressImageFileResult> {
-  if (!isHeicImageFile(file)) {
-    return compressImageToByteLimit(file, maxBytes);
-  }
+const heicPreparations = new WeakMap<
+  File,
+  { image: Promise<CompressImageFileResult>; thumbnail: Promise<string | null> }
+>();
+// Preparing tiles share full-size decodes, so keep only one HEIC bitmap alive at a time.
+let heicPreparationQueue = Promise.resolve();
 
+function prepareHeicImage(file: File) {
+  const cached = heicPreparations.get(file);
+  if (cached) return cached;
+  let resolveThumbnail!: (src: string | null) => void;
+  const thumbnail = new Promise<string | null>((resolve) => {
+    resolveThumbnail = resolve;
+  });
+  const image = heicPreparationQueue
+    .then(() => convertHeicImage(file, resolveThumbnail))
+    .finally(() => resolveThumbnail(null));
+  heicPreparationQueue = image.then(
+    () => undefined,
+    () => undefined,
+  );
+  const preparation = { image, thumbnail };
+  heicPreparations.set(file, preparation);
+  return preparation;
+}
+
+async function convertHeicImage(
+  file: File,
+  onThumbnail: (src: string | null) => void,
+): Promise<CompressImageFileResult> {
   if (file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) {
     return { ok: false, reason: "too-large" };
   }
 
-  let converted: Blob;
+  let bitmap: ImageBitmap | undefined;
   try {
     const dimensionError = await validateHeicImageDimensions(file);
     if (dimensionError) {
       return { ok: false, reason: dimensionError };
     }
-    const { heicTo } = await import("heic-to/csp");
-    converted = await heicTo({ blob: file, type: "image/jpeg", quality: QUALITY_STEPS[0] });
+    bitmap =
+      typeof createImageBitmap === "function"
+        ? await createImageBitmap(file).catch(() => undefined)
+        : undefined;
+    if (!bitmap) {
+      const { heicTo } = await import("heic-to/csp");
+      bitmap = await heicTo({ blob: file, type: "bitmap" });
+    }
+    const imageSize = fitImageAttachmentSize(bitmap) ?? {
+      width: bitmap.width,
+      height: bitmap.height,
+    };
+    const surface = createCanvas(imageSize.width, imageSize.height);
+    if (!surface) return { ok: false, reason: "unreadable" };
+    surface.context.drawImage(bitmap, 0, 0, imageSize.width, imageSize.height);
+    const [converted] = await Promise.all([
+      encodeCanvas(surface.canvas, QUALITY_STEPS[0], "image/jpeg"),
+      renderComposerImageThumbnailFromBitmap(bitmap).then(onThumbnail),
+    ]);
+    if (!converted) return { ok: false, reason: "unreadable" };
+    return {
+      ok: true,
+      file: new File([converted], fileNameForMimeType(file.name || "image", "image/jpeg"), {
+        type: "image/jpeg",
+        lastModified: file.lastModified,
+      }),
+      recompressed: true,
+      imageSize,
+    };
   } catch {
     return { ok: false, reason: "unreadable" };
+  } finally {
+    bitmap?.close();
   }
+}
 
-  const jpeg = new File([converted], fileNameForMimeType(file.name || "image", "image/jpeg"), {
-    type: "image/jpeg",
-    lastModified: file.lastModified,
-  });
-  const result = await compressImageToByteLimit(jpeg, maxBytes, {
+export async function prepareImageForAttachment(
+  file: File,
+  maxBytes: number,
+): Promise<CompressImageFileResult> {
+  if (!isHeicImageFile(file)) return compressImageToByteLimit(file, maxBytes);
+  const prepared = await prepareHeicImage(file).image;
+  if (!prepared.ok || prepared.file.size <= maxBytes) return prepared;
+  const result = await compressImageToByteLimit(prepared.file, maxBytes, {
     preferredMimeType: "image/jpeg",
     sourceSizeBytes: file.size,
   });
