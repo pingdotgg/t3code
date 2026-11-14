@@ -7,7 +7,7 @@
 //! turns the mapper keeps one provider thread row and the pending runtime requests (each one
 //! removed when answered or when its turn ends).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use conn_contract::to_json;
 use conn_provider::{ProviderEvent, TurnInput};
@@ -98,7 +98,14 @@ struct Turn {
     interrupted: bool,
     native_metadata: Value,
     context_usage: Value,
+    /// `isCompactionMessage`: the turn's message is exactly `/compact` with no attachments.
+    compaction_message: bool,
+    /// `isCompactCommand`: `/compact`, optionally with preservation instructions.
+    compact_command: bool,
 }
+
+/// How many compaction ids a session remembers (`completedCompactionIds`); older ones fall out.
+const COMPACTION_IDS_KEPT: usize = 128;
 
 /// A runtime request waiting for the user (`pendingRuntimeRequests`).
 #[derive(Debug, Clone)]
@@ -136,6 +143,13 @@ pub(crate) struct Mapper<E: Env> {
     context_usage: Option<Value>,
     pending: HashMap<String, PendingRequest>,
     logged: HashSet<String>,
+    /// `compactionMarkers`: set when the session compacted, so the next prompt resends T3's
+    /// instructions and runtime notes. Each mark is a new number, so a late prompt success
+    /// cannot clear a later compaction.
+    compaction_marker: Option<u64>,
+    marker_seq: u64,
+    /// `completedCompactionIds`: an agent may patch a completed compaction again.
+    completed_compactions: VecDeque<String>,
 }
 
 impl<E: Env> std::fmt::Debug for Mapper<E> {
@@ -164,7 +178,46 @@ impl<E: Env> Mapper<E> {
             context_usage: None,
             pending: HashMap::new(),
             logged: HashSet::new(),
+            compaction_marker: None,
+            marker_seq: 0,
+            completed_compactions: VecDeque::new(),
         }
+    }
+
+    // ---- compaction ----------------------------------------------------------------------
+
+    /// `markSessionCompacted`. With an id, each compaction marks the session once.
+    pub(crate) fn mark_compacted(&mut self, compaction_id: Option<&str>) {
+        if let Some(id) = compaction_id {
+            if self.completed_compactions.iter().any(|known| known == id) {
+                return;
+            }
+            if self.completed_compactions.len() >= COMPACTION_IDS_KEPT {
+                self.completed_compactions.pop_front();
+            }
+            self.completed_compactions.push_back(id.to_owned());
+        }
+        self.marker_seq += 1;
+        self.compaction_marker = Some(self.marker_seq);
+    }
+
+    /// The current compaction marker, read when a prompt is built.
+    pub(crate) fn compaction_marker(&self) -> Option<u64> {
+        self.compaction_marker
+    }
+
+    /// A prompt that carried T3's instructions succeeded: the compaction it saw is handled,
+    /// unless a newer one came since.
+    pub(crate) fn clear_compaction_marker(&mut self, observed: Option<u64>) {
+        if observed.is_some() && self.compaction_marker == observed {
+            self.compaction_marker = None;
+        }
+    }
+
+    /// A new runtime starts without compaction state (`restartRuntimeAfterTeardownIfRequired`).
+    pub(crate) fn reset_compaction(&mut self) {
+        self.compaction_marker = None;
+        self.completed_compactions.clear();
     }
 
     fn driver(&self) -> &'static str {
@@ -269,7 +322,13 @@ impl<E: Env> Mapper<E> {
     // ---- turns ---------------------------------------------------------------------------
 
     /// `startTurnUnlocked` up to the prompt: the running turn and the active thread.
-    pub(crate) fn begin_turn(&mut self, input: &TurnInput, session_id: &str) -> Vec<Out> {
+    /// `user_text` is the message text the prompt carries (`/compact` normalized).
+    pub(crate) fn begin_turn(
+        &mut self,
+        input: &TurnInput,
+        session_id: &str,
+        user_text: &str,
+    ) -> Vec<Out> {
         let mut out = Vec::new();
         let started_at = self.env.now();
         let native_turn_id = format!("{session_id}:turn:{}", input.provider_turn_ordinal);
@@ -300,6 +359,13 @@ impl<E: Env> Mapper<E> {
                 .cloned()
                 .unwrap_or(Value::Null)
         });
+        let no_attachments = input.message.attachments.is_empty();
+        let trimmed = user_text.trim();
+        let compaction_message = no_attachments && trimmed == "/compact";
+        let compact_command = no_attachments
+            && trimmed
+                .strip_prefix("/compact")
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace));
         let turn = Turn {
             thread_id: input.thread_id.as_str().to_owned(),
             run_id: input.run_id.as_str().to_owned(),
@@ -323,6 +389,8 @@ impl<E: Env> Mapper<E> {
             interrupted: false,
             native_metadata,
             context_usage,
+            compaction_message,
+            compact_command,
         };
         let running = self.provider_turn_payload(&turn, "running", None);
         self.event(
@@ -686,7 +754,34 @@ impl<E: Env> Mapper<E> {
         let session_id = params["sessionId"].as_str().unwrap_or("").to_owned();
         let update = &params["update"];
         let kind = update["sessionUpdate"].as_str().unwrap_or("");
+        // Turn projection misses compactions that finish while idle or after settlement.
+        if kind == "compaction_update"
+            && update["status"] == "completed"
+            && let Some(id) = update["compactionId"].as_str()
+        {
+            self.mark_compacted(Some(&format!("{session_id}\u{0}{id}")));
+        }
         match kind {
+            "compaction_update" => {
+                if let Some(state) = tools::compaction_tool(update) {
+                    self.tool_updated(state, None, &mut out);
+                }
+            }
+            "compaction_summary_chunk" => {
+                if let (Some(text), Some(id)) = (
+                    content_display_text(&update["content"]),
+                    update["compactionId"].as_str(),
+                ) {
+                    let tool_call_id = format!("acp-compaction:{id}");
+                    let previous = self
+                        .turn
+                        .as_ref()
+                        .and_then(|turn| turn.tools.get(&tool_call_id).cloned())
+                        .unwrap_or_else(|| tools::compaction_placeholder(&tool_call_id));
+                    let appended = tools::append_output_text(previous, &text);
+                    self.tool_updated(appended, None, &mut out);
+                }
+            }
             "usage_update" | "session_info_update" => {
                 self.session_state_update(&session_id, kind, update, &mut out);
             }
@@ -998,7 +1093,35 @@ impl<E: Env> Mapper<E> {
             "completedAt": completed_at,
             "updatedAt": now,
         });
-        let item = tools::project_turn_item(tool, &status, base);
+        let item = if let Some(compaction_id) = tool.tool_call_id.strip_prefix("acp-compaction:") {
+            let mut item = base;
+            set(&mut item, "type", json!("compaction"));
+            set(&mut item, "driver", json!(self.driver()));
+            let raw_output = tool
+                .data
+                .get("rawOutput")
+                .or_else(|| tool.data.get("content"));
+            if let Some(summary) = raw_output.and_then(tools::text_from_unknown) {
+                set(&mut item, "summary", json!(summary));
+            }
+            if let Some(used) = turn
+                .context_usage
+                .get("usedTokens")
+                .filter(|v| !v.is_null())
+            {
+                set(&mut item, "beforeTokenCount", used.clone());
+            }
+            if status == "completed" {
+                turn.context_usage = Value::Null;
+                self.context_usage = None;
+                // A completion projected at turn end must not swallow the agent's later one.
+                let key = format!("{}\u{0}{compaction_id}", turn.native_thread_id);
+                self.mark_compacted(projected.is_none().then_some(key.as_str()));
+            }
+            item
+        } else {
+            tools::project_turn_item(tool, &status, base)
+        };
         self.event(json!({"type": "turn_item.updated", "turnItem": item}), out);
         self.turn = Some(turn);
     }
@@ -1522,6 +1645,18 @@ impl<E: Env> Mapper<E> {
         let Some(mut turn) = self.turn.take() else {
             return out;
         };
+        if self.flavor.supports_compaction && settled == "completed" {
+            if turn.compact_command {
+                self.mark_compacted(None);
+            }
+            let has_compaction_tool = turn
+                .tools
+                .keys()
+                .any(|id| id.starts_with("acp-compaction:"));
+            if turn.compaction_message && !has_compaction_tool {
+                self.compaction_item(&mut turn, &now, &mut out);
+            }
+        }
         let payload = self.provider_turn_payload(&turn, settled, Some(&now));
         self.event(
             json!({"type": "provider_turn.updated", "threadId": turn.thread_id, "providerTurn": payload}),
@@ -1576,6 +1711,34 @@ impl<E: Env> Mapper<E> {
         // Requests of this turn cannot be answered any more.
         self.pending.clear();
         out
+    }
+
+    /// A `/compact` turn that completed without the agent's own compaction update: the
+    /// session's context usage is gone, and the turn shows "Context compacted".
+    fn compaction_item(&mut self, turn: &mut Turn, now: &str, out: &mut Vec<Out>) {
+        turn.context_usage = Value::Null;
+        self.context_usage = None;
+        let native_item_id = format!("{}:compaction", turn.native_turn_id);
+        let ordinal = Self::resolve_ordinal(turn, &native_item_id);
+        let item = json!({
+            "id": ids::turn_item_from_item(self.driver(), &native_item_id),
+            "threadId": turn.thread_id,
+            "runId": turn.run_id,
+            "nodeId": turn.root_node_id,
+            "providerThreadId": turn.provider_thread["id"],
+            "providerTurnId": turn.provider_turn_id,
+            "nativeItemRef": {"driver": self.driver(), "nativeId": native_item_id, "strength": "weak"},
+            "parentItemId": null,
+            "ordinal": ordinal,
+            "type": "compaction",
+            "driver": self.driver(),
+            "status": "completed",
+            "title": "Context compacted",
+            "startedAt": turn.started_at,
+            "completedAt": now,
+            "updatedAt": now,
+        });
+        self.event(json!({"type": "turn_item.updated", "turnItem": item}), out);
     }
 
     /// The agent exited: an open turn fails, open requests go.
@@ -1770,4 +1933,43 @@ fn selected(option_id: &str) -> J {
             .with("outcome", "selected")
             .with("optionId", option_id),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use conn_provider_support::ids::FixedEnv;
+
+    fn mapper() -> Mapper<FixedEnv> {
+        Mapper::new(FixedEnv::default(), &crate::flavor::GROK, "grok", "s")
+    }
+
+    #[test]
+    fn a_compaction_id_marks_the_session_once_and_old_ids_fall_out() {
+        let mut mapper = mapper();
+        mapper.mark_compacted(Some("s\u{0}c1"));
+        let first = mapper.compaction_marker();
+        assert!(first.is_some());
+        mapper.clear_compaction_marker(first);
+        assert_eq!(mapper.compaction_marker(), None);
+        // The same completed compaction, patched again: no new mark.
+        mapper.mark_compacted(Some("s\u{0}c1"));
+        assert_eq!(mapper.compaction_marker(), None);
+        for n in 0..1_000 {
+            mapper.mark_compacted(Some(&format!("s\u{0}x{n}")));
+        }
+        assert_eq!(mapper.completed_compactions.len(), COMPACTION_IDS_KEPT);
+    }
+
+    #[test]
+    fn a_late_prompt_success_keeps_a_newer_compaction() {
+        let mut mapper = mapper();
+        mapper.mark_compacted(None);
+        let seen = mapper.compaction_marker();
+        mapper.mark_compacted(None);
+        mapper.clear_compaction_marker(seen);
+        assert!(mapper.compaction_marker().is_some());
+        mapper.reset_compaction();
+        assert_eq!(mapper.compaction_marker(), None);
+    }
 }

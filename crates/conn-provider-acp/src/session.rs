@@ -90,6 +90,8 @@ struct State<E: Env> {
     active_prompt: Option<(u64, String)>,
     instruction_state: Option<InstructionState>,
     delivered_notes: Option<String>,
+    /// What the running prompt delivers once it succeeds.
+    delivery: Option<Delivery>,
     flush_armed: bool,
     restart_required: bool,
     closed: bool,
@@ -98,6 +100,16 @@ struct State<E: Env> {
     active_model: Option<String>,
     /// The running turn's `ProviderAdapterV2RuntimePolicy` (or the session's), as JSON.
     policy: Value,
+}
+
+/// What a prompt carried (`promptParts`): recorded only when the prompt succeeds, as T3
+/// records `promptInstructionStates` and `promptRuntimeInstructions` in the reply callback.
+#[derive(Debug)]
+struct Delivery {
+    instruction_state: Option<InstructionState>,
+    notes: Option<String>,
+    /// The compaction marker the prompt saw when it was built.
+    compaction_marker: Option<u64>,
 }
 
 pub struct AcpSession {
@@ -221,6 +233,7 @@ impl AcpSession {
                 prompt_request: None,
                 instruction_state: None,
                 delivered_notes: None,
+                delivery: None,
                 flush_armed: false,
                 restart_required: false,
                 closed: false,
@@ -282,6 +295,8 @@ impl Inner {
             state.prompt_seq = 0;
             state.instruction_state = None;
             state.delivered_notes = None;
+            state.delivery = None;
+            state.mapper.reset_compaction();
             state.runtime = Some(Runtime {
                 connection: connection.clone(),
                 stop: Some(spawned.stop),
@@ -427,16 +442,23 @@ impl Inner {
         {
             return;
         }
-        let Some((_, active_id)) = state.active_prompt.take() else {
+        if state.active_prompt.take().is_none() {
             return;
-        };
-        if matches!(&outcome, PromptOutcome::Stopped(reason) if reason != "cancelled" && reason != "refusal" && reason != "error")
+        }
+        let delivery = state.delivery.take();
+        // Grok cancels locally, refusals discard the prompt, and errors need a retry.
+        if let Some(delivery) = delivery
+            && matches!(&outcome, PromptOutcome::Stopped(reason) if reason != "cancelled" && reason != "refusal" && reason != "error")
         {
-            // Delivered: later prompts skip the notes until they change.
-            let _ = active_id;
-        } else {
-            state.delivered_notes = None;
-            state.instruction_state = None;
+            if let Some(instruction_state) = delivery.instruction_state {
+                state.instruction_state = Some(instruction_state);
+                state
+                    .mapper
+                    .clear_compaction_marker(delivery.compaction_marker);
+            }
+            if let Some(notes) = delivery.notes {
+                state.delivered_notes = Some(notes);
+            }
         }
         let outs = state.mapper.prompt_settled(outcome);
         self.deliver(&mut state, outs).await;
@@ -791,11 +813,18 @@ impl Session for AcpSession {
                 let session_id = state.session_id.clone().unwrap_or_default();
                 let attachments: Vec<Value> =
                     input.message.attachments.iter().map(to_json).collect();
-                let message_text = conn_provider_support::attachments::prompt_text(
-                    &input.message.text,
-                    &attachments,
-                    None,
-                );
+                // `compactThread`: T3's orchestrator sends `/compact` in any case as exactly
+                // `/compact` to a flavor that compacts.
+                let user_text = if flavor.supports_compaction
+                    && attachments.is_empty()
+                    && input.message.text.trim().eq_ignore_ascii_case("/compact")
+                {
+                    "/compact".to_owned()
+                } else {
+                    input.message.text.clone()
+                };
+                let message_text =
+                    conn_provider_support::attachments::prompt_text(&user_text, &attachments, None);
                 let instruction_state = InstructionState {
                     plan_mode: serde_json::to_value(input.runtime_policy.interaction_mode)
                         .ok()
@@ -803,14 +832,23 @@ impl Session for AcpSession {
                     has_t3_mcp: inner.has_t3_mcp(),
                     has_device_tools: false,
                 };
-                let text = prompt::wrap(&message_text, instruction_state, state.instruction_state);
+                // A compacted session gets T3's instructions and notes again.
+                let compaction_marker = state.mapper.compaction_marker();
+                let previous = if compaction_marker.is_some() {
+                    None
+                } else {
+                    state.instruction_state
+                };
+                let text = prompt::wrap(&message_text, instruction_state, previous);
                 let model = to_json(&input.model_selection)["model"]
                     .as_str()
                     .unwrap_or("")
                     .to_owned();
                 let notes = prompt::runtime_instructions(flavor.harness, &model);
-                let slash = message_text.trim_start().starts_with('/');
-                let send_notes = !slash && state.delivered_notes.as_deref() != Some(notes.as_str());
+                let slash = user_text.trim_start().starts_with('/');
+                let send_notes = !slash
+                    && (compaction_marker.is_some()
+                        || state.delivered_notes.as_deref() != Some(notes.as_str()));
                 let mut blocks = Vec::new();
                 if !text.is_empty() {
                     blocks.push(obj().with("type", "text").with("text", text.clone()));
@@ -823,12 +861,11 @@ impl Session for AcpSession {
                 if send_notes {
                     blocks.push(obj().with("type", "text").with("text", notes.clone()));
                 }
-                if text != message_text {
-                    state.instruction_state = Some(instruction_state);
-                }
-                if send_notes {
-                    state.delivered_notes = Some(notes);
-                }
+                state.delivery = Some(Delivery {
+                    instruction_state: (text != message_text).then_some(instruction_state),
+                    notes: send_notes.then_some(notes),
+                    compaction_marker,
+                });
                 let mut params = obj()
                     .with("sessionId", session_id.clone())
                     .with("prompt", J::Arr(blocks));
@@ -846,7 +883,7 @@ impl Session for AcpSession {
                     None
                 };
                 state.active_prompt = Some((generation, prompt_id.unwrap_or_default()));
-                let outs = state.mapper.begin_turn(&input, &session_id);
+                let outs = state.mapper.begin_turn(&input, &session_id, &user_text);
                 inner.deliver(&mut state, outs).await;
                 // The reply comes back through the driver, in order with the turn's updates.
                 state.prompt_request = connection.send("session/prompt", params).await;

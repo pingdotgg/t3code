@@ -95,12 +95,38 @@ when `providerInstances.grok` changes, every `providerHealthRefreshInterval` (5 
 ## Supported (Grok)
 
 Streamed text and reasoning (named and unnamed segments, the 50 ms flush), session titles and
-context usage, tool calls (merge, Grok normalization, the persist rule, read / execute / edit
+context usage, `/compact` (see "Compaction"), tool calls (merge, Grok normalization, the persist rule, read / execute / edit
 / generic projections, file diffs), todo plans and proposed-plan updates, permission requests
 with T3's disposition rules and Grok's choices, Grok's `ask_user_question`, prompt failures
 (RPC errors and xAI `error` / `rate_limit` completions), model switch, Stop, close, agent
 exit. Unknown methods and updates are skipped and logged once per kind; agent requests we do
 not serve get a -32601 reply.
+
+## Compaction (Grok: `supportsCompaction`)
+
+As T3's adapter does for a flavor with `supportsCompaction`:
+
+- `/compact` goes to Grok as a plain prompt, without T3's instruction wrapper and runtime notes
+  (a native slash command). A message `/compact` in any case and with no attachments is sent
+  as exactly `/compact`, as T3's orchestrator does through `compactThread`.
+- A `/compact` turn that completes (also `/compact <instructions>`) marks the session
+  compacted; so does a `compaction_update` with status `completed` (each compaction id once;
+  the last 128 ids are kept, T3 keeps all) and a completed "Compact context" tool. The next
+  prompt then sends T3's instructions and runtime notes again. A prompt that carried them
+  clears the mark only when it succeeds and no newer compaction came while it ran.
+- Prompt delivery is recorded only when the prompt succeeds (not `cancelled`, `refusal`,
+  `error`, or a failed request), as T3 records `promptInstructionStates` in the reply callback.
+- `compaction_update` and `compaction_summary_chunk` become one "Compact context" tool per
+  compaction id; its turn item has the type `compaction`, the summary, and the token count
+  before. A completed one clears the session's context usage.
+- A `/compact` turn that completes without such a tool gets T3's "Context compacted" item
+  (`<turn>:compaction`) and clears the context usage.
+
+Proof: two scenarios made by `tools/make-scenarios.mjs` from the recorded `multi_turn`
+transcript (`testdata/grok-scenarios/`: `grok_compact` without and `grok_compact_update` with
+the agent's own compaction updates). They are not live recordings. `capture-ts-events.mjs`
+runs them through T3's fixture runner and Grok adapter, so T3 decides the golden events and
+prompts; our replay and the stub conformance check compare against those.
 
 ## Not built
 
@@ -108,10 +134,7 @@ not serve get a -32601 reply.
   debounce), post-settle continuation prompts, subagents and their child threads, the x.ai
   extension notifications behind them. The five transcripts that need them are on
   `testdata/grok/expected-failures.txt`. See "Map: Grok background work" for the plan.
-- **Grok extras:** `x.ai/exit_plan_mode`, skill mentions (`rewriteUserText`), compaction via
-  `/compact` (the entry lists `/compact` as T3's does; a `/compact` turn reaches Grok as a
-  plain prompt, without T3's compaction item or its refusal when the session does not
-  advertise the command), the reasoning effort in `session/set_model` meta, model slug
+- **Grok extras:** `x.ai/exit_plan_mode`, skill mentions (`rewriteUserText`), the reasoning effort in `session/set_model` meta, model slug
   aliases, `promptInactivityTimeout`, image attachments as blocks (text paths only), MCP tool
   presentation (`extractMcpToolCallIdentity`), web search and fetch projections, structured
   file changes, notices, retries.
@@ -180,6 +203,7 @@ cargo test -p conn-provider-acp                                                 
 CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/conformance.mjs   # the wire check
 CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/probe-conformance.mjs   # the status probe
 CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/gen-instructions.mjs --check
+CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/make-scenarios.mjs   # the hand-made scenarios
 CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/capture-ts-events.mjs grok   # regenerate testdata
 ```
 
@@ -188,8 +212,9 @@ CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/capture-ts-event
   `acp-replay-agent.ts` (`matchesExpected` ported rule for rule); every `expect_outbound` frame
   must match, and every event must equal what T3's adapter emitted for the same transcript
   (captured by `tools/capture-ts-events.mjs` through T3's own fixture runner; timestamps and
-  random uuids normalized). **10 of 15 pass**; the other 5 are listed with their reason, and
-  the test fails when a listed one passes or an unlisted one fails.
+  random uuids normalized). **12 of 17 pass**: 10 of T3's 15 recorded transcripts and both
+  hand-made compaction scenarios. The other 5 are listed with their reason, and the test
+  fails when a listed one passes or an unlisted one fails.
 - **Probe conformance (`tools/probe-conformance.mjs`, in `tools/check.sh`):** T3's own
   `checkGrokProviderStatus` and ours, each against a stub CLI (`tools/grok-cli-stub.mjs`) per
   scenario: disabled, missing, not executable, `--version` hangs and ignores SIGTERM,
@@ -204,8 +229,8 @@ CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/capture-ts-event
 - **Stub conformance (`tools/conformance.mjs`, in `tools/check.sh`):** the same stub agent
   under T3's real Grok adapter and spawn path and under `AcpProvider`; argv, environment,
   every stdin line byte for byte (workspace path and trace ids normalized) and the shutdown
-  order compared. **10 of 10 scenarios the same** (the passing fixtures; the 5 others are
-  skipped and listed). It found three differences, fixed: ids from 2^30, the trace context
+  order compared. **12 of 12 scenarios the same** (the passing fixtures and the compaction
+  scenarios; the 5 others are skipped and listed). It found three differences, fixed: ids from 2^30, the trace context
   after the id, and kill-on-close.
 - **Bounded state:** `state_stays_bounded_over_many_turns` runs 200 turns with text, a tool
   call and an approval each; no turn, request or reply is left behind.

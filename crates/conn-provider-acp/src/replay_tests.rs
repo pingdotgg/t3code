@@ -184,6 +184,15 @@ pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
                     errors.push(format!("startTurn: {e}"));
                 }
             }
+            // T3's orchestrator sends `/compact` through `compactThread`, which starts the turn
+            // with the text `/compact`; ours sends the message through `start_turn`.
+            "compactThread" => {
+                let mut input = input.clone();
+                input["message"]["text"] = json!("/compact");
+                if let Err(e) = session.start_turn(crate::testing::turn_input(&input)).await {
+                    errors.push(format!("compactThread: {e}"));
+                }
+            }
             "respondToRuntimeRequest" => {
                 // Our request ids carry our own uuid: answer the requests in the order they came.
                 let ids: Vec<String> = crate::lock(&events)

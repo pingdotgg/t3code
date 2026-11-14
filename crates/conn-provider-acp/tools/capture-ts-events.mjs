@@ -7,6 +7,10 @@
 // ACP transcripts through T3's own fixture runner and adapter; no agent starts, no model is
 // called. It adds one temporary test to apps/server/src/orchestration-v2/testkit and deletes it.
 //
+// It also runs this crate's own scenarios, testdata/<flavor>-scenarios/<name>/ (written by
+// tools/make-scenarios.mjs), through the same runner and adapter, with no output assertions:
+// T3's adapter decides what the golden events are.
+//
 // Each golden file holds, for one fixture:
 // - `transcript`: the entries exactly as T3's harness handed them to its replay agent, after
 //   `materializeReplayTranscriptRuntimeInstructions` (the runtime notes T3 appends to prompts);
@@ -22,6 +26,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { monorepo } from "../../../tools/monorepo.mjs";
+import { readScenarios, scenarioTestSource } from "./scenarios.mjs";
 
 const HARNESSES = {
   grok: { name: "GrokOrchestratorReplayHarness", file: "GrokAdapterV2.testkit.ts", transcript: "grok_transcript.ndjson" },
@@ -42,11 +47,13 @@ if (harness === undefined) {
 }
 
 const MONOREPO = monorepo();
+
 const CRATE = NodePath.dirname(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)));
 
 const TEST_SOURCE = `
 import * as fs from "node:fs";
-import { describe } from "@effect/vitest";
+import * as NodeUrl from "node:url";
+import { describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -118,9 +125,7 @@ const tapped = (log: Array<unknown>, transcripts: Array<unknown>) => ({
   },
 });
 
-describe("conn acp capture", () => {
-  itRunsReplayFixtures("${flavor}", (input) => {
-    if (ONLY.length > 0 && !ONLY.includes(input.fixtureName)) return Effect.void;
+const capture = (input: any) => {
     const log: Array<unknown> = [];
     const transcripts: Array<unknown> = [];
     return runReplayFixture({ ...input, harness: tapped(log, transcripts) as any }).pipe(
@@ -139,13 +144,24 @@ describe("conn acp capture", () => {
       ),
       Effect.flatten,
     );
+};
+
+describe("conn acp capture", () => {
+  itRunsReplayFixtures("${flavor}", (input) => {
+    if (ONLY.length > 0 && !ONLY.includes(input.fixtureName)) return Effect.void;
+    return capture(input);
   });
+});
+describe("conn acp scenarios", () => {
+__SCENARIO_TESTS__
 });
 `;
 
 const server = NodePath.join(MONOREPO, "apps/server");
 const testkit = NodePath.join(server, "src/orchestration-v2/testkit");
-const testFile = NodePath.join(testkit, `ConnAcpCapture${flavor}.tmp.test.ts`);
+// The name carries this run's PID, so runs side by side on one checkout do not collide.
+const testFile = NodePath.join(testkit, `ConnAcpCapture${flavor}.${process.pid}.tmp.test.ts`);
+const scenarios = readScenarios(flavor, harness.transcript).filter((s) => only.length === 0 || only.includes(s.name));
 const out = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-acp-capture-"));
 const head = NodeChildProcess.execFileSync("git", ["-C", MONOREPO, "rev-parse", "--short", "HEAD"])
   .toString()
@@ -155,7 +171,9 @@ const capturedOn = new Date().toISOString().slice(0, 10);
 // Vitest workers do not inherit the environment, so the output folder goes into the source.
 NodeFS.writeFileSync(
   testFile,
-  TEST_SOURCE.replace("__OUT__", JSON.stringify(out)).replace("__ONLY__", JSON.stringify(only)),
+  TEST_SOURCE.replace("__OUT__", JSON.stringify(out))
+    .replace("__ONLY__", JSON.stringify(only))
+    .replace("__SCENARIO_TESTS__", scenarioTestSource(scenarios, "capture")),
 );
 let status = 0;
 try {
@@ -175,8 +193,11 @@ NodeFS.mkdirSync(target, { recursive: true });
 for (const file of NodeFS.readdirSync(out).toSorted()) {
   const name = file.replace(/\.json$/, "");
   const raw = JSON.parse(NodeFS.readFileSync(NodePath.join(out, file), "utf8"));
+  const source = scenarios.some((s) => s.name === name)
+    ? `this crate's testdata/${flavor}-scenarios/${name}/${harness.transcript} (hand-made, see tools/make-scenarios.mjs)`
+    : `fixtures/${name}/${harness.transcript}`;
   const golden = {
-    note: `ProviderAdapterV2 calls and events from T3's ${flavor} adapter replaying fixtures/${name}/${harness.transcript} through the orchestrator fixture runner at ${head}; driver dropped.`,
+    note: `ProviderAdapterV2 calls and events from T3's ${flavor} adapter replaying ${source} through the orchestrator fixture runner at ${head}; driver dropped.`,
     capturedOn,
     outcome: raw.outcome,
     transcripts: raw.transcripts.map((t) => t.entries),

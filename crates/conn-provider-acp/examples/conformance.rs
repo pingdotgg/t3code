@@ -126,6 +126,15 @@ async fn run(provider: &AcpProvider, calls: Vec<Value>) -> Result<(), String> {
                 .start_turn(turn_input(input))
                 .await
                 .map_err(|e| format!("startTurn: {e}"))?,
+            // T3's `compactThread` starts the turn with the text `/compact`.
+            "compactThread" => {
+                let mut input = input.clone();
+                input["message"]["text"] = Value::from("/compact");
+                session
+                    .start_turn(turn_input(&input))
+                    .await
+                    .map_err(|e| format!("compactThread: {e}"))?;
+            }
             "respondToRuntimeRequest" => {
                 let id = pending.get(answered).cloned().ok_or("no pending request")?;
                 answered += 1;

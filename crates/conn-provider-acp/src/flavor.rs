@@ -71,6 +71,9 @@ pub struct Flavor {
     pub(crate) normalize_tool: Option<fn(crate::tools::ToolState) -> crate::tools::ToolState>,
     /// `capabilities` (`OrchestrationV2ProviderCapabilities`) for the session row.
     pub(crate) capabilities: fn() -> Value,
+    /// `supportsCompaction`: `/compact` goes to the agent as a prompt, and its success (or
+    /// the agent's own `compaction_update`) makes the next prompt resend T3's notes.
+    pub(crate) supports_compaction: bool,
 }
 
 impl std::fmt::Debug for Flavor {
@@ -285,6 +288,7 @@ pub static GROK: Flavor = Flavor {
     normalize_tool: Some(crate::grok::normalize_tool),
     select_model: |setup, _initialize, model| crate::grok::model_switch(setup, model),
     capabilities: grok_capabilities,
+    supports_compaction: true,
 };
 
 /// `grokLaunchRuntimeMode`.
