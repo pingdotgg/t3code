@@ -43,7 +43,7 @@ interface ThreadServersPanelProps {
   readonly threadId: ThreadId;
 }
 
-/** Keeps discovery live while a thread is shown, so its details open with the current servers. */
+/** Keeps discovery live so the thread's details open with its current servers. */
 export function ThreadServersDiscovery(props: { readonly environmentId: EnvironmentId }) {
   useDiscoveredPortsState(props.environmentId);
   return null;
