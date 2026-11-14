@@ -27,12 +27,13 @@ import {
   type ProviderDiffSlice,
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
-import type {
-  AzureDevOpsChangeEntry,
-  AzureDevOpsItemContent,
-  AzureDevOpsIteration,
-  AzureDevOpsPullRequest,
-  AzureDevOpsRepositoryLocation,
+import {
+  latestAzureDevOpsTime,
+  type AzureDevOpsChangeEntry,
+  type AzureDevOpsItemContent,
+  type AzureDevOpsIteration,
+  type AzureDevOpsPullRequest,
+  type AzureDevOpsRepositoryLocation,
 } from "./azureDevOpsPullRequestJson.ts";
 import { definition } from "../shared/definition.ts";
 
@@ -227,6 +228,23 @@ export const make = Effect.gen(function* () {
       isDraft: pullRequest.isDraft,
     });
 
+  /**
+   * Azure's own rows date an open pull request by its creation, so a read of one pull request is
+   * dated by its newest thread instead. A failed read keeps the row's own date.
+   */
+  const withActivity = (input: { readonly cwd: string }, pullRequest: AzureDevOpsPullRequest) => {
+    const location = pullRequest.location;
+    if (pullRequest.state !== "open" || location === null) return Effect.succeed(pullRequest);
+    return cli.readActivityAt({ cwd: input.cwd, location, number: pullRequest.number }).pipe(
+      Effect.map((activityAt) => ({
+        ...pullRequest,
+        updatedAt:
+          latestAzureDevOpsTime([pullRequest.updatedAt, activityAt]) ?? pullRequest.updatedAt,
+      })),
+      Effect.orElseSucceed(() => pullRequest),
+    );
+  };
+
   /** A later slice names its iteration, which the list it was cut from already holds. */
   const diffScope = Effect.fn("AzureDevOpsPullRequestProvider.diffScope")(function* (input: {
     readonly cwd: string;
@@ -388,7 +406,9 @@ export const make = Effect.gen(function* () {
 
     getChangeRequestSummary: Effect.fn("AzureDevOpsPullRequestProvider.getChangeRequestSummary")(
       function* (input) {
-        const pullRequest = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
+        const pullRequest = yield* cli
+          .getPullRequest({ cwd: input.cwd, number: input.number })
+          .pipe(Effect.flatMap((read) => withActivity(input, read)));
         // Undefined keeps the last known state; null would claim no checks exist.
         const checksState = yield* readChecks(input, pullRequest).pipe(
           Effect.map((checks) => rollupCheckStatuses(checks.map((check) => check.status))),
@@ -404,7 +424,9 @@ export const make = Effect.gen(function* () {
 
     getChangeRequest: Effect.fn("AzureDevOpsPullRequestProvider.getChangeRequest")(
       function* (input) {
-        const pullRequest = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
+        const pullRequest = yield* cli
+          .getPullRequest({ cwd: input.cwd, number: input.number })
+          .pipe(Effect.flatMap((read) => withActivity(input, read)));
         const location = pullRequest.location;
         const iterations =
           location === null
@@ -672,15 +694,19 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(fail("runAction")),
-          Effect.map(
-            (pullRequest) =>
-              pullRequest && {
-                ...toSummary(pullRequest),
-                autoMergeEnabled: pullRequest.autoMergeEnabled,
-                ...(pullRequest.autoMergeMethod === undefined
-                  ? {}
-                  : { autoMergeMethod: pullRequest.autoMergeMethod }),
-              },
+          // Clients drop a reply dated before the summary they show, so it is dated the same way.
+          Effect.flatMap((reply) =>
+            reply
+              ? withActivity(input, reply).pipe(
+                  Effect.map((pullRequest) => ({
+                    ...toSummary(pullRequest),
+                    autoMergeEnabled: pullRequest.autoMergeEnabled,
+                    ...(pullRequest.autoMergeMethod === undefined
+                      ? {}
+                      : { autoMergeMethod: pullRequest.autoMergeMethod }),
+                  })),
+                )
+              : Effect.void,
           ),
         ),
 

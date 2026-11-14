@@ -3,7 +3,9 @@ import {
   normalizeRefName,
 } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
@@ -75,6 +77,8 @@ const RawPullRequestSchema = Schema.Struct({
 const RawThreadSchema = Schema.Struct({
   id: Schema.Int,
   isDeleted: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  publishedDate: Schema.optional(Schema.NullOr(Schema.String)),
+  lastUpdatedDate: Schema.optional(Schema.NullOr(Schema.String)),
   threadContext: Schema.optional(
     Schema.NullOr(Schema.Struct({ filePath: Schema.optional(Schema.NullOr(Schema.String)) })),
   ),
@@ -86,6 +90,7 @@ const RawThreadSchema = Schema.Struct({
           content: Schema.optional(Schema.NullOr(Schema.String)),
           author: Schema.optional(Schema.NullOr(RawIdentitySchema)),
           publishedDate: Schema.optional(Schema.NullOr(Schema.String)),
+          lastUpdatedDate: Schema.optional(Schema.NullOr(Schema.String)),
           isDeleted: Schema.optional(Schema.NullOr(Schema.Boolean)),
           commentType: Schema.optional(Schema.NullOr(Schema.String)),
         }),
@@ -454,6 +459,38 @@ export function decodePolicyChecksJson(
     }),
     rawCount: decoded.success.length,
   });
+}
+
+/** The newest of Azure's timestamps, which mix offsets and precisions; unreadable ones are skipped. */
+export function latestAzureDevOpsTime(values: Iterable<string | null | undefined>): string | null {
+  let latest: DateTime.Utc | null = null;
+  for (const value of values) {
+    const at = DateTime.make(value?.trim() ?? "");
+    if (Option.isSome(at) && (latest === null || DateTime.isGreaterThan(at.value, latest))) {
+      latest = at.value;
+    }
+  }
+  return latest === null ? null : DateTime.formatIso(latest);
+}
+
+/**
+ * When the pull request's conversation last moved. Azure keeps no last-updated time on a pull
+ * request, but it adds a system thread for each push, vote and state change, so every thread counts.
+ */
+export function decodeThreadActivityJson(raw: string): Result.Result<string | null, DecodeFailure> {
+  const decoded = decodeThreadPage(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const times: Array<string | null | undefined> = [];
+  for (const entry of decoded.success.value) {
+    const decodedThread = decodeThreadEntry(entry);
+    if (Exit.isFailure(decodedThread)) continue;
+    const thread = decodedThread.value;
+    times.push(thread.publishedDate, thread.lastUpdatedDate);
+    for (const comment of thread.comments ?? []) {
+      times.push(comment.publishedDate, comment.lastUpdatedDate);
+    }
+  }
+  return Result.succeed(latestAzureDevOpsTime(times));
 }
 
 const RawIterationSchema = Schema.Struct({
