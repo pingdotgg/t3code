@@ -221,10 +221,11 @@ export function parseElicitationForm(
   for (const { id, property, options } of parsedFields) {
     if (folded.has(id)) continue;
     const kind = fields.get(id)?.kind;
+    const header = text(property.title) ?? `Question ${questions.length + 1}`;
     questions.push({
       id,
-      header: text(property.title) ?? `Question ${questions.length + 1}`,
-      question: text(property.description) ?? message,
+      header,
+      question: text(property.description) ?? text(message) ?? header,
       options,
       ...(kind === "text" || kind === "number" || companions.has(id)
         ? {}

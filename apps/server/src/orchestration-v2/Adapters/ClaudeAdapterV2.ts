@@ -36,6 +36,7 @@ import {
   type ClaudeModelLedger,
 } from "../../provider/ClaudeTurnTokenUsage.ts";
 import { toMcpElicitationResponse } from "../../provider/CodexMcpElicitation.ts";
+import { parseElicitationForm } from "@t3tools/provider-acp/server/elicitationForm";
 import {
   type CanUseTool,
   type ElicitationRequest,
@@ -8519,6 +8520,53 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
         });
 
+        // Resolves `{}` when the signal aborts first; the card is then withdrawn.
+        const awaitUserInputRequest = Effect.fnUntraced(function* (
+          artifacts: Effect.Success<ReturnType<typeof buildApprovalRequestArtifacts>>,
+          signal: AbortSignal,
+        ) {
+          const answers = yield* Deferred.make<ProviderUserInputAnswers, never>();
+          yield* Ref.update(pendingRuntimeRequests, (current) => {
+            const updated = new Map(current);
+            updated.set(String(artifacts.request.id), {
+              type: "user_input",
+              answers,
+            });
+            return updated;
+          });
+          yield* Effect.all(
+            [
+              emitProviderEvent({
+                type: "node.updated",
+                driver: CLAUDE_PROVIDER,
+                node: artifacts.node,
+              }),
+              emitProviderEvent({
+                type: "runtime_request.updated",
+                driver: CLAUDE_PROVIDER,
+                runtimeRequest: artifacts.request,
+              }),
+              emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: artifacts.turnItem,
+              }),
+            ],
+            { concurrency: 1 },
+          );
+          const resolvedAnswers = yield* awaitClaudeUserInputAnswers(answers, signal).pipe(
+            Effect.ensuring(
+              Ref.update(pendingRuntimeRequests, (current) => {
+                const updated = new Map(current);
+                updated.delete(String(artifacts.request.id));
+                return updated;
+              }),
+            ),
+          );
+          if (!(yield* Deferred.isDone(answers))) yield* cancelWithdrawnRequest(artifacts);
+          return resolvedAnswers;
+        });
+
         const ensureReasoningBlock = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
           itemId: string,
@@ -11655,48 +11703,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               requestKind: "user_input",
               questions,
             });
-            const answers = yield* Deferred.make<ProviderUserInputAnswers, never>();
-            yield* Ref.update(pendingRuntimeRequests, (current) => {
-              const updated = new Map(current);
-              updated.set(String(artifacts.request.id), {
-                type: "user_input",
-                answers,
-              });
-              return updated;
-            });
-            yield* Effect.all(
-              [
-                emitProviderEvent({
-                  type: "node.updated",
-                  driver: CLAUDE_PROVIDER,
-                  node: artifacts.node,
-                }),
-                emitProviderEvent({
-                  type: "runtime_request.updated",
-                  driver: CLAUDE_PROVIDER,
-                  runtimeRequest: artifacts.request,
-                }),
-                emitProviderEvent({
-                  type: "turn_item.updated",
-                  driver: CLAUDE_PROVIDER,
-                  turnItem: artifacts.turnItem,
-                }),
-              ],
-              { concurrency: 1 },
-            );
-            const resolvedAnswers = yield* awaitClaudeUserInputAnswers(
-              answers,
-              callbackOptions.signal,
-            ).pipe(
-              Effect.ensuring(
-                Ref.update(pendingRuntimeRequests, (current) => {
-                  const updated = new Map(current);
-                  updated.delete(String(artifacts.request.id));
-                  return updated;
-                }),
-              ),
-            );
-            if (!(yield* Deferred.isDone(answers))) yield* cancelWithdrawnRequest(artifacts);
+            const resolvedAnswers = yield* awaitUserInputRequest(artifacts, callbackOptions.signal);
             return callbackOptions.signal.aborted
               ? ({
                   behavior: "deny",
@@ -11862,6 +11869,37 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return { action: "cancel" } satisfies ElicitationResult;
           const acceptance = claudeMcpElicitationAcceptance(request);
           const context = yield* Ref.get(activeTurn);
+          const form =
+            acceptance === undefined && request.mode !== "url"
+              ? parseElicitationForm(request.requestedSchema, request.message)
+              : undefined;
+          if (context !== null && form !== undefined && form.questions.length > 0) {
+            if (context.heldRootFrames.length > 0) {
+              yield* releaseHeldRootFrames(context);
+            }
+            const nativeRequestId = `mcp-elicitation-form:${callbackOptions.requestId}`;
+            const serverLabel = request.displayName ?? request.title ?? request.serverName;
+            const artifacts = yield* buildApprovalRequestArtifacts({
+              context,
+              nativeItemId: nativeRequestId,
+              nativeRequestId,
+              // No tool node exists for an elicitation control request to hang under.
+              parentNodeId: context.input.rootNodeId,
+              requestKind: "user_input",
+              questions: form.questions.map((question) => ({
+                ...question,
+                header: `${serverLabel}: ${question.header}`,
+              })),
+            });
+            const answers = yield* awaitUserInputRequest(artifacts, callbackOptions.signal);
+            const content = callbackOptions.signal.aborted ? undefined : form.content(answers);
+            if (content === undefined) return { action: "cancel" } satisfies ElicitationResult;
+            return {
+              action: "accept",
+              // Only readonly in type: the parser builds fresh arrays for each answer.
+              content: content as ClaudeMcpElicitationContent,
+            } satisfies ElicitationResult;
+          }
           if (acceptance === undefined || context === null) {
             yield* Effect.logWarning(
               "Declined an MCP elicitation the approval card cannot answer.",

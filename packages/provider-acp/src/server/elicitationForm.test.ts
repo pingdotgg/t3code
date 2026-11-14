@@ -97,4 +97,22 @@ describe("parseElicitationForm", () => {
       q0__other: "SQLite",
     });
   });
+
+  it("falls back to the header when the message is blank", () => {
+    const form = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          code: { type: "string", title: "Code" },
+          count: { type: "number", minimum: 1 },
+        },
+      },
+      "  ",
+    );
+    assert(form !== undefined);
+    assert.deepStrictEqual(
+      form.questions.map((question) => question.question),
+      ["Code", "Question 2"],
+    );
+  });
 });
