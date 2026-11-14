@@ -26,6 +26,16 @@ pub struct Compiled {
     pub settings: Map<String, Value>,
 }
 
+/// The models the T3 server offers clients (`ServerProvider.models`): every model of its
+/// bundled catalog, with names, aliases, the legacy flag and option descriptors.
+pub fn provider_models() -> Vec<Value> {
+    let catalog: Value = serde_json::from_str(CATALOG).unwrap_or(Value::Null);
+    match catalog.get("providerModels") {
+        Some(Value::Array(models)) => models.clone(),
+        _ => Vec::new(),
+    }
+}
+
 /// Compiles a contract `ModelSelection` (as JSON).
 pub fn compile(selection: &Value) -> Compiled {
     let model = selection["model"].as_str().unwrap_or("default").trim();
