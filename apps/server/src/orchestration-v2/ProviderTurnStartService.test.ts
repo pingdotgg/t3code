@@ -1552,6 +1552,50 @@ effectIt.effect.each([
   }),
 );
 
+effectIt.effect("leaves delegated children to their own runs when the parent starts a turn", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      previousTurn: { runStatus: "completed", turnStatus: "completed" },
+    });
+    const projection = harness.projection();
+    const completedChild = (origin: "provider_native" | "app_owned") => ({
+      id: NodeId.make(`node:${origin}`),
+      threadId: projection.thread.id,
+      runId: projection.runs[0]!.id,
+      parentNodeId: NodeId.make(`node:${origin}:parent`),
+      origin,
+      createdBy: "agent" as const,
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerThreadId: ProviderThreadId.make(`provider-thread:${origin}`),
+      childThreadId: ThreadId.make(`thread:${origin}`),
+      nativeTaskRef: null,
+      prompt: "work",
+      title: null,
+      model: null,
+      status: "completed" as const,
+      result: "done",
+      startedAt: null,
+      completedAt: null,
+      updatedAt: projection.updatedAt,
+    });
+    harness.setProjection({
+      ...projection,
+      subagents: [completedChild("provider_native"), completedChild("app_owned")],
+    });
+
+    yield* harness.start;
+
+    // A delegated child thread has its own run on the shared session; a parent run that also
+    // owns it ingests every one of the child's later items a second time.
+    expect(harness.startRootRun.mock.calls[0]?.[0]).toMatchObject({
+      relatedThreadIds: [ThreadId.make("thread:provider_native")],
+      relatedProviderThreadIds: [ProviderThreadId.make("provider-thread:provider_native")],
+    });
+  }),
+);
+
 effectIt.effect("does not start another turn when abandoned-turn cleanup fails", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
