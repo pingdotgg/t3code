@@ -1101,6 +1101,382 @@ describe("pullCurrentBranch", () => {
     };
   });
 
+  it.effect("pulls while its background fetch is queued behind other repositories", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { cwd, remoteHead } = yield* cloneBehindRemote;
+        const blockers: string[] = [];
+        for (let index = 0; index < 4; index++) {
+          const blocker = yield* cloneBehindRemote;
+          blockers.push(NodeFS.realpathSync.native(blocker.cwd));
+        }
+        const targetPath = NodeFS.realpathSync.native(cwd);
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const release = yield* Deferred.make<void>();
+        const blockersStarted = yield* Deferred.make<void>();
+        const targetEntered = yield* Deferred.make<void>();
+        let running = 0;
+        let targetFetchStarted = false;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            const handle = yield* delegate.spawn(command);
+            if (!ChildProcess.isStandardCommand(command) || !command.args.includes("fetch"))
+              return handle;
+            const commandCwd = String(command.options.cwd);
+            if (commandCwd === targetPath) targetFetchStarted = true;
+            if (blockers.includes(commandCwd)) {
+              running++;
+              if (running === 4) yield* Deferred.succeed(blockersStarted, undefined);
+              yield* Deferred.await(release);
+            }
+            return handle;
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const tracer = Tracer.make({
+          span(options) {
+            const span = new Tracer.NativeSpan(options);
+            if (options.name === "GitVcsDriver.fetchRemoteForStatus.wait") {
+              const attribute = span.attribute.bind(span);
+              span.attribute = (key, value) => {
+                attribute(key, value);
+                if (key === "statusFetch.joining") Deferred.doneUnsafe(targetEntered, Effect.void);
+              };
+            }
+            return span;
+          },
+        });
+        yield* Effect.gen(function* () {
+          const blockerStatuses = [];
+          for (const blocker of blockers) {
+            blockerStatuses.push(yield* driver.statusDetailsRemote(blocker).pipe(Effect.forkChild));
+          }
+          yield* Deferred.await(blockersStarted);
+          const targetStatus = yield* driver
+            .statusDetailsRemote(cwd)
+            .pipe(Effect.withTracer(tracer), Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(targetEntered);
+          const result = yield* driver.pullCurrentBranch(cwd);
+          assert.equal(result.status, "pulled");
+          assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), remoteHead);
+          yield* Deferred.succeed(release, undefined);
+          yield* Effect.forEach(blockerStatuses, Fiber.join, { concurrency: "unbounded" });
+          yield* Fiber.join(targetStatus);
+          assert.isFalse(targetFetchStarted);
+        }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+      }),
+    ).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("resolves a status waiter when Pull claims its queued fetch", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { cwd, remoteHead } = yield* cloneBehindRemote;
+        const blockers: string[] = [];
+        for (let index = 0; index < 4; index++) {
+          const blocker = yield* cloneBehindRemote;
+          blockers.push(NodeFS.realpathSync.native(blocker.cwd));
+        }
+        const targetPath = NodeFS.realpathSync.native(cwd);
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const release = yield* Deferred.make<void>();
+        const blockersStarted = yield* Deferred.make<void>();
+        const targetEntered = yield* Deferred.make<void>();
+        let running = 0;
+        let targetFetches = 0;
+        let waiterSucceeded = false;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            const handle = yield* delegate.spawn(command);
+            if (!ChildProcess.isStandardCommand(command) || !command.args.includes("fetch"))
+              return handle;
+            const commandCwd = String(command.options.cwd);
+            if (commandCwd === targetPath) targetFetches++;
+            if (blockers.includes(commandCwd)) {
+              running++;
+              if (running === 4) yield* Deferred.succeed(blockersStarted, undefined);
+              yield* Deferred.await(release);
+            }
+            return handle;
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const tracer = Tracer.make({
+          span(options) {
+            const span = new Tracer.NativeSpan(options);
+            if (options.name === "GitVcsDriver.fetchRemoteForStatus.wait") {
+              const attribute = span.attribute.bind(span);
+              span.attribute = (key, value) => {
+                attribute(key, value);
+                if (key === "statusFetch.joining") Deferred.doneUnsafe(targetEntered, Effect.void);
+              };
+              const end = span.end.bind(span);
+              span.end = (endTime, exit) => {
+                waiterSucceeded = Exit.isSuccess(exit);
+                end(endTime, exit);
+              };
+            }
+            return span;
+          },
+        });
+        yield* Effect.gen(function* () {
+          for (const blocker of blockers) {
+            yield* driver.statusDetailsRemote(blocker).pipe(Effect.forkChild);
+          }
+          yield* Deferred.await(blockersStarted);
+          const status = yield* driver
+            .statusDetailsRemote(cwd)
+            .pipe(Effect.withTracer(tracer), Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(targetEntered);
+          const pull = yield* driver.pullCurrentBranch(cwd);
+          const refreshed = yield* Fiber.join(status);
+          assert.equal(pull.status, "pulled");
+          assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), remoteHead);
+          assert.isTrue(waiterSucceeded);
+          assert.equal(refreshed.behindCount, 0);
+          assert.equal(targetFetches, 0);
+        }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+      }),
+    ).pipe(Effect.provide(layerTest)),
+  );
+
+  const claimedFetchFallbacks = [
+    "diverged",
+    "interrupted",
+    "spawn-failure",
+    "fetch-failure",
+    "upstream-only",
+  ] as const;
+
+  it.effect.each(claimedFetchFallbacks)(
+    "falls back to the claimed status fetch when Pull is %s",
+    (failure) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { cwd, updater, remoteHead } = yield* cloneBehindRemote;
+          if (failure === "upstream-only") {
+            yield* git(updater, ["push", "origin", "HEAD:refs/heads/other"]);
+            yield* writeTextFile(cwd, ".git/refs/remotes/origin/other.lock", "");
+          }
+          if (failure === "diverged") {
+            yield* writeTextFile(cwd, "local.txt", "local\n");
+            yield* git(cwd, ["add", "local.txt"]);
+            yield* git(cwd, ["commit", "-m", "local commit"]);
+          }
+          const blockers: string[] = [];
+          for (let index = 0; index < 4; index++) {
+            const blocker = yield* cloneBehindRemote;
+            blockers.push(NodeFS.realpathSync.native(blocker.cwd));
+          }
+          const targetPath = NodeFS.realpathSync.native(cwd);
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const release = yield* Deferred.make<void>();
+          const blockersStarted = yield* Deferred.make<void>();
+          const targetEntered = yield* Deferred.make<void>();
+          const targetFetchStarted = yield* Deferred.make<void>();
+          const pullBeforeFetch = yield* Deferred.make<void>();
+          const releasePull = yield* Deferred.make<void>();
+          let running = 0;
+          let targetFetches = 0;
+          let waiterSucceeded = false;
+          let targetFetchExitCode: number | undefined;
+          const spawner = ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              if (ChildProcess.isStandardCommand(command)) {
+                const commandCwd = NodeFS.realpathSync.native(String(command.options.cwd));
+                if (
+                  commandCwd === targetPath &&
+                  command.args.includes("pull") &&
+                  (failure === "spawn-failure" || failure === "fetch-failure")
+                ) {
+                  return yield* PlatformError.systemError({
+                    _tag: "NotFound",
+                    module: "ChildProcess",
+                    method: "spawn",
+                  });
+                }
+                if (
+                  commandCwd === targetPath &&
+                  failure === "interrupted" &&
+                  command.args[0] === "rev-parse" &&
+                  command.args[1] === "HEAD" &&
+                  command.args.length === 2
+                ) {
+                  yield* Deferred.succeed(pullBeforeFetch, undefined);
+                  yield* Deferred.await(releasePull);
+                }
+              }
+              const handle = yield* delegate.spawn(command);
+              if (!ChildProcess.isStandardCommand(command) || !command.args.includes("fetch"))
+                return handle;
+              const commandCwd = String(command.options.cwd);
+              if (commandCwd === targetPath) {
+                targetFetches++;
+                yield* Deferred.succeed(targetFetchStarted, undefined);
+                return ChildProcessSpawner.makeHandle({
+                  ...handle,
+                  exitCode: handle.exitCode.pipe(
+                    Effect.tap((exitCode) =>
+                      Effect.sync(() => {
+                        targetFetchExitCode = exitCode;
+                      }),
+                    ),
+                  ),
+                });
+              }
+              if (blockers.includes(commandCwd)) {
+                running++;
+                if (running === 4) yield* Deferred.succeed(blockersStarted, undefined);
+                yield* Deferred.await(release);
+              }
+              return handle;
+            }),
+          );
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          const tracer = Tracer.make({
+            span(options) {
+              const span = new Tracer.NativeSpan(options);
+              if (options.name === "GitVcsDriver.fetchRemoteForStatus.wait") {
+                const attribute = span.attribute.bind(span);
+                span.attribute = (key, value) => {
+                  attribute(key, value);
+                  if (key === "statusFetch.joining")
+                    Deferred.doneUnsafe(targetEntered, Effect.void);
+                };
+                const end = span.end.bind(span);
+                span.end = (endTime, exit) => {
+                  waiterSucceeded = Exit.isSuccess(exit);
+                  end(endTime, exit);
+                };
+              }
+              return span;
+            },
+          });
+          yield* Effect.gen(function* () {
+            for (const blocker of blockers) {
+              yield* driver.statusDetailsRemote(blocker).pipe(Effect.forkChild);
+            }
+            yield* Deferred.await(blockersStarted);
+            const status = yield* driver
+              .statusDetailsRemote(cwd)
+              .pipe(Effect.withTracer(tracer), Effect.forkChild({ startImmediately: true }));
+            yield* Deferred.await(targetEntered);
+            if (failure === "interrupted") {
+              const pull = yield* driver.pullCurrentBranch(cwd).pipe(Effect.forkChild);
+              yield* Deferred.await(pullBeforeFetch);
+              yield* Fiber.interrupt(pull);
+              const exit = yield* Fiber.await(pull);
+              assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+            } else if (failure === "upstream-only") {
+              assert.equal((yield* driver.pullCurrentBranch(cwd)).status, "pulled");
+              yield* (yield* FileSystem.FileSystem).remove(
+                `${cwd}/.git/refs/remotes/origin/other.lock`,
+              );
+            } else {
+              const error = yield* Effect.flip(driver.pullCurrentBranch(cwd));
+              assert.equal(error.operation, "GitVcsDriver.pullCurrentBranch.pull");
+              if (failure === "diverged") {
+                assert.equal(error.detail, "git pull failed");
+                assert.notEqual(error.exitCode, 0);
+              }
+            }
+            assert.equal(targetFetches, 0);
+            if (failure === "fetch-failure") {
+              yield* git(cwd, ["remote", "set-url", "origin", `${cwd}/missing.git`]);
+            }
+            yield* Deferred.succeed(release, undefined);
+            yield* Deferred.await(targetFetchStarted);
+            assert.isTrue((yield* Fiber.join(status)).isRepo);
+            assert.equal(waiterSucceeded, failure !== "fetch-failure");
+            assert.equal(targetFetches, 1);
+            assert.isDefined(targetFetchExitCode);
+            if (failure === "fetch-failure") assert.notEqual(targetFetchExitCode, 0);
+            else assert.equal(targetFetchExitCode, 0);
+            if (failure === "upstream-only") {
+              assert.equal(yield* git(cwd, ["rev-parse", "refs/remotes/origin/other"]), remoteHead);
+            }
+          }).pipe(
+            Effect.ensuring(
+              Effect.all([
+                Deferred.succeed(release, undefined),
+                Deferred.succeed(releasePull, undefined),
+              ]),
+            ),
+          );
+        }),
+      ).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("waits for a running status fetch before starting Pull", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { cwd, remoteHead } = yield* cloneBehindRemote;
+        const targetPath = NodeFS.realpathSync.native(cwd);
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fetchStarted = yield* Deferred.make<void>();
+        const releaseFetch = yield* Deferred.make<void>();
+        const pullResolvedCommonDir = yield* Deferred.make<void>();
+        const pullStarted = yield* Deferred.make<void>();
+        const events: string[] = [];
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (!ChildProcess.isStandardCommand(command)) return yield* delegate.spawn(command);
+            const target = NodeFS.realpathSync.native(String(command.options.cwd)) === targetPath;
+            if (target && command.args.includes("pull")) {
+              events.push("pull-spawn");
+              yield* Deferred.succeed(pullStarted, undefined);
+            }
+            const handle = yield* delegate.spawn(command);
+            if (target && command.args.includes("fetch")) {
+              yield* Deferred.succeed(fetchStarted, undefined);
+              yield* Deferred.await(releaseFetch);
+              yield* handle.exitCode;
+              events.push("fetch-exit");
+            }
+            return handle;
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const tracer = Tracer.make({
+          span(options) {
+            const span = new Tracer.NativeSpan(options);
+            if (options.name === "resolveGitCommonDir") {
+              const end = span.end.bind(span);
+              span.end = (endTime, exit) => {
+                end(endTime, exit);
+                Deferred.doneUnsafe(pullResolvedCommonDir, Effect.void);
+              };
+            }
+            return span;
+          },
+        });
+        yield* Effect.gen(function* () {
+          yield* driver.statusDetailsRemote(cwd).pipe(Effect.forkChild);
+          yield* Deferred.await(fetchStarted);
+          const pull = yield* driver
+            .pullCurrentBranch(cwd)
+            .pipe(Effect.withTracer(tracer), Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(pullResolvedCommonDir);
+          assert.isFalse(yield* Deferred.isDone(pullStarted));
+          assert.isUndefined(pull.pollUnsafe());
+          yield* Deferred.succeed(releaseFetch, undefined);
+          const result = yield* Fiber.join(pull);
+          assert.equal(result.status, "pulled");
+          assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), remoteHead);
+          assert.deepEqual(events, ["fetch-exit", "pull-spawn"]);
+        }).pipe(Effect.ensuring(Deferred.succeed(releaseFetch, undefined)));
+      }),
+    ).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("still fetches other branches on the first pull", () =>
     Effect.gen(function* () {
       const driver = yield* GitVcsDriver.GitVcsDriver;
