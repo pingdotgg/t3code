@@ -58,7 +58,7 @@ import {
   collapseExpandedComposerCursor,
   parseFolderMoveCommand,
 } from "../../composer-logic";
-import { askThreadMove } from "./threadMoveDialogStore";
+import { requestConfirmDialog } from "../../confirmDialog";
 import { threadMoveToastDescription } from "./threadMoveToast";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { type ChatMessage, DEFAULT_INTERACTION_MODE } from "../../types";
@@ -109,7 +109,7 @@ import {
   multipleModelSendBlock,
   referencedThreadContexts,
   runThreadMove,
-  threadMoveDialogCopy,
+  threadMoveConfirmMessage,
 } from "./composerSend.logic";
 import { useMultipleModelSend } from "./useMultipleModelSend";
 import { type ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -603,11 +603,14 @@ export function useComposerSend(input: ComposerSendInput) {
         },
         (question) => {
           closeMoveToast();
-          return askThreadMove(
-            threadMoveDialogCopy(
-              question,
-              activeThread.worktreePath ?? activeProject?.workspaceRoot ?? null,
-            ),
+          // No mounted dialog host counts as a no.
+          return (
+            requestConfirmDialog(
+              threadMoveConfirmMessage(
+                question,
+                activeThread.worktreePath ?? activeProject?.workspaceRoot ?? null,
+              ),
+            ) ?? Promise.resolve(false)
           );
         },
       )

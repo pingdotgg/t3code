@@ -20,7 +20,7 @@ import {
   folderMoveMenuBlockReason,
   slashMenuRowText,
   splitInlineCode,
-  threadMoveDialogCopy,
+  threadMoveConfirmMessage,
 } from "./composerSend.logic";
 
 const local = EnvironmentId.make("local");
@@ -240,34 +240,39 @@ it("runThreadMove asks each question once, keeps every flag, and stops at a decl
   expect(await runThreadMove(request, async () => refused, ask)).toBe(refused);
 });
 
-it("threadMoveDialogCopy names nesting, both folders once, the way back and threads", () => {
+// The confirm dialog takes its title from the first line, so the question leads each message.
+it("threadMoveConfirmMessage names nesting, both folders once, the way back and threads", () => {
   const nested = { ...needsProject, nestedIn: { projectId: ProjectId.make("p"), title: "App" } };
-  expect(threadMoveDialogCopy(nested, "/repo")).toEqual({
-    title: "Create a project and move this thread?",
-    from: "/repo",
-    to: "/repo/app",
-    lines: ["The new project is nested in project App."],
-    confirmLabel: "Create project and move",
-  });
+  expect(threadMoveConfirmMessage(nested, "/repo")).toBe(
+    [
+      "Create a project and move this thread?",
+      "From: /repo",
+      "To: /repo/app",
+      "",
+      "The new project is nested in project App.",
+    ].join("\n"),
+  );
   const leaving = {
     ...confirm,
     staysOnDisk: "The folder /worktrees/w stays on disk with all its files until you remove it.",
   };
-  expect(threadMoveDialogCopy({ ...leaving, to: null, wayBack: "none" }, null)).toEqual({
-    title: "Leave this scratch folder?",
-    from: "/worktrees/w",
-    to: null,
-    lines: [
+  expect(threadMoveConfirmMessage({ ...leaving, to: null, wayBack: "none" }, null)).toBe(
+    [
+      "Leave this scratch folder?",
+      "From: /worktrees/w",
+      "To: A new scratch folder",
+      "",
       "The folder stays on disk with all its files until you remove it.",
       'No command brings the thread back here. To keep a way back, cancel and choose "Turn into project" first.',
       "Still working there: Fork.",
-    ],
-    confirmLabel: "Move thread",
-  });
-  const worktree = threadMoveDialogCopy(leaving, null);
-  expect(worktree.title).toBe("Leave this worktree?");
-  expect(worktree.lines.join("\n")).not.toContain("/worktrees/w");
-  expect(worktree.lines).toContain(
+    ].join("\n"),
+  );
+  const [title, from, ...rest] = threadMoveConfirmMessage(leaving, null).split("\n");
+  expect([title, from]).toEqual(["Leave this worktree?", "From: /worktrees/w"]);
+  expect(rest.join("\n")).not.toContain("/worktrees/w");
+  expect(rest).toContain(
     "Add the From folder as a project first, and /cd to it brings the thread back.",
   );
+  // Without a known current folder, the message has no From line.
+  expect(threadMoveConfirmMessage(needsProject, null).split("\n")[1]).toBe("To: /repo/app");
 });
