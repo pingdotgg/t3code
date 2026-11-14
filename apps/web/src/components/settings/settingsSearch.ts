@@ -484,7 +484,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Tool calls in chat",
     to: "/settings/chat",
     searchTerms: [
-      "hide tool calls commands edits searches work log activity quiet chat zen final answers only",
+      "hide tool calls commands edits searches work log activity quiet chat zen final answers only messages thinking reasoning thoughts tasks subagents",
     ],
   },
   {

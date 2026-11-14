@@ -1470,7 +1470,7 @@ describe("buildThreadFeed", () => {
     const running = { runId, status: "running" as const, startedAt: at(1), completedAt: null };
     const rows = (
       items: ReadonlyArray<OrchestrationV2TurnItem>,
-      toolCallVisibility: "hideSuccessful" | "hideAll" | "zen",
+      toolCallVisibility: "hideSuccessful" | "hideAll" | "messagesOnly" | "zen",
       latestRun: ThreadFeedLatestRun | null = null,
     ) =>
       deriveThreadFeedPresentation(
@@ -1553,6 +1553,25 @@ describe("buildThreadFeed", () => {
       "user",
       "final",
       "wake",
+      "thinking:",
+    ]);
+
+    const thought = {
+      ...base("thought", at(3), 9),
+      type: "reasoning" as const,
+      text: "Checking the captures",
+      streaming: false,
+    };
+    expect(rows([user, step, thought, passed, failed, final], "messagesOnly")).toEqual([
+      "user",
+      "fold",
+      "step",
+      "final",
+    ]);
+    expect(rows([user, thought, passed, final], "messagesOnly")).toEqual(["user", "final"]);
+    expect(rows([user, step, thought, passed], "messagesOnly", running)).toEqual([
+      "user",
+      "step",
       "thinking:",
     ]);
   });

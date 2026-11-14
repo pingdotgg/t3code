@@ -1399,7 +1399,7 @@ function settleSupersededReasoning(entries: ReadonlyArray<TimelineEntry>) {
   });
 }
 
-function workShownAsFinalAnswerOnly(
+function shownWithoutWorkLog(
   entry: TimelineEntry,
   pendingApprovalRequestIds: ReadonlySet<RuntimeRequestId> | undefined,
 ): boolean {
@@ -1495,7 +1495,7 @@ function timelineRowEntries(
     const retainedReplyIds = retainedAssistantReplyEntryIds(entries);
     shown = entries.filter((entry, index) => {
       if (entry.kind !== "message") {
-        return workShownAsFinalAnswerOnly(entry, input.pendingApprovalRequestIds);
+        return shownWithoutWorkLog(entry, input.pendingApprovalRequestIds);
       }
       const { message } = entry;
       return (
@@ -1508,6 +1508,11 @@ function timelineRowEntries(
           (answeringRunId === null || message.runId !== answeringRunId))
       );
     });
+  } else if (visibility === "messagesOnly") {
+    shown = entries.filter(
+      (entry) =>
+        entry.kind === "message" || shownWithoutWorkLog(entry, input.pendingApprovalRequestIds),
+    );
   } else if (visibility !== "showAll") {
     shown = entries.filter(
       (entry) =>
