@@ -278,6 +278,9 @@ pub(super) const PROVIDER_SETTINGS: &[&str] = &[
     "usageLimitSources",
 ];
 
+/// Settings patch keys that need `access:write` (requiredScopesForServerSettingsPatch).
+pub(super) const ACCESS_SETTINGS: &[&str] = &["requireConnectDeviceApproval"];
+
 /// Scope rules the T3 server applies inside a handler, outside the method table. A served
 /// method that has one must apply it by hand; `scopes.rs` tests that none is served.
 #[cfg(test)]

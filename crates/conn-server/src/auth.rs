@@ -1085,6 +1085,9 @@ fn pairing_to_contract(link: &StoredPairing) -> AuthPairingLink {
         label: link.label.clone(),
         created_at: iso8601(link.created_at_ms),
         expires_at: iso8601(link.expires_at_ms),
+        // Only a T3 Connect device's request makes a link with one; this server refuses
+        // DPoP, so it serves no T3 Connect device.
+        connect_device_request: None,
     }
 }
 

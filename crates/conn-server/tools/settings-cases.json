@@ -170,6 +170,11 @@
         }
       },
       "patch": { "enableAgentBrowserAccess": true }
+    },
+    {
+      "name": "T3 Connect device approval is stored like any setting",
+      "stored": {},
+      "patch": { "requireConnectDeviceApproval": true }
     }
   ]
 }
