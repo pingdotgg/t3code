@@ -117,6 +117,7 @@ const question = Schema.Struct({
       label: Schema.String,
       description: Schema.String,
       value: Schema.optional(Schema.String),
+      preview: Schema.optional(Schema.String),
     }),
   ),
   multiSelect: Schema.optional(Schema.Boolean),
@@ -199,6 +200,7 @@ const ThreadSearchTool = Tool.make("t3_thread_search", {
     projectId: Schema.optional(ProjectId),
   }),
   success: Schema.Struct({
+    currentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
     matches: Schema.Array(
       Schema.Struct({
         threadId: OrchestrationThreadSearchMatch.fields.threadId,
