@@ -1,3 +1,5 @@
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { LegendList } from "@legendapp/list/react-native";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import {
@@ -9,7 +11,7 @@ import {
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
-import { FlatList, Platform } from "react-native";
+import { Platform } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { EmptyState } from "../../components/ui/EmptyState";
@@ -117,14 +119,17 @@ export function PullRequestFilterSearchScreen({
       placeholder={placeholder}
       closeAccessibilityLabel={kind === "labels" ? "Close label filter" : "Close author filter"}
       clearAccessibilityLabel={kind === "labels" ? "Clear label search" : "Clear author search"}
-      searchTextChangeId="pr-filter-option-search"
       query={query}
       onQueryChange={setQuery}
     >
       {({ paddingBottom }) => (
-        <FlatList
+        <LegendList
+          renderScrollComponent={NativeScrollView}
           data={rows}
           keyExtractor={(value) => value.toLowerCase()}
+          extraData={{ selected, colors, count: rows.length }}
+          estimatedItemSize={56}
+          recycleItems
           className="flex-1"
           contentInsetAdjustmentBehavior="automatic"
           automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}

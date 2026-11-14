@@ -1,7 +1,14 @@
-import type { ProviderInstanceId, UnifiedSettings } from "@t3tools/contracts";
+import {
+  type ProviderInstanceId,
+  textGeneratorForSelection,
+  type UnifiedSettings,
+} from "@t3tools/contracts";
 
 import { mergeEnvironmentSettings } from "../../hooks/useSettings";
-import { getCustomModelOptionsByInstance } from "../../modelSelection";
+import {
+  getCustomModelOptionsByInstance,
+  getTextGenerationModelOptionsByInstance,
+} from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -13,16 +20,31 @@ import { useSettingsScope } from "./SettingsScopeContext";
 export function useScopedModelDisabledReason(
   settings: UnifiedSettings,
   entries: readonly ProviderInstanceEntry[],
+  textGeneration = false,
 ) {
   const { targets } = useSettingsScope();
   const { environments } = useEnvironments();
   const providersByEnvironment = useEnvironmentProviders();
   return (instanceId: ProviderInstanceId, model: string): string | null => {
     const sourceEntry = entries.find((entry) => entry.instanceId === instanceId);
+    const shownGenerator = textGeneratorForSelection(settings, instanceId);
     for (const candidate of targets) {
       const environment = environments.find(
         (entry) => entry.environmentId === candidate.environmentId,
       );
+      const unavailable = `This model is unavailable on ${environment?.label ?? "a selected environment"}. Select that environment to choose its model separately.`;
+      const generator = textGeneratorForSelection(candidate.settings, instanceId);
+      if (shownGenerator !== undefined || generator !== undefined) {
+        // Only the shown environment's model list is loaded; elsewhere it must reach the same API.
+        if (
+          !generator?.enabled ||
+          generator.kind !== shownGenerator?.kind ||
+          generator.baseUrl !== shownGenerator.baseUrl
+        ) {
+          return unavailable;
+        }
+        continue;
+      }
       const providers = providersByEnvironment.get(candidate.environmentId);
       if (!environment?.serverConfig || !providers) continue;
       const entry = applyProviderInstanceSettings(
@@ -30,7 +52,10 @@ export function useScopedModelDisabledReason(
         candidate.settings,
         candidate.projectId,
       ).find((option) => option.instanceId === instanceId);
-      const options = getCustomModelOptionsByInstance(
+      const optionsForInstance = textGeneration
+        ? getTextGenerationModelOptionsByInstance
+        : getCustomModelOptionsByInstance;
+      const options = optionsForInstance(
         mergeEnvironmentSettings(candidate.settings, settings),
         providers,
       ).get(instanceId);
@@ -40,7 +65,7 @@ export function useScopedModelDisabledReason(
         entry.driverKind !== sourceEntry?.driverKind ||
         !options?.some((option) => option.slug === model && !option.isUnavailable)
       ) {
-        return `This model is unavailable on ${environment?.label ?? "a selected environment"}. Select that environment to choose its model separately.`;
+        return unavailable;
       }
     }
     return null;
