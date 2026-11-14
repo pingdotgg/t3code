@@ -427,8 +427,7 @@ it.effect.each([
             : liveProcess.run(input),
       }),
     );
-    const store = yield* makeCaptureStore(gatedDriver, cwd);
-    const fiber = yield* store
+    const fiber = yield* gatedDriver.checkpoints
       .restoreCheckpoint({ cwd, checkpointRef })
       .pipe(Effect.exit, Effect.forkScoped);
     if (gate !== null) {
