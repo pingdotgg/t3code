@@ -85,6 +85,12 @@ describe("ssh config", () => {
         path.join(sshDir, "config"),
         "Include config.d/*\nInclude config.d/.literal.conf\nInclude config.d/.enabled-*.conf\nInclude explicit-directory\nHost real\n  HostName real.example.com\n",
       );
+      for (const [index, separator] of ["\u2028", "\u2029"].entries()) {
+        yield* fs.writeFileString(
+          path.join(sshDir, "config.d", `team${separator}one.conf`),
+          `Host unicode-${index}\n  HostName unicode-${index}.example.com\n`,
+        );
+      }
       yield* fs.writeFileString(
         path.join(sshDir, "config.d", "team.conf"),
         "Host team\n  HostName team.example.com\n",
@@ -115,6 +121,8 @@ describe("ssh config", () => {
           ["literal", "literal.example.com", "ssh-config"],
           ["real", "real.example.com", "ssh-config"],
           ["team", "team.example.com", "ssh-config"],
+          ["unicode-0", "unicode-0.example.com", "ssh-config"],
+          ["unicode-1", "unicode-1.example.com", "ssh-config"],
         ],
       );
     }).pipe(Effect.provide(NodeServices.layer)),
