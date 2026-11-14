@@ -321,3 +321,23 @@ it.each(["duplicate", "unavailable"] as const)(
     }
   },
 );
+
+it("keeps a question's reattach marker beside a matching one in the thread draft", () => {
+  const store = useComposerDraftStore.getState();
+  const request = RuntimeRequestId.make("stopped");
+  const question = questionAttachmentDraftId(environmentId, threadId, request, "first");
+  const threadMarker = { ...textFile("notes"), id: "thread-marker", file: null };
+  const questionMarker = { ...textFile("notes"), id: "question-marker", file: null };
+  store.addFiles({ environmentId, threadId }, [threadMarker]);
+  store.addFiles(question, [questionMarker], { allowDuplicates: true });
+
+  makeThreadRequestsResolvedAnnouncer(
+    environmentId,
+    threadId,
+  )([{ id: request, status: "cancelled" }]);
+
+  expect(store.getComposerDraft({ environmentId, threadId })?.files).toEqual([
+    threadMarker,
+    questionMarker,
+  ]);
+});

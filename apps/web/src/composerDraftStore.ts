@@ -1086,6 +1086,7 @@ function transferComposerAttachments(
     }
     const marker = destination.files.find(
       (candidate) =>
+        !composerFileNeedsReattach(file) &&
         composerFileNeedsReattach(candidate) &&
         !replacements.has(candidate.id) &&
         composerFileMatchesReattachMarker(candidate, file),
