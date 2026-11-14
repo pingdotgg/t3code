@@ -8479,6 +8479,287 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each([
+    { ...modelSelection, model: "gpt-5.5", options: [{ id: "reasoningEffort", value: "high" }] },
+    { instanceId: alternateInstanceId, model: "gpt-5.5" },
+  ])(
+    "starts a queued scheduled delivery on a selection set while it waited: %j",
+    (newerSelection) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make(
+          `runtime-layer-queued-scheduled-selection-${newerSelection.instanceId}-${"options" in newerSelection}`,
+        );
+        const scheduledMessageId = MessageId.make(`${threadId}:scheduled`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId: ProjectId.make(`${threadId}:project`),
+          createdBy: "user",
+          creationSource: "web",
+          title: "Scheduled delivery selection",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:active`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:active`),
+          text: "Busy",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const active = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        // Bound scheduled tasks send like ScheduledTaskService: no model of their own.
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:scheduled`),
+          threadId,
+          messageId: scheduledMessageId,
+          scheduledTaskId: ScheduledTaskId.make(`${threadId}:task`),
+          text: "Scheduled prompt",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.userMessageId === scheduledMessageId,
+        )!;
+        assert.equal(queued.status, "queued");
+        assert.deepEqual(queued.modelSelection, modelSelection);
+        // Stop holds the queue; a thread changes instance only while no run is active.
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make(`${threadId}:stop`),
+          threadId,
+          runId: active.id,
+          holdQueue: true,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make(`${threadId}:select-newer`),
+          threadId,
+          modelSelection: newerSelection,
+        });
+        yield* orchestrator.dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make(`${threadId}:resume`),
+          threadId,
+        });
+        yield* orchestrator.resumeQueuedRuns;
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        const delivered = after.runs.find((run) => run.userMessageId === scheduledMessageId)!;
+        assert.equal(delivered.status, "starting");
+        assert.deepEqual(delivered.modelSelection, newerSelection);
+        assert.equal(
+          after.attempts.find((attempt) => attempt.id === delivered.activeAttemptId)
+            ?.providerInstanceId,
+          newerSelection.instanceId,
+        );
+        assert.deepEqual(after.thread.modelSelection, newerSelection);
+        assert.equal(after.thread.providerInstanceId, newerSelection.instanceId);
+      }),
+  );
+
+  it.effect(
+    "starts a queued scheduled delivery that pinned a model on its pin after the thread moved",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make("runtime-layer-queued-scheduled-pinned-selection");
+        const scheduledMessageId = MessageId.make(`${threadId}:scheduled`);
+        const pinnedSelection = { instanceId: modelSelection.instanceId, model: "gpt-5.5" };
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId: ProjectId.make(`${threadId}:project`),
+          createdBy: "user",
+          creationSource: "web",
+          title: "Pinned scheduled selection",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:active`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:active`),
+          text: "Busy",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const active = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        // A task that pins a model names it on the delivery, as a fresh-thread launch seeds it.
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:scheduled`),
+          threadId,
+          messageId: scheduledMessageId,
+          scheduledTaskId: ScheduledTaskId.make(`${threadId}:task`),
+          modelSelection: pinnedSelection,
+          text: "Pinned scheduled prompt",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.userMessageId === scheduledMessageId,
+        )!;
+        assert.equal(queued.status, "queued");
+        assert.deepEqual(queued.modelSelection, pinnedSelection);
+        // Stop holds the queue; a thread changes instance only while no run is active.
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make(`${threadId}:stop`),
+          threadId,
+          runId: active.id,
+          holdQueue: true,
+        });
+        // The user moves the thread off the pinned model while the delivery is held.
+        const movedSelection = { instanceId: alternateInstanceId, model: "gpt-5.5" };
+        yield* orchestrator.dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make(`${threadId}:select-moved`),
+          threadId,
+          modelSelection: movedSelection,
+        });
+        yield* orchestrator.dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make(`${threadId}:resume`),
+          threadId,
+        });
+        yield* orchestrator.resumeQueuedRuns;
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        const delivered = after.runs.find((run) => run.userMessageId === scheduledMessageId)!;
+        assert.equal(delivered.status, "starting");
+        // The pin wins: the run starts on the selection the delivery named, not the thread's later pick.
+        assert.deepEqual(delivered.modelSelection, pinnedSelection);
+        assert.equal(
+          after.attempts.find((attempt) => attempt.id === delivered.activeAttemptId)
+            ?.providerInstanceId,
+          pinnedSelection.instanceId,
+        );
+        // Pinned tasks keep today's behaviour: the thread follows the run's selection back.
+        assert.deepEqual(after.thread.modelSelection, pinnedSelection);
+      }),
+  );
+
+  it.effect(
+    "starts a fresh scheduled delivery on a new provider thread after a provider switch",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make("runtime-layer-fresh-scheduled-provider-thread");
+        const switchedSelection = { instanceId: alternateInstanceId, model: "gpt-5.5" };
+        const scheduledMessageId = MessageId.make(`${threadId}:scheduled`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId: ProjectId.make(`${threadId}:project`),
+          createdBy: "user",
+          creationSource: "web",
+          title: "Fresh scheduled provider thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:active`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:active`),
+          text: "Busy",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const active = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:scheduled`),
+          threadId,
+          messageId: scheduledMessageId,
+          scheduledTaskId: ScheduledTaskId.make(`${threadId}:task`),
+          text: "Scheduled prompt",
+          attachments: [],
+          freshContext: true,
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const queuedProjection = yield* orchestrator.getThreadProjection(threadId);
+        const queued = queuedProjection.runs.find(
+          (run) => run.userMessageId === scheduledMessageId,
+        )!;
+        // The queue reserved an unused provider thread on the original instance.
+        const reserved = queuedProjection.providerThreads.find(
+          (providerThread) => providerThread.id === queued.providerThreadId,
+        )!;
+        assert.equal(reserved.providerInstanceId, modelSelection.instanceId);
+        assert.isNull(reserved.firstRunOrdinal);
+        assert.isNull(reserved.nativeThreadRef);
+        // Stop holds the queue; a thread changes instance only while no run is active.
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make(`${threadId}:stop`),
+          threadId,
+          runId: active.id,
+          holdQueue: true,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make(`${threadId}:select-switched`),
+          threadId,
+          modelSelection: switchedSelection,
+        });
+        yield* orchestrator.dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make(`${threadId}:resume`),
+          threadId,
+        });
+        yield* orchestrator.resumeQueuedRuns;
+
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        const delivered = after.runs.find((run) => run.userMessageId === scheduledMessageId)!;
+        assert.equal(delivered.status, "starting");
+        assert.isTrue(delivered.freshContext === true);
+        assert.notEqual(delivered.providerThreadId, reserved.id);
+        assert.equal(
+          after.providerThreads.find(
+            (providerThread) => providerThread.id === delivered.providerThreadId,
+          )?.providerInstanceId,
+          switchedSelection.instanceId,
+        );
+        assert.equal(
+          after.providerThreads.find((providerThread) => providerThread.id === reserved.id)
+            ?.providerInstanceId,
+          modelSelection.instanceId,
+        );
+      }),
+  );
+
   it.effect("keeps the queue after a user interrupts the active run", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -9276,8 +9557,8 @@ it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (
 });
 
 it.layer(layerTest)("snooze queued runs", (it) => {
-  it.effect.each(["notification", "delegated-completion", "user"] as const)(
-    "only user messages block snooze with a held %s run",
+  it.effect.each(["notification", "delegated-completion", "user", "limited-user"] as const)(
+    "only user messages block snooze with a queued %s run, unless a usage limit holds them",
     (kind) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -9346,8 +9627,8 @@ it.layer(layerTest)("snooze queued runs", (it) => {
           attachments: [],
           modelSelection,
           dispatchMode: { type: "queue_after_active" },
-          createdBy: kind === "user" ? "user" : "agent",
-          creationSource: kind === "user" ? "web" : "server",
+          createdBy: kind === "user" || kind === "limited-user" ? "user" : "agent",
+          creationSource: kind === "user" || kind === "limited-user" ? "web" : "server",
           ...(kind === "notification"
             ? {
                 notification: {
@@ -9366,6 +9647,43 @@ it.layer(layerTest)("snooze queued runs", (it) => {
                 }
               : {}),
         });
+        if (kind === "limited-user") {
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`limited:${threadId}`),
+                type: "turn-item.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  id: TurnItemId.make(`limited:${threadId}`),
+                  type: "error",
+                  threadId,
+                  runId: activeRun.id,
+                  nodeId: activeRun.rootNodeId,
+                  providerThreadId: null,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 2,
+                  status: "failed",
+                  title: "Usage limit reached",
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                  // A proxied provider can report no reset time.
+                  failure: {
+                    class: "usage_limit",
+                    message: "Claude API rate limit reached. Try again later.",
+                    code: "api_error_429",
+                    retryable: true,
+                    resetAt: null,
+                  },
+                },
+              },
+            ],
+          });
+        }
         const beforeRecovery = yield* orchestrator.getThreadProjection(threadId);
         yield* eventSink.commitCommand({
           commandId: CommandId.make(`recovery:${threadId}`),
@@ -9380,13 +9698,24 @@ it.layer(layerTest)("snooze queued runs", (it) => {
             occurredAt: now,
             payload:
               run.status === "queued"
-                ? { ...run, queueHeld: true }
-                : { ...run, status: "cancelled" as const, completedAt: now },
+                ? // A usage limit stops the queue from starting without marking it held.
+                  kind === "limited-user"
+                  ? run
+                  : { ...run, queueHeld: true }
+                : {
+                    ...run,
+                    status: kind === "limited-user" ? ("failed" as const) : ("cancelled" as const),
+                    completedAt: now,
+                  },
           })),
           effects: [],
         });
         const beforeSnooze = yield* orchestrator.getThreadProjection(threadId);
-        assert.isTrue(beforeSnooze.runs.some((run) => run.status === "queued" && run.queueHeld));
+        assert.isTrue(
+          beforeSnooze.runs.some(
+            (run) => run.status === "queued" && (kind === "limited-user" || run.queueHeld),
+          ),
+        );
         const snooze = orchestrator.dispatch({
           type: "thread.snooze",
           commandId: CommandId.make(`snooze:${threadId}`),
@@ -9902,6 +10231,19 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
       assert.isNotNull(visited.thread.lastVisitedAt);
       assert.equal(DateTime.formatIso(visited.thread.lastVisitedAt!), visitedAt);
       assert.deepEqual(visited.thread.updatedAt, createdUpdatedAt);
+      const sql = yield* SqlClient.SqlClient;
+      const visitPayloadKeys = (commandId: string) =>
+        sql<{ readonly payload_json: string }>`
+          SELECT payload_json FROM orchestration_events WHERE command_id = ${commandId}
+        `.pipe(
+          Effect.map((rows) =>
+            rows.map((row) => Object.keys(JSON.parse(row.payload_json)).toSorted()),
+          ),
+        );
+      // A visit stores read state, not a copy of the thread.
+      for (const keys of yield* visitPayloadKeys("runtime-layer-visited-thread-visit")) {
+        assert.includeMembers(["lastVisitedAt", "opens", "threadId"], keys);
+      }
 
       yield* orchestrator.dispatch({
         type: "thread.visit",
@@ -9911,6 +10253,8 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
       });
       const afterStaleVisit = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(DateTime.formatIso(afterStaleVisit.thread.lastVisitedAt!), visitedAt);
+      // A stale visit with no open changes nothing, so it stores nothing.
+      assert.deepEqual(yield* visitPayloadKeys("runtime-layer-visited-thread-visit-stale"), []);
 
       const shell = yield* orchestrator.getShellSnapshot();
       const thread = shell.threads.find((candidate) => candidate.id === threadId);
@@ -9927,7 +10271,6 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
         .pipe(Effect.flip);
       assert.instanceOf(markUnread, Orchestrator.OrchestratorDispatchError);
 
-      const sql = yield* SqlClient.SqlClient;
       yield* sql`INSERT INTO orchestration_v2_projection_turn_items (
         turn_item_id, thread_id, ordinal, type, status, updated_at, payload_json
       ) VALUES (
