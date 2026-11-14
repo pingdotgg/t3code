@@ -1,13 +1,13 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { ConnectionTraceId } from "./ConnectionTraceId";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { hasSavedBearerRoute } from "@t3tools/client-runtime/connection";
+import { hasSavedBearerRoute, hostFreezeNotice } from "@t3tools/client-runtime/connection";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 
@@ -20,6 +20,7 @@ import { cn } from "../../lib/cn";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { serverEnvironment } from "../../state/server";
 import { environmentPresentations } from "../../state/presentation";
+import { ConnectionDiagnosisDetails, useConnectionDiagnosis } from "./ConnectionDiagnosisDetails";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { environmentStatusText } from "./environmentStatusText";
@@ -58,15 +59,22 @@ export function ConnectionEnvironmentRow(props: {
     environmentPresentations.presentationAtom(props.environment.environmentId),
   );
   const canRetry = presentation !== null && hasSavedBearerRoute(presentation.entry);
+  const { diagnosis, state: connectionState } = useConnectionDiagnosis(
+    props.environment.environmentId,
+    presentation,
+  );
   const enabled = props.environment.isEnabled && !unsupported;
   const statusLabel = connectionStatusLabel(props.environment);
   const statusTraceId = enabled ? props.environment.connectionErrorTraceId : null;
   const hasConnectionFailure = enabled && props.environment.connectionError !== null;
+  const freeze = enabled
+    ? hostFreezeNotice(props.environment.environmentLabel, serverConfig?.lastEventLoopStall)
+    : null;
   const isRetrying =
     enabled &&
     (props.environment.connectionState === "connecting" ||
       props.environment.connectionState === "reconnecting");
-  const handleSave = useCallback(async () => {
+  const handleSave = async () => {
     const result = await props.onUpdate(props.environment.environmentId, {
       label: label.trim(),
       displayUrl: url.trim(),
@@ -80,7 +88,7 @@ export function ConnectionEnvironmentRow(props: {
       "Could not update environment",
       error instanceof Error ? error.message : "The environment could not be updated.",
     );
-  }, [label, url, props]);
+  };
 
   return (
     <Animated.View layout={LinearTransition.duration(250)} className="bg-grouped-card">
@@ -118,7 +126,16 @@ export function ConnectionEnvironmentRow(props: {
               {props.environment.displayUrl}
             </Text>
           ) : null}
-          {statusLabel ? (
+          {diagnosis ? (
+            <>
+              <Text className="text-xs text-danger-foreground">{diagnosis.headline}</Text>
+              {connectionState.attempt > 0 ? (
+                <Text className="text-xs text-foreground-muted">
+                  {`Retrying · attempt ${connectionState.attempt}`}
+                </Text>
+              ) : null}
+            </>
+          ) : statusLabel ? (
             <Text
               className={cn(
                 "text-xs",
@@ -135,6 +152,14 @@ export function ConnectionEnvironmentRow(props: {
                   activation="longPress"
                 />
               ) : null}
+            </Text>
+          ) : null}
+          {freeze ? (
+            <Text
+              className="text-xs text-warning-foreground"
+              numberOfLines={props.expanded ? undefined : 1}
+            >
+              {`${freeze.title}. ${freeze.description}`}
             </Text>
           ) : null}
         </Pressable>
@@ -177,6 +202,12 @@ export function ConnectionEnvironmentRow(props: {
           exiting={FadeOut.duration(150)}
           className="gap-3 px-4 pb-4"
         >
+          {diagnosis ? (
+            <ConnectionDiagnosisDetails
+              hostLabel={props.environment.environmentLabel}
+              diagnosis={diagnosis}
+            />
+          ) : null}
           {props.environment.isRelayManaged ? (
             <Text className="text-sm text-foreground-muted">
               Managed by T3 Connect. Tunnel details update automatically.
@@ -252,6 +283,9 @@ export function ConnectionEnvironmentRow(props: {
               )}
 
               <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Reconnect environment"
+                accessibilityState={{ disabled: !enabled }}
                 className="h-[42px] w-[42px] items-center justify-center rounded-[14px] border border-input-border bg-input active:opacity-70 disabled:opacity-40"
                 disabled={!enabled}
                 onPress={() => props.onReconnect(props.environment.environmentId)}
@@ -265,6 +299,8 @@ export function ConnectionEnvironmentRow(props: {
               </Pressable>
 
               <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Remove environment"
                 className="h-[42px] w-[42px] items-center justify-center rounded-[14px] border border-danger-border bg-danger active:opacity-70"
                 onPress={() => props.onRemove(props.environment.environmentId)}
               >

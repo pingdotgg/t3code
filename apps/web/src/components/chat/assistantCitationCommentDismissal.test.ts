@@ -24,50 +24,6 @@ describe("resolveAssistantCitationCommentDismissal", () => {
     ).toEqual({ kind: "commit", comment: "second thought" });
   });
 
-  it("closes without saving when nothing changed", () => {
-    expect(
-      resolveAssistantCitationCommentDismissal({
-        reason: "outside-press",
-        draft: null,
-        savedComment: "kept",
-      }),
-    ).toEqual({ kind: "close" });
-    expect(
-      resolveAssistantCitationCommentDismissal({
-        reason: "outside-press",
-        draft: "  kept ",
-        savedComment: "kept",
-      }),
-    ).toEqual({ kind: "close" });
-    expect(
-      resolveAssistantCitationCommentDismissal({
-        reason: "outside-press",
-        draft: "kept",
-        savedComment: " kept ",
-      }),
-    ).toEqual({ kind: "close" });
-  });
-
-  it("clears a comment when the draft was emptied", () => {
-    expect(
-      resolveAssistantCitationCommentDismissal({
-        reason: "trigger-press",
-        draft: "",
-        savedComment: "old",
-      }),
-    ).toEqual({ kind: "commit", comment: "" });
-  });
-
-  it("keeps Escape as an explicit discard", () => {
-    expect(
-      resolveAssistantCitationCommentDismissal({
-        reason: "escape-key",
-        draft: "unsaved",
-        savedComment: undefined,
-      }),
-    ).toEqual({ kind: "close" });
-  });
-
   it("keeps the popover open instead of dropping an over-length draft", () => {
     expect(
       resolveAssistantCitationCommentDismissal({

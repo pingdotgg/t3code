@@ -1,5 +1,7 @@
 import {
+  ASSISTANT_CITATION_CONTEXT_LENGTH,
   ASSISTANT_CITATION_MAX_COMMENT_LENGTH,
+  ASSISTANT_CITATION_MAX_ID_LENGTH,
   ASSISTANT_CITATION_MAX_TEXT_LENGTH,
   AssistantCitation,
 } from "@t3tools/contracts";
@@ -8,9 +10,14 @@ import * as Schema from "effect/Schema";
 
 const CITATION_PROTOCOL = "t3-citation:";
 const CITATION_HREF_PREFIX = `${CITATION_PROTOCOL}//v1/`;
-// Percent encoding needs up to nine characters per UTF-16 code unit; 16k covers selectors.
+// Percent encoding needs up to nine characters per UTF-16 code unit; 1k covers keys and offsets.
 const MAX_CITATION_HREF_LENGTH =
-  9 * (ASSISTANT_CITATION_MAX_TEXT_LENGTH + ASSISTANT_CITATION_MAX_COMMENT_LENGTH) + 16_000;
+  9 *
+    (ASSISTANT_CITATION_MAX_TEXT_LENGTH +
+      ASSISTANT_CITATION_MAX_COMMENT_LENGTH +
+      3 * ASSISTANT_CITATION_MAX_ID_LENGTH +
+      2 * ASSISTANT_CITATION_CONTEXT_LENGTH) +
+  1_000;
 const CITATION_LINK = new RegExp(
   String.raw`\[Assistant quote\]\((${CITATION_HREF_PREFIX}[^\s)]{1,${MAX_CITATION_HREF_LENGTH - CITATION_HREF_PREFIX.length}})\)`,
   "g",
@@ -98,7 +105,14 @@ export function parseAssistantCitationHref(href: string): AssistantCitation | nu
 
 export function assistantCitationLabel(citation: AssistantCitation): string {
   const preview = (citation.comment?.trim() || citation.text).replace(/\s+/g, " ");
-  return preview.length > 64 ? `${preview.slice(0, 64)}…` : preview;
+  if (preview.length <= 64) return preview;
+  let end = 64;
+  const previous = preview.charCodeAt(end - 1);
+  const next = preview.charCodeAt(end);
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end -= 1;
+  }
+  return `${preview.slice(0, end)}…`;
 }
 
 export function serializeAssistantCitation(citation: AssistantCitation): string {

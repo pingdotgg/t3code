@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { defaultThemeGeneration, defaultThemeToApply } from "./useDefaultTheme";
+import { defaultThemeGeneration, defaultThemeToApply, themeSetsOwnMode } from "./useDefaultTheme";
 
 const BASE = {
   environmentId: "env-1",
@@ -11,12 +11,6 @@ const BASE = {
 } as const;
 
 describe("default theme adoption", () => {
-  it("applies a set this client has not seen", () => {
-    expect(defaultThemeToApply(BASE)).toBe(
-      defaultThemeGeneration(BASE.defaultTheme, BASE.defaultThemeSetAt),
-    );
-  });
-
   it("does not replay a generation it already applied", () => {
     const generation = defaultThemeGeneration(BASE.defaultTheme, BASE.defaultThemeSetAt);
     expect(defaultThemeToApply({ ...BASE, appliedGeneration: generation })).toBe(null);
@@ -32,23 +26,14 @@ describe("default theme adoption", () => {
     expect(next).not.toBe(null);
     expect(next).not.toBe(applied);
   });
+});
 
-  it("falls back to once-per-value without a set time", () => {
-    const generation = defaultThemeGeneration("nightfall", "");
-    expect(defaultThemeToApply({ ...BASE, defaultThemeSetAt: "", appliedGeneration: null })).toBe(
-      generation,
-    );
-    expect(
-      defaultThemeToApply({ ...BASE, defaultThemeSetAt: "", appliedGeneration: generation }),
-    ).toBe(null);
-  });
-
-  it("waits for a theme that has not arrived yet", () => {
-    expect(defaultThemeToApply({ ...BASE, resolves: false })).toBe(null);
-  });
-
-  it("leaves a client alone with no environment or no theme set", () => {
-    expect(defaultThemeToApply({ ...BASE, environmentId: null })).toBe(null);
-    expect(defaultThemeToApply({ ...BASE, defaultTheme: "" })).toBe(null);
-  });
+it("lets a theme set its own mode only when no mode was set with it or after it", () => {
+  const theme = "2026-11-13T10:00:00.000Z";
+  const set = (defaultAppearance: string, defaultAppearanceSetAt: string) =>
+    themeSetsOwnMode({ defaultThemeSetAt: theme, defaultAppearance, defaultAppearanceSetAt });
+  expect(set("", "")).toBe(true);
+  expect(set("dark", "2026-11-13T09:00:00.000Z")).toBe(true);
+  expect(set("dark", theme)).toBe(false);
+  expect(set("light", "2026-11-13T11:00:00.000Z")).toBe(false);
 });

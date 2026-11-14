@@ -17,25 +17,20 @@ export type SelectionOutput<A, Options> = Options extends
   ? undefined
   : Options extends undefined
     ? A
-    : Extract<
-          Options[keyof Options & keyof ResourceSelection],
-          ReadonlyArray<string>
-        > extends never
+    : Extract<Options[keyof Options & keyof ResourceSelection], ReadonlyArray<string>> extends never
       ? A
       : A | undefined;
 
-export class InvalidResourceSelection extends Data.TaggedError(
-  "InvalidResourceSelection",
-)<{ message: string }> {}
+export class InvalidResourceSelection extends Data.TaggedError("InvalidResourceSelection")<{
+  message: string;
+}> {}
 
-export class UnsafeSelectionBoundary extends Data.TaggedError(
-  "UnsafeSelectionBoundary",
-)<{ message: string }> {}
+export class UnsafeSelectionBoundary extends Data.TaggedError("UnsafeSelectionBoundary")<{
+  message: string;
+}> {}
 
 /** Resolve and close the selection before accessing state or providers. */
-export const selectResources = <
-  Node extends { FQN: string; LogicalId: string },
->(
+export const selectResources = <Node extends { FQN: string; LogicalId: string }>(
   declared: ReadonlyArray<Node>,
   upstream: (node: Node) => ReadonlyArray<string>,
   options: ResourceSelection,
@@ -55,29 +50,20 @@ export const selectResources = <
           message: `${message}. Available resources and Actions: ${available || "(none)"}`,
         }),
       );
-    const resolve = (
-      kind: "include" | "exclude",
-      patterns: ReadonlyArray<string>,
-    ) =>
+    const resolve = (kind: "include" | "exclude", patterns: ReadonlyArray<string>) =>
       Effect.gen(function* () {
-        if (patterns.length === 0)
-          return yield* invalid(`${kind} must not be empty`);
+        if (patterns.length === 0) return yield* invalid(`${kind} must not be empty`);
         const matches = new Map<string, string>();
         for (const pattern of new Set(patterns)) {
-          if (pattern.trim() === "")
-            return yield* invalid(`${kind} pattern must not be empty`);
+          if (pattern.trim() === "") return yield* invalid(`${kind} pattern must not be empty`);
           const exact = byFqn.get(pattern);
           let nodes: ReadonlyArray<Node>;
           if (exact) {
             nodes = [exact];
           } else {
             const scanned = picomatch.scan(pattern);
-            const parsed = yield* Effect.try(() =>
-              picomatch.parse(pattern),
-            ).pipe(
-              Effect.catch(() =>
-                invalid(`Invalid ${kind} pattern '${pattern}'`),
-              ),
+            const parsed = yield* Effect.try(() => picomatch.parse(pattern)).pipe(
+              Effect.catch(() => invalid(`Invalid ${kind} pattern '${pattern}'`)),
             );
             if (
               scanned.negated ||
@@ -95,11 +81,7 @@ export const selectResources = <
                 strictBrackets: true,
                 nonegate: true,
               }),
-            ).pipe(
-              Effect.catch(() =>
-                invalid(`Invalid ${kind} pattern '${pattern}'`),
-              ),
-            );
+            ).pipe(Effect.catch(() => invalid(`Invalid ${kind} pattern '${pattern}'`)));
             const glob = scanned.isGlob;
             nodes = declared.filter((node) =>
               glob ? matcher(node.FQN) : node.LogicalId === pattern,
@@ -115,9 +97,7 @@ export const selectResources = <
           }
           if (nodes.length === 0) {
             if (kind === "include")
-              return yield* invalid(
-                `Unknown or unmatched include '${pattern}'`,
-              );
+              return yield* invalid(`Unknown or unmatched include '${pattern}'`);
             yield* Effect.logWarning(
               `Exclusion '${pattern}' matched no declared resources or Actions.`,
             );
@@ -136,11 +116,8 @@ export const selectResources = <
       options.exclude === undefined
         ? new Map<string, string>()
         : yield* resolve("exclude", options.exclude);
-    const selected = new Set(
-      [...included.keys()].filter((fqn) => !excluded.has(fqn)),
-    );
-    if (selected.size === 0)
-      return yield* invalid("Resource selection is empty");
+    const selected = new Set([...included.keys()].filter((fqn) => !excluded.has(fqn)));
+    if (selected.size === 0) return yield* invalid("Resource selection is empty");
     const chains = new Map([...selected].map((fqn) => [fqn, [fqn]]));
     // Set iteration visits additions and terminates on dependency cycles.
     for (const fqn of selected) {
@@ -152,9 +129,7 @@ export const selectResources = <
           );
         }
         if (!byFqn.has(dependency)) {
-          return yield* invalid(
-            `Dependency ${chain.join(" -> ")} is undeclared`,
-          );
+          return yield* invalid(`Dependency ${chain.join(" -> ")} is undeclared`);
         }
         if (!selected.has(dependency)) {
           selected.add(dependency);

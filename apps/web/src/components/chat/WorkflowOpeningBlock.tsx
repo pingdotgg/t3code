@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   isTerminalSubagentStatus,
+  workflowMemberModelSelection,
   workflowOpeningHeadline,
   type RuntimeSubagent,
   type WorkflowOpening,
@@ -22,20 +23,18 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipTrigger } from "../ui/tooltip";
 import { AgentElapsed } from "./AgentElapsed";
 import { findRevealRef } from "./markdownFindContext";
-import { shouldCollapseUserMessage } from "./MessagesTimeline.logic";
+import { useTallEnoughToFold } from "./useTallEnoughToFold";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { EnvironmentSubagentAvatar } from "./V2LifecycleRow";
 
 const FOLDED_SCRIPT_MASK = "linear-gradient(to bottom, black calc(100% - 1.75rem), transparent)";
 
-/** The script as a fenced block, so it renders like any other code in the thread. */
 function scriptMarkdown(script: string) {
   const longestRun = Math.max(2, ...(script.match(/`+/g) ?? []).map((run) => run.length));
   const fence = "`".repeat(longestRun + 1);
   return `${fence}javascript\n${script.trimEnd()}\n${fence}`;
 }
 
-/** Opens a workflow coordinator's thread in place of its script: the plan, its agents, then the script. */
 export function WorkflowOpeningBlock(props: {
   readonly opening: WorkflowOpening;
   readonly environmentId: EnvironmentId;
@@ -103,7 +102,6 @@ export function WorkflowOpeningBlock(props: {
   );
 }
 
-/** One member agent, drawn like the timeline's subagent rows; it opens the member's thread. */
 function WorkflowMemberRow(props: {
   readonly member: RuntimeSubagent;
   readonly environmentId: EnvironmentId;
@@ -186,6 +184,7 @@ function WorkflowMemberRow(props: {
             model={member.model}
             providerInstanceId={props.providerInstanceId}
             origin="provider_native"
+            modelSelection={workflowMemberModelSelection(member, props.providerInstanceId)}
             provider={props.providers.find(
               (provider) => provider.instanceId === props.providerInstanceId,
             )}
@@ -202,11 +201,10 @@ function WorkflowMemberRow(props: {
   );
 }
 
-/** The script as highlighted code, folded like a long message until opened or found. */
 function WorkflowScript(props: { readonly script: string }) {
   const [expanded, setExpanded] = useState(false);
   const revealRef = findRevealRef(() => setExpanded(true));
-  const canFold = shouldCollapseUserMessage(props.script);
+  const { ref: contentRef, tallEnough: canFold } = useTallEnoughToFold();
   const folded = canFold && !expanded;
   return (
     <div>
@@ -221,7 +219,9 @@ function WorkflowScript(props: { readonly script: string }) {
             : undefined
         }
       >
-        <ChatMarkdown text={scriptMarkdown(props.script)} cwd={undefined} />
+        <div ref={contentRef}>
+          <ChatMarkdown text={scriptMarkdown(props.script)} cwd={undefined} />
+        </div>
       </div>
       {canFold ? (
         <div className="-ms-1">

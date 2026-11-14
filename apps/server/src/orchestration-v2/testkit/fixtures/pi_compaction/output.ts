@@ -72,8 +72,7 @@ export function assertPiCompactionOutput(
     ),
     "compaction must not run a model turn",
   );
-  // Right after compacting, Pi reports context usage as unknown (tokens: null);
-  // the meter keeps Pi's own post-compaction estimate instead of going blank.
+  // Pi reports tokens null after compaction; retain its post-compaction estimate.
   const compactionTurn = projection.providerTurns.find(
     (turn) => turn.runAttemptId === compactionRuns[1]?.activeAttemptId,
   );

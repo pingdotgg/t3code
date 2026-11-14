@@ -1,75 +1,62 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Sink from "effect/Sink";
-import * as Stream from "effect/Stream";
+import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerConfig from "../config.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 
-function emptyProcessHandle() {
-  return ChildProcessSpawner.makeHandle({
-    pid: ChildProcessSpawner.ProcessId(1),
-    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-    isRunning: Effect.succeed(false),
-    kill: () => Effect.void,
-    unref: Effect.succeed(Effect.void),
-    stdin: Sink.drain,
-    stdout: Stream.empty,
-    stderr: Stream.empty,
-    all: Stream.empty,
-    getInputFd: () => Sink.drain,
-    getOutputFd: () => Stream.empty,
-  });
-}
-
-describe("resolveNativeAppIcon", () => {
-  it.effect("escapes Spotlight wildcards and caches misses", () => {
-    const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
-    const spawner = ChildProcessSpawner.make((command) =>
-      Effect.sync(() => {
-        const input = command as unknown as {
-          readonly command: string;
-          readonly args: ReadonlyArray<string>;
-        };
-        commands.push(input);
-        return emptyProcessHandle();
-      }),
-    );
-    const layerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
-      prefix: "t3-native-app-icon-test-",
+it.effect("resolves the exact bundle path without Spotlight and caches the converted icon", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bundle-icon-" });
+    const bundle = path.join(root, "Build Output", "My App.app");
+    const resources = path.join(bundle, "Contents", "Resources");
+    yield* fs.makeDirectory(resources, { recursive: true });
+    yield* fs.writeFileString(path.join(resources, "AppIcon.icns"), "icon");
+    const commands: string[] = [];
+    const spawner = Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({
+      string: (command) =>
+        Effect.gen(function* () {
+          if (command._tag !== "StandardCommand") return "";
+          commands.push(command.command);
+          if (command.command === "/usr/bin/plutil") return "AppIcon";
+          if (command.command === "/usr/bin/sips") {
+            yield* fs.writeFileString(String(command.args.at(-1)), "converted icon");
+          }
+          return "";
+        }),
     });
-    const layerDependencies = Layer.mergeAll(
-      layerConfig,
-      Layer.succeed(HostProcess.Platform, "darwin"),
-      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    ).pipe(Layer.provideMerge(NodeServices.layer));
-    const layerTest = NativeAppIconResolver.layer.pipe(Layer.provide(layerDependencies));
-    const app = { _tag: "display-name", displayName: "Review * App" } as const;
-
-    return Effect.gen(function* () {
-      const resolver = yield* NativeAppIconResolver.NativeAppIconResolver;
-      expect(yield* resolver.resolve(app)).toBeNull();
-      expect(yield* resolver.resolve(app)).toBeNull();
-
-      expect(commands).toHaveLength(1);
-      expect(commands[0]).toMatchObject({ command: "/usr/bin/mdfind" });
-      expect(commands[0]?.args[0]).toContain("Review \\* App");
-
-      for (let index = 0; index < 256; index += 1) {
-        expect(
-          yield* resolver.resolve({
-            _tag: "display-name",
-            displayName: `Missing Review App ${index}`,
-          }),
-        ).toBeNull();
-      }
-      expect(commands).toHaveLength(257);
-      expect(yield* resolver.resolve(app)).toBeNull();
-      expect(commands).toHaveLength(258);
-    }).pipe(Effect.provide(layerTest));
-  });
-});
+    yield* Effect.gen(function* () {
+      const resolver = yield* NativeAppIconResolver.make;
+      const reference = { _tag: "app-path" as const, path: bundle };
+      const icon = yield* resolver.resolve(reference);
+      expect(icon).not.toBeNull();
+      if (icon === null) return;
+      expect(yield* fs.readFileString(icon)).toBe("converted icon");
+      expect(yield* resolver.resolve(reference)).toBe(icon);
+      expect(yield* resolver.resolve({ _tag: "app-path", path: "~/Build Output/My App.app" })).toBe(
+        icon,
+      );
+      expect(commands.filter((command) => command === "/usr/bin/sips")).toHaveLength(1);
+      expect(commands).not.toContain("/usr/bin/mdfind");
+      expect(yield* resolver.resolve({ _tag: "app-path", path: "relative.app" })).toBeNull();
+      expect(yield* resolver.resolve({ _tag: "app-path", path: root })).toBeNull();
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          spawner,
+          ServerConfig.ServerConfig.layerTest(root, { prefix: "t3-native-icon-config-" }),
+        ),
+      ),
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(HostProcess.HomeDirectory, root),
+    );
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);

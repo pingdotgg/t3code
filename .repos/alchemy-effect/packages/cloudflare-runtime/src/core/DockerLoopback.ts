@@ -1,4 +1,3 @@
-import * as NodeChild from "node:child_process";
 import * as NodeFs from "node:fs";
 import * as NodeNet from "node:net";
 import * as NodeOs from "node:os";
@@ -24,7 +23,6 @@ const LOOPBACK_HOST_PORT =
 const DSN_PORT = /(?:^|[\s;])port=(\d{1,5})\b/gi;
 
 const unixServers = new Map<number, NodeNet.Server>();
-const netnsForwarders = new Map<string, NodeChild.ChildProcess>();
 
 /**
  * Native Linux Docker: a SYN to `host-gateway` (bridge IP) is host INPUT
@@ -33,19 +31,7 @@ const netnsForwarders = new Map<string, NodeChild.ChildProcess>();
  */
 export const usesUnixSocketLoopback = () => process.platform === "linux";
 
-const nsenterAvailable = () => {
-  try {
-    const result = NodeChild.spawnSync("nsenter", ["--version"], {
-      encoding: "utf8",
-    });
-    return result.error === undefined;
-  } catch {
-    return false;
-  }
-};
-
-export const loopbackSocketDir = () =>
-  NodePath.join(NodeOs.tmpdir(), "alchemy-dev-loopback");
+export const loopbackSocketDir = () => NodePath.join(NodeOs.tmpdir(), "alchemy-dev-loopback");
 
 const addPort = (ports: Set<number>, raw: string) => {
   const port = Number(raw);
@@ -91,9 +77,7 @@ export const sidecarLoopbackExtraHost = () =>
     ? `${CONTAINER_LOOPBACK_ALIAS}:127.0.0.1`
     : `${CONTAINER_LOOPBACK_ALIAS}:host-gateway`;
 
-export const sidecarLoopbackBinds = (
-  ports: readonly number[],
-): readonly string[] => {
+export const sidecarLoopbackBinds = (ports: readonly number[]): readonly string[] => {
   if (!usesUnixSocketLoopback() || ports.length === 0) return [];
   return [`${loopbackSocketDir()}:${CONTAINER_LOOPBACK_MOUNT}`];
 };
@@ -132,8 +116,7 @@ const pipeSockets = (incoming: NodeNet.Socket, outgoing: NodeNet.Socket) => {
   outgoing.on("error", fail);
 };
 
-const socketPathFor = (port: number) =>
-  NodePath.join(loopbackSocketDir(), `${port}.sock`);
+const socketPathFor = (port: number) => NodePath.join(loopbackSocketDir(), `${port}.sock`);
 
 const FORWARDER_SOURCE = `\
 import * as net from "node:net";
@@ -143,6 +126,7 @@ const dir = process.argv[2];
 const ports = process.argv.slice(3).map(Number).filter((p) => p > 0 && p <= 65535);
 if (dir === undefined || ports.length === 0) process.exit(1);
 
+let pending = ports.length;
 for (const port of ports) {
   const server = net.createServer((incoming) => {
     const outgoing = net.connect(path.join(dir, \`\${port}.sock\`));
@@ -155,7 +139,13 @@ for (const port of ports) {
     incoming.on("error", fail);
     outgoing.on("error", fail);
   });
-  server.listen({ host: "127.0.0.1", port, exclusive: false });
+  server.on("error", (error) => {
+    console.error(error);
+    process.exit(1);
+  });
+  server.listen({ host: "127.0.0.1", port }, () => {
+    if (--pending === 0) console.log("ALCHEMY_LOOPBACK_READY");
+  });
 }
 `;
 
@@ -171,9 +161,7 @@ const writeForwarderScript = (dir: string) => {
  */
 export const ensureLoopbackUnixSockets = (ports: readonly number[]) => {
   if (!usesUnixSocketLoopback()) return;
-  const unique = [
-    ...new Set(ports.filter((port) => Number.isInteger(port) && port > 0)),
-  ];
+  const unique = [...new Set(ports.filter((port) => Number.isInteger(port) && port > 0))];
   if (unique.length === 0) return;
   const dir = loopbackSocketDir();
   NodeFs.mkdirSync(dir, { recursive: true });
@@ -208,84 +196,6 @@ export const closeLoopbackUnixSockets = () => {
       // already gone
     }
   }
-  for (const [id, child] of netnsForwarders) {
-    netnsForwarders.delete(id);
-    child.kill();
-  }
-};
-
-export const ufwAllowHint = (ports: readonly number[]) => {
-  const portList = ports.length > 0 ? ports.join(",") : "<prisma-or-dev-ports>";
-  return `sudo ufw allow from 172.16.0.0/12 to any port ${portList} proto tcp`;
-};
-
-/**
- * Listen on `127.0.0.1:<port>` in the sidecar netns and forward through
- * the host unix socket. Only the network namespace is entered so this
- * process still uses the host filesystem (and host bun/node).
- */
-export const attachLoopbackNetnsForwarder = (input: {
-  keys: readonly string[];
-  pid: number;
-  ports: readonly number[];
-}): { ok: true } | { ok: false; error: string } => {
-  if (!usesUnixSocketLoopback()) return { ok: true };
-  const ports = [
-    ...new Set(
-      input.ports.filter((port) => Number.isInteger(port) && port > 0),
-    ),
-  ];
-  if (ports.length === 0) return { ok: true };
-  if (input.pid <= 0) {
-    return { ok: false, error: "container pid is not available" };
-  }
-  if (!nsenterAvailable()) {
-    return { ok: false, error: "nsenter not found on PATH" };
-  }
-  const keys = [...new Set(input.keys.filter((key) => key.length > 0))];
-  for (const key of keys) {
-    netnsForwarders.get(key)?.kill();
-  }
-  const dir = loopbackSocketDir();
-  const script = writeForwarderScript(dir);
-  try {
-    const child = NodeChild.spawn(
-      "nsenter",
-      [
-        "-t",
-        String(input.pid),
-        "-n",
-        "--",
-        process.execPath,
-        script,
-        dir,
-        ...ports.map(String),
-      ],
-      { stdio: "ignore" },
-    );
-    child.on("error", () => {
-      for (const key of keys) {
-        if (netnsForwarders.get(key) === child) netnsForwarders.delete(key);
-      }
-    });
-    child.on("exit", () => {
-      for (const key of keys) {
-        if (netnsForwarders.get(key) === child) netnsForwarders.delete(key);
-      }
-    });
-    for (const key of keys) netnsForwarders.set(key, child);
-    return { ok: true };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, error: message };
-  }
-};
-
-export const detachLoopbackNetnsForwarder = (containerId: string) => {
-  const child = netnsForwarders.get(containerId);
-  if (child === undefined) return;
-  netnsForwarders.delete(containerId);
-  child.kill();
 };
 
 export const isContainerStartPath = (url: string | undefined) =>

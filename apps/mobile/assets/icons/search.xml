@@ -1,0 +1,10 @@
+<!-- Tabler Icons search (MIT), matching AppSymbol's magnifyingglass.
+     Strokes expanded to fills: Expo UI's vector parser does not support strokes. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#000000"
+        android:pathData="M2,10 A8,8 0 1,1 18,10 A8,8 0 1,1 2,10 Z M4,10 A6,6 0 1,0 16,10 A6,6 0 1,0 4,10 Z" />
+    <path android:fillColor="#000000"
+        android:pathData="M14.2929,15.7071 A1,1 0 0,1 15.7071,14.2929 L21.7071,20.2929 A1,1 0 0,1 20.2929,21.7071 Z" />
+</vector>

@@ -4,11 +4,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
+import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 
 import {
+  formatConnectDeviceList,
   formatIssuedPairingCredential,
   formatIssuedSession,
   formatPairingCredentialList,
@@ -23,29 +25,28 @@ import {
   resolveCliAuthConfig,
 } from "./config.ts";
 
-const runWithEnvironmentAuth = <A, E>(
+const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E>(
   flags: CliAuthLocationFlags,
   run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
   options?: {
     readonly quietLogs?: boolean;
   },
-) =>
-  Effect.gen(function* () {
-    const logLevel = yield* GlobalFlag.LogLevel;
-    const config = yield* resolveCliAuthConfig(flags, logLevel);
-    const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
-    return yield* Effect.gen(function* () {
-      const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-      return yield* run(environmentAuth);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(EnvironmentAuth.layerRuntime).pipe(
-          Layer.provide(ServerConfig.layer(config)),
-          Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
-        ),
+) {
+  const logLevel = yield* GlobalFlag.LogLevel;
+  const config = yield* resolveCliAuthConfig(flags, logLevel, options);
+  const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
+  return yield* Effect.gen(function* () {
+    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    return yield* run(environmentAuth);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(EnvironmentAuth.layerRuntime).pipe(
+        Layer.provide(ServerConfig.layer(config)),
+        Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
       ),
-    );
-  });
+    ),
+  );
+});
 
 const ttlFlag = Flag.String("ttl").pipe(
   Flag.withSchema(DurationFromString),
@@ -69,6 +70,15 @@ const subjectFlag = Flag.String("subject").pipe(
 );
 
 const baseUrlFlag = Flag.String("base-url").pipe(
+  Flag.withSchema(
+    Schema.URLFromString.pipe(
+      Schema.check(
+        Schema.makeFilter((url) => url.protocol === "http:" || url.protocol === "https:", {
+          expected: "an http:// or https:// URL",
+        }),
+      ),
+    ),
+  ),
   Flag.withDescription("Optional public base URL used to print a ready `/pair#token=...` link."),
   Flag.optional,
 );
@@ -100,7 +110,7 @@ const pairingCreateCommand = Command.make("create", {
           });
           const output = formatIssuedPairingCredential(issued, {
             json: flags.json,
-            ...(Option.isSome(flags.baseUrl) ? { baseUrl: flags.baseUrl.value } : {}),
+            ...(Option.isSome(flags.baseUrl) ? { baseUrl: flags.baseUrl.value.href } : {}),
           });
           yield* Console.log(output);
         }),
@@ -155,6 +165,82 @@ const pairingRevokeCommand = Command.make("revoke", {
 const pairingCommand = Command.make("pairing").pipe(
   Command.withDescription("Manage one-time client pairing tokens."),
   Command.withSubcommands([pairingCreateCommand, pairingListCommand, pairingRevokeCommand]),
+);
+
+const connectDeviceListCommand = Command.make("list", {
+  ...authLocationFlags,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "List T3 Connect devices waiting for approval and those already trusted.",
+  ),
+  Command.withHandler((flags) =>
+    runWithEnvironmentAuth(
+      flags,
+      (environmentAuth) =>
+        Effect.gen(function* () {
+          const waiting = (yield* environmentAuth.listPairingLinks()).flatMap((link) =>
+            link.connectDeviceRequest ? [link.connectDeviceRequest] : [],
+          );
+          const trusted = yield* environmentAuth.listConnectDevices();
+          yield* Console.log(formatConnectDeviceList({ waiting, trusted }, { json: flags.json }));
+        }),
+      { quietLogs: flags.json },
+    ),
+  ),
+);
+
+const verificationCodeArgument = Argument.String("code").pipe(
+  Argument.withDescription("The code the device shows, such as `K7QM-2XFD`."),
+);
+
+const connectDeviceApproveCommand = Command.make("approve", {
+  ...authLocationFlags,
+  code: verificationCodeArgument,
+}).pipe(
+  Command.withDescription("Approve the waiting T3 Connect device that shows this code."),
+  Command.withHandler((flags) =>
+    runWithEnvironmentAuth(flags, (environmentAuth) =>
+      Effect.gen(function* () {
+        const approved = yield* environmentAuth.approveConnectDeviceByCode(flags.code);
+        yield* Console.log(
+          approved
+            ? `Approved ${flags.code}. The device connects on its next try.\n`
+            : `No device waiting for approval shows ${flags.code}.\n`,
+        );
+      }),
+    ),
+  ),
+);
+
+const connectDeviceRevokeCommand = Command.make("revoke", {
+  ...authLocationFlags,
+  code: verificationCodeArgument,
+}).pipe(
+  Command.withDescription("Stop trusting a T3 Connect device and end its sessions."),
+  Command.withHandler((flags) =>
+    runWithEnvironmentAuth(flags, (environmentAuth) =>
+      Effect.gen(function* () {
+        const outcome = yield* environmentAuth.revokeConnectDeviceByCode(flags.code);
+        yield* Console.log(
+          outcome === "revoked"
+            ? `Revoked ${flags.code}. If approval for new devices is off, it can connect again on its own.\n`
+            : outcome === "ambiguous"
+              ? `More than one trusted device shows ${flags.code}; revoke it from a client.\n`
+              : `No trusted device shows ${flags.code}.\n`,
+        );
+      }),
+    ),
+  ),
+);
+
+const connectDeviceCommand = Command.make("connect-device").pipe(
+  Command.withDescription("Approve and revoke devices that reach this host through T3 Connect."),
+  Command.withSubcommands([
+    connectDeviceListCommand,
+    connectDeviceApproveCommand,
+    connectDeviceRevokeCommand,
+  ]),
 );
 
 const sessionIssueCommand = Command.make("issue", {
@@ -241,5 +327,5 @@ const sessionCommand = Command.make("session").pipe(
 
 export const authCommand = Command.make("auth").pipe(
   Command.withDescription("Manage the local auth control plane for headless deployments."),
-  Command.withSubcommands([pairingCommand, sessionCommand]),
+  Command.withSubcommands([pairingCommand, sessionCommand, connectDeviceCommand]),
 );

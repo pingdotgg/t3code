@@ -14,7 +14,7 @@ import {
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import { Pressable, type TextLayoutEvent, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -28,6 +28,7 @@ import { environmentPresentations } from "../../state/presentation";
 import { availableCloudEnvironmentPresentation } from "../cloud/cloudEnvironmentPresentation";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
+import { useConnectionDiagnosis } from "./ConnectionDiagnosisDetails";
 import { environmentStatusText } from "./environmentStatusText";
 import { type RelayEnvironmentView, useConnectionController } from "./useConnectionController";
 
@@ -42,9 +43,7 @@ interface CloudEnvironmentRowsProps {
 }
 
 export function CloudEnvironmentRows(props: CloudEnvironmentRowsProps) {
-  // Showcase captures run without a Clerk publishable key, so `ClerkProvider`
-  // is never mounted and any `useAuth` call throws — the fixture states whether
-  // the rows are signed in instead of asking Clerk.
+  // Showcase lacks ClerkProvider; use fixture auth state to avoid a throwing useAuth call.
   if (props.showcaseSignedIn !== undefined) {
     return props.showcaseSignedIn ? <CloudEnvironmentRowsContent {...props} /> : null;
   }
@@ -78,10 +77,8 @@ function CloudEnvironmentRowsContent(
   const hasCloudRows =
     props.connectedCloudEnvironments.length > 0 || availableCloudEnvironments.length > 0;
 
-  const handleConnectCloudEnvironment = useCallback(
-    (entry: RelayEnvironmentView) => controller.connectRelayEnvironment(entry.environment),
-    [controller],
-  );
+  const handleConnectCloudEnvironment = (entry: RelayEnvironmentView) =>
+    controller.connectRelayEnvironment(entry.environment);
 
   const discoveredDescriptors = new Map(
     controller.relayEnvironments.flatMap((entry) =>
@@ -91,9 +88,9 @@ function CloudEnvironmentRowsContent(
     ),
   );
 
-  const handleToggleCloudError = useCallback((environmentId: string) => {
+  const handleToggleCloudError = (environmentId: string) => {
     setExpandedErrorId((current) => (current === environmentId ? null : environmentId));
-  }, []);
+  };
 
   const showHeader = props.showHeader ?? true;
 
@@ -193,6 +190,7 @@ function ConnectedCloudEnvironmentRow(props: {
   );
   const canRetry = presentation !== null && hasSavedBearerRoute(presentation.entry);
   const enabled = props.environment.isEnabled && !unsupported;
+  const { diagnosis } = useConnectionDiagnosis(props.environment.environmentId, presentation);
   const [lastDescriptor, setLastDescriptor] = useState(props.descriptor);
   if (props.descriptor !== undefined && props.descriptor !== lastDescriptor) {
     setLastDescriptor(props.descriptor);
@@ -205,6 +203,7 @@ function ConnectedCloudEnvironmentRow(props: {
       connectionError={enabled || unsupported ? props.environment.connectionError : null}
       connectionErrorTraceId={enabled ? props.environment.connectionErrorTraceId : null}
       connectionState={enabled || unsupported ? props.environment.connectionState : "available"}
+      awaitingApproval={enabled && presentation?.connection.awaitingApproval === true}
       errorExpanded={props.errorExpanded}
       label={props.environment.environmentLabel}
       machine={resolveEnvironmentMachineKind(
@@ -213,7 +212,11 @@ function ConnectedCloudEnvironmentRow(props: {
       onValueChange={props.onSetEnabled}
       onToggleError={props.onToggleError}
       disabled={unsupported && !canRetry}
-      {...(enabled || unsupported ? {} : { statusText: "Off" })}
+      {...(enabled || unsupported
+        ? diagnosis
+          ? { statusText: diagnosis.headline }
+          : {}
+        : { statusText: "Off" })}
       value={enabled}
     />
   );
@@ -267,6 +270,8 @@ function CloudEnvironmentRowShell(props: {
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
   readonly connectionState: EnvironmentConnectionPhase;
+  /** Waiting on the host to approve this device: say so plainly, not as a failure. */
+  readonly awaitingApproval?: boolean;
   readonly disabled?: boolean;
   readonly errorExpanded: boolean;
   readonly label: string;
@@ -285,9 +290,10 @@ function CloudEnvironmentRowShell(props: {
       phase: props.connectionState,
       error: props.connectionError,
       traceId: props.connectionErrorTraceId,
+      ...(props.awaitingApproval ? { awaitingApproval: true as const } : {}),
     });
   const statusClassName =
-    props.connectionError && props.connectionState !== "unsupported"
+    props.connectionError && props.connectionState !== "unsupported" && !props.awaitingApproval
       ? "text-danger-foreground"
       : "text-foreground-muted";
   const [errorMeasurement, setErrorMeasurement] = useState<{
@@ -303,21 +309,18 @@ function CloudEnvironmentRowShell(props: {
   const StatusContainer = errorCanExpand ? Pressable : View;
   const ContentContainer = props.onOpen || props.onRemove ? Pressable : View;
   const ChevronContainer = props.onOpen || props.onRemove ? Pressable : View;
-  const onMeasuredErrorTextLayout = useCallback(
-    (event: TextLayoutEvent) => {
-      if (!props.connectionError) {
-        return;
-      }
-      const nextLineCount = event.nativeEvent.lines.length;
-      setErrorMeasurement((currentMeasurement) =>
-        currentMeasurement?.text === measuredErrorText &&
-        currentMeasurement.lineCount === nextLineCount
-          ? currentMeasurement
-          : { text: measuredErrorText, lineCount: nextLineCount },
-      );
-    },
-    [measuredErrorText, props.connectionError],
-  );
+  const onMeasuredErrorTextLayout = (event: TextLayoutEvent) => {
+    if (!props.connectionError) {
+      return;
+    }
+    const nextLineCount = event.nativeEvent.lines.length;
+    setErrorMeasurement((currentMeasurement) =>
+      currentMeasurement?.text === measuredErrorText &&
+      currentMeasurement.lineCount === nextLineCount
+        ? currentMeasurement
+        : { text: measuredErrorText, lineCount: nextLineCount },
+    );
+  };
   return (
     <View collapsable={false} className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5">
       <ContentContainer

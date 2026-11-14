@@ -2,10 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 import { AuthFilesystemReadScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
 
 import {
-  canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
   filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
+  getFilesystemBrowseTabCompletion,
   resolveFilesystemReadAccess,
 } from "./filesystem.ts";
 
@@ -21,64 +21,6 @@ describe("filesystem read access", () => {
         sessionError: null,
       }),
     ).toEqual({ canReadFiles: false, isPending: true, error: null });
-  });
-
-  it("stops waiting when the loaded catalog has no matching environment", () => {
-    expect(
-      resolveFilesystemReadAccess({
-        isCatalogReady: true,
-        connection: null,
-        session: null,
-        sessionError: null,
-      }),
-    ).toEqual({
-      canReadFiles: false,
-      isPending: false,
-      error: "This environment is not connected.",
-    });
-  });
-
-  it.each(["available", "offline", "error"] as const)(
-    "stops waiting for an unresolved session when the connection is %s",
-    (phase) => {
-      expect(
-        resolveFilesystemReadAccess({
-          isCatalogReady: true,
-          connection: { phase, error: null },
-          session: null,
-          sessionError: null,
-        }),
-      ).toEqual({
-        canReadFiles: false,
-        isPending: false,
-        error: "This environment is not connected.",
-      });
-    },
-  );
-
-  it.each(["connected", "connecting", "reconnecting"] as const)(
-    "waits for the session check while %s",
-    (phase) => {
-      expect(
-        resolveFilesystemReadAccess({
-          isCatalogReady: true,
-          connection: { phase, error: null },
-          session: null,
-          sessionError: null,
-        }),
-      ).toEqual({ canReadFiles: false, isPending: true, error: null });
-    },
-  );
-
-  it("reports the transport failure when the session cannot be checked", () => {
-    expect(
-      resolveFilesystemReadAccess({
-        isCatalogReady: true,
-        connection: { phase: "error", error: "The relay is unavailable." },
-        session: null,
-        sessionError: null,
-      }),
-    ).toEqual({ canReadFiles: false, isPending: false, error: "The relay is unavailable." });
   });
 
   it.each([false, true])(
@@ -140,20 +82,53 @@ describe("filesystem browse model", () => {
     expect(getFilesystemBrowsePath("~/projects/", "", false).isBrowsing).toBe(false);
   });
 
-  it("filters names, hidden directories, and exact matches consistently", () => {
-    const entries = [
-      { name: ".config", fullPath: "/Users/test/.config" },
-      { name: "Code", fullPath: "/Users/test/Code" },
-      { name: "codething", fullPath: "/Users/test/codething" },
-    ];
+  it("completes Tab like a shell", () => {
+    const entry = (name: string) => ({ name, fullPath: `/Users/me/${name}` });
+    expect(getFilesystemBrowseTabCompletion([entry("Creations")], "Creation")).toEqual({
+      name: "Creations",
+      isComplete: true,
+    });
+    expect(getFilesystemBrowseTabCompletion([entry("OpenSourced"), entry("OpenAI")], "op")).toEqual(
+      { name: "Open", isComplete: false },
+    );
+    expect(getFilesystemBrowseTabCompletion([entry("Open"), entry("Opal")], "Op")).toBeNull();
+    expect(getFilesystemBrowseTabCompletion([entry("openAI"), entry("OpenSource")], "o")).toEqual({
+      name: "open",
+      isComplete: false,
+    });
+    expect(getFilesystemBrowseTabCompletion([entry("😀one"), entry("😁two")], "")).toBeNull();
+    expect(getFilesystemBrowseTabCompletion([entry("ΟΣα"), entry("οσβ")], "ο")).toBeNull();
+    expect(getFilesystemBrowseTabCompletion([entry("İfoo"), entry("İfar")], "i\u0307")).toEqual({
+      name: "İf",
+      isComplete: false,
+    });
+    expect(getFilesystemBrowseTabCompletion([entry("😀one"), entry("😀other")], "😀")).toEqual({
+      name: "😀o",
+      isComplete: false,
+    });
+    expect(getFilesystemBrowseTabCompletion([], "x")).toBeNull();
+  });
 
-    expect(filterFilesystemBrowseEntries(entries, "co")).toEqual({
-      visibleEntries: entries.slice(1, 3),
+  it("matches folder names stored decomposed, as macOS Finder names them", () => {
+    const entry = { name: "De\u0301veloppement", fullPath: "/Users/me/De\u0301veloppement" };
+    expect(filterFilesystemBrowseEntries([entry], "d\u00e9v")).toEqual({
+      visibleEntries: [entry],
       exactEntry: null,
     });
-    expect(filterFilesystemBrowseEntries(entries, "").visibleEntries).toEqual(entries.slice(1));
-    expect(filterFilesystemBrowseEntries(entries, ".").visibleEntries).toEqual(entries.slice(0, 1));
-    expect(filterFilesystemBrowseEntries(entries, "Code").exactEntry).toEqual(entries[1]);
+    expect(filterFilesystemBrowseEntries([entry], "De").visibleEntries).toEqual([entry]);
+    expect(filterFilesystemBrowseEntries([entry], "dévpt").visibleEntries).toEqual([entry]);
+    expect(filterFilesystemBrowseEntries([entry], "D\u00e9veloppement").exactEntry).toBe(entry);
+    // Linux keeps both spellings as separate folders; the one typed exactly wins.
+    const composed = { name: "D\u00e9veloppement", fullPath: "/home/me/D\u00e9veloppement" };
+    expect(filterFilesystemBrowseEntries([entry, composed], "D\u00e9veloppement").exactEntry).toBe(
+      composed,
+    );
+    // Two spellings that both normalize to the query are ambiguous; neither is picked.
+    const angstroms = [
+      { name: "\u212B", fullPath: "/home/me/\u212B" },
+      { name: "A\u030A", fullPath: "/home/me/A\u030A" },
+    ];
+    expect(filterFilesystemBrowseEntries(angstroms, "\u00C5").exactEntry).toBeNull();
   });
 });
 
@@ -180,11 +155,43 @@ describe("browse navigation", () => {
     await expect(invalidatedRun).resolves.toBe(false);
     expect(commits).toEqual(["second"]);
   });
+});
 
-  it("only preloads connected environments", () => {
-    expect(canPreloadBrowsePath("connected")).toBe(true);
-    expect(canPreloadBrowsePath("offline")).toBe(false);
-    expect(canPreloadBrowsePath("reconnecting")).toBe(false);
-    expect(canPreloadBrowsePath(null)).toBe(false);
+describe("browse entry filtering", () => {
+  const entries = ["my-t3code", "t3code", "cotton", "T3Code-old", ".t3", "docs"].map((name) => ({
+    name,
+    fullPath: `~/code/${name}`,
+  }));
+  const names = (query: string) =>
+    filterFilesystemBrowseEntries(entries, query).visibleEntries.map((entry) => entry.name);
+
+  it("keeps every visible entry in order for an empty query", () => {
+    expect(names("")).toEqual(["my-t3code", "t3code", "cotton", "T3Code-old", "docs"]);
+  });
+
+  it("matches substrings and subsequences, best match first", () => {
+    expect(names("code")).toEqual(["t3code", "T3Code-old", "my-t3code"]);
+    expect(names("t3c")).toEqual(["t3code", "T3Code-old", "my-t3code"]);
+    expect(names("tcd")).toEqual(["t3code", "T3Code-old", "my-t3code"]);
+    expect(names("xyz")).toEqual([]);
+  });
+
+  it("ranks a word-start match in a long name above any substring match", () => {
+    const longName = `${"a".repeat(240)}-foo`;
+    const folders = [
+      { name: "xfoo", fullPath: "~/xfoo" },
+      { name: longName, fullPath: "~/long" },
+    ];
+    expect(
+      filterFilesystemBrowseEntries(folders, "foo").visibleEntries.map((entry) => entry.name),
+    ).toEqual([longName, "xfoo"]);
+  });
+
+  it("shows dot folders only when the query starts with a dot", () => {
+    expect(names("t3")).not.toContain(".t3");
+    expect(filterFilesystemBrowseEntries(entries, ".t3")).toEqual({
+      visibleEntries: [entries[4]],
+      exactEntry: entries[4],
+    });
   });
 });

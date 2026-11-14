@@ -48,14 +48,6 @@ interface FirstRunDecisionInput {
   readonly threadCount: number;
 }
 
-interface HostedFirstRunDecisionInput {
-  readonly localEnvironmentDisabled?: boolean;
-  readonly hydrated: boolean;
-  readonly completed: boolean;
-  readonly catalogReady: boolean;
-  readonly environmentCount: number;
-}
-
 export function isFirstRunWorkspaceProvenanceAuthoritative(input: {
   readonly welcomeReceived: boolean;
   readonly bootstrapStatus: "pending" | "complete" | null;
@@ -71,11 +63,7 @@ export function transitionFirstRunGateState(
     return state.decision === "pending" && !state.stalled ? { ...state, stalled: true } : state;
   }
 
-  if (
-    state.decision === "wizard" ||
-    event.decision === "pending" ||
-    (state.decision === "app" && event.decision !== "wizard")
-  ) {
+  if (event.decision === "pending" || state.decision === event.decision) {
     return state;
   }
 
@@ -157,23 +145,9 @@ export function resolveFirstRunDecision(input: FirstRunDecisionInput): {
     : { decision: "app", persistCompletion: input.workspaceAuthoritative };
 }
 
-export function resolveHostedFirstRunDecision(input: HostedFirstRunDecisionInput): {
+export function resolveHostedFirstRunDecision(hydrated: boolean): {
   readonly decision: FirstRunDecision;
   readonly persistCompletion: boolean;
 } {
-  if (!input.hydrated) {
-    return { decision: "pending", persistCompletion: false };
-  }
-
-  if (input.completed) {
-    return { decision: "app", persistCompletion: false };
-  }
-
-  if (!input.catalogReady) {
-    return { decision: "pending", persistCompletion: false };
-  }
-
-  return input.environmentCount === 0 && !input.localEnvironmentDisabled
-    ? { decision: "wizard", persistCompletion: false }
-    : { decision: "app", persistCompletion: true };
+  return { decision: hydrated ? "app" : "pending", persistCompletion: false };
 }

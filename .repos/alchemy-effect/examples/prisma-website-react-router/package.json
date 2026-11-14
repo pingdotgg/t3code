@@ -2,6 +2,11 @@
   "name": "prisma-website-react-router",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/prisma-website-react-router"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -11,6 +16,7 @@
     "build": "react-router build"
   },
   "dependencies": {
+    "@alchemy.run/prisma": "workspace:*",
     "@react-router/node": "catalog:",
     "alchemy": "workspace:*",
     "effect": "catalog:",
@@ -21,21 +27,17 @@
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@react-router/dev": "catalog:",
     "@tailwindcss/vite": "catalog:",
     "@types/react": "catalog:",
+    "@vercel/nft": "catalog:",
     "tailwindcss": "catalog:",
     "typescript": "catalog:",
-    "vite": "catalog:",
-    "@vercel/nft": "catalog:"
+    "vite": "catalog:"
   },
   "engines": {
     "node": ">=22"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/prisma-website-react-router"
   }
 }

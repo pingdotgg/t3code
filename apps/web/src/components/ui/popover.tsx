@@ -1,8 +1,8 @@
-"use client";
-
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 
 import { cn } from "~/lib/utils";
+
+import { renderClosingPositioner } from "./closing-positioner";
 
 const PopoverCreateHandle = PopoverPrimitive.createHandle;
 
@@ -59,15 +59,13 @@ function PopoverPopup({
   width?: keyof typeof popoverPopupWidthClassName;
   touchBackdrop?: boolean;
 }) {
-  // Viewport rekeys its children when the active trigger clears on close. Persistent
-  // single-trigger forms need a stable container to retain drafts and submit guards.
+  // Viewport rekeys on close; persistent single-trigger forms need stable containers for drafts and submit
+  // guards.
   const Viewport = keepMounted ? "div" : PopoverPrimitive.Viewport;
   return (
     <PopoverPrimitive.Portal keepMounted={keepMounted}>
       {touchBackdrop ? (
-        // A non-modal popover closes on an outside tap and lets that tap reach the
-        // control under the finger. On touch screens the backdrop takes the tap, so
-        // tapping away only closes the popover, as it does for modal menus and selects.
+        // On touch, the backdrop consumes outside taps so closing cannot also activate the control beneath.
         <PopoverPrimitive.Backdrop
           className="fixed inset-0 z-[130] hidden pointer-coarse:block"
           data-slot="popover-backdrop"
@@ -80,12 +78,15 @@ function PopoverPopup({
         collisionAvoidance={collisionAvoidance}
         collisionPadding={variant === "panel" ? 0 : undefined}
         className={cn(
-          "h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-transform data-instant:transition-none",
+          "h-(--positioner-height) max-h-(--available-height) w-(--positioner-width) max-w-(--available-width)",
+          // Kept-mounted positioners first paint at the window origin, so a transform transition slides them in from there.
+          !keepMounted && "transition-transform data-instant:transition-none",
           variant === "panel"
             ? "z-(--z-sheet) w-[min(calc(var(--thread-details-panel-width)+--spacing(4)),calc(var(--anchor-width)---spacing(2)))] transition-[top] duration-150 ease-out data-instant:transition-[top] motion-reduce:transition-none motion-reduce:data-instant:transition-none"
             : "z-[130]",
         )}
         data-slot="popover-positioner"
+        render={renderClosingPositioner}
         side={side}
         sideOffset={sideOffset}
       >
@@ -93,6 +94,8 @@ function PopoverPopup({
           className={cn(
             "relative flex h-(--popup-height,auto) w-(--popup-width,auto) origin-(--transform-origin) rounded-lg text-popover-foreground outline-none transition-[width,height,scale,opacity] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] has-data-[slot=calendar]:rounded-xl has-data-[slot=calendar]:before:rounded-[calc(var(--radius-xl)-1px)] data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0 dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
             variant !== "panel" && "dropdown-glass",
+            // Electron drag hit-testing ignores z-index; popups over a drag region would swallow hover.
+            "[-webkit-app-region:no-drag]",
             tooltipStyle &&
               "w-fit text-balance rounded-md text-xs shadow-md/5 before:rounded-[calc(var(--radius-md)-1px)]",
             !tooltipStyle &&

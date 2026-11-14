@@ -11,18 +11,13 @@ export type RemoteDesktopUpdateStep =
       readonly reason?: string;
     };
 
-/**
- * The caps are what stop a check -> up-to-date -> check loop and endless
- * download retries; they are counts rather than booleans because a state event
- * raced by the local 4-minute poller can re-show an already-handled status
- * once.
- */
+/** Bound retries with counts: background poller races can repeat an already-handled status once. */
 export interface RemoteDesktopUpdateAttempts {
   readonly checks: number;
   readonly downloads: number;
 }
 
-export const MAX_REMOTE_UPDATE_CHECKS = 2;
+const MAX_REMOTE_UPDATE_CHECKS = 2;
 export const MAX_REMOTE_UPDATE_DOWNLOADS = 3;
 
 function isInstallableDesktopUpdateState(state: DesktopUpdateState): boolean {
@@ -46,9 +41,7 @@ export function nextRemoteDesktopUpdateStep(
       reason: disabledReason ?? "Automatic updates are disabled on this machine.",
     };
   }
-  // An install of this version already failed to apply here. Installing it
-  // again from afar would stop the app's threads for nothing, so only the user
-  // on this machine retries it.
+  // Reinstalling a failed version disrupts threads without updating; retries require the local user.
   if (
     state.notAppliedVersion !== undefined &&
     (state.downloadedVersion ?? state.availableVersion) === state.notAppliedVersion
@@ -59,11 +52,7 @@ export function nextRemoteDesktopUpdateStep(
       reason: `Update ${state.notAppliedVersion} did not apply on this machine. Retry it from the desktop app there.`,
     };
   }
-  // Mirror installDownloadedUpdate's own admission rule exactly, so the run
-  // never reports an install that the updater then refuses. A download
-  // survives an unrelated background updater error (errorContext null) and
-  // a previous failed install (errorContext "install"); it does not survive
-  // a check or download error, which fall through to the error branch.
+  // Match install admission, including retained downloads after unrelated background or earlier install errors.
   if (isInstallableDesktopUpdateState(state)) {
     return { action: "install" };
   }
@@ -80,9 +69,7 @@ export function nextRemoteDesktopUpdateStep(
     }
     return { action: "download" };
   }
-  // "up-to-date" and "error" are retained from earlier/background checks,
-  // so before this run has issued its own check they are stale, not
-  // terminal: the whole point of a remote request is to look again.
+  // Background up-to-date/error states are stale until this request has issued its own check.
   if (state.status === "up-to-date") {
     if (attempts.checks === 0) {
       return { action: "check" };
@@ -109,11 +96,7 @@ export function nextRemoteDesktopUpdateStep(
   return { action: "check" };
 }
 
-/**
- * Updater messages are plain strings and may be blank; a blank reason would
- * fail encoding and silently drop the terminal report, leaving the server to
- * wait for its timeout.
- */
+/** Blank reasons fail encoding and drop the terminal report, forcing the server to time out. */
 export function normalizeRemoteUpdateReason(reason: string | undefined): string | undefined {
   const trimmed = reason?.trim();
   return trimmed ? trimmed : undefined;

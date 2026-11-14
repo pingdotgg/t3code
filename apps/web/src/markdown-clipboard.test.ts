@@ -1,11 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { serializeRenderedMarkdownFragment } from "./markdown-clipboard";
+import {
+  serializeCodeBlockToMarkdown,
+  serializeRenderedMarkdownFragment,
+  serializeTableElementToMarkdown,
+} from "./markdown-clipboard";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import {
   collectAssistantCitations,
   serializeAssistantCitation,
 } from "@t3tools/shared/assistantCitations";
+import { markdownMathRanges, parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
+
+import { unified } from "unified";
+import remarkParse from "remark-parse";
+import {
+  CHAT_MARKDOWN_REMARK_PLUGINS,
+  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+} from "@t3tools/shared/markdownPipeline";
+
+const userMarkdown = unified()
+  .use(remarkParse)
+  .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+  .use(CHAT_USER_MARKDOWN_REMARK_PLUGINS);
 
 const TEXT_NODE = 3;
 const ELEMENT_NODE = 1;
@@ -95,6 +112,22 @@ class FakeElement {
     };
     return search(this);
   }
+
+  /** Supports the `:scope > a > b` child paths the table serializer queries. */
+  querySelectorAll(selector: string): FakeElement[] {
+    return selector.split(", ").flatMap((part) =>
+      part
+        .replace(/^:scope > /, "")
+        .split(" > ")
+        .reduce<FakeElement[]>(
+          (level, tag) =>
+            level.flatMap((element) =>
+              element.children.filter((child) => child.tagName === tag.toUpperCase()),
+            ),
+          [this],
+        ),
+    );
+  }
 }
 
 function asNode(element: FakeElement): Node {
@@ -144,82 +177,6 @@ describe("serializeRenderedMarkdownFragment", () => {
     vi.unstubAllGlobals();
   });
 
-  it("wraps inline code in backticks", () => {
-    const paragraph = new FakeElement("P").append(
-      new FakeText("run "),
-      new FakeElement("CODE").append(new FakeText("git status")),
-      new FakeText(" first"),
-    );
-    const container = new FakeElement("DIV").append(paragraph);
-
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("run `git status` first");
-  });
-
-  describe.each([
-    { parentLayout: "tight", childLayout: "tight" },
-    { parentLayout: "tight", childLayout: "loose" },
-    { parentLayout: "loose", childLayout: "tight" },
-    { parentLayout: "loose", childLayout: "loose" },
-  ])("$parentLayout parent with $childLayout child", ({ parentLayout, childLayout }) => {
-    it.each([
-      { parentChecked: null, childChecked: true, parent: "- Parent", child: "  - [x] Child" },
-      {
-        parentChecked: false,
-        childChecked: true,
-        parent: "- [ ] Parent",
-        child: "  - [x] Child",
-      },
-      {
-        parentChecked: true,
-        childChecked: false,
-        parent: "- [x] Parent",
-        child: "  - [ ] Child",
-      },
-    ])("copies $parent with $child", ({ parentChecked, childChecked, parent, child }) => {
-      const parentContent = parentLayout === "loose" ? new FakeElement("P") : new FakeElement("LI");
-      if (parentChecked !== null) {
-        const checkbox = new FakeElement("INPUT", [], { type: "checkbox" });
-        checkbox.checked = parentChecked;
-        parentContent.append(checkbox, new FakeText(" "));
-      }
-      parentContent.append(new FakeText("Parent"));
-      const parentItem =
-        parentLayout === "loose" ? new FakeElement("LI").append(parentContent) : parentContent;
-      const checkbox = new FakeElement("INPUT", [], { type: "checkbox" });
-      checkbox.checked = childChecked;
-      const childContent = new FakeElement(childLayout === "loose" ? "P" : "LI").append(
-        checkbox,
-        new FakeText(" Child"),
-      );
-      const childItem =
-        childLayout === "loose" ? new FakeElement("LI").append(childContent) : childContent;
-      parentItem.append(new FakeText("\n"), new FakeElement("UL").append(childItem));
-      const container = new FakeElement("DIV").append(
-        new FakeElement("P").append(new FakeText("Before")),
-        new FakeElement("UL").append(parentItem),
-        new FakeElement("P").append(new FakeText("After")),
-      );
-
-      expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
-        `Before\n\n${parent}${parentLayout === "loose" ? "\n\n" : "\n"}${child}\n\nAfter`,
-      );
-    });
-  });
-
-  it("indents a code block under a numbered task item by the number width only", () => {
-    const checkbox = new FakeElement("INPUT", [], { type: "checkbox" });
-    checkbox.checked = true;
-    const item = new FakeElement("LI").append(
-      new FakeElement("P").append(checkbox, new FakeText(" Run the tests")),
-      renderedCodeBlock(["pnpm test"]),
-    );
-    const container = new FakeElement("DIV").append(new FakeElement("OL").append(item));
-
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
-      "1. [x] Run the tests\n\n   ```\n   pnpm test\n   ```",
-    );
-  });
-
   it("copies the complete quote, source, and comment instead of the comment-only chip label", () => {
     const citation = {
       version: 1 as const,
@@ -246,17 +203,6 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(collectAssistantCitations(copied).map((entry) => entry.citation)).toEqual([citation]);
   });
 
-  it("keeps a highlighted block code selection plain when its pre wrapper is outside the range", () => {
-    const code = new FakeElement("CODE").append(
-      shikiCodeLine("git show-ref --verify refs/remotes/origin/opt/deploy/dev"),
-    );
-    const container = new FakeElement("DIV").append(code);
-
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
-      "git show-ref --verify refs/remotes/origin/opt/deploy/dev",
-    );
-  });
-
   it("keeps a multi-line code selection plain instead of inline-wrapping it", () => {
     const code = new FakeElement("CODE").append(new FakeText("first line\nsecond line"));
     const container = new FakeElement("DIV").append(code);
@@ -264,46 +210,215 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("first line\nsecond line");
   });
 
-  it("keeps fences when a bare list item sits alongside the code block", () => {
+  it.each([
+    ["backtick edges", "`value`"],
+    ["space edges", "  value  "],
+    ["only spaces", "   "],
+  ])("copies inline code that parses back unchanged: %s", (_, value) => {
+    const container = new FakeElement("DIV").append(
+      new FakeElement("P").append(
+        new FakeText("Use "),
+        new FakeElement("CODE").append(new FakeText(value)),
+        new FakeText(" here."),
+      ),
+    );
+    const paragraph = parseMarkdownWithMath(serializeRenderedMarkdownFragment(asNode(container)))
+      .children[0];
+    if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
+    expect(paragraph.children.find((child) => child.type === "inlineCode")?.value).toBe(value);
+  });
+
+  it.each([
+    String.raw`see C:\me\.t3\shot.png`,
+    String.raw`C:\work\_build`,
+    "C:/work/_build/out.txt",
+    String.raw`C:\work\a-_b.txt`,
+    "a*word*b and a_word_b; ~~literal~~ and ~single~",
+    String.raw`before\ after\	end`,
+  ])("copies prose that parses back unchanged: %s", (value) => {
+    const container = new FakeElement("DIV").append(new FakeText(value));
+    const paragraph = userMarkdown.parse(serializeRenderedMarkdownFragment(asNode(container)))
+      .children[0];
+    expect(paragraph).toMatchObject({ type: "paragraph", children: [{ type: "text", value }] });
+  });
+
+  it.each([
+    ["*", "EM", "word", "emphasis"],
+    ["\\", "CODE", "value", "inlineCode"],
+  ])("keeps a text edge %j beside %s", (edge, tag, value, type) => {
+    const container = new FakeElement("DIV").append(
+      new FakeText(edge),
+      new FakeElement(tag).append(new FakeText(value)),
+    );
+    const paragraph = userMarkdown.parse(serializeRenderedMarkdownFragment(asNode(container)))
+      .children[0];
+    expect(paragraph).toMatchObject({
+      type: "paragraph",
+      children: [
+        { type: "text", value: edge },
+        type === "inlineCode" ? { type, value } : { type, children: [{ type: "text", value }] },
+      ],
+    });
+  });
+
+  it("copies email links with their address and drops in-app destinations", () => {
+    const container = new FakeElement("DIV").append(
+      new FakeElement("P").append(
+        new FakeText("Write to "),
+        new FakeElement("A", [], { href: "mailto:support@example.com" }).append(
+          new FakeText("support@example.com"),
+        ),
+        new FakeText(", "),
+        new FakeElement("A", [], { href: "mailto:support@example.com?subject=Help" }).append(
+          new FakeText("Support"),
+        ),
+        new FakeText(", "),
+        new FakeElement("A", [], { href: "mailto:support@example.com?subject=Help)" }).append(
+          new FakeText("Support"),
+        ),
+        new FakeText(" or "),
+        new FakeElement("A", [], { href: "/environment-one/thread-one" }).append(
+          new FakeText("the thread"),
+        ),
+        new FakeText("."),
+      ),
+    );
+    const copied = serializeRenderedMarkdownFragment(asNode(container));
+    expect(copied).toBe(
+      "Write to support@example.com, [Support](mailto:support@example.com?subject=Help), [Support](mailto:support@example.com?subject=Help\\)) or the thread.",
+    );
+    const paragraph = parseMarkdownWithMath(copied).children[0];
+    if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
+    expect(
+      paragraph.children.filter((child) => child.type === "link").map((link) => link.url),
+    ).toEqual([
+      "mailto:support@example.com",
+      "mailto:support@example.com?subject=Help",
+      "mailto:support@example.com?subject=Help)",
+    ]);
+  });
+
+  it.each([
+    ["array[index]", "https://example.com"] as const,
+    ...[
+      "support@example.com?subject=Help",
+      "foo",
+      "support@example.internal1",
+      "support@example.com_",
+      "support@example.com-",
+      "first_last@example.com",
+    ].map((label) => [label, `mailto:${label}`] as const),
+  ])("keeps the link label and destination: %s", (label, href) => {
+    const anchor = new FakeElement("A", [], { href }).append(new FakeText(label));
+    const container = new FakeElement("DIV").append(anchor);
+    const paragraph = userMarkdown.parse(serializeRenderedMarkdownFragment(asNode(container)))
+      .children[0];
+    if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
+    expect(paragraph.children).toMatchObject([
+      { type: "link", url: href, children: [{ type: "text", value: label }] },
+    ]);
+  });
+
+  it("copies alert and insight callouts as their Markdown instead of the rendered label", () => {
+    // The shape ChatMarkdown renders for `> [!WARNING]\n> Back up first.`.
+    const callout = new FakeElement("DIV", [], {
+      role: "note",
+      "data-markdown-alert": "warning",
+    }).append(
+      new FakeElement("P", [], {
+        "data-thread-find-ignore": "true",
+        "data-markdown-alert-label": "",
+      }).append(new FakeElement("SVG", [], { "aria-hidden": "true" }), new FakeText("Warning")),
+      new FakeElement("P").append(new FakeText("Back up first.")),
+    );
+    const container = new FakeElement("DIV").append(callout);
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "> [!WARNING]\n> Back up first.",
+    );
+    const insight = new FakeElement("DIV", [], {
+      role: "note",
+      "data-markdown-alert": "insight",
+    }).append(
+      new FakeElement("P", [], {
+        "data-thread-find-ignore": "true",
+        "data-markdown-alert-label": "",
+      }).append(new FakeText("Insight")),
+      new FakeElement("P").append(new FakeText("Caches are warm.")),
+    );
+    expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(insight)))).toBe(
+      `★ Insight ${"─".repeat(37)}\nCaches are warm.\n${"─".repeat(49)}`,
+    );
+  });
+
+  it("preserves explicit ordered-list values and continues from resets when copying", () => {
+    const list = new FakeElement("OL", [], { start: "0" }).append(
+      new FakeElement("LI").append(new FakeText("A")),
+      new FakeElement("LI", [], { value: "5" }).append(new FakeText("B")),
+      new FakeElement("LI").append(new FakeText("C")),
+      new FakeElement("LI", [], { value: "0" }).append(new FakeText("D")),
+    );
+    expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(list)))).toBe(
+      "0. A\n5. B\n6. C\n0. D",
+    );
+  });
+
+  it("keeps a bare list item that sits alongside the code block", () => {
     const container = new FakeElement("DIV").append(
       new FakeElement("UL").append(new FakeElement("LI")),
       renderedCodeBlock(["pnpm test"]),
     );
 
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("-\n\n```\npnpm test\n```");
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("-\n\npnpm test");
   });
 
-  it("keeps fences when a checkbox-only task item sits alongside the code block", () => {
+  it("copies a command and the prose after it as shown, without code fences", () => {
     const container = new FakeElement("DIV").append(
-      new FakeElement("UL").append(
-        new FakeElement("LI").append(new FakeElement("INPUT", [], { type: "checkbox" })),
-      ),
-      renderedCodeBlock(["pnpm test"]),
+      renderedCodeBlock(["printf 'hello\\n'"]),
+      new FakeElement("P").append(new FakeText("T")),
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("printf 'hello\\n'\n\nT");
+  });
+
+  it("keeps a diagram's source exactly as written when copied with prose", () => {
+    const source = 'flowchart TD\n  A["first   \n\n\nlast"]';
+    const container = new FakeElement("DIV").append(
+      new FakeElement("DIV", [], {
+        "data-markdown-mermaid": "",
+        "data-markdown-copy": serializeCodeBlockToMarkdown(source, "mermaid"),
+      }),
+      new FakeElement("P").append(new FakeText("After")),
     );
 
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
-      "- [ ]\n\n```\npnpm test\n```",
+      `\`\`\`mermaid\n${source}\n\`\`\`\n\nAfter`,
     );
   });
 
-  it("still drops fences for a code block that is the whole list item", () => {
-    const container = new FakeElement("DIV").append(
-      new FakeElement("UL").append(new FakeElement("LI").append(renderedCodeBlock(["pnpm test"]))),
-      new FakeText("\n"),
+  it("keeps blank lines inside a code block in a list item, quote, or longer fence", () => {
+    const code = ["import os", "", "", "def main():"];
+    const list = new FakeElement("OL").append(
+      new FakeElement("LI").append(new FakeText("Create it:\n"), renderedCodeBlock(code)),
+    );
+    const quote = new FakeElement("BLOCKQUOTE").append(
+      new FakeElement("P").append(new FakeText("Note:")),
+      renderedCodeBlock(code),
+    );
+    const nestedFence = new FakeElement("DIV").append(
+      new FakeElement("P").append(new FakeText("Example:")),
+      renderedCodeBlock(["```js", "a()", "", "", "b()  ", "```"]),
     );
 
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("pnpm test");
-  });
-
-  it("keeps fences when a file chip sits alongside the code block", () => {
-    const container = new FakeElement("DIV").append(
-      renderedCodeBlock(["pnpm test"]),
-      new FakeText("\n"),
-      new FakeElement("BUTTON", [], { "data-markdown-copy": "`src/foo.ts`" }),
+    expect(serializeRenderedMarkdownFragment(asNode(nestedFence))).toBe(
+      "Example:\n\n```js\na()\n\n\nb()  \n```",
     );
 
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
-      "```\npnpm test\n```\n\n`src/foo.ts`",
+    expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(list)))).toBe(
+      "1. Create it:\n   import os\n\n\n   def main():",
+    );
+    expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(quote)))).toBe(
+      "> Note:\n>\n> import os\n>\n>\n> def main():",
     );
   });
 
@@ -318,30 +433,97 @@ describe("serializeRenderedMarkdownFragment", () => {
       "printf '%s' 'TOKEN' | gh secret set CLOUDFLARE_API_TOKEN",
     );
   });
+});
 
-  it("still fences a code block copied alongside prose", () => {
-    const container = new FakeElement("DIV").append(
-      new FakeElement("P").append(new FakeText("Run this:")),
-      renderedCodeBlock(["gh workflow run Deploy --ref main"]),
-    );
+function renderedFormula(tex: string): FakeElement {
+  // MarkdownMath's wrapper; its children stand in for KaTeX's glyphs.
+  return new FakeElement("SPAN", [], {
+    "data-markdown-math": "inline",
+    "data-markdown-copy": `\\(${tex}\\)`,
+  }).append(new FakeText(tex));
+}
 
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
-      "Run this:\n\n```\ngh workflow run Deploy --ref main\n```",
-    );
+function renderedTable(...rows: Array<Array<FakeElement | FakeText>>): FakeElement {
+  const row = (tag: string, cells: Array<FakeElement | FakeText>) =>
+    new FakeElement("TR").append(...cells.map((cell) => new FakeElement(tag).append(cell)));
+  const [head = [], ...body] = rows;
+  return new FakeElement("TABLE").append(
+    new FakeElement("THEAD").append(row("TH", head)),
+    new FakeElement("TBODY").append(...body.map((cells) => row("TD", cells))),
+  );
+}
+
+describe("copying rendered Markdown tables", () => {
+  beforeEach(() => {
+    vi.stubGlobal("Node", { TEXT_NODE, ELEMENT_NODE });
   });
 
-  it("uses a rendered card's explicit Markdown copy representation", () => {
-    const card = new FakeElement("DIV", [], {
-      "data-markdown-copy": "Hello World (Document template)\n\n",
-    }).append(
-      new FakeElement("SPAN").append(new FakeText("Hello World")),
-      new FakeElement("SPAN").append(new FakeText("Document template")),
-      new FakeElement("BUTTON").append(new FakeText("Use template")),
-    );
-    const container = new FakeElement("DIV").append(card);
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
 
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
-      "Hello World (Document template)",
+  it("keeps formula pipes as authored while escaping prose pipes", () => {
+    const table = renderedTable(
+      [new FakeText("Formula"), new FakeText("Note")],
+      [renderedFormula("|x|"), new FakeText("*a* | ~~b~~")],
+      [renderedFormula("\\|x\\|"), new FakeElement("CODE").append(new FakeText("\\(c|d\\)"))],
+      [
+        new FakeElement("A", [], { href: "https://example.com/?q=a|b" }).append(
+          new FakeText("norm "),
+          renderedFormula("|y|"),
+        ),
+        new FakeText("e"),
+      ],
+      [
+        new FakeElement("UL").append(
+          new FakeElement("LI").append(renderedFormula("|z|"), new FakeText(" a | b")),
+        ),
+        new FakeElement("BLOCKQUOTE").append(new FakeElement("P").append(new FakeText("c | d"))),
+      ],
     );
+    const markdown = serializeTableElementToMarkdown(table as unknown as Element);
+
+    const tree = parseMarkdownWithMath(markdown);
+    const parsed = tree.children[0];
+    if (parsed?.type !== "table") throw new Error("Expected a table");
+    expect(parsed.children.map((row) => row.children.length)).toEqual([2, 2, 2, 2, 2]);
+    expect(markdownMathRanges(markdown, tree).map((formula) => formula.tex)).toEqual([
+      "|x|",
+      "\\|x\\|",
+      "|y|",
+      "|z|",
+    ]);
+    expect(parsed.children[1]?.children[1]?.children).toMatchObject([
+      { type: "text", value: "*a* | ~~b~~" },
+    ]);
+    expect(parsed.children[4]?.children[1]?.children).toMatchObject([
+      { type: "text", value: "> c | d" },
+    ]);
+    const [, , codeRow, linkRow] = parsed.children;
+    expect(codeRow?.children[1]?.children[0]).toMatchObject({
+      type: "inlineCode",
+      value: "\\(c|d\\)",
+    });
+    expect(linkRow?.children[0]?.children[0]).toMatchObject({
+      type: "link",
+      url: "https://example.com/?q=a|b",
+    });
+  });
+
+  it("copies code and diagrams in cells without markers or unescaped pipes", () => {
+    const code = new FakeElement("PRE").append(
+      new FakeElement("CODE").append(new FakeText("a  b")),
+    );
+    const diagram = new FakeElement("DIV", [], {
+      "data-markdown-mermaid": "",
+      "data-markdown-copy": serializeCodeBlockToMarkdown("A -->|hi| B", "mermaid"),
+    });
+    expect(
+      serializeTableElementToMarkdown(
+        asNode(
+          renderedTable([new FakeText("Command"), new FakeText("Diagram")], [code, diagram]),
+        ) as Element,
+      ),
+    ).toBe("| Command | Diagram |\n| --- | --- |\n| a  b | ```mermaid A -->\\|hi\\| B ``` |");
   });
 });

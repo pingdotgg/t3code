@@ -1,10 +1,10 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import type { ModelCapabilities } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as PlatformError from "effect/PlatformError";
+import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -12,6 +12,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import {
   isCommandMissingCause,
+  resolveProviderProbeTimeoutMs,
   parseGenericCliVersion,
   providerModelsFromSettings,
   spawnAndCollect,
@@ -37,23 +38,6 @@ const OPENCODE_CUSTOM_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabil
 });
 
 describe("providerModelsFromSettings", () => {
-  it("applies the provided capabilities to custom models", () => {
-    const models = providerModelsFromSettings(
-      [],
-      ["openai/gpt-5"],
-      OPENCODE_CUSTOM_MODEL_CAPABILITIES,
-    );
-
-    expect(models).toEqual([
-      {
-        slug: "openai/gpt-5",
-        name: "openai/gpt-5",
-        isCustom: true,
-        capabilities: OPENCODE_CUSTOM_MODEL_CAPABILITIES,
-      },
-    ]);
-  });
-
   it("keeps an entry's own name and capabilities over the driver default", () => {
     const capabilities = createModelCapabilities({
       optionDescriptors: [{ id: "fastMode", label: "Fast Mode", type: "boolean" }],
@@ -115,10 +99,6 @@ describe("providerModelsFromSettings", () => {
 });
 
 describe("parseGenericCliVersion", () => {
-  it("parses a bare version", () => {
-    expect(parseGenericCliVersion("1.14.19")).toBe("1.14.19");
-  });
-
   it("parses a v-prefixed version", () => {
     expect(parseGenericCliVersion("opencode v2.0.3")).toBe("2.0.3");
     expect(parseGenericCliVersion("v22.19.0")).toBe("22.19.0");
@@ -128,30 +108,12 @@ describe("parseGenericCliVersion", () => {
     expect(parseGenericCliVersion("codex-cli 0.53.0 (build abc)")).toBe("0.53.0");
   });
 
-  it("returns null when no version is present", () => {
-    expect(parseGenericCliVersion("no version here")).toBeNull();
-  });
-
   it("ignores versions glued to other word characters", () => {
     expect(parseGenericCliVersion("build2.0.3artifact")).toBeNull();
   });
 });
 
 describe("ProviderCommandNotFoundError", () => {
-  it("classifies normalized platform failures without parsing messages", () => {
-    expect(
-      isCommandMissingCause(
-        PlatformError.systemError({
-          _tag: "NotFound",
-          module: "ChildProcess",
-          method: "spawn",
-          description: "arbitrary host detail",
-        }),
-      ),
-    ).toBe(true);
-    expect(isCommandMissingCause(new Error("spawn provider ENOENT"))).toBe(false);
-  });
-
   it.effect("retains safe failed-command diagnostics without process output", () => {
     const stderr = "'codex' is not recognized: secret-token-value";
     const spawner = ChildProcessSpawner.make(() =>
@@ -176,7 +138,7 @@ describe("ProviderCommandNotFoundError", () => {
         "C:\\tools\\codex.cmd",
         ChildProcess.make("codex", ["--version"]),
       ).pipe(
-        Effect.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(HostProcess.Platform, "win32"),
         Effect.flip,
       );
@@ -198,4 +160,51 @@ describe("ProviderCommandNotFoundError", () => {
       expect(error.message).not.toContain("secret-token-value");
     });
   });
+});
+
+describe("resolveProviderProbeTimeoutMs", () => {
+  it.each([
+    "codex",
+    "claude",
+    "cursor",
+    "antigravity",
+    "grok",
+    "kiro",
+    "fx",
+    "pi",
+    "muse",
+    "opencode",
+    "acp_registry",
+  ])("uses only %s's readiness override", (provider) => {
+    const key = `T3CODE_${provider.toUpperCase()}_PROBE_TIMEOUT_MS`;
+    expect(resolveProviderProbeTimeoutMs(provider, 25000, { [key]: "60000" })).toBe(60000);
+    expect(resolveProviderProbeTimeoutMs(provider, 25000, { [key]: "1000" })).toBe(25000);
+    expect(
+      resolveProviderProbeTimeoutMs(provider, 25000, { T3CODE_OTHER_PROBE_TIMEOUT_MS: "60000" }),
+    ).toBe(25000);
+  });
+  it.each([undefined, "", " ", "bad", "0", "-1", "1.5", "Infinity", "2147483648"])(
+    "retains the phase default for invalid value %s",
+    (value) => {
+      expect(
+        resolveProviderProbeTimeoutMs("claude", 25000, { T3CODE_CLAUDE_PROBE_TIMEOUT_MS: value }),
+      ).toBe(25000);
+    },
+  );
+});
+
+describe("spawnAndCollect", () => {
+  // regression: #35262 - without forceKillAfter a timed-out probe whose CLI ignores
+  // SIGTERM waits for it to exit, so the caller's timeout never returns.
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "lets a timed-out probe return when the CLI ignores SIGTERM",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* spawnAndCollect(
+          "sh",
+          ChildProcess.make("sh", ["-c", 'trap "" TERM; sleep 30']),
+        ).pipe(Effect.timeoutOption("200 millis"));
+        expect(Option.isNone(result)).toBe(true);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

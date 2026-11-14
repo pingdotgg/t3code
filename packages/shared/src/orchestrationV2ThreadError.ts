@@ -5,12 +5,18 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+type ErrorTurnItem = Extract<OrchestrationV2TurnItem, { type: "error" }>;
+/** Only error items are read, so callers may pass items stripped of other fields. */
+type FailureScanTurnItem =
+  | ErrorTurnItem
+  | { readonly type: Exclude<OrchestrationV2TurnItem["type"], "error"> };
+
 export function latestRootProviderFailure(
   run: OrchestrationV2Run | null,
-  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+  turnItems: ReadonlyArray<FailureScanTurnItem>,
 ): OrchestrationV2ProviderFailure | null {
   if (run?.status !== "failed") return null;
-  let latest: Extract<OrchestrationV2TurnItem, { type: "error" }> | null = null;
+  let latest: ErrorTurnItem | null = null;
   for (const item of turnItems) {
     if (
       item.type !== "error" ||
@@ -41,8 +47,8 @@ export function threadErrorSummary(
     usageLimitResetAt:
       currentFailure?.class === "usage_limit" ? (currentFailure.resetAt ?? null) : null,
     lastError: sessionError ?? failure?.message ?? null,
-    lastErrorClass:
-      sessionError !== null && sessionError !== failure?.message ? null : (failure?.class ?? null),
+    lastErrorClass: currentFailure?.class ?? null,
+    lastErrorCode: currentFailure?.code ?? null,
   };
 }
 
@@ -59,11 +65,25 @@ export function latestExecutedRun(
 }
 
 /**
- * Ordinals follow submission, but a run can start ahead of a held queue (a
- * restart continuation, or a message sent while the queue is held), so a queued
- * run resumed later can have a lower ordinal than one that already ended. An
- * unfinished run is the latest.
+ * Work started now would run in the project checkout, not the worktree the thread asked for. A
+ * failed or interrupted setup leaves the request standing until a worktree exists or later work
+ * has run past it.
  */
+export function orchestrationV2WorktreePending(
+  worktreePath: string | null,
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): boolean {
+  const latest = latestExecutedRun(runs);
+  return (
+    worktreePath === null &&
+    (latest?.status === "preparing" ||
+      latest?.status === "failed" ||
+      latest?.status === "interrupted") &&
+    latest.workspacePreparation?.type === "worktree"
+  );
+}
+
+/** Held queues can execute out of ordinal order; unfinished runs count as latest. */
 export function runRanAfter(
   run: Pick<OrchestrationV2Run, "ordinal" | "completedAt">,
   other: Pick<OrchestrationV2Run, "ordinal" | "completedAt">,
@@ -77,7 +97,7 @@ export function runRanAfter(
 
 export function usageLimitBlockedRun(
   runs: ReadonlyArray<OrchestrationV2Run>,
-  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+  turnItems: ReadonlyArray<FailureScanTurnItem>,
   sessionError: string | null,
 ): OrchestrationV2Run | null {
   const executed = latestExecutedRun(runs);
@@ -86,14 +106,10 @@ export function usageLimitBlockedRun(
   return summary.lastErrorClass === "usage_limit" ? executed : null;
 }
 
-/**
- * That limited run, when newer runs were queued or cancelled before starting.
- * Callers that treat the highest-ordinal run as the thread outcome would
- * otherwise hide the limit.
- */
+/** Retains a limited run's outcome when higher-ordinal runs never started. */
 export function usageLimitRunPresentedAsLatest(
   runs: ReadonlyArray<OrchestrationV2Run>,
-  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+  turnItems: ReadonlyArray<FailureScanTurnItem>,
   sessionError: string | null,
 ): OrchestrationV2Run | null {
   const blocked = usageLimitBlockedRun(runs, turnItems, sessionError);
@@ -106,7 +122,24 @@ export function latestUnheldRun(
   let latest: OrchestrationV2Run | null = null;
   for (const run of runs) {
     if (run.status === "queued" && run.queueHeld === true) continue;
+    if (outlivedBeforeStart(run, runs)) continue;
     if (latest === null || run.ordinal > latest.ordinal) latest = run;
   }
   return latest;
+}
+
+// Steering a queued message cancels its run before it starts and hands the message to the
+// earlier run, which outlives the cancellation; that earlier run then presents as latest.
+function outlivedBeforeStart(
+  run: OrchestrationV2Run,
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): boolean {
+  if (run.status !== "cancelled" || run.startedAt !== null || !run.completedAt) return false;
+  const cancelledAt = DateTime.toEpochMillis(run.completedAt);
+  return runs.some(
+    (earlier) =>
+      earlier.ordinal < run.ordinal &&
+      earlier.status !== "queued" &&
+      (!earlier.completedAt || DateTime.toEpochMillis(earlier.completedAt) >= cancelledAt),
+  );
 }

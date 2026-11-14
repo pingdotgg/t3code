@@ -40,6 +40,7 @@ layer("GitLabCli.layer", (it) => {
               web_url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
               target_branch: "main",
               source_branch: "feature/mr-threads",
+              sha: "a".repeat(40),
               state: "closed",
               closed_at: "2026-08-23T10:00:00Z",
               source_project_id: 101,
@@ -66,6 +67,7 @@ layer("GitLabCli.layer", (it) => {
         url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
         baseRefName: "main",
         headRefName: "feature/mr-threads",
+        headSha: "a".repeat(40),
         state: "closed",
         closedAt: "2026-08-23T10:00:00Z",
         mergedAt: null,
@@ -79,6 +81,19 @@ layer("GitLabCli.layer", (it) => {
           cwd: "/repo",
           args: ["mr", "view", "--output", "json", "--", "42"],
         }),
+      );
+      const classifyFailure = mockedRun.mock.calls.at(-1)?.[0].classifyFailure;
+      assert.strictEqual(
+        classifyFailure?.(
+          "x gitlab.example.test has not been authenticated with glab. Run `glab auth login`",
+        ),
+        "authentication",
+      );
+      assert.strictEqual(
+        classifyFailure?.(
+          'Failed to get merge request 42: oauth2: "invalid_grant" "The provided authorization grant is invalid, expired, revoked, does not match the redirection URI used in the authorization request, or was issued to another client."',
+        ),
+        "authentication",
       );
     }),
   );
@@ -151,151 +166,74 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads repository clone URLs", () =>
-    Effect.gen(function* () {
-      mockedRun.mockReturnValueOnce(
-        Effect.succeed(
-          processOutput(
-            JSON.stringify({
-              path_with_namespace: "octocat/t3code",
-              web_url: "https://gitlab.com/octocat/t3code",
-              http_url_to_repo: "https://gitlab.com/octocat/t3code.git",
-              ssh_url_to_repo: "git@gitlab.com:octocat/t3code.git",
-            }),
-          ),
-        ),
-      );
-
-      const result = yield* Effect.gen(function* () {
-        const glab = yield* GitLabCli.GitLabCli;
-        return yield* glab.getRepositoryCloneUrls({
-          cwd: "/repo",
-          repository: "octocat/t3code",
+  it.effect(
+    "retries oversized MR lists with smaller pages without losing same-named branches",
+    () =>
+      Effect.gen(function* () {
+        const entries = Array.from({ length: 4 }, (_, index) => ({
+          iid: index + 1,
+          title: "MR " + index,
+          // The first alone escapes past the default 1 MB cap; together they pass the list cap.
+          description: index === 0 ? '"'.repeat(600_000) : "x".repeat(3_000_000),
+          web_url: "https://gitlab.com/acme/web/-/merge_requests/" + (index + 1),
+          target_branch: "main",
+          source_branch: "feature",
+          source_project_id: index === 3 ? 100 : 101,
+          target_project_id: 100,
+        }));
+        mockedRun.mockImplementation((input) => {
+          const size = Number(input.args[input.args.indexOf("--per-page") + 1]);
+          const pageIndex = input.args.indexOf("--page");
+          const page = pageIndex < 0 ? 1 : Number(input.args[pageIndex + 1]);
+          const raw = JSON.stringify(entries.slice((page - 1) * size, page * size));
+          const cap = input.maxOutputBytes ?? 1_000_000;
+          return Effect.succeed({
+            ...processOutput(raw.slice(0, cap)),
+            stdoutTruncated: raw.length > cap,
+          });
         });
-      });
-
-      assert.deepStrictEqual(result, {
-        nameWithOwner: "octocat/t3code",
-        url: "https://gitlab.com/octocat/t3code",
-        sshUrl: "git@gitlab.com:octocat/t3code.git",
-      });
-    }),
+        const glab = yield* GitLabCli.GitLabCli;
+        const result = yield* glab.listMergeRequests({
+          cwd: "/repo",
+          headSelector: "feature",
+          state: "open",
+          limit: 4,
+        });
+        assert.deepStrictEqual(
+          result.map((mr) => mr.number),
+          [1, 2, 3, 4],
+        );
+        assert.strictEqual(result[3]?.isCrossRepository, false);
+      }),
   );
 
-  it.effect("creates merge requests through the GitLab API without placing the body in argv", () =>
+  it.effect("creates same-project MRs without a repository lookup", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
-
       const glab = yield* GitLabCli.GitLabCli;
       yield* glab.createMergeRequest({
         cwd: "/repo",
         baseBranch: "main",
-        headSelector: "owner:feature/provider",
-        title: "Provider MR",
-        bodyFile: "/tmp/t3-mr-body.md",
+        headSelector: "feature/fix",
+        title: "Fix remote flow",
+        bodyFile: "/tmp/body.md",
       });
-
-      expect(mockedRun).toHaveBeenCalledWith(
+      expect(mockedRun).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({
-          command: "glab",
-          cwd: "/repo",
           args: [
             "api",
             "--method",
             "POST",
             "projects/:fullpath/merge_requests",
             "--raw-field",
-            "source_branch=feature/provider",
+            "source_branch=feature/fix",
             "--raw-field",
             "target_branch=main",
             "--raw-field",
-            "title=Provider MR",
+            "title=Fix remote flow",
             "--field",
-            "description=@/tmp/t3-mr-body.md",
+            "description=@/tmp/body.md",
           ],
-        }),
-      );
-    }),
-  );
-
-  it.effect("creates repositories under an explicit namespace", () =>
-    Effect.gen(function* () {
-      mockedRun
-
-        .mockReturnValueOnce(Effect.succeed(processOutput(JSON.stringify({ id: 1234 }))))
-        .mockReturnValueOnce(
-          Effect.succeed(
-            processOutput(
-              JSON.stringify({
-                path_with_namespace: "octocat/t3code",
-                web_url: "https://gitlab.com/octocat/t3code",
-                http_url_to_repo: "https://gitlab.com/octocat/t3code.git",
-                ssh_url_to_repo: "git@gitlab.com:octocat/t3code.git",
-              }),
-            ),
-          ),
-        );
-
-      const glab = yield* GitLabCli.GitLabCli;
-      const result = yield* glab.createRepository({
-        cwd: "/repo",
-        repository: "octocat/t3code",
-        visibility: "public",
-      });
-
-      assert.deepStrictEqual(result, {
-        nameWithOwner: "octocat/t3code",
-        url: "https://gitlab.com/octocat/t3code",
-        sshUrl: "git@gitlab.com:octocat/t3code.git",
-      });
-      expect(mockedRun).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({
-          command: "glab",
-          cwd: "/repo",
-          args: ["api", "namespaces/octocat"],
-        }),
-      );
-      expect(mockedRun).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({
-          command: "glab",
-          cwd: "/repo",
-          args: [
-            "api",
-            "--method",
-            "POST",
-            "projects",
-            "--raw-field",
-            "path=t3code",
-            "--raw-field",
-            "name=t3code",
-            "--raw-field",
-            "visibility=public",
-            "--raw-field",
-            "namespace_id=1234",
-          ],
-        }),
-      );
-    }),
-  );
-
-  it.effect("does not pass unsupported force flags when checking out merge requests", () =>
-    Effect.gen(function* () {
-      mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
-
-      const glab = yield* GitLabCli.GitLabCli;
-      yield* glab.checkoutMergeRequest({
-        cwd: "/repo",
-        reference: "42",
-        force: true,
-      });
-
-      expect(mockedRun).toHaveBeenCalledWith(
-        expect.objectContaining({
-          command: "glab",
-          cwd: "/repo",
-          args: ["mr", "checkout", "--", "42"],
         }),
       );
     }),

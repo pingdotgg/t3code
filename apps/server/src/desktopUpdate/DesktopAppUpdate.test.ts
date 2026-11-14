@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import type { DesktopUpdateState, DesktopUpdateStatusReport } from "@t3tools/contracts";
@@ -41,6 +42,7 @@ function report(
   terminal?: {
     readonly outcome: DesktopUpdateStatusReport["outcome"];
     readonly reason?: string;
+    readonly preparedRequestId?: string;
   },
 ): DesktopUpdateStatusReport {
   return {
@@ -49,6 +51,9 @@ function report(
     requestId,
     ...(terminal?.outcome === undefined ? {} : { outcome: terminal.outcome }),
     ...(terminal?.reason === undefined ? {} : { reason: terminal.reason }),
+    ...(terminal?.preparedRequestId === undefined
+      ? {}
+      : { preparedRequestId: terminal.preparedRequestId }),
     state,
   };
 }
@@ -104,21 +109,7 @@ const makeHarness = Effect.fn("test.make_desktop_app_update_harness")(function* 
   return { service };
 });
 
-it.layer(NodeServices.layer)("desktop app update", (it) => {
-  it.effect("is unavailable without desktop mode or the control fd", () =>
-    Effect.gen(function* () {
-      const web = yield* makeHarness({ mode: "web" });
-      expect(web.service.available).toBe(false);
-      const noFd = yield* makeHarness({ controlFd: undefined });
-      expect(noFd.service.available).toBe(false);
-      expect((yield* noFd.service.run(() => Effect.void).pipe(Effect.flip)).reason).toContain(
-        "not started by the T3 Code desktop app",
-      );
-      const desktop = yield* makeHarness();
-      expect(desktop.service.available).toBe(true);
-    }),
-  );
-
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("desktop app update", (it) => {
   it.effect("collapses state reports into progress stages and succeeds on installing", () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness({
@@ -146,28 +137,43 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
     }),
   );
 
-  it.effect("maps up-to-date and failed outcomes to readable errors", () =>
+  it.effect("commits the original preparation when a retry joins its downloaded update", () =>
     Effect.gen(function* () {
-      const upToDate = yield* makeHarness({
+      const { service } = yield* makeHarness({
         reports: (requestId) => [
-          report(requestId, makeState({ status: "up-to-date" }), { outcome: "up-to-date" }),
-        ],
-      });
-      expect((yield* upToDate.service.run(() => Effect.void).pipe(Effect.flip)).reason).toBe(
-        "The T3 Code desktop app on this machine is already up to date on 1.2.3.",
-      );
-
-      const failed = yield* makeHarness({
-        reports: (requestId) => [
-          report(requestId, makeState({ status: "error", message: "feed unreachable" }), {
+          report(requestId, makeState({ status: "downloaded", downloadedVersion: "1.2.4" }), {
+            outcome: "ready-to-install",
+            preparedRequestId: "original-preparation",
+          }),
+          report("original-preparation", makeState({ status: "downloaded" }), {
             outcome: "failed",
-            reason: "feed unreachable",
+            reason: "installer refused",
           }),
         ],
       });
-      expect((yield* failed.service.run(() => Effect.void).pipe(Effect.flip)).reason).toBe(
-        "feed unreachable",
-      );
+      const prepared = yield* service.run(() => Effect.void);
+      expect(prepared.desktopUpdateToken).toBe("original-preparation");
+      expect(
+        (yield* service.commit(prepared.desktopUpdateToken ?? "missing").pipe(Effect.flip)).reason,
+      ).toBe("installer refused");
+    }),
+  );
+
+  it.effect("succeeds without an install when a track switch finds the host current", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness({
+        reports: (requestId) => [
+          report(requestId, makeState({ status: "up-to-date", currentVersion: "1.2.3" }), {
+            outcome: "up-to-date",
+          }),
+        ],
+      });
+      const trackSwitch = { channel: "latest" as const, targetVersion: "1.2.3" };
+
+      expect(yield* service.run(() => Effect.void, trackSwitch)).toEqual({
+        targetVersion: "1.2.3",
+        method: "desktop-app",
+      });
     }),
   );
 

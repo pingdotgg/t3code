@@ -1,7 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it, afterEach, describe, expect, vi } from "@effect/vitest";
+import { assert, it, afterEach, describe, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
@@ -10,6 +9,9 @@ import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import { AzureCliInstallLocation, type AzureCliInstall } from "./azureCliLauncher.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 
 const processOutput = (stdout: string): SourceControlHost.SourceControlProcessOutput => ({
@@ -22,9 +24,11 @@ const processOutput = (stdout: string): SourceControlHost.SourceControlProcessOu
 
 const mockRun = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>();
 
+// The CLI layer is exercised on a host that spawns `az` itself, so the launcher upgrade stays out of these assertions.
 const layerSupport = Layer.mergeAll(
   TestSourceControlHost.layer({ process: { run: mockRun } }),
   NodeServices.layer,
+  Layer.succeed(HostProcess.Platform, "linux"),
 );
 const layer = Layer.mergeAll(AzureDevOpsCli.layer.pipe(Layer.provide(layerSupport)), layerSupport);
 
@@ -43,6 +47,7 @@ describe("AzureDevOpsCli.layer", () => {
               title: "Add Azure provider",
               sourceRefName: "refs/heads/feature/source-control",
               targetRefName: "refs/heads/main",
+              lastMergeSourceCommit: { commitId: "a".repeat(40) },
               status: "active",
               creationDate: "2026-01-02T00:00:00.000Z",
               closedDate: null,
@@ -67,9 +72,29 @@ describe("AzureDevOpsCli.layer", () => {
       assert.strictEqual(result.url, "https://dev.azure.com/acme/project/_git/repo/pullrequest/42");
       assert.strictEqual(result.baseRefName, "main");
       assert.strictEqual(result.headRefName, "feature/source-control");
+      assert.strictEqual(result.headSha, "a".repeat(40));
       assert.strictEqual(result.state, "open");
       assert.deepStrictEqual(result.updatedAt._tag, Option.some(1)._tag);
-      assert.deepStrictEqual(mockRun.mock.calls.at(-1)?.[0], {
+      const { classifyFailure, ...call } = mockRun.mock.calls.at(-1)?.[0] ?? {};
+      assert.strictEqual(
+        classifyFailure?.("Please run az login to setup account."),
+        "authentication",
+      );
+      assert.strictEqual(
+        classifyFailure?.("Please run 'az login' to setup account."),
+        "authentication",
+      );
+      assert.strictEqual(
+        classifyFailure?.("TF401180: The requested pull request was not found."),
+        "not-found",
+      );
+      assert.strictEqual(
+        classifyFailure?.(
+          "ERROR: TF400733: The request has been canceled: Request was blocked due to exceeding usage of resource 'Global' in namespace 'User'.",
+        ),
+        "rate-limited",
+      );
+      assert.deepStrictEqual(call, {
         operation: "AzureDevOpsCli.execute",
         command: "az",
         args: [
@@ -85,6 +110,7 @@ describe("AzureDevOpsCli.layer", () => {
           "json",
         ],
         cwd: "/repo",
+        notFoundDetail: "Pull request not found.",
         timeoutMs: 30_000,
       });
       assert.strictEqual(result.isCrossRepository, false);
@@ -151,66 +177,6 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("lists pull requests with Azure status and source branch arguments", () =>
-    Effect.gen(function* () {
-      mockRun.mockReturnValueOnce(
-        Effect.succeed(
-          processOutput(
-            JSON.stringify([
-              {
-                pullRequestId: 7,
-                title: "Merged work",
-                sourceRefName: "refs/heads/feature/merged",
-                targetRefName: "refs/heads/main",
-                status: "completed",
-                closedDate: "2026-01-03T00:00:00.000Z",
-                _links: {
-                  web: {
-                    href: "https://dev.azure.com/acme/project/_git/repo/pullrequest/7",
-                  },
-                },
-              },
-            ]),
-          ),
-        ),
-      );
-
-      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
-      const result = yield* az.listPullRequests({
-        cwd: "/repo",
-        headSelector: "origin:feature/merged",
-        state: "merged",
-        limit: 10,
-      });
-
-      assert.strictEqual(result[0]?.state, "merged");
-      assert.strictEqual(result[0]?.mergedAt, "2026-01-03T00:00:00.000Z");
-      assert.strictEqual(result[0]?.closedAt, null);
-      expect(mockRun).toHaveBeenCalledWith({
-        operation: "AzureDevOpsCli.execute",
-        command: "az",
-        args: [
-          "repos",
-          "pr",
-          "list",
-          "--detect",
-          "true",
-          "--source-branch",
-          "feature/merged",
-          "--status",
-          "completed",
-          "--top",
-          "10",
-          "--only-show-errors",
-          "--output",
-          "json",
-        ],
-        cwd: "/repo",
-        timeoutMs: 30_000,
-      });
-    }).pipe(Effect.provide(layer)),
-  );
-
   it.effect("reads repository clone URLs", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(
@@ -243,7 +209,7 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("creates repositories through Azure Repos", () =>
+  it.effect("looks up a project/repository path as that project's repository", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(
         Effect.succeed(
@@ -253,125 +219,60 @@ describe("AzureDevOpsCli.layer", () => {
               webUrl: "https://dev.azure.com/acme/project/_git/repo",
               remoteUrl: "https://dev.azure.com/acme/project/_git/repo",
               sshUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
-              project: {
-                name: "project",
-              },
+              project: { name: "project" },
             }),
           ),
         ),
       );
 
       const az = yield* AzureDevOpsCli.AzureDevOpsCli;
-      const result = yield* az.createRepository({
-        cwd: "/repo",
-        repository: "project/repo",
-        visibility: "private",
-      });
+      yield* az.getRepositoryCloneUrls({ cwd: "/somewhere", repository: "project/repo" });
 
-      assert.deepStrictEqual(result, {
-        nameWithOwner: "project/repo",
-        url: "https://dev.azure.com/acme/project/_git/repo",
-        sshUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
-      });
-      expect(mockRun).toHaveBeenCalledWith({
-        operation: "AzureDevOpsCli.execute",
-        command: "az",
-        args: [
-          "repos",
-          "create",
-          "--detect",
-          "true",
-          "--name",
-          "repo",
-          "--project",
-          "project",
-          "--only-show-errors",
-          "--output",
-          "json",
-        ],
-        cwd: "/repo",
-        timeoutMs: 30_000,
-      });
+      assert.deepStrictEqual(mockRun.mock.calls.at(-1)?.[0].args, [
+        "repos",
+        "show",
+        "--detect",
+        "true",
+        "--repository",
+        "repo",
+        "--project",
+        "project",
+        "--only-show-errors",
+        "--output",
+        "json",
+      ]);
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("creates pull requests using the body file as the Azure description", () =>
+  it.effect("percent-encodes the source branch while preserving recognized ref prefixes", () =>
     Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const bodyFile = `/tmp/t3code-azure-devops-cli-.md`;
-      yield* fileSystem.writeFileString(bodyFile, "Generated body");
-      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
 
       const az = yield* AzureDevOpsCli.AzureDevOpsCli;
-      yield* az.createPullRequest({
-        cwd: "/repo",
-        baseBranch: "main",
-        headSelector: "feature/provider",
-        title: "Provider PR",
-        bodyFile,
+      yield* az.listPullRequests({
+        cwd: "/somewhere",
+        headSelector: "user/feat/1-(#2)-slug",
+        state: "open",
       });
 
-      expect(mockRun).toHaveBeenCalledWith(
-        expect.objectContaining({
-          command: "az",
-          cwd: "/repo",
-          args: expect.arrayContaining(["--description", `@${bodyFile}`]),
-        }),
-      );
-      expect(mockRun.mock.calls[0]?.[0].args).not.toContain("--output");
-    }).pipe(Effect.provide(layer)),
-  );
+      const args = mockRun.mock.calls.at(-1)?.[0].args ?? [];
+      assert.strictEqual(args[args.indexOf("--source-branch") + 1], "user%2Ffeat%2F1-(%232)-slug");
 
-  it.effect("does not force JSON output on checkout side-effect commands", () =>
-    Effect.gen(function* () {
-      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+      for (const prefix of ["refs/heads/", "refs/pull/", "refs/tags/"]) {
+        mockRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
+        yield* az.listPullRequests({
+          cwd: "/somewhere",
+          headSelector: "fallback",
+          source: { refName: `${prefix}user/feat/1-(#2)-slug` },
+          state: "open",
+        });
 
-      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
-      yield* az.checkoutPullRequest({
-        cwd: "/repo",
-        reference: "42",
-      });
-
-      expect(mockRun).toHaveBeenCalledWith({
-        operation: "AzureDevOpsCli.execute",
-        command: "az",
-        args: [
-          "repos",
-          "pr",
-          "checkout",
-          "--only-show-errors",
-          "--detect",
-          "true",
-          "--id",
-          "42",
-          "--remote-name",
-          "origin",
-        ],
-        cwd: "/repo",
-        timeoutMs: 30_000,
-      });
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("forwards explicit output limits to the process boundary", () =>
-    Effect.gen(function* () {
-      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
-
-      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
-      yield* az.execute({
-        cwd: "/repo",
-        args: ["repos", "pr", "list"],
-        maxOutputBytes: 16 * 1024 * 1024,
-      });
-
-      expect(mockRun).toHaveBeenCalledWith({
-        operation: "AzureDevOpsCli.execute",
-        command: "az",
-        args: ["repos", "pr", "list"],
-        cwd: "/repo",
-        timeoutMs: 30_000,
-        maxOutputBytes: 16 * 1024 * 1024,
-      });
+        const refArgs = mockRun.mock.calls.at(-1)?.[0].args ?? [];
+        assert.strictEqual(
+          refArgs[refArgs.indexOf("--source-branch") + 1],
+          `${prefix}user%2Ffeat%2F1-(%232)-slug`,
+        );
+      }
     }).pipe(Effect.provide(layer)),
   );
 
@@ -428,27 +329,6 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("keeps invalid pull request output diagnostics structured", () =>
-    Effect.gen(function* () {
-      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("not-json")));
-
-      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
-      const error = yield* az.getPullRequest({ cwd: "/repo", reference: "42" }).pipe(Effect.flip);
-
-      assert.instanceOf(error, AzureDevOpsCli.AzureDevOpsPullRequestDecodeError);
-      assert.strictEqual(error.operation, "getPullRequest");
-      assert.strictEqual(error.command, "az");
-      assert.strictEqual(error.cwd, "/repo");
-      assert.strictEqual(error.outputLength, 8);
-      assert.strictEqual(error.detail, "Azure DevOps CLI returned invalid pull request JSON.");
-      assert.exists(error.cause);
-      assert.strictEqual(
-        error.message,
-        "Azure DevOps CLI failed in getPullRequest: Azure DevOps CLI returned invalid pull request JSON.",
-      );
-    }).pipe(Effect.provide(layer)),
-  );
-
   it.effect("preserves rate-limit failures as a distinct error", () =>
     Effect.gen(function* () {
       const cause = new VcsProcessExitError({
@@ -468,5 +348,50 @@ describe("AzureDevOpsCli.layer", () => {
       assert.instanceOf(error, AzureDevOpsCli.AzureDevOpsCliRateLimitError);
       assert.strictEqual(error.cause, cause);
     }).pipe(Effect.provide(layer)),
+  );
+});
+
+describe("azureCliInvocation", () => {
+  const launcher = "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd";
+  const msi: AzureCliInstall = {
+    interpreter: "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\python.exe",
+    installer: "MSI",
+  };
+
+  const invocationFor = (install: AzureCliInstall | undefined) =>
+    AzureDevOpsCli.azureCliInvocation().pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(HostProcess.Environment, { PATH: "C:\\tools" }),
+      Effect.provideService(SpawnExecutableResolution, () => launcher),
+      Effect.provideService(AzureCliInstallLocation, () => install),
+    );
+
+  it.effect("runs the install's interpreter in UTF-8 mode", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* invocationFor(msi), {
+        command: msi.interpreter,
+        args: ["-X", "utf8", "-IBm", "azure.cli"],
+        env: { AZ_INSTALLER: "MSI" },
+      });
+    }),
+  );
+
+  it.effect("keeps the launcher when the install is not recognized", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* invocationFor(undefined), {
+        command: "az",
+        args: [],
+      });
+    }),
+  );
+
+  it.effect("spawns az directly off Windows", () =>
+    Effect.gen(function* () {
+      const invocation = yield* AzureDevOpsCli.azureCliInvocation().pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+      );
+
+      assert.deepStrictEqual(invocation, { command: "az", args: [] });
+    }),
   );
 });

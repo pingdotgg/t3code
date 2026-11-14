@@ -26,10 +26,7 @@ import { asEffect } from "./Util/types.ts";
  * replace, which silently swaps the class in for the Effect and bricks
  * every deployed worker/lambda).
  */
-export const makeEntrypointLayer = (
-  tag: any,
-  entrypoint: any,
-): Layer.Layer<any> => {
+export const makeEntrypointLayer = (tag: any, entrypoint: any): Layer.Layer<any> => {
   if (typeof entrypoint?.build === "function") {
     return entrypoint;
   }
@@ -49,9 +46,7 @@ const parseRedactedMarker = (raw: string): string | undefined => {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (isRedactedMarker(parsed)) {
-      return typeof parsed.value === "string"
-        ? parsed.value
-        : JSON.stringify(parsed.value);
+      return typeof parsed.value === "string" ? parsed.value : JSON.stringify(parsed.value);
     }
   } catch {
     // not JSON — plain env value, fall through

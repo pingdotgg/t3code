@@ -40,7 +40,7 @@ export function PreviewEmptyState({
         </EmptyMedia>
         <EmptyTitle>No preview yet</EmptyTitle>
         <EmptyDescription>
-          Type a URL above, or run a dev script. Browser-ready localhost servers will show up here
+          Type a URL above, or run a dev script. Local servers this thread starts will show up here
           automatically.
         </EmptyDescription>
       </Empty>

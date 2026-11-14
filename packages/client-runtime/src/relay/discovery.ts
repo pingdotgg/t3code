@@ -34,6 +34,8 @@ export interface RelayDiscoveredEnvironment {
 
 export interface RelayEnvironmentDiscoveryState {
   readonly environments: ReadonlyMap<string, RelayDiscoveredEnvironment>;
+  // Only a loaded account list distinguishes a missing registration from an unknown one.
+  readonly listed: boolean;
   readonly refreshing: boolean;
   readonly offline: boolean;
   readonly error: Option.Option<ConnectionAttemptError>;
@@ -49,10 +51,21 @@ export class RelayEnvironmentDiscovery extends Context.Service<
 
 export const EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE: RelayEnvironmentDiscoveryState = {
   environments: new Map(),
+  listed: false,
   refreshing: false,
   offline: false,
   error: Option.none(),
 };
+
+export type RelayEnvironmentRegistration = "registered" | "unregistered" | "unknown";
+
+export function relayEnvironmentRegistration(
+  state: RelayEnvironmentDiscoveryState,
+  environmentId: string,
+): RelayEnvironmentRegistration {
+  if (state.environments.has(environmentId)) return "registered";
+  return state.listed ? "unregistered" : "unknown";
+}
 
 function validateStatus(
   environment: RelayClientEnvironmentRecord,
@@ -92,17 +105,15 @@ function validateStatus(
   return Effect.succeed(status);
 }
 
-function relayAccountId(clerkToken: string): Option.Option<string> {
-  try {
-    return Option.fromNullishOr(decodeRelayJwt(clerkToken).sub).pipe(
-      Option.filter((subject) => subject.length > 0),
-    );
-  } catch {
-    return Option.none();
-  }
-}
+const relayAccountId = Effect.fn("clientRuntime.discovery.relayAccountId")(function* (
+  clerkToken: string,
+) {
+  const claims = yield* decodeRelayJwt(clerkToken).pipe(Effect.option);
+  const sub = Option.isSome(claims) ? claims.value.sub : undefined;
+  return typeof sub === "string" && sub.length > 0 ? Option.some(sub) : Option.none<string>();
+});
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
   const relay = yield* ManagedRelay.ManagedRelayClient;
   const session = yield* ClientCapabilities.CloudSession;
@@ -110,6 +121,8 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const state = yield* SubscriptionRef.make(EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
   const refreshLock = yield* Semaphore.make(1);
+  const foregroundCheckLock = yield* Semaphore.make(1);
+  const registrationCheckRequested = yield* Ref.make(false);
   const hasRefreshed = yield* Ref.make(false);
   const accountGeneration = yield* Ref.make(0);
   const activeAccountId = yield* Ref.make<Option.Option<string>>(Option.none());
@@ -218,16 +231,14 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
       yield* Ref.set(refreshGeneration, generation);
       yield* SubscriptionRef.set(state, {
         environments: new Map(),
+        listed: false,
         refreshing: true,
         offline: false,
         error: Option.none(),
       });
 
-      // Signed out is the idle state, not a failure: the proactive refresh on
-      // credentials-changed also runs on sign-out and must settle back to a
-      // clean empty list. Only the session-level "no credentials" error is
-      // benign — relay-side auth failures (expired/invalid tokens) happen
-      // after this point and must surface as errors.
+      // Sign-out triggers credentials-changed refreshes and must settle to an empty list.
+      // Only session-level missing credentials are benign; relay-side auth failures must surface.
       const tokenResult = yield* Effect.result(session.clerkToken);
       if (tokenResult._tag === "Failure") {
         const failure = tokenResult.failure;
@@ -247,7 +258,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
       if ((yield* Ref.get(accountGeneration)) !== generation) {
         return;
       }
-      const accountId = relayAccountId(clerkToken);
+      const accountId = yield* relayAccountId(clerkToken);
       const previousAccountId = yield* Ref.get(activeAccountId);
       if (
         Option.isSome(previousAccountId) &&
@@ -276,6 +287,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
       yield* SubscriptionRef.update(state, (current) => ({
         ...current,
         environments: next,
+        listed: true,
       }));
 
       yield* Effect.forEach(
@@ -310,6 +322,52 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
     ),
   );
 
+  // Refreshes only when the account's registrations changed, so foregrounding keeps unchanged rows.
+  const checkRegistrations = Effect.fn("RelayEnvironmentDiscovery.checkRegistrations")(
+    function* () {
+      if (
+        !(yield* Ref.get(hasRefreshed)) ||
+        (yield* connectivity.status) === "offline" ||
+        Option.isNone(yield* session.identity)
+      ) {
+        return;
+      }
+      const current = yield* SubscriptionRef.get(state);
+      if (!current.listed || current.refreshing || Option.isSome(current.error)) {
+        return yield* refresh;
+      }
+      const generation = yield* Ref.get(accountGeneration);
+      const clerkToken = yield* session.clerkToken;
+      const listed = yield* relay.listEnvironments({ clerkToken });
+      if ((yield* Ref.get(accountGeneration)) !== generation) {
+        return;
+      }
+      const known = (yield* SubscriptionRef.get(state)).environments;
+      if (
+        listed.length === known.size &&
+        listed.every((environment) => known.has(environment.environmentId))
+      ) {
+        return;
+      }
+      yield* refresh;
+    },
+    Effect.catch((error) =>
+      Effect.logDebug("Relay foreground registration check failed", { error }),
+    ),
+  );
+  // A wakeup during a running check is answered by one more check once that one finishes.
+  const requestRegistrationCheck = Ref.set(registrationCheckRequested, true).pipe(
+    Effect.andThen(
+      foregroundCheckLock.withPermitsIfAvailable(1)(
+        Effect.gen(function* () {
+          while (yield* Ref.getAndSet(registrationCheckRequested, false)) {
+            yield* checkRegistrations();
+          }
+        }),
+      ),
+    ),
+  );
+
   yield* connectivity.changes.pipe(
     Stream.changes,
     Stream.runForEach((networkStatus) =>
@@ -335,7 +393,9 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
             yield* SubscriptionRef.set(state, EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
             yield* refresh.pipe(Effect.forkScoped);
           })
-        : Effect.void,
+        : ConnectionWakeups.shouldRelistAccountAfterWakeup(reason)
+          ? requestRegistrationCheck.pipe(Effect.forkScoped)
+          : Effect.void,
     ),
     Effect.forkScoped,
   );

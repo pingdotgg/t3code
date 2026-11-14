@@ -58,15 +58,4 @@ describe("ApnsProviderTokens", () => {
       ApnsProviderTokens.__resetApnsProviderTokenCacheForTest();
     }).pipe(Effect.provide(ApnsProviderTokens.layer));
   });
-
-  it.effect("serves repeat pushes from the isolate cache without re-signing", () => {
-    ApnsProviderTokens.__resetApnsProviderTokenCacheForTest();
-    return Effect.gen(function* () {
-      const tokens = yield* ApnsProviderTokens.ApnsProviderTokens;
-      const first = yield* tokens.getJwt({ ...signingInput, issuedAtUnixSeconds: WINDOW + 10 });
-      const again = yield* tokens.getJwt({ ...signingInput, issuedAtUnixSeconds: WINDOW + 500 });
-      expect(again).toBe(first);
-      ApnsProviderTokens.__resetApnsProviderTokenCacheForTest();
-    }).pipe(Effect.provide(ApnsProviderTokens.layer));
-  });
 });

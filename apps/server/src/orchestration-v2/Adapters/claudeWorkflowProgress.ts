@@ -53,9 +53,14 @@ function parseAgent(entry: unknown): OrchestrationV2WorkflowAgent | null {
   const label = text(field(entry, "label"));
   if (index === undefined || label === undefined) return null;
   const reportedState = text(field(entry, "state")) ?? "";
-  const state = Object.hasOwn(AGENT_STATES, reportedState)
-    ? (AGENT_STATES[reportedState] ?? "running")
-    : "running";
+  const startedAt = timestamp(field(entry, "startedAt"));
+  // Claude marks members `start` when scheduled; they only run once a concurrency slot sets startedAt.
+  const state =
+    reportedState === "start" && startedAt === undefined
+      ? "queued"
+      : Object.hasOwn(AGENT_STATES, reportedState)
+        ? (AGENT_STATES[reportedState] ?? "running")
+        : "running";
   return {
     index,
     label,
@@ -69,17 +74,20 @@ function parseAgent(entry: unknown): OrchestrationV2WorkflowAgent | null {
     ...optional("toolCalls", count(field(entry, "toolCalls"))),
     ...optional("durationMs", count(field(entry, "durationMs"))),
     ...optional("queuedAt", timestamp(field(entry, "queuedAt"))),
-    ...optional("startedAt", timestamp(field(entry, "startedAt"))),
+    ...optional("startedAt", startedAt),
+    // Execution duration excludes startup waits; terminal progress carries the end instant.
+    ...optional(
+      "completedAt",
+      state === "completed" || state === "failed"
+        ? timestamp(field(entry, "lastProgressAt"))
+        : undefined,
+    ),
     ...optional("prompt", preview(field(entry, "promptPreview"))),
     ...optional("result", preview(field(entry, "resultPreview"))),
   };
 }
 
-/**
- * A background launch answers the model with an acknowledgement rather than the run's output, and
- * that acknowledgement is the only place the run's filesystem handles appear — nothing later on
- * the event stream repeats them.
- */
+/** The background-launch ACK is the only frame carrying the run's filesystem handles. */
 export function parseClaudeWorkflowRunHandles(
   toolUseResult: unknown,
 ): OrchestrationV2WorkflowRunHandles | undefined {
@@ -112,12 +120,7 @@ function parseClaudeWorkflowProgress(message: unknown): {
   return phases.length === 0 && agents.length === 0 ? null : { phases, agents };
 }
 
-/**
- * Returns undefined when nothing identifies the task as a workflow. Progress frames do not repeat
- * `task_type`, so this is the single place that decides whether a task is a coordinator; without
- * it every ordinary subagent's usage frame would mint an empty workflow and render as a
- * coordinator.
- */
+/** Returns undefined without workflow evidence; progress frames omit task_type and ordinary subagents also emit usage. */
 export function mergeClaudeWorkflowProgress(input: {
   readonly previous: OrchestrationV2SubagentWorkflow | undefined;
   readonly name?: string | undefined;

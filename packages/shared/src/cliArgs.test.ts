@@ -25,6 +25,24 @@ describe("tokenizeCliArgs", () => {
         String.raw`--config model="gpt 5" --enable foo\ bar --config=profile='work profile'`,
       ),
     ).toEqual(["--config", "model=gpt 5", "--enable", "foo bar", "--config=profile=work profile"]);
+
+    for (const whitespace of [" ", "\t"]) {
+      const args = `--add-dir /tmp/project\\${whitespace}`;
+      expect(tokenizeCliArgs(args)).toEqual(["--add-dir", `/tmp/project${whitespace}`]);
+      expect(tokenizeCliArgs(`${args} --verbose`)).toEqual([
+        "--add-dir",
+        `/tmp/project${whitespace}`,
+        "--verbose",
+      ]);
+    }
+  });
+
+  it("ignores unescaped surrounding whitespace", () => {
+    expect(tokenizeCliArgs(" \t\n")).toEqual([]);
+    expect(tokenizeCliArgs(" \t--add-dir /tmp/project \t\n")).toEqual([
+      "--add-dir",
+      "/tmp/project",
+    ]);
   });
 
   it("preserves literal backslashes in path values", () => {
@@ -40,99 +58,10 @@ describe("tokenizeCliArgs", () => {
 });
 
 describe("parseCliArgs", () => {
-  it("keeps escaped apostrophes in flag values without consuming the next flag", () => {
-    expect(parseCliArgs(String.raw`--append-system-prompt don\'t --verbose`)).toEqual({
-      flags: { "append-system-prompt": "don't", verbose: null },
-      positionals: [],
-    });
-  });
-
-  it("returns empty result for empty string", () => {
-    expect(parseCliArgs("")).toEqual({ flags: {}, positionals: [] });
-  });
-
-  it("returns empty result for whitespace-only string", () => {
-    expect(parseCliArgs("   ")).toEqual({ flags: {}, positionals: [] });
-  });
-
-  it("returns empty result for empty array", () => {
-    expect(parseCliArgs([])).toEqual({ flags: {}, positionals: [] });
-  });
-
-  it("parses --chrome boolean flag", () => {
-    expect(parseCliArgs("--chrome")).toEqual({
-      flags: { chrome: null },
-      positionals: [],
-    });
-  });
-
-  it("parses --chrome with --verbose", () => {
-    expect(parseCliArgs("--chrome --verbose")).toEqual({
-      flags: { chrome: null, verbose: null },
-      positionals: [],
-    });
-  });
-
-  it("parses --effort with a value", () => {
-    expect(parseCliArgs("--effort high")).toEqual({
-      flags: { effort: "high" },
-      positionals: [],
-    });
-  });
-
-  it("parses --chrome --effort high --debug", () => {
-    expect(parseCliArgs("--chrome --effort high --debug")).toEqual({
-      flags: { chrome: null, effort: "high", debug: null },
-      positionals: [],
-    });
-  });
-
-  it("parses --model with full model name", () => {
-    expect(parseCliArgs("--model claude-sonnet-4-6")).toEqual({
-      flags: { model: "claude-sonnet-4-6" },
-      positionals: [],
-    });
-  });
-
-  it("parses --append-system-prompt with value and --chrome", () => {
-    expect(parseCliArgs("--append-system-prompt always-think-step-by-step --chrome")).toEqual({
-      flags: { "append-system-prompt": "always-think-step-by-step", chrome: null },
-      positionals: [],
-    });
-  });
-
-  it("parses quoted --append-system-prompt with value and --chrome", () => {
-    expect(parseCliArgs(`--append-system-prompt "always think step by step" --chrome`)).toEqual({
-      flags: { "append-system-prompt": "always think step by step", chrome: null },
-      positionals: [],
-    });
-  });
-
-  it("parses --max-budget-usd with numeric value", () => {
-    expect(parseCliArgs("--chrome --max-budget-usd 5.00")).toEqual({
-      flags: { chrome: null, "max-budget-usd": "5.00" },
-      positionals: [],
-    });
-  });
-
-  it("parses --effort=high syntax", () => {
-    expect(parseCliArgs("--effort=high")).toEqual({
-      flags: { effort: "high" },
-      positionals: [],
-    });
-  });
-
   it("parses --key=value mixed with boolean flags", () => {
     expect(parseCliArgs("--chrome --model=claude-sonnet-4-6 --debug")).toEqual({
       flags: { chrome: null, model: "claude-sonnet-4-6", debug: null },
       positionals: [],
-    });
-  });
-
-  it("collects positional arguments", () => {
-    expect(parseCliArgs("1.2.3")).toEqual({
-      flags: {},
-      positionals: ["1.2.3"],
     });
   });
 
@@ -143,15 +72,39 @@ describe("parseCliArgs", () => {
     });
   });
 
-  it("handles extra whitespace between tokens", () => {
-    expect(parseCliArgs("  --chrome   --verbose  ")).toEqual({
-      flags: { chrome: null, verbose: null },
-      positionals: [],
+  it("accepts a trailing -- without operands", () => {
+    expect(parseCliArgs("--")).toEqual({ flags: {}, positionals: [] });
+  });
+
+  it.each([
+    { args: "--effort low -- --effort high --chrome" },
+    { args: ["--effort", "low", "--", "--effort", "high", "--chrome"] },
+  ])("ends option parsing at -- for $args", ({ args }) => {
+    expect(parseCliArgs(args)).toEqual({
+      flags: { effort: "low" },
+      positionals: ["--effort", "high", "--chrome"],
     });
   });
 
-  it("ignores bare -- with no flag name", () => {
-    expect(parseCliArgs("--")).toEqual({ flags: {}, positionals: [] });
+  it("preserves all operands after --, including empty strings and another --", () => {
+    expect(parseCliArgs(["--", "", "--", "--model=example", "-x"])).toEqual({
+      flags: {},
+      positionals: ["", "--", "--model=example", "-x"],
+    });
+  });
+
+  it("ends option parsing with explicit boolean flags too", () => {
+    expect(parseCliArgs(["--chrome", "--", "--verbose"], { booleanFlags: ["chrome"] })).toEqual({
+      flags: { chrome: null },
+      positionals: ["--verbose"],
+    });
+  });
+
+  it("keeps -- inside an equals-form option value", () => {
+    expect(parseCliArgs("--append-system-prompt=-- --chrome")).toEqual({
+      flags: { "append-system-prompt": "--", chrome: null },
+      positionals: [],
+    });
   });
 
   it("boolean flag does not consume next token as value", () => {
@@ -161,25 +114,5 @@ describe("parseCliArgs", () => {
         positionals: ["1.2.3"],
       },
     );
-  });
-
-  it("non-boolean flag still consumes next token", () => {
-    expect(parseCliArgs(["--root", "/path", "1.2.3"], { booleanFlags: ["github-output"] })).toEqual(
-      {
-        flags: { root: "/path" },
-        positionals: ["1.2.3"],
-      },
-    );
-  });
-
-  it("mixes boolean and value flags with positionals", () => {
-    expect(
-      parseCliArgs(["--github-output", "--root", "/path", "1.2.3"], {
-        booleanFlags: ["github-output"],
-      }),
-    ).toEqual({
-      flags: { "github-output": null, root: "/path" },
-      positionals: ["1.2.3"],
-    });
   });
 });

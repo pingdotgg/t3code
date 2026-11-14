@@ -1,3 +1,11 @@
+import * as NodeFs from "node:fs";
+import * as NodePath from "node:path";
+import type { Builder } from "@sveltejs/kit";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import { rolldown } from "rolldown";
+import { runBuildChild } from "../core/BuildChild.ts";
 /**
  * `@alchemy.run/frontend-frameworks/sveltekit/aws` — the AWS Lambda deploy
  * target for `@alchemy.run/frontend-frameworks/sveltekit`.
@@ -26,14 +34,6 @@
  */
 import * as FrameworkCore from "../core/index.ts";
 import { DeployTargetError, makeDeployTarget } from "../core/index.ts";
-import type { Builder } from "@sveltejs/kit";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as NodeFs from "node:fs";
-import * as NodePath from "node:path";
-import * as Path from "effect/Path";
-import { rolldown } from "rolldown";
-import { runBuildChild } from "../core/BuildChild.ts";
 import {
   make,
   type SvelteKitAdapter,
@@ -58,7 +58,7 @@ export interface SvelteKitAwsTargetConfig extends SvelteKitTargetConfig {
 }
 
 /** The entry module name the finishing pass writes (`dist/server/index.mjs`). */
-export const SERVER_ENTRY_NAME = NodePath.join("server", "index.mjs");
+export const SERVER_ENTRY_NAME = "server/index.mjs";
 
 /**
  * The generated (unbundled) Lambda entry: kit's pre-built server instance
@@ -71,9 +71,7 @@ const generateLambdaEntry = (options: {
   readonly serverImport: string;
   readonly streaming: boolean;
 }): string => {
-  const wrap = options.streaming
-    ? "toLambdaHandler"
-    : "toBufferedLambdaHandler";
+  const wrap = options.streaming ? "toLambdaHandler" : "toBufferedLambdaHandler";
   return /* js */ `
 import { server } from ${JSON.stringify(options.serverImport)};
 import { ${wrap} } from '@alchemy.run/frontend-frameworks/aws-lambda';
@@ -151,10 +149,7 @@ export const makeAwsAdapter = (options: {
         });
         builder.instrument({
           entrypoint: workerEntry,
-          instrumentation: NodePath.join(
-            builder.getServerDirectory(),
-            "instrumentation.server.js",
-          ),
+          instrumentation: NodePath.join(builder.getServerDirectory(), "instrumentation.server.js"),
           initializer,
         });
       }
@@ -171,9 +166,7 @@ export const makeAwsAdapter = (options: {
  * `cwd === root` holds); {@link makeAwsTarget} wraps it with the wholesale
  * `build` hook that spawns the child.
  */
-const makeAwsAdapterTarget = (
-  config: SvelteKitAwsTargetConfig = {},
-): SvelteKitTarget =>
+const makeAwsAdapterTarget = (config: SvelteKitAwsTargetConfig = {}): SvelteKitTarget =>
   makeDeployTarget({
     platform: "aws",
     config,
@@ -191,24 +184,17 @@ const makeAwsAdapterTarget = (
         const path = yield* Path.Path;
         const entry = context.entry;
         if (entry === undefined) {
-          return yield* Effect.fail(
-            fail(
-              "The SvelteKit build produced no on-disk Lambda entry for the finishing pass " +
-                "(context.entry is missing)",
-            ),
+          return yield* fail(
+            "The SvelteKit build produced no on-disk Lambda entry for the finishing pass " +
+              "(context.entry is missing)",
           );
         }
         const root = context.root;
-        const distDirectory =
-          output.distDirectory ?? path.resolve(root, "dist");
+        const distDirectory = output.distDirectory ?? path.resolve(root, "dist");
         const serverOutDir = path.join(distDirectory, "server");
         yield* fs
           .remove(serverOutDir, { recursive: true, force: true })
-          .pipe(
-            Effect.mapError((error) =>
-              fail("Failed to clean dist/server", error),
-            ),
-          );
+          .pipe(Effect.mapError((error) => fail("Failed to clean dist/server", error)));
 
         // Re-bundle the entry (kit's server graph + the aws-lambda adapter)
         // for Node. `dist/server` must be self-contained: the Lambda ships
@@ -237,18 +223,14 @@ const makeAwsAdapterTarget = (
               await bundle.close();
             }
           },
-          catch: (error) =>
-            fail("Failed to bundle the Lambda server for Node", error),
+          catch: (error) => fail("Failed to bundle the Lambda server for Node", error),
         });
 
         const modules = yield* FrameworkCore.readServerModulesFromDisk({
           directory: serverOutDir,
           prefix: "server",
         }).pipe(Effect.mapError((error) => fail(error.message, error.cause)));
-        const serverModules = FrameworkCore.sortServerModules(
-          modules,
-          SERVER_ENTRY_NAME,
-        );
+        const serverModules = FrameworkCore.sortServerModules(modules, SERVER_ENTRY_NAME);
 
         return {
           ...output,
@@ -296,14 +278,13 @@ export const buildInChild = (config: SvelteKitAwsBuildChildConfig) =>
  * Create the AWS Lambda {@link SvelteKitTarget}. See the module doc for
  * the seams.
  */
-export const makeAwsTarget = (
-  config: SvelteKitAwsTargetConfig = {},
-): SvelteKitTarget => ({
+export const makeAwsTarget = (config: SvelteKitAwsTargetConfig = {}): SvelteKitTarget => ({
   ...makeAwsAdapterTarget(config),
   build: (context) =>
     runBuildChild({
       module: import.meta.url,
       rootDir: context.root,
+      env: context.env,
       framework: "sveltekit",
       config: {
         rootDir: context.root,

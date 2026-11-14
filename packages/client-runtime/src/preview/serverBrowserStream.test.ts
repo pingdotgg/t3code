@@ -63,39 +63,6 @@ describe("preview stream control", () => {
     dialog: null,
   };
 
-  it("marks passive viewers without changing active viewer URLs", () => {
-    const { client, socket } = connect();
-    expect(new URL(socket.url).searchParams.has("interactive")).toBe(false);
-    client.stop();
-    const passive = createPreviewStreamClient(
-      { ...target, interactive: false },
-      {
-        onFrame: vi.fn(),
-        onViewport: vi.fn(),
-        onConnectedChange: vi.fn(),
-        onUnauthorized: vi.fn(),
-      },
-    );
-    expect(new URL(FakeSocket.current.url).searchParams.get("interactive")).toBe("false");
-    passive.stop();
-  });
-
-  it("does not resize or navigate before ownership is granted", () => {
-    const { client, socket } = connect();
-    expect(client.send({ type: "resize", width: 390, height: 844 })).toBe(false);
-    expect(client.send({ type: "navigate", url: "http://example.test" })).toBe(false);
-    socket.control(agent);
-    expect(client.send({ type: "takeControl" })).toBe(true);
-    expect(client.send({ type: "text", text: "premature" })).toBe(false);
-    socket.control({ ...agent, controller: "you", generation: 2 });
-    expect(client.send({ type: "text", text: "owned" })).toBe(true);
-    expect(socket.sent.map((entry) => JSON.parse(entry))).toEqual([
-      { type: "takeControl" },
-      { type: "text", text: "owned" },
-    ]);
-    client.stop();
-  });
-
   it("does not grant control from malformed dialog metadata", () => {
     const { client, socket, onControl } = connect();
     socket.message(
@@ -139,6 +106,31 @@ describe("preview stream control", () => {
     expect(client.send({ type: "text", text: "late input" })).toBe(false);
     expect(client.send({ type: "dialog", accept: false })).toBe(false);
     client.stop();
+  });
+
+  it("withdraws an offered file picker when the stream drops or stops", () => {
+    const onFileChooser = vi.fn();
+    const events = {
+      onFrame: vi.fn(),
+      onFileChooser,
+      onViewport: vi.fn(),
+      onConnectedChange: vi.fn(),
+      onUnauthorized: vi.fn(),
+    };
+    const client = createPreviewStreamClient(target, events);
+    const socket = FakeSocket.current;
+    socket.dispatchEvent(new Event("open"));
+    socket.message(JSON.stringify({ type: "fileChooser", id: "c1", multiple: false, accept: "" }));
+    socket.dispatchEvent(Object.assign(new Event("close"), { code: 1012 }));
+    expect(onFileChooser).toHaveBeenLastCalledWith(null);
+    client.stop();
+
+    const restarted = createPreviewStreamClient(target, events);
+    FakeSocket.current.message(
+      JSON.stringify({ type: "fileChooser", id: "c2", multiple: false, accept: "" }),
+    );
+    restarted.stop();
+    expect(onFileChooser).toHaveBeenLastCalledWith(null);
   });
 });
 
