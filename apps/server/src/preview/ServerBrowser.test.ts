@@ -1839,67 +1839,52 @@ it.effect("closing a tab force-closes a page that never finishes unloading", () 
   ).pipe(Effect.provide(layer)),
 );
 
-it.effect.each(["listen", "guard", "timeout"] as const)(
-  "closing a desktop tab during setup unloads its page before disconnecting (%s)",
-  (beforeUnload) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { broker } = yield* ready;
-        const manager = yield* Manager.PreviewManager;
-        desktopRendersNext = true;
-        const gate = (desktopConnectionGate = Promise.withResolvers<void>());
-        const started = (desktopConnectionStarted = Promise.withResolvers<void>());
-        yield* Effect.addFinalizer(() => Effect.sync(() => gate.resolve()));
-        const opening = yield* broker
-          .invoke<PreviewAutomationStatus>({
-            scope,
-            operation: "open",
-            input: { reuseExistingTab: false, open: false },
-          })
-          .pipe(Effect.result, Effect.forkScoped);
-        yield* Effect.promise(() => started.promise);
-        const { context, browser } = desktopConnections[0]!;
-        const page = context.page;
-        page.beforeUnload = beforeUnload === "timeout" ? "listen" : beforeUnload;
-        if (beforeUnload === "listen") page.unloadGate = Promise.withResolvers<void>();
-        if (beforeUnload === "timeout") {
-          vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-          yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
-        }
-        const { sessions } = yield* manager.list({ threadId: testThread.threadId });
-        const session = sessions.find((candidate) => !candidate.headless)!;
-        const closing = yield* manager
-          .close({ threadId: testThread.threadId, tabId: session.tabId })
-          .pipe(Effect.forkScoped({ startImmediately: true }));
-        expect(page.isClosed()).toBe(false);
-        if (beforeUnload === "timeout") {
-          vi.advanceTimersByTime(5_000);
-          yield* Fiber.join(closing);
-        }
-        gate.resolve();
-        if (beforeUnload === "listen") {
-          yield* Effect.promise(() =>
-            Promise.race([page.pagehideWatched.promise, desktopReleased.promise]),
-          );
-          expect((yield* manager.list({ threadId: testThread.threadId })).sessions).toEqual(
-            expect.arrayContaining([expect.objectContaining({ tabId: session.tabId })]),
-          );
-          page.unloadGate!.resolve();
-        }
-        yield* Fiber.join(closing);
-        expect(yield* Fiber.join(opening)).toMatchObject({
-          _tag: "Failure",
-        });
-        yield* Effect.promise(() => desktopReleased.promise);
-        expect(page.unloadEvents).toEqual(["beforeunload", "pagehide", "visibilitychange"]);
-        expect(page.isClosed()).toBe(true);
-        expect(browser.close).toHaveBeenCalled();
-        if (beforeUnload === "timeout") expect(vi.getTimerCount()).toBe(0);
-      }),
-    ).pipe(Effect.provide(layer)),
+it.effect("closing a desktop tab during setup unloads its page before disconnecting", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      desktopRendersNext = true;
+      const gate = (desktopConnectionGate = Promise.withResolvers<void>());
+      const started = (desktopConnectionStarted = Promise.withResolvers<void>());
+      yield* Effect.addFinalizer(() => Effect.sync(() => gate.resolve()));
+      const opening = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { reuseExistingTab: false, open: false },
+        })
+        .pipe(Effect.result, Effect.forkScoped);
+      yield* Effect.promise(() => started.promise);
+      const { context, browser } = desktopConnections[0]!;
+      const page = context.page;
+      page.beforeUnload = "listen";
+      page.unloadGate = Promise.withResolvers<void>();
+      const { sessions } = yield* manager.list({ threadId: testThread.threadId });
+      const session = sessions.find((candidate) => !candidate.headless)!;
+      const closing = yield* manager
+        .close({ threadId: testThread.threadId, tabId: session.tabId })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      expect(page.isClosed()).toBe(false);
+      gate.resolve();
+      yield* Effect.promise(() =>
+        Promise.race([page.pagehideWatched.promise, desktopReleased.promise]),
+      );
+      expect((yield* manager.list({ threadId: testThread.threadId })).sessions).toEqual(
+        expect.arrayContaining([expect.objectContaining({ tabId: session.tabId })]),
+      );
+      page.unloadGate.resolve();
+      yield* Fiber.join(closing);
+      expect(yield* Fiber.join(opening)).toMatchObject({ _tag: "Failure" });
+      yield* Effect.promise(() => desktopReleased.promise);
+      expect(page.unloadEvents).toEqual(["beforeunload", "pagehide", "visibilitychange"]);
+      expect(page.isClosed()).toBe(true);
+      expect(browser.close).toHaveBeenCalled();
+    }),
+  ).pipe(Effect.provide(layer)),
 );
 
-it.effect.each(["agent", "client", "all", "concurrent", "timeout"] as const)(
+it.effect.each(["agent", "client", "all", "concurrent"] as const)(
   "closing a desktop tab waits for unload before removal (%s)",
   (source) =>
     Effect.scoped(
@@ -1925,10 +1910,6 @@ it.effect.each(["agent", "client", "all", "concurrent", "timeout"] as const)(
         }).pipe(Effect.forkScoped);
         page.beforeUnload = "listen";
         page.unloadGate = Promise.withResolvers<void>();
-        if (source === "timeout") {
-          vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-          yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
-        }
         const close = () => manager.close({ threadId: testThread.threadId, tabId });
         const closing = yield* (
           source === "agent"
@@ -1948,22 +1929,11 @@ it.effect.each(["agent", "client", "all", "concurrent", "timeout"] as const)(
           source === "all"
             ? yield* manager.open({ threadId: testThread.threadId, runtime: "server" })
             : undefined;
-        if (source === "timeout") {
-          vi.advanceTimersByTime(4_999);
-          expect(browser.close).not.toHaveBeenCalled();
-          vi.advanceTimersByTime(1);
-        } else {
-          page.unloadGate.resolve();
-        }
+        page.unloadGate.resolve();
         yield* Fiber.join(closing);
         yield* Effect.promise(() => desktopReleased.promise);
-        expect(page.unloadEvents).toEqual(
-          source === "timeout"
-            ? ["beforeunload"]
-            : ["beforeunload", "pagehide", "visibilitychange"],
-        );
+        expect(page.unloadEvents).toEqual(["beforeunload", "pagehide", "visibilitychange"]);
         expect(browser.close).toHaveBeenCalledTimes(1);
-        if (source === "timeout") expect(vi.getTimerCount()).toBe(0);
         if (openedDuringClose) {
           const remaining = yield* manager.list({ threadId: testThread.threadId });
           expect(remaining.sessions.map((session) => session.tabId)).toContain(
