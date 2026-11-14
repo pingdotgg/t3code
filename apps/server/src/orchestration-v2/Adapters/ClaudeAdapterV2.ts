@@ -12188,12 +12188,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 toolInput: EMPTY_CLAUDE_NATIVE_TOOL_INPUT,
                 parentToolUseId,
               }));
-            // A refused handback delivered nothing; the subagent's later result stands.
+            // A refused or unexecuted handback delivered nothing; the subagent's later result stands.
             if (
               toolCall.toolName === "SubagentHandback" &&
               parentToolUseId !== null &&
               (isClaudeToolResultError(toolResult) ||
-                claudeToolNonExecutionKind(message, toolResult.tool_use_id) === "cancelled")
+                claudeToolNonExecutionKind(message, toolResult.tool_use_id) !== undefined)
             ) {
               const subagent = yield* resolveSubagentByToolUseId(context, parentToolUseId);
               if (subagent !== undefined) subagent.handbackText = null;

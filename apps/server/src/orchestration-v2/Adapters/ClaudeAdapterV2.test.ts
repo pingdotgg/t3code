@@ -22368,6 +22368,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             text: "Final.",
             expected: "Final.",
           },
+          {
+            name: "interrupted",
+            handback: "interrupted",
+            isError: false,
+            text: "Final.",
+            expected: "Final.",
+          },
         ];
         for (const [index, testCase] of cases.entries()) {
           const harness = yield* makeWakeHarness;
@@ -22427,13 +22434,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     },
                   ],
                 },
-                ...(testCase.handback === "cancelled"
-                  ? {
+                ...(testCase.handback === "refused"
+                  ? {}
+                  : {
                       tool_result_meta: [
-                        { id: `toolu-handback-${testCase.name}`, non_execution_kind: "cancelled" },
+                        {
+                          id: `toolu-handback-${testCase.name}`,
+                          non_execution_kind: testCase.handback,
+                        },
                       ],
-                    }
-                  : {}),
+                    }),
                 parent_tool_use_id: launchId,
                 uuid: uuid(3),
                 session_id: WAKE_NATIVE_SESSION,
