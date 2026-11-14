@@ -227,6 +227,38 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
+  it.effect.each([
+    { repository: "group/project", args: ["api", "projects/group%2Fproject"] },
+    {
+      repository: "https://gitlab.example.com:8443/group/sub/project.git",
+      args: ["api", "--hostname", "gitlab.example.com:8443", "projects/group%2Fsub%2Fproject"],
+    },
+    {
+      repository: "https://gitlab.com/group/project/-/tree/main",
+      args: ["api", "--hostname", "gitlab.com", "projects/group%2Fproject"],
+    },
+  ])("looks up $repository by its project path", ({ repository, args }) =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            JSON.stringify({
+              path_with_namespace: "group/project",
+              web_url: "https://sourcecontrol.example.com/group/project",
+              http_url_to_repo: "https://sourcecontrol.example.com/group/project.git",
+              ssh_url_to_repo: "git@sourcecontrol.example.com:group/project.git",
+            }),
+          ),
+        ),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      yield* glab.getRepositoryCloneUrls({ cwd: "/repo", repository });
+
+      expect(mockedRun).toHaveBeenCalledWith(expect.objectContaining({ command: "glab", args }));
+    }),
+  );
+
   it.effect("keeps non-merge-request not-found failures generic", () =>
     Effect.gen(function* () {
       const cause = new VcsProcessExitError({
