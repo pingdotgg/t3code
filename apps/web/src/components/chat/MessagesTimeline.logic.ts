@@ -1,7 +1,10 @@
 import * as DateTime from "effect/DateTime";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
-import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
+import {
+  isLiveSubagentTurnItem,
+  waitingOnSubagentsLabel,
+} from "@t3tools/client-runtime/state/subagentRuntime";
 import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
 import { claudeResumeCompactionAge } from "@t3tools/shared/claudeCompaction";
@@ -82,7 +85,9 @@ export function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "proposed-plan") {
     return entry.proposedPlan.runId;
   }
-  if (entry.kind === "html-render" || entry.kind === "mcp-app") return entry.runId;
+  if (entry.kind === "html-render" || entry.kind === "mcp-app" || entry.kind === "sent-message") {
+    return entry.runId;
+  }
   return entry.kind === "work" ? (entry.entry.runId ?? null) : null;
 }
 
@@ -280,6 +285,7 @@ export function workEntryIsVisibleInGroup(
 }
 const TIMELINE_MINIMAP_ITEM_SPACING = 8;
 export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
+export const TIMELINE_MINIMAP_TARGET_OFFSET = 24;
 // Relative to the timeline, not the viewport, so an open terminal shrinks the rail and
 // endpoint previews (centered on their strip) still fit above and below it.
 const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "max(4rem, calc(100% - 14.75rem))";
@@ -529,6 +535,8 @@ type MessagesTimelineRowContent =
       kind: "thinking";
       id: string;
       createdAt: string | null;
+      /** Replaces "Thinking" while the run has done nothing since launching children that still run. */
+      label?: string;
       groupId?: string;
       expanded?: boolean;
     }
@@ -632,6 +640,12 @@ type MessagesTimelineRowContent =
       id: string;
       createdAt: string;
       htmlRender: HtmlRenderReference;
+    }
+  | {
+      kind: "sent-message";
+      id: string;
+      createdAt: string;
+      text: string;
     }
   | {
       kind: "mcp-app";
@@ -816,6 +830,7 @@ function deriveSupersededAttemptFolds(
       (entry.kind === "event" && entry.projectedItem.item.type === "handoff") ||
       entry.kind === "html-render" ||
       entry.kind === "mcp-app" ||
+      entry.kind === "sent-message" ||
       timelineEntryIsPersistentResourceCard(entry) ||
       liveSubagentEntryIds.has(entry.id) ||
       (entry.kind === "work" && entry.entry.itemType === "system_notice")
@@ -1439,6 +1454,19 @@ export function liveAnswerPreview(entries: ReadonlyArray<TimelineEntry>): string
     if (line !== "") return line;
   }
   return null;
+}
+
+/** Reads entries before tool visibility filters them, so hidden newer parent work still counts. */
+function runningSubagentsAtRunTail(entries: ReadonlyArray<TimelineEntry>, runId: RunId): number {
+  let running = 0;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]!;
+    if (entry.kind !== "event") break;
+    const { item } = entry.projectedItem;
+    if (item.type !== "subagent" || item.runId !== runId) break;
+    if (isLiveSubagentTurnItem(item)) running += 1;
+  }
+  return running;
 }
 
 function timelineRowEntries(
@@ -2125,6 +2153,16 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    if (timelineEntry.kind === "sent-message") {
+      nextRows.push({
+        kind: "sent-message",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        text: timelineEntry.text,
+      });
+      continue;
+    }
+
     if (timelineEntry.kind === "mcp-app") {
       nextRows.push({
         kind: "mcp-app",
@@ -2296,10 +2334,15 @@ export function deriveMessagesTimelineRows(input: {
       }
       nextRows.push(...viewedImagesRows(groupId, failedGroupAnchor.createdAt, groupedEntries));
     } else {
+      const waitingOn =
+        unsettledRunId === null
+          ? 0
+          : runningSubagentsAtRunTail(input.timelineEntries, unsettledRunId);
       nextRows.push({
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,
         createdAt: input.activeTurnStartedAt ?? null,
+        ...(waitingOn > 0 ? { label: waitingOnSubagentsLabel(waitingOn) } : {}),
       });
     }
   }
@@ -2481,19 +2524,33 @@ function replaceStreamingMessageRows(
     return null;
   }
   const replacements = new Map<ChatMessage, Extract<TimelineEntry, { kind: "message" }>>();
+  const thoughts = new Map<string, WorkLogEntry>();
+  const plans = new Map<string, ProposedPlan>();
   for (let index = 0; index < timelineEntries.length; index += 1) {
     const entry = timelineEntries[index]!;
     const previousEntry = previousEntries[index]!;
     if (entry === previousEntry) continue;
     if (
-      entry.kind !== "message" ||
-      previousEntry.kind !== "message" ||
+      entry.kind !== previousEntry.kind ||
       entry.id !== previousEntry.id ||
       entry.createdAt !== previousEntry.createdAt ||
       entry.attempt !== previousEntry.attempt
     ) {
       return null;
     }
+    if (entry.kind === "work" && previousEntry.kind === "work") {
+      if (!isStreamingThoughtUpdate(previousEntry.entry, entry.entry)) return null;
+      thoughts.set(entry.id, entry.entry);
+      continue;
+    }
+    if (entry.kind === "proposed-plan" && previousEntry.kind === "proposed-plan") {
+      const { planMarkdown: _before, updatedAt: _beforeAt, ...before } = previousEntry.proposedPlan;
+      const { planMarkdown: _after, updatedAt: _afterAt, ...after } = entry.proposedPlan;
+      if (!shallow(before, after)) return null;
+      plans.set(entry.id, entry.proposedPlan);
+      continue;
+    }
+    if (entry.kind !== "message" || previousEntry.kind !== "message") return null;
     if (
       entry.projectedItem !== previousEntry.projectedItem &&
       (entry.projectedItem === undefined ||
@@ -2510,8 +2567,54 @@ function replaceStreamingMessageRows(
     if (!isStreamingMessageTextUpdate(previousEntry.message, entry.message)) return null;
     replacements.set(previousEntry.message, entry);
   }
-  if (replacements.size === 0) return previous.rows;
-  return previous.rows.map((row) => {
+  if (replacements.size === 0 && thoughts.size === 0 && plans.size === 0) return previous.rows;
+  // Rows settle superseded thinking after tool visibility filtering, which these entries
+  // have not seen; the fast path keeps item status, so the row's settled status still holds.
+  const patchedThoughts = new Map<WorkLogEntry, WorkLogEntry>();
+  const patchThought = (entry: WorkLogEntry) => {
+    const thought = thoughts.get(entry.id);
+    if (!thought) return entry;
+    let patched = patchedThoughts.get(entry);
+    if (!patched) {
+      patched =
+        entry.toolLifecycleStatus === thought.toolLifecycleStatus ||
+        entry.toolLifecycleStatus === undefined
+          ? thought
+          : { ...thought, toolLifecycleStatus: entry.toolLifecycleStatus };
+      patchedThoughts.set(entry, patched);
+    }
+    return patched;
+  };
+  const patchedGroups = new Map<WorkLogEntry[], WorkLogEntry[]>();
+  const patchGroup = (group: WorkLogEntry[]) => {
+    if (!group.some((entry) => thoughts.has(entry.id))) return group;
+    const patched = patchedGroups.get(group) ?? group.map(patchThought);
+    patchedGroups.set(group, patched);
+    return patched;
+  };
+  const patchedLiveThoughtIds = new Set<string>();
+  const rows = previous.rows.map((row): MessagesTimelineRow => {
+    if (row.kind === "proposed-plan") {
+      const proposedPlan = plans.get(row.id);
+      return proposedPlan ? { ...row, proposedPlan } : row;
+    }
+    if (row.kind === "work-live") {
+      const groupedEntries = patchGroup(row.groupedEntries);
+      if (groupedEntries === row.groupedEntries) return row;
+      for (const entry of groupedEntries) {
+        if (thoughts.has(entry.id)) patchedLiveThoughtIds.add(entry.id);
+      }
+      return {
+        ...row,
+        entry: patchThought(row.entry),
+        groupedEntries,
+        ...(row.thought ? { thought: patchThought(row.thought) } : {}),
+      };
+    }
+    if (row.kind === "work") {
+      const groupedEntries = patchGroup(row.groupedEntries);
+      return groupedEntries === row.groupedEntries ? row : { ...row, groupedEntries };
+    }
     if (row.kind !== "message" && row.kind !== "assistant-meta") return row;
     const entry = replacements.get(row.message);
     return entry
@@ -2522,6 +2625,39 @@ function replaceStreamingMessageRows(
         }
       : row;
   });
+  // Only a live row holds thinking without deriving a label from its text. Settled
+  // groups, folded turns, and work toggles summarize it, so they need the full rebuild.
+  for (const id of thoughts.keys()) if (!patchedLiveThoughtIds.has(id)) return null;
+  return rows;
+}
+
+/**
+ * Rows read a thought's text only through its blankness (visibility, the live
+ * thought line) and through labels that live rows do not store.
+ */
+function isStreamingThoughtUpdate(previous: WorkLogEntry, next: WorkLogEntry): boolean {
+  if (
+    previous.itemType !== "reasoning" ||
+    previous.projectedItem === undefined ||
+    next.projectedItem === undefined ||
+    !isStreamingTurnItemTextUpdate(previous.projectedItem, next.projectedItem) ||
+    Boolean(previous.detail?.trim()) !== Boolean(next.detail?.trim())
+  ) {
+    return false;
+  }
+  const {
+    detail: _before,
+    structuredPayload: _beforeItem,
+    projectedItem: _beforeRow,
+    ...rest
+  } = previous;
+  const {
+    detail: _after,
+    structuredPayload: _afterItem,
+    projectedItem: _afterRow,
+    ...nextRest
+  } = next;
+  return shallow(rest, nextRest);
 }
 
 export function deriveMessagesTimelineRowsWithState(
@@ -2566,7 +2702,12 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       );
     case "thinking": {
       const bt = b as typeof a;
-      return a.createdAt === bt.createdAt && a.groupId === bt.groupId && a.expanded === bt.expanded;
+      return (
+        a.createdAt === bt.createdAt &&
+        a.groupId === bt.groupId &&
+        a.expanded === bt.expanded &&
+        a.label === bt.label
+      );
     }
     case "worktree-setup":
       return a.snapshot === (b as typeof a).snapshot;
@@ -2624,6 +2765,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       // Tool updates rebuild entries; preserve frames for unchanged pages.
       const bh = b as typeof a;
       return a.createdAt === bh.createdAt && htmlRenderReferencesEqual(a.htmlRender, bh.htmlRender);
+    }
+
+    case "sent-message": {
+      const bs = b as typeof a;
+      return a.createdAt === bs.createdAt && a.text === bs.text;
     }
 
     case "mcp-app": {

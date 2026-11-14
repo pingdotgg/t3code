@@ -56,6 +56,7 @@ import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
+import { MessageToolkit } from "../../apps/server/src/mcp/toolkits/message/tools.ts";
 import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "../../apps/server/src/mcp/toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "../../apps/server/src/mcp/toolkits/previewControls/tools.ts";
@@ -64,6 +65,7 @@ import {
   CHILD_PULL_REQUEST_REPORT_NEXT,
   PullRequestsToolkit,
 } from "../../apps/server/src/mcp/toolkits/pullRequests/tools.ts";
+import { ThemeToolkit } from "../../apps/server/src/mcp/toolkits/theme/tools.ts";
 import { ThreadToolkit } from "../../apps/server/src/mcp/toolkits/thread/tools.ts";
 import { WorktreeToolkit } from "../../apps/server/src/mcp/toolkits/worktree/tools.ts";
 import {
@@ -72,6 +74,7 @@ import {
 } from "../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { proxyConfig } from "../shared/proxy.ts";
 import { changeRequestsCreatedBy } from "../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts";
+import { type BackgroundWait, makeBackgroundWait } from "./backgroundWait.ts";
 import { DeviceExpect, gradeDevice } from "./device-grading.ts";
 import { FileLinksExpect, gradeFileLinks } from "./file-link-grading.ts";
 import {
@@ -168,7 +171,10 @@ const Rest = [Schema.Record(Schema.String, Schema.Unknown)] as const;
 const PriorToolCall = Schema.Struct({
   tool: Schema.String,
   input: Schema.Unknown,
-  /** For a device tool, `"default"` runs the call on the world's devices for T3's result. */
+  /**
+   * For a device tool or t3_background_wait, `"default"` runs the call on the world's devices or
+   * background tasks for T3's result.
+   */
   result: Schema.Unknown,
   /** Repository-relative file whose current contents supply this tool result. */
   resultFile: Schema.optional(Schema.String),
@@ -273,6 +279,11 @@ const McpToolUseWorld = Schema.StructWithRest(
     deviceInvalidCapture: Schema.optional(Schema.Boolean),
     /** Devices another thread's agent-device session holds, by device id: that thread's id. */
     deviceOwners: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    /**
+     * Task IDs of the background commands and Monitors still running on the agent's Claude
+     * session. With them, T3's own t3_background_wait handler answers from this world.
+     */
+    backgroundTasks: Schema.optional(Schema.Array(Schema.String)),
     /** PRs already linked to the thread, with the state T3 last saw. */
     linkedPullRequests: Schema.optional(
       Schema.Array(
@@ -441,12 +452,14 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   AttachmentToolkit,
   ProjectToolkit,
   EnvironmentToolkit,
+  ThemeToolkit,
   PreviewControlsToolkit,
   WorktreeToolkit,
   PullRequestsToolkit,
   PreviewToolkit,
   DeviceToolkit,
   HtmlToolkit,
+  MessageToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
 // McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
 const t3InputDecoders = new Map(
@@ -860,6 +873,10 @@ type Sample = {
   devices?: DeviceTools;
   /** T3's results for prior device calls whose case result is "default". */
   readonly priorResults: Map<unknown, string>;
+  /** Prior calls whose T3 result is an error, so the agent sees it as one. */
+  readonly priorErrors: Set<unknown>;
+  /** T3's t3_background_wait, once `withBackgroundWait` builds it for `world.backgroundTasks`. */
+  backgroundWait?: BackgroundWait;
   /** Calls so far per mocked tool, for mocks that answer in sequence. */
   readonly mockCalls: Map<string, number>;
 };
@@ -906,6 +923,7 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     secretFiles: [],
     secretRequests: 0,
     priorResults: new Map(),
+    priorErrors: new Set(),
     mockCalls: new Map(),
   };
 };
@@ -934,6 +952,25 @@ export const withDevices = Effect.fn("evaluateMcpToolUse.withDevices")(function*
   for (const call of (sample.testCase.setup.priorTurns ?? []).flatMap((t) => t.toolCalls ?? [])) {
     if (call.result !== "default" || !isDeviceTool(call.tool)) continue;
     sample.priorResults.set(call, (yield* sample.devices.call(call.tool, call.input)).text);
+  }
+});
+
+/**
+ * Builds T3's t3_background_wait for a world with background tasks, and answers prior waits whose
+ * result is "default" with T3's result.
+ */
+export const withBackgroundWait = Effect.fn("evaluateMcpToolUse.withBackgroundWait")(function* (
+  sample: Sample,
+) {
+  const running = sample.testCase.setup.world?.backgroundTasks;
+  if (running === undefined) return;
+  const backgroundWait = yield* makeBackgroundWait(running);
+  sample.backgroundWait = backgroundWait;
+  for (const call of (sample.testCase.setup.priorTurns ?? []).flatMap((t) => t.toolCalls ?? [])) {
+    if (call.result !== "default" || call.tool !== "t3_background_wait") continue;
+    const result = yield* backgroundWait(call.input);
+    sample.priorResults.set(call, result.text);
+    if (result.isError) sample.priorErrors.add(call);
   }
 });
 
@@ -1024,8 +1061,13 @@ export const buildMessages = (sample: Sample) => {
     const calls = (turn.toolCalls ?? []).map((call) => {
       const tool = findTool(base, call.tool);
       if (tool === undefined) throw new Error(`${testCase.id}: unknown prior tool ${call.tool}.`);
-      if (call.result === "default" && isDeviceTool(call.tool) && !sample.priorResults.has(call)) {
-        throw new Error(`${testCase.id}: prior ${call.tool} needs T3's result; run withDevices.`);
+      const builder = isDeviceTool(call.tool)
+        ? "withDevices"
+        : call.tool === "t3_background_wait"
+          ? "withBackgroundWait"
+          : undefined;
+      if (call.result === "default" && builder && !sample.priorResults.has(call)) {
+        throw new Error(`${testCase.id}: prior ${call.tool} needs T3's result; run ${builder}.`);
       }
       return { ...call, id: `toolu_prior_${nextId++}`, name: tool.name, tool, prior: call };
     });
@@ -1047,7 +1089,8 @@ export const buildMessages = (sample: Sample) => {
         normalizeToolName(tool.name) === "orchestrator_capabilities"
           ? capabilities(sample, result)
           : (sample.priorResults.get(prior) ?? result);
-      push("user", toolResult(id, replayed));
+      const answer = toolResult(id, replayed);
+      push("user", sample.priorErrors.has(prior) ? { ...answer, is_error: true } : answer);
     }
     if (turn.text) push(turn.role, text(turn.text));
   }
@@ -1263,15 +1306,19 @@ export const t3Default = (
       return { ...pr(), watching: true, wasWatching: false };
     case "unwatch_pull_request":
       return { ...pr(), watching: false, wasWatching: true };
-    case "list_thread_pull_requests":
+    case "list_thread_pull_requests": {
+      const states = Array.isArray(input.states) ? input.states : undefined;
+      const matching = [...sample.linked]
+        .map((url) => ({ ...linkedEntry(sample, url), source: "agent", watching: false }))
+        .filter((entry) => states === undefined || states.includes(entry.state));
+      const start = Number(valueText(input.cursor)) || 0;
+      const end = start + 50;
       return {
-        pullRequests: [...sample.linked].map((url) => ({
-          ...linkedEntry(sample, url),
-          source: "agent",
-          watching: false,
-        })),
+        pullRequests: matching.slice(start, end),
         chains: [],
+        nextCursor: end < matching.length ? String(end) : null,
       };
+    }
     case "t3_thread_read": {
       const threadId = valueText(input.threadId);
       const launched = sample.threads.get(threadId);
@@ -1638,6 +1685,10 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   const fromWorld = mock === undefined || mock === "default" || failure !== undefined;
   if (sample.devices && isT3Name(call.name) && isDeviceTool(name) && fromWorld) {
     const result = yield* sample.devices.call(name, input, failure);
+    return result.isError ? failed(result.text) : toolResult(call.id, result.text);
+  }
+  if (sample.backgroundWait && isT3Name(call.name) && name === "t3_background_wait" && fromWorld) {
+    const result = yield* sample.backgroundWait(input);
     return result.isError ? failed(result.text) : toolResult(call.id, result.text);
   }
   // A pasted secret is saved without a card, so a mocked card outcome does not apply.
@@ -2142,6 +2193,7 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
 ) {
   const sample = { ...makeSample(testCase, base), shellUsage: spent.shellUsage };
   yield* withDevices(sample);
+  yield* withBackgroundWait(sample);
   const runPromise = Effect.runPromiseWith(yield* Effect.context<HttpClient.HttpClient>());
   const messages = buildMessages(sample);
   const input = base.codex ? codexMessages(messages) : undefined;
@@ -2562,7 +2614,7 @@ const main = Effect.gen(function* () {
     // One JSON line per case. Without --case this also checks that every case builds.
     for (const testCase of selected) {
       const sample = makeSample(testCase, baseFor(testCase));
-      yield* Effect.scoped(withDevices(sample));
+      yield* Effect.scoped(Effect.andThen(withDevices(sample), withBackgroundWait(sample)));
       const messages = buildMessages(sample);
       const body = sample.base.codex
         ? codexRequest(sample.base, codexMessages(messages))
