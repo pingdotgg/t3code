@@ -7396,30 +7396,49 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     );
 
     it.effect.each([
-      { location: "root", conflict: false },
-      { location: "nested", conflict: false },
-      { location: "worktree", conflict: false },
-      { location: "root", conflict: true },
-      { location: "nested", conflict: true },
-      { location: "worktree", conflict: true },
+      { location: "root", conflict: false, encoding: "utf8" },
+      { location: "nested", conflict: false, encoding: "utf8" },
+      { location: "worktree", conflict: false, encoding: "utf8" },
+      { location: "root", conflict: true, encoding: "utf8" },
+      { location: "nested", conflict: true, encoding: "utf8" },
+      { location: "worktree", conflict: true, encoding: "utf8" },
+      { location: "root", conflict: false, encoding: "utf16le" },
+      { location: "root", conflict: true, encoding: "utf16le" },
     ])(
-      "rejects selected-file merge commits without mutation ($location, conflict: $conflict)",
-      ({ location, conflict }) =>
+      "rejects selected-file merge commits without mutation ($location, conflict: $conflict, $encoding)",
+      ({ location, conflict, encoding }) =>
         Effect.gen(function* () {
           let cwd = yield* makeTmpDir();
           const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const writeReadme = (text: string) =>
+            Effect.sync(() =>
+              NodeFS.writeFileSync(
+                NodePath.join(cwd, "README.md"),
+                encoding === "utf16le" ? Buffer.from(`\ufeff${text}`, "utf16le") : text,
+              ),
+            );
+          if (encoding === "utf16le") {
+            yield* writeTextFile(
+              cwd,
+              ".gitattributes",
+              "README.md text working-tree-encoding=UTF-16\n",
+            );
+            yield* writeReadme("base\n");
+            yield* git(cwd, ["add", "."]);
+            yield* git(cwd, ["commit", "-m", "Declare UTF-16 encoding"]);
+          }
           const driver = yield* GitVcsDriver.GitVcsDriver;
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           yield* git(cwd, ["checkout", "-b", "feature"]);
           yield* writeTextFile(cwd, "feature.txt", "feature\n");
-          if (conflict) yield* writeTextFile(cwd, "README.md", "feature version\n");
+          if (conflict) yield* writeReadme("feature version\n");
           yield* git(cwd, ["add", "."]);
           yield* git(cwd, ["commit", "-m", "Feature"]);
           const featureHead = yield* git(cwd, ["rev-parse", "HEAD"]);
           yield* git(cwd, ["checkout", initialBranch]);
           yield* writeTextFile(cwd, "main.txt", "main\n");
-          if (conflict) yield* writeTextFile(cwd, "README.md", "main version\n");
+          if (conflict) yield* writeReadme("main version\n");
           yield* git(cwd, ["add", "."]);
           yield* git(cwd, ["commit", "-m", "Main"]);
           const mainHead = yield* git(cwd, ["rev-parse", "HEAD"]);
@@ -7472,11 +7491,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             const unresolved = yield* driver
               .commit(commitCwd, "Unresolved merge", "", { stage: {} })
               .pipe(Effect.result);
-            assert.isTrue(Result.isFailure(unresolved), "committed an unresolved conflict");
+            if (Result.isSuccess(unresolved)) {
+              assert.fail(
+                `committed an unresolved conflict: ${yield* git(cwd, ["show", "HEAD:README.md"])}`,
+              );
+            }
             assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), mainHead);
             assert.equal(yield* git(cwd, ["ls-files", "--unmerged"]), unmerged);
             // A lone "=======" is a heading underline, not a conflict boundary.
-            yield* writeTextFile(cwd, "README.md", "Heading\n=======\n\nresolved\n");
+            yield* writeReadme("Heading\n=======\n\nresolved\n");
             assert.isNotNull(yield* driver.prepareCommitContext(commitCwd));
           }
           yield* driver.commit(commitCwd, "Finish merge", "", { stage: {} });
