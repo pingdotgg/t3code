@@ -16,7 +16,8 @@ export function MiddleTruncate({
   showTitle?: boolean;
   variant?: "default" | "cap-aligned";
 }) {
-  const split = splitForMiddleTruncate(value, tail);
+  const raw = splitForMiddleTruncate(value, tail);
+  const split = raw && collapseSegments(raw);
   const headRef = useRef<HTMLSpanElement>(null);
   const head = split?.head;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fits the head span's DOM text and refits it through a ResizeObserver
@@ -42,10 +43,12 @@ export function MiddleTruncate({
       {split ? (
         <>
           {/* The tail carries the ellipsis so it sits flush; a CSS ellipsis leaves a ragged gap. */}
-          <span ref={headRef} className="peer min-w-0 overflow-hidden">
+          <span ref={headRef} className="peer min-w-0 overflow-hidden whitespace-pre">
             {split.head}
           </span>
-          <span className="shrink-0 peer-data-overflow:before:content-['…']">{split.tail}</span>
+          <span className="shrink-0 whitespace-pre peer-data-overflow:before:content-['…']">
+            {split.tail}
+          </span>
         </>
       ) : (
         // Keyed so React does not reuse the head node and its imperative clip.
@@ -87,6 +90,16 @@ function fitHead(head: HTMLElement) {
   head.style.clipPath = slack > 0 ? `inset(-0.25em ${slack}px -0.25em 0)` : "";
   const tail = head.nextElementSibling;
   if (tail instanceof HTMLElement) tail.style.translate = slack > 0 ? `-${slack}px 0` : "";
+}
+
+// The segments render pre so the space at the cut survives, so collapse here what CSS
+// would have (not \s: em and no-break spaces are kept). Split first, so the tail length
+// still counts the raw value.
+function collapseSegments(split: { head: string; tail: string }) {
+  const collapse = (text: string) => text.replace(/[ \t\n\r\f]+/g, " ");
+  const head = collapse(split.head).replace(/^ /, "");
+  const tail = collapse(split.tail).replace(/ $/, "");
+  return { head, tail: head.endsWith(" ") ? tail.replace(/^ /, "") : tail };
 }
 
 const DEFAULT_TAIL = 10;
