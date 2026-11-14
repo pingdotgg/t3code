@@ -1924,6 +1924,109 @@ it.effect("ends a nested native subagent and its thread when the root run is int
   }),
 );
 
+it.effect.each(["completed", "failed", "cancelled"] as const)(
+  "settles request usage after the native %s projection, without delaying visible completion",
+  (status) =>
+    Effect.gen(function* () {
+      const order: string[] = [];
+      const reports: ProviderUsageAnalytics.RunSettledReport[] = [];
+      yield* runBackgroundItemScenario(
+        "native-usage-settlement",
+        (ids) => {
+          const turn = (usagePending: boolean): ProviderAdapter.ProviderAdapterV2Event =>
+            ({
+              type: "provider_turn.updated",
+              driver,
+              providerTurn: {
+                id: ids.rootProviderTurnId,
+                providerThreadId: ids.providerThreadId,
+                runAttemptId: ids.attemptId,
+                status: usagePending ? "completed" : status,
+                ...(usagePending ? { usagePending: true } : {}),
+                turnTokenUsage: { inputTokens: usagePending ? 3 : 15 },
+              },
+            }) as ProviderAdapter.ProviderAdapterV2Event;
+          return [
+            {
+              type: "background_work.updated",
+              driver,
+              providerTurnId: ids.rootProviderTurnId,
+              pending: true,
+            },
+            turn(true),
+            rootTerminalEvent(ids, "completed"),
+            turn(false),
+            {
+              type: "background_work.updated",
+              driver,
+              providerTurnId: ids.rootProviderTurnId,
+              pending: false,
+            },
+          ];
+        },
+        {
+          onFinalized: () =>
+            Effect.sync(() => {
+              order.push("visible");
+            }),
+          onIngest: (event) =>
+            Effect.sync(() => {
+              if (event.type === "provider_turn.updated" && !event.providerTurn.usagePending) {
+                order.push(`native:${event.providerTurn.turnTokenUsage?.inputTokens}`);
+              }
+            }),
+          analytics: {
+            runStarted: () => Effect.void,
+            turnCompleted: () => Effect.void,
+            runSettled: (report) =>
+              Effect.sync(() => {
+                reports.push(report);
+                order.push("usage");
+              }),
+          },
+        },
+      );
+      assert.deepEqual(order, ["visible", "native:15", "usage"]);
+      assert.lengthOf(reports, 1);
+      assert.equal(reports[0]?.status, status);
+    }),
+);
+
+it.effect("reports deferred usage when ingestion ends before native settlement", () =>
+  Effect.gen(function* () {
+    const reports: ProviderUsageAnalytics.RunSettledReport[] = [];
+    yield* runBackgroundItemScenario(
+      "native-usage-unsettled",
+      (ids) => [
+        {
+          type: "provider_turn.updated",
+          driver,
+          providerTurn: {
+            id: ids.rootProviderTurnId,
+            providerThreadId: ids.providerThreadId,
+            runAttemptId: ids.attemptId,
+            status: "completed",
+            usagePending: true,
+          },
+        } as ProviderAdapter.ProviderAdapterV2Event,
+        rootTerminalEvent(ids, "completed"),
+      ],
+      {
+        analytics: {
+          runStarted: () => Effect.void,
+          turnCompleted: () => Effect.void,
+          runSettled: (report) =>
+            Effect.sync(() => {
+              reports.push(report);
+            }),
+        },
+      },
+    );
+    assert.lengthOf(reports, 1);
+    assert.equal(reports[0]?.status, "completed");
+  }),
+);
+
 it.effect("keeps ingesting until queued background work clears after the probe goes idle", () =>
   Effect.gen(function* () {
     // The adapter's probe runs ahead of its event queue, so only the queued update may release.
@@ -4084,6 +4187,7 @@ function runBackgroundItemScenario(
     | ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>
     | Stream.Stream<ProviderAdapter.ProviderAdapterV2Event>,
   options?: {
+    readonly analytics?: Effect.Success<typeof ProviderUsageAnalytics.ProviderTurnAnalytics>;
     readonly onIngest?: (
       event: ProviderAdapter.ProviderAdapterV2Event,
       write: { readonly inSharedCommit: boolean },
@@ -4136,6 +4240,9 @@ function runBackgroundItemScenario(
     const layerTest = RunExecutionService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          options?.analytics
+            ? Layer.succeed(ProviderUsageAnalytics.ProviderTurnAnalytics, options.analytics)
+            : Layer.empty,
           McpAppModelContext.layerEmpty,
           Layer.succeed(PreviewAgentActivity.PreviewAgentActivity, previewActivity),
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),

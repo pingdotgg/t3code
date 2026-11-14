@@ -418,6 +418,22 @@ it.effect("records accepted billed turn usage once without billing the context w
       },
       event: { type: "provider_turn.updated" as const, driver: CODEX_DRIVER, providerTurn },
     };
+    yield* ingestor.ingestNormalized({
+      ...input,
+      event: {
+        ...input.event,
+        providerTurn: {
+          ...providerTurn,
+          usagePending: true,
+          turnTokenUsage: { ...providerTurn.turnTokenUsage, inputTokens: 3 },
+        },
+      },
+    });
+    assert.isEmpty(recorded);
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    assert.isTrue(
+      (yield* projections.getThreadProjection(threadEvent.threadId)).providerTurns[0]?.usagePending,
+    );
     yield* ingestor.ingestNormalized(input);
     yield* ingestor.ingestNormalized(input);
     const ignored = yield* ingestor.ingestNormalized({
@@ -439,6 +455,9 @@ it.effect("records accepted billed turn usage once without billing the context w
       },
     });
     assert.isEmpty(ignored);
+    assert.isUndefined(
+      (yield* projections.getThreadProjection(threadEvent.threadId)).providerTurns[0]?.usagePending,
+    );
     assert.lengthOf(recorded, 1);
     assert.deepEqual(recorded[0], {
       driver: CODEX_DRIVER,
