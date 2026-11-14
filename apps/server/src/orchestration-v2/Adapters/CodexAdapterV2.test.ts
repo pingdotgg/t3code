@@ -3091,6 +3091,164 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  const compactionAfterResumedTurnTranscript = (
+    startOutcome: "accepted" | "interrupted" | "hook-stopped",
+  ) => {
+    const nativeThreadId = "compact-thread";
+    const nativeTurnId = "compact-turn";
+    const resumedTurnId = "resumed-turn";
+    const item = { type: "contextCompaction", id: "compact-item" };
+    const startResponse =
+      startOutcome !== "interrupted"
+        ? { type: "emit_inbound" as const, label: "compact", frame: { id: 3, result: {} } }
+        : {
+            type: "emit_inbound" as const,
+            label: "compact",
+            frame: {
+              id: 3,
+              error: { code: -32_000, message: "Context compaction ended with interrupted." },
+            },
+          };
+    return makeCodexReplayTranscript({
+      scenario: `compaction-after-resumed-turn-${startOutcome}`,
+      entries: [
+        ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "unused" }).slice(0, 5),
+        {
+          type: "expect_outbound",
+          label: "compact",
+          frame: { id: 3, method: "thread/compact/start", params: { threadId: nativeThreadId } },
+        },
+        {
+          type: "emit_inbound",
+          label: "start",
+          frame: {
+            method: "turn/started",
+            params: {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: resumedTurnId, status: "inProgress" }),
+            },
+          },
+        },
+        {
+          type: "emit_inbound",
+          label: "complete",
+          frame: {
+            method: "turn/completed",
+            params: {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: resumedTurnId, status: "interrupted" }),
+            },
+          },
+        },
+        startResponse,
+        {
+          type: "emit_inbound",
+          label: "start",
+          frame: {
+            method: "turn/started",
+            params: {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+            },
+          },
+        },
+        ...(startOutcome === "hook-stopped"
+          ? [
+              {
+                type: "emit_inbound" as const,
+                label: "hook/completed",
+                frame: {
+                  method: "hook/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    run: {
+                      id: "compact-hook",
+                      eventName: "preCompact",
+                      source: "project",
+                      sourcePath: "/workspace/.codex/hooks.json",
+                      scope: "turn",
+                      executionMode: "sync",
+                      handlerType: "command",
+                      displayOrder: 1,
+                      startedAt: 1782622440,
+                      status: "stopped",
+                      entries: [{ kind: "stop", text: "Not now." }],
+                    },
+                  },
+                },
+              },
+            ]
+          : (["item/started", "item/completed"] as const).map((method) => ({
+              type: "emit_inbound" as const,
+              label: method,
+              frame: { method, params: { threadId: nativeThreadId, turnId: nativeTurnId, item } },
+            }))),
+        {
+          type: "emit_inbound",
+          label: "complete",
+          frame: {
+            method: "turn/completed",
+            params: {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({
+                id: nativeTurnId,
+                status: startOutcome === "hook-stopped" ? "interrupted" : "completed",
+              }),
+            },
+          },
+        },
+      ],
+    });
+  };
+
+  it.effect.each(["accepted", "interrupted", "hook-stopped"] as const)(
+    "binds the compaction turn after an interrupted resumed turn (%s)",
+    (startOutcome) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeCodexReplayHarness(
+            compactionAfterResumedTurnTranscript(startOutcome),
+          );
+          assert.isDefined(harness.runtime.compactThread);
+          yield* harness.runtime.compactThread!(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("compact-attempt"),
+              text: "/compact",
+            }),
+          );
+          yield* harness.firstTerminal;
+          const items = harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+              ? [event.turnItem]
+              : [],
+          );
+          const hookStopped = startOutcome === "hook-stopped";
+          assert.deepEqual(
+            items.map((entry) => entry.status),
+            hookStopped ? [] : ["running", "completed"],
+          );
+          // The resumed turn was never adopted: the only terminal is the compaction's.
+          assert.deepEqual(
+            harness.terminalEvents().map((event) => event.status),
+            [hookStopped ? "interrupted" : "completed"],
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
+
   it.effect.each(["failed", "interrupted", "Stop"] as const)(
     "settles unfinished compaction on %s without changing completed compaction",
     (outcome) =>

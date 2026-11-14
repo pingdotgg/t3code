@@ -376,6 +376,16 @@ function isCodexActiveWriterError(error: unknown): boolean {
   );
 }
 
+// Codex can report a compaction as interrupted when a different turn on the
+// thread ends first, while the compaction itself still runs; its item decides.
+function isCompactionInterruptedError(error: unknown): boolean {
+  return (
+    isCodexAppServerRequestError(error) &&
+    error.method === "thread/compact/start" &&
+    error.errorMessage.includes("Context compaction ended with interrupted")
+  );
+}
+
 function codexTimestamp(seconds: number | null | undefined): DateTime.Utc {
   return seconds === null || seconds === undefined
     ? DateTime.nowUnsafe()
@@ -2038,6 +2048,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const pendingRootTurns = yield* Ref.make(
           new Map<string, ProviderAdapter.ProviderAdapterV2TurnInput>(),
         );
+        const pendingCompactions = yield* Ref.make(
+          new Map<string, ProviderAdapter.ProviderAdapterV2TurnInput>(),
+        );
+        const heldTurnStarts = new Map<
+          string,
+          { readonly threadId: string; readonly turn: CodexSchema.V2TurnStartedNotification__Turn }
+        >();
         const turnWaiters = yield* Ref.make(new Map<string, Deferred.Deferred<void, never>>());
         const subagentThreads = yield* Ref.make(new Map<string, CodexSubagentThreadContext>());
         const subagentSelections = new Map<string, Omit<ModelSelection, "instanceId">>();
@@ -4964,7 +4981,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("hook/completed", (payload) =>
           Effect.gen(function* () {
-            if (payload.turnId == null || payload.run.status !== "stopped") return;
+            if (payload.turnId == null) return;
+            // Codex runs preCompact only for compaction, and can stop it before any item.
+            if (payload.run.eventName === "preCompact" && heldTurnStarts.has(payload.turnId))
+              yield* classifyHeldTurnStart({
+                turnId: payload.turnId,
+                isCompactionItem: true,
+              }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1));
+            if (payload.run.status !== "stopped") return;
             const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
             if (context?.providerThread.nativeThreadRef?.nativeId !== payload.threadId) return;
             const reason = payload.run.entries
@@ -4978,29 +5002,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }),
         );
 
-        yield* client.handleServerNotification("turn/started", (payload) =>
-          Effect.gen(function* () {
-            const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
-            if (context !== undefined) {
-              if (context.nativeStartReady !== undefined) {
-                yield* Deferred.succeed(context.nativeStartReady, undefined);
-              }
-              return;
-            }
-            const pendingRootTurn = (yield* Ref.get(pendingRootTurns)).get(payload.threadId);
-            if (pendingRootTurn !== undefined) {
-              yield* registerRootTurn({
-                turnInput: pendingRootTurn,
-                nativeTurnId: payload.turn.id,
-                startedAt: codexTimestamp(payload.turn.startedAt),
-              });
-              yield* Ref.update(pendingRootTurns, (current) => {
-                const updated = new Map(current);
-                updated.delete(payload.threadId);
-                return updated;
-              });
-              return;
-            }
+        // The turn/started handling for a turn nobody claimed: goal continuations,
+        // orphan goal turns, and subagent bookkeeping.
+        const handleUnclaimedTurnStart = Effect.fn("CodexAdapterV2.handleUnclaimedTurnStart")(
+          function* (payload: CodexSchema.V2TurnStartedNotification) {
             const goalHold = goalHolds.get(payload.threadId);
             if (goalHold !== undefined) {
               goalHolds.delete(payload.threadId);
@@ -5061,6 +5066,80 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeTurnId: payload.turn.id,
               startedAt: codexTimestamp(payload.turn.startedAt),
             });
+          },
+        );
+
+        // A turn held for a pending compaction is classified by its first item: a
+        // contextCompaction item makes it the compaction run; anything else, or the
+        // turn ending itemless, releases it to the unclaimed-turn handling.
+        const classifyHeldTurnStart = Effect.fn("CodexAdapterV2.classifyHeldTurnStart")(
+          function* (input: { readonly turnId: string; readonly isCompactionItem: boolean }) {
+            const held = heldTurnStarts.get(input.turnId);
+            if (held === undefined) return;
+            heldTurnStarts.delete(input.turnId);
+            if (input.isCompactionItem) {
+              const pendingCompaction = (yield* Ref.get(pendingCompactions)).get(held.threadId);
+              if (pendingCompaction !== undefined) {
+                yield* Ref.update(pendingCompactions, (current) => {
+                  const updated = new Map(current);
+                  updated.delete(held.threadId);
+                  return updated;
+                });
+                yield* registerRootTurn({
+                  turnInput: pendingCompaction,
+                  nativeTurnId: input.turnId,
+                  startedAt: codexTimestamp(held.turn.startedAt),
+                });
+                return;
+              }
+            }
+            yield* handleUnclaimedTurnStart({ threadId: held.threadId, turn: held.turn });
+          },
+        );
+
+        const releaseHeldTurnStarts = Effect.fn("CodexAdapterV2.releaseHeldTurnStarts")(function* (
+          threadId: string,
+        ) {
+          for (const [turnId, held] of heldTurnStarts) {
+            if (held.threadId !== threadId) continue;
+            heldTurnStarts.delete(turnId);
+            yield* handleUnclaimedTurnStart({ threadId, turn: held.turn });
+          }
+        });
+
+        yield* client.handleServerNotification("turn/started", (payload) =>
+          Effect.gen(function* () {
+            const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
+            if (context !== undefined) {
+              if (context.nativeStartReady !== undefined) {
+                yield* Deferred.succeed(context.nativeStartReady, undefined);
+              }
+              return;
+            }
+            const pendingRootTurn = (yield* Ref.get(pendingRootTurns)).get(payload.threadId);
+            if (pendingRootTurn !== undefined) {
+              yield* registerRootTurn({
+                turnInput: pendingRootTurn,
+                nativeTurnId: payload.turn.id,
+                startedAt: codexTimestamp(payload.turn.startedAt),
+              });
+              yield* Ref.update(pendingRootTurns, (current) => {
+                const updated = new Map(current);
+                updated.delete(payload.threadId);
+                return updated;
+              });
+              return;
+            }
+            // A pending compaction must not adopt whichever turn starts first; hold
+            // the turn until its first item says whether it is the compaction turn.
+            if ((yield* Ref.get(pendingCompactions)).has(payload.threadId)) {
+              heldTurnStarts.set(payload.turn.id, {
+                threadId: payload.threadId,
+                turn: payload.turn,
+              });
+              return;
+            }
+            yield* handleUnclaimedTurnStart(payload);
           }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
         );
 
@@ -5240,6 +5319,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("item/started", (payload) =>
           Effect.gen(function* () {
+            yield* classifyHeldTurnStart({
+              turnId: payload.turnId,
+              isCompactionItem: payload.item.type === "contextCompaction",
+            });
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
               return;
@@ -5394,6 +5477,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("item/completed", (payload) =>
           Effect.gen(function* () {
+            yield* classifyHeldTurnStart({
+              turnId: payload.turnId,
+              isCompactionItem: payload.item.type === "contextCompaction",
+            });
             if (payload.item.type === "contextCompaction")
               yield* Ref.update(threadsAwaitingContextRestore, (current) =>
                 new Set(current).add(payload.threadId),
@@ -7122,6 +7209,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("turn/completed", (payload) =>
           Effect.gen(function* () {
+            if (heldTurnStarts.has(payload.turn.id)) {
+              yield* classifyHeldTurnStart({
+                turnId: payload.turn.id,
+                isCompactionItem: false,
+              }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1));
+            }
             const compacted = yield* Ref.modify(threadsAwaitingContextRestore, (current) => {
               if (!current.has(payload.threadId)) return [false, current] as const;
               const next = new Set(current);
@@ -7787,17 +7880,25 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           compactThread: Effect.fn("CodexAdapterV2.compactThread")(
             function* (turnInput) {
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
-              yield* Ref.update(pendingRootTurns, (current) =>
+              yield* Ref.update(pendingCompactions, (current) =>
                 new Map(current).set(threadId, turnInput),
               );
-              // Clear on interruption; a late turn/started must not be adopted after an interrupted start.
+              // On failure or interruption, a late compaction item must not be adopted
+              // and held turns go back to normal. Codex's interrupted reply is not a
+              // failure: the compaction item still decides.
               yield* client.request("thread/compact/start", { threadId }).pipe(
+                Effect.asVoid,
+                Effect.catchIf(isCompactionInterruptedError, () => Effect.void),
                 Effect.onError(() =>
-                  Ref.update(pendingRootTurns, (current) => {
+                  Ref.update(pendingCompactions, (current) => {
                     const next = new Map(current);
                     next.delete(threadId);
                     return next;
-                  }),
+                  }).pipe(
+                    Effect.andThen(releaseHeldTurnStarts(threadId)),
+                    Effect.orDie,
+                    turnTerminalizationPermit.withPermits(1),
+                  ),
                 ),
               );
             },
