@@ -293,7 +293,8 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
   const planSources = new Map<string, LimitAccount>();
-  const merge = (key: string, next: LimitAccount) => {
+  const routedKeys = new Set<string>();
+  const merge = (key: string, next: LimitAccount, routed = false) => {
     // Prefer hub redemption to clear its routing cooldown too; displayed balance still follows the freshest read.
     const previousHub = hubRedeems.get(key);
     if (
@@ -322,9 +323,11 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     const previous = accounts.get(key);
     if (!previous) {
       accounts.set(key, next);
+      if (routed) routedKeys.add(key);
       return;
     }
     const fresher = Date.parse(next.limits.checkedAt) > Date.parse(previous.limits.checkedAt);
+    const previousRouted = routedKeys.has(key);
     const environments = [
       ...previous.environments,
       ...next.environments.filter(
@@ -332,8 +335,11 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           !previous.environments.some((seen) => seen.environmentId === candidate.environmentId),
       ),
     ];
-    const winner = fresher ? next : previous;
-    const creditSource = creditSources.get(key);
+    const winner =
+      routed !== previousRouted ? (routed ? next : previous) : fresher ? next : previous;
+    if (winner === next && routed) routedKeys.add(key);
+    // A routing hub's windows redeem only that hub's credit, so redemption clears what is shown.
+    const creditSource = routedKeys.has(key) ? winner : creditSources.get(key);
     // A hub e-mail names the account better than the driver's default instance name.
     const hubEmail = [previous, next].some(
       (account) => account.environments.length === 0 && account.email,
@@ -350,9 +356,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
-      redeem:
-        hubRedeems.get(key)?.redeem ??
-        (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
+      redeem: routedKeys.has(key)
+        ? winner.redeem
+        : (hubRedeems.get(key)?.redeem ??
+          (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem))),
       limits: {
         ...winner.limits,
         ...(creditSource?.limits.resetCredits
@@ -399,27 +406,31 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         // A resolved account already has an identity; its public key must stay distinct from others'.
         const hub = resolved ? `${environmentId}:${source.id}` : hubIdentity(environmentId, source);
         const key = `${hub}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
-        merge(resolved ?? key, {
-          key,
-          driver: account.driver,
-          displayName: account.email ? null : hubAccountName(account),
-          email: account.email,
-          plan: account.plan,
-          accentColor: undefined,
-          environments: [],
-          sourceLabel,
-          redeem: account.usageLimits.resetCredits?.nextCreditId
-            ? {
-                environmentId,
-                input: {
-                  sourceId: source.id,
-                  accountId: account.id,
-                  creditId: account.usageLimits.resetCredits.nextCreditId,
-                },
-              }
-            : null,
-          limits: account.usageLimits,
-        });
+        merge(
+          resolved ?? key,
+          {
+            key,
+            driver: account.driver,
+            displayName: account.email ? null : hubAccountName(account),
+            email: account.email,
+            plan: account.plan,
+            accentColor: undefined,
+            environments: [],
+            sourceLabel,
+            redeem: account.usageLimits.resetCredits?.nextCreditId
+              ? {
+                  environmentId,
+                  input: {
+                    sourceId: source.id,
+                    accountId: account.id,
+                    creditId: account.usageLimits.resetCredits.nextCreditId,
+                  },
+                }
+              : null,
+            limits: account.usageLimits,
+          },
+          source.routesClients === true,
+        );
       }
     }
   }
@@ -966,6 +977,47 @@ export function collectProviderUsageLimits(
         (a, b) =>
           Date.parse(b.account.usageLimits.checkedAt) - Date.parse(a.account.usageLimits.checkedAt),
       )[0];
+    const routed = sources
+      .filter((source) => source.routesClients === true)
+      .flatMap((source) => source.accounts.map((account) => ({ source, account })))
+      .filter(
+        ({ account }) =>
+          key !== null && resolveKey(account) === key && !limitsNotice(account.usageLimits),
+      )
+      .sort(
+        (a, b) =>
+          Date.parse(b.account.usageLimits.checkedAt) - Date.parse(a.account.usageLimits.checkedAt),
+      )[0];
+    if (routed && key) nativeAccountKeys.add(key);
+    const base = {
+      id: provider.instanceId,
+      driver: provider.driver,
+      label: `${provider.displayName?.trim() || String(provider.driver)} [${provider.instanceId}]`,
+      ...(provider.auth.label ? { plan: provider.auth.label } : {}),
+      instanceId: provider.instanceId,
+      ...(provider.displayName ? { displayName: provider.displayName } : {}),
+      ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
+      ...(provider.auth.email ? { email: provider.auth.email } : {}),
+    };
+    if (routed) {
+      // A routing hub's windows redeem only that hub's credit; without one, clients offer no reset.
+      const { resetCredits, ...windows } = routed.account.usageLimits;
+      const creditId = resetCredits?.nextCreditId;
+      accounts.push({
+        ...base,
+        ...(creditId
+          ? {
+              resetCreditInput: {
+                sourceId: routed.source.id,
+                accountId: routed.account.id,
+                creditId,
+              },
+            }
+          : {}),
+        limits: creditId ? { ...windows, resetCredits } : windows,
+      });
+      continue;
+    }
     const hubCreditId = hubCredits?.account.usageLimits.resetCredits?.nextCreditId;
     const showHubCredits =
       hubCredits &&
@@ -976,11 +1028,7 @@ export function collectProviderUsageLimits(
       ? hubCredits.account.usageLimits.resetCredits
       : credits?.limits.resetCredits;
     accounts.push({
-      id: provider.instanceId,
-      driver: provider.driver,
-      label: `${provider.displayName?.trim() || String(provider.driver)} [${provider.instanceId}]`,
-      ...(provider.auth.label ? { plan: provider.auth.label } : {}),
-      instanceId: provider.instanceId,
+      ...base,
       resetCreditInput:
         hubCreditId && hubCredits
           ? {
@@ -989,9 +1037,6 @@ export function collectProviderUsageLimits(
               creditId: hubCreditId,
             }
           : { instanceId: credits?.provider.instanceId ?? provider.instanceId },
-      ...(provider.displayName ? { displayName: provider.displayName } : {}),
-      ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
-      ...(provider.auth.email ? { email: provider.auth.email } : {}),
       limits: shownCredits ? { ...limits, resetCredits: shownCredits } : limits,
     });
   }

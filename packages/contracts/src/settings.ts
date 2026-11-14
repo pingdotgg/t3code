@@ -938,6 +938,7 @@ export const UsageLimitSourceConfig = Schema.Struct({
     secretSetting,
   ),
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  routesClients: Schema.optional(Schema.Boolean),
 });
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 

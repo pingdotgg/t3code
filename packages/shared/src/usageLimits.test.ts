@@ -333,6 +333,98 @@ describe("pools", () => {
     }
   });
 
+  it("takes figures from a hub that clients route through, even over a fresher native read", () => {
+    const native = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [{ ...window, usedPercent: 90 }],
+      },
+    });
+    const hubAccount = {
+      id: "claude-same@example.com.json",
+      driver: claude,
+      email: "same@example.com",
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 10 }] },
+    };
+    const withHub = (routesClients: boolean) =>
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [native],
+              usageLimitSources: [{ ...source, routesClients, accounts: [hubAccount] }],
+            },
+          },
+        ],
+      ]);
+    const routed = collectLimitAccounts(withHub(true));
+    expect(routed).toHaveLength(1);
+    expect(routed[0]?.limits.windows[0]?.usedPercent).toBe(10);
+    expect(routed[0]?.environments).toEqual([{ environmentId: "env-a", label: "Laptop" }]);
+    expect(collectLimitAccounts(withHub(false))[0]?.limits.windows[0]?.usedPercent).toBe(90);
+  });
+
+  it("redeems only the routing hub's own credit when it supplies the figures", () => {
+    const hubAccount = (usedPercent: number, nextCreditId?: string) => ({
+      id: "claude-same@example.com.json",
+      driver: claude,
+      email: "same@example.com",
+      usageLimits: {
+        checkedAt,
+        windows: [{ ...window, usedPercent }],
+        ...(nextCreditId ? { resetCredits: { availableCount: 1, nextCreditId } } : {}),
+      },
+    });
+    const observing = {
+      ...source,
+      id: UsageLimitSourceId.make("observer"),
+      accounts: [
+        {
+          ...hubAccount(70, "observer-credit"),
+          usageLimits: {
+            ...hubAccount(70, "observer-credit").usageLimits,
+            checkedAt: "2026-09-03T11:30:00.000Z",
+          },
+        },
+      ],
+    };
+    const merged = (routedCredit?: string) =>
+      collectLimitAccounts(
+        new Map([
+          [
+            EnvironmentId.make("env-a"),
+            {
+              ...laptop,
+              serverConfig: {
+                providers: [],
+                usageLimitSources: [
+                  { ...source, routesClients: true, accounts: [hubAccount(10, routedCredit)] },
+                  observing,
+                ],
+              },
+            },
+          ],
+        ]),
+      );
+    const withoutCredit = merged();
+    expect(withoutCredit).toHaveLength(1);
+    expect(withoutCredit[0]?.limits.windows[0]?.usedPercent).toBe(10);
+    expect(withoutCredit[0]?.redeem).toBeNull();
+    expect(withoutCredit[0]?.limits.resetCredits).toBeUndefined();
+    const withCredit = merged("routed-credit");
+    expect(withCredit[0]?.redeem?.input).toEqual({
+      sourceId: "hub",
+      accountId: "claude-same@example.com.json",
+      creditId: "routed-credit",
+    });
+    expect(withCredit[0]?.limits.resetCredits?.nextCreditId).toBe("routed-credit");
+  });
+
   it("merges OpenCode Go limits from machines with the same API key", () => {
     const go = provider({
       driver: ProviderDriverKind.make("opencode"),
@@ -1400,6 +1492,93 @@ describe("/usage-limits", () => {
       ],
     },
   ];
+
+  it("reports a routing hub's figures for the selected account, and native ones otherwise", () => {
+    const fresher = provider({
+      ...selected,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [{ ...window, usedPercent: 90 }],
+      },
+    });
+    const usedPercent = (routesClients: boolean) =>
+      collectProviderUsageLimits(
+        fresher.instanceId,
+        [fresher],
+        sources.map((source) => ({ ...source, routesClients })),
+        now,
+      )?.accounts[0]?.limits.windows[0]?.usedPercent;
+    expect(usedPercent(true)).toBe(window.usedPercent);
+    expect(usedPercent(false)).toBe(90);
+
+    const failed = provider({
+      ...selected,
+      usageLimits: { ...limits, unavailable: { reason: "probeFailed" } },
+    });
+    const report = collectProviderUsageLimits(
+      failed.instanceId,
+      [failed],
+      sources.map((source) => ({ ...source, routesClients: true })),
+      now,
+    );
+    expect(report?.accounts.map((account) => account.id)).toEqual([failed.instanceId, "hub:oss"]);
+  });
+
+  it("redeems only the routing hub's own credit when it supplies the figures", () => {
+    const nativeCredit = provider({
+      ...selected,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [{ ...window, usedPercent: 90 }],
+        resetCredits: { availableCount: 3, nextCreditId: "native-credit" },
+      },
+    });
+    const hubs = (routedCredit?: string) => [
+      {
+        ...sources[0]!,
+        routesClients: true,
+        accounts: [
+          {
+            ...sources[0]!.accounts[0]!,
+            usageLimits: {
+              ...limits,
+              ...(routedCredit
+                ? { resetCredits: { availableCount: 1, nextCreditId: routedCredit } }
+                : {}),
+            },
+          },
+        ],
+      },
+      {
+        ...sources[0]!,
+        id: UsageLimitSourceId.make("observer"),
+        accounts: [
+          {
+            ...sources[0]!.accounts[0]!,
+            usageLimits: {
+              ...limits,
+              checkedAt: "2026-09-03T11:45:00.000Z",
+              resetCredits: { availableCount: 2, nextCreditId: "observer-credit" },
+            },
+          },
+        ],
+      },
+    ];
+    const row = (routedCredit?: string) =>
+      collectProviderUsageLimits(nativeCredit.instanceId, [nativeCredit], hubs(routedCredit), now)
+        ?.accounts[0];
+    const withoutCredit = row();
+    expect(withoutCredit?.limits.windows[0]?.usedPercent).toBe(window.usedPercent);
+    expect(withoutCredit?.resetCreditInput).toBeUndefined();
+    expect(withoutCredit?.limits.resetCredits).toBeUndefined();
+    const withCredit = row("routed-credit");
+    expect(withCredit?.resetCreditInput).toEqual({
+      sourceId: "hub",
+      accountId: "duplicate",
+      creditId: "routed-credit",
+    });
+    expect(withCredit?.limits.resetCredits?.availableCount).toBe(1);
+  });
 
   it("uses hub credit balances and redemption targets in the composer, including native duplicates", () => {
     const hubs = sources.map((source) => ({

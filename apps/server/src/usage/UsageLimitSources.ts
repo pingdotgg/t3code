@@ -93,6 +93,7 @@ export const make = Effect.gen(function* () {
           }
         : {}),
       checkedAt,
+      routesClients: config.routesClients === true,
     } as const;
     const managementKey = yield* readManagementKey(config);
     if (managementKey.length === 0) {
