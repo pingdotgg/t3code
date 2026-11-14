@@ -75,7 +75,9 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
 
-import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
+import {
+  providerMessageTextWithAttachmentPaths,
+} from "@t3tools/provider-core/server/attachmentPrompt";
 import {
   modelImageInputSupport,
   shouldSendNativeImage,
@@ -3850,7 +3852,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         contextWindows.set(directory, windows);
         const variants = modelVariants.get(directory) ?? new Map<string, ReadonlySet<string>>();
         modelVariants.set(directory, variants);
-        const imageInputs = modelImageInputs.get(directory) ?? new Map<string, boolean | undefined>();
+        const imageInputs =
+          modelImageInputs.get(directory) ?? new Map<string, boolean | undefined>();
         modelImageInputs.set(directory, imageInputs);
         return client.model.list({ location: { directory } }).pipe(
           Effect.timeout("5 seconds"),
