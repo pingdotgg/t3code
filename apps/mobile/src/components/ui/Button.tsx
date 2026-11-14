@@ -41,6 +41,7 @@ export function Button(props: ButtonProps) {
         props.size === "compact" ? "min-h-10 px-5" : "min-h-12 px-6",
         props.fullWidth ? "w-full" : "self-start",
         disabled ? "bg-subtle-strong" : containerClassName,
+        props.disabled && "opacity-50",
       )}
     >
       {props.loading ? (
