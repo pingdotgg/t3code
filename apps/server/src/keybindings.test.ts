@@ -638,7 +638,6 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         // buffered in the subscription ahead of the real change observed below.
         yield* keybindings.revalidate;
 
-        // Update the file content on disk and revalidate
         yield* writeKeybindingsConfig(keybindingsConfigPath, [
           { key: "mod+j", command: "terminal.toggle" },
           { key: "mod+k", command: "threadPanel.toggle" },
