@@ -331,6 +331,101 @@ export function NewTaskBranchPickerRouteScreen() {
   );
 }
 
+export function NewTaskRepositoriesPickerRouteScreen() {
+  const flow = useNewTaskFlow();
+  const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
+  const choices = flow.worktreeRepositoryChoices;
+  const selection = flow.worktreeRepositorySelection;
+  const selected = new Set(selection.selected);
+  const toggle = (repositoryPath: string) => {
+    if (choices === null) return;
+    void Haptics.selectionAsync();
+    flow.setWorktreeRepositories(
+      choices.flatMap((choice) =>
+        (choice.repositoryPath === repositoryPath) !== selected.has(choice.repositoryPath)
+          ? [choice.repositoryPath]
+          : [],
+      ),
+    );
+  };
+  const header =
+    choices === null || choices.length === 0 ? null : (
+      <View className="gap-3 pb-3">
+        <Text textRole="footnote" className="px-1 text-foreground-muted">
+          {selection.needsChoice
+            ? "Choose the repositories this thread works on."
+            : "Each gets its own worktree on the thread's branch."}
+        </Text>
+        <View className="flex-row gap-2">
+          <Button
+            label="Select all"
+            size="compact"
+            disabled={selected.size === choices.length}
+            onPress={() =>
+              flow.setWorktreeRepositories(choices.map((choice) => choice.repositoryPath))
+            }
+          />
+          <Button
+            label="Select none"
+            size="compact"
+            disabled={!selection.needsChoice && selected.size === 0}
+            onPress={() => flow.setWorktreeRepositories([])}
+          />
+        </View>
+      </View>
+    );
+  return (
+    <View className="flex-1 bg-sheet" collapsable={false}>
+      <AppBar title="Repositories" hideBottomBorder onBack={() => navigation.goBack()} />
+      <ScreenContent>
+        {choices === null || choices.length === 0 ? (
+          <View className="flex-1 items-center justify-center gap-3 px-4">
+            {choices === null ? <AppActivityIndicator /> : null}
+            <Text className="text-center text-sm text-foreground-muted">
+              {choices === null ? "Loading repositories…" : "This project tracks no repositories"}
+            </Text>
+          </View>
+        ) : (
+          <LegendList
+            renderScrollComponent={NativeScrollView}
+            alwaysBounceVertical={false}
+            automaticallyAdjustsScrollIndicatorInsets
+            className="flex-1 bg-sheet android:bg-sheet-solid"
+            contentInsetAdjustmentBehavior="automatic"
+            contentContainerStyle={{
+              paddingBottom: Math.max(insets.bottom, 16) + 16,
+              paddingHorizontal: 16,
+              paddingTop: 16,
+            }}
+            data={choices}
+            extraData={selection.selected}
+            keyExtractor={(choice) => choice.repositoryPath}
+            ListHeaderComponent={header}
+            renderItem={({ item, index }) => (
+              <SelectionRow
+                icon="folder"
+                role="checkbox"
+                isFirst={index === 0}
+                isLast={index === choices.length - 1}
+                onPress={() => toggle(item.repositoryPath)}
+                selected={selected.has(item.repositoryPath)}
+                subtitle={
+                  item.relativePath !== undefined && item.relativePath !== item.name
+                    ? item.relativePath
+                    : undefined
+                }
+                title={item.name}
+              />
+            )}
+            showsVerticalScrollIndicator={false}
+          />
+        )}
+      </ScreenContent>
+    </View>
+  );
+}
+
 export function BranchPickerScreen(props: {
   readonly title: string;
   readonly project: EnvironmentProject | null;

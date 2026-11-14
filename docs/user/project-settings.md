@@ -65,7 +65,14 @@ From a script, `t3 project add <path> --track-repos` tracks every repository it 
 Each turn's changes are listed per repository; see
 [Review turn changes](source-control.md#review-turn-changes).
 
-A thread that runs in its own worktree works only in the project's own folder.
+**New worktree** works for these projects too, including a plain folder that is not a repository
+itself. The thread gets its own folder laid out like the project, and each repository you choose
+gets its own worktree there, all on the thread's branch. Pick the repositories from the
+repositories control next to the workspace picker before you send: every tracked repository is
+included when the project tracks eight or fewer, and none until you choose when it tracks more.
+To bring another repository into a running thread, open the thread details panel and pick it under
+**Other repositories**. In a plain folder, the files outside your repositories are shared links to
+the originals, not copies, so editing one changes it for every thread.
 
 ## Pin and archive projects
 

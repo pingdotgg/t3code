@@ -225,7 +225,13 @@ it.effect(
               forThread: () =>
                 Effect.succeed({
                   folders: [
-                    ...repositories.map((path) => ({ name: path, path, isGitRepository: true })),
+                    ...repositories.map((path) => ({
+                      name: path,
+                      path,
+                      isGitRepository: true,
+                      // The first is a task folder's worktree of a tracked checkout elsewhere.
+                      ...(path === repositories[0] ? { repositoryPath: "/tracked/repo-0" } : {}),
+                    })),
                     { name: "notes", path: "/wrapper/notes", isGitRepository: false },
                   ],
                   extraRoots: [],
@@ -269,6 +275,11 @@ it.effect(
         assert.deepEqual(
           scopes.map((repository) => repository.cwd),
           repositories,
+        );
+        // A scope works in the thread's checkout and is known by the tracked folder it stands for.
+        assert.deepEqual(
+          scopes.slice(0, 2).map((repository) => repository.repositoryPath),
+          ["/tracked/repo-0", repositories[1]],
         );
         const captureAll = (ordinalWithinScope: number) =>
           Effect.forEach(scopes, (repository) =>

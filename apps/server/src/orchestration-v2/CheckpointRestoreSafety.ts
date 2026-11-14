@@ -1,4 +1,8 @@
-import type { OrchestrationV2AppThread, OrchestrationV2CheckpointScope } from "@t3tools/contracts";
+import type {
+  OrchestrationV2AppThread,
+  OrchestrationV2CheckpointScope,
+  TaskFolder,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -14,6 +18,8 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
   function* (
     thread: Pick<OrchestrationV2AppThread, "id" | "worktreePath">,
     scope: Pick<OrchestrationV2CheckpointScope, "cwd">,
+    /** The task folder the thread works in: a file restore reaches its repository worktrees too. */
+    taskFolder: Pick<TaskFolder, "repositories"> | null,
     dependencies: {
       readonly fileSystem: FileSystem.FileSystem;
       readonly projections: ProjectionStoreV2["Service"];
@@ -44,6 +50,12 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
       const worktreeCwd = yield* resolve(worktreePath);
       shared = cwd !== worktreeCwd;
       if (!shared) {
+        const restored = [
+          cwd,
+          ...(yield* Effect.forEach(taskFolder?.repositories ?? [], (repository) =>
+            resolve(repository.worktreePath),
+          )),
+        ];
         const shell = yield* projections.getShellSnapshot();
         const checkedPaths = new Set<string>();
         for (const otherThread of [...shell.threads, ...shell.archivedThreads]) {
@@ -92,7 +104,10 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
                 (_error) => Effect.succeed(null),
               ),
             );
-            if (otherCwd !== null && (contains(cwd, otherCwd) || contains(otherCwd, cwd))) {
+            if (
+              otherCwd !== null &&
+              restored.some((folder) => contains(folder, otherCwd) || contains(otherCwd, folder))
+            ) {
               shared = true;
               break;
             }

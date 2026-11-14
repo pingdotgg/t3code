@@ -2,9 +2,10 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
-import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
+import { NodeId, RunAttemptId, RunId, TrimmedNonEmptyString } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
+  repositoryRewindCheckpoint,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
@@ -637,5 +638,33 @@ describe("latestProviderTurnForAttempt", () => {
     ];
     expect(latestProviderTurnForAttempt(turns, RunAttemptId.make("goal-attempt"))?.id).toBe("last");
     expect(latestProviderTurnForAttempt(turns, null)).toBeUndefined();
+  });
+});
+
+describe("repositoryRewindCheckpoint", () => {
+  const run = RunId.make("run");
+  // Runs 2 and 6 changed the repository; a rewind to run 3 already discarded what run 5 recorded.
+  const checkpoints = [
+    { ordinalWithinScope: 1, runId: null, status: "ready" },
+    { ordinalWithinScope: 2, runId: run, status: "ready" },
+    { ordinalWithinScope: 4, runId: null, status: "stale" },
+    { ordinalWithinScope: 5, runId: run, status: "stale" },
+    { ordinalWithinScope: 5, runId: null, status: "ready" },
+    { ordinalWithinScope: 6, runId: run, status: "ready" },
+    { ordinalWithinScope: 8, runId: null, status: "missing" },
+    { ordinalWithinScope: 9, runId: run, status: "ready" },
+  ] as const;
+
+  it.each([
+    { target: 0, restores: 1, why: "the baseline before the first change" },
+    { target: 2, restores: 2, why: "the target run's own checkpoint" },
+    { target: 3, restores: 5, why: "the baseline before the next change, past stale records" },
+    { target: 6, restores: 6, why: "the target run's own checkpoint" },
+    { target: 7, restores: null, why: "nothing: the state before run 9 was never snapshotted" },
+    { target: 10, restores: null, why: "nothing: no later run changed the repository" },
+  ])("a rewind to run $target restores $why", ({ target, restores }) => {
+    expect(repositoryRewindCheckpoint(checkpoints, target)?.ordinalWithinScope ?? null).toBe(
+      restores,
+    );
   });
 });

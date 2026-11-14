@@ -225,9 +225,18 @@ export interface CheckpointServiceV2Shape {
     }>,
     CheckpointServiceV2Error
   >;
+  /**
+   * Restores a thread's folders together. Every snapshot is checked before a folder changes and
+   * each folder is snapshotted first, so a restore that fails puts back the ones already
+   * restored: a rewind changes all of them or none.
+   */
   readonly restore: (input: {
-    readonly scope: OrchestrationV2CheckpointScope;
-    readonly checkpoint: OrchestrationV2Checkpoint;
+    readonly targets: ReadonlyArray<{
+      readonly scope: Pick<OrchestrationV2CheckpointScope, "id" | "cwd">;
+      readonly checkpoint: Pick<OrchestrationV2Checkpoint, "ordinalWithinScope" | "ref" | "status">;
+    }>;
+    /** Every folder of the thread with checkpoints of its own; a restore leaves the others' alone. */
+    readonly scopes: ReadonlyArray<Pick<OrchestrationV2CheckpointScope, "id" | "cwd">>;
   }) => Effect.Effect<void, CheckpointServiceV2Error>;
   readonly deleteStaleRefs: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
@@ -250,17 +259,18 @@ export class CheckpointServiceV2 extends Context.Service<
   CheckpointServiceV2Shape
 >()("t3/orchestration-v2/CheckpointService/CheckpointServiceV2") {}
 
+const scopeRef = Effect.fnUntraced(function* (scopeId: CheckpointScopeId, name: string) {
+  const crypto = yield* Digest.Digest;
+  const digest = yield* crypto
+    .digest(Digest.sha256, new TextEncoder().encode(scopeId))
+    .pipe(Effect.orDie);
+  const scopeKey = Hex.encode(digest).slice(0, 32);
+  return CheckpointRef.make(`${CHECKPOINT_REFS_PREFIX}/${Base64Url.encode(scopeKey)}/${name}`);
+});
+
 export const checkpointRefForScopeOrdinal = Effect.fn("checkpointRefForScopeOrdinal")(
-  function* (input: { readonly scopeId: CheckpointScopeId; readonly ordinalWithinScope: number }) {
-    const crypto = yield* Digest.Digest;
-    const digest = yield* crypto
-      .digest(Digest.sha256, new TextEncoder().encode(input.scopeId))
-      .pipe(Effect.orDie);
-    const scopeKey = Hex.encode(digest).slice(0, 32);
-    return CheckpointRef.make(
-      `${CHECKPOINT_REFS_PREFIX}/${Base64Url.encode(scopeKey)}/ordinal/${input.ordinalWithinScope}`,
-    );
-  },
+  (input: { readonly scopeId: CheckpointScopeId; readonly ordinalWithinScope: number }) =>
+    scopeRef(input.scopeId, `ordinal/${input.ordinalWithinScope}`),
 );
 
 function checkpointIdForScopeOrdinal(
@@ -701,48 +711,103 @@ export const layer: Layer.Layer<
         ),
       );
 
-    const restore: CheckpointServiceV2Shape["restore"] = (input) =>
-      withWorkspaceLock(
-        input.scope.cwd,
-        Effect.gen(function* () {
-          if (input.checkpoint.status !== "ready") {
-            return yield* new CheckpointRestoreError({
-              scopeId: input.scope.id,
-              checkpointId: input.checkpoint.id,
-              cause: `Checkpoint status is ${input.checkpoint.status}.`,
-            });
-          }
-
-          const restored = yield* checkpointStore.restoreCheckpoint({
-            cwd: input.scope.cwd,
-            checkpointRef: input.checkpoint.ref,
-            fallbackToHead: false,
-          });
-          if (!restored) {
-            return yield* new CheckpointRestoreError({
-              scopeId: input.scope.id,
-              checkpointId: input.checkpoint.id,
-              cause: "Checkpoint ref is unavailable.",
-            });
-          }
-        }),
-      ).pipe(
-        Effect.mapError((cause) =>
-          isCheckpointRestoreError(cause)
-            ? cause
-            : new CheckpointRestoreError({
-                scopeId: input.scope.id,
-                checkpointId: input.checkpoint.id,
-                cause,
-              }),
-        ),
-      );
-
     const resolveNestedScopePaths: CheckpointServiceV2Shape["nestedScopePaths"] = (scopes) =>
       nestedScopePaths(scopes).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
       );
+
+    const restore: CheckpointServiceV2Shape["restore"] = Effect.fn("CheckpointService.restore")(
+      function* (input) {
+        type Target = (typeof input.targets)[number];
+        const failed = (target: Target, cause: unknown) =>
+          isCheckpointRestoreError(cause)
+            ? Effect.succeed(cause)
+            : Effect.map(
+                checkpointIdForScopeOrdinal(idAllocator, {
+                  scopeId: target.scope.id,
+                  ordinalWithinScope: target.checkpoint.ordinalWithinScope,
+                }),
+                (checkpointId) =>
+                  new CheckpointRestoreError({ scopeId: target.scope.id, checkpointId, cause }),
+              );
+        for (const target of input.targets) {
+          if (target.checkpoint.status !== "ready") {
+            return yield* Effect.flip(
+              failed(target, `Checkpoint status is ${target.checkpoint.status}.`),
+            );
+          }
+          const exists = yield* checkpointStore
+            .hasCheckpointRef({ cwd: target.scope.cwd, checkpointRef: target.checkpoint.ref })
+            .pipe(Effect.catch((cause) => Effect.flip(failed(target, cause))));
+          if (!exists) return yield* Effect.flip(failed(target, "Checkpoint ref is unavailable."));
+        }
+        const nested = yield* resolveNestedScopePaths(input.scopes);
+        const snapshots: Array<Omit<CheckpointStore.RestoreCheckpointInput, "fallbackToHead">> = [];
+        yield* Effect.forEach(
+          input.targets,
+          (target) =>
+            withWorkspaceLock(
+              target.scope.cwd,
+              Effect.gen(function* () {
+                const excludePaths = nested.get(target.scope.id);
+                const folder = {
+                  cwd: target.scope.cwd,
+                  ...(excludePaths === undefined ? {} : { excludePaths }),
+                };
+                const preRewindRef = yield* scopeRef(target.scope.id, "pre-rewind").pipe(
+                  Effect.provideService(Digest.Digest, crypto),
+                );
+                yield* checkpointStore.captureCheckpoint({
+                  ...folder,
+                  checkpointRef: preRewindRef,
+                });
+                snapshots.push({ ...folder, checkpointRef: preRewindRef });
+                // What this process knew of the folder no longer holds.
+                repositoryStates.delete(target.scope.id);
+                const restored = yield* checkpointStore.restoreCheckpoint({
+                  ...folder,
+                  checkpointRef: target.checkpoint.ref,
+                  fallbackToHead: false,
+                });
+                if (!restored) return yield* Effect.fail("Checkpoint ref is unavailable.");
+              }),
+            ).pipe(Effect.catch((cause) => Effect.flip(failed(target, cause)))),
+          { discard: true },
+        ).pipe(
+          Effect.onError(() =>
+            Effect.forEach(
+              snapshots.toReversed(),
+              (snapshot) =>
+                withWorkspaceLock(snapshot.cwd, checkpointStore.restoreCheckpoint(snapshot)).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("A failed rewind left a folder partly restored", {
+                      cwd: snapshot.cwd,
+                      cause,
+                    }),
+                  ),
+                ),
+              { discard: true },
+            ),
+          ),
+          Effect.ensuring(
+            Effect.suspend(() =>
+              Effect.forEach(
+                snapshots,
+                (snapshot) =>
+                  checkpointStore
+                    .deleteCheckpointRefs({
+                      cwd: snapshot.cwd,
+                      checkpointRefs: [snapshot.checkpointRef],
+                    })
+                    .pipe(Effect.ignore),
+                { discard: true },
+              ),
+            ),
+          ),
+        );
+      },
+    );
 
     const repositoryScopes: CheckpointServiceV2Shape["repositoryScopes"] = Effect.fn(
       "CheckpointService.repositoryScopes",
@@ -755,7 +820,7 @@ export const layer: Layer.Layer<
             idAllocator.allocate
               .checkpointScope({
                 threadId: input.rootScope.threadId,
-                name: `repository:${folder.path}`,
+                name: `repository:${folder.repositoryPath ?? folder.path}`,
               })
               .pipe(
                 Effect.map(
@@ -772,7 +837,7 @@ export const layer: Layer.Layer<
                       advancesAppRunCount: false,
                       cwd: folder.path,
                       label: folder.name,
-                      repositoryPath: folder.path,
+                      repositoryPath: folder.repositoryPath ?? folder.path,
                       createdAt: input.rootScope.createdAt,
                     }) satisfies OrchestrationV2CheckpointScope,
                 ),

@@ -1,4 +1,5 @@
 import {
+  addableTaskFolderRepositories,
   pinnableThreadRepositories,
   repositorySectionSummary,
   THREAD_REPOSITORY_SECTIONS_VISIBLE,
@@ -8,7 +9,18 @@ import {
   type ThreadRepositorySections as RepositorySections,
 } from "@t3tools/client-runtime/state/thread-repositories";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
-import type { EnvironmentId, ProjectId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import type {
+  EnvironmentId,
+  ProjectId,
+  ScopedThreadRef,
+  TaskFolder,
+  ThreadId,
+} from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -22,11 +34,13 @@ import { cn } from "~/lib/utils";
 import { useQuietThreadProjection } from "~/state/entities";
 import { filesystemEnvironment, useFilesystemReadAccess } from "~/state/filesystem";
 import { useEnvironmentQuery } from "~/state/query";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { vcsEnvironment } from "~/state/vcs";
 import { useThreadRepositoryPins, useThreadRepositoryPinsStore } from "~/threadRepositoryPinsStore";
 
 import { GitActionsControl } from "../GitActionsControl";
 import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuTrigger } from "../ui/menu";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import {
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
@@ -41,6 +55,12 @@ interface ThreadRepositorySectionsProps {
   isServerThread: boolean;
   /** The thread's own folder, which has its own Git controls when it is a repository. */
   threadCwd: string | null;
+  /**
+   * The thread's task folder. Its repositories are then the only ones listed, each bound to the
+   * thread's own worktree of it, and adding one creates that worktree.
+   */
+  taskFolder: TaskFolder | null;
+  onTaskFolderChange: () => void;
   /** Says so when no repository is listed, instead of leaving the section blank. */
   explainsEmpty: boolean;
   showActions: boolean;
@@ -143,6 +163,7 @@ function OtherRepositoryItems(props: {
   environmentId: EnvironmentId;
   projectId: ProjectId;
   threadCwd: string | null;
+  taskFolder: TaskFolder | null;
   sections: RepositorySections;
   onPick: (repository: { repositoryPath: string; name: string }) => void;
 }) {
@@ -159,11 +180,17 @@ function OtherRepositoryItems(props: {
       </MenuItem>
     );
   }
-  const repositories = pinnableThreadRepositories({
-    folders: folders.data.folders,
-    sections: props.sections,
-    threadCwd: props.threadCwd,
-  });
+  const repositories =
+    props.taskFolder === null
+      ? pinnableThreadRepositories({
+          folders: folders.data.folders,
+          sections: props.sections,
+          threadCwd: props.threadCwd,
+        })
+      : addableTaskFolderRepositories({
+          folders: folders.data.folders,
+          taskFolder: props.taskFolder,
+        });
   if (repositories.length === 0) {
     return (
       <MenuItem disabled>
@@ -180,8 +207,8 @@ function OtherRepositoryItems(props: {
 }
 
 /**
- * Git state and actions for the tracked repositories a thread changed or the user added. Folded
- * sections are not rendered, so they hold no subscription.
+ * Git state and actions for the tracked repositories a thread changed or the user added, or for
+ * the worktrees in its task folder. Folded sections are not rendered, so they hold no subscription.
  */
 export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
   const threadRef: ScopedThreadRef = {
@@ -196,13 +223,47 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
   const [showAll, setShowAll] = useState(false);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
+  const canAddWorktree = useAtomValue(
+    filesystemEnvironment.addTaskFolderRepository.permissionAtom(props.environmentId),
+  );
+  const addTaskFolderRepository = useAtomCommand(filesystemEnvironment.addTaskFolderRepository, {
+    label: "task folder add repository",
+    reportFailure: false,
+  });
+  const [addingName, setAddingName] = useState<string | null>(null);
 
+  const { taskFolder } = props;
   const sections = threadRepositorySections({
     changed: structure === null ? [] : threadChangedRepositories(structure.projection),
     pinned,
     threadCwd: props.threadCwd,
     showAll,
+    taskFolder,
   });
+  const addWorktree = async (repository: { repositoryPath: string; name: string }) => {
+    if (addingName !== null) return;
+    setAddingName(repository.name);
+    const result = await addTaskFolderRepository({
+      environmentId: props.environmentId,
+      input: { threadId: props.threadId, repositoryPath: repository.repositoryPath },
+    });
+    setAddingName(null);
+    if (result._tag === "Failure") {
+      if (isAtomCommandInterrupted(result)) return;
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `Could not add ${repository.name}`,
+          description: error instanceof Error ? error.message : String(error),
+        }),
+      );
+      return;
+    }
+    props.onTaskFolderChange();
+    setShowAll(true);
+    setExpandedKey(repository.repositoryPath);
+  };
   const owner = props.isServerThread
     ? { threadId: props.threadId }
     : { projectId: props.projectId };
@@ -228,7 +289,9 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
     <>
       {sections.visible.length === 0 && props.explainsEmpty ? (
         <p className="px-2.5 py-1.5 text-xs text-muted-foreground">
-          Repositories appear here once this thread changes them.
+          {taskFolder === null
+            ? "Repositories appear here once this thread changes them."
+            : "This thread has no repository worktrees yet."}
         </p>
       ) : null}
       {sections.visible.map(renderSection)}
@@ -247,13 +310,18 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
           </span>
         </ThreadDetailsControl>
       ) : null}
-      {canReadFiles ? (
+      {canReadFiles && (taskFolder === null || (props.isServerThread && canAddWorktree)) ? (
         <Menu open={isPickerOpen} onOpenChange={setIsPickerOpen}>
           <MenuTrigger
             render={<ThreadDetailsControl size="sm" variant="ghost" part="row" tone="muted" />}
+            disabled={addingName !== null}
           >
             <PlusIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-            <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>Other repositories...</span>
+            <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>
+              {addingName === null
+                ? "Other repositories..."
+                : `Adding a worktree of ${addingName}...`}
+            </span>
           </MenuTrigger>
           <MenuPopup align="start">
             {isPickerOpen ? (
@@ -261,8 +329,13 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
                 environmentId={props.environmentId}
                 projectId={props.projectId}
                 threadCwd={props.threadCwd}
+                taskFolder={taskFolder}
                 sections={sections}
                 onPick={(repository) => {
+                  if (taskFolder !== null) {
+                    void addWorktree(repository);
+                    return;
+                  }
                   pin(threadRef, repository);
                   // Pins beyond the visible few would land folded away, out of sight.
                   if (pinned.length >= THREAD_REPOSITORY_SECTIONS_VISIBLE) setShowAll(true);

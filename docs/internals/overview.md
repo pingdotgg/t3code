@@ -90,13 +90,29 @@ capture workspace state without adding commits to the user's branch. A revert mu
 workspace state with the provider conversation. A provider that cannot roll back its conversation
 must reject that operation before changing the filesystem.
 
-A thread that runs in its project folder also gets one `repository` checkpoint scope per tracked
-Git folder it reaches, under its root scope. A project can track dozens of repositories while a
+A thread also gets one `repository` checkpoint scope per tracked Git folder it reaches, under its
+root scope. A project can track dozens of repositories while a
 turn touches a few, so these scopes are sparse: a turn costs one `git status` per repository, and
 only a repository the turn changed gets a snapshot ref, a `checkpoint.captured` record and, the
 first time, its `checkpoint-scope.created`. A missing record means the turn left the repository
-alone, and a ref does not exist for every run ordinal. Rewind does not restore these folders: file
-restore needs an isolated worktree, and a thread in its own worktree reaches no tracked folders.
+alone, and a ref does not exist for every run ordinal.
+
+A file rewind restores the thread's folder and every repository a discarded run changed, or none
+of them: each folder is snapshotted first and put back if a later restore fails. A repository
+with no checkpoint at the target returns to the baseline taken before its first later change,
+which `repositoryRewindCheckpoint` picks; one whose earlier state was never snapshotted is left as
+it is. Run ordinals are never reused, so the snapshots of discarded runs are deleted rather than
+overwritten.
+
+A worktree thread of a project that tracks Git folders works in a task folder: one directory under
+the worktrees directory that holds the project folder and a worktree of each chosen repository at
+the same relative places, all on the thread's branch. The record is keyed by that directory, not
+by thread, because subagents, forks and reused worktrees share a path. Such a thread reaches only
+those worktrees: a repository scope's `cwd` is the worktree and its `repositoryPath` the tracked
+folder. A project folder that is not a repository root is never checked out; its entries are
+linked, so they stay shared with the original. Its root checkpoints are `missing` by design, and
+a file rewind there restores the repositories alone. `TaskFolders` owns every change to a task folder,
+and removal keeps any checkout the single-worktree rules would keep.
 
 Thread settlement is server-owned. The
 [settlement service](../../apps/server/src/orchestration-v2/ThreadSettlementService.ts) evaluates PR
