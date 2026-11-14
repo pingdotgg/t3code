@@ -3767,6 +3767,49 @@ export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalComma
 
 export type OrchestrationV2ServerCommand = OrchestrationV2Command | OrchestrationV2InternalCommand;
 
+export const OrchestrationV2ThreadInsightsUsage = Schema.Struct({
+  status: Schema.Literals(["complete", "partial", "unavailable"]),
+  turns: NonNegativeInt,
+  measuredTurns: NonNegativeInt,
+  inputTokens: Schema.optionalKey(NonNegativeInt),
+  cachedInputTokens: Schema.optionalKey(NonNegativeInt),
+  cacheCreationTokens: Schema.optionalKey(NonNegativeInt),
+  outputTokens: Schema.optionalKey(NonNegativeInt),
+  reasoningTokens: Schema.optionalKey(NonNegativeInt),
+  costUsd: Schema.NullOr(Schema.Number),
+  unpricedTurns: NonNegativeInt,
+  hasOtherUsage: Schema.Boolean,
+});
+export type OrchestrationV2ThreadInsightsUsage = typeof OrchestrationV2ThreadInsightsUsage.Type;
+
+export const OrchestrationV2ThreadInsightsRow = Schema.Struct({
+  threadId: ThreadId,
+  parentThreadId: Schema.NullOr(ThreadId),
+  title: Schema.String,
+  status: Schema.String,
+  providerInstanceIds: Schema.Array(ProviderInstanceId),
+  steps: Schema.NullOr(Schema.Array(OrchestrationV2PlanStep)),
+  usage: OrchestrationV2ThreadInsightsUsage,
+});
+export type OrchestrationV2ThreadInsightsRow = typeof OrchestrationV2ThreadInsightsRow.Type;
+
+export const OrchestrationV2GetThreadInsightsResult = Schema.Struct({
+  rows: Schema.Array(OrchestrationV2ThreadInsightsRow),
+  remotes: Schema.Array(
+    Schema.Struct({
+      environmentId: EnvironmentId,
+      threadId: ThreadId,
+      parentThreadId: ThreadId,
+      title: Schema.String,
+      status: Schema.String,
+    }),
+  ),
+  unavailableThreadIds: Schema.Array(ThreadId),
+  truncated: Schema.Boolean,
+});
+export type OrchestrationV2GetThreadInsightsResult =
+  typeof OrchestrationV2GetThreadInsightsResult.Type;
+
 export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
@@ -3783,6 +3826,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
   getNativeChildWork: "orchestration.getNativeChildWork",
+  getThreadInsights: "orchestration.getThreadInsights",
   stopWorkflow: "orchestration.stopWorkflow",
   forceStopThread: "orchestration.forceStopThread",
   getTurnItem: "orchestration.getTurnItem",
@@ -4489,6 +4533,10 @@ export const OrchestrationV2RpcSchemas = {
   getWorkflowScript: {
     input: OrchestrationV2GetWorkflowScriptInput,
     output: OrchestrationV2GetWorkflowScriptResult,
+  },
+  getThreadInsights: {
+    input: Schema.Struct({ threadId: ThreadId }),
+    output: OrchestrationV2GetThreadInsightsResult,
   },
   getNativeChildWork: {
     input: OrchestrationV2GetNativeChildWorkInput,

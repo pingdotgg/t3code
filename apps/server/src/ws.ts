@@ -1,3 +1,4 @@
+import * as ThreadInsightsQuery from "./orchestration-v2/ThreadInsightsQuery.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest inside the pure provider mapping.
 import * as NodeCrypto from "node:crypto";
@@ -1504,6 +1505,7 @@ export const layerWsRpc = (
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const agentSessionImporter = yield* AgentSessionImporter.AgentSessionImporter;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      const threadInsights = yield* ThreadInsightsQuery.ThreadInsightsQuery;
       const nativeChildWork = yield* NativeChildWorkQuery.NativeChildWorkQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
@@ -1869,6 +1871,7 @@ export const layerWsRpc = (
             ? {}
             : { managedPolicy: serverSettings.managedPolicy }),
           shellResumeCompletionMarker: true,
+          threadInsights: true,
           shellThreadFamilies: true,
           threadLinkMetadata: true,
           shellOlderSettled: true,
@@ -2001,6 +2004,7 @@ export const layerWsRpc = (
           threadManagement.forceStopThread(input),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
           readWorkflowScript({ scriptPath: input.scriptPath }),
+        [ORCHESTRATION_V2_WS_METHODS.getThreadInsights]: (input) => threadInsights.read(input),
         [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: (input) =>
           nativeChildWork.getNativeChildWork(input),
         [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input) =>

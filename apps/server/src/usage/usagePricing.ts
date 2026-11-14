@@ -395,6 +395,22 @@ export function priceUsage(
   };
 }
 
+/** Turn totals can combine requests on either side of a context-price threshold. */
+export function priceTurnUsage(
+  table: RateTable,
+  record: PricedRecord,
+  overrides?: RateTable,
+): number | null {
+  const rate = overrides?.get(record.model.trim()) ?? recordRate(table, record);
+  if (
+    rate === null ||
+    rate.contextTiers.some((tier) => promptTokens(record.totals) > tier.thresholdTokens)
+  )
+    return null;
+  const priced = priceUsage(table, record, overrides);
+  return priced.costSource === "unpriced" ? null : priced.costUsd;
+}
+
 export function cacheSavingsUsd(
   table: RateTable,
   record: PricedRecord,

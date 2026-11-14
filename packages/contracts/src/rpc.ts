@@ -1921,6 +1921,15 @@ const WsOrchestrationV2GetWorkflowScriptRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2GetThreadInsightsRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getThreadInsights,
+  {
+    payload: OrchestrationV2RpcSchemas.getThreadInsights.input,
+    success: OrchestrationV2RpcSchemas.getThreadInsights.output,
+    error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2GetNativeChildWorkRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getNativeChildWork,
   {
@@ -2303,6 +2312,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2GetNativeChildWorkRpc,
+  WsOrchestrationV2GetThreadInsightsRpc,
   WsOrchestrationV2StopWorkflowRpc,
   WsOrchestrationV2ForceStopThreadRpc,
   WsOrchestrationV2GetTurnItemRpc,

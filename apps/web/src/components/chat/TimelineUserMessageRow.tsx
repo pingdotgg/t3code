@@ -271,6 +271,7 @@ function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "messag
   const ctx = use(TimelineRowCtx);
   return ctx.workflowOpening?.messageId === row.message.id ? (
     <WorkflowOpeningBlock
+      parentRef={ctx.threadRef}
       opening={ctx.workflowOpening}
       environmentId={ctx.activeThreadEnvironmentId}
       onOpenThread={(threadId) => ctx.onOpenThread(ThreadId.make(threadId))}

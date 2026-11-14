@@ -14,6 +14,7 @@ import {
   AuthSourceControlWriteScope,
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
+  ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -69,7 +70,11 @@ describe("RPC authorization scopes", () => {
   });
 
   it("lets thread readers observe and refresh checkout branches", () => {
-    for (const method of [WS_METHODS.subscribeVcsBranch, WS_METHODS.vcsRefreshBranch]) {
+    for (const method of [
+      WS_METHODS.subscribeVcsBranch,
+      WS_METHODS.vcsRefreshBranch,
+      ORCHESTRATION_V2_WS_METHODS.getThreadInsights,
+    ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
     }
   });

@@ -1,3 +1,4 @@
+import { ThreadInsightsMenu } from "./ThreadInsightsMenu";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { AgentElapsed } from "./AgentElapsed";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -504,43 +505,62 @@ function SubagentTimelineLink(props: {
   const className =
     "group/subagent flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-left";
   return (
-    <Tooltip>
-      <TooltipTrigger
-        delay={200}
-        render={
-          open === null ? (
-            <div data-v2-item-type="subagent" aria-description={statusLabel} className={className}>
-              {content}
-            </div>
-          ) : (
-            <button
-              type="button"
-              data-v2-item-type="subagent"
-              aria-label={`Open ${props.title}`}
-              aria-description={statusLabel}
-              onClick={open}
-              className={cn(
-                className,
-                "cursor-pointer transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
-              )}
-            >
-              {content}
-            </button>
-          )
-        }
-      />
-      <ThreadHoverCardPopup>
-        <SubagentTimelineTooltip
-          {...props}
-          elapsed={agent ? <AgentElapsed agent={projectedSubagentsToRuntime([agent])[0]!} /> : null}
-          model={agent?.model ?? null}
-          modelSelection={agent?.modelSelection}
-          status={liveStatus}
-          result={agent?.result ?? props.result}
-          progress={agent?.progress ?? props.progress}
+    <div className="flex min-w-0 items-center">
+      <div className="min-w-0 flex-1">
+        <Tooltip>
+          <TooltipTrigger
+            delay={200}
+            render={
+              open === null ? (
+                <div
+                  data-v2-item-type="subagent"
+                  aria-description={statusLabel}
+                  className={className}
+                >
+                  {content}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  data-v2-item-type="subagent"
+                  aria-label={`Open ${props.title}`}
+                  aria-description={statusLabel}
+                  onClick={open}
+                  className={cn(
+                    className,
+                    "cursor-pointer transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+                  )}
+                >
+                  {content}
+                </button>
+              )
+            }
+          />
+          <ThreadHoverCardPopup>
+            <SubagentTimelineTooltip
+              {...props}
+              elapsed={
+                agent ? <AgentElapsed agent={projectedSubagentsToRuntime([agent])[0]!} /> : null
+              }
+              model={agent?.model ?? null}
+              modelSelection={agent?.modelSelection}
+              status={liveStatus}
+              result={agent?.result ?? props.result}
+              progress={agent?.progress ?? props.progress}
+            />
+          </ThreadHoverCardPopup>
+        </Tooltip>
+      </div>
+      {(remote?.threadId ?? threadId) ? (
+        <ThreadInsightsMenu
+          parent={props.parentRef}
+          target={{
+            environmentId: remote?.environmentId ?? props.parentRef.environmentId,
+            threadId: (remote?.threadId ?? threadId)!,
+          }}
         />
-      </ThreadHoverCardPopup>
-    </Tooltip>
+      ) : null}
+    </div>
   );
 }
 

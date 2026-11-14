@@ -1,3 +1,5 @@
+import { ThreadInsightsMenu } from "./ThreadInsightsMenu";
+import { ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import {
   workflowMemberModelSelection,
   type SubagentWorkflowGroup,
@@ -50,6 +52,7 @@ function phaseStatusLabel(phase: SubagentWorkflowGroup["phases"][number]) {
 }
 
 function WorkflowMemberRow({
+  parentRef,
   member,
   providerInstanceId,
   provider,
@@ -58,6 +61,7 @@ function WorkflowMemberRow({
   driver,
   onOpen,
 }: {
+  parentRef: ScopedThreadRef;
   member: RuntimeSubagent;
   providerInstanceId: ProviderInstanceId;
   provider: ServerProvider | undefined;
@@ -69,7 +73,13 @@ function WorkflowMemberRow({
   const threadId = member.childThreadId;
   const canOpen = threadId !== null;
   return (
-    <li>
+    <li className="flex items-center">
+      {threadId !== null ? (
+        <ThreadInsightsMenu
+          parent={parentRef}
+          target={{ environmentId: parentRef.environmentId, threadId: ThreadId.make(threadId) }}
+        />
+      ) : null}
       <Tooltip>
         <TooltipTrigger
           delay={200}
@@ -118,6 +128,7 @@ function WorkflowMemberRow({
 }
 
 export function ThreadLineageWorkflowRow({
+  parentRef,
   group,
   header,
   providerInstanceId,
@@ -130,6 +141,7 @@ export function ThreadLineageWorkflowRow({
   stopping,
   stopDisabled,
 }: {
+  readonly parentRef: ScopedThreadRef;
   readonly group: SubagentWorkflowGroup;
   readonly header: ReactNode;
   readonly providerInstanceId: ProviderInstanceId;
@@ -228,6 +240,7 @@ export function ThreadLineageWorkflowRow({
                   <ul className="m-0 list-none p-0">
                     {phase.members.map((member) => (
                       <WorkflowMemberRow
+                        parentRef={parentRef}
                         key={member.id}
                         member={member}
                         providerInstanceId={providerInstanceId}
@@ -245,6 +258,7 @@ export function ThreadLineageWorkflowRow({
           })}
           {group.unphasedMembers.map((member) => (
             <WorkflowMemberRow
+              parentRef={parentRef}
               key={member.id}
               member={member}
               providerInstanceId={providerInstanceId}

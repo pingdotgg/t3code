@@ -1,3 +1,4 @@
+import { PlanId } from "@t3tools/contracts";
 import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
 import { applyOrchestrationV2ThreadVisit, pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
@@ -25,7 +26,6 @@ import type {
   OrchestrationV2ExecutionNode,
   OrchestrationV2PlanArtifact,
   OrchestrationV2PendingRuntimeRequestSummary,
-  PlanId,
   OrchestrationV2ConversationMessage,
   OrchestrationV2ContextTransfer,
   OrchestrationV2DomainEvent,
@@ -534,6 +534,14 @@ export interface ProjectionStoreV2Shape {
     filter?: ProjectionRecordFilter,
   ) => Effect.Effect<ProjectionRecords<K>, ProjectionStoreV2Error>;
 
+  readonly getThreadProviderTurns: (
+    threadId: ThreadId,
+    options: { readonly limit: number; readonly providerThreadIds?: readonly ProviderThreadId[] },
+  ) => Effect.Effect<
+    { readonly providerTurns: readonly OrchestrationV2ProviderTurn[]; readonly truncated: boolean },
+    ProjectionStoreV2Error
+  >;
+
   readonly apply: (
     event: OrchestrationV2DomainEvent,
   ) => Effect.Effect<void, ProjectionStoreV2Error>;
@@ -665,6 +673,9 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     providerTurnId: ProviderTurnId,
   ) => Effect.Effect<ProjectionPendingUserInputs, ProjectionStoreV2Error>;
+  readonly getLatestTodoList: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OrchestrationV2PlanArtifact | undefined, ProjectionStoreV2Error>;
   readonly getPlan: (
     threadId: ThreadId,
     planId: PlanId,
@@ -3736,46 +3747,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               (field) => field === "plans" || field === "runs" || field === "providerThreads",
             ))
             ? []
-            : yield* sql<{
-                readonly plan_id: string;
-                readonly run_id: string;
-                readonly provider_thread_id: string | null;
-                readonly last_plan_id: string;
-              }>`
-                WITH latest_owner AS MATERIALIZED (
-                  SELECT plan.plan_id, owner.run_id, owner.provider_thread_id
-                  FROM orchestration_v2_projection_plans AS plan
-                  INNER JOIN orchestration_v2_projection_runs AS owner
-                    ON owner.thread_id = plan.thread_id AND owner.run_id = plan.run_id
-                  WHERE plan.thread_id = ${threadId}
-                    AND plan.kind = 'todo_list' AND plan.status <> 'superseded'
-                  ORDER BY owner.ordinal DESC, plan.plan_id DESC
-                  LIMIT 1
-                )
-                SELECT COALESCE(CASE WHEN EXISTS (
-                  SELECT 1 FROM orchestration_v2_projection_plans
-                  WHERE thread_id = ${threadId} AND run_id = owner.run_id
-                    AND kind = 'todo_list' AND status <> 'superseded'
-                    AND plan_id <> owner.plan_id
-                ) THEN (
-                  -- Plan UUIDs cannot order replacements within a run.
-                  SELECT plan.plan_id
-                  FROM orchestration_v2_projection_turn_items AS item
-                  CROSS JOIN orchestration_v2_projection_plans AS plan
-                    ON plan.plan_id = json_extract(item.payload_json, '$.planId')
-                  WHERE item.run_id = owner.run_id AND item.thread_id = ${threadId}
-                    AND item.type = 'todo_list'
-                    AND plan.run_id = owner.run_id AND plan.thread_id = ${threadId}
-                    AND plan.kind = 'todo_list' AND plan.status <> 'superseded'
-                  ORDER BY item.ordinal DESC
-                  LIMIT 1
-                ) END, owner.plan_id) AS plan_id, owner.run_id, owner.provider_thread_id,
-                (
-                  SELECT MAX(plan_id) FROM orchestration_v2_projection_plans
-                  WHERE thread_id = ${threadId} AND run_id = owner.run_id
-                ) AS last_plan_id
-                FROM latest_owner AS owner
-              `;
+            : yield* latestTodoOwner(threadId);
 
         const [
           thread,
@@ -5584,6 +5556,76 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
+    const getLatestTodoList: ProjectionStoreV2Shape["getLatestTodoList"] = Effect.fn(
+      "ProjectionStore.getLatestTodoList",
+    )(
+      function* (threadId) {
+        const owners = yield* latestTodoOwner(threadId);
+        if (owners[0] !== undefined)
+          return yield* getPlan(threadId, PlanId.make(owners[0].plan_id));
+        // Native children have provider turns and items but no orchestration run.
+        const runless = yield* sql<{ readonly plan_id: string }>`
+          SELECT plan.plan_id
+          FROM orchestration_v2_projection_plans AS plan
+          INNER JOIN orchestration_v2_projection_turn_items AS item
+            ON item.thread_id = plan.thread_id
+              AND json_extract(item.payload_json, '$.planId') = plan.plan_id
+          WHERE plan.thread_id = ${threadId} AND plan.run_id IS NULL
+            AND plan.kind = 'todo_list' AND plan.status <> 'superseded'
+            AND item.type = 'todo_list' AND item.run_id IS NULL
+          ORDER BY json_extract(item.payload_json, '$.startedAt') DESC,
+            item.ordinal DESC, plan.plan_id DESC
+          LIMIT 1
+        `;
+        return runless[0] === undefined
+          ? undefined
+          : yield* getPlan(threadId, PlanId.make(runless[0].plan_id));
+      },
+      (effect, threadId) => effect.pipe(Effect.mapError(controlReadError(threadId))),
+    );
+
+    const latestTodoOwner = (threadId: ThreadId) => sql<{
+      readonly plan_id: string;
+      readonly run_id: string;
+      readonly provider_thread_id: string | null;
+      readonly last_plan_id: string;
+    }>`
+                WITH latest_owner AS MATERIALIZED (
+                  SELECT plan.plan_id, owner.run_id, owner.provider_thread_id
+                  FROM orchestration_v2_projection_plans AS plan
+                  INNER JOIN orchestration_v2_projection_runs AS owner
+                    ON owner.thread_id = plan.thread_id AND owner.run_id = plan.run_id
+                  WHERE plan.thread_id = ${threadId}
+                    AND plan.kind = 'todo_list' AND plan.status <> 'superseded'
+                    AND owner.status <> 'rolled_back'
+                  ORDER BY owner.ordinal DESC, plan.plan_id DESC
+                  LIMIT 1
+                )
+                SELECT COALESCE(CASE WHEN EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_plans
+                  WHERE thread_id = ${threadId} AND run_id = owner.run_id
+                    AND kind = 'todo_list' AND status <> 'superseded'
+                    AND plan_id <> owner.plan_id
+                ) THEN (
+                  -- Plan UUIDs cannot order replacements within a run.
+                  SELECT plan.plan_id
+                  FROM orchestration_v2_projection_turn_items AS item
+                  CROSS JOIN orchestration_v2_projection_plans AS plan
+                    ON plan.plan_id = json_extract(item.payload_json, '$.planId')
+                  WHERE item.run_id = owner.run_id AND item.thread_id = ${threadId}
+                    AND item.type = 'todo_list'
+                    AND plan.run_id = owner.run_id AND plan.thread_id = ${threadId}
+                    AND plan.kind = 'todo_list' AND plan.status <> 'superseded'
+                  ORDER BY item.ordinal DESC
+                  LIMIT 1
+                ) END, owner.plan_id) AS plan_id, owner.run_id, owner.provider_thread_id,
+                (
+                  SELECT MAX(plan_id) FROM orchestration_v2_projection_plans
+                  WHERE thread_id = ${threadId} AND run_id = owner.run_id
+                ) AS last_plan_id
+                FROM latest_owner AS owner
+              `;
+
     const getPlan: ProjectionStoreV2Shape["getPlan"] = (threadId, planId) =>
       sql
         .withTransaction(
@@ -6305,6 +6347,34 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
         Effect.mapError(controlReadError(threadId)),
       );
+
+    const getThreadProviderTurns: ProjectionStoreV2Shape["getThreadProviderTurns"] = Effect.fn(
+      "ProjectionStore.getThreadProviderTurns",
+    )(
+      function* (threadId, options) {
+        yield* requireThread(threadId);
+        // Limit IDs before fetching bodies so historical payloads never enter the sort.
+        const rows = yield* sql<PayloadRow>`
+          SELECT payload_json FROM orchestration_v2_projection_provider_turns
+          WHERE rowid IN (
+            SELECT rowid FROM orchestration_v2_projection_provider_turns
+            WHERE thread_id = ${threadId}
+              ${options.providerThreadIds === undefined ? sql`` : sql`AND provider_thread_id IN (SELECT value FROM json_each(${encodeIdList(options.providerThreadIds)}))`}
+            ORDER BY provider_thread_id ASC, ordinal ASC
+            LIMIT ${options.limit + 1}
+          )
+          ORDER BY provider_thread_id ASC, ordinal ASC
+        `;
+        return {
+          providerTurns: yield* decodeRows(
+            decodeProviderTurnPayload,
+            threadId,
+          )(rows.slice(0, options.limit)),
+          truncated: rows.length > options.limit,
+        };
+      },
+      (effect, threadId) => effect.pipe(Effect.mapError(controlReadError(threadId))),
+    );
 
     const getThreadSnapshot: ProjectionStoreV2Shape["getThreadSnapshot"] = (threadId) =>
       sql
@@ -9015,10 +9085,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getNextTurnItemOrdinal: readOnReader(getNextTurnItemOrdinal),
       getTurnItem: readOnReader(getTurnItem),
       getMessagesById: readOnReader(getMessagesById),
+      getThreadProviderTurns: readOnReader(getThreadProviderTurns),
       getThreadRecords: (threadId, fields, filter) =>
         getThreadRecords(threadId, fields, filter).pipe(NodeSqliteClient.readOnly),
       getRuntimeRequest: readOnReader(getRuntimeRequest),
       getPlan: readOnReader(getPlan),
+      getLatestTodoList: readOnReader(getLatestTodoList),
       getProviderControlContext: readOnReader(getProviderControlContext),
       getLimitRecoveryCandidates: readOnReader(getLimitRecoveryCandidates),
       getLimitRecoveryWakeAt: readOnReader(getLimitRecoveryWakeAt),

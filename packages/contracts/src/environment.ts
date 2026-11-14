@@ -201,6 +201,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
    * The server config's flags of the same names. A server that names them here lets a client
    * load the shell snapshot before the socket opens, and answers its `resumeFrom`.
    */
+  threadInsights: Schema.optionalKey(Schema.Boolean),
   shellThreadFamilies: Schema.optionalKey(Schema.Boolean),
   shellOlderSettled: Schema.optionalKey(Schema.Boolean),
   /** Publishes a pull request refresh when linked-thread answers change; older servers need polling. */

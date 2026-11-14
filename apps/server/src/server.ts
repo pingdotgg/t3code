@@ -1,3 +1,4 @@
+import * as ThreadInsightsQuery from "./orchestration-v2/ThreadInsightsQuery.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Random from "effect/Random";
@@ -588,9 +589,10 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   ),
 );
 
-const layerOrchestrationApplication = Layer.merge(
+const layerOrchestrationApplication = Layer.mergeAll(
   CheckpointDiffQuery.layer,
   NativeChildWorkQuery.layer,
+  ThreadInsightsQuery.layer.pipe(Layer.provide(layerUsage), Layer.provide(ProjectionStoreV2.layer)),
 ).pipe(Layer.provideMerge(layerCheckpointStore), Layer.provideMerge(layerOrchestrationV2Runtime));
 
 const layerThreadSettlementWorker = Layer.effectDiscard(

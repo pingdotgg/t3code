@@ -46,7 +46,11 @@ vi.mock("../state/session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
     scope === AuthOrchestrationOperateScope && state.granted.has(environmentId),
 }));
+vi.mock("../rightPanelStore", () => ({
+  useRightPanelStore: { getState: () => ({ openThreadInsights: () => {} }) },
+}));
 vi.mock("../state/entities", () => ({
+  useServerConfigs: () => new Map(),
   readEnvironmentServerConfigLoaded: () => true,
   readEnvironmentSupportsAutoSettleOptOut: () => true,
   readThreadShell: () => ({

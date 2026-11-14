@@ -8,6 +8,7 @@ import {
   lookupRate,
   parseRateTable,
   priceUsage,
+  priceTurnUsage,
 } from "./usagePricing.ts";
 
 const rate = (input: number, cacheRead?: number) => ({
@@ -267,6 +268,40 @@ describe("usage pricing", () => {
         }),
       ).costUsd,
     ).toBeCloseTo(20_000 * 8e-6 + 280_000 * 8e-7 + 1_000 * 3e-5, 12);
+  });
+
+  it("leaves aggregated turns unpriced when requests may cross a context threshold", () => {
+    const table = parseRateTable({
+      "tiered-model": {
+        ...rate(1e-6),
+        input_cost_per_token_above_100k_tokens: 2e-6,
+        output_cost_per_token_above_100k_tokens: 7.5e-6,
+      },
+      "flat-model": rate(1e-6),
+    });
+    const aggregate = (input: number, model = "tiered-model") => ({
+      model,
+      speed: "standard" as const,
+      reportedCostUsd: null,
+      totals: {
+        uncachedInputTokens: input,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 100,
+        reasoningTokens: 0,
+      },
+    });
+    // Two 60K requests each use the base rate, unlike a single 120K request.
+    expect(priceTurnUsage(table, aggregate(60_000))).toBeCloseTo(0.0605);
+    expect(priceTurnUsage(table, aggregate(100_000))).toBeCloseTo(0.1005);
+    expect(priceTurnUsage(table, aggregate(120_000))).toBeNull();
+    expect(priceUsage(table, aggregate(120_000)).costUsd).toBeCloseTo(0.24075);
+    expect(priceTurnUsage(table, aggregate(120_000, "flat-model"))).toBeCloseTo(0.1205);
+    expect(priceTurnUsage(table, aggregate(120_000, "unknown-model"))).toBeNull();
+    const overrides = createOverrideRateTable({
+      "tiered-model": { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 5 },
+    });
+    expect(priceTurnUsage(table, aggregate(120_000), overrides)).toBeCloseTo(0.1205);
   });
 
   it("bills the long-context tier only above its threshold, filling missing tier fields from base", () => {

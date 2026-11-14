@@ -1,3 +1,4 @@
+import { ThreadInsightsMenu } from "./ThreadInsightsMenu";
 import type {
   EditorId,
   EnvironmentId,
@@ -179,6 +180,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
         };
         return (
           <>
+            <ThreadInsightsMenu parent={activeThreadRef} target={activeThreadRef} />
             <div className="group/details-items">
               {show.environment || show.openIn || show.scripts ? (
                 <ThreadDetailsSection

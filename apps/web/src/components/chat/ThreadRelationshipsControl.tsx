@@ -1,3 +1,5 @@
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import { ThreadInsightsMenu } from "./ThreadInsightsMenu";
 import { useAtomValue } from "@effect/atom-react";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
@@ -261,6 +263,7 @@ function currentSubagent<Agent extends RuntimeSubagent>(
  * the thread there, when this client is connected to that environment.
  */
 function RemoteSubagentRow(props: {
+  readonly parentRef: ScopedThreadRef;
   readonly agent: RemoteSubagent;
   readonly provider: ServerProvider | undefined;
 }) {
@@ -275,6 +278,10 @@ function RemoteSubagentRow(props: {
   });
   return (
     <li className="group relative flex h-8 items-center rounded-lg">
+      <ThreadInsightsMenu
+        parent={props.parentRef}
+        target={scopeThreadRef(remoteChild.environmentId, remoteChild.threadId)}
+      />
       <Tooltip>
         <TooltipTrigger
           delay={200}
@@ -862,6 +869,7 @@ export function ThreadRelationshipsPanel(props: {
     if (workflowGroup && agent) {
       return (
         <ThreadLineageWorkflowRow
+          parentRef={ref}
           key={threadId}
           group={workflowGroup}
           providerInstanceId={agent.providerInstanceId}
@@ -879,6 +887,7 @@ export function ThreadRelationshipsPanel(props: {
     }
     return (
       <li key={threadId} className="group relative flex h-8 items-center rounded-lg">
+        <ThreadInsightsMenu parent={ref} target={scopeThreadRef(props.environmentId, threadId)} />
         {isMergeTarget ? (
           <div className={THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS}>
             <Tooltip>
@@ -1023,6 +1032,7 @@ export function ThreadRelationshipsPanel(props: {
                 visibleRows.map((row) =>
                   "remote" in row ? (
                     <RemoteSubagentRow
+                      parentRef={ref}
                       key={row.remote.id}
                       agent={row.remote}
                       // Its provider instance belongs to the environment it runs in.

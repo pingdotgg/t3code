@@ -2,6 +2,8 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
 export type ThreadActionMenuId =
+  | "view-tasks"
+  | "view-usage"
   | "find"
   | "new-thread-on-branch"
   | "filter-by-project"
@@ -70,6 +72,7 @@ export function buildDraftActionMenuItems(options: {
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
   readonly canFind?: boolean;
+  readonly canViewInsights?: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
     readonly label: string;
@@ -102,6 +105,8 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
   return ![
     "find",
     "new-thread-on-branch",
+    "view-tasks",
+    "view-usage",
     "project-settings",
     "mark-unread",
     "share-guest",
@@ -117,6 +122,12 @@ export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
+    ...(state.canViewInsights
+      ? [
+          { id: "view-tasks" as const, label: "View tasks", icon: "list-todo" },
+          { id: "view-usage" as const, label: "View usage", icon: "chart-no-axes-combined" },
+        ]
+      : []),
     ...(state.canFind
       ? [{ id: "find" as const, label: "Find in thread", icon: "text-search" }]
       : []),

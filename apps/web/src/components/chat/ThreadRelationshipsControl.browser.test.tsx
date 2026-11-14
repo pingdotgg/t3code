@@ -29,6 +29,7 @@ vi.mock(import("@effect/atom-react"), async (original) => ({
 }));
 
 vi.mock(import("../../state/entities"), () => ({
+  useServerConfigs: (() => new Map()) as never,
   useQuietThreadShell: (() => null) as never,
   useThreadProjection: ((ref: unknown) =>
     ref === null ? null : { projection: state.projection }) as never,

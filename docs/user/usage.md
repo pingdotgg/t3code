@@ -57,6 +57,25 @@ saved totals first, then updates them when Cursor's API responds.
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.
 
+## Inspect one thread
+
+On web and desktop, choose **View usage** in a thread's menu, or in the menu beside a
+subagent in the work log or Lineage. The **Tasks & usage** side panel combines the thread
+and its subagents, including descendants on connected environments. Forks and side chats
+are separate. Expand a row to inspect its tasks, or open **View tasks** to start there.
+The progress count describes reported steps; different agents' lists can overlap.
+
+Usage comes from recorded turns. Missing provider reports, unavailable children, and limits on
+large families are marked as partial. Input includes cache tokens, and output includes reasoning.
+Extra provider usage that may overlap child turns is shown without adding it again.
+
+Cost is an estimate at standard API rates for turns with one reported model. Missing cache
+breakdowns are treated as uncached input. Mixed or unknown models and turns whose aggregate
+cannot establish the context pricing tier stay unpriced. This estimate
+can differ from Usage's transcript-based history and does not represent a subscription charge.
+Subscription limits are account-wide across threads and devices. Providers do not report how
+much of a subscription's quota an individual thread consumed.
+
 ## Set custom model prices
 
 On web or desktop, open the environment dropdown on **Usage**, then choose **Model prices** to add,

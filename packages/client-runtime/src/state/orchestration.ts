@@ -192,6 +192,12 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       idleTtlMs: 300_000,
     }),
     // Mounted only while a subagent inspector is open; running children change between opens.
+    threadInsights: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:thread-insights",
+      tag: ORCHESTRATION_V2_WS_METHODS.getThreadInsights,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
     nativeChildWork: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:native-child-work",
       tag: ORCHESTRATION_V2_WS_METHODS.getNativeChildWork,

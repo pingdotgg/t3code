@@ -83,6 +83,12 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
             typeof surface.target.name === "string" &&
             (surface.target.platform === "ios" || surface.target.platform === "android")))
       );
+    case "thread-insights":
+      return (
+        typeof surface.environmentId === "string" &&
+        typeof surface.threadId === "string" &&
+        (surface.section === "tasks" || surface.section === "usage")
+      );
     case "side-chat":
       return typeof surface.threadId === "string" && surface.id === `side-chat:${surface.threadId}`;
     case "pull-request":
