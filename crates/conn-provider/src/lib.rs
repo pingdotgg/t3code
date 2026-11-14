@@ -5,12 +5,15 @@
 //! process or connection). A session owns provider threads, runs turns on them, and reports
 //! everything that happens as [`ProviderEvent`]s on one channel.
 //!
-//! Kept from the TS interface: open session, ensure/resume thread, start/steer/interrupt
-//! turn, apply model selection, respond to runtime requests (permission prompts and user
-//! questions), the event stream. Added: [`Session::apply_runtime_policy`], so a permission
-//! mode change reaches a running process (Claude `setPermissionMode`); TS passes the policy
-//! per turn only. Left out until needed: compact, rollback, fork, thread snapshots, history
-//! injection, background tasks, subagent stop, MCP apps, feedback upload.
+//! Kept from the TS interface: plan a selection transition; open session (with its MCP
+//! servers and a host handle, returning the session row); ensure/resume/fork/roll back a
+//! thread; start/steer/interrupt a turn; apply a model selection; stop and await background
+//! tasks; respond to runtime requests; the event stream; 8 of the 19 error tags that change
+//! what the engine does (as condensed variants). Added: [`Session::apply_runtime_policy`], so
+//! a permission mode change reaches a running process (Claude `setPermissionMode`); TS passes
+//! the policy per turn only; [`ProviderEvent::ContinuationRequested`], where TS uses a
+//! separate service. Left out until needed: compact, thread unload, subagent stop, MCP apps,
+//! feedback upload, prompt suggestions, context-window hooks.
 //!
 //! To add a provider: make a crate that depends on this one and implements both traits.
 
