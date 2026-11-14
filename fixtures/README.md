@@ -39,6 +39,14 @@ Line format, as the workspace README fixes it, with two additions:
 | `terminal`                                                      | On a draft: terminal drawer, `echo`, resize, reload (scrollback returns), 50 MB `yes`, close                                                            |
 | `rust-attachment`, `rust-worktree`, `rust-mcp`, `rust-subagent` | Claude names an uploaded image's colour; a launch into a new worktree; Claude calls `t3_thread_list` over `/mcp`; a subagent row opens its child thread |
 | `rust-*`                                                        | As `remote`, with the Rust `conn-server` as the remote environment (`--rust <binary>`)                                                                  |
+| `rust-worktree-files`                                           | Claude writes a file in a new worktree; it is there and not in the root; the file tree opens a tracked file and the new one; the diff shows it         |
+| `rust-review-added`                                             | A project added to the running server (`conn-server project add`); a thread in it; the diff panel shows its branch's changes                            |
+| `rust-secrets`                                                  | A hub key stored from the client, a generator key seeded on disk; toggle the generator, reload: both keys real on disk, the client holds `••••••`       |
+| `rust-model-switch`                                             | Two turns, Haiku 5.5 then Haiku 4.5: the client sends the new model, the thread keeps it, Claude's session log names it                                 |
+| `rust-archive`                                                  | Archive a thread from its sidebar menu: gone from the list, listed in Settings › Archive, restored by Unarchive                                         |
+| `rust-two-clients`                                              | A second browser context opens the thread; it sees the first client's next turn run and its reply arrive, with no reload                                |
+| `rust-stop-continue`                                            | `rust-stop`, then the same thread takes the next message                                                                                                |
+| `rust-memory`                                                   | Three turns, then the idle session closes; samples the server and its SDK host at each step                                                             |
 | `ts-*`                                                          | The same drivers as `rust-follow-up`, `rust-queue`, `rust-search`, with a paired TypeScript server, for side-by-side comparison                         |
 | `*-files`                                                       | Favicon, `@` search, image upload, content search, open a file; no model call                                                                           |
 
@@ -75,26 +83,38 @@ git diff --stat fixtures/sessions
 ```
 
 The `rust-*` scenarios run only when named, after `pairing`, with `--rust <binary>`. They
-record only the Rust server's traffic and always write a screenshot per checkpoint. With
-`--rust target/release/examples/replay_server` the Rust server runs the engine's scripted fake
-provider, so no model is called. These work on it: `rust-turn`, `rust-restart`, `rust-vcs`,
-`rust-files`, `rust-terminal`, `rust-settings`, `rust-search`, `rust-worktree`:
+record only the Rust server's traffic and always write a screenshot per checkpoint. Each one
+does what a user does and checks the result (a reply, a file, a diff line, a value on disk),
+not only that a view opens. One command runs a whole set:
 
 ```sh
-cargo build --release --examples
-node fixtures/recorder/record.mjs pairing rust-turn rust-restart rust-vcs rust-files \
-  rust-terminal rust-settings rust-search rust-worktree \
-  --rust target/release/examples/replay_server --out /tmp/conn-recordings
+cargo build --release -p conn-server --bins --examples
+(cd helpers/sdk-host && npm ci)                       # live only
+fixtures/recorder/rust-scenarios.sh fake              # 16 scenarios, no model call, ~17 min
+fixtures/recorder/rust-scenarios.sh live              # 22 scenarios, 27 Claude Haiku turns
 ```
 
-`rust-permission`, `rust-stop`, `rust-mcp`, `rust-attachment` and `rust-subagent` need
-Claude to act (a prompt, a tool call, a subagent): use `--rust target/release/conn-server`,
-which runs the `claude` CLI. `rust-follow-up`, `rust-queue` and `rust-load` were recorded with
-Haiku; they are not yet tried on the fake provider. `rust-terminal` runs the
-`terminal` steps on the Conn Server; `recorder/compare-terminal.mjs <recording>` prints either
-as a timeline. `rust-restart` stops and restarts the Rust server on the same state and waits
-for the client to reconnect without a reload. `rust-load` runs 11 turns in three threads, then
-idles two minutes.
+Both write recordings to a new temp folder (or `--out <dir>`), and `CONN_RECORDER_SHOTS=<dir>`
+keeps the screenshots. `fake` runs `target/release/examples/replay_server`, the engine's
+scripted fake provider: no tool runs, so the follow-up and queue scenarios send into the next
+turn, not into a running one, and the worktree scenario writes the agent's file itself.
+`live` runs `target/release/conn-server` with the user's own Claude login and settings, and
+adds the scenarios where Claude must act: `rust-permission`, `rust-stop-continue`, `rust-mcp`,
+`rust-attachment`, `rust-subagent` and `rust-memory` (it sets `CONN_SESSION_IDLE_TIMEOUT=1`
+so the idle session closes in a minute). Turns per scenario: `rust-restart`, `rust-follow-up`,
+`rust-queue`, `rust-two-clients`, `rust-stop-continue` and `rust-model-switch` 2,
+`rust-memory` 3, `rust-files`, `rust-terminal`, `rust-settings` and `rust-secrets` 0, the
+others 1. The recorder runs scenarios in its own table order, not in the order named.
+
+`rust-terminal` runs the `terminal` steps on the Conn Server;
+`recorder/compare-terminal.mjs <recording>` prints either as a timeline. `rust-restart` stops
+and restarts the Rust server on the same state and waits for the client to reconnect without
+a reload. `rust-load` runs 11 turns in three threads, then idles two minutes; it is in neither
+set. Memory samples (`rust-turn`, `rust-memory`) give RSS and macOS `footprint` in KB for the
+server and, as `hostRss`/`hostFootprint`, its SDK host.
+
+`recorder/compare.mjs <a> <b> [tag prefix ...]` pairs the calls of two recordings (names in
+`sessions/` or paths to `.ndjson` files) and diffs their answers, for the `ts-`/`rust-` pairs.
 
 `--rust-url <pairingUrl>` uses a Rust server that already runs (for example on another host,
 through `ssh -L` on the same port) instead of starting one. `--rust-sample <command>` measures

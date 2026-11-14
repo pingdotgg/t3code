@@ -196,23 +196,59 @@ async function startServer(name = "project", prepare) {
   return { root, base, project, port, token, child, origin: `http://127.0.0.1:${port}` };
 }
 
-/** RSS and macOS `footprint` of a server this run started, in KB. Only the server, no children. */
-function localMemory(s) {
-  const rss = Number(
-    NodeChildProcess.execFileSync("ps", ["-o", "rss=", "-p", String(s.child.pid)], {
-      encoding: "utf8",
-    }).trim(),
-  );
+/** RSS and macOS `footprint` of one process, in KB; null when it is gone. */
+function processMemory(pid) {
+  let rss;
+  try {
+    rss = Number(
+      NodeChildProcess.execFileSync("ps", ["-o", "rss=", "-p", String(pid)], {
+        encoding: "utf8",
+      }).trim(),
+    );
+  } catch {
+    return null;
+  }
   let footprint = null;
   try {
     // macOS only; elsewhere the tool is missing and RSS stands alone.
-    const out = NodeChildProcess.execFileSync("footprint", [String(s.child.pid)], {
-      encoding: "utf8",
-    });
+    const out = NodeChildProcess.execFileSync("footprint", [String(pid)], { encoding: "utf8" });
     const m = /Footprint: ([\d.]+) (KB|MB)/.exec(out);
     if (m) footprint = Number(m[1]) * (m[2] === "MB" ? 1024 : 1);
   } catch {}
   return { rss, footprint };
+}
+
+/**
+ * Memory of a server this run started, in KB: the server itself, and its SDK host (a `node`
+ * child) when one runs. The `claude` CLI and its helpers are not counted.
+ */
+function localMemory(s) {
+  const server = processMemory(s.child.pid) ?? { rss: 0, footprint: null };
+  let children = [];
+  try {
+    children = NodeChildProcess.execFileSync("pgrep", ["-P", String(s.child.pid)], {
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter(Boolean);
+  } catch {}
+  const host = children
+    .filter((pid) => {
+      try {
+        return /node|sdk-host/.test(
+          NodeChildProcess.execFileSync("ps", ["-o", "command=", "-p", pid], { encoding: "utf8" }),
+        );
+      } catch {
+        return false;
+      }
+    })
+    .map((pid) => processMemory(pid))
+    .find(Boolean);
+  return {
+    ...server,
+    hostRss: host?.rss ?? 0,
+    hostFootprint: host?.footprint ?? 0,
+  };
 }
 
 const STATIC = /\/assets\/|\.(png|ico|svg|webmanifest|woff2?|css|js)(\?|$)|third-party-licenses/;
@@ -369,6 +405,17 @@ try {
         log(name, "shot", file);
       },
       cap,
+      browser,
+      context,
+      // The engine's scripted fake provider stands in for Claude: no model call, no tool runs.
+      fake: rustBinary !== null && NodePath.basename(rustBinary) === "replay_server",
+      /** Runs the Rust server's own CLI on its state folder; returns stdout. */
+      rustCli: (s, ...cliArgs) =>
+        NodeChildProcess.execFileSync(
+          rustBinary,
+          [...cliArgs, "--state-dir", NodePath.join(s.root, "state")],
+          { cwd: s.project, encoding: "utf8" },
+        ),
       startServer: async (name, prepare) => {
         const extra = await startServer(name, prepare);
         extraServers.push(extra);
@@ -454,6 +501,10 @@ try {
       failed = true;
       log(`scenario ${name} FAILED: ${e.stack ?? e}`);
       await page.screenshot({ path: NodePath.join(shots, "failure.png") }).catch(() => {});
+      // A scenario with a second client leaves its page here.
+      await ctx.other
+        ?.screenshot({ path: NodePath.join(shots, "failure-other.png") })
+        .catch(() => {});
       log(`failure screenshot ${NodePath.join(shots, "failure.png")}`);
       for (const c of await context.cookies()) addSecret(c.value);
       writeSession(`${name}.partial`, cap);
