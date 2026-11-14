@@ -1,5 +1,6 @@
 import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/contracts";
 
+import { isWebUrl } from "./browser/webUrl";
 import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
@@ -27,6 +28,7 @@ export function createLocalApi(): LocalApi {
           return;
         }
 
+        if (!isWebUrl(url)) throw new Error("Unable to open link.");
         window.open(url, "_blank", "noopener,noreferrer");
       },
       openSystemSettings: async (pane) => {
