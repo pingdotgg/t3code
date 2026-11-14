@@ -1349,7 +1349,6 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 <span
                   className={cn(
                     "relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end",
-                    props.settlementSupported && variantAction === "settle" && "min-w-16",
                     props.sweepAction !== null && "hidden",
                     jumpHintLabel && JUMP_HINT_SLOT_CLASS_NAME,
                   )}
@@ -1358,7 +1357,10 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                     className={cn(
                       "inline-flex justify-end tabular-nums text-secondary-label",
                       variantAction === "unsettle" && "text-(--sidebar-settled-meta)",
-                      !isWoke && "group-any-hover/sidebar-row:opacity-0",
+                      !isWoke &&
+                        (props.settlementSupported && variantAction === "settle"
+                          ? "group-any-hover/sidebar-row:hidden"
+                          : "group-any-hover/sidebar-row:opacity-0"),
                     )}
                   >
                     {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
@@ -1446,8 +1448,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                             onClick={handleSettleClick}
                             onPointerDown={handleActionPointerDown}
                             className={cn(
-                              "pointer-events-none absolute inset-y-0 right-0 -mr-2 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-meta text-muted-foreground opacity-0 outline-none transition-opacity hover:surface-ghost-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
-                              isWoke && "group-any-hover/sidebar-row:static",
+                              "pointer-events-none absolute inset-y-0 right-0 -mr-2 inline-flex cursor-pointer items-center gap-1 self-stretch rounded-md bg-transparent px-2 text-meta text-muted-foreground opacity-0 outline-none transition-opacity hover:surface-ghost-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
+                              !jumpHintLabel &&
+                                "focus-visible:static group-any-hover/sidebar-row:static",
                             )}
                           />
                         }
