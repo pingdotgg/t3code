@@ -137,6 +137,73 @@ Not proven:
 - Orbit's flow in a real container.
 - Codex on CLI 0.166 or 0.167 (the recordings are from 0.156).
 
+## Timers after a clock jump (2026-11-14)
+
+Orbit freezes and wakes containers. On wake the wall clock has jumped. On Linux with the cgroup
+freezer, `CLOCK_MONOTONIC` (tokio's and `std`'s `Instant`) runs on through the freeze, so every
+monotonic deadline that passed fires once at the thaw. On a sleeping Mac or after a checkpoint
+restore, the monotonic clock stands still. Every test below acts out the wake with a jump of
+10 minutes, 2 hours and 3 days. T3 references are in `$CONN_MONOREPO/apps/server/src` at the
+pin; Effect's clock reads `Date.now()` and sleeps on `setTimeout` (monotonic).
+
+| Timer | Clock here | After a jump of 10 min / 2 h / 3 d | T3 server | Test |
+| --- | --- | --- | --- | --- |
+| Scheduled task timer (`conn-features/src/scheduled/mod.rs:1323`) | sleeps monotonic, at most 10 min (`MAX_SLEEP`, :71); reads the wall clock on each wake | Monotonic ran on: wakes at the thaw; an overdue interval runs once and plans from the wake; a fixed time runs if at most 10 min late, else is recorded missed once and moves to the next slot. No burst. Monotonic still: wakes within the rest of its sleep (≤ 10 min) | polls every 5 s (`scheduling/Scheduler.ts:57`); same rules (`ScheduledTaskService.ts:1242-1290`, `Schedule.ts:73-81`) | `scheduled::tests::clock_jumps` (3) |
+| Idle provider session release (`conn-engine/src/engine.rs:303`, `runner.rs:99`) | reaper sleeps monotonic, 15 min; idle time by the engine's wall clock | 10 min: kept until 30 min; 2 h, 3 d: released at the next reaper wait | `Effect.sleep(idleTimeoutMs)`, monotonic (`ProviderSessionManager.ts:1487`, `:1840`) | `an_idle_session_after_a_wall_clock_jump` |
+| Background hold, 4 h (`runner.rs:99`) | wall, from the first idle check | 2 h: hold starts; 3 d after it: released | `pinnedSinceMs`, wall (`ProviderSessionManager.ts:1393-1418`) | `background_work_holds_through_a_jump_until_the_wall_clock_passes_the_hold` |
+| Claude query idle end (`conn-provider-claude/src/session.rs:467`) | monotonic | counts awake time only; the engine release above closes it first | the session manager's release | none of its own (engine test) |
+| Provider status interval, 5 min, recheck 30 s (`conn-server/src/methods/provider.rs:298`) | monotonic sleep loop | one probe at the thaw, then every 5 min; only while a lease asks | same (`packages/provider-core/src/server/managedProvider.ts:410-430`) | `the_probe_interval_fires_once_after_a_long_freeze` |
+| Client activity leases, ≤ 120 s (`provider.rs:111`) | **fixed**: both clocks, the larger elapsed wins | ended after every jump; a wall clock stepped back does not extend one | wall (`background/BackgroundPolicy.ts:61-62`, `:218-220`) | `a_lease_ends_after_a_jump_on_either_clock` |
+| Pairing codes 5 min / 24 h, sessions 30 d, WebSocket ticket 5 min (`auth.rs:71-76`) | wall | 10 min: codes and tickets gone, session alive; 3 d: 24 h code gone, session alive | wall (`auth/PairingGrantStore.ts:326`, `:476`; `auth/SessionStore.ts:454-455`, `:590`) | `auth::tests::expiries_follow_the_wall_clock_after_a_freeze` |
+| Socket revocation check, 30 s (`http.rs:673`); desktop parent watch, 2 s (`serve.rs:324`) | **fixed**: monotonic interval that no longer catches up | one check at the thaw; before the fix 8,640 (30 s) and 129,600 (2 s) back to back after 3 d | no such loop | `a_check_fires_once_after_a_long_freeze` (fails with the old `Burst`) |
+| `/mcp` credential liveness, 24 h (`conn-mcp/src/credentials.rs:73`) | **fixed**: both clocks | 10 min, 2 h: alive; 3 d: expired until the thread's next run touches it | both clocks (`mcp/McpSessionRegistry.ts:82`, `:174`) | `a_credential_counts_idle_time_the_wall_clock_shows_after_a_freeze` |
+| `/mcp` `Mcp-Session-Id`, 24 h (`conn-mcp/src/sessions.rs:12`) | monotonic | lives on if the monotonic clock stood still; the agent's next call re-initializes either way | not checked | none |
+| Webhook rate and log windows, 1 min (`webhook/mod.rs:153`, `:178`, `:193`) | wall | a full window is free after any jump | wall (`ScheduledTaskService.ts:1942`, `:2304`) | `rate_and_log_windows_clear_after_a_wall_clock_jump` |
+| Webhook replay keys, 7 d (`webhook/store.rs:18`, `:281`) | wall | held after 10 min, 2 h, 3 d; gone at 7 d | wall (`scheduledTasks/webhookDedupe.ts:29`, `:40-42`) | `replay_keys_hold_through_wall_clock_jumps` |
+| Text generator model cache (`text_generation/mod.rs:228`) | none | never expires by time; `refresh` or a config change | the same (`textGeneration/TextGenerators.ts:146-153`) | none: no clock to move |
+| Login environment refresh, 10 s (`methods/source_control.rs:288`) | monotonic | monotonic still: one refresh within 10 s of the wake may be skipped | wall (`sourceControl/SourceControlDiscovery.ts:85`, Effect `cachedWithTTL`) | none: `std::time::Instant`, no seam; the difference lasts at most 10 s, and a wall TTL would block refreshes after a wall clock stepped back |
+| SDK host stop-when-idle (`conn-provider-support/src/sdk_host.rs:305`) | no timer: stops when the last query closes | follows the engine release above | T3 keeps the SDK in process | covered by the engine test and the existing host tests |
+| WebSocket idle close, 60 s (`session.rs:163`, `:188`) | monotonic | monotonic ran on: the idle timer and buffered client pings are ready together; `select!` may close a live socket; the client reconnects | the server has none; the client's ping timeout ends a frozen connection (Effect `RpcClient.ts:1231`) | none |
+| Short monotonic waits: flushes, debounces, request and stop timeouts, VCS and terminal polls, the run follower (24 h), title retries | monotonic, one-shot | each fires once at the thaw; none catches up | the same, on `setTimeout` | none |
+
+Fixed: the lease, `/mcp` credential and interval rows (above). Not fixed, for Nick:
+
+- **The scheduled task timer with a still monotonic clock.** A fixed time due shortly before the
+  wake can be recorded missed where T3 runs it (the timer slept on for up to 10 minutes; the
+  test shows it). In Orbit's freezer the monotonic clock runs on, so the case does not arise
+  there. Options: a 5 s poll as T3 (exact, about 12 wakes a minute while a task is enabled), a
+  shorter cap, or leave it.
+- **The idle release counts frozen wall time as idle.** After a 2-hour freeze with a still
+  monotonic clock, the provider session closes at the next reaper wait (≤ 15 min); T3 waits 30
+  minutes of awake time. In Orbit both close at the thaw.
+
+### A turn and its CLI across a freeze
+
+The server and the provider CLI are in one container, so both freeze and thaw together. Neither
+server reads the CLI's network state; both wait for the CLI to report.
+
+- **A running turn** stays `running` through the freeze. At the thaw the CLI reads its API
+  stream again. If the stream died during the freeze, the CLI's own retry logic decides: it
+  retries and goes on, or it reports an error, which ends the run `failed` (Claude's result,
+  Codex's `turn/completed` with an error). This server sets no turn deadline; T3 has none either.
+  Stop works as always.
+- **The CLI exits** (it gave up): the session's event stream ends. The engine ends a run that is
+  still open as `failed`, "The provider session ended during the turn."
+  (`conn-engine/src/runner.rs:997`). If the SDK host itself exits, every open query ends with
+  "The SDK host exited" (`conn-provider-support/src/sdk_host.rs:466-476`). T3: `ClaudeAdapterV2.ts:249-251`
+  (a query that ended before the turn), `CodexAdapterV2.ts:2694` (a Codex app-server exit ends the
+  session). The exact T3 line that fails a Claude turn whose query ends mid-turn is not traced.
+- **The CLI hangs** (its socket never errors): the turn stays `running` until a Stop, here and in
+  T3. The idle release does not close a session with an active turn.
+- **Requests in flight at the freeze** (a Codex request, an SDK host call, an ACP `initialize`):
+  with the monotonic clock run on, their timeout and their answer can be ready together at the
+  thaw. tokio's `timeout` polls the answer first; T3's Node event loop runs expired timers before
+  it reads input, so T3 is likelier to fail such a request.
+
+Not proven: a real Orbit freeze and wake (all of this is on test clocks); that Orbit's freezer
+keeps `CLOCK_MONOTONIC` running (Linux's documented behaviour, not measured in a container); how
+the Claude and Codex CLIs behave when their API stream died during a freeze.
+
 ## Engine, part 3: buffered delivery (2026-11-14)
 
 The fixture replay passes 50 of 159 variants: Grok 9 of 15 (was 1), Claude 24 of 34 and Codex
