@@ -1511,6 +1511,7 @@ it.effect(
           Layer.provide(
             Layer.mock(ThreadManagement.ThreadManagementService)({
               listProjectThreads: () => Effect.succeed([unsettled, settled]),
+              getShellSnapshot: () => Effect.succeed({ threads: [unsettled, settled] } as never),
             }),
           ),
           Layer.provide(ServerSettings.layerTest()),
