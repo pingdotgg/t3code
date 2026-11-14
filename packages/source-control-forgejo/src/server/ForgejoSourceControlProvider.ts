@@ -129,7 +129,7 @@ export const makeDiscovery = Effect.gen(function* () {
                   : providerAuth({
                       status: "unauthenticated",
                       detail:
-                        "Authenticate this server with `fj --host <server-url> auth add-token`.",
+                        "Authenticate this server with `fj --host <server-url> auth add-token`. For a server under a URL subpath, such as `https://example.com/forgejo`, use `tea login add` instead.",
                     }),
         },
       });

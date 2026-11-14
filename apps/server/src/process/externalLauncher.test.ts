@@ -195,6 +195,8 @@ it.effect.skipIf(windowsHost)(
       const codePath = path.join(binDir, "code");
       yield* fileSystem.writeFileString(codePath, "#!/bin/sh\n");
       yield* fileSystem.chmod(codePath, 0o755);
+      const colonProject = path.join(project, "build:2026");
+      yield* fileSystem.makeDirectory(colonProject);
       const file = `${path.join(project, "file.ts")}:3:7`;
 
       const spawned: ChildProcess.StandardCommand[] = [];
@@ -202,6 +204,7 @@ it.effect.skipIf(windowsHost)(
         const launcher = yield* ExternalLauncher.ExternalLauncher;
         yield* launcher.launchEditor({ editor: "vscode", cwd: project });
         yield* launcher.launchEditor({ editor: "vscode", cwd: file });
+        yield* launcher.launchEditor({ editor: "vscode", cwd: colonProject });
       }).pipe(
         Effect.provide(
           layerTest({
@@ -218,6 +221,7 @@ it.effect.skipIf(windowsHost)(
         [
           ["--new-window", project],
           ["--goto", file],
+          ["--new-window", colonProject],
         ],
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -792,17 +796,32 @@ it.effect.skipIf(windowsHost)("does not offer the OpenZFS zed daemon as Zed on L
     );
     yield* fs.chmod(zfsZed, 0o755);
     const editor = EDITORS.find((editor) => editor.id === "zed")!;
-    const resolve = resolveEditorCommand(editor, { HOME: home, PATH: binDir }).pipe(
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(Path.Path, withSystemBin(path, systemBin)),
-    );
-    assert.deepEqual(yield* resolve, Option.none());
+    const laterBin = path.join(home, "later-bin");
+    const resolveOn = (platform: NodeJS.Platform) =>
+      resolveEditorCommand(editor, { HOME: home, PATH: `${binDir}:${laterBin}` }).pipe(
+        Effect.provideService(HostProcess.Platform, platform),
+        Effect.provideService(Path.Path, withSystemBin(path, systemBin)),
+      );
+    assert.deepEqual(yield* resolveOn("linux"), Option.none());
+    assert.deepEqual(yield* resolveOn("darwin"), Option.none());
 
     const zedEditor = path.join(home, ".local/bin/zed");
     yield* fs.makeDirectory(path.dirname(zedEditor), { recursive: true });
     yield* fs.writeFileString(zedEditor, "#!/bin/sh\necho 'Zed 0.200.0'\n");
     yield* fs.chmod(zedEditor, 0o755);
-    assert.deepEqual(yield* resolve, Option.some({ command: zedEditor, baseArgs: [] }));
+    assert.deepEqual(yield* resolveOn("linux"), Option.some({ command: zedEditor, baseArgs: [] }));
+
+    yield* fs.remove(zedEditor);
+    const laterZed = path.join(laterBin, "zed");
+    yield* fs.makeDirectory(laterBin, { recursive: true });
+    yield* fs.writeFileString(laterZed, "#!/bin/sh\necho 'Zed 0.200.0'\n");
+    yield* fs.chmod(laterZed, 0o755);
+    for (const platform of ["linux", "darwin"] as const) {
+      assert.deepEqual(
+        yield* resolveOn(platform),
+        Option.some({ command: laterZed, baseArgs: [] }),
+      );
+    }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -1181,6 +1200,57 @@ it.effect(
       ),
     );
   },
+);
+
+it.effect.each(["Zed Nightly", "Zed Preview"])(
+  "launches stable Zed on Windows when %s comes first on PATH",
+  (channel) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-zed-channels-" });
+      // A user folder naming Zed and a channel does not mark either install.
+      const programs = path.join(root, "Users", "zedpreview", "Programs");
+      const prereleaseBin = path.join(programs, channel, "bin");
+      const stableBin = path.join(programs, "Zed", "bin");
+      for (const dir of [prereleaseBin, stableBin]) {
+        yield* fs.makeDirectory(dir, { recursive: true });
+        yield* fs.writeFileString(path.join(dir, "zed.EXE"), "");
+      }
+      const env = { PATH: `${prereleaseBin};${stableBin}`, PATHEXT: ".COM;.EXE;.BAT;.CMD" };
+
+      const launchZed = Effect.gen(function* () {
+        let spawned: ChildProcess.StandardCommand | undefined;
+        yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          yield* launcher.launchEditor({ editor: "zed", cwd: "C:\\workspace" });
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              platform: "win32",
+              env,
+              onSpawn: (command) => {
+                spawned = command;
+              },
+            }),
+          ),
+        );
+        assert.ok(spawned);
+        return spawned;
+      });
+
+      const stable = yield* launchZed;
+      assert.equal(stable.command, path.join(stableBin, "zed.EXE"));
+      assert.deepEqual(stable.args, ["C:\\workspace"]);
+
+      env.PATH = `${stableBin};${prereleaseBin}`;
+      assert.equal((yield* launchZed).command, "zed");
+
+      env.PATH = `${prereleaseBin};${stableBin}`;
+      // With only the prerelease install left, it still opens by name.
+      yield* fs.remove(path.join(stableBin, "zed.EXE"));
+      assert.equal((yield* launchZed).command, "zed");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 const launchWindowsShimEditor = (cwd: string) =>

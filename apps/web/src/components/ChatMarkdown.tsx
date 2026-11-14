@@ -19,6 +19,7 @@ import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
+  decodeMarkdownLinkEscapes,
   remarkAssistantInsights,
 } from "@t3tools/shared/markdownPipeline";
 import { useAtomValue } from "@effect/atom-react";
@@ -126,6 +127,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { recordVisitForThread } from "../browserHistoryStore";
+import { contextMenuSourceOf } from "../contextMenuSource";
 import {
   PreferredEditorEnvironmentRequiredError,
   useOpenInPreferredEditor,
@@ -470,6 +472,7 @@ function fileLinkSourcesKey(
 ): string {
   const hrefs = extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))
     .filter((href) => !parseComposerContextHref(href))
+    .map(decodeMarkdownLinkEscapes)
     .map(normalizeMarkdownLinkHrefKey)
     .filter((href) => resolveMarkdownFileLinkMeta(href, cwd, imageBaseDir ?? cwd));
   const spans = extractInlineCodeSpans(text).filter((span) =>
@@ -1319,6 +1322,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             event.stopPropagation();
             const api = readLocalApi();
             if (!api) return;
+            const source = contextMenuSourceOf(event);
             const threadLinkAction = !canOperateHost
               ? undefined
               : linkedThreadPullRequestFor(href) !== null
@@ -1331,7 +1335,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
               canOpenInPreview,
               threadLinkAction,
               position: { x: event.clientX, y: event.clientY },
-              showContextMenu: (items, position) => api.contextMenu.show(items, position),
+              showContextMenu: (items, position) => api.contextMenu.show(items, position, source),
               openInPreview: async (target) => {
                 const result = await openExternalLinkInPreview(target);
                 if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {

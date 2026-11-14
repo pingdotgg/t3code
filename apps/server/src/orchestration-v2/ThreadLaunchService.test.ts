@@ -633,7 +633,7 @@ it.effect.each([" /COMPACT "])(
         );
         assert.isNull((yield* threads.getThreadProjection(launched.threadId)).thread.lastVisitedAt);
         assert.isFalse(
-          (yield* outbox.listByCommandId(CommandId.make("compact-title:initial-message"))).some(
+          (yield* outbox.listByCommandId(CommandId.make("compact-title"))).some(
             (effect) => effect.request.type === "thread-title.generate",
           ),
         );
@@ -776,7 +776,7 @@ it.effect("arms durable title generation after accepting the first message", () 
         generateTitle: true,
       };
       const launched = yield* launches.launch(input);
-      const generationCommandId = CommandId.make("command:launch:title-generation:initial-message");
+      const generationCommandId = input.commandId;
 
       const projection = yield* threads.getThreadProjection(launched.threadId);
       assert.equal(projection.thread.title, "Generate my title");
@@ -850,9 +850,9 @@ it.effect("arms durable title generation after accepting the first message", () 
   }),
 );
 
-it.effect("does not update a reused thread title when the initial message is rejected", () =>
+it.effect("a rejected initial message leaves no title change and no new thread", () =>
   Effect.gen(function* () {
-    const harness = makeHarness();
+    const harness = makeHarness({ adapters: [adapter, claudeAdapter] });
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
       const threads = yield* ThreadManagement.ThreadManagementService;
@@ -897,6 +897,24 @@ it.effect("does not update a reused thread title when the initial message is rej
       assert.isUndefined(projection.thread.titleRegeneration);
       assert.isEmpty(projection.messages);
       assert.isEmpty(yield* outbox.listByCommandId(CommandId.make(`${commandId}:initial-message`)));
+
+      // The orchestrator refuses this goal command, after the launch's own checks pass.
+      const newThreadId = ThreadId.make("thread:launch:rejected-new-thread");
+      const rejected = yield* launches
+        .launch({
+          ...launchInput({
+            command: "command:launch:rejected-new-thread",
+            thread: newThreadId,
+            message: "/goal pause",
+          }),
+          modelSelection: claudeModelSelection,
+        })
+        .pipe(Effect.flip);
+      if (rejected._tag !== "ThreadLaunchError") {
+        assert.fail(`expected ThreadLaunchError, got ${rejected._tag}`);
+      }
+      assert.equal(rejected.operation, "create-thread");
+      assert.isNull(yield* threads.getThreadShell(newThreadId));
     }).pipe(Effect.provide(harness.layer));
   }),
 );
@@ -1680,6 +1698,21 @@ it.effect("replays a server-allocated launch", () =>
         workspace: { type: "worktree", baseRef: "main" },
       });
       const first = yield* launches.launch(rest);
+      // One commit holds the thread and its first run, so no client sees the thread idle between.
+      const launchCommits = yield* threads
+        .streamStoredEventsFrom({ threadId: first.threadId })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "thread.created" || stored.event.type === "run.created",
+          ),
+          Stream.take(2),
+          Stream.runCollect,
+        );
+      assert.deepEqual(
+        Array.from(launchCommits, (stored) => stored.commandId),
+        [rest.commandId, rest.commandId],
+      );
       yield* Deferred.await(setupEntered);
       const retry = yield* launches.launch(rest);
       assert.equal(first.threadId, retry.threadId);

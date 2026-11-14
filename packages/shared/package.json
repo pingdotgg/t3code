@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./png": {
+      "types": "./src/png.ts",
+      "import": "./src/png.ts"
+    },
     "./pullRequestAnchor": {
       "types": "./src/pullRequestAnchor.ts",
       "import": "./src/pullRequestAnchor.ts"
@@ -414,6 +418,10 @@
     "./thirdPartyLicenses": {
       "types": "./src/thirdPartyLicenses.ts",
       "import": "./src/thirdPartyLicenses.ts"
+    },
+    "./commandOutput": {
+      "types": "./src/commandOutput.ts",
+      "import": "./src/commandOutput.ts"
     },
     "./claudeCompaction": {
       "types": "./src/claudeCompaction.ts",
