@@ -1807,6 +1807,161 @@ describe("ClaudeAdapterV2 resumeThread", () => {
       ),
     ),
   );
+  it.effect("fails after the CLI exits because the resumed conversation is gone", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-lost-session-",
+        });
+        yield* fileSystem.makeDirectory(path.join(configDir, "projects", "-workspace"), {
+          recursive: true,
+        });
+        const nativeId = "native-thread-lost";
+        const openedResume: Array<string | undefined> = [];
+        let continuationOffers = 0;
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: { CLAUDE_CONFIG_DIR: configDir },
+          continuationRequests: {
+            offer: () =>
+              Effect.sync(() => {
+                continuationOffers += 1;
+              }),
+          },
+          attachmentsDir: configDir,
+          fileSystem,
+          path,
+          random: yield* SecureRandom.SecureRandom,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          queryRunner: {
+            allocateSessionId: Effect.succeed(nativeId),
+            open: (input) =>
+              Effect.sync(() => {
+                openedResume.push(input.options.resume);
+                // Claude Code answers `--resume` of an unsaved session with this result and exits
+                // before it reads a prompt.
+                const lostConversation = {
+                  type: "result",
+                  subtype: "error_during_execution",
+                  duration_ms: 0,
+                  duration_api_ms: 0,
+                  is_error: true,
+                  num_turns: 0,
+                  stop_reason: null,
+                  total_cost_usd: 0,
+                  usage: {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 0,
+                  },
+                  modelUsage: {},
+                  permission_denials: [],
+                  errors: [`No conversation found with session ID: ${nativeId}`],
+                  uuid: "00000000-0000-4000-8000-000000015854",
+                  session_id: nativeId,
+                } as unknown as SDKMessage;
+                return {
+                  messages: Stream.make(lostConversation),
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.void,
+                };
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const threadId = ThreadId.make("thread-claude-lost-session");
+        const openSession = (providerSessionId: string) =>
+          adapter.openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make(providerSessionId),
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+          });
+
+        const providerThread = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const runtime = yield* openSession("provider-session-claude-lost-1");
+            const providerThread = yield* runtime.ensureThread({
+              threadId,
+              modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+              runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+            });
+            const errorUpdate = yield* runtime.events.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "provider_thread.updated" &&
+                  event.providerThread.status === "error",
+              ),
+              Stream.runHead,
+              Effect.forkScoped,
+            );
+            // An earlier turn was recorded for this id, but its transcript was never saved.
+            yield* Effect.flip(
+              runtime.startTurn(
+                makeClaudeTestTurnInput({
+                  threadId,
+                  providerThread,
+                  now: yield* DateTime.now,
+                  attemptId: RunAttemptId.make("attempt-claude-lost-session"),
+                  text: "continue",
+                  attachments: [],
+                  providerTurnOrdinal: 2,
+                }),
+              ),
+            );
+            assert.deepStrictEqual(openedResume, [nativeId]);
+            // A wake continuation would take the fresh session's history handoff without sending it.
+            assert.equal(continuationOffers, 0);
+            // The session manager unloads the thread on this status, so the next start reaches resumeThread.
+            const update = Option.getOrThrow(yield* Fiber.join(errorUpdate));
+            assert.equal(
+              update.type === "provider_thread.updated"
+                ? update.providerThread.nativeThreadRef?.nativeId
+                : undefined,
+              nativeId,
+            );
+            return providerThread;
+          }),
+        );
+
+        const reopened = yield* openSession("provider-session-claude-lost-2");
+        const outcome = yield* reopened
+          .resumeThread({ providerThread })
+          .pipe(Effect.match({ onSuccess: () => "resumed", onFailure: (error) => error._tag }));
+        assert.equal(
+          outcome,
+          "ProviderAdapterResumeThreadError",
+          `resumeThread accepted ${nativeId} after Claude Code reported its conversation gone, so every later turn resumes it again`,
+        );
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
 });
 
 describe("ClaudeAdapterV2 resume compaction", () => {

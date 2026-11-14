@@ -250,6 +250,7 @@ export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 /** The query exited before the turn attached, so the prompt was never offered. */
 export const CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL =
   "Claude provider query ended before the turn could start.";
+const CLAUDE_LOST_CONVERSATION_ERROR_PREFIX = "No conversation found with session ID";
 const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
 
 interface ClaudeCacheCreation {
@@ -5431,6 +5432,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     adapterOptions.settings.homePath.trim().length > 0 ||
     adapterOptions.environment.CLAUDE_CONFIG_DIR !== hostEnvironment.CLAUDE_CONFIG_DIR;
   const announcedBypassDowngrades = new Set<ThreadId>();
+  // Sessions Claude Code answered "No conversation found" for; a missing transcript alone may still resume.
+  const lostNativeThreads = new Set<string>();
   const readBypassSettings = (filePath: string) =>
     fileSystem.readFileString(filePath).pipe(
       Effect.flatMap(decodeClaudeBypassSettings),
@@ -12577,6 +12580,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ) {
                     context.permissionMode = message.permissionMode;
                   }
+                  const lostConversation =
+                    message.type === "result" &&
+                    "errors" in message &&
+                    message.errors.some((error) =>
+                      error.startsWith(CLAUDE_LOST_CONVERSATION_ERROR_PREFIX),
+                    );
                   if (message.type === "result") {
                     const ledger = claudeModelLedger(message.modelUsage);
                     const growth = claudeLedgerDelta(context.modelLedger, ledger);
@@ -12594,7 +12603,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       resultsReportingNewContextWindow.add(message);
                     }
                   }
-                  return handleSdkMessage({ query: querySession, message });
+                  if (!lostConversation) return handleSdkMessage({ query: querySession, message });
+                  lostNativeThreads.add(nativeThreadId);
+                  // The result can precede turn attachment; the error status unloads the
+                  // thread from the session manager so the next start resumes through resumeThread.
+                  return DateTime.now.pipe(
+                    Effect.flatMap((updatedAt) =>
+                      emitProviderEvent({
+                        type: "provider_thread.updated",
+                        driver: CLAUDE_PROVIDER,
+                        providerThread: {
+                          ...turnInput.providerThread,
+                          providerSessionId: session.id,
+                          status: "error",
+                          updatedAt,
+                        },
+                      }),
+                    ),
+                    // Before a turn attaches, the refusal would read as a native wake and open a
+                    // continuation that consumes the fresh session's history handoff without a prompt.
+                    Effect.andThen(Ref.get(activeTurn)),
+                    Effect.flatMap((attached) =>
+                      attached === null
+                        ? Effect.void
+                        : handleSdkMessage({ query: querySession, message }),
+                    ),
+                  );
                 }),
               ),
             ),
@@ -13542,6 +13576,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 // A live process holds the conversation even before saving it.
                 (yield* Ref.get(queryContext))?.nativeThreadId !== nativeThreadId
               ) {
+                if (lostNativeThreads.has(nativeThreadId)) {
+                  return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CLAUDE_PROVIDER,
+                    detail: `Claude Code has no conversation ${nativeThreadId} to resume.`,
+                  });
+                }
                 // An unreadable transcript leaves the resume to the CLI.
                 const transcript = yield* claudeTranscriptState(nativeThreadId).pipe(
                   Effect.orElseSucceed(() => "missing" as const),
