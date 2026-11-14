@@ -206,13 +206,15 @@ function serializeAnchor(anchor: Element, inTableCell: boolean): string {
   const markdownCopy = anchor.getAttribute("data-markdown-copy");
   if (markdownCopy !== null) return escapeTablePipes(markdownCopy, inTableCell);
   const content = serializeChildren(anchor, inTableCell);
-  const href = escapeTablePipes(anchor.getAttribute("href") ?? "", inTableCell);
+  const href = anchor.getAttribute("href") ?? "";
   if (!/^(?:https?:\/\/|mailto:)/i.test(href)) return content;
   const label = content.trim();
   if (!label) return "";
-  // GFM autolinks a bare URL or email address back to the same destination.
-  if (href === label || href === `mailto:${label}`) return label;
-  return `[${label}](${href})`;
+  if (href === label) return escapeTablePipes(label, inTableCell);
+  // Keep ordinary GFM email autolinks as bare addresses.
+  if (href === `mailto:${label}` && /^[\w.+-]+@[\w-]+(?:\.[\w-]+)+$/.test(label)) return label;
+  const destination = escapeTablePipes(href.replace(/[\\()]/g, "\\$&"), inTableCell);
+  return `[${label}](${destination})`;
 }
 
 /**

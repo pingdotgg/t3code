@@ -27,11 +27,11 @@ test(
       window.getSelection()?.addRange(range);
       return null;
     });
-    await browser.keyboard.press("Control+C");
+    await browser.keyboard.press("ControlOrMeta+C");
 
     const composer = screen.getByRole("textbox");
     await composer.tap();
-    await browser.keyboard.press("Control+V");
+    await browser.keyboard.press("ControlOrMeta+V");
     await app.screenshot("pasted");
     await expect(composer).toContainText(MESSAGE);
   },

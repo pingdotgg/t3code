@@ -227,6 +227,10 @@ describe("serializeRenderedMarkdownFragment", () => {
         new FakeElement("A", [], { href: "mailto:support@example.com?subject=Help" }).append(
           new FakeText("Support"),
         ),
+        new FakeText(", "),
+        new FakeElement("A", [], { href: "mailto:support@example.com?subject=Help)" }).append(
+          new FakeText("Support"),
+        ),
         new FakeText(" or "),
         new FakeElement("A", [], { href: "/environment-one/thread-one" }).append(
           new FakeText("the thread"),
@@ -234,10 +238,33 @@ describe("serializeRenderedMarkdownFragment", () => {
         new FakeText("."),
       ),
     );
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
-      "Write to support@example.com, [Support](mailto:support@example.com?subject=Help) or the thread.",
+    const copied = serializeRenderedMarkdownFragment(asNode(container));
+    expect(copied).toBe(
+      "Write to support@example.com, [Support](mailto:support@example.com?subject=Help), [Support](mailto:support@example.com?subject=Help\\)) or the thread.",
     );
+    const paragraph = parseMarkdownWithMath(copied).children[0];
+    if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
+    expect(
+      paragraph.children.filter((child) => child.type === "link").map((link) => link.url),
+    ).toEqual([
+      "mailto:support@example.com",
+      "mailto:support@example.com?subject=Help",
+      "mailto:support@example.com?subject=Help)",
+    ]);
   });
+
+  it.each(["support@example.com?subject=Help", "foo"])(
+    "keeps the destination when the email label is not a bare address: %s",
+    (label) => {
+      const href = `mailto:${label}`;
+      const anchor = new FakeElement("A", [], { href }).append(new FakeText(label));
+      const container = new FakeElement("DIV").append(anchor);
+      const paragraph = parseMarkdownWithMath(serializeRenderedMarkdownFragment(asNode(container)))
+        .children[0];
+      if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
+      expect(paragraph.children.find((child) => child.type === "link")?.url).toBe(href);
+    },
+  );
 
   it("copies alert and insight callouts as their Markdown instead of the rendered label", () => {
     // The shape ChatMarkdown renders for `> [!WARNING]\n> Back up first.`.
