@@ -44,7 +44,12 @@ export type AndroidAnchoredMenuProps = {
 };
 
 export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
-  const { scale, menuWidth: desiredMenuWidth, menuItemHeight } = useAndroidControlSizing();
+  const {
+    scale,
+    menuWidth: desiredMenuWidth,
+    menuItemHeight,
+    menuCornerRadius,
+  } = useAndroidControlSizing();
   const [anchor, setAnchor] = useState<AnchorSnapshot | null>(null);
   const [path, setPath] = useState<readonly MenuAction[]>([]);
   const [overlay, setOverlay] = useState<OverlayFrame | null>(null);
@@ -184,11 +189,11 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
             ) : (
               <View
                 // No entering animation: it freezes this frame before the Compose host reports its size.
-                className="absolute overflow-hidden bg-card-alt shadow-md"
+                className="absolute overflow-hidden bg-grouped-card shadow-md"
                 style={{
                   left,
                   width: menuWidth,
-                  borderRadius: 4 * scale,
+                  borderRadius: menuCornerRadius,
                   ...verticalPlacement,
                 }}
               >

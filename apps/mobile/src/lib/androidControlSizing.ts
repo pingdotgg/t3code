@@ -16,6 +16,7 @@ export function resolveAndroidControlSizing(baseFontSize: number) {
     largeFabSize: Math.round(96 * scale),
     menuWidth: Math.round(250 * scale),
     menuItemHeight: Math.max(48, Math.round(48 * scale)),
+    menuCornerRadius: Math.round(16 * scale),
     fabClearance: fabSize * 2 + 36,
   };
 }
