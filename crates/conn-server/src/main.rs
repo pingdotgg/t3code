@@ -33,6 +33,17 @@ fn main() {
     if let Some(codex) = conn_provider_codex::CodexProvider::detect("codex".into(), codex) {
         providers.push(Arc::new(codex));
     }
+    // T3's default `grok` instance: off until `providerInstances.grok` enables it; the
+    // server's status task applies the stored settings and probes the CLI.
+    providers.push(Arc::new(conn_provider_acp::AcpProvider::with_settings(
+        "grok".into(),
+        &conn_provider_acp::GROK,
+        conn_provider_acp::AcpConfig {
+            workspace_cwd: Some(options.cwd.clone()),
+            ..Default::default()
+        },
+        conn_provider_acp::GrokSettings::default(),
+    )));
     // One thread: a container serves a handful of clients, and each worker thread costs
     // stack and allocator arenas.
     let runtime = conn_server::serve::or_exit(

@@ -11,6 +11,7 @@ rust-version.workspace = true
 conn-contract.workspace = true
 conn-provider.workspace = true
 conn-provider-support.workspace = true
+conn-support.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 # Signals the agent's process group at close and Stop, as T3 does; already in the tree.

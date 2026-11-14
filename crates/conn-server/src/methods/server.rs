@@ -82,9 +82,16 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         async move { config }
     });
     let providers = deps.clone();
-    table.unary("server.refreshProviders", move |_, _: Value| {
-        let list = current_providers(&providers);
-        async move { Ok(json!({ "providers": list })) }
+    table.unary("server.refreshProviders", move |_, input: Value| {
+        let deps = providers.clone();
+        async move {
+            // T3 awaits the refresh before it answers. `modelCatalogOnly` answers no providers.
+            if input["modelCatalogOnly"] == true {
+                return Ok(json!({ "providers": [] }));
+            }
+            super::provider::refresh(&deps, input["instanceId"].as_str()).await;
+            Ok(json!({ "providers": current_providers(&deps) }))
+        }
     });
 
     let env = environment.clone();
@@ -130,7 +137,8 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     table.stream("subscribeServerConfig", move |_, _: Value| {
         let config = server_config(&env, current_providers(&providers));
         let env = env.clone();
-        async move { Ok(config_stream(env, config?)) }
+        let deps = providers.clone();
+        async move { Ok(config_stream(env, deps, config?)) }
     });
     let env = environment.clone();
     table.stream("subscribeAuthAccess", move |ctx, _: Value| {
@@ -208,12 +216,15 @@ pub fn server_config(environment: &Environment, providers: Vec<Value>) -> Result
 
 /// The config snapshot, then `settingsUpdated` after each settings write and
 /// `keybindingsUpdated` after each keybinding write, until the client unsubscribes.
-fn config_stream(env: Arc<Environment>, config: Value) -> ItemStream {
+fn config_stream(env: Arc<Environment>, deps: Deps, config: Value) -> ItemStream {
     let (tx, rx) = mpsc::channel::<Result<Value, Failure>>(4);
     let mut settings = env.settings.subscribe();
     let mut keybindings = env.keybindings.subscribe();
+    let mut providers = deps.provider_status.subscribe();
     settings.mark_unchanged();
     keybindings.mark_unchanged();
+    providers.mark_unchanged();
+    let mut sent_providers = config["providers"].clone();
     tokio::spawn(async move {
         let snapshot = json!({ "version": 1, "type": "snapshot", "config": config });
         if tx.send(Ok(snapshot)).await.is_err() {
@@ -229,6 +240,14 @@ fn config_stream(env: Arc<Environment>, config: Value) -> ItemStream {
                     if changed.is_err() { break; }
                     let snapshot = env.keybindings.snapshot();
                     json!({ "version": 1, "type": "keybindingsUpdated", "payload": { "keybindings": snapshot.keybindings, "issues": snapshot.issues } })
+                }
+                changed = providers.changed() => {
+                    if changed.is_err() { break; }
+                    // T3 sends the list only when it differs from the one this client has.
+                    let list = Value::Array(current_providers(&deps));
+                    if list == sent_providers { continue; }
+                    sent_providers = list.clone();
+                    json!({ "version": 1, "type": "providerStatuses", "payload": { "providers": list } })
                 }
                 _ = tx.closed() => break,
             };
@@ -351,7 +370,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn the_config_stream_follows_settings_and_keybinding_writes() {
+    async fn the_config_stream_follows_settings_keybindings_and_providers() {
         let (env, dir) = environment();
         let config = server_config(&env, Vec::new()).unwrap();
         assert!(config["keybindings"].as_array().unwrap().len() > 10);
@@ -362,7 +381,18 @@ mod tests {
             server_time.len() == 24 && server_time <= before.as_str(),
             "serverTime is the host clock as an ISO time: {server_time}"
         );
-        let mut stream = config_stream(env.clone(), config);
+        let deps = Deps {
+            providers: vec![std::sync::Arc::new(
+                conn_provider_acp::AcpProvider::with_settings(
+                    "grok".into(),
+                    &conn_provider_acp::GROK,
+                    conn_provider_acp::AcpConfig::default(),
+                    conn_provider_acp::GrokSettings::default(),
+                ),
+            )],
+            ..Deps::default()
+        };
+        let mut stream = config_stream(env.clone(), deps.clone(), config);
         assert_eq!(stream.recv().await.unwrap().unwrap()["type"], "snapshot");
         env.settings
             .update(json!({ "enableAgentBrowserAccess": false }), None)
@@ -380,6 +410,11 @@ mod tests {
             stream.recv().await.unwrap().unwrap()["type"],
             "keybindingsUpdated"
         );
+        // A provider refresh sends the new list (`providerStatuses`).
+        super::super::provider::refresh(&deps, None).await;
+        let event = stream.recv().await.unwrap().unwrap();
+        assert_eq!(event["type"], "providerStatuses");
+        assert_eq!(event["payload"]["providers"][0]["instanceId"], "grok");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

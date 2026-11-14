@@ -226,6 +226,8 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
         state_dir.display()
     );
     println!("methods: {}", state.table.coverage());
+    // Probes spawn provider CLIs; T3 starts them once the server is ready, too.
+    crate::methods::provider::start_status_refresh(&state.deps);
     if !is_desktop {
         // One code, valid 24 hours, spent by the first device that pairs.
         match auth.issue_pairing_code(None, auth::STARTUP_PAIRING_CODE_TTL_MS) {

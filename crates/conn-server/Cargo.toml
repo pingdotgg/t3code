@@ -19,6 +19,7 @@ conn-engine.workspace = true
 conn-provider.workspace = true
 conn-provider-claude.workspace = true
 conn-provider-codex.workspace = true
+conn-provider-acp.workspace = true
 conn-mcp.workspace = true
 conn-vcs.workspace = true
 conn-files.workspace = true

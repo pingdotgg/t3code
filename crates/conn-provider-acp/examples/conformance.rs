@@ -59,6 +59,7 @@ async fn main() {
             AcpConfig {
                 binary: scenario["binary"].as_str().expect("binary").to_owned(),
                 environment: Vec::new(),
+                ..AcpConfig::default()
             },
         );
         if let Err(error) = run(&provider, calls.as_array().cloned().unwrap_or_default()).await {

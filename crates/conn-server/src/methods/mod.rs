@@ -38,6 +38,8 @@ pub struct Deps {
     pub scheduled_tasks: Option<conn_features::scheduled::ScheduledTasks>,
     /// Annotations (`conn_features::annotations`); without it `annotations.*` is not served.
     pub annotations: Option<conn_features::annotations::Annotations>,
+    /// Bumped when a provider's `ServerProvider` entry changes (`provider::ProviderStatus`).
+    pub provider_status: provider::ProviderStatus,
 }
 
 impl std::fmt::Debug for Deps {
