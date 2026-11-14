@@ -3033,6 +3033,20 @@ describe("parseAgentSessionTranscript", () => {
           sessionId: "claude-session",
           message: { role: "user", content: [{ type: "tool_result", text: "hidden" }] },
         }),
+        ...[
+          "<command-name>/review</command-name>\n<command-message>review</command-message>\n<command-args>the login flow</command-args>",
+          "<local-command-stdout>Enabled plan mode</local-command-stdout>",
+          "<bash-input>npm test</bash-input>",
+          "<bash-stdout>1 passed</bash-stdout><bash-stderr></bash-stderr>",
+          "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>",
+          "[Request interrupted by user for tool use]",
+        ].map((content) =>
+          JSON.stringify({
+            type: "user",
+            sessionId: "claude-session",
+            message: { role: "user", content },
+          }),
+        ),
         JSON.stringify({
           type: "assistant",
           sessionId: "claude-session",
@@ -3064,6 +3078,8 @@ describe("parseAgentSessionTranscript", () => {
       model: "claude-sonnet-5",
       messages: [
         { role: "user", text: "Fix authentication" },
+        { role: "user", text: "/review the login flow" },
+        { role: "user", text: "!npm test" },
         { role: "assistant", text: "Updated the login flow" },
         { role: "assistant", text: "The provider request failed" },
       ],
@@ -3074,6 +3090,20 @@ describe("parseAgentSessionTranscript", () => {
     { customTitles: ["Refactor auth module"], expected: "Refactor auth module" },
     // Claude writes an empty customTitle when the user clears a rename.
     { customTitles: ["Refactor auth module", ""], expected: "Generated title" },
+    // Some launchers rename the session to the raw markup of its opening command.
+    {
+      customTitles: ["<command-message>pstack:poteto-mode</command-message>"],
+      expected: "Generated title",
+    },
+    {
+      customTitles: ["<local-command-stdout>Enabled plan mode</local-command-stdout>"],
+      expected: "Generated title",
+    },
+    { customTitles: ["<bash-input>npm test</bash-input>"], expected: "Generated title" },
+    {
+      customTitles: ["<command-name>/review</command-name><command-args>login flow</command-args>"],
+      expected: "Generated title",
+    },
   ])("uses Claude custom titles $customTitles over the AI title", ({ customTitles, expected }) => {
     const aiTitle = JSON.stringify({
       type: "ai-title",
@@ -3086,7 +3116,7 @@ describe("parseAgentSessionTranscript", () => {
           type: "user",
           sessionId: "claude-session",
           timestamp: "2026-08-24T10:00:00.000Z",
-          message: { role: "user", content: "<command-name>/effort</command-name>" },
+          message: { role: "user", content: "Tighten the session checks" },
         }),
         // Claude rewrites both records on every metadata flush with ai-title
         // last, so a later ai-title must not override the user's rename.
@@ -3102,6 +3132,33 @@ describe("parseAgentSessionTranscript", () => {
     });
 
     expect(thread?.title).toBe(expected);
+  });
+
+  it.each([
+    {
+      first:
+        "<command-name>/pstack:arena</command-name><command-args>Compare designs</command-args>",
+      title: "Compare designs",
+    },
+    {
+      first: "<command-name>/clear</command-name><command-message>clear</command-message>",
+      title: "Plan the release",
+    },
+    { first: "/Users/me/app fails to build", title: "/Users/me/app fails to build" },
+  ])("titles a Claude thread after its request, not command markup: $title", ({ first, title }) => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [first, "Plan the release"]
+        .map((content) =>
+          JSON.stringify({ type: "user", sessionId: "claude-session", message: { content } }),
+        )
+        .join("\n"),
+      source: "claudeAgent",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe(title);
   });
 
   it.each([199, 200])("keeps the canonical first prompt with %s later Codex messages", (count) => {
@@ -3495,18 +3552,38 @@ describe("parseAgentSessionTranscript", () => {
     expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
   });
 
-  it("skips sessions without a visible user message", () => {
+  it.each([
+    {
+      name: "only an assistant reply",
+      records: [{ type: "assistant", message: { content: "Done" } }],
+      expected: null,
+    },
+    {
+      name: "only a bare command",
+      records: [{ type: "user", message: { content: "<command-name>/clear</command-name>" } }],
+      expected: null,
+    },
+    {
+      name: "a bare command the agent answered",
+      records: [
+        { type: "user", message: { content: "<command-name>/review</command-name>" } },
+        { type: "assistant", message: { content: "Found two issues" } },
+      ],
+      expected: { title: "/review", texts: ["/review", "Found two issues"] },
+    },
+  ])("imports a Claude session only if it got a request: $name", ({ records, expected }) => {
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
-      contents: JSON.stringify({
-        type: "assistant",
-        message: { role: "assistant", content: "Done" },
-      }),
+      contents: records.map((record) => JSON.stringify(record)).join("\n"),
       source: "claudeAgent",
       providerInstanceId: ProviderInstanceId.make("claudeAgent"),
       fallbackSessionId: "claude-session",
       lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
     });
 
-    expect(thread).toBeNull();
+    expect(
+      thread === null
+        ? null
+        : { title: thread.title, texts: thread.messages.map((message) => message.text) },
+    ).toEqual(expected);
   });
 });

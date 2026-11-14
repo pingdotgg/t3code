@@ -356,10 +356,12 @@ function foldClaudeFields(fields: ClaudeFields, record: DecodedTranscriptRecord)
   const model = record.message?.model?.trim();
   return {
     sessionId: record.sessionId?.trim() || fields.sessionId,
-    title: record.aiTitle?.trim() || fields.title,
+    title: claudeTitle(record.aiTitle) ?? fields.title,
     // Claude flushes the AI title after the user's rename; an empty rename clears it.
     customTitle:
-      record.customTitle === undefined ? fields.customTitle : record.customTitle.trim() || null,
+      record.customTitle === undefined
+        ? fields.customTitle
+        : (claudeTitle(record.customTitle) ?? null),
     // Claude uses this sentinel for local error responses. It is not a
     // model ID that can be selected when the imported session resumes.
     model: model && model !== "<synthetic>" ? model : fields.model,
@@ -395,6 +397,44 @@ function codexHistoryBase(records: ReadonlyArray<DecodedTranscriptRecord>) {
     base.end_byte_offset >= 0
     ? base
     : undefined;
+}
+
+// Claude Code records its own UI as user turns: slash commands, `!` shell runs and
+// their output, task notifications. Keep what the user typed, as they typed it.
+const CLAUDE_UI_OUTPUT =
+  /^(?:<(?:task-notification|local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)>|\[Request interrupted by user(?: for tool use)?\]$)/;
+
+/**
+ * A slash command as typed. Its arguments may name the thread; a bare command
+ * leaves that to a later prompt. Null for any other text.
+ */
+function claudeCommand(text: string): { readonly text: string; readonly titleText: string } | null {
+  if (!/^<command-(?:name|message)>/.test(text)) return null;
+  const name =
+    /<command-name>([^<]*)<\/command-name>/.exec(text)?.[1]?.trim() ||
+    `/${/<command-message>([^<]*)<\/command-message>/.exec(text)?.[1]?.trim() ?? ""}`;
+  const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1]?.trim() ?? "";
+  return { text: args.length === 0 ? name : `${name} ${args}`, titleText: args };
+}
+
+/** What a Claude user turn shows the user typed, and the part of it that may name the thread. */
+function claudeUserText(text: string): { readonly text: string; readonly titleText: string } {
+  if (CLAUDE_UI_OUTPUT.test(text)) return { text: "", titleText: "" };
+  const shellInput = /^<bash-input>([\s\S]*)<\/bash-input>$/.exec(text)?.[1];
+  if (shellInput !== undefined) return { text: `!${shellInput}`, titleText: "" };
+  return claudeCommand(text) ?? { text, titleText: text };
+}
+
+function claudeVisibleText(record: DecodedTranscriptRecord) {
+  const text = extractText(record.message?.content);
+  return record.type === "user" ? claudeUserText(text) : { text, titleText: text };
+}
+
+/** Saved titles can be the raw markup of a user turn, such as the command that opened the session. */
+function claudeTitle(title: string | undefined): string | undefined {
+  const trimmed = title?.trim();
+  if (!trimmed) return undefined;
+  return claudeUserText(trimmed).text === trimmed ? trimmed : undefined;
 }
 
 function deriveTitle(source: AgentSessionSource, text: string): string | undefined {
@@ -472,6 +512,9 @@ function parseAgentSessionRecords(
       : (claudeFields.title ?? null);
   let model = claudeFields.model ?? null;
   let derivedTitle: string | undefined;
+  // Names a session whose only request was a bare command, such as `/review`.
+  let bareCommandTitle: string | undefined;
+  let hasAssistantMessage = false;
   let hasCodexSessionId = false;
   const messages: Array<AgentSessionThreadMessage & { readonly codexResponseUser: boolean }> = [];
   let firstUserMessage:
@@ -533,13 +576,16 @@ function parseAgentSessionRecords(
   let conversationMessageCount = 0;
   const retainMessage = (
     message: AgentSessionThreadMessage & { readonly codexResponseUser: boolean },
+    titleText = message.text,
   ) => {
     if (firstUserMessage === undefined && message.role === "user") {
       firstUserMessage = message;
     }
     if (derivedTitle === undefined && message.role === "user") {
-      derivedTitle = deriveTitle(input.source, message.text);
+      derivedTitle = deriveTitle(input.source, titleText);
+      bareCommandTitle ??= deriveTitle(input.source, message.text);
     }
+    hasAssistantMessage ||= message.role === "assistant";
     conversationMessageCount += 1;
     messages.push(message);
     if (messages.length > MAX_IMPORTED_MESSAGES) messages.shift();
@@ -579,14 +625,17 @@ function parseAgentSessionRecords(
     if (input.source === "claudeAgent") {
       if (isHiddenClaudeRecord(record)) continue;
       if (record.type !== "user" && record.type !== "assistant") continue;
-      const text = extractText(record.message?.content);
+      const { text, titleText } = claudeVisibleText(record);
       if (text.length === 0) continue;
-      retainMessage({
-        role: record.type,
-        text,
-        createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
-        codexResponseUser: false,
-      });
+      retainMessage(
+        {
+          role: record.type,
+          text,
+          createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
+          codexResponseUser: false,
+        },
+        titleText,
+      );
       continue;
     }
 
@@ -651,7 +700,14 @@ function parseAgentSessionRecords(
   const visibleMessages = messages.map(
     ({ codexResponseUser: _codexResponseUser, ...message }) => message,
   );
-  if (providerSessionId.trim().length === 0 || firstUserMessage === undefined) return null;
+  if (
+    providerSessionId.trim().length === 0 ||
+    firstUserMessage === undefined ||
+    // A Claude session of bare commands such as `/clear` that no reply followed did nothing.
+    (input.source === "claudeAgent" && derivedTitle === undefined && !hasAssistantMessage)
+  ) {
+    return null;
+  }
   const firstUserMessageRetained = messages.includes(firstUserMessage);
   const { codexResponseUser: _codexResponseUser, ...visibleFirstUserMessage } = firstUserMessage;
   const retainedMessages = firstUserMessageRetained
@@ -662,7 +718,8 @@ function parseAgentSessionRecords(
     source: input.source,
     providerInstanceId: input.providerInstanceId,
     providerSessionId,
-    title: claudeFields.customTitle ?? title ?? derivedTitle ?? "Imported thread",
+    title:
+      claudeFields.customTitle ?? title ?? derivedTitle ?? bareCommandTitle ?? "Imported thread",
     model,
     createdAt: retainedMessages[0]?.createdAt ?? fallbackTimestamp,
     updatedAt: fallbackTimestamp,

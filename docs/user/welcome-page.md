@@ -95,7 +95,10 @@ newest remaining visible user and assistant messages, with 200 messages total.
 It omits tool activity and attachments. For Codex, it omits generated setup
 context only when a canonical user event and a valid shared turn ID identify the
 same user turn. Ambiguous legacy or response-only context stays in the imported
-conversation so T3 Code does not remove user text. It reads one conversation at
+conversation so T3 Code does not remove user text. For Claude, slash commands
+and `!` shell commands appear as you typed them; their output, background task
+notifications and interruption markers are left out, and a conversation that
+only ran commands such as `/clear`, with no reply, is skipped. It reads one conversation at
 a time and skips files larger than 4 GiB. It also skips a conversation when the
 message text and metadata it keeps need more than 32 MiB of memory. Tool output
 does not count toward that limit. It skips a conversation with more than 100,000
