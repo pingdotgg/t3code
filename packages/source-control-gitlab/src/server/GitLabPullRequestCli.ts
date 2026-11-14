@@ -56,6 +56,7 @@ import {
   decodeMergeRequestGraphqlListJson,
   decodeMergeRequestListJson,
   decodeMergeRequestFileStatsJson,
+  decodeMergeRequestWatchFingerprintJson,
   decodeMergeRequestStatsJson,
   decodeMutationErrorsJson,
   decodeNotesJson,
@@ -75,6 +76,7 @@ import {
   LABEL_PERMISSION_GRAPHQL_QUERY,
   MERGE_MESSAGES_GRAPHQL_QUERY,
   MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
+  MERGE_REQUEST_WATCH_FINGERPRINT_GRAPHQL_QUERY,
   MERGE_REQUEST_STATS_GRAPHQL_QUERY,
   REPOSITORY_BLOBS_GRAPHQL_QUERY,
   LIST_ITEM_GRAPHQL_FIELDS,
@@ -89,6 +91,7 @@ import {
 } from "./gitLabMergeRequestJson.ts";
 import type {
   ProviderChangeRequestSummary,
+  ProviderChangeRequestWatchFingerprint,
   ProviderFileStats,
   ProviderListCursor,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
@@ -343,6 +346,8 @@ const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DIFF_TIMEOUT_MS = 60_000;
 const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
+// REST list rows carry full descriptions, so a page can pass the 1 MB default output cap.
+const MERGE_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 export interface GitLabDiscussionThreads {
   readonly threads: ReadonlyArray<PullRequestConversationThread>;
@@ -445,6 +450,13 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly repository: string;
       readonly number: number;
     }) => Effect.Effect<ProviderFileStats, GitLabPullRequestCliError>;
+
+    readonly getMergeRequestWatchFingerprint: (input: {
+      readonly cwd: string;
+      readonly host?: string | undefined;
+      readonly repository: string;
+      readonly number: number;
+    }) => Effect.Effect<ProviderChangeRequestWatchFingerprint | null, GitLabPullRequestCliError>;
 
     readonly listNotes: (input: {
       readonly cwd: string;
@@ -1085,6 +1097,7 @@ export const make = Effect.gen(function* () {
         ["per_page", String(perPage)],
         ["page", String(input.page)],
       ])}`,
+      maxOutputBytes: MERGE_REQUEST_LIST_MAX_OUTPUT_BYTES,
     }).pipe(
       Effect.flatMap((result) => {
         const raw = result.stdout.trim();
@@ -2300,6 +2313,19 @@ export const make = Effect.gen(function* () {
         query: MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
         variables: { fullPath: input.repository, iid: String(input.number) },
         decode: decodeMergeRequestFileStatsJson,
+      }),
+    ),
+
+    getMergeRequestWatchFingerprint: Effect.fn(
+      "GitLabPullRequestCli.getMergeRequestWatchFingerprint",
+    )((input) =>
+      graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "getMergeRequestWatchFingerprint",
+        query: MERGE_REQUEST_WATCH_FINGERPRINT_GRAPHQL_QUERY,
+        variables: { fullPath: input.repository, iid: String(input.number) },
+        decode: decodeMergeRequestWatchFingerprintJson,
       }),
     ),
 
