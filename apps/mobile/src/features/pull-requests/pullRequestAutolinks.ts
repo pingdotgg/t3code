@@ -3,6 +3,8 @@ import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
+import { markdownHtmlTags } from "../../lib/markdownDocument";
+
 type MarkdownNode = {
   readonly type: string;
   readonly position?:
@@ -25,7 +27,6 @@ const UNLINKED_TYPES = new Set([
   "html",
   "definition",
 ]);
-const HTML_TAG = /<!--[\s\S]*?(?:-->|$)|<\/?[a-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/giu;
 const PROTECTED_TAG = /^<(\/)?(?:a|code|pre|script|style)(?=[\s>])/iu;
 
 /**
@@ -59,7 +60,7 @@ export function linkReferenceAutolinks(
           if (protectedHtmlDepth === 0) visit(child, base, inHtml);
           continue;
         }
-        // Text between tags holds no tag this pattern matches, so expanding it again would recurse forever.
+        // Text between tags holds no tag the scan matches, so expanding it again would recurse forever.
         if (inHtml) continue;
         const start = child.position?.start.offset;
         const end = child.position?.end.offset;
@@ -71,7 +72,8 @@ export function linkReferenceAutolinks(
             visit(parser.parse(markdown.slice(from, to)), from, true);
           }
         };
-        for (const tag of markdown.slice(base + start, base + end).matchAll(HTML_TAG)) {
+        // Skips tags inside code spans and fences, which stay code.
+        for (const tag of markdownHtmlTags(markdown.slice(base + start, base + end))) {
           linkHtmlText(base + start + tag.index);
           const protectedTag = PROTECTED_TAG.exec(tag[0]);
           if (protectedTag) {
