@@ -8,7 +8,8 @@
 //! - `background`: the turn completes with background work left, then asks for a
 //!   continuation turn, which answers `continued` and ends the work.
 //! - `background-task`: the turn completes with background task `bg-1` on its provider
-//!   thread's roster, which `await_background_tasks` marks or clears.
+//!   thread's roster, which `await_background_tasks` marks or clears. `background-task-hang`:
+//!   the same roster, and the turn waits for an interrupt.
 //! - `background-reported`: like `background-hold`, but the work shows only as
 //!   `background_work.updated` (pending), and a running background command row.
 //! - anything else: streams `echo: <text>` in three chunks and completes.
@@ -553,13 +554,15 @@ impl Session for FakeSession {
                     started.push(provider_turn(&turn, "completed"));
                     started.push(terminal(&turn, TurnStatus::Completed, None));
                 }
-                "background-task" => {
+                "background-task" | "background-task-hang" => {
                     self.background.store(true, Ordering::SeqCst);
                     *crate::lock(&self.roster) = vec![("bg-1".to_owned(), false)];
                     started.push(self.roster_update(conn_contract::to_json(&input.provider_thread)));
-                    started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "started bg-1", false));
-                    started.push(provider_turn(&turn, "completed"));
-                    started.push(terminal(&turn, TurnStatus::Completed, None));
+                    if text == "background-task" {
+                        started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "started bg-1", false));
+                        started.push(provider_turn(&turn, "completed"));
+                        started.push(terminal(&turn, TurnStatus::Completed, None));
+                    }
                 }
                 "background-hold" => {
                     self.background.store(true, Ordering::SeqCst);
