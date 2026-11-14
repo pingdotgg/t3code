@@ -165,23 +165,22 @@ export class AntigravityKeyringError extends Schema.TaggedError<AntigravityKeyri
   }
 }
 
-/** Reads the CLI's keyring entry; `undefined` when there is none. Windows names it `service:account`. */
+/** Reads the CLI's keyring entry; `undefined` when there is none. */
 const readAntigravityKeyringSecret = Effect.fn("readAntigravityKeyringSecret")(function* (
   platform: NodeJS.Platform,
 ) {
+  // go-keyring's Windows target is `gemini:antigravity`; @napi-rs/keyring 1.3 reaches it only via
+  // `withTarget`, which writes an empty secret first and would wipe the CLI's sign-in.
+  if (platform === "win32") return undefined;
   // Loading the native binding lazily keeps a broken binding from blocking server startup.
   const Keyring = yield* Effect.tryPromise({
     try: () => import("@napi-rs/keyring"),
     catch: (cause) => new AntigravityKeyringError({ cause }),
   });
-  const entry =
-    platform === "win32"
-      ? Keyring.AsyncEntry.withTarget(
-          `${KEYRING_SERVICE}:${KEYRING_ACCOUNT}`,
-          KEYRING_SERVICE,
-          KEYRING_ACCOUNT,
-        )
-      : new Keyring.AsyncEntry(KEYRING_SERVICE, KEYRING_ACCOUNT);
+  const entry = yield* Effect.try({
+    try: () => new Keyring.AsyncEntry(KEYRING_SERVICE, KEYRING_ACCOUNT),
+    catch: (cause) => new AntigravityKeyringError({ cause }),
+  });
   // Typed as `Uint8Array`, but the binding returns a plain array of bytes.
   const secret: ArrayLike<number> | undefined = yield* Effect.tryPromise({
     try: () => entry.getSecret(),
