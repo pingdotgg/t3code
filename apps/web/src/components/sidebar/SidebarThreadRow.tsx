@@ -895,7 +895,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const fileDropHandlers = onFileDropThreads
     ? makeWorkspaceFileDropHandlers({
-        setDragActive: (active) => setFileDragActive(setIsFileDragOver, active),
+        setDragMode: (mode) => setFileDragActive(setIsFileDragOver, mode !== null),
         addFiles: (files) => {
           onFileDropThreads(threadRef, files);
         },
@@ -1720,7 +1720,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const onFileDropThreads = props.onFileDropThreads;
   const fileDropHandlers = makeWorkspaceFileDropHandlers({
-    setDragActive: (active) => setFileDragActive(setIsFileDragOver, active),
+    setDragMode: (mode) => setFileDragActive(setIsFileDragOver, mode !== null),
     addFiles: (files) => {
       onFileDropThreads(threadRef, files);
     },
