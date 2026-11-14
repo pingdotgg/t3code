@@ -9,7 +9,7 @@ import type { PullRequestReviewGuideExcerpt, PullRequestReviewPosition } from "@
 import { ArrowUpRightIcon } from "lucide-react";
 import { useState } from "react";
 
-import { useTheme } from "~/hooks/useTheme";
+import { useRenderedAppearance } from "~/hooks/useTheme";
 import {
   getRenderablePatch,
   resolveDiffThemeName,
@@ -18,7 +18,7 @@ import {
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import {
   buildDiffReviewComment,
-  resolveDiffReviewPosition,
+  resolveDiffReviewAnchor,
   type ReviewCommentContext,
 } from "~/reviewCommentContext";
 
@@ -31,12 +31,9 @@ import {
   toViewerSide,
 } from "../PullRequestReviewAnnotation";
 import type { PendingReviewComment } from "../pullRequestReviewStore";
-import {
-  excerptExpansionOldContents,
-  excerptRows,
-  fileDiffRows,
-  rowsToPatch,
-} from "@t3tools/client-runtime/review-guide-tour";
+import { excerptRows, fileDiffRows, rowsToPatch } from "@t3tools/client-runtime/review-guide-tour";
+import type { PullRequestCompletionScope } from "../PullRequestMarkdownTextarea";
+import { excerptLoader } from "./GuideExcerpt.logic";
 import { GuideNoteMarker } from "./GuideNotes";
 import { GuideProse } from "./GuideProse";
 
@@ -53,11 +50,15 @@ export interface ExcerptNoteMarker {
 
 export interface ExcerptCommenting {
   readonly canComment: boolean;
+  /** The host anchors a comment to a range of lines rather than to its last one. */
+  readonly rangeComments: boolean;
+  readonly completionScope: PullRequestCompletionScope | null;
   readonly pending: ReadonlyArray<PendingReviewComment>;
   readonly onComment: (comment: {
     readonly path: string;
     readonly oldPath: string | null;
     readonly position: PullRequestReviewPosition;
+    readonly startPosition?: PullRequestReviewPosition | undefined;
     readonly body: string;
   }) => void;
   readonly onRemove: (commentId: string) => void;
@@ -73,6 +74,7 @@ interface ExcerptAnnotation {
 interface ExcerptDraft {
   readonly range: SelectedLineRange;
   readonly position: PullRequestReviewPosition;
+  readonly startPosition?: PullRequestReviewPosition;
 }
 
 type ExcerptSlice = NonNullable<ReturnType<typeof excerptSlice>>;
@@ -95,32 +97,6 @@ function excerptSlice(file: FileDiffMetadata | null, excerpt: PullRequestReviewG
   return { fileDiff, rows: shown, shown: shown.length, total: rows.length, drawn };
 }
 
-// The excerpt expands against an old side of its own: the file's real old side differs from
-// the new one wherever another hunk changed it, and the renderer needs the two to agree around
-// the lines it shows. A slice across hunks has nothing consistent to expand into.
-function excerptLoader(
-  excerpt: PullRequestReviewGuideExcerpt,
-  sliceRows: ExcerptSlice["rows"],
-  loadDiffFiles: FileDiffContentsLoader,
-): FileDiffContentsLoader | null {
-  if (sliceRows.some((row) => row.hunk !== sliceRows[0]?.hunk)) {
-    return null;
-  }
-  return async (fileDiff) => {
-    const loaded = await loadDiffFiles(fileDiff);
-    const oldContents = excerptExpansionOldContents(loaded.newFile.contents, sliceRows);
-    if (oldContents === null) return loaded;
-    return {
-      newFile: loaded.newFile,
-      oldFile: {
-        name: loaded.oldFile?.name ?? loaded.newFile.name,
-        contents: oldContents,
-        cacheKey: `${loaded.newFile.cacheKey ?? loaded.newFile.name}:excerpt:${excerpt.side}:${excerpt.start}-${excerpt.end}`,
-      },
-    };
-  };
-}
-
 export function GuideExcerpt({
   excerpt,
   file,
@@ -138,7 +114,7 @@ export function GuideExcerpt({
   loadDiffFiles: FileDiffContentsLoader;
   onOpenFile: (path: string) => void;
 }) {
-  // Kept here, not in ExcerptDiff, so a selection survives the diff reloading for a new head.
+  // Keep selections outside ExcerptDiff to survive head reloads.
   const [draft, setDraft] = useState<ExcerptDraft | null>(null);
   const slice = excerptSlice(file, excerpt);
 
@@ -180,7 +156,6 @@ export function GuideExcerpt({
   );
 }
 
-// Split out so draft changes re-render the diff without re-slicing the patch.
 function ExcerptDiff({
   excerpt,
   file,
@@ -202,8 +177,8 @@ function ExcerptDiff({
   commenting: ExcerptCommenting | null;
   onOpenFile: (path: string) => void;
 }) {
-  const { resolvedTheme } = useTheme();
-  const loadExcerptFiles = excerptLoader(excerpt, slice.rows, loadDiffFiles);
+  const resolvedTheme = useRenderedAppearance();
+  const loadExcerptFiles = excerptLoader(excerpt, file, slice.rows, loadDiffFiles);
 
   const annotations = (() => {
     const groups = new Map<string, DiffLineAnnotation<ExcerptAnnotation>>();
@@ -253,9 +228,9 @@ function ExcerptDiff({
 
   const beginComment = (range: SelectedLineRange | null) => {
     if (range === null) return;
-    const position = resolveDiffReviewPosition(file, range.end, range.endSide ?? range.side);
-    if (position === null) return;
-    setDraft({ range, position });
+    const anchor = resolveDiffReviewAnchor(file, range, commenting?.rangeComments === true);
+    if (anchor === null) return;
+    setDraft({ range, ...anchor });
   };
   const interactive = commenting !== null && draft === null;
   const onAskAgent = commenting?.onAskAgent ?? null;
@@ -322,6 +297,7 @@ function ExcerptDiff({
                 kind="draft"
                 rangeLabel={`${excerpt.path}:${getReviewPositionAnchor(draft.position).line}`}
                 text=""
+                completionScope={commenting.canComment ? commenting.completionScope : null}
                 placeholder={
                   commenting.canComment ? "Add a comment…" : "Ask the agent about these lines…"
                 }
@@ -344,6 +320,7 @@ function ExcerptDiff({
                     path: excerpt.path,
                     oldPath: previousPathOf(file, excerpt.path),
                     position: draft.position,
+                    startPosition: draft.startPosition,
                     body,
                   });
                   setDraft(null);

@@ -28,9 +28,7 @@ export const SERVER_ENTRY_FILE_NAME = "worker.js";
  * the seams. The config's `compatibilityDate`/`compatibilityFlags` are
  * carried for serve/deploy consumers; the build reuses Octane's native tooling.
  */
-export const makeCloudflareTarget = (
-  config: OctaneTargetConfig = {},
-): OctaneTarget =>
+export const makeCloudflareTarget = (config: OctaneTargetConfig = {}): OctaneTarget =>
   makeDeployTarget({
     platform: "cloudflare",
     config,
