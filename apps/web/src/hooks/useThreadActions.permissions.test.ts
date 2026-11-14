@@ -27,6 +27,7 @@ const state = vi.hoisted(() => ({
   serverConfig: { shellThreadFamilies: false },
   familyLookupFails: false,
   scopes: new Map<string, Set<string>>(),
+  sessionNotLoaded: new Set<string>(),
   threads: [] as {
     environmentId: EnvironmentId;
     id: ThreadId;
@@ -65,6 +66,9 @@ vi.mock("../state/session", () => ({
   environmentSession: { sessionStateAtom: "session" },
   readEnvironmentScope: (environmentId: string, scope: string) =>
     state.scopes.get(environmentId)?.has(scope) === true,
+  readThreadTriageScope: (environmentId: string) =>
+    state.scopes.get(environmentId)?.has(AuthOrchestrationOperateScope) === true ||
+    state.sessionNotLoaded.has(environmentId),
 }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand:
@@ -73,7 +77,11 @@ vi.mock("../state/use-atom-command", () => ({
       state.requests.push({ action, ...request });
       const scope =
         action === "removeWorktree" ? AuthSourceControlWriteScope : AuthOrchestrationOperateScope;
-      if (!state.scopes.get(request.environmentId)?.has(scope)) {
+      // Without a loaded session the command itself queues settle and snooze.
+      if (
+        !state.scopes.get(request.environmentId)?.has(scope) &&
+        !state.sessionNotLoaded.has(request.environmentId)
+      ) {
         return AsyncResult.failure(Cause.fail(new Error("Server denied the request")));
       }
       state.afterRequest?.(action);
@@ -274,6 +282,7 @@ beforeEach(() => {
       latestTurn: null,
     },
   ];
+  state.sessionNotLoaded = new Set();
   state.requests = [];
   state.localEffects = [];
   state.confirm.mockReset().mockResolvedValue(true);
@@ -311,6 +320,17 @@ describe("thread action permissions", () => {
       expect(state.requests).toEqual([
         expect.objectContaining({ action: name, environmentId: secondary }),
       ]);
+    },
+  );
+
+  it.each(operations)(
+    "$name runs before the session loads only for settle, snooze and their undo",
+    async ({ name, run }) => {
+      state.sessionNotLoaded.add(secondary);
+      const result = await run(useThreadActions(), target);
+      const triage = ["settle", "unsettle", "snooze", "unsnooze"].includes(name);
+      expect(result._tag).toBe(triage ? "Success" : "Failure");
+      expect(state.requests.map(({ action }) => action)).toEqual(triage ? [name] : []);
     },
   );
 

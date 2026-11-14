@@ -22,6 +22,8 @@ const state = vi.hoisted(() => ({
   titleOutcome: null as ThreadTitleRegenerationOutcome | null,
   archivedRefreshes: [] as string[],
   scopes: new Map<string, Set<string>>(),
+  sessionNotLoaded: new Set<string>(),
+  successValues: new Map<string, unknown>(),
   shells: [] as EnvironmentThreadShell[],
   requests: [] as {
     action: string;
@@ -64,6 +66,9 @@ vi.mock("../archive/useArchivedThreadSnapshots", () => ({
 vi.mock("../../state/session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
     state.scopes.get(environmentId)?.has(scope) === true,
+  readThreadTriageScope: (environmentId: string) =>
+    state.scopes.get(environmentId)?.has(AuthOrchestrationOperateScope) === true ||
+    state.sessionNotLoaded.has(environmentId),
 }));
 vi.mock("../../state/presentation", () => ({
   connectedEnvironmentIdsAtom: "connected-environments",
@@ -152,13 +157,19 @@ vi.mock("../../state/threads", () => ({
       }) => {
         state.requests.push({ action, ...request });
         await state.heldActions.get(action);
-        if (!state.scopes.get(request.environmentId)?.has(AuthOrchestrationOperateScope)) {
+        // Without a loaded session the command itself queues settle and snooze.
+        if (
+          !state.scopes.get(request.environmentId)?.has(AuthOrchestrationOperateScope) &&
+          !state.sessionNotLoaded.has(request.environmentId)
+        ) {
           return AsyncResult.failure(Cause.fail(new Error("Thread operation denied")));
         }
         if (action === state.failedAction)
           return AsyncResult.failure(Cause.fail(new Error("Server rejected action")));
         state.afterRequest?.();
-        return AsyncResult.success(action === "regenerateTitle" ? state.titleOutcome : undefined);
+        return AsyncResult.success(
+          action === "regenerateTitle" ? state.titleOutcome : state.successValues.get(action),
+        );
       },
     ]),
   ),
@@ -199,6 +210,8 @@ beforeEach(() => {
   state.archivedRefreshes = [];
   state.pendingOrder = null;
   state.dropBusy = false;
+  state.sessionNotLoaded = new Set();
+  state.successValues = new Map();
   state.holdingRows = false;
   state.scopes = new Map([
     [primaryEnvironmentId, new Set([AuthOrchestrationOperateScope])],
@@ -249,6 +262,19 @@ describe("thread list operation permissions", () => {
 
     expect(state.requests).toEqual([]);
   });
+
+  it.each(mutationCases)(
+    "%s runs before the session loads only for settle, snooze and their undo",
+    async (handler, action) => {
+      state.scopes.get(primaryEnvironmentId)!.clear();
+      state.sessionNotLoaded.add(primaryEnvironmentId);
+
+      await useThreadListActions()[handler](makeThread(), "2099-01-01T00:00:00.000Z");
+
+      const triage = ["settle", "unsettle", "snooze", "unsnooze"].includes(action);
+      expect(state.requests.map((request) => request.action)).toEqual(triage ? [action] : []);
+    },
+  );
 
   it("rechecks permission after a retained delete confirmation", async () => {
     useThreadListActions().confirmDeleteThread(makeThread());
@@ -472,6 +498,22 @@ describe("thread action undo", () => {
       snoozedUntil: thread.snoozedUntil,
     });
     expect(readThreadUndoNotice()).toBeNull();
+  });
+
+  // Whether the queued settle reached the server is known only when Undo runs.
+  it.each([
+    ["cancels it before it syncs", { sequence: 0, cancelledPendingSync: true }, ["snooze"]],
+    ["finds it delivered", { sequence: 3 }, ["pin", "snooze"]],
+  ])("restores a queued settle only as far as needed when Undo %s", async (_, undone, restored) => {
+    state.successValues.set("unsettle", undone);
+    const thread = makeThread({
+      pinnedAt: "2026-09-02T00:00:00.000Z",
+      pinOrderKey: "m",
+      snoozedUntil: "2099-01-01T09:00:00.000Z",
+    });
+    expect(await useThreadListActions().settleThread(thread)).toBe(true);
+    await readThreadUndoNotice()!.undo();
+    expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unsettle", ...restored]);
   });
 
   // regression: #21401 restore archive and thread action undo

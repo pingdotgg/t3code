@@ -5,6 +5,7 @@ import {
   type AuthSessionState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
@@ -33,6 +34,7 @@ import { appAtomRegistry } from "./atom-registry";
 import {
   environmentSession,
   readEnvironmentScope,
+  readThreadTriageScope,
   useEnvironmentScope,
   useEnvironmentsWithScope,
 } from "./session";
@@ -98,6 +100,22 @@ it("reacts to grant revocation, failure, and regrant without a connection list c
   appAtomRegistry.set(source(secondary), AsyncResult.success(session(true)));
   expect(appAtomRegistry.get(observed)).toEqual(new Set([secondary]));
   expect(changes).not.toHaveLength(0);
+});
+
+it("lets settle and snooze queue until a loaded session denies them, also after a failed refresh", () => {
+  const failedAfter = (canOperate: boolean) =>
+    AsyncResult.failure<AuthSessionState, Error>(Cause.fail(new Error("Session lookup failed")), {
+      previousSuccess: Option.some(AsyncResult.success(session(canOperate))),
+    });
+  expect(readThreadTriageScope(secondary)).toBe(true);
+  appAtomRegistry.set(source(secondary), AsyncResult.failure(Cause.fail(new Error("offline"))));
+  expect(readThreadTriageScope(secondary)).toBe(true);
+  appAtomRegistry.set(source(secondary), AsyncResult.success(session(false)));
+  expect(readThreadTriageScope(secondary)).toBe(false);
+  appAtomRegistry.set(source(secondary), failedAfter(false));
+  expect(readThreadTriageScope(secondary)).toBe(false);
+  appAtomRegistry.set(source(secondary), failedAfter(true));
+  expect(readThreadTriageScope(secondary)).toBe(true);
 });
 
 it("uses exact new-server permissions and keeps old-server grants usable", () => {
