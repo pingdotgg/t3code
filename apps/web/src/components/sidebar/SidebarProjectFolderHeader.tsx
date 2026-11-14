@@ -84,11 +84,9 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
             <span className="sr-only">{FOLDER_DOT_LABEL[dot]}</span>
           </span>
         ) : null}
-        {collapsed && hiddenThreads.length > 0 ? (
-          <span className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground group-hover/project-folder:invisible group-has-[[data-sidebar-action-for]:focus]/project-folder:invisible pointer-coarse:invisible">
-            {hiddenThreads.length}
-          </span>
-        ) : null}
+        <span className="min-w-3 shrink-0 text-end text-xs tabular-nums text-sidebar-muted-foreground group-hover/project-folder:invisible group-has-[[data-sidebar-action-for]:focus]/project-folder:invisible pointer-coarse:invisible">
+          {collapsed && hiddenThreads.length > 0 ? hiddenThreads.length : null}
+        </span>
         <ChevronDownIcon
           aria-hidden
           className={cn(
