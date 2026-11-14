@@ -6607,6 +6607,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }
         : undefined,
     );
+    if (
+      yield* projectionStore
+        .isMessageIdOwnedElsewhere({
+          threadId: command.threadId,
+          messageId: command.messageId,
+          turnItemId: idAllocator.derive.userTurnItem({ messageId: command.messageId }),
+        })
+        .pipe(mapDispatchError(command))
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Message ${command.messageId} already belongs to another thread.`,
+      });
+    }
     if (command.steerFollowUpOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.steerFollowUpOfRunId);
       if (

@@ -534,6 +534,12 @@ export interface ProjectionStoreV2Shape {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
   }) => Effect.Effect<OrchestrationV2TurnItem | null, ProjectionStoreV2Error>;
+  /** Message and turn item ids are global keys, so another thread's row would be taken over. */
+  readonly isMessageIdOwnedElsewhere: (input: {
+    readonly threadId: ThreadId;
+    readonly messageId: MessageId;
+    readonly turnItemId: TurnItemId;
+  }) => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly getMessagesById: (
     threadId: ThreadId,
     messageIds: ReadonlyArray<MessageId>,
@@ -6233,6 +6239,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(controlReadError(threadId)),
       );
 
+    const isMessageIdOwnedElsewhere: ProjectionStoreV2Shape["isMessageIdOwnedElsewhere"] = ({
+      threadId,
+      messageId,
+      turnItemId,
+    }) =>
+      sql<{ thread_id: string }>`
+        SELECT thread_id FROM orchestration_v2_projection_messages WHERE message_id = ${messageId}
+        UNION ALL
+        SELECT thread_id FROM orchestration_v2_projection_turn_items
+        WHERE turn_item_id = ${turnItemId}`.pipe(
+        Effect.map((rows) => rows.some((row) => row.thread_id !== threadId)),
+        Effect.mapError(controlReadError(threadId)),
+      );
+
     // A live run fork shows its source's history through the fork run without copying it.
     const shownByLiveFork = (threadId: ThreadId, runIdColumn: string) => sql`
       EXISTS (
@@ -9089,6 +9109,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       hasPendingDelegatedCompletion: readOnReader(hasPendingDelegatedCompletion),
       getNextTurnItemOrdinal: readOnReader(getNextTurnItemOrdinal),
       getTurnItem: readOnReader(getTurnItem),
+      isMessageIdOwnedElsewhere: readOnReader(isMessageIdOwnedElsewhere),
       getMessagesById: readOnReader(getMessagesById),
       getThreadRecords: (threadId, fields, filter) =>
         getThreadRecords(threadId, fields, filter).pipe(NodeSqliteClient.readOnly),

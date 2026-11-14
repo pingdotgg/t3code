@@ -31,6 +31,7 @@ import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const forkCases = (
@@ -932,6 +933,118 @@ it.effect("resolves an explicit checkpoint fork to its source run", () =>
     });
     const child = yield* orchestrator.getThreadShell(childId);
     assert.deepEqual(child?.forkedFrom, { type: "run", threadId: parentId, runId });
+  }).pipe(Effect.provide(forkCases[0]!.layer)),
+);
+
+it.effect("a fork cannot send a message under an id its parent already owns", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const parentId = ThreadId.make("message-id-fork-parent");
+    const childId = ThreadId.make("message-id-fork-child");
+    const runId = RunId.make("message-id-fork-run");
+    const messageId = MessageId.make("message-id-fork-message");
+    const itemId = IdAllocator.derive.userTurnItem({ messageId });
+    const text = "Inherited message must remain visible";
+    yield* createParent(parentId);
+    yield* writeParentRun({
+      threadId: parentId,
+      runId,
+      ordinal: 1,
+      status: "completed",
+      text,
+      stable: true,
+    });
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("message-id-fork-message"),
+          type: "message.updated",
+          threadId: parentId,
+          runId,
+          occurredAt: now,
+          payload: {
+            id: messageId,
+            threadId: parentId,
+            runId,
+            nodeId: null,
+            role: "user",
+            text,
+            attachments: [],
+            streaming: false,
+            createdBy: "user",
+            creationSource: "web",
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+        {
+          id: EventId.make("message-id-fork-item"),
+          type: "turn-item.updated",
+          threadId: parentId,
+          runId,
+          occurredAt: now,
+          payload: {
+            id: itemId,
+            threadId: parentId,
+            runId,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 101,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "user_message",
+            createdBy: "user",
+            creationSource: "web",
+            inputIntent: "turn_start",
+            messageId,
+            text,
+            attachments: [],
+          },
+        },
+      ],
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("message-id-fork"),
+      sourceThreadId: parentId,
+      targetThreadId: childId,
+      sourcePoint: { type: "run", runId },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const rejected = yield* orchestrator
+      .dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("message-id-fork-colliding"),
+        threadId: childId,
+        messageId,
+        text: "Local colliding message",
+        attachments: [],
+        modelSelection: forkCases[0]!.modelSelection,
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      })
+      .pipe(Effect.flip);
+    assert.instanceOf(rejected, Orchestrator.OrchestratorDispatchError);
+    assert.include(String(rejected.cause), "already belongs to another thread");
+    const parent = yield* orchestrator.getThreadProjection(parentId);
+    assert.deepEqual(
+      parent.turnItems.flatMap((item) => (item.id === itemId ? [item.threadId] : [])),
+      [parentId],
+    );
+    assert.deepEqual(
+      parent.messages.map((message) => [message.id, message.text]),
+      [[messageId, text]],
+    );
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
