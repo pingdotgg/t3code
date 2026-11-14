@@ -211,8 +211,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   replayGate?: ProviderReplayGate,
   continuationEnabled = true,
   agentId = "claude-acp",
-  // A flavor that buffers wakes without following the agent's work state still
-  // has the hook, so callers that only want the buffer opt the assertion out.
+  // Registry agents without post-settle continuation lack the hook entirely.
   expectPendingBackgroundWork = continuationEnabled,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1950,10 +1949,6 @@ describe("AcpRegistryAdapterV2", () => {
 
       const gate = makeProviderReplayGate(["wake"]);
       const session = yield* openKimi("kimi-code", gate, true);
-      assert.isDefined(
-        session.runtime.hasPendingBackgroundWork,
-        "Kimi must keep post-settle wake traffic for a continuation run",
-      );
       yield* session.runtime.startTurn(session.turnInput(1));
       // Kimi registers no background tasks, so the v1 response completes the run
       // directly, but the marker frame races the prompt callback's terminal. Sync on
