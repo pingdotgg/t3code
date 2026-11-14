@@ -51,7 +51,9 @@ it("keeps the title when dragging a search result from a collapsed folder", asyn
     // AppRoot brings its own router.
     router: false,
   });
-  const folder = page.getByRole("button", { name: /^render/ });
+  const folder = page
+    .getByTestId("sidebar-project-folder")
+    .getByRole("button", { name: /^render/ });
   await expect.element(folder).toHaveAttribute("aria-expanded", "true");
   // A removed row fades out as a clone without its test id, so match the live row only.
   const secondRow = page.getByTestId("sidebar-row-folder").filter({ hasText: second.title });
