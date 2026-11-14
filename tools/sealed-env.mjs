@@ -33,6 +33,7 @@ export function standInShell(dir) {
         '  if [ "$found" = 1 ]; then cmd="$arg"; found=2; fi',
         '  case "$arg" in -*c*) [ "$found" = 0 ] && found=1 ;; esac',
         "done",
+        "HISTFILE=/dev/null; export HISTFILE",
         'if [ "$found" = 2 ]; then exec /bin/sh -c "$cmd"; fi',
         "exec /bin/sh",
         "",

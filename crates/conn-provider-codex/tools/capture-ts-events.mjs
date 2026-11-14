@@ -12,6 +12,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { monorepo } from "../../../tools/monorepo.mjs";
+import { gitEnv, sealedNodeEnv } from "../../../tools/sealed-env.mjs";
 
 const MONOREPO = monorepo();
 const CRATE = NodePath.dirname(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)));
@@ -49,7 +50,6 @@ import { materializeReplayTranscriptWorkspace } from "@t3tools/provider-testing/
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import { itRunsReplayFixtures, runReplayFixture } from "./ProviderReplayFixtures.ts";
-import { gitEnv } from "../../../tools/sealed-env.mjs";
 
 const OUT = __OUT__;
 const tapped = (log: Array<unknown>) => ({
@@ -121,6 +121,8 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   });
 }
 const out = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-codex-capture-"));
+const sealedDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-codex-capture-env-"));
+process.once("exit", () => NodeFS.rmSync(sealedDir, { recursive: true, force: true }));
 const head = NodeChildProcess.execFileSync("git", ["-C", MONOREPO, "rev-parse", "--short", "HEAD"], { env: gitEnv() })
   .toString()
   .trim();
@@ -132,6 +134,8 @@ try {
   NodeChildProcess.execFileSync("vp", ["test", "run", NodePath.relative(server, testFile)], {
     cwd: server,
     stdio: "inherit",
+    // Sealed: T3's code and the stub it starts get a throwaway HOME and only what node needs.
+    env: sealedNodeEnv(sealedDir),
   });
 } finally {
   cleanup();

@@ -98,7 +98,12 @@ fn session(helper: &Helper) -> (ClaudeSession, mpsc::Receiver<conn_provider::Pro
     let session = ClaudeSession::open(
         "provider-session-interrupt".into(),
         "claudeAgent",
-        ClaudeConfig::default(),
+        // A Claude home that does not exist: the session reads `settings.json` from its home,
+        // and the default is `~/.claude`, the real one of whoever runs the tests.
+        ClaudeConfig {
+            home_path: Some(std::env::temp_dir().join("conn-claude-interrupt-tests-no-home")),
+            ..ClaudeConfig::default()
+        },
         helper.clone(),
         tx,
         vec![],

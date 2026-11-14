@@ -35,6 +35,11 @@ node tools/canary.mjs setup "$canary" || exit 1
 node tools/canary.mjs watch "$canary" &
 canary_watch=$!
 
+# Cargo reads the global git configuration (its own `http.proxy` lookup), and the tests run
+# `git` through the code under test, which inherits this environment. Neither may read the
+# git settings of this machine.
+cargo() { GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 command cargo "$@"; }
+
 passed=()
 failed=()
 skipped=()

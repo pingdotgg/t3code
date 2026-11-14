@@ -100,7 +100,7 @@ printf '%s\n' "${base_env[@]}" > "$OUT/base.env"
 
 if [ "${CONFORMANCE_SKIP_RUST:-}" != "1" ]; then
   echo "== Conn Server (helper)"
-  (cd "$workspace_root" && cargo build -q -p conn-provider-claude --example conformance)
+  (cd "$workspace_root" && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 cargo build -q -p conn-provider-claude --example conformance)
   # The same working directory as the T3 side below: the spawn script's `cd -P` gives the CLI
   # OLDPWD, which is the spawning server's own working directory on both sides.
   (

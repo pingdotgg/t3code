@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { monorepo, repoRoot } from "../../../tools/monorepo.mjs";
+import { gitEnv } from "../../../tools/sealed-env.mjs";
 
 const crateDir = NodeURL.fileURLToPath(new URL("../", import.meta.url));
 const workspaceDir = repoRoot;
@@ -104,7 +105,7 @@ const check = () =>
     {
       cwd: crateCopy,
       encoding: "utf8",
-      env: { ...process.env, CARGO_TARGET_DIR: NodePath.join(work, "target") },
+      env: { ...gitEnv(), CARGO_TARGET_DIR: NodePath.join(work, "target") },
     },
   );
 const before = check();

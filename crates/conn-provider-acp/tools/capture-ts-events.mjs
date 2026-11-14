@@ -28,6 +28,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { monorepo } from "../../../tools/monorepo.mjs";
+import { gitEnv, sealedNodeEnv } from "../../../tools/sealed-env.mjs";
 import { readScenarios, scenarioTestSource } from "./scenarios.mjs";
 
 const HARNESSES = {
@@ -63,7 +64,6 @@ import * as Stream from "effect/Stream";
 import { ${harness.name} as HARNESS } from "../Adapters/${harness.file}";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import { itRunsReplayFixtures, runReplayFixture } from "./ProviderReplayFixtures.ts";
-import { gitEnv } from "../../../tools/sealed-env.mjs";
 
 const OUT = __OUT__;
 const ONLY: ReadonlyArray<string> = __ONLY__;
@@ -166,6 +166,8 @@ const testkit = NodePath.join(server, "src/orchestration-v2/testkit");
 const testFile = NodePath.join(testkit, `ConnAcpCapture${flavor}.${process.pid}.tmp.test.ts`);
 const scenarios = readScenarios(flavor, harness.transcript).filter((s) => only.length === 0 || only.includes(s.name));
 const out = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-acp-capture-"));
+const sealedDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-acp-capture-env-"));
+process.once("exit", () => NodeFS.rmSync(sealedDir, { recursive: true, force: true }));
 const head = NodeChildProcess.execFileSync("git", ["-C", MONOREPO, "rev-parse", "--short", "HEAD"], { env: gitEnv() })
   .toString()
   .trim();
@@ -183,6 +185,8 @@ try {
   NodeChildProcess.execFileSync("vp", ["test", "run", NodePath.relative(server, testFile)], {
     cwd: server,
     stdio: "inherit",
+    // Sealed: T3's code and the stub it starts get a throwaway HOME and only what node needs.
+    env: sealedNodeEnv(sealedDir),
   });
 } catch {
   // Failing T3 cases are recorded with their outcome, not dropped.
