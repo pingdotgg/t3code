@@ -534,6 +534,8 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
               const shared = strings[Number(raw)];
               if (shared) yield* inCell(text(shared));
             } else if (cell.attrs.t === "inlineStr") yield* inCell(text(cell));
+            else if (cell.attrs.t === "b" && (raw.trim() === "0" || raw.trim() === "1"))
+              yield* inCell([raw.trim() === "1" ? "true" : "false"]);
             else {
               if (value && hasCellText(value)) yield* inCell(text(value));
               else for (const formula of all(cell, "f")) yield* inCell(text(formula));
