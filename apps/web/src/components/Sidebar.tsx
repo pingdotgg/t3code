@@ -1188,9 +1188,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const threadSearch = useThreadSearch(
     connectedEnvironmentIds,
     threadSearchQuery,
-    scopedProjectGroups.length === 0
-      ? {}
-      : { projectIds: scopedProjectRefs.map((projectRef) => projectRef.projectId) },
+    scopedProjectGroups.length === 0 ? {} : { projectRefs: scopedProjectRefs },
   );
   const routeDraftIdForRows = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
   const visibleDraftSessionCount = useComposerDraftStore((store) => {

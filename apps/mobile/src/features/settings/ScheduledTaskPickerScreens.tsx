@@ -208,7 +208,9 @@ export function ScheduledTaskThreadPickerRouteScreen() {
   useThreadSearch(
     environmentId !== null && projectId !== null ? [environmentId] : [],
     query,
-    projectId === null ? { titlesOnly: true } : { titlesOnly: true, projectIds: [projectId] },
+    environmentId === null || projectId === null
+      ? { titlesOnly: true }
+      : { titlesOnly: true, projectRefs: [{ environmentId, projectId }] },
   );
 
   if (!editor) return <MissingTaskDraft />;

@@ -66,6 +66,8 @@ export class ThreadSearchError extends Schema.TaggedError<ThreadSearchError>()(
 
 // Token lists bind as JSON arrays, so any number of them is one parameter.
 const TokenList = Schema.fromJsonString(Schema.Array(Schema.String));
+const encodeTokenList = Schema.encodeEffect(TokenList);
+const ProjectRowids = Schema.fromJsonString(Schema.Array(Schema.Number));
 const SearchRequest = Schema.Struct({
   /** The FTS5 query, or null to scan messages instead. */
   match: Schema.NullOr(Schema.String),
@@ -75,7 +77,7 @@ const SearchRequest = Schema.Struct({
   ),
   /** For each short word outside ASCII, the spellings a hit must contain one of. */
   shortSpellings: Schema.fromJsonString(Schema.Array(Schema.Array(Schema.String))),
-  projectId: Schema.NullOr(ProjectId),
+  projectRowids: Schema.NullOr(ProjectRowids),
   /** Threads the caller already lists, left out before the hit limit. */
   excludedThreadIds: TokenList,
 });
@@ -162,14 +164,16 @@ function accentInsensitiveGlob(token: string): string {
 function buildMessageSearch(
   query: string,
   hasIndex: boolean,
-): Omit<typeof SearchRequest.Type, "projectId" | "excludedThreadIds"> | null {
+): Omit<typeof SearchRequest.Type, "projectRowids" | "excludedThreadIds"> | null {
   const { long, short } = messageSearchTokens(query);
   if (long.length === 0) return null;
   // Two-character CJK words are too short for trigrams.
   const indexed = hasIndex && long.every((token) => Array.from(token).length >= 3);
   const narrowing = short.filter((token) => !NON_ASCII.test(token));
   return {
-    match: indexed ? long.map((token) => `"${token.replaceAll('"', '""')}"`).join(" ") : null,
+    match: indexed
+      ? `text : (${long.map((token) => `"${token.replaceAll('"', '""')}"`).join(" ")})`
+      : null,
     substrings: (indexed ? narrowing : [...long, ...narrowing]).map((token) => ({
       token,
       accentInsensitive: accentInsensitiveGlob(token),
@@ -218,22 +222,49 @@ export function buildSearchSnippet(text: string, matchStart: number): string {
 // accented queries and non-Latin case can still miss: "fermée"/"fermee", "ОШИБКА"/"ошибка".
 export const messageHitsQuery = (
   sql: SqlClient.SqlClient,
-  { match, substrings, shortSpellings, projectId, excludedThreadIds }: typeof SearchRequest.Encoded,
+  {
+    match,
+    substrings,
+    shortSpellings,
+    projectRowids,
+    excludedThreadIds,
+  }: typeof SearchRequest.Encoded,
 ) => sql`
     WITH eligible AS MATERIALIZED (
       SELECT threads.thread_id, threads.project_id
-      FROM orchestration_v2_projection_threads AS threads
-      INNER JOIN projection_projects AS projects
-        ON projects.project_id = threads.project_id
+      FROM ${
+        projectRowids === null
+          ? sql`orchestration_v2_projection_threads AS threads
+            INNER JOIN projection_projects AS projects ON projects.project_id = threads.project_id`
+          : sql`projection_projects AS projects
+            CROSS JOIN orchestration_v2_projection_threads AS threads ON threads.project_id = projects.project_id`
+      }
       WHERE threads.deleted_at IS NULL
         AND threads.archived_at IS NULL
         AND projects.deleted_at IS NULL
-        AND (${projectId} IS NULL OR threads.project_id = ${projectId})
+        ${projectRowids === null ? sql`` : sql`AND projects.rowid IN (SELECT value FROM json_each(${projectRowids}))`}
         AND threads.thread_id NOT IN (SELECT value FROM json_each(${excludedThreadIds}))
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
         AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1
     )
+    ${
+      // Bound each covering-index read before merging; an IN query would sort whole projects.
+      match === null && projectRowids !== null
+        ? sql`, candidates AS MATERIALIZED (
+            SELECT ids.value AS message_rowid
+            FROM json_each(${projectRowids}) AS project
+            CROSS JOIN json_each((
+              SELECT json_group_array(message_rowid) FROM (
+                SELECT message_rowid FROM orchestration_v2_message_projects
+                WHERE project_rowid = project.value
+                ORDER BY message_rowid DESC LIMIT ${MESSAGE_SCAN_LIMIT}
+              )
+            )) AS ids
+            ORDER BY message_rowid DESC LIMIT ${MESSAGE_SCAN_LIMIT}
+          )`
+        : sql``
+    }
     ${
       match === null
         ? sql`
@@ -245,13 +276,21 @@ export const messageHitsQuery = (
             messages.role AS source,
             ${messageSearchText(sql)} AS text,
             messages.created_at AS "messageCreatedAt"
-          FROM orchestration_v2_projection_messages AS messages
+          FROM ${
+            projectRowids === null
+              ? sql`orchestration_v2_projection_messages AS messages`
+              : sql`candidates CROSS JOIN orchestration_v2_projection_messages AS messages
+                ON messages.rowid = candidates.message_rowid`
+          }
           INNER JOIN eligible ON eligible.thread_id = messages.thread_id
           WHERE ${indexedMessageCondition(sql)}
-            -- A scan reads every message it passes, so it stops at the newest ones.
-            AND messages.rowid > (
-              SELECT coalesce(max(rowid), 0) FROM orchestration_v2_projection_messages
-            ) - ${MESSAGE_SCAN_LIMIT}
+            ${
+              projectRowids === null
+                ? sql`AND messages.rowid > (
+                    SELECT coalesce(max(rowid), 0) FROM orchestration_v2_projection_messages
+                  ) - ${MESSAGE_SCAN_LIMIT}`
+                : sql``
+            }
         `
         : sql`
           SELECT
@@ -322,7 +361,7 @@ export class ThreadSearch extends Context.Service<
   {
     /** Message text matches, for clients that rank their own thread list. */
     readonly search: (
-      input: OrchestrationSearchThreadsInput,
+      input: OrchestrationV2SearchThreadsInput,
     ) => Effect.Effect<OrchestrationSearchThreadsResult, ThreadSearchError>;
     /**
      * Title, branch, pull request, and project matches ranked as the command
@@ -481,8 +520,7 @@ export const make = Effect.gen(function* () {
   // A project scope applies before ranking, so other projects' stronger hits
   // cannot use up the limit.
   const searchMessages = Effect.fn("ThreadSearch.search")(function* (
-    input: OrchestrationSearchThreadsInput & {
-      readonly projectId: ProjectId | null;
+    input: OrchestrationV2SearchThreadsInput & {
       /** Threads the caller already lists, which must not use up the limit. */
       readonly excludedThreadIds?: ReadonlySet<ThreadId>;
       /** Off for an agent's search, which has no use for the user's picks. */
@@ -512,13 +550,29 @@ export const make = Effect.gen(function* () {
           SELECT 1 FROM sqlite_master WHERE name = 'orchestration_v2_message_search'
         `;
         const messageSearch = buildMessageSearch(input.query, index.length > 0);
-        return messageSearch === null
-          ? []
-          : yield* searchRows({
-              ...messageSearch,
-              projectId: input.projectId,
-              excludedThreadIds: [...(input.excludedThreadIds ?? [])],
-            });
+        if (messageSearch === null) return [];
+        const projectIds =
+          input.projectIds === undefined ? null : yield* encodeTokenList(input.projectIds);
+        const projectRows =
+          projectIds === null
+            ? null
+            : yield* sql<{ readonly id: number }>`
+          SELECT rowid AS id FROM projection_projects
+          WHERE project_id IN (SELECT value FROM json_each(${projectIds}))
+            AND deleted_at IS NULL
+        `;
+        if (projectRows?.length === 0) return [];
+        const projectRowids = projectRows?.map((row) => row.id) ?? null;
+        const match =
+          messageSearch.match === null || projectRowids === null
+            ? messageSearch.match
+            : `${messageSearch.match} AND project : (${projectRowids.map((id) => `":${id}:"`).join(" OR ")})`;
+        return yield* searchRows({
+          ...messageSearch,
+          match,
+          projectRowids,
+          excludedThreadIds: [...(input.excludedThreadIds ?? [])],
+        });
       }),
     );
     const best = new Map<ThreadId, Hit>();
@@ -581,8 +635,7 @@ export const make = Effect.gen(function* () {
     };
   });
 
-  const search: ThreadSearch["Service"]["search"] = (input) =>
-    searchMessages({ ...input, projectId: null });
+  const search: ThreadSearch["Service"]["search"] = (input) => searchMessages(input);
 
   const searchThreads: ThreadSearch["Service"]["searchThreads"] = Effect.fn(
     "ThreadSearch.searchThreads",
@@ -628,7 +681,7 @@ export const make = Effect.gen(function* () {
     const { matches } = yield* searchMessages({
       query: input.query,
       limit: 50,
-      projectId: input.projectId ?? null,
+      ...(input.projectId === undefined ? {} : { projectIds: [input.projectId] }),
       excludedThreadIds: shown,
       picks: false,
     });
@@ -709,7 +762,7 @@ export const searchThreadsWithOlderSettledRows = Effect.fn(
 )(function* <E1, E2, E3, E4, E5>(input: {
   readonly request: OrchestrationV2SearchThreadsInput;
   readonly search: (
-    input: OrchestrationSearchThreadsInput,
+    input: OrchestrationV2SearchThreadsInput,
   ) => Effect.Effect<OrchestrationSearchThreadsResult, E1>;
   readonly searchOlderSettled: (
     input: Parameters<ThreadSearch["Service"]["searchOlderSettled"]>[0],
@@ -720,8 +773,7 @@ export const searchThreadsWithOlderSettledRows = Effect.fn(
   ) => Effect.Effect<Effect.Effect<OrchestrationV2ThreadShellSnapshot, E4>, E3>;
   readonly latestSequence: Effect.Effect<number, E5>;
 }) {
-  const { olderSettledBefore, projectIds, environmentLabel, titlesOnly, ...request } =
-    input.request;
+  const { olderSettledBefore, environmentLabel, titlesOnly, ...request } = input.request;
   const messages: OrchestrationV2SearchThreadsResult =
     titlesOnly === true ? { matches: [] } : yield* input.search(request);
   if (olderSettledBefore === undefined) return messages;
@@ -729,7 +781,7 @@ export const searchThreadsWithOlderSettledRows = Effect.fn(
   const threadIds = yield* input.searchOlderSettled({
     query: request.query,
     before: olderSettledBefore,
-    projectIds,
+    projectIds: request.projectIds,
     environmentLabel,
     messageThreadIds: messages.matches.map((match) => match.threadId),
   });

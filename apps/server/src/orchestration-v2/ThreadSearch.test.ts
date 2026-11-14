@@ -284,10 +284,18 @@ it.layer(layerTest)("ThreadSearch", (it) => {
   it.effect("reads the newest hits without sorting all of them", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+      for (const match of [null, 'text : "needle" AND project : ":1:"']) {
+        const scopedPlan = yield* sql<{
+          readonly detail: string;
+        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", shortSpellings: "[]", projectRowids: "[1]", excludedThreadIds: "[]" })}`;
+        assert.isFalse(scopedPlan.some((row) => row.detail.startsWith("SCAN messages")));
+        if (match !== null)
+          assert.isFalse(scopedPlan.some((row) => row.detail.includes("TEMP B-TREE")));
+      }
       for (const match of ['"needle"', null]) {
         const plan = yield* sql<{
           readonly detail: string;
-        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", shortSpellings: "[]", projectId: null, excludedThreadIds: "[]" })}`;
+        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", shortSpellings: "[]", projectRowids: null, excludedThreadIds: "[]" })}`;
         assert.isFalse(
           plan.some((row) => row.detail.includes("TEMP B-TREE")),
           plan.map((row) => row.detail).join("\n"),
@@ -1092,6 +1100,94 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
     }),
   );
 });
+
+it.effect.each([true, false])(
+  "ThreadSearch finds scoped message matches despite newer hits in another project (indexed: %s)",
+  (indexed) =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const selected = ProjectId.make("project:selected");
+      const other = ProjectId.make("project:other");
+      const target = ThreadId.make("thread:deployment-notes");
+      yield* Effect.forEach([selected, other], createProject, { discard: true });
+      yield* Effect.forEach(
+        [
+          thread(target, selected),
+          message(target, "selected-note", "user", "Release checklist complete."),
+          ...Array.from({ length: 51 }, (_, index) => {
+            const id = ThreadId.make(`thread:other-${index}`);
+            return [
+              thread(id, other),
+              message(id, `other-note-${index}`, "user", "Release checklist complete.", {
+                minute: 2,
+              }),
+            ];
+          }).flat(),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      if (!indexed) {
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_insert`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_update`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_delete`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_project_update`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_thread_insert`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_project_insert`;
+        yield* sql`DROP TABLE orchestration_v2_message_search`;
+      }
+      // Other projects must not consume the bounded SQL candidate window either.
+      yield* sql`
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${indexed ? 10_001 : 20_001})
+        INSERT INTO orchestration_v2_projection_messages
+          (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
+        SELECT 'crowded-' || i, 'thread:other-0', 'user', 0, ${DateTime.formatIso(at(5))},
+          ${DateTime.formatIso(at(5))}, json_object('text', 'Release checklist complete.')
+        FROM n
+      `;
+      const result = yield* ThreadSearch.searchThreadsWithOlderSettledRows({
+        request: { query: "release", projectIds: [selected] },
+        search: search.search,
+        searchOlderSettled: search.searchOlderSettled,
+        sql,
+        readThreads: (threadIds) =>
+          projections.readShellSnapshot({ location: "active", threadIds }),
+        latestSequence: Effect.succeed(7),
+      });
+      assert.deepEqual(
+        result.matches.map((match) => match.threadId),
+        [target],
+      );
+      if (!indexed) {
+        const secondProject = ProjectId.make("project:zz-second-selected");
+        const newest = ThreadId.make("thread:newest-selected");
+        yield* createProject(secondProject);
+        yield* projections.apply(thread(newest, secondProject));
+        yield* sql`
+          WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${20_000})
+          INSERT INTO orchestration_v2_projection_messages
+            (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
+          SELECT 'selected-window-' || i, ${newest}, 'user', 0, ${DateTime.formatIso(at(6))},
+            ${DateTime.formatIso(at(6))}, json_object('text', 'Status notes')
+          FROM n
+        `;
+        yield* projections.apply(
+          message(newest, "latest-selected", "user", "Release checklist complete.", { minute: 7 }),
+        );
+        // Pins the shared 20,000-message scan ceiling, not a ranking preference.
+        const merged = yield* search.search({
+          query: "release",
+          projectIds: [selected, secondProject],
+        });
+        assert.deepEqual(
+          merged.matches.map((match) => match.threadId),
+          [newest],
+        );
+      }
+    }).pipe(Effect.provide(layerTest)),
+);
 
 it.layer(layerTest)("ThreadSearch.searchThreadsWithOlderSettledRows", (it) => {
   it.effect("adds older settled rows to message hits, or alone for titles only", () =>

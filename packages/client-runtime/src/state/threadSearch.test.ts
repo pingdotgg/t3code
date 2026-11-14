@@ -122,7 +122,10 @@ it("asks environments that omit older settled threads for their rows, with the c
   });
   const registry = AtomRegistry.make();
   const scope = {
-    projectIds: [ProjectId.make("project-a")],
+    projectRefs: [
+      { environmentId: envA, projectId: ProjectId.make("project-a") },
+      { environmentId: envB, projectId: ProjectId.make("project-b") },
+    ],
     environmentLabels: { [envA]: "Laptop" },
   };
 
@@ -138,11 +141,16 @@ it("asks environments that omit older settled threads for their rows, with the c
       {
         query: "ui",
         olderSettledBefore: "2026-10-01T00:00:00.000Z",
-        projectIds: scope.projectIds,
+        projectIds: [scope.projectRefs[0]!.projectId],
         environmentLabel: "Laptop",
         titlesOnly: true,
       },
     ],
+  ]);
+  inputs.length = 0;
+  registry.get(search.results(makeThreadSearchKey([envB], "release", scope)));
+  expect(inputs).toEqual([
+    [envB, { query: "release", projectIds: [scope.projectRefs[1]!.projectId] }],
   ]);
   inputs.length = 0;
   registry.get(search.results(makeThreadSearchKey([envB], "needle")));

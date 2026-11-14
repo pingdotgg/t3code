@@ -1225,7 +1225,7 @@ function ScheduledTaskDestination({
   // Mounts older settled threads matching the query, which shells may leave out.
   useThreadSearch(open && projectId ? [environmentId] : [], query, {
     titlesOnly: true,
-    projectIds: [projectId as ProjectId],
+    projectRefs: projectId === null ? [] : [{ environmentId, projectId: projectId as ProjectId }],
   });
   const threads = scheduledTaskDestinationThreads(shells, {
     environmentId,
