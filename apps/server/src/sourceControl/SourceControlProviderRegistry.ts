@@ -134,12 +134,12 @@ function unsupportedProvider(
   });
 }
 
-function selectProviderContext(
+function providerContextCandidates(
   remotes: ReadonlyArray<{
     readonly name: string;
     readonly url: string;
   }>,
-): SourceControlProvider.SourceControlProviderContext | null {
+): ReadonlyArray<SourceControlProvider.SourceControlProviderContext> {
   const candidates: Array<SourceControlProvider.SourceControlProviderContext> = [];
   for (const remote of remotes) {
     const provider = sourceControlDefinitions.recognizeRemote(remote.url);
@@ -152,6 +152,12 @@ function selectProviderContext(
     }
   }
 
+  return candidates;
+}
+
+function selectProviderContext(
+  candidates: ReadonlyArray<SourceControlProvider.SourceControlProviderContext>,
+): SourceControlProvider.SourceControlProviderContext | null {
   return (
     candidates.find((candidate) => candidate.remoteName === "origin") ??
     candidates.find((candidate) => candidate.provider.kind !== "unknown") ??
@@ -307,7 +313,11 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
               }),
           ),
         );
-        return yield* refineContext(cwd, selectProviderContext(remotes.remotes));
+        const candidates = providerContextCandidates(remotes.remotes);
+        const context = yield* refineContext(cwd, selectProviderContext(candidates));
+        if (context?.provider.kind !== "unknown") return context;
+        // An origin no integration claims must not hide a remote on a recognized host.
+        return candidates.find((candidate) => candidate.provider.kind !== "unknown") ?? context;
       },
     );
 
