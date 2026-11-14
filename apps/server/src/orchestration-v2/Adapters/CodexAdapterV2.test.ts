@@ -8213,6 +8213,83 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     };
   };
 
+  it.effect("ends a native child when Codex closes it without a turn completion", () =>
+    Effect.gen(function* () {
+      const { spawned, rootFinished } = lateChildPrefix();
+      const closed = (threadId: string): CodexReplay.CodexAppServerReplayEntry => ({
+        type: "emit_inbound",
+        frame: { method: "thread/closed", params: { threadId } },
+      });
+      const unload = (id: number, entries: CodexReplay.CodexAppServerReplayEntry[]) => [
+        {
+          type: "expect_outbound" as const,
+          frame: { id, method: "thread/unsubscribe", params: { threadId: RESUME_NATIVE_THREAD } },
+        },
+        ...entries,
+        { type: "emit_inbound" as const, frame: { id, result: { status: "notSubscribed" } } },
+      ];
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: RESUME_SCENARIO,
+          entries: [
+            ...spawned,
+            childAgentMessage({
+              id: "closed-child-answer",
+              text: "CHILD_REPORT",
+              turnId: RESUME_CHILD_TURN_1,
+              completedAtMs: 1782622442000,
+            }),
+            ...rootFinished,
+            ...unload(4, [closed("unrelated-thread")]),
+            ...unload(5, [closed(RESUME_CHILD_THREAD)]),
+            ...unload(6, [childTurnCompleted(RESUME_CHILD_TURN_1), closed(RESUME_CHILD_THREAD)]),
+          ],
+        }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-native-child-closed"),
+          text: RESUME_PROMPT,
+        }),
+      );
+      yield* harness.firstTerminal;
+      yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+      assert.isTrue(yield* harness.hasPendingBackgroundWork);
+      yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+      assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+      const child = harness.subagentUpdates().at(-1)?.subagent;
+      assert.equal(child?.status, "interrupted");
+      assert.equal(child?.result, "CHILD_REPORT");
+      assert.deepEqual(
+        harness.terminalEvents().map((event) => event.status),
+        ["completed"],
+      );
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "provider_turn.updated" &&
+          event.providerTurn.nativeTurnRef?.nativeId === RESUME_CHILD_TURN_1
+            ? [event.providerTurn.status]
+            : [],
+        ),
+        ["running", "interrupted"],
+      );
+      assert.lengthOf(harness.continuationRequests, 0);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["completed", "failed", "interrupted", "starting", "replied-last"] as const)(
     "handles a late native child after the capacity retry %s",
     (parentStatus) =>

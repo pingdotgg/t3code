@@ -5208,34 +5208,50 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         // Unloading an idle thread kills its terminals without completing
         // their command items, while the shared provider session stays alive.
+        // A closed native child thread never sends turn/completed for its active turn.
         yield* client.handleServerNotification("thread/closed", (payload) =>
           Effect.gen(function* () {
-            const closing = threadClosings.get(payload.threadId);
-            threadClosings.delete(payload.threadId);
-            if (closing !== undefined) yield* Deferred.succeed(closing, undefined);
             const completedAt = yield* DateTime.now;
-            for (const context of (yield* Ref.get(settledTurns)).values()) {
-              if (context.providerThread.nativeThreadRef?.nativeId !== payload.threadId) continue;
-              const commands = (yield* Ref.get(runningCommandItemsByTurn)).get(
-                context.nativeTurnId,
-              );
-              if (commands !== undefined) {
-                context.closedCommandItemIds = new Set(commands.keys());
+            for (const context of (yield* Ref.get(activeTurns)).values()) {
+              if (
+                context.subagent !== null &&
+                context.providerThread.nativeThreadRef?.nativeId === payload.threadId
+              ) {
+                yield* finalizeCodexTurn({
+                  context,
+                  nativeTurnId: context.nativeTurnId,
+                  status: "interrupted",
+                  completedAt,
+                });
               }
-              yield* terminalizeRunningCommandItems(
-                context,
-                context.nativeTurnId,
-                "interrupted",
-                completedAt,
-              );
-              yield* Ref.update(runningCommandItemsByTurn, (current) => {
-                const updated = new Map(current);
-                updated.delete(context.nativeTurnId);
-                return updated;
-              });
-              yield* releaseSettledTurnIfIdle(context.nativeTurnId);
             }
-          }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
+            yield* Effect.gen(function* () {
+              const closing = threadClosings.get(payload.threadId);
+              threadClosings.delete(payload.threadId);
+              if (closing !== undefined) yield* Deferred.succeed(closing, undefined);
+              for (const context of (yield* Ref.get(settledTurns)).values()) {
+                if (context.providerThread.nativeThreadRef?.nativeId !== payload.threadId) continue;
+                const commands = (yield* Ref.get(runningCommandItemsByTurn)).get(
+                  context.nativeTurnId,
+                );
+                if (commands !== undefined) {
+                  context.closedCommandItemIds = new Set(commands.keys());
+                }
+                yield* terminalizeRunningCommandItems(
+                  context,
+                  context.nativeTurnId,
+                  "interrupted",
+                  completedAt,
+                );
+                yield* Ref.update(runningCommandItemsByTurn, (current) => {
+                  const updated = new Map(current);
+                  updated.delete(context.nativeTurnId);
+                  return updated;
+                });
+                yield* releaseSettledTurnIfIdle(context.nativeTurnId);
+              }
+            }).pipe(turnTerminalizationPermit.withPermits(1));
+          }).pipe(Effect.orDie),
         );
 
         yield* client.handleServerNotification("item/started", (payload) =>
