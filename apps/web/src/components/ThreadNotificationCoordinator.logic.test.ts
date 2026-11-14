@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   createThreadNotificationGate,
   isSnoozedForNotification,
+  RELEASED_COMPLETION_GRACE_MS,
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
 
@@ -11,16 +12,27 @@ const working: ThreadNotificationObservation = {
   requestId: null,
   settled: false,
   completedAt: null,
-  snoozed: false,
+  backgroundWake: false,
 };
 const completed = (at: number): ThreadNotificationObservation => ({
   attention: null,
   requestId: null,
   settled: true,
   completedAt: at,
-  snoozed: false,
+  backgroundWake: false,
+});
+const waking: ThreadNotificationObservation = { ...working, backgroundWake: true };
+const woke = (at: number): ThreadNotificationObservation => ({
+  ...completed(at),
+  backgroundWake: true,
 });
 const visible = { archived: false, quiet: false, snoozed: false };
+const snoozed = { ...visible, snoozed: true };
+
+function fakeTimers(): Disposable {
+  vi.useFakeTimers();
+  return { [Symbol.dispose]: () => void vi.useRealTimers() };
+}
 
 function harness() {
   const notify = vi.fn();
@@ -34,28 +46,13 @@ function harness() {
 }
 
 describe("createThreadNotificationGate", () => {
-  it("does not notify completion while the thread is snoozed", () => {
+  it("skips a completion seen while snoozed, but still notifies attention", () => {
     const { notify, observe } = harness();
     observe(working);
-    observe({ ...completed(1), snoozed: true }, { ...visible, snoozed: true });
+    observe(completed(1), snoozed);
+    observe({ ...completed(1) });
     expect(notify).not.toHaveBeenCalled();
-    observe(completed(1));
-    expect(notify).not.toHaveBeenCalled();
-  });
-
-  it("still notifies attention while the thread is snoozed", () => {
-    const { notify, observe } = harness();
-    observe(working);
-    observe(
-      {
-        attention: "run-1:approval:",
-        requestId: null,
-        settled: false,
-        completedAt: null,
-        snoozed: true,
-      },
-      { ...visible, snoozed: true },
-    );
+    observe({ ...working, attention: "run-2:approval" }, snoozed);
     expect(notify.mock.calls).toEqual([["thread", "input"]]);
   });
 
@@ -87,13 +84,7 @@ describe("createThreadNotificationGate", () => {
   it("notifies each attention once per stretch and still notifies the subsequent completion", () => {
     const { notify, observe } = harness();
     observe(working);
-    const attention = {
-      attention: "run-1:approval:a",
-      requestId: "a",
-      settled: false,
-      completedAt: null,
-      snoozed: false,
-    };
+    const attention = { ...working, attention: "run-1:approval:a", requestId: "a" };
     observe(attention);
     expect(notify.mock.calls).toEqual([["thread", "input"]]);
     observe({ ...attention });
@@ -125,13 +116,7 @@ describe("createThreadNotificationGate", () => {
     const { notify, observe } = harness();
     observe(working);
     observe(completed(1));
-    observe({
-      attention: "run-1:limited",
-      requestId: null,
-      settled: false,
-      completedAt: null,
-      snoozed: false,
-    });
+    observe({ ...working, attention: "run-1:limited" });
     observe(completed(1));
     expect(notify.mock.calls).toEqual([
       ["thread", "completion"],
@@ -167,36 +152,95 @@ describe("createThreadNotificationGate", () => {
       expect(notify.mock.calls).toEqual([["thread", "completion"]]);
     }
   });
+
+  it("waits out the grace before notifying a wake's completion, and a final wake replaces it", () => {
+    using _timers = fakeTimers();
+    const { notify, observe } = harness();
+    observe(working);
+    observe(completed(1));
+    // Held until the monitor left, or completing after it already had: either way unheld here.
+    observe(waking);
+    observe(woke(2));
+    expect(notify).toHaveBeenCalledTimes(1);
+    observe(working);
+    vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
+    expect(notify).toHaveBeenCalledTimes(1);
+    observe(completed(3));
+    vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
+    expect(notify.mock.calls).toEqual([
+      ["thread", "completion"],
+      ["thread", "completion"],
+    ]);
+  });
+
+  it("notifies a wake's completion once after the grace when no run follows, even across a pause", () => {
+    using _timers = fakeTimers();
+    const { gate, notify, observe } = harness();
+    observe(waking);
+    observe(woke(1));
+    gate.pause();
+    vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
+    expect(notify).not.toHaveBeenCalled();
+    observe({ ...woke(1) });
+    vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS - 1);
+    observe({ ...woke(1) });
+    expect(notify).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(notify.mock.calls).toEqual([["thread", "completion"]]);
+    observe({ ...woke(1) });
+    vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops a pending wake completion when the thread is snoozed", () => {
+    using _timers = fakeTimers();
+    const { notify, observe } = harness();
+    observe(waking);
+    observe(woke(1));
+    observe({ ...woke(1) }, snoozed);
+    vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("drops a pending wake completion when the thread is removed or the gate is cleared", () => {
+    using _timers = fakeTimers();
+    for (const reset of [
+      (gate: ReturnType<typeof createThreadNotificationGate<string>>) => gate.retain(new Set()),
+      (gate: ReturnType<typeof createThreadNotificationGate<string>>) => gate.clear(),
+    ]) {
+      const { gate, notify, observe } = harness();
+      observe(waking);
+      observe(woke(1));
+      reset(gate);
+      vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
+      expect(notify).not.toHaveBeenCalled();
+    }
+  });
 });
 
 describe("isSnoozedForNotification", () => {
+  const snoozedAt = Date.parse("2026-01-01T11:00:00.000Z");
   const wakeAt = Date.parse("2026-01-01T12:00:00.000Z");
-  const snoozedThread = {
-    snoozedAt: "2026-01-01T11:00:00.000Z",
+  const thread = {
+    snoozedAt: new Date(snoozedAt).toISOString(),
     snoozedUntil: new Date(wakeAt).toISOString(),
     hasPendingApprovals: false,
     hasPendingUserInput: false,
   };
+  const later = wakeAt + 60_000;
 
-  it("is snoozed before the wake time", () => {
-    expect(isSnoozedForNotification(snoozedThread, null, wakeAt - 1)).toBe(true);
-  });
-
-  it("keeps a completion from the snooze suppressed when processed after the wake", () => {
-    expect(isSnoozedForNotification(snoozedThread, wakeAt - 1, wakeAt + 60_000)).toBe(true);
-  });
-
-  it("does not suppress a completion from before the snooze processed after the wake", () => {
-    const snoozedAt = Date.parse(snoozedThread.snoozedAt);
-    expect(isSnoozedForNotification(snoozedThread, snoozedAt - 1, wakeAt + 60_000)).toBe(false);
-  });
-
-  it("does not suppress a completion after the wake time", () => {
-    expect(isSnoozedForNotification(snoozedThread, wakeAt + 1, wakeAt + 60_000)).toBe(false);
-  });
-
-  it("does not suppress after an early wake for attention", () => {
-    const raised = { ...snoozedThread, hasPendingApprovals: true };
-    expect(isSnoozedForNotification(raised, wakeAt - 1, wakeAt - 1)).toBe(false);
+  it.each([
+    ["during the snooze, processed after the wake", thread, wakeAt - 1, later, true],
+    ["before the snooze, processed after the wake", thread, snoozedAt - 1, later, false],
+    ["after the wake", thread, wakeAt + 1, later, false],
+    [
+      "after an early wake for attention",
+      { ...thread, hasPendingApprovals: true },
+      wakeAt - 1,
+      wakeAt - 1,
+      false,
+    ],
+  ])("a completion %s is suppressed: %s", (_name, shell, completedAt, now, expected) => {
+    expect(isSnoozedForNotification(shell, completedAt, now)).toBe(expected);
   });
 });

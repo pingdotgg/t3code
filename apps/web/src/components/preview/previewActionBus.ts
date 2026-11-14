@@ -1,10 +1,13 @@
 export type PreviewAction =
   | "toggle-panel"
   | "refresh"
+  | "back"
+  | "forward"
   | "focus-url"
   | "zoom-in"
   | "zoom-out"
-  | "reset-zoom";
+  | "reset-zoom"
+  | "find";
 
 const EVENT_NAME = "t3code:preview-action";
 
