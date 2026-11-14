@@ -6962,25 +6962,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             mapDispatchError(command),
           )
       : Effect.succeed(false);
-    const seedsEmptyThread =
+    // A thread named before its first message (for example by an MCP launch that tracks an issue)
+    // keeps that name instead of a title generated from a terse prompt such as "work on this".
+    const seedsUntitledThread =
       command.titleSeed !== undefined &&
       (yield* projectionStore.getMessageCount(command.threadId).pipe(mapDispatchError(command))) ===
-        0;
+        0 &&
+      !hasTitleSetBeforeFirstMessage(projection.thread, command.titleSeed);
     if (
       !isNativeMaintenanceCommand(command) &&
-      (seedsEmptyThread || (command.createdBy === "user" && (yield* onlyMaintenanceHistory)))
+      (seedsUntitledThread || (command.createdBy === "user" && (yield* onlyMaintenanceHistory)))
     ) {
-      // A thread named before its first message (for example by an MCP launch that tracks an
-      // issue) keeps that name, and the title model refines it from the first message instead of
-      // replacing it with a guess from a terse prompt such as "work on this".
-      const keepsTitle =
-        seedsEmptyThread && hasTitleSetBeforeFirstMessage(projection.thread, command.titleSeed);
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
         ...projection.thread,
-        title: keepsTitle
-          ? projection.thread.title
-          : (command.titleSeed ?? projection.thread.title),
+        title: command.titleSeed ?? projection.thread.title,
         titleRegeneration: { requestId: command.commandId, startedAt: now },
         updatedAt: now,
       };
@@ -6996,11 +6992,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       yield* Ref.update(effects, (existing) => [
         ...existing,
-        pendingThreadTitleGenerationEffect(
-          command.commandId,
-          command.threadId,
-          keepsTitle ? { type: "regenerate" } : { type: "initial", messageId: command.messageId },
-        ),
+        pendingThreadTitleGenerationEffect(command.commandId, command.threadId, {
+          type: "initial",
+          messageId: command.messageId,
+        }),
       ]);
       projection = applyToProjection(projection, event);
     }
