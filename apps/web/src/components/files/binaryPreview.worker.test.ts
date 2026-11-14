@@ -10,12 +10,15 @@ it.each([ARCHIVE_ENTRY_MAX_BYTES, ARCHIVE_ENTRY_MAX_BYTES + 1])(
   "only copies previewable TAR payloads with a %i-byte entry",
   async (size) => {
     const encode = (value: string) => new TextEncoder().encode(value);
+    const large = new Uint8Array(size).fill(97);
     const entries = [
       { path: "before.txt", bytes: encode("before") },
-      { path: "large.txt", bytes: new Uint8Array(size).fill(97) },
+      { path: "large.txt", bytes: large },
       { path: "empty.txt", bytes: new Uint8Array() },
+      { path: "large-link.txt", bytes: new Uint8Array(), link: "large.txt" },
       { path: "after.txt", bytes: encode("after") },
     ];
+    const contents = (entry: (typeof entries)[number]) => (entry.link ? large : entry.bytes);
     const bytes = new Uint8Array(
       entries.reduce(
         (length, entry) => length + 512 + Math.ceil(entry.bytes.length / 512) * 512,
@@ -30,7 +33,8 @@ it.each([ARCHIVE_ENTRY_MAX_BYTES, ARCHIVE_ENTRY_MAX_BYTES + 1])(
       write(124, entry.bytes.length.toString(8).padStart(11, "0") + "\0");
       write(136, "00000000000\0");
       bytes.fill(32, offset + 148, offset + 156);
-      write(156, "0");
+      write(156, entry.link ? "1" : "0");
+      if (entry.link) write(157, entry.link);
       write(
         148,
         bytes
@@ -64,7 +68,7 @@ it.each([ARCHIVE_ENTRY_MAX_BYTES, ARCHIVE_ENTRY_MAX_BYTES + 1])(
         type: "archive",
         entries: entries.map((entry) => ({
           path: entry.path,
-          size: entry.bytes.length,
+          size: contents(entry).length,
           directory: false,
           modified: "1970-01-01T00:00:00.000Z",
         })),
@@ -76,7 +80,8 @@ it.each([ARCHIVE_ENTRY_MAX_BYTES, ARCHIVE_ENTRY_MAX_BYTES + 1])(
       expect(copiedBytes).toBe(11 + (size <= ARCHIVE_ENTRY_MAX_BYTES ? size : 0));
       for (const entry of entries) {
         const result = await request({ type: "entry", path: entry.path });
-        if (entry.bytes.length > ARCHIVE_ENTRY_MAX_BYTES) {
+        const expected = contents(entry);
+        if (expected.length > ARCHIVE_ENTRY_MAX_BYTES) {
           expect(result).toEqual({
             type: "error",
             message: "Entry previews are limited to 10 MB.",
@@ -84,8 +89,8 @@ it.each([ARCHIVE_ENTRY_MAX_BYTES, ARCHIVE_ENTRY_MAX_BYTES + 1])(
         } else {
           if (result.type !== "entry") throw new Error("Expected entry");
           expect(result.path).toBe(entry.path);
-          expect(result.bytes.length).toBe(entry.bytes.length);
-          expect(result.bytes.every((byte, index) => byte === entry.bytes[index])).toBe(true);
+          expect(result.bytes.length).toBe(expected.length);
+          expect(result.bytes.every((byte, index) => byte === expected[index])).toBe(true);
         }
       }
       expect(await request({ type: "entry", path: "missing.txt" })).toEqual({
