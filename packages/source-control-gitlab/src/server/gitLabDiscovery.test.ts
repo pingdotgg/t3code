@@ -131,6 +131,18 @@ self-hosted.example.test
 `,
     exitCode: 0,
   },
+  {
+    // The registry places an SSH alias by its ssh config HostName and keeps the written remote.
+    name: "behind an SSH alias",
+    remoteUrl: "git@gitlab.example.com:group/project.git",
+    writtenRemoteUrl: "git@gitlab-work:group/project.git",
+    host: "gitlab.example.com",
+    stdout: `gitlab.example.com
+  ✓ Logged in to gitlab.example.com as gitlab-user
+  ✓ Token found: ******
+`,
+    exitCode: 0,
+  },
 ] as const)("claims a self-hosted remote glab is signed in to $name", (scenario) =>
   Effect.gen(function* () {
     const remote = parseGitRemoteHost(scenario.remoteUrl);
@@ -142,7 +154,7 @@ self-hosted.example.test
       context: {
         provider: unknownRemoteProvider(remote),
         remoteName: "origin",
-        remoteUrl: scenario.remoteUrl,
+        remoteUrl: "writtenRemoteUrl" in scenario ? scenario.writtenRemoteUrl : scenario.remoteUrl,
       },
       process: {
         run: ({ command, args }) => {

@@ -21,14 +21,23 @@ const unknownContext = (baseUrl: string) => ({
   remoteUrl: "git@code.example.test:team/project.git",
 });
 
-// The default host dies on any command, so refinement never reaches `gh`.
+// The host dies on any command but the ssh config read, so refinement never reaches `gh`.
 const makeDiscovery = (credential: GitHubRest.GitHubRest["Service"]["credential"]) =>
   GitHubSourceControlProvider.makeDiscovery.pipe(
     Effect.provide(
       Layer.mergeAll(
         Layer.mock(GitHubRest.GitHubRest)({ credential }),
         Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({ enabled: false }),
-        TestSourceControlHost.layer(),
+        TestSourceControlHost.layer({
+          process: {
+            run: (input) =>
+              input.command === "ssh"
+                ? Effect.succeed(
+                    TestSourceControlHost.processOutput(`hostname ${input.args.at(-1)}\n`),
+                  )
+                : Effect.die(`Unexpected ${input.command} run in ${input.operation}.`),
+          },
+        }),
       ),
     ),
     Effect.provideService(HostProcess.Environment, {}),
@@ -100,6 +109,49 @@ it.effect.each([
     const provider = yield* discovery.refineUnknownRemote({
       cwd: "/repo",
       context: { ...unknownContext(`https://${host}`), remoteUrl },
+    });
+    assert.deepStrictEqual(provider, {
+      kind: SourceControlProviderKind.make("github"),
+      name: "GitHub",
+      baseUrl: "https://github.com",
+    });
+  }),
+);
+
+it.effect("recognizes an SSH alias whose ssh config HostName is github.com", () =>
+  Effect.gen(function* () {
+    const discovery = yield* GitHubSourceControlProvider.makeDiscovery.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(GitHubRest.GitHubRest)({
+            credential: (host) =>
+              host === "github.com"
+                ? Effect.succeed({ token: Redacted.make("token"), fingerprint: `${host}:fp` })
+                : Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),
+          }),
+          Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({ enabled: false }),
+          TestSourceControlHost.layer({
+            process: {
+              run: (input) =>
+                Effect.succeed(
+                  input.command === "ssh" && input.args.includes("-G")
+                    ? TestSourceControlHost.processOutput(
+                        "user git\nhostname github.com\nport 22\n",
+                      )
+                    : TestSourceControlHost.processOutput("", {
+                        exitCode: ChildProcessSpawner.ExitCode(1),
+                      }),
+                ),
+            },
+          }),
+        ),
+      ),
+      Effect.provideService(HostProcess.Environment, {}),
+    );
+    if (discovery.type !== "managed-cli") return assert.fail("expected a managed CLI");
+    const provider = yield* discovery.refineUnknownRemote({
+      cwd: "/repo",
+      context: { ...unknownContext("https://gh-work"), remoteUrl: "git@gh-work:team/project.git" },
     });
     assert.deepStrictEqual(provider, {
       kind: SourceControlProviderKind.make("github"),

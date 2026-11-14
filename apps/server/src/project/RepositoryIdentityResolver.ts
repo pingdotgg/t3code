@@ -27,6 +27,8 @@ export interface RepositoryIdentityResolverOptions {
   readonly refine?: (
     identity: RepositoryIdentity,
   ) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
+  /** `SourceControlHost.canonicalRemoteUrl`; absent, remotes are read as written. */
+  readonly canonicalRemoteUrl?: (remoteUrl: string) => Effect.Effect<string>;
 }
 
 export class RepositoryIdentityResolver extends Context.Service<
@@ -77,6 +79,7 @@ function parseRemoteFetchUrls(stdout: string): Map<string, string> {
 function pickMarkedRemote(
   remotes: ReadonlyMap<string, string>,
   resolved: string,
+  canonicalUrls: ReadonlyMap<string, string>,
 ): { readonly remoteName: string; readonly remoteUrl: string } | null {
   const marks = resolved.split("\n").flatMap((line) => {
     const match = /^remote\.(.+)\.gh-resolved\s+(\S+)$/u.exec(line.trim());
@@ -90,12 +93,14 @@ function pickMarkedRemote(
   if (!mark || others.length > 0) return null;
   if (mark.value === "base") return { remoteName: mark.remoteName, remoteUrl: mark.remoteUrl };
   // Compare hosts with HTTP ports kept: one hostname can serve separate forges on two ports.
-  const host = parseGitRemoteHost(mark.remoteUrl)?.host;
+  // Two SSH aliases for one server are the same host.
+  const hostOf = (url: string) => parseGitRemoteHost(canonicalUrls.get(url) ?? url)?.host;
+  const host = hostOf(mark.remoteUrl);
   const markedPath = mark.value.toLowerCase();
   const [remoteName, remoteUrl] =
     [...remotes.entries()].find(
       ([, url]) =>
-        parseGitRemoteHost(url)?.host === host &&
+        hostOf(url) === host &&
         normalizeGitRemoteUrl(url).split("/").slice(1).join("/") === markedPath,
     ) ?? [];
   return remoteName && remoteUrl ? { remoteName, remoteUrl } : null;
@@ -104,8 +109,9 @@ function pickMarkedRemote(
 function pickPrimaryRemote(
   remotes: ReadonlyMap<string, string>,
   resolved: string,
+  canonicalUrls: ReadonlyMap<string, string>,
 ): { readonly remoteName: string; readonly remoteUrl: string } | null {
-  const marked = pickMarkedRemote(remotes, resolved);
+  const marked = pickMarkedRemote(remotes, resolved, canonicalUrls);
   if (marked) return marked;
 
   for (const preferredRemoteName of ["upstream", "origin"] as const) {
@@ -133,28 +139,34 @@ function repositoryPathOf(canonicalKey: string, remoteUrl: string): string {
 
 function buildRepositoryOrigin(
   originUrl: string | undefined,
+  canonicalOriginUrl: string | undefined,
   canonicalKey: string,
 ): RepositoryIdentity["origin"] {
   if (!originUrl) return undefined;
-  const originKey = sourceControlDefinitions.repositoryKeyFromRemote(originUrl);
+  const originKey = sourceControlDefinitions.repositoryKeyFromRemote(
+    canonicalOriginUrl ?? originUrl,
+  );
   if (originKey === canonicalKey) return undefined;
   const displayName = repositoryPathOf(originKey, originUrl);
   return { canonicalKey: originKey, remoteUrl: originUrl, ...(displayName ? { displayName } : {}) };
 }
 
+// The key and host follow where ssh config sends an alias; the locator keeps git's own URL.
 function buildRepositoryIdentity(input: {
   readonly remoteName: string;
   readonly remoteUrl: string;
+  readonly canonicalRemoteUrl: string;
   readonly originUrl: string | undefined;
+  readonly canonicalOriginUrl: string | undefined;
   readonly rootPath: string;
 }): RepositoryIdentity {
-  const canonicalKey = sourceControlDefinitions.repositoryKeyFromRemote(input.remoteUrl);
-  const sourceControlProvider = sourceControlDefinitions.recognizeRemote(input.remoteUrl);
+  const canonicalKey = sourceControlDefinitions.repositoryKeyFromRemote(input.canonicalRemoteUrl);
+  const sourceControlProvider = sourceControlDefinitions.recognizeRemote(input.canonicalRemoteUrl);
   const repositoryPath = repositoryPathOf(canonicalKey, input.remoteUrl);
   const repositoryPathSegments = repositoryPath.split("/").filter((segment) => segment.length > 0);
   const [owner] = repositoryPathSegments;
   const repositoryName = repositoryPathSegments.at(-1);
-  const origin = buildRepositoryOrigin(input.originUrl, canonicalKey);
+  const origin = buildRepositoryOrigin(input.originUrl, input.canonicalOriginUrl, canonicalKey);
 
   return {
     canonicalKey,
@@ -269,6 +281,7 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   "RepositoryIdentityResolver.resolveFromCacheKey",
 )(function* (
   cacheKey: RepositoryIdentityCacheKey,
+  canonicalRemoteUrl: (remoteUrl: string) => Effect.Effect<string>,
 ): Effect.fn.Return<RepositoryIdentity | null, never, ProcessRunner.ProcessRunner> {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const env = gitEnv(yield* HostProcess.Platform);
@@ -295,14 +308,21 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     resolvedResult._tag === "Some" && resolvedResult.value.code === 0
       ? resolvedResult.value.stdout
       : "";
-  const remote = pickPrimaryRemote(remotes, resolved);
-  return remote
-    ? buildRepositoryIdentity({
-        ...remote,
-        originUrl: remotes.get("origin"),
-        rootPath: cacheKey.rootPath,
-      })
-    : null;
+  const canonicalUrls = new Map(
+    yield* Effect.forEach(new Set(remotes.values()), (url) =>
+      canonicalRemoteUrl(url).pipe(Effect.map((canonical) => [url, canonical] as const)),
+    ),
+  );
+  const remote = pickPrimaryRemote(remotes, resolved, canonicalUrls);
+  if (!remote) return null;
+  const originUrl = remotes.get("origin");
+  return buildRepositoryIdentity({
+    ...remote,
+    canonicalRemoteUrl: canonicalUrls.get(remote.remoteUrl) ?? remote.remoteUrl,
+    originUrl,
+    canonicalOriginUrl: originUrl === undefined ? undefined : canonicalUrls.get(originUrl),
+    rootPath: cacheKey.rootPath,
+  });
 });
 
 export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
@@ -313,6 +333,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const path = yield* Path.Path;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
   const refine = options.refine ?? Effect.succeed;
+  const canonicalRemoteUrl = options.canonicalRemoteUrl ?? Effect.succeed;
   const timeToLive = (exit: Exit.Exit<unknown>) =>
     Exit.match(exit, {
       onSuccess: (value) =>
@@ -335,7 +356,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     RepositoryIdentity | null
   >(
     (cacheKey) =>
-      resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
+      resolveRepositoryIdentityFromCacheKey(cacheKey, canonicalRemoteUrl).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
         Effect.filterOrElse(
           (identity): identity is null => identity === null,
