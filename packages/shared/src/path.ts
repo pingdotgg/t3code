@@ -36,7 +36,7 @@ function isRootPath(value: string): boolean {
 }
 
 function trimTrailingPathSeparators(value: string): string {
-  if (value.length === 0 || isRootPath(value)) {
+  if (value.length === 0 || isRootPath(value) || /^[a-zA-Z]:$/.test(value)) {
     return value;
   }
   const trimmed = value.startsWith("/")
