@@ -162,7 +162,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     expect(received.args).toEqual([value]);
     expect(received.input).toBe(input);
     expect(received.cwd.replaceAll("\\", "/")).toBe(
-      (home + "/.t3/device/hosts/" + owner).replaceAll("\\", "/"),
+      (yield* fs.realPath(home + "/.t3/device/hosts/" + owner)).replaceAll("\\", "/"),
     );
     yield* SshDeviceHost.probe({
       kind: "ssh",
