@@ -24,6 +24,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  ProviderThreadId,
   ThreadId,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
@@ -763,6 +764,8 @@ const pollProtocolMethods = (events: Queue.Queue<EffectAcpProtocol.AcpProtocolLo
 
 const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
   environment: Readonly<Record<string, string>>,
+  followAgentWorkState = false,
+  drainPromptEvents = true,
   prepareAttachments = false,
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -771,6 +774,7 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
   const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
   const instanceId = ProviderInstanceId.make("acp-test-instruction-compaction");
   const threadId = ThreadId.make("thread-acp-instruction-compaction");
+  let rejectLoad = false;
   yield* (yield* McpProviderSessions.McpProviderSessions).set({
     environmentId: EnvironmentId.make("environment-acp-instruction-compaction"),
     threadId,
@@ -798,6 +802,7 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
       driver: ACP_TEST_DRIVER,
       capabilities: AcpProviderCapabilitiesV2,
       supportsCompaction: true,
+      followAgentWorkState,
       rewriteUserText: (text) =>
         prepareAttachments ? Effect.succeed(text) : prepare.pipe(Effect.as(text)),
       ...(prepareAttachments
@@ -820,6 +825,10 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
             Effect.sync(() => {
               sessionUpdate = next;
             }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+          loadSession: (sessionId, options) =>
+            rejectLoad
+              ? Effect.fail(EffectAcpErrors.AcpRequestError.internalError("Mock load failure"))
+              : runtime.loadSession(sessionId, options),
           handleExtNotification: (method, payload, next) =>
             Effect.sync(() => {
               if (method === "github.com/copilot/sessionEvent") {
@@ -829,7 +838,7 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
           // Make compaction during prompt completion deterministic at the adapter boundary.
           prompt: (payload, options) =>
             runtime.prompt(payload, options).pipe(
-              Effect.tap(() => runtime.drainEvents),
+              Effect.tap(() => (drainPromptEvents ? runtime.drainEvents : Effect.void)),
               // Grok's local cancel reports `cancelled` even when the agent never saw the prompt.
               Effect.map((result) => {
                 if (nextPromptStopReason === undefined) return result;
@@ -842,6 +851,7 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
       }),
     },
     selfInvocation,
+    continuationRequests: { offer: () => Effect.void },
   });
   const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
     runtimeMode: "full-access",
@@ -849,30 +859,156 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
     cwd: process.cwd(),
   });
   const modelSelection = { instanceId, model: "default" } as const;
-  const runtime = yield* adapter.openSession({
+  const open = Effect.fnUntraced(function* (initialNativeThreadId?: string) {
+    const scope = yield* Scope.make();
+    yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+    const runtime = yield* adapter
+      .openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-instruction-compaction"),
+        modelSelection,
+        runtimePolicy,
+        ...(initialNativeThreadId === undefined ? {} : { initialNativeThreadId }),
+      })
+      .pipe(Effect.provideService(Scope.Scope, scope));
+    return { runtime, scope };
+  });
+  let session = yield* open();
+  let providerThread = yield* session.runtime.ensureThread({
     threadId,
-    providerSessionId: ProviderSessionId.make("provider-session-acp-instruction-compaction"),
     modelSelection,
     runtimePolicy,
   });
-  const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
   const now = yield* DateTime.now;
   let ordinal = 0;
   const sessionId = "mock-session-1";
   return {
-    runTurn: Effect.fnUntraced(function* (messageText: string, expectedStatus = "completed") {
+    runTurn: Effect.fnUntraced(function* (
+      messageText: string,
+      expectedStatus = "completed",
+      reopen:
+        | boolean
+        | "rollback"
+        | "compact"
+        | "resume-compact-reopen"
+        | "resume-info-reopen" = false,
+      interactionMode: "default" | "plan" = "default",
+    ) {
+      const turnRuntimePolicy = { ...runtimePolicy, interactionMode };
+      if (reopen === "compact") {
+        if (sessionUpdate === undefined) return yield* Effect.die("Missing session handler");
+        const sessionId = providerThread.nativeThreadRef?.nativeId;
+        if (sessionId == null) return yield* Effect.die("Missing native session");
+        yield* sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "compaction_update",
+            compactionId: "idle-compact",
+            status: "completed",
+          },
+        });
+      }
+      if (reopen === "rollback") {
+        const result = yield* session.runtime.rollbackThread({
+          providerThread,
+          providerThreadTurns: [],
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("instruction-rollback"),
+            appRunOrdinal: 0,
+          },
+        });
+        providerThread = result.providerThread;
+      }
+      const resume = Effect.fnUntraced(function* () {
+        const nativeSessionId = providerThread.nativeThreadRef?.nativeId;
+        if (nativeSessionId == null)
+          return yield* Effect.die("Expected a persisted native session");
+        yield* Scope.close(session.scope, Exit.void);
+        session = yield* open(nativeSessionId);
+        providerThread = yield* session.runtime.resumeThread({
+          providerThread,
+          modelSelection,
+          runtimePolicy: turnRuntimePolicy,
+        });
+      });
+      if (reopen === true || reopen === "resume-compact-reopen" || reopen === "resume-info-reopen")
+        yield* resume();
+      if (reopen === "resume-info-reopen") {
+        if (sessionUpdate === undefined) return yield* Effect.die("Missing session handler");
+        const sessionId = providerThread.nativeThreadRef?.nativeId;
+        if (sessionId == null) return yield* Effect.die("Missing native session");
+        yield* sessionUpdate({
+          sessionId,
+          update: { sessionUpdate: "session_info_update", title: "Updated native title" },
+        });
+        const updated = yield* session.runtime.events.pipe(
+          Stream.filter((event) => event.type === "provider_thread.updated"),
+          Stream.runHead,
+        );
+        providerThread = Option.getOrThrow(updated).providerThread;
+        yield* resume();
+      }
+      if (reopen === "resume-compact-reopen") {
+        if (sessionUpdate === undefined) return yield* Effect.die("Missing session handler");
+        const stored = providerThread;
+        const nativeRef = stored.nativeThreadRef;
+        if (nativeRef?.nativeId == null) return yield* Effect.die("Missing native session");
+        const sessionId = nativeRef.nativeId;
+        yield* sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "compaction_update",
+            compactionId: "resumed-idle-compact",
+            status: "completed",
+          },
+        });
+        const pendingInvalidations = yield* session.runtime.readInstructionInvalidations!;
+        const updated = yield* session.runtime.events.pipe(
+          Stream.filter((event) => event.type === "provider_thread.updated"),
+          Stream.runHead,
+        );
+        providerThread = Option.getOrThrow(updated).providerThread;
+        assert.isNull(providerThread.nativeMetadata?.acpInstructions);
+        assert.deepEqual(pendingInvalidations, [providerThread]);
+        yield* session.runtime.resumeThread({
+          providerThread: {
+            ...stored,
+            id: ProviderThreadId.make("acp-alternate-thread"),
+            nativeThreadRef: { ...nativeRef, nativeId: "mock-session-2" },
+            nativeMetadata: null,
+          },
+        });
+        rejectLoad = true;
+        const failedResume = yield* Effect.exit(
+          session.runtime.resumeThread({ providerThread: stored }),
+        );
+        rejectLoad = false;
+        assert.isTrue(Exit.isFailure(failedResume));
+        const afterFailure = yield* session.runtime.readInstructionInvalidations!;
+        assert.isNull(
+          afterFailure.find((thread) => thread.id === stored.id)?.nativeMetadata?.acpInstructions,
+        );
+        yield* resume();
+      }
+      const { runtime } = session;
       yield* runtime.startTurn(
         makeTurnInput({
           threadId,
           providerThread,
           instanceId,
-          runtimePolicy,
+          runtimePolicy: turnRuntimePolicy,
           now,
           ordinal: ++ordinal,
           messageText,
         }),
       );
       const terminal = yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          Effect.sync(() => {
+            if (event.type === "provider_thread.updated") providerThread = event.providerThread;
+          }),
+        ),
         Stream.filter((event) => event.type === "turn.terminal"),
         Stream.runHead,
       );
@@ -1105,6 +1241,32 @@ const optionValues = (question: OrchestrationV2UserInputQuestion | undefined) =>
 describe("AcpAdapterV2", () => {
   beforeAll(() => bundleAgents);
 
+  it.live("retains delivered instructions across a resumed session info update", () =>
+    Effect.gen(function* () {
+      const { runTurn } = yield* makeInstructionCompactionHarness({});
+      yield* runTurn("Start work.");
+      assert.equal(
+        (yield* runTurn("Continue work.", "completed", "resume-info-reopen"))[0]?.text,
+        "Continue work.",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+  it.live.each(["rollback", "compact"] as const)(
+    "reinjects instructions after idle %s with no continuation consumer",
+    (transition) =>
+      Effect.gen(function* () {
+        const { runTurn } = yield* makeInstructionCompactionHarness(
+          {},
+          false,
+          transition !== "rollback",
+        );
+        assertReinjectedInstructions(yield* runTurn("Start work."), "Start work.");
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after reset.", "completed", transition),
+          "Continue after reset.",
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
   it.live("keeps a completed tool's status when its linked ACP terminal streams output", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("acp-test-terminal-linked-tool");
@@ -2439,6 +2601,98 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live.each([false, true])(
+    "invalidates old instructions after a failed mode change (reopen: %s)",
+    (reopen) =>
+      Effect.gen(function* () {
+        const { runTurn } = yield* makeInstructionCompactionHarness({
+          T3_ACP_FAIL_PROMPT_ORDINAL: "2",
+        });
+        assert.include(
+          (yield* runTurn("Plan first.", "completed", false, "plan"))[0]?.text ?? "",
+          "T3 Code interaction mode: Plan",
+        );
+        yield* runTurn("Implement now.", "failed");
+        assert.include(
+          (yield* runTurn("Plan again.", "completed", reopen, "plan"))[0]?.text ?? "",
+          "T3 Code interaction mode: Plan",
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("retries instruction delivery after a cancelled prompt before and after reopen", () =>
+    Effect.gen(function* () {
+      const { runTurn } = yield* makeInstructionCompactionHarness({
+        T3_ACP_VIBE_RETRY_OUTCOME: "cancelled",
+      });
+      yield* runTurn("Start work.", "cancelled");
+      assertReinjectedInstructions(
+        yield* runTurn("Continue after compact.", "cancelled", "compact"),
+        "Continue after compact.",
+      );
+      assertReinjectedInstructions(yield* runTurn("Continue work.", "cancelled"), "Continue work.");
+      assertReinjectedInstructions(
+        yield* runTurn("Continue after reopen.", "cancelled", true),
+        "Continue after reopen.",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("records instructions before ACP work-state completion ends the run", () =>
+    Effect.gen(function* () {
+      const { runTurn } = yield* makeInstructionCompactionHarness(
+        { T3_ACP_ECHO_ACCEPTED_PROMPT: "1" },
+        true,
+      );
+      assertReinjectedInstructions(yield* runTurn("Start work."), "Start work.");
+      assert.equal(
+        (yield* runTurn("Continue work.", "completed", true))[0]?.text,
+        "Continue work.",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("persists idle compaction after resume before another turn", () =>
+    Effect.gen(function* () {
+      const { runTurn } = yield* makeInstructionCompactionHarness({});
+      yield* runTurn("Start work.");
+      assertReinjectedInstructions(
+        yield* runTurn("Continue after idle compaction.", "completed", "resume-compact-reopen"),
+        "Continue after idle compaction.",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live.each(["native", "focused", "protocol"] as const)(
+    "retains ACP instructions across reopen but reinjects after %s compaction",
+    (compaction) =>
+      Effect.gen(function* () {
+        const { runTurn } = yield* makeInstructionCompactionHarness(
+          compaction === "protocol"
+            ? {
+                T3_ACP_COMPACTION_PROMPT_ORDINALS: "2",
+              }
+            : {},
+        );
+        assertReinjectedInstructions(yield* runTurn("Start work."), "Start work.");
+        assert.equal(
+          (yield* runTurn("Continue work.", "completed", true))[0]?.text,
+          "Continue work.",
+        );
+        yield* runTurn(
+          compaction === "native"
+            ? "/compact"
+            : compaction === "focused"
+              ? "/compact keep the plan"
+              : "Compact while working.",
+        );
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after compact.", "completed", true),
+          "Continue after compact.",
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live.each(["cancelled", "refusal", "error"] as const)(
     "reinjects ACP instructions after protocol compaction, during reinjection, prompt preparation, or while idle (%s)",
     (stopReason) =>
@@ -2454,6 +2708,8 @@ describe("AcpAdapterV2", () => {
             T3_ACP_COMPACTION_PROMPT_ORDINALS: "2,4",
             T3_ACP_OPEN_COMPACTION_PROMPT_ORDINALS: "13",
           },
+          false,
+          true,
           stopReason === "error",
         );
         const expectedStatus =
@@ -7698,6 +7954,7 @@ describe("AcpAdapterV2", () => {
           const secondChildSessionId = "mock-child-session-finalize-window-second";
           let firstSubagentStatus: "running" | "completed" = "running";
           let secondSubagentStatus: "waiting" | "completed" = "waiting";
+          let backgroundTurn = false;
           type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
           let sessionUpdateHandler:
             | Parameters<RuntimeService["handleSessionUpdate"]>[0]
@@ -7715,6 +7972,7 @@ describe("AcpAdapterV2", () => {
               deferFinalizeForBackgroundWork: true,
               enablePostSettleContinuation: true,
               extractSubagentUpdate: (toolCall) => {
+                if (!backgroundTurn) return undefined;
                 if (toolCall.toolCallId === "tool-call-generic-1") {
                   return {
                     nativeTaskId: "task-finalize-window-first",
@@ -7783,7 +8041,7 @@ describe("AcpAdapterV2", () => {
             Stream.runForEach((event) => Queue.offer(events, event)),
             Effect.forkScoped,
           );
-          const providerThread = yield* runtime.ensureThread({
+          let providerThread = yield* runtime.ensureThread({
             threadId,
             modelSelection,
             runtimePolicy,
@@ -7791,6 +8049,16 @@ describe("AcpAdapterV2", () => {
           const now = yield* DateTime.now;
           yield* runtime.startTurn(
             makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
+          );
+          while (true) {
+            const event = yield* Queue.take(events);
+            if (event.type === "provider_thread.updated") providerThread = event.providerThread;
+            if (event.type === "turn.terminal") break;
+          }
+          assert.isNotNull(providerThread.nativeMetadata?.acpInstructions);
+          backgroundTurn = true;
+          yield* runtime.startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 2 }),
           );
           yield* Deferred.await(promptSettled);
           yield* TestClock.adjust("1 second");
@@ -7842,20 +8110,30 @@ describe("AcpAdapterV2", () => {
               rawOutput: { content: "SECOND_DONE" },
             },
           });
+          const compactFiber = yield* sessionUpdateHandler!({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "compaction_update",
+              compactionId: "finalization-window",
+              status: "completed",
+            },
+          }).pipe(Effect.forkScoped({ startImmediately: true }));
           yield* Deferred.succeed(releaseFinalizationClockRead, undefined);
           yield* Fiber.join(adjustFiber);
+          yield* Fiber.join(compactFiber);
           yield* Effect.yieldNow;
           yield* Effect.yieldNow;
 
           const providerTurnId = idAllocator.derive.providerTurn({
             driver: ACP_TEST_DRIVER,
-            nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+            nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:2"),
           });
           let completedSubagentUpdates = 0;
           let rootTerminalStatus: string | null = null;
           let polled = yield* Queue.poll(events);
           while (Option.isSome(polled)) {
             const event = polled.value;
+            if (event.type === "provider_thread.updated") providerThread = event.providerThread;
             if (
               event.type === "turn_item.updated" &&
               event.turnItem.type === "subagent" &&
@@ -7870,6 +8148,7 @@ describe("AcpAdapterV2", () => {
             polled = yield* Queue.poll(events);
           }
           assert.equal(rootTerminalStatus, "completed");
+          assert.isNull(providerThread.nativeMetadata?.acpInstructions);
           assert.equal(completedSubagentUpdates, 1);
           assert.isFalse(
             yield* hasPendingBackgroundWork,

@@ -17,7 +17,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ProviderSessionId,
+  ProviderSessionId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -158,7 +158,7 @@ const layerPausingAttachEventSink = (pause: {
   ).pipe(Layer.provide(layerTestEventSink));
 
 const layerBeforeUnchangedWriteEventSink = (
-  before: Ref.Ref<Effect.Effect<void>>,
+  before: Ref.Ref<Effect.Effect<void, EventSink.EventSinkWriteError>>,
   // One effect runs before each turn-item write, in order.
   beforeTurnItems: Ref.Ref<ReadonlyArray<Effect.Effect<void>>> | undefined,
 ) =>
@@ -445,6 +445,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
   state: Ref.Ref<TestProviderRuntimeState>,
   options: {
     readonly failEventStream?: boolean;
+    readonly readInstructionInvalidations?: Effect.Effect<
+      ReadonlyArray<OrchestrationV2ProviderThread>
+    >;
     readonly normalizeThreadLoadModelSelection?: (selection: ModelSelection) => ModelSelection;
     readonly capabilities?: OrchestrationV2ProviderCapabilities;
     readonly extensionStatuses?: OrchestrationV2ProviderSession["extensionStatuses"];
@@ -538,6 +541,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           instanceId: ProviderInstanceId.make("codex"),
           driver: CODEX_DRIVER,
           providerSessionId: input.providerSessionId,
+          ...(options.readInstructionInvalidations === undefined
+            ? {}
+            : { readInstructionInvalidations: options.readInstructionInvalidations }),
           ...(options.normalizeThreadLoadModelSelection === undefined
             ? {}
             : { normalizeThreadLoadModelSelection: options.normalizeThreadLoadModelSelection }),
@@ -631,7 +637,10 @@ function layerTest(input: {
   readonly failReleaseEventWrites?: boolean;
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
   readonly pauseAttachWrite?: Parameters<typeof layerPausingAttachEventSink>[0];
-  readonly beforeUnchangedWrite?: Ref.Ref<Effect.Effect<void>>;
+  readonly beforeUnchangedWrite?: Ref.Ref<Effect.Effect<void, EventSink.EventSinkWriteError>>;
+  readonly readInstructionInvalidations?: Effect.Effect<
+    ReadonlyArray<OrchestrationV2ProviderThread>
+  >;
   readonly beforeTurnItemsWrite?: Ref.Ref<ReadonlyArray<Effect.Effect<void>>>;
   readonly pauseResolve?: {
     readonly armed: Ref.Ref<boolean>;
@@ -668,6 +677,9 @@ function layerTest(input: {
   const layerRegistry = Layer.unwrap(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
+      ...(input.readInstructionInvalidations === undefined
+        ? {}
+        : { readInstructionInvalidations: input.readInstructionInvalidations }),
       ...(input.normalizeThreadLoadModelSelection === undefined
         ? {}
         : { normalizeThreadLoadModelSelection: input.normalizeThreadLoadModelSelection }),
@@ -3478,7 +3490,9 @@ it.effect.each(["a runtime whose tasks can outlive it", "server shutdown"] as co
 it.effect("ProviderSessionManagerV2 keeps provider updates that land while release clears", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
-    const beforeUnchangedWrite = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+    const beforeUnchangedWrite = yield* Ref.make<
+      Effect.Effect<void, EventSink.EventSinkWriteError>
+    >(Effect.void);
     const beforeTurnItemsWrite = yield* Ref.make<ReadonlyArray<Effect.Effect<void>>>([]);
     const effect = Effect.gen(function* () {
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
@@ -4128,6 +4142,279 @@ it.effect("ProviderSessionManagerV2 settles a request the event pump persists du
       Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, flakyReleaseWrites: flaky })),
     );
   }),
+);
+
+it.effect.each([
+  "current",
+  "queued-completion",
+  "released-completion",
+  "repeated-close",
+  "contended-close",
+  "detached-close",
+  "failed-close",
+  "failed-event",
+  "release-after-failed-event",
+  "retry-after-failed-release",
+  "detach-after-failed-event",
+  "release-before-event",
+  "newer-run",
+  "newer-session",
+] as const)(
+  "ProviderSessionManagerV2 persists instruction invalidation only for its owner (%s)",
+  (owner) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const beforeUnchangedWrite = yield* Ref.make<
+        Effect.Effect<void, EventSink.EventSinkWriteError>
+      >(Effect.void);
+      const adapterInvalidations = yield* Ref.make<ReadonlyArray<OrchestrationV2ProviderThread>>(
+        [],
+      );
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("instruction-invalidation");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThread = {
+          ...makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+          lastRunOrdinal: 1,
+          nativeMetadata: {
+            title: "current title",
+            acpInstructions: {
+              nativeSessionId: "native-thread",
+              digest: "delivered-instructions",
+            },
+          },
+        };
+        const stored = {
+          ...providerThread,
+          ...(owner === "newer-run" ? { lastRunOrdinal: 2 } : {}),
+          ...(owner === "newer-session"
+            ? { providerSessionId: ProviderSessionId.make("newer-session") }
+            : {}),
+        };
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+            {
+              id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+              type: "provider-thread.updated",
+              threadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: stored,
+            },
+          ],
+        });
+        const before = (yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]))
+          .providerThreads[0]!;
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const invalidation = {
+          ...providerThread,
+          nativeMetadata: { title: "stale title", acpInstructions: null },
+        };
+        if (owner === "release-before-event") {
+          // The adapter has recorded compaction, but the event pump has not seen it.
+          yield* Ref.set(adapterInvalidations, [invalidation]);
+          yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
+          const projection = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]);
+          assert.isNull(projection.providerThreads[0]?.nativeMetadata?.acpInstructions);
+          return;
+        }
+        const subscription = yield* runtime.subscribeEvents!;
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.isDefined(queue);
+        const failedWrite = Effect.fail(new EventSink.EventSinkWriteError({ eventCount: 1 }));
+        if (
+          owner === "failed-event" ||
+          owner === "release-after-failed-event" ||
+          owner === "retry-after-failed-release" ||
+          owner === "detach-after-failed-event"
+        ) {
+          yield* Ref.set(beforeUnchangedWrite, failedWrite);
+        }
+        yield* Queue.offer(queue!, {
+          type: "provider_thread.updated",
+          driver: CODEX_DRIVER,
+          providerThread: invalidation,
+        });
+        const completionEventId = yield* idAllocator.allocate.event({
+          threadId,
+          providerSessionId,
+        });
+        const restoreCompletion = eventSink.write({
+          events: [
+            {
+              id: completionEventId,
+              type: "provider-thread.updated",
+              threadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: before,
+            },
+          ],
+        });
+        let conflicts = 0;
+        let release: Fiber.Fiber<void> | undefined;
+        const raceWithCleanup: Effect.Effect<void> = Effect.gen(function* () {
+          conflicts++;
+          if (conflicts === 1) {
+            release = yield* manager
+              .release({ providerSessionId, reason: "manual_shutdown" })
+              .pipe(Effect.orDie, Effect.forkChild({ startImmediately: true }));
+          } else {
+            assert.isFalse(
+              yield* manager.isLive(providerSessionId),
+              "release must enter between retries",
+            );
+          }
+          yield* eventSink.write({
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+                type: "provider-thread.updated",
+                threadId,
+                driver: CODEX_DRIVER,
+                occurredAt: now,
+                payload: {
+                  ...before,
+                  nativeMetadata: { ...before.nativeMetadata, title: `conflict ${conflicts}` },
+                },
+              },
+            ],
+          });
+          if (conflicts < 4) yield* Ref.set(beforeUnchangedWrite, raceWithCleanup);
+        }).pipe(Effect.orDie);
+        yield* subscription.events.pipe(
+          Stream.tap(() =>
+            Effect.gen(function* () {
+              if (owner === "failed-event") {
+                assert.isTrue(yield* manager.isLive(providerSessionId));
+                assert.deepEqual(
+                  (yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]))
+                    .providerThreads[0]?.nativeMetadata?.acpInstructions,
+                  before.nativeMetadata?.acpInstructions,
+                );
+              }
+              if (owner === "released-completion")
+                yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
+              if (
+                owner === "release-after-failed-event" ||
+                owner === "retry-after-failed-release" ||
+                owner === "detach-after-failed-event"
+              ) {
+                const release =
+                  owner === "detach-after-failed-event"
+                    ? manager.detach({ providerSessionId, threadId })
+                    : manager.release({ providerSessionId, reason: "manual_shutdown" });
+                if (owner === "retry-after-failed-release") {
+                  yield* Ref.set(beforeUnchangedWrite, failedWrite);
+                  assert.isTrue(Exit.isFailure(yield* Effect.exit(release)));
+                  assert.isFalse(yield* manager.isLive(providerSessionId));
+                  assert.equal((yield* Ref.get(state)).closeCount, 1);
+                  const invalidation = yield* eventSink
+                    .stream({
+                      threadId,
+                      afterSequence: yield* eventSink.latestSequence({ threadId }),
+                      eventType: "provider-thread.updated",
+                    })
+                    .pipe(Stream.runHead, Effect.forkScoped);
+                  yield* TestClock.adjust("1 second");
+                  yield* Fiber.join(invalidation);
+                } else {
+                  yield* release;
+                }
+                // The subscriber is still open, so it cannot have retried the write.
+                assert.isNull(
+                  (yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]))
+                    .providerThreads[0]?.nativeMetadata?.acpInstructions,
+                );
+              }
+              if (owner === "queued-completion" || owner === "released-completion")
+                yield* restoreCompletion;
+              if (owner === "detached-close") {
+                yield* restoreCompletion;
+                yield* manager.detach({ providerSessionId, threadId });
+              }
+              if (owner === "failed-close") {
+                yield* restoreCompletion;
+                yield* Ref.set(
+                  beforeUnchangedWrite,
+                  Effect.fail(new EventSink.EventSinkWriteError({ eventCount: 1 })),
+                );
+              }
+              if (owner === "contended-close") {
+                yield* restoreCompletion;
+                yield* Ref.set(beforeUnchangedWrite, raceWithCleanup);
+              }
+            }),
+          ),
+          Stream.runHead,
+        );
+        if (release !== undefined) yield* Fiber.join(release);
+        if (owner === "failed-event") {
+          assert.isTrue(yield* manager.isLive(providerSessionId));
+          assert.equal((yield* Ref.get(state)).closeCount, 0);
+        }
+        if (owner === "contended-close") assert.equal(conflicts, 4);
+        if (owner === "failed-close") yield* subscription.close;
+        if (owner === "repeated-close") {
+          yield* restoreCompletion;
+          yield* subscription.close;
+        }
+        const projection = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]);
+        const updated = projection.providerThreads.find(
+          (candidate) => candidate.id === providerThread.id,
+        );
+        assert.deepEqual(
+          updated,
+          owner === "current" ||
+            owner === "queued-completion" ||
+            owner === "released-completion" ||
+            owner === "repeated-close" ||
+            owner === "contended-close" ||
+            owner === "failed-close" ||
+            owner === "failed-event" ||
+            owner === "release-after-failed-event" ||
+            owner === "retry-after-failed-release" ||
+            owner === "detach-after-failed-event"
+            ? {
+                ...before,
+                nativeMetadata: {
+                  ...before.nativeMetadata,
+                  ...(owner === "contended-close" ? { title: "conflict 4" } : {}),
+                  acpInstructions: null,
+                },
+              }
+            : before,
+        );
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            beforeUnchangedWrite,
+            ...(owner === "detach-after-failed-event"
+              ? { capabilities: ExclusiveCapabilities }
+              : {}),
+            ...(owner === "release-before-event"
+              ? { readInstructionInvalidations: Ref.get(adapterInvalidations) }
+              : {}),
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect.each(["manual_shutdown", "server_shutdown"] as const)(

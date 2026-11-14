@@ -1,3 +1,4 @@
+import type * as Digest from "effect/crypto/Digest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import { type OrchestrationV2ProviderCapabilities } from "@t3tools/contracts";
@@ -205,6 +206,7 @@ export const makeFxAdapterV2 = Effect.fn("makeFxAdapterV2")(function* (
 });
 
 export type FxAdapterV2DriverEnv =
+  | Digest.Digest
   | ChildProcessSpawner.ChildProcessSpawner
   | SecureRandom.SecureRandom
   | FileSystem.FileSystem

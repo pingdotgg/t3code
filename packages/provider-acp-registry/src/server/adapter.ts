@@ -1,3 +1,4 @@
+import type * as Digest from "effect/crypto/Digest";
 import {
   extractClaudeSubagentUpdate,
   extractClaudeSubagentSessionEvent,
@@ -351,6 +352,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
 });
 
 export type AcpRegistryAdapterV2DriverEnv =
+  | Digest.Digest
   | ChildProcessSpawner.ChildProcessSpawner
   | SecureRandom.SecureRandom
   | FileSystem.FileSystem
