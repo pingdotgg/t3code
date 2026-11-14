@@ -119,6 +119,7 @@ import {
 import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptStore.ts";
 import {
   ContextHandoffServiceV2,
+  type HandoffHistoryReader,
   readForkHistoryItems,
   readInheritedHandoffItems,
   visibleConversationItems,
@@ -1773,6 +1774,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
       );
 
+  const handoffHistory = (
+    threadId: ThreadId,
+    runIds?: ReadonlyArray<RunId>,
+  ): HandoffHistoryReader => ({
+    page: (limit) => projectionStore.getHandoffHistory(threadId, runIds, limit),
+    items: (itemIds) => projectionStore.getHandoffHistoryItems(threadId, itemIds),
+  });
+
   const readInheritedItems = (thread: OrchestrationV2AppThread) =>
     readInheritedHandoffItems(projectionStore, thread).pipe(
       Effect.mapError((cause) => new OrchestratorProjectionError({ threadId: thread.id, cause })),
@@ -2762,15 +2771,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 },
                 runs: projection.runs,
                 strategy: handoffStrategy,
-                items: [
-                  ...(needsFullContext && latestCompletedRun !== undefined
-                    ? legacyImportItems
-                    : []),
-                  ...(yield* readHandoffItems(
-                    threadId,
-                    coveredRuns.map((run) => run.id),
-                  )),
-                ],
+                items:
+                  needsFullContext && latestCompletedRun !== undefined ? legacyImportItems : [],
+                readHistory: handoffHistory(
+                  threadId,
+                  coveredRuns.map((run) => run.id),
+                ),
                 createdAt: now,
               })
               .pipe(
@@ -6290,7 +6296,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           toProviderInstanceId: input.modelSelection.instanceId,
           coveredRunOrdinals: { from: Math.max(1, contextBoundary), to: targetRun.ordinal },
           strategy: "full_thread_summary",
-          items: yield* readHandoffItems(
+          items: [],
+          readHistory: handoffHistory(
             input.command.threadId,
             contextBoundary === 0
               ? undefined
@@ -8465,18 +8472,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               run.ordinal <= latestHandoffRun.ordinal,
           );
     const providerSwitchItems =
-      providerSwitchCoveredRuns.length === 0
-        ? []
-        : [
-            ...(latestCompletedRun !== undefined &&
-            (targetProviderThread === undefined || requiresFullProviderSwitchContext)
-              ? legacyImportItems
-              : []),
-            ...(yield* readHandoffItems(
-              command.threadId,
-              providerSwitchCoveredRuns.map((run) => run.id),
-            )),
-          ];
+      latestCompletedRun !== undefined &&
+      (targetProviderThread === undefined || requiresFullProviderSwitchContext)
+        ? legacyImportItems
+        : [];
     const providerSwitchTransferId =
       providerSwitchCoveredRuns.length === 0 || latestHandoffRun === undefined
         ? null
@@ -8528,6 +8527,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   ? "full_thread_summary"
                   : "delta_since_target_last_seen",
               items: providerSwitchItems,
+              readHistory: handoffHistory(
+                command.threadId,
+                providerSwitchCoveredRuns.map((run) => run.id),
+              ),
               runs: projection.runs,
               createdAt: now,
             })

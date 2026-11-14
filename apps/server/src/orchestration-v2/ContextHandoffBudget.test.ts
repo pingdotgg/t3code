@@ -23,7 +23,10 @@ import {
   historyCost,
   historyResponseItems,
   selectHistory,
+  selectLoadedHistory,
+  minHistoricalMessageCost,
   historicalMessage,
+  jsonEscapedByteLength,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { projectContextHandoffForWire } from "./WireProjection.ts";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
@@ -210,6 +213,97 @@ describe("handoff budget", () => {
       });
       assert.isAtMost(historyCost(selected.messages, selected.context), budget);
       assert.isAbove(selected.omittedItems, 0);
+    }
+  });
+
+  it("counts escaped JSON bytes exactly, including lone surrogates and control characters", () => {
+    const samples = [
+      "",
+      "plain ascii",
+      '\u0000\u0008\t\n\u000b\f\r\u001f"\\',
+      "界é€𝄞🧪",
+      "\ud800",
+      "\udc00x",
+      "a\ud83d",
+      "\ud83d\ude00\ud83d",
+      "\u007f\u0080\u07ff\u0800\uffff",
+    ];
+    for (const sample of samples) {
+      assert.strictEqual(
+        jsonEscapedByteLength(sample),
+        Buffer.byteLength(JSON.stringify(sample)) - 2,
+      );
+    }
+  });
+
+  it("asks only for older candidates that could still fit past oversized newer ones", () => {
+    const candidates = [
+      message("early:user", "user", "Migrate the billing tables."),
+      message("early:answer", "assistant", "Constraint: keep invoice IDs stable."),
+      message("later:user", "user", "Continue the migration."),
+      ...Array.from({ length: 865 }, (_, index) =>
+        message(`command:${index}`, "assistant", "x".repeat(20_000)),
+      ),
+    ];
+    const input = {
+      coverage: "Recover",
+      budget: 16_000,
+      candidates: candidates.map((candidate) => ({
+        itemId: candidate.itemId,
+        minCost: minHistoricalMessageCost(candidate, candidate.text.length),
+      })),
+    };
+    const all = selectHistory({ ...input, messages: candidates });
+    assert.includeMembers(
+      all.messages.map((selected) => selected.itemId),
+      ["early:user", "early:answer", "later:user"].map((id) => TurnItemId.make(id)),
+    );
+    const newestPage = [candidates[0]!, candidates[2]!, ...candidates.slice(-256)];
+    assert.deepEqual(selectLoadedHistory({ ...input, messages: newestPage }), {
+      missingItemIds: [TurnItemId.make("early:answer")],
+    });
+    assert.deepEqual(selectLoadedHistory({ ...input, messages: candidates }), all);
+    const withoutAnswer = candidates.filter((candidate) => candidate.itemId !== "early:answer");
+    assert.deepEqual(
+      selectLoadedHistory({
+        ...input,
+        candidates: input.candidates.filter((candidate) => candidate.itemId !== "early:answer"),
+        messages: [withoutAnswer[0]!, withoutAnswer[1]!, ...withoutAnswer.slice(-256)],
+      }),
+      selectHistory({ ...input, messages: withoutAnswer }),
+    );
+  });
+
+  it("settles from the newest page once older candidates cannot fit", () => {
+    const candidates = [
+      message("bulk:user", "user", "Run the bulk pass."),
+      ...Array.from({ length: 3_000 }, (_, index) =>
+        message(`bulk:${index}`, "assistant", `Working on module ${index % 10}`.padEnd(220)),
+      ),
+    ];
+    const input = {
+      coverage: "Recover",
+      budget: 16_000,
+      candidates: candidates.map((candidate) => ({
+        itemId: candidate.itemId,
+        minCost: minHistoricalMessageCost(candidate, candidate.text.length),
+      })),
+    };
+    assert.deepEqual(
+      selectLoadedHistory({ ...input, messages: [candidates[0]!, ...candidates.slice(-256)] }),
+      selectHistory({ ...input, messages: candidates }),
+    );
+  });
+
+  it("never selects past the serialized envelope at any budget edge", () => {
+    const candidates = [
+      message("edge:0", "user", "界🧪\n".repeat(7)),
+      message("edge:1", "assistant", 'quote " and \\ slash'),
+      message("edge:2", "user", "x".repeat(300)),
+    ];
+    for (let budget = 1_024; budget <= 2_200; budget++) {
+      const selected = selectHistory({ messages: candidates, coverage: "Recover", budget });
+      assert.isAtMost(historyCost(selected.messages, selected.context), budget);
     }
   });
 

@@ -1,6 +1,7 @@
 import {
   type OrchestrationV2AppThread,
   OrchestrationV2ContextHandoff,
+  type OrchestrationV2HistoricalMessage,
   type OrchestrationV2TurnItem,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
@@ -22,10 +23,12 @@ import {
   historicalMessage,
   renderHistory,
   selectHistory,
+  selectLoadedHistory,
+  minHistoricalMessageCost,
 } from "@t3tools/provider-core/server/handoffBudget";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
-import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
+import type { HandoffHistoryCandidate, ProjectionStoreV2Shape } from "./ProjectionStore.ts";
 
 export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandoffPrepareError>()(
   "ContextHandoffPrepareError",
@@ -41,6 +44,15 @@ export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandof
     return `Failed to prepare context handoff for run ${this.targetRunId} in thread ${this.threadId}.`;
   }
 }
+
+export interface HandoffHistoryReader {
+  readonly page: (limit: number) => ReturnType<ProjectionStoreV2Shape["getHandoffHistory"]>;
+  readonly items: (
+    itemIds: ReadonlyArray<OrchestrationV2HistoricalMessage["itemId"]>,
+  ) => ReturnType<ProjectionStoreV2Shape["getHandoffHistoryItems"]>;
+}
+
+const HANDOFF_HISTORY_PAGE = 256;
 
 export const ContextHandoffServiceV2Error = Schema.Union([ContextHandoffPrepareError]);
 export type ContextHandoffServiceV2Error = typeof ContextHandoffServiceV2Error.Type;
@@ -84,6 +96,8 @@ export interface ContextHandoffServiceV2Shape {
       "delta_since_target_last_seen" | "full_thread_summary"
     >;
     readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+    /** History after `items`, read a page at a time until the budget is settled. */
+    readonly readHistory?: HandoffHistoryReader;
     readonly createdAt: DateTime.Utc;
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
   /** Parent activity after the fork point, prepended to a side chat's first provider turn. */
@@ -503,6 +517,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         "delta_since_target_last_seen" | "full_thread_summary"
       >;
       readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+      readonly readHistory?: HandoffHistoryReader;
       readonly createdAt: DateTime.Utc;
     }) {
       const handoffId = yield* idAllocator.allocate
@@ -524,25 +539,87 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           ),
         );
       const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
-      const coverage = handoffCoverage({
-        ...input,
-        threadId: input.sourceThreadId ?? input.threadId,
-      });
-      const selected = selectHistory({
-        messages: input.items.flatMap((item) => {
-          const message = historicalMessage(item);
-          return message === null
-            ? []
-            : [
-                {
-                  ...message,
-                  ...(item.runId === null ? {} : { runStatus: runStatuses.get(item.runId) }),
-                },
-              ];
-        }),
-        coverage,
-        budget: tokenCap,
-      });
+      const historical = (items: ReadonlyArray<OrchestrationV2TurnItem>) =>
+        items.flatMap((item) => {
+          const message = historicalMessage(
+            item,
+            item.runId === null ? undefined : runStatuses.get(item.runId),
+          );
+          return message === null ? [] : [message];
+        });
+      const prefix = historical(input.items);
+      // `items` are always loaded, so their bound is never read.
+      const candidatesOf = (messages: ReadonlyArray<OrchestrationV2HistoricalMessage>) =>
+        messages.map((message) => ({ itemId: message.itemId, minCost: 0 }));
+      const pageCandidates = (candidates: ReadonlyArray<HandoffHistoryCandidate>) =>
+        candidates.map(({ minTextLength, ...candidate }) => ({
+          itemId: candidate.itemId,
+          minCost: minHistoricalMessageCost(
+            { ...candidate, role: candidate.kind === "user_message" ? "user" : "assistant" },
+            minTextLength,
+          ),
+        }));
+      const select = (
+        candidates: Parameters<typeof selectLoadedHistory>[0]["candidates"],
+        messages: ReadonlyArray<OrchestrationV2HistoricalMessage>,
+        sourceItems: ReadonlyArray<{ readonly id: string }>,
+      ) => {
+        const coverage = handoffCoverage({
+          ...input,
+          threadId: input.sourceThreadId ?? input.threadId,
+          items: sourceItems,
+        });
+        const selected = selectLoadedHistory({ candidates, messages, coverage, budget: tokenCap });
+        return selected.missingItemIds === undefined ? { ...selected, coverage } : selected;
+      };
+      const readFailed = (cause: unknown) =>
+        new ContextHandoffPrepareError({
+          threadId: input.threadId,
+          targetRunId: input.targetRunId,
+          fromProviderThreadIds: Array.from(input.fromProviderThreadIds),
+          toProviderThreadId: input.toProviderThreadId,
+          cause,
+        });
+      let candidates = candidatesOf(prefix);
+      let loaded = prefix;
+      if (input.readHistory !== undefined) {
+        const page = yield* input.readHistory
+          .page(HANDOFF_HISTORY_PAGE)
+          .pipe(Effect.mapError(readFailed));
+        candidates = [...candidates, ...pageCandidates(page.candidates)];
+        loaded = [...prefix, ...historical(page.items)];
+      }
+      const order = new Map(candidates.map((candidate, index) => [candidate.itemId, index]));
+      let selected = select(
+        candidates,
+        loaded,
+        input.readHistory === undefined
+          ? input.items
+          : candidates.map((candidate) => ({ id: candidate.itemId })),
+      );
+      // Oversized items are skipped, so how far back selection reaches depends on their sizes.
+      while (selected.missingItemIds !== undefined) {
+        // Selection walks newest first, so the newest page of what it might still take comes first.
+        const fetched = selected.missingItemIds.slice(-HANDOFF_HISTORY_PAGE);
+        const requested = new Set(fetched);
+        const more = historical(
+          yield* input.readHistory!.items(fetched).pipe(Effect.mapError(readFailed)),
+        );
+        const found = new Set(more.map((message) => message.itemId));
+        // An item removed since the first read drops out instead of being requested again.
+        candidates = candidates.filter(
+          (candidate) => !requested.has(candidate.itemId) || found.has(candidate.itemId),
+        );
+        loaded = [...loaded, ...more].toSorted(
+          (a, b) => order.get(a.itemId)! - order.get(b.itemId)!,
+        );
+        selected = select(
+          candidates,
+          loaded,
+          candidates.map((candidate) => ({ id: candidate.itemId })),
+        );
+      }
+      const coverage = selected.coverage;
       return {
         id: handoffId,
         transferId: input.transferId,

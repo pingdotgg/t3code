@@ -344,6 +344,17 @@ export interface ProjectionRuntimeResponseContext {
   readonly session: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
 }
 
+/** A handoff history item's header fields and a lower bound on its text length, read without decoding it. */
+export interface HandoffHistoryCandidate {
+  readonly itemId: TurnItemId;
+  readonly threadId: ThreadId;
+  readonly runId: RunId | null;
+  readonly providerThreadId: ProviderThreadId | null;
+  readonly kind: OrchestrationV2TurnItem["type"];
+  readonly status: OrchestrationV2TurnItem["status"];
+  readonly minTextLength: number;
+}
+
 export interface ProjectionRecordFilter {
   readonly providerThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly providerTurnAttemptIds?: ReadonlyArray<RunAttemptId>;
@@ -672,6 +683,25 @@ export interface ProjectionStoreV2Shape {
   readonly getTurnStartHistory: (
     threadId: ThreadId,
     runIds?: ReadonlyArray<RunId>,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2TurnItem>, ProjectionStoreV2Error>;
+  /**
+   * Every history item in order with a lower bound on its text length, and the newest `limit`
+   * items loaded plus the first and latest user message and the latest other one.
+   */
+  readonly getHandoffHistory: (
+    threadId: ThreadId,
+    runIds: ReadonlyArray<RunId> | undefined,
+    limit: number,
+  ) => Effect.Effect<
+    {
+      readonly candidates: ReadonlyArray<HandoffHistoryCandidate>;
+      readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+    },
+    ProjectionStoreV2Error
+  >;
+  readonly getHandoffHistoryItems: (
+    threadId: ThreadId,
+    itemIds: ReadonlyArray<TurnItemId>,
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2TurnItem>, ProjectionStoreV2Error>;
   readonly getThreadProjection: (
     threadId: ThreadId,
@@ -5201,6 +5231,100 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         effect.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause }))),
     );
 
+    const getHandoffHistory: ProjectionStoreV2Shape["getHandoffHistory"] = Effect.fn(
+      "ProjectionStore.getHandoffHistory",
+    )(
+      function* (threadId, runIds, limit) {
+        const where = sql`thread_id = ${threadId}
+          AND type IN ('user_message','assistant_message','command_execution','error',
+            'run_interrupt_result','file_change','proposed_plan')
+          AND ${runIds === undefined ? sql`1` : sql`run_id IN (SELECT value FROM json_each(${encodeIdList(runIds)}))`}`;
+        type Row = PayloadRow & { readonly turnItemId: TurnItemId; readonly ordinal: number };
+        // Character counts never exceed a string's UTF-16 length, so these stay lower bounds of
+        // historicalText; 23 and 13 are the fixed command and file-change wrappers.
+        const candidates = yield* sql<HandoffHistoryCandidate>`
+          SELECT turn_item_id AS "itemId", thread_id AS "threadId", run_id AS "runId",
+            provider_thread_id AS "providerThreadId", type AS "kind", status,
+            COALESCE(CASE type
+            WHEN 'command_execution' THEN 23 + length(json_extract(payload_json, '$.input'))
+              + COALESCE(length(json_extract(payload_json, '$.output')), 0)
+            WHEN 'error' THEN length(json_extract(payload_json, '$.failure.message'))
+            WHEN 'run_interrupt_result' THEN length(json_extract(payload_json, '$.message'))
+            WHEN 'proposed_plan' THEN length(json_extract(payload_json, '$.markdown'))
+            WHEN 'file_change' THEN 13
+            ELSE length(json_extract(payload_json, '$.text'))
+          END, 0) AS "minTextLength"
+          FROM orchestration_v2_projection_turn_items
+          WHERE ${where}
+          ORDER BY ordinal ASC, turn_item_id ASC
+        `;
+        const rowsWhere = (
+          kind: "any" | "user" | "other",
+          direction: "first" | "last",
+          count: number,
+        ) => {
+          const filter =
+            kind === "any"
+              ? sql`1`
+              : kind === "user"
+                ? sql`type = 'user_message'`
+                : sql`type <> 'user_message'`;
+          return direction === "first"
+            ? sql<Row>`
+                SELECT payload_json, turn_item_id AS "turnItemId", ordinal
+                FROM orchestration_v2_projection_turn_items
+                WHERE ${where} AND ${filter}
+                ORDER BY ordinal ASC, turn_item_id ASC
+                LIMIT ${count}
+              `
+            : sql<Row>`
+                SELECT payload_json, turn_item_id AS "turnItemId", ordinal
+                FROM orchestration_v2_projection_turn_items
+                WHERE ${where} AND ${filter}
+                ORDER BY ordinal DESC, turn_item_id DESC
+                LIMIT ${count}
+              `;
+        };
+        const rows = new Map<TurnItemId, Row>();
+        for (const batch of [
+          yield* rowsWhere("any", "last", limit),
+          yield* rowsWhere("user", "first", 1),
+          yield* rowsWhere("user", "last", 1),
+          yield* rowsWhere("other", "last", 1),
+        ])
+          for (const row of batch) rows.set(row.turnItemId, row);
+        return {
+          candidates,
+          items: yield* decodeRows(
+            decodeTurnItemPayload,
+            threadId,
+          )(
+            [...rows.values()].toSorted(
+              (a, b) => a.ordinal - b.ordinal || (a.turnItemId < b.turnItemId ? -1 : 1),
+            ),
+          ),
+        };
+      },
+      (effect, threadId, _runIds, _limit) =>
+        effect.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause }))),
+    );
+
+    const getHandoffHistoryItems: ProjectionStoreV2Shape["getHandoffHistoryItems"] = Effect.fn(
+      "ProjectionStore.getHandoffHistoryItems",
+    )(
+      function* (threadId, itemIds) {
+        const rows = yield* sql<PayloadRow>`
+          SELECT payload_json FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId}
+            AND turn_item_id IN (SELECT value FROM json_each(${encodeIdList(itemIds)}))
+          ORDER BY ordinal ASC, turn_item_id ASC
+        `;
+        return yield* decodeRows(decodeTurnItemPayload, threadId)(rows);
+      },
+      (effect, threadId, _itemIds) =>
+        effect.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause }))),
+    );
+
     const getThreadProjection: ProjectionStoreV2Shape["getThreadProjection"] = (threadId) =>
       sql
         .withTransaction(readProjection(threadId, new Set()))
@@ -9084,6 +9208,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadProjection: readOnReader(getThreadProjection),
       getTurnStartContext: readOnReader(getTurnStartContext),
       getTurnStartHistory: readOnReader(getTurnStartHistory),
+      getHandoffHistory: readOnReader(getHandoffHistory),
+      getHandoffHistoryItems: readOnReader(getHandoffHistoryItems),
       getRuntimeRecoveryProjection: readOnReader(getRuntimeRecoveryProjection),
       getRunningTurnContext: readOnReader(getRunningTurnContext),
       getThreadProviderContext: readOnReader(getThreadProviderContext),
