@@ -4485,28 +4485,21 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           });
         },
         moveComposerAttachments: (from, to) => {
-          const fromKey = resolveComposerDraftKey(get(), from) ?? "";
-          const toKey = resolveComposerDraftKey(get(), to) ?? "";
-          if (fromKey.length === 0 || toKey.length === 0 || fromKey === toKey) {
+          const state = get();
+          const fromKey = resolveComposerDraftKey(state, from);
+          const toKey = resolveComposerDraftKey(state, to);
+          const source = fromKey ? state.draftsByThreadKey[fromKey] : undefined;
+          if (!fromKey || !toKey || fromKey === toKey || !source) {
             return [];
           }
-          let kept: Array<ComposerImageAttachment | ComposerFileAttachment> = [];
-          set((state) => {
-            const source = state.draftsByThreadKey[fromKey];
-            if (!source) {
-              return state;
-            }
-            const destination = state.draftsByThreadKey[toKey] ?? createEmptyThreadDraft();
-            const transfer = transferComposerAttachments(
-              source,
-              destination,
-              composerTargetEnvironmentId(state, to, toKey),
-            );
-            kept = [...transfer.source.images, ...transfer.source.files];
-            if (transfer.moved.length === 0) {
-              return state;
-            }
-            return {
+          const destination = state.draftsByThreadKey[toKey] ?? createEmptyThreadDraft();
+          const transfer = transferComposerAttachments(
+            source,
+            destination,
+            composerTargetEnvironmentId(state, to, toKey),
+          );
+          if (transfer.moved.length > 0) {
+            set({
               draftsByThreadKey: withComposerDrafts(state.draftsByThreadKey, {
                 [fromKey]: transfer.source,
                 [toKey]: {
@@ -4521,9 +4514,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                   ),
                 },
               }),
-            };
-          });
-          return kept;
+            });
+          }
+          return [...transfer.source.images, ...transfer.source.files];
         },
       };
     },
