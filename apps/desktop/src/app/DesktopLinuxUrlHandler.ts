@@ -96,6 +96,38 @@ export function renderUrlHandlerDesktopEntry(input: {
   ].join("\n");
 }
 
+function parseUrlHandlerExecTarget(entry: string): string | null {
+  const exec = /^Exec=(.*) %U$/mu.exec(entry)?.[1];
+  if (exec === undefined) return null;
+  const unescaped = exec.replace(/\\([\\nrt])/gu, (_, char: string) =>
+    char === "n" ? "\n" : char === "r" ? "\r" : char === "t" ? "\t" : char,
+  );
+  const quoted = /^"(.*)"$/su.exec(unescaped)?.[1];
+  return (
+    quoted === undefined ? unescaped : quoted.replace(/\\([\\`$"])/gu, (_, char: string) => char)
+  ).replaceAll("%%", "%");
+}
+
+const APPIMAGE_NAME_VERSION = /\d+\.\d+\.\d+/u;
+
+// An updater from before version-free AppImage names deletes its own file and installs the update
+// beside it under the new name. The previous launch's entry still names the path launchers use.
+export function replacedVersionedAppImagePath(input: {
+  readonly previousEntry: string;
+  readonly appImagePath: string;
+}): string | null {
+  const previous = parseUrlHandlerExecTarget(input.previousEntry);
+  if (previous === null) return null;
+  const previousName = previous.slice(previous.lastIndexOf("/") + 1);
+  const currentName = input.appImagePath.slice(input.appImagePath.lastIndexOf("/") + 1);
+  return previous.startsWith("/") &&
+    previous.slice(0, -previousName.length) === input.appImagePath.slice(0, -currentName.length) &&
+    APPIMAGE_NAME_VERSION.test(previousName) &&
+    !APPIMAGE_NAME_VERSION.test(currentName)
+    ? previous
+    : null;
+}
+
 // Docks may look up the Wayland app id without a desktop entry; icon theme lookups are case-sensitive.
 const LINUX_THEME_ICON_SIZE = "256x256";
 
