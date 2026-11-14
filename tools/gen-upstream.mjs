@@ -24,6 +24,9 @@
 //   this server knows, and the keys of a `projectSettingsOverrides` entry. settings.rs redacts
 //   and restores exactly these secrets.
 //
+// - crates/conn-server/src/model_manifest/generated.rs: where `model-manifest.json` comes from
+//   and its times (apps/server/src/provider/ModelManifest.ts), and the bundled manifest's
+//   `updatedAt`.
 // - crates/conn-server/src/text_generation/generated.rs: the thread title prompts of
 //   `buildThreadTitlePrompt` (packages/provider-core), as text parts around their values.
 //
@@ -349,6 +352,50 @@ const upstreamRs = rustfmt(
   ].join("\n"),
 );
 
+// ---- Model manifest ----------------------------------------------------------------------
+// `apps/server/src/provider/ModelManifest.ts`: where the manifest comes from, how long a fetch
+// counts and how long a failed one holds off the next; and the bundled manifest's `updatedAt`,
+// below which a fetched or cached manifest is refused.
+
+const MANIFEST_FILE = "apps/server/src/provider/ModelManifest.ts";
+const manifestSource = NodeFS.readFileSync(inMonorepo(MANIFEST_FILE), "utf8");
+const manifestConstant = (name) => {
+  const match = new RegExp(`const ${name} =\\s*([^;]+);`).exec(manifestSource);
+  if (match === null) throw new Error(`${MANIFEST_FILE} has no ${name}`);
+  return match[1].trim();
+};
+const manifestMs = (name) => {
+  const expression = manifestConstant(name);
+  if (!/^[\d\s*_]+$/.test(expression)) throw new Error(`${name} is not a product of numbers: ${expression}`);
+  return expression
+    .split("*")
+    .map((part) => Number(part.trim().replaceAll("_", "")))
+    .reduce((a, b) => a * b, 1);
+};
+const manifestUrl = JSON.parse(manifestConstant("MODEL_MANIFEST_URL").replaceAll('"', '"'));
+const bundledManifest = JSON.parse(
+  NodeFS.readFileSync(inMonorepo("apps/server/src/provider/model-manifest.json"), "utf8"),
+);
+const modelManifestRs = rustfmt(
+  [
+    ...HEADER,
+    "",
+    `//! From \`${MANIFEST_FILE}\` and the bundled \`model-manifest.json\` beside it.`,
+    "",
+    "/// `MODEL_MANIFEST_URL`: the manifest on T3 Code's main branch.",
+    `pub const MODEL_MANIFEST_URL: &str = ${str(manifestUrl)};`,
+    "/// `MANIFEST_TTL_MS`: a fetch counts this long.",
+    `pub(super) const MANIFEST_TTL_MS: i64 = ${manifestMs("MANIFEST_TTL_MS")};`,
+    "/// `MANIFEST_RETRY_MS`: a failed fetch holds off the next one this long.",
+    `pub(super) const MANIFEST_RETRY_MS: i64 = ${manifestMs("MANIFEST_RETRY_MS")};`,
+    "/// `FETCH_TIMEOUT_MS`.",
+    `pub(super) const FETCH_TIMEOUT_MS: u64 = ${manifestMs("FETCH_TIMEOUT_MS")};`,
+    "/// The bundled manifest's `updatedAt`: an older fetched or cached manifest is refused.",
+    `pub(super) const BUNDLED_UPDATED_AT: &str = ${str(bundledManifest.updatedAt ?? "")};`,
+    "",
+  ].join("\n"),
+);
+
 // ---- Payload limits ----------------------------------------------------------------------
 //
 // The length, pattern, range and entry-count checks of a few methods' payload schemas, read
@@ -505,6 +552,7 @@ const outputs = {
   "crates/conn-server/src/settings/generated.rs": secretsRs,
   "crates/conn-server/src/limits/generated.rs": limitsRs,
   "crates/conn-server/src/text_generation/generated.rs": titlePromptsRs,
+  "crates/conn-server/src/model_manifest/generated.rs": modelManifestRs,
 };
 
 let stale = false;
