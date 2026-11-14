@@ -1,3 +1,4 @@
+import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import type { PullRequestRef, RepositoryIdentity, ThreadPullRequestKey } from "@t3tools/contracts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { normalizeThreadPullRequestKey } from "../sourceControl/threadPullRequests.ts";
@@ -29,7 +30,15 @@ export function pullRequestSyncKey(
       number: reference.number,
     });
   }
-  const resolvedHost = reference.host ?? host;
+  // An SSH checkout names no web port, so its hostname's links on any port are its own.
+  const resolvedHost =
+    reference.host !== undefined &&
+    host !== undefined &&
+    isSshRemoteUrl(identity?.locator.remoteUrl ?? "") &&
+    URL.canParse(`https://${reference.host}`) &&
+    new URL(`https://${reference.host}`).hostname === host
+      ? host
+      : (reference.host ?? host);
   return resolvedHost === undefined
     ? null
     : normalizeThreadPullRequestKey({
