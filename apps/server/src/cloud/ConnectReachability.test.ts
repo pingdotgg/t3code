@@ -19,7 +19,11 @@ import { vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
-import { classifyReachability, type ReachabilityFacts } from "./ConnectReachability.ts";
+import {
+  classifyReachability,
+  formatReachabilityFailure,
+  type ReachabilityFacts,
+} from "./ConnectReachability.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 
 vi.mock("node:net", { spy: true });
@@ -50,9 +54,10 @@ describe("classifyReachability", () => {
     [{ kind: "status", status: 530, cloudflareError: "1016" }, "unexpected_response"],
     [{ kind: "network_error" }, "timeout"],
   ] as const)("maps endpoint result %o to %s", (endpoint, cause) => {
-    expect(classifyReachability(facts({ endpoint, edgeReachable: true }), checkedAt)).toMatchObject(
-      { status: "unreachable", cause },
-    );
+    const result = classifyReachability(facts({ endpoint, edgeReachable: true }), checkedAt);
+    expect(result).toMatchObject({ status: "unreachable", cause });
+    if (result.status !== "unreachable") throw new Error("Expected an endpoint failure");
+    expect(formatReachabilityFailure(result)).toContain("NOT reachable from other devices");
   });
 
   it("keeps the endpoint cause when the TCP edge test cannot explain it", () => {
@@ -423,11 +428,12 @@ describe("ConnectReachability DNS failures", () => {
   it.effect("says whether the name exists in public DNS", () =>
     Effect.gen(function* () {
       using _connect = mockEdgeConnect();
-      for (const [lookupCode, dnsStatus, reason] of [
-        ["ENOTFOUND", 0, "old cached answer"],
-        ["ENOTFOUND", 3, "missing from public DNS"],
+      for (const [lookupCode, dnsStatus, reason, fix] of [
+        ["ENOTFOUND", 0, "old cached answer", "30 minutes"],
+        ["ENOTFOUND", 3, "missing from public DNS", "run `t3 connect` again"],
         // The local resolver did not answer, so nothing it cached is to blame.
-        ["EAI_AGAIN", 0, "does not resolve from this machine"],
+        ["EAI_AGAIN", 0, "does not resolve from this machine", "DNS settings"],
+        ["ENOTFOUND", 2, "does not resolve from this machine", "DNS settings"],
       ] as const) {
         const layer = reachabilityLayer(
           (request) =>
@@ -442,7 +448,21 @@ describe("ConnectReachability DNS failures", () => {
         expect(result).toMatchObject({
           cause: "dns_failed",
           reason: expect.stringContaining(reason),
+          fix: expect.stringContaining(fix),
         });
+        if (result.status !== "unreachable") throw new Error("Expected a DNS failure");
+        const formatted = formatReachabilityFailure(result);
+        expect(formatted).toContain("This machine could not verify T3 Connect reachability");
+        expect(formatted).not.toContain("NOT reachable from other devices");
+        if (dnsStatus === 2 || lookupCode === "EAI_AGAIN") {
+          expect(result.reason).toContain("env.example.test");
+          expect(result.hint).toContain(
+            "This check cannot tell whether the public DNS record is missing",
+          );
+          expect(result.fix).toContain("compare DNS on this machine and another network");
+        } else {
+          expect(result.hint).toBeNull();
+        }
       }
     }),
   );
