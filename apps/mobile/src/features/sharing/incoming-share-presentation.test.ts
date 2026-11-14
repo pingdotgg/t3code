@@ -44,6 +44,10 @@ describe("incoming share presentation", () => {
     expect(step("share-1", [home, draftFor("share-1")])).toEqual(held);
     // The project picker pushed above the draft leaves it open.
     expect(step("share-1", [home, draftFor("share-1"), { name: "NewTaskProject" }])).toEqual(held);
+    // A draft without a project is replaced by the picker, which keeps the share.
+    expect(
+      step("share-1", [home, { name: "NewTaskProject", params: { incomingShareId: "share-1" } }]),
+    ).toEqual(held);
     expect(step("share-1", [home])).toEqual({ present: null, discard: "share-1" });
     expect(step("share-1", [home])).toEqual(held);
     expect(step(null, [home])).toEqual(held);

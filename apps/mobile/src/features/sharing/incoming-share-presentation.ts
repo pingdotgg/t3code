@@ -23,18 +23,29 @@ interface RouteLike {
   readonly params?: object;
 }
 
-/** Draft routes anywhere in the root stack: a route pushed above one leaves it open. */
+function shareIdOf(params: { readonly incomingShareId?: unknown } | undefined): string[] {
+  const value = params?.incomingShareId;
+  const id = Array.isArray(value) ? value[0] : value;
+  return typeof id === "string" ? [id] : [];
+}
+
+/**
+ * New-task routes anywhere in the root stack: a route pushed above one leaves it
+ * open, and a draft without a project hands its share to the picker it is replaced by.
+ */
 export function incomingShareDraftRoutes(routes: ReadonlyArray<RouteLike>): {
   readonly isDraftPresented: boolean;
   readonly shareIds: ReadonlyArray<string>;
 } {
-  const drafts = routes.filter(isDraftThreadRoute);
-  const shareIds = drafts.flatMap((route) => {
-    const value = (route.params as { draft: { incomingShareId?: unknown } }).draft.incomingShareId;
-    const id = Array.isArray(value) ? value[0] : value;
-    return typeof id === "string" ? [id] : [];
-  });
-  return { isDraftPresented: drafts.length > 0, shareIds };
+  const flows = routes.filter(
+    (route) => isDraftThreadRoute(route) || route.name === "NewTaskProject",
+  );
+  const shareIds = flows.flatMap((route) =>
+    route.name === "NewTaskProject"
+      ? shareIdOf(route.params)
+      : shareIdOf((route.params as { draft: { incomingShareId?: unknown } }).draft),
+  );
+  return { isDraftPresented: flows.length > 0, shareIds };
 }
 
 export function transitionIncomingSharePresentation(
