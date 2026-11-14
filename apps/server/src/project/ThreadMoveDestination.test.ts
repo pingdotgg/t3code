@@ -103,7 +103,7 @@ const makeWorld = Effect.gen(function* () {
     "projA/nested projB dup archived deleted scratch/thread scratch/other scratch/promoted",
     "worktree/sub worktree/proot jjws/.jj jjws/sub jjdefault/.jj/repo jjdefault/sub",
     "main/.git/worktrees/wt main/.git/modules/worktrees/lib main/worktrees/lib srv/worktrees/main",
-    "separate locked-git locked-jj/.jj locked-root locked-parent/child managed/repo/branch/sub plain W PW",
+    "separate locked-git locked-jj/.jj locked-root locked-parent/child managed/repo/branch/sub plain W PW/nested",
   ].flatMap((group) => group.split(" "))) {
     yield* fileSystem.makeDirectory(at(folder), { recursive: true });
   }
@@ -462,6 +462,39 @@ it.layer(NodeServices.layer)("decideThreadMove", (it) => {
       const { _tag, ...leaving } = result as Extract<typeof result, { _tag: "confirm" }>;
       const confirmed = yield* decide(world, { ...input, confirm: true });
       expect(confirmed).toEqual(expect.objectContaining({ _tag: "move", leaving }));
+    }),
+  );
+
+  it.effect.each<readonly [string, string, (at: World["at"]) => string, (world: World) => Options]>(
+    [
+      [
+        "the thread left the folder in the question",
+        "t3",
+        (at) => at("projB"),
+        (world) => patch(world, "t3", { worktreePath: world.at("W") }),
+      ],
+      [
+        "the typed path resolves to another folder",
+        "p-root",
+        () => "nested",
+        (world) => patch(world, "p-root", { projectId: ProjectId.make("A") }),
+      ],
+    ],
+  )("an answered question is refused when %s", ([, threadId, typed, change]) =>
+    Effect.gen(function* () {
+      const world = yield* makeWorld;
+      const input = request(threadId, typed(world.at));
+      const question = yield* decide(world, input);
+      const answer: ThreadMoveInput =
+        question._tag === "confirm"
+          ? { ...input, confirm: true, approved: { from: question.from, to: question.to } }
+          : question._tag === "needs-project"
+            ? { ...input, addProject: true, approved: { to: question.folder } }
+            : input;
+      expect(yield* decide(world, answer)).toMatchObject({ _tag: "move" });
+      expect(yield* decide(world, answer, change)).toMatchObject(
+        refusal("changed while you were deciding"),
+      );
     }),
   );
 

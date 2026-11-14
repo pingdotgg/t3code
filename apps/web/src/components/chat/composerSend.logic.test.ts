@@ -202,15 +202,16 @@ const confirm = {
 } as const satisfies ThreadMoveResult;
 const moved = { _tag: "moved", folder: "/repo/app", members: [] } as const;
 
-it("runThreadMove asks each question once, keeps every flag, and stops at a decline", async () => {
+it("runThreadMove asks each question once, keeps every flag, sends back the folders it showed, and stops at a decline", async () => {
   const calls: ThreadMoveInput[] = [];
   const answers: ReadonlyArray<ThreadMoveResult> = [needsProject, confirm, moved];
   const move = async (input: ThreadMoveInput) => answers[calls.push(input) - 1]!;
   expect(await runThreadMove(request, move, async () => true)).toBe(moved);
+  const approved = { from: "/worktrees/w", to: "/repo/app" };
   expect(calls).toEqual([
     request,
-    { ...request, addProject: true },
-    { ...request, addProject: true, confirm: true },
+    { ...request, addProject: true, approved: { to: "/repo/app" } },
+    { ...request, addProject: true, confirm: true, approved },
   ]);
 
   calls.length = 0;

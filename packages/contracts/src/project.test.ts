@@ -183,7 +183,7 @@ describe("shared project payloads", () => {
     const project = { projectId: ProjectId.make("project"), title: "App" };
     const inputs: ReadonlyArray<ThreadMoveInput> = [
       { threadId, destination: " ../my app ", addProject: true, confirm: true },
-      { threadId, destination: null },
+      { threadId, destination: null, confirm: true, approved: { from: "/w", to: null } },
     ];
     const results: ReadonlyArray<ThreadMoveResult> = [
       { _tag: "moved", folder: "/repo/b", members: [thread] },

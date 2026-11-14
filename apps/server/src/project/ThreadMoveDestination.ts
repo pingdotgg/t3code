@@ -249,6 +249,21 @@ export const decideThreadMove = Effect.fn("ThreadMoveDestination.decideThreadMov
   });
   if (destination._tag === "refused" || destination._tag === "moved") return destination;
 
+  // Compared as resolved folders: a question can name a project root that is a symlink.
+  const { approved } = request;
+  if (approved !== undefined) {
+    const to =
+      destination._tag === "scratch"
+        ? null
+        : destination._tag === "project"
+          ? yield* resolve(destination.project.workspaceRoot)
+          : destination.folder;
+    const left = approved.from !== undefined && (yield* resolve(approved.from)) !== threadFolder;
+    if (left || (approved.to === null ? null : yield* resolve(approved.to)) !== to) {
+      return refused("The thread or its destination changed while you were deciding. Try again.");
+    }
+  }
+
   const members = collectMoveSet(thread.id, threads);
   const destinationProjectId =
     destination._tag === "new-project" ? null : (destination.project?.id ?? null);

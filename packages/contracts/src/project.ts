@@ -562,6 +562,18 @@ export const ThreadMoveInput = Schema.Struct({
   destination: Schema.NullOr(Schema.NonEmptyString),
   addProject: Schema.optional(Schema.Boolean),
   confirm: Schema.optional(Schema.Boolean),
+  /**
+   * The folders in the question this call answers: `from` of a `confirm`, and its `to` or the
+   * `folder` of a `needs-project`. The server refuses when the thread left `from` or the
+   * destination no longer resolves to `to`.
+   */
+  approved: Schema.optional(
+    Schema.Struct({
+      from: Schema.optional(Schema.NonEmptyString),
+      /** Null for a new scratch folder. */
+      to: Schema.NullOr(Schema.NonEmptyString),
+    }),
+  ),
 });
 export type ThreadMoveInput = typeof ThreadMoveInput.Type;
 

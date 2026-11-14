@@ -163,8 +163,12 @@ export async function runThreadMove(
   const result = await move(input);
   if (result._tag === "moved" || result._tag === "refused") return result;
   if (!(await ask(result))) return null;
-  const flags = result._tag === "needs-project" ? { addProject: true } : { confirm: true };
-  return runThreadMove({ ...input, ...flags }, move, ask);
+  // The server resolves the path again, so the answer names the folders the question showed.
+  const answer =
+    result._tag === "needs-project"
+      ? { addProject: true, approved: { to: result.folder } }
+      : { confirm: true, approved: { from: result.from, to: result.to } };
+  return runThreadMove({ ...input, ...answer }, move, ask);
 }
 
 /**
