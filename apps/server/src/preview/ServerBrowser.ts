@@ -111,6 +111,7 @@ const SCREENCAST_MOTION_WINDOW_MS = 300;
 const SCREENCAST_MOTION_QUALITY = 50;
 const HOST_RECONNECT_DELAY = "1 second";
 const DESKTOP_ATTACH_TIMEOUT = "10 seconds";
+const DESKTOP_FIRST_FRAME_TIMEOUT = "5 seconds";
 // A viewer still is best-effort; a capture Chromium never answers must not hold the capture lock.
 const VIEWER_STILL_TIMEOUT_MS = 2_000;
 const VIEWER_OUTPUT_LIMIT = 64;
@@ -553,6 +554,11 @@ const make = Effect.gen(function* () {
 
   const closedPendingTabs = new Set<string>();
   const adoptedPages = new Map<string, { readonly page: Page; readonly openerTabId: string }>();
+  /** What a tab keeps while it moves to a new headless page. */
+  const movedTabs = new Map<
+    string,
+    { readonly url: string | null; readonly downloads: Array<ServerDownload> }
+  >();
   const closedSessions = new Set<string>();
   let hostConnectionId: string | null = null;
   let viewerResizeOrder = 0;
@@ -914,12 +920,39 @@ const make = Effect.gen(function* () {
       if (tab.isolatedContext) void closed.then(() => page.context().close()).catch(constVoid);
     }
     void tab.recording?.encoder.close().catch(constVoid);
-    void NodeFSP.rm(downloadDir(tab), { recursive: true, force: true }).catch(constVoid);
+    if (!movedTabs.has(key)) {
+      void NodeFSP.rm(downloadDir(tab), { recursive: true, force: true }).catch(constVoid);
+    }
     reportLiveTabs();
     if (closeSession) {
       runFork(manager.close({ threadId: tab.threadId, tabId: tab.tabId }).pipe(Effect.ignore));
     }
   };
+
+  const moveTabToHeadless = Effect.fn("ServerBrowser.moveTabToHeadless")(function* (
+    tab: ServerTab,
+  ) {
+    const key = tabKey(tab.threadId, tab.tabId);
+    yield* manager.markHeadless({ threadId: tab.threadId, tabId: tab.tabId }).pipe(Effect.ignore);
+    // Another viewer that timed out on this tab may have moved it already.
+    if (tabs.get(key) !== tab) return;
+    // An uncommitted first navigation leaves the session's Loading URL to the new page.
+    const url = tab.page.url() === "about:blank" ? null : tab.page.url();
+    movedTabs.set(key, { url, downloads: tab.downloads });
+    dropTab(tab, false);
+    yield* findTab(tab.threadId, tab.tabId).pipe(
+      // A failed launch keeps the move for the next viewer; a closed session leaves nothing to own the files.
+      Effect.catchTags({
+        ServerBrowserTabNotFoundError: () =>
+          Effect.sync(() => {
+            if (movedTabs.delete(key)) {
+              void NodeFSP.rm(downloadDir(tab), { recursive: true, force: true }).catch(constVoid);
+            }
+          }),
+      }),
+      Effect.ignore,
+    );
+  });
 
   const desktopRenders = (snapshot: PreviewSessionSnapshot) =>
     desktopChannel.available && !snapshot.headless
@@ -981,6 +1014,7 @@ const make = Effect.gen(function* () {
   ): Promise<ServerTab> => {
     const adopted = adoptedPages.get(tabKey(snapshot.threadId, snapshot.tabId));
     adoptedPages.delete(tabKey(snapshot.threadId, snapshot.tabId));
+    const moved = movedTabs.get(tabKey(snapshot.threadId, snapshot.tabId));
     const desktop =
       adopted === undefined && (await desktopRenders(snapshot))
         ? await connectDesktop(snapshot)
@@ -1052,7 +1086,7 @@ const make = Effect.gen(function* () {
       desktop: desktop === null ? null : { close: desktop.close },
       profileId: snapshot.profileId,
       openerTabId: adopted?.openerTabId,
-      downloads: [],
+      downloads: moved?.downloads ?? [],
       fileChooser: null,
       dialog: null,
       setting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
@@ -1235,23 +1269,23 @@ const make = Effect.gen(function* () {
     page.on("close", () => dropTab(tab, true));
     page.on("crash", () => reopenCrashedTab(tab));
     tabs.set(key, tab);
+    movedTabs.delete(key);
     reportLiveTabs();
     // A desktop page navigates on its own and can finish loading before these listeners attach.
     if (desktop) void page.waitForLoadState("load").then(() => reportLoaded(tab), constVoid);
     // Existing desktop and popup PDFs can start loading before interception attaches.
-    if (
-      snapshot.navStatus._tag === "Loading" &&
-      ((!adopted && !desktop) || isPdfAssetUrl(snapshot.navStatus.url))
-    ) {
+    const initialUrl =
+      moved?.url ?? (snapshot.navStatus._tag === "Loading" ? snapshot.navStatus.url : null);
+    if (initialUrl !== null && ((!adopted && !desktop) || isPdfAssetUrl(initialUrl))) {
       tab.loading = true;
-      const initialUrl = URL.parse(snapshot.navStatus.url);
-      if (initialUrl) initialUrl.hash = "";
-      tab.pendingInitialRequestUrl = initialUrl?.href ?? null;
+      const requestUrl = URL.parse(initialUrl);
+      if (requestUrl) requestUrl.hash = "";
+      tab.pendingInitialRequestUrl = requestUrl?.href ?? null;
       const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
       tab.initialNavigation = (
-        (desktop || adopted) && page.url() === snapshot.navStatus.url
+        (desktop || adopted) && page.url() === initialUrl
           ? page.reload(options)
-          : page.goto(snapshot.navStatus.url, options)
+          : page.goto(initialUrl, options)
       ).then(constVoid, (cause: unknown) => {
         throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
       });
@@ -3134,6 +3168,7 @@ const make = Effect.gen(function* () {
         }
       }).catch(() => null);
       if (data) viewer.push({ _tag: "frame", data: Buffer.from(data, "base64"), ack: Effect.void });
+      return data !== null;
     };
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
     yield* Effect.addFinalizer(() =>
@@ -3142,8 +3177,10 @@ const make = Effect.gen(function* () {
       }),
     );
     let screencastStarted = false;
+    const firstLiveFrame = Promise.withResolvers<void>();
     session.on("Page.screencastFrame", (frame) => {
       screencastStarted = true;
+      firstLiveFrame.resolve();
       if (framesInFlight > 0) mayHaveDropped = true;
       framesInFlight += 1;
       const arrivedAt = Date.now();
@@ -3190,7 +3227,24 @@ const make = Effect.gen(function* () {
     yield* Effect.promise(() => startScreencast(1));
     // An idle page does not repaint for a new screencast, so the viewer
     // starts from a still unless a live frame beat it.
-    if (!screencastStarted) yield* Effect.forkScoped(Effect.promise(pushStill));
+    const firstFrame = Effect.promise(async () => {
+      if (screencastStarted || (await pushStill()) || !tab.desktop) return;
+      // A failed still is not proof the page cannot paint; a live frame may still come.
+      await firstLiveFrame.promise;
+    });
+    yield* Effect.forkScoped(
+      tab.desktop
+        ? firstFrame.pipe(
+            Effect.timeoutOption(DESKTOP_FIRST_FRAME_TIMEOUT),
+            Effect.map((painted) => {
+              // A minimized host window paints no guest, so this page can never reach the
+              // viewer. Reconnecting moves the tab to headless Chromium, which needs no display.
+              // The move outlives this viewer, whose scope closes when it reconnects.
+              if (Option.isNone(painted) && !screencastStarted) runFork(moveTabToHeadless(tab));
+            }),
+          )
+        : firstFrame,
+    );
     return {
       output,
       input: (raw: unknown) =>
