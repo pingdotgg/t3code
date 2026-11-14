@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import type { PullRequestCheck, PullRequestCheckStatus } from "@t3tools/contracts";
 
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
@@ -17,7 +18,10 @@ import {
   MAX_FILE_DIFF_EDITS,
   parseAzureDevOpsDiffCursor,
 } from "./azureDevOpsDiff.ts";
-import type { AzureDevOpsChangeEntry } from "./azureDevOpsPullRequestJson.ts";
+import {
+  decodeIterationChangesJson,
+  type AzureDevOpsChangeEntry,
+} from "./azureDevOpsPullRequestJson.ts";
 
 const ITERATION = { id: 3, headCommit: "head", mergeBaseCommit: "base" };
 
@@ -308,7 +312,20 @@ describe("getDiff reads", () => {
           objectId: `${path.toUpperCase()}-NEW`,
           originalObjectId: `${path.toUpperCase()}-OLD`,
         })),
-        { ...change("gone.ts", "deleted"), objectId: null, originalObjectId: "GONE-OLD" },
+        // The delete as Azure lists it, with no path of its own.
+        ...Result.getOrThrow(
+          decodeIterationChangesJson(
+            JSON.stringify({
+              changeEntries: [
+                {
+                  changeType: "delete",
+                  originalPath: "/gone.ts",
+                  item: { originalObjectId: "GONE-OLD" },
+                },
+              ],
+            }),
+          ),
+        ).changes,
         { ...change("added.ts", "new"), objectId: "ADDED-NEW", originalObjectId: null },
       ];
       const batches: ReadonlyArray<string>[] = [];
@@ -370,6 +387,19 @@ describe("getDiff reads", () => {
         ],
       ]);
       expect(reads.toSorted()).toEqual(["base:b.ts", "head:b.ts"]);
+      const gone = slice.patch.indexOf("diff --git a/gone.ts");
+      expect(slice.patch.slice(gone, slice.patch.indexOf("diff --git a/added.ts"))).toBe(
+        [
+          "diff --git a/gone.ts b/gone.ts",
+          "deleted file mode 100644",
+          "--- a/gone.ts",
+          "+++ /dev/null",
+          "@@ -1,2 +0,0 @@",
+          "-old 0 zzzz",
+          "-old 1 zzzz",
+          "",
+        ].join("\n"),
+      );
     }),
   );
 
