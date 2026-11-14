@@ -1795,9 +1795,12 @@ describe("ThreadSettlementServiceV2 worker", () => {
     }),
   );
 
-  it.effect(
-    "a merge while a quiet pull request's thread is not a candidate rereads it next sweep",
-    () =>
+  it.effect.each([
+    { when: "after", mergeDuringRead: false },
+    { when: "during", mergeDuringRead: true },
+  ])(
+    "a merge $when a quiet pull request's read, while its thread is not a candidate, rereads it next sweep",
+    ({ mergeDuringRead }) =>
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
         const thread = makeThread("busy-branch", {
@@ -1810,26 +1813,37 @@ describe("ThreadSettlementServiceV2 worker", () => {
             url: "https://example.test/owner/repository/pull/42",
           },
         });
+        const readStarted = yield* Deferred.make<void>();
+        const releaseRead = yield* Deferred.make<void>();
+        if (!mergeDuringRead) yield* Deferred.succeed(releaseRead, undefined);
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([thread]),
           pullRequestSummary: (input) =>
-            Effect.succeed(
-              makePullRequestSummary({
-                ...input,
-                state: "open",
-                updatedAt: DateTime.formatIso(DateTime.makeUnsafe(Date.parse(NOW) - 2 * DAY_MS)),
-              }),
+            Deferred.succeed(readStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseRead)),
+              Effect.as(
+                makePullRequestSummary({
+                  ...input,
+                  state: "open",
+                  updatedAt: DateTime.formatIso(DateTime.makeUnsafe(Date.parse(NOW) - 2 * DAY_MS)),
+                }),
+              ),
             ),
         });
 
         yield* Effect.gen(function* () {
           const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
-          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          yield* reactor.start();
+          yield* Deferred.succeed(fixture.activation, undefined);
+          yield* Queue.take(fixture.snapshotReads);
+          yield* Deferred.await(readStarted);
+          if (!mergeDuringRead) yield* reactor.drain;
           assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
 
           yield* Ref.set(fixture.snapshots, makeSnapshot([]));
           yield* fixture.publishMerge;
           yield* Queue.take(fixture.snapshotReads);
+          yield* Deferred.succeed(releaseRead, undefined);
           yield* reactor.drain;
 
           yield* Ref.set(fixture.snapshots, makeSnapshot([thread]));

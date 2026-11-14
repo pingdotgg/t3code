@@ -323,6 +323,8 @@ export const make = Effect.gen(function* () {
     readonly repository: string;
     readonly number: number;
   }) => `${reference.projectId}\0${reference.repository.toLowerCase()}\0${reference.number}`;
+  // Merge sweeps overlap other sweeps; a read that began before a merge must not mark it quiet.
+  let mergeGeneration = 0;
   const terminals = yield* TerminalManager.TerminalManager;
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   // Repeated thread.settled retains settledAt; run the action only once per settlement.
@@ -333,7 +335,10 @@ export const make = Effect.gen(function* () {
     threadId?: ThreadId,
   ) {
     // A thread that is not a candidate now (still running) must not keep a merged PR's quiet entry.
-    if (mergedPullRequest !== null) quietOpenReadAt.delete(quietReadKey(mergedPullRequest));
+    if (mergedPullRequest !== null) {
+      mergeGeneration++;
+      quietOpenReadAt.delete(quietReadKey(mergedPullRequest));
+    }
     const settings = yield* settingsService.getSettings;
     const automaticSettlementEnabled = autoSettlementConfigured(settings);
     const threads = yield* projections.getSettlementCandidates(threadId);
@@ -520,9 +525,10 @@ export const make = Effect.gen(function* () {
         const shellClosed =
           group.filter((member) => shellClosedThreads.delete(member.id)).length > 0;
         if (shellClosed) quietOpenReadAt.delete(readKey);
-        else if (quietOpenReadAt.has(readKey)) {
+        else if (!matchesMerge && quietOpenReadAt.has(readKey)) {
           return { state: "open", closedAt: null, mergedAt: null } satisfies SettlementPullRequest;
         }
+        const readGeneration = mergeGeneration;
         const summary = matchesMerge
           ? ({
               state: "merged",
@@ -540,6 +546,7 @@ export const make = Effect.gen(function* () {
         if (
           "updatedAt" in summary &&
           summary.state === "open" &&
+          readGeneration === mergeGeneration &&
           nowMs - Date.parse(summary.updatedAt) >= QUIET_AFTER_MS
         ) {
           quietOpenReadAt.set(readKey, nowMs);
