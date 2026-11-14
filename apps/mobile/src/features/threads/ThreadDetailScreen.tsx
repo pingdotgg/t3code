@@ -179,6 +179,7 @@ import { ManagedRuntimeModeNotice } from "./ManagedRuntimeModeNotice";
 import { FreshSessionNotice } from "./FreshSessionNotice";
 import { Notice } from "../../components/ui/Notice";
 import { formatTokens } from "@t3tools/shared/usageFormat";
+import { isBackgroundWorkRefusal } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
@@ -1744,6 +1745,15 @@ function ThreadDetailBody(
                         <ComposerErrorNotice
                           message={composerError}
                           onDismiss={() => clearThreadComposerError(selectedThreadKey)}
+                          onStop={
+                            // The refusal says "press Stop"; work only the provider sees has no other Stop.
+                            props.canOperateThread && isBackgroundWorkRefusal(composerError)
+                              ? () => {
+                                  clearThreadComposerError(selectedThreadKey);
+                                  void runStatusAction("stop");
+                                }
+                              : undefined
+                          }
                         />
                       </Animated.View>
                     ) : null}
