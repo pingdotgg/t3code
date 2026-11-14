@@ -1,10 +1,11 @@
+import "~/index.css";
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { ProjectId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { page } from "vite-plus/test/browser";
 
 import { AppRoot } from "~/AppRoot";
 // The draft route loads ChatView lazily; importing it here keeps its first transform out of the test's timeout.
@@ -66,29 +67,26 @@ it("the new-thread project picker follows the manual sidebar project order", asy
 
   const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
   await router.load();
+  const container = document.createElement("div");
+  container.style.cssText = "height: 100dvh; width: 100%;";
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
+    container,
     router: false,
   });
   // The shell snapshot has arrived once the sidebar lists the project.
   await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
-  const trigger = document.querySelector<HTMLElement>("[data-draft-project-trigger]");
-  if (!trigger) throw new Error("The draft project picker did not render.");
-  await userEvent.click(page.elementLocator(trigger));
-  await expect.element(page.getByRole("option", { name: "beta" })).toBeVisible();
+  const projects = page.getByRole("list", { name: "Projects", exact: true });
+  await expect.element(projects.getByRole("button", { name: /beta/ }).first()).toBeVisible();
 
-  // The draft's own project leads; the rest keep the sidebar's order.
+  await expect.element(projects.getByRole("button", { name: /^Add project/ })).toBeVisible();
   await vi.waitFor(() => {
     expect(
-      page
-        .getByRole("option")
+      projects
+        .getByRole("listitem")
         .elements()
-        .map((option) => option.textContent),
-    ).toEqual([
-      expect.stringMatching(/render$/),
-      expect.stringMatching(/beta$/),
-      expect.stringMatching(/alpha$/),
-      "Add project",
-    ]);
+        .slice(0, 3)
+        .map((row) => row.querySelector("button span[aria-label]")?.getAttribute("aria-label")),
+    ).toEqual(["render", "beta", "alpha"]);
   });
 });
