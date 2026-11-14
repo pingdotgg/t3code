@@ -715,7 +715,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           effectiveConfig.customModels,
           observed,
         );
-        if (next.models === provider.models) return [next, learned];
+        if (next.models === provider.models) return [next, observed];
         return [
           next,
           next.models.filter(

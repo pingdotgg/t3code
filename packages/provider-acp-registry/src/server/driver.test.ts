@@ -1191,6 +1191,7 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
       yield* fileSystem.writeFileString(modelsPath, JSON.stringify(models));
       const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+      let version = "1.0.0";
 
       const instance = yield* AcpRegistryDriver.create({
         instanceId: identity.instanceId,
@@ -1203,9 +1204,16 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
           ...catalogWithInspection({
             status: "ready",
             agentId: "test-agent",
-            version: "1.0.0",
+            version,
             distribution: "npx",
           }),
+          inspect: () =>
+            Effect.sync(() => ({
+              status: "ready" as const,
+              agentId: "test-agent",
+              version,
+              distribution: "npx" as const,
+            })),
           resolve: () =>
             Effect.succeed({
               distribution: "npx" as const,
@@ -1263,11 +1271,25 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
           return effortBySlug(yield* instance.snapshot.getSnapshot);
         });
 
+      // A live session that reports neither models nor options leaves the probe's list as is.
+      yield* coordinator.publishLiveConfiguration(
+        identity.instanceId,
+        normalizeAcpRegistryLiveConfiguration([]),
+      );
       const probed = yield* waitFor("model-a", "").pipe(
         Effect.forkScoped({ startImmediately: true }),
       );
       yield* instance.snapshot.refresh;
       yield* Fiber.join(probed);
+
+      // An update moves the agent's default; model-a still keeps what the probe saw.
+      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["model-e", ...models]));
+      version = "1.1.0";
+      const reprobed = yield* waitFor("model-e", "").pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* instance.snapshot.refresh;
+      yield* Fiber.join(reprobed);
 
       // The probe saw model-a without effort; models no session opened borrow the current one's.
       expect(yield* publish("model-b", "effort")).toBe(
