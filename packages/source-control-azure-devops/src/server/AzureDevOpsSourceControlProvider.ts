@@ -4,6 +4,7 @@ import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contrac
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import type { NormalizedAzureDevOpsPullRequestRecord } from "./azureDevOpsPullRequests.ts";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
   combinedAuthOutput,
@@ -89,6 +90,7 @@ function toChangeRequest(summary: NormalizedAzureDevOpsPullRequestRecord): Chang
 
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
+  const { git } = yield* SourceControlHost.SourceControlHost;
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("azure-devops"),
@@ -239,18 +241,37 @@ export const make = Effect.gen(function* () {
         );
       },
     ),
+    // `az repos pr checkout` ignores git failures: in a single-branch clone its checkout fails
+    // and its pull then merges the pull request into the current branch.
     checkoutChangeRequest: Effect.fn("AzureDevOpsSourceControlProvider.checkoutChangeRequest")(
-      function (input) {
-        return azure
-          .checkoutPullRequest({
+      function* (input) {
+        const pullRequest = yield* azure.getPullRequest(input);
+        if (pullRequest.isCrossRepository)
+          return yield* new SourceControlProviderError({
+            provider: SourceControlProviderKind.make("azure-devops"),
+            operation: "checkoutChangeRequest",
             cwd: input.cwd,
-            reference: input.reference,
-            ...(input.context !== undefined ? { remoteName: input.context.remoteName } : {}),
-          })
-          .pipe(
-            Effect.mapError(
-              (error) =>
-                new SourceControlProviderError({
+            reference: SourceControlProvider.transportSafeSourceControlErrorValue(input.reference),
+            detail: "Checking out an Azure DevOps pull request from a fork is not supported.",
+          });
+        const branch = pullRequest.headRefName;
+        const remoteBranch = {
+          cwd: input.cwd,
+          remoteName: input.context?.remoteName ?? "origin",
+          remoteBranch: branch,
+        };
+        // An existing branch is only switched to; the caller advances it without losing commits.
+        if ((yield* git.listLocalBranchNames(input.cwd)).includes(branch))
+          yield* git.fetchRemoteTrackingBranch(remoteBranch);
+        else yield* git.fetchRemoteBranch({ ...remoteBranch, localBranch: branch });
+        yield* git.switchRef({ cwd: input.cwd, refName: branch });
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.mapError((error) =>
+            error._tag === "SourceControlProviderError"
+              ? error
+              : new SourceControlProviderError({
                   provider: SourceControlProviderKind.make("azure-devops"),
                   operation: "checkoutChangeRequest",
                   command: error.command,
@@ -261,9 +282,8 @@ export const make = Effect.gen(function* () {
                   detail: error.detail,
                   cause: error,
                 }),
-            ),
-          );
-      },
+          ),
+        ),
     ),
   });
 });

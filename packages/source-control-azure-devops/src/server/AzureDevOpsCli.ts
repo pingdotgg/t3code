@@ -258,12 +258,6 @@ export class AzureDevOpsCli extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
     }) => Effect.Effect<string | null, AzureDevOpsCliError>;
-
-    readonly checkoutPullRequest: (input: {
-      readonly cwd: string;
-      readonly reference: string;
-      readonly remoteName?: string;
-    }) => Effect.Effect<void, AzureDevOpsCliError>;
   }
 >()("@t3tools/source-control-azure-devops/server/AzureDevOpsCli") {}
 
@@ -574,21 +568,6 @@ export const make = Effect.gen(function* () {
         ),
         Effect.map((repo) => normalizeDefaultBranch(repo.defaultBranch)),
       );
-    }),
-    checkoutPullRequest: Effect.fn("AzureDevOpsCli.checkoutPullRequest")(function (input) {
-      return execute({
-        cwd: input.cwd,
-        args: [
-          "repos",
-          "pr",
-          "checkout",
-          "--only-show-errors",
-          "--id",
-          normalizeChangeRequestId(input.reference),
-          "--remote-name",
-          input.remoteName ?? "origin",
-        ],
-      }).pipe(Effect.asVoid);
     }),
   });
 });
