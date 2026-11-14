@@ -303,6 +303,7 @@ it("tests the selected model after download and preserves its transcript across 
           state: { phase: "idle", error: null, errorAction: null },
           preview: null,
           level: 0,
+          recordingStartedAt: null,
           preparing: false,
           blocksSubmission: false,
           freezesEditor: false,
