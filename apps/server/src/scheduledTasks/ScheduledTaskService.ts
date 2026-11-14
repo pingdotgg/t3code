@@ -58,7 +58,12 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { latestRootProviderFailure } from "@t3tools/shared/orchestrationV2ThreadError";
-import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
+import {
+  isMissedFixedTimeRun,
+  isSameSchedule,
+  nextScheduledRunAt,
+  withStoredCalendar,
+} from "./Schedule.ts";
 import {
   redactHeaders,
   redactQuery,
@@ -1474,7 +1479,9 @@ export const layer = Layer.effect(
             }
           : input.schedule.type === "once"
             ? { type: "once", runAt: iso(DateTime.makeUnsafe(input.schedule.runAt)) }
-            : input.schedule;
+            : input.schedule.type === "fixed_time"
+              ? withStoredCalendar(input.schedule, existingTask?.schedule)
+              : input.schedule;
       const webhook =
         input.schedule.type === "webhook"
           ? yield* Effect.gen(function* () {
