@@ -118,6 +118,7 @@ import {
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import { createTurnItemOrdinalAllocator } from "@t3tools/provider-core/server/turnItemOrdinals";
 import {
   type BackgroundWork,
   type BackgroundWorkReport,
@@ -1825,6 +1826,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
     openSession: Effect.fn("AcpAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
+        const turnItemOrdinals = createTurnItemOrdinalAllocator();
         let itemIdentityVersion: 2 | undefined =
           input.initialProviderItemIdentityVersion ??
           (input.initialNativeThreadId === undefined ? 2 : undefined);
@@ -2601,13 +2603,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         );
 
         const resolveItemOrdinal = (context: ActiveAcpTurn, nativeItemId: string) =>
-          Effect.sync(() => {
-            const existing = context.itemOrdinals.get(nativeItemId);
-            if (existing !== undefined) return existing;
-            const ordinal = context.input.providerTurnOrdinal * 100 + context.itemOrdinals.size + 1;
-            context.itemOrdinals.set(nativeItemId, ordinal);
-            return ordinal;
-          });
+          Effect.sync(() =>
+            turnItemOrdinals.resolve(
+              context.input.providerTurnOrdinal,
+              context.itemOrdinals,
+              nativeItemId,
+            ),
+          );
 
         const resolveSubagentChildOrdinal = (subagent: ActiveAcpSubagent, nativeItemId: string) => {
           const existing = subagent.childItemOrdinals.get(nativeItemId);

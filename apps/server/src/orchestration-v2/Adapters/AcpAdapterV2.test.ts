@@ -1208,6 +1208,78 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live("keeps concurrent threads' item ordinals in their own turn bands", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("acp-test-ordinal-bands");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const higherBandAllocated = yield* Deferred.make<void>();
+      yield* Effect.forEach(
+        [10, 1],
+        (ordinal) =>
+          Effect.gen(function* () {
+            const threadId = ThreadId.make("thread-acp-ordinal-" + ordinal);
+            const runtime = yield* adapter.openSession({
+              threadId,
+              providerSessionId: ProviderSessionId.make("session-acp-ordinal-" + ordinal),
+              modelSelection,
+              runtimePolicy,
+            });
+            const providerThread = yield* runtime.ensureThread({
+              threadId,
+              modelSelection,
+              runtimePolicy,
+            });
+            if (ordinal === 1) yield* Deferred.await(higherBandAllocated);
+            yield* runtime.startTurn(
+              makeTurnInput({
+                threadId,
+                providerThread,
+                instanceId,
+                runtimePolicy,
+                now: yield* DateTime.now,
+                ordinal,
+              }),
+            );
+            const events = yield* runtime.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            );
+            const ordinals = [
+              ...new Set(
+                events.flatMap((event) =>
+                  event.type === "turn_item.updated" ? [event.turnItem.ordinal] : [],
+                ),
+              ),
+            ].sort((a, b) => a - b);
+            assert.isAbove(ordinals.length, 0);
+            assert.equal(ordinals[0], ordinal * 100 + 1);
+            assert.isTrue(
+              ordinals.every((value) => value > ordinal * 100 && value < (ordinal + 1) * 100),
+            );
+            if (ordinal === 10) yield* Deferred.succeed(higherBandAllocated, undefined);
+          }),
+        { concurrency: "unbounded" },
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("reports per-turn usage unavailable on a continuation turn that never prompts", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("acp-test-usage-continuation");
