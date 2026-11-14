@@ -632,8 +632,6 @@ type SidebarThreadRowProps = {
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
   snoozeSupported: boolean;
-  // the descriptor is not loaded. Unpinned cards get a pin quick action on
-  // hover; the context menu keeps pin and unpin for every row.
   pinningSupported: boolean;
   isPinned: boolean;
   sortable?: SortableThreadRowBag | undefined;
@@ -683,7 +681,6 @@ type SidebarThreadRowProps = {
   onUnsettle: (threadRef: ScopedThreadRef) => void;
   onSnooze: (threadRef: ScopedThreadRef, preset: Pick<SnoozePreset, "snoozedUntil">) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
-  onPin: (threadRef: ScopedThreadRef) => void;
   onUnpin: (threadRef: ScopedThreadRef) => void;
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
   onFileDropThreads?: ((threadRef: ScopedThreadRef, files: File[]) => void) | undefined;
@@ -747,7 +744,6 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     onThreadClick,
     onUnsettle,
     onUnsnooze,
-    onPin,
     onUnpin,
     readOpensPullRequestsInRightPanel,
     renamingTitle,
@@ -986,11 +982,6 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const handleSnoozePreset = (preset: Pick<SnoozePreset, "snoozedUntil">) => {
     onSnooze(threadRef, preset);
   };
-  const handlePinClick = (event: ReactMouseEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
-    onPin(threadRef);
-  };
   const [snoozeMenuOpenRaw, setSnoozeMenuOpen] = useState(false);
   // The React Compiler caches render results on their inputs, so a clock read
   // here would stay frozen until `thread` changes and a queued-turn gate would
@@ -1021,8 +1012,6 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     canOperateThread && props.snoozeSupported && canSnooze(thread, { now: snoozeGateNow });
   // Closing here, not just masking, keeps the menu from reopening when the button returns.
   if (snoozeMenuOpenRaw && !showSnoozeButton) setSnoozeMenuOpen(false);
-  // Pinned cards already show the clickable unpin glyph in this row.
-  const showPinButton = props.pinningSupported && canOperateThread && !props.isPinned;
   const snoozeMenuOpen = snoozeMenuOpenRaw && showSnoozeButton;
   const jumpHintLabel = snoozeMenuOpen ? null : props.jumpLabel;
   const handlePrClick = (event: ReactMouseEvent<HTMLElement>, targetUrl?: string) => {
@@ -1577,10 +1566,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                       />
                     )}
                   </span>
-                  {props.settlementSupported ||
-                  showSnoozeButton ||
-                  showPinButton ||
-                  hasUnsentDraft ? (
+                  {props.settlementSupported || showSnoozeButton || hasUnsentDraft ? (
                     <span
                       className={cn(
                         // Mouse clicks leave Settle focused; focus-within would pin controls over
@@ -1605,23 +1591,6 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                             <XIcon className="size-3.5" />
                           </TooltipTrigger>
                           <TooltipPopup side="top">Discard draft</TooltipPopup>
-                        </Tooltip>
-                      ) : null}
-                      {showPinButton ? (
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <button
-                                type="button"
-                                aria-label="Pin thread"
-                                onClick={handlePinClick}
-                                className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-badge bg-transparent text-muted-foreground outline-none transition-colors hover:surface-ghost-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                              />
-                            }
-                          >
-                            <PinIcon className="size-3" />
-                          </TooltipTrigger>
-                          <TooltipPopup>Pin thread</TooltipPopup>
                         </Tooltip>
                       ) : null}
                       {showSnoozeButton ? (
