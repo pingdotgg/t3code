@@ -705,7 +705,6 @@ it.layer(
     }),
   );
 
-  // Client retries resend the first attach's size, which a later resize may have replaced.
   it.effect("gives the PTY back to a wider viewer once a client stops attaching", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -740,8 +739,6 @@ it.layer(
       const registry = AtomRegistry.make();
       yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
       const input = openInput({ cols: 54, rows: 15 });
-      const detached = yield* Deferred.make<void>();
-      let wasLive = false;
       const session = atoms.createSession({
         target: {
           environmentId,
@@ -752,10 +749,6 @@ it.layer(
         canOperate: () => true,
         onExit: () => {
           throw new Error("running shell unexpectedly exited");
-        },
-        onLiveChange: (live) => {
-          if (live) wasLive = true;
-          else if (wasLive) Deferred.doneUnsafe(detached, Exit.void);
         },
       });
       const closeDriver = registry.mount(session.driver({ kind: "attached", input }));
@@ -770,16 +763,11 @@ it.layer(
         { immediate: true },
       );
       yield* Deferred.await(ready);
-      yield* manager.resize(
-        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID, cols: 54, rows: 15 },
-        "socket-phone:0",
-      );
       const process = ptyAdapter.processes[0]!;
       expect(process.resizeCalls.at(-1)).toEqual({ cols: 54, rows: 15 });
 
       closeDriver();
       closeViewer();
-      yield* Deferred.await(detached);
       // Unused atoms are released on the registry's next scheduled task.
       yield* Effect.callback<void>((resume) => {
         registry.schedulerAsync.makeDispatcher().scheduleTask(() => resume(Effect.void), 0);
@@ -791,6 +779,8 @@ it.layer(
       expect(process.resizeCalls.at(-1)).toEqual({ cols: 130, rows: 30 });
     }),
   );
+
+  // Client retries resend the first attach's size, which a later resize may have replaced.
   it.effect("keeps a viewer's resized grid when the same viewer attaches again", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
