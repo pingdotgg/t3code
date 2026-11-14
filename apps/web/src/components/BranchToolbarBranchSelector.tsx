@@ -364,25 +364,15 @@ export function BranchToolbarBranchSelector({
         : null;
 
   const copyBranchName = (branchName: string) => {
-    void writeTextToClipboard(branchName, "branch name").then(
-      (didCopy) => {
-        if (!didCopy) return;
-        toastManager.add({
-          type: "success",
-          title: "Branch name copied",
-          description: branchName,
-        });
-      },
-      (error: unknown) => {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to copy branch name",
-            description: toBranchActionErrorMessage(error),
-          }),
-        );
-      },
-    );
+    void writeTextToClipboard(branchName, "branch name").then(undefined, (error: unknown) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy branch name",
+          description: toBranchActionErrorMessage(error),
+        }),
+      );
+    });
   };
 
   const handleBranchContextMenu = (event: ReactMouseEvent, branchName: string | null) => {
