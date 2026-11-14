@@ -48,10 +48,9 @@ import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStr
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
-export const ACP_REGISTRY_URL =
-  "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
+const ACP_REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 
-export const MAX_REGISTRY_BYTES = 1024 * 1024;
+const MAX_REGISTRY_BYTES = 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
 const MAX_COMMAND_OUTPUT_BYTES = 1024 * 1024;
 // Archive listings can exceed the output of package-manager commands.
@@ -232,7 +231,7 @@ export type AcpRegistryPlatformTarget =
   | "windows-aarch64"
   | "windows-x86_64";
 
-export function resolveAcpRegistryPlatformTarget(
+function resolveAcpRegistryPlatformTarget(
   platform: NodeJS.Platform,
   architecture: NodeJS.Architecture,
 ): AcpRegistryPlatformTarget | undefined {
@@ -1203,9 +1202,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         timeout: PACKAGE_QUERY_TIMEOUT,
         truncatedOutputReason: "install_failed",
       }).pipe(Effect.flatMap((output) => parsePackageManagerPath(managerPath, output)));
-      const commandEnvironment = withPreferredPath(environment, binDirectory, platform);
+      const managedBinEnvironment = { ...environment, PATH: binDirectory };
       const executablePath = packageCommandCandidates(agent, packageIdentity.name)
-        .map((candidate) => resolveExecutable(candidate, platform, commandEnvironment))
+        .map((candidate) => resolveExecutable(candidate, platform, managedBinEnvironment))
         .find((candidate): candidate is string => candidate !== undefined);
       return executablePath === undefined
         ? Option.none<AcpRegistryPackageInstallReceipt>()

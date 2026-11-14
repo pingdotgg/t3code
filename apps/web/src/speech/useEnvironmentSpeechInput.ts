@@ -92,7 +92,6 @@ type HookInput = {
   readonly projectId?: ProjectId | null | undefined;
   readonly projectName?: string | null | undefined;
   readonly ownerKey: string;
-  readonly draftText: string;
   readonly disabled?: boolean | undefined;
   /**
    * Until a destination is chosen, voice input is offered and its first gesture opens Voice
@@ -212,19 +211,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   useEffect(() => {
     latestRef.current = { input, clientSettings, cleanupPrepared, projectWords };
   });
-  const draftRevisionRef = useRef({ ownerKey: input.ownerKey, text: input.draftText, revision: 0 });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks committed draft revisions so a late transcript cannot overwrite an edited draft
-  useEffect(() => {
-    const revision = draftRevisionRef.current;
-    if (revision.ownerKey !== input.ownerKey || revision.text !== input.draftText) {
-      draftRevisionRef.current = {
-        ownerKey: input.ownerKey,
-        text: input.draftText,
-        revision: revision.revision + 1,
-      };
-    }
-  }, [input.ownerKey, input.draftText]);
-
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the recording controller bound to the consented destination; it is disposed with the consent
   useEffect(() => {
     if (!prepared || !grantId || typeof navigator === "undefined") return;
@@ -242,20 +228,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     const readDraft = (): VoiceDraftSnapshot => {
       const current = latestRef.current.input;
       const draft = current.readDraft();
-      const revision = draftRevisionRef.current;
-      if (revision.ownerKey !== current.ownerKey || revision.text !== draft.text) {
-        draftRevisionRef.current = {
-          ownerKey: current.ownerKey,
-          text: draft.text,
-          revision: revision.revision + 1,
-        };
-      }
-      return {
-        ownerKey: current.ownerKey,
-        text: draft.text,
-        selection: draft.selection,
-        revision: draftRevisionRef.current.revision,
-      };
+      return { ownerKey: current.ownerKey, text: draft.text, selection: draft.selection };
     };
     const platform = createBrowserVoiceInputPlatform({
       prepared,
