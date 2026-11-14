@@ -22,9 +22,13 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { ControlPill } from "../../components/ui/ControlPill";
 import { cn } from "../../lib/cn";
 import { resolveMarkdownLinkPresentation } from "../../lib/markdownLinks";
+import { FONT_FAMILIES } from "../../lib/fontFamilies";
+import { FormulaText } from "../../native/FormulaText";
+import { formulaMarkdown } from "../../native/formulaText";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   fileRoutePathSegments,
   resolveFileLinkPath,
@@ -120,6 +124,7 @@ function QuestionText(props: {
 }
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
+  const { mathRenderingEnabled, themeVariables } = useAppearancePreferences();
   const questionCount = props.pendingUserInput.questions.length;
   const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
   const isResponding = props.respondingUserInputId === props.pendingUserInput.requestId;
@@ -281,11 +286,24 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   const selected = isPendingUserInputOptionSelected(question, draft, optionValue);
                   const description =
                     option.description !== option.label ? option.description : undefined;
+                  const labelFormulas = mathRenderingEnabled ? formulaMarkdown(option.label) : null;
+                  const descriptionFormulas =
+                    mathRenderingEnabled && description ? formulaMarkdown(description) : null;
+                  const formulaAlign =
+                    Platform.OS === "android"
+                      ? null
+                      : ({ textAlign: setDirection === "rtl" ? "right" : "left" } as const);
                   return (
                     <View key={optionValue} className="gap-1.5">
                       <Pressable
                         accessibilityRole={question.multiSelect ? "checkbox" : "radio"}
                         accessibilityState={{ checked: selected, disabled: responseDisabled }}
+                        // A typeset label is not a Text, so it would not name the option.
+                        accessibilityLabel={
+                          labelFormulas || descriptionFormulas
+                            ? [option.label, description].filter(Boolean).join(", ")
+                            : undefined
+                        }
                         disabled={responseDisabled}
                         className={cn(
                           "min-h-12 w-full rounded-2xl border px-3.5 py-3",
@@ -300,16 +318,42 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                         }
                       >
                         <View className="min-w-0 flex-1 gap-0.5">
-                          <Text
-                            className={cn(
-                              "font-t3-bold text-sm",
-                              selected ? "text-foreground" : "text-foreground-secondary",
-                            )}
-                            style={proseDirectionStyle(option.label, setDirection)}
-                          >
-                            {option.label}
-                          </Text>
-                          {description ? (
+                          {labelFormulas ? (
+                            <FormulaText
+                              markdown={labelFormulas}
+                              color={
+                                themeVariables[
+                                  selected ? "--color-foreground" : "--color-foreground-secondary"
+                                ]
+                              }
+                              fontFamily={FONT_FAMILIES.bold}
+                              fontSize={14}
+                              lineHeight={19}
+                              writingDirection={textDirection(option.label)}
+                              {...formulaAlign}
+                            />
+                          ) : (
+                            <Text
+                              className={cn(
+                                "font-t3-bold text-sm",
+                                selected ? "text-foreground" : "text-foreground-secondary",
+                              )}
+                              style={proseDirectionStyle(option.label, setDirection)}
+                            >
+                              {option.label}
+                            </Text>
+                          )}
+                          {descriptionFormulas ? (
+                            <FormulaText
+                              markdown={descriptionFormulas}
+                              color={themeVariables["--color-foreground-muted"]}
+                              fontFamily={FONT_FAMILIES.regular}
+                              fontSize={14}
+                              lineHeight={20}
+                              writingDirection={textDirection(description ?? "")}
+                              {...formulaAlign}
+                            />
+                          ) : description ? (
                             <Text
                               className="font-sans text-sm leading-5 text-foreground-muted"
                               style={proseDirectionStyle(description, setDirection)}
