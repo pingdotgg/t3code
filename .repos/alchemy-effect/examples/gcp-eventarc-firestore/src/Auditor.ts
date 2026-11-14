@@ -1,4 +1,4 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { LOCATION, Shop } from "./resources.ts";
@@ -61,14 +61,10 @@ export default class Auditor extends GCP.Function<Auditor>()(
               eventId: event.id,
               eventType: event.type,
               eventTime: event.time ?? null,
-              payloadBytes:
-                event.data instanceof Uint8Array ? event.data.length : null,
+              payloadBytes: event.data instanceof Uint8Array ? event.data.length : null,
             })
             .pipe(
-              Effect.catchTag(
-                "GCP.Firestore.DocumentAlreadyExists",
-                () => Effect.void,
-              ),
+              Effect.catchTag("GCP.Firestore.DocumentAlreadyExists", () => Effect.void),
               // A failure answers 500, and Eventarc redelivers later.
               Effect.orDie,
             );
