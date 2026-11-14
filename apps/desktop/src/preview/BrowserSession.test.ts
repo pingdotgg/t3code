@@ -203,7 +203,7 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("keeps the native User-Agent except for the Electron token sent to Teams", () =>
+  it.effect("strips only the Electron token from requests to Teams and Microsoft sign-in", () =>
     Effect.gen(function* () {
       const nativeUserAgent =
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) T3Code(Alpha)/0.0.33 Chrome/146.0.7680.216 Electron/41.5.0 Safari/537.36";
@@ -237,12 +237,18 @@ describe("BrowserSession", () => {
       assert.isDefined(browserSession);
       assert.strictEqual(browserSession.getUserAgent(), nativeUserAgent);
 
-      // Teams redirects Electron to an error page before sign-in; every other host sees the native one.
+      // Teams and Microsoft sign-in see a Chrome User-Agent; every other host sees the native one.
       const calls = browserSession.webRequest.onBeforeSendHeaders.mock.calls;
       assert.strictEqual(calls.length, 1);
       const [filter, listener] = calls[0] ?? [];
       assert.deepStrictEqual(filter, {
-        urls: ["https://teams.cloud.microsoft/*", "https://teams.microsoft.com/*"],
+        urls: [
+          "https://teams.cloud.microsoft/*",
+          "https://teams.microsoft.com/*",
+          "https://login.microsoftonline.com/*",
+          "https://login.microsoft.com/*",
+          "https://login.live.com/*",
+        ],
       });
       const send = (requestHeaders: Record<string, string>) => {
         let response: { requestHeaders?: Record<string, string> } | undefined;
