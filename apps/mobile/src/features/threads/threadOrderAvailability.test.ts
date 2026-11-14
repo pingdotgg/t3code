@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   generateSpreadPinOrderKeys,
   pinOrderKeyBetween,
+  sortActiveThreadsByOrderKey,
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentId } from "@t3tools/contracts";
 
@@ -246,4 +247,25 @@ describe("computeThreadMoveAvailability matches the reference planner", () => {
     const reference = referenceAvailability(ordered, allThreads, WRITABLE);
     expect(Object.fromEntries(batch)).toEqual(Object.fromEntries(reference));
   });
+});
+
+it("swaps writable Active rows below a frozen keyless row", () => {
+  const ordered = [
+    makeRow("frozen", "env-x", null, false),
+    makeRow("a", "env-w", "m", false),
+    makeRow("b", "env-w", "t", false),
+  ];
+  const input = { ordered, section: "active" as const, reorderableEnvironmentIds: WRITABLE };
+  const assignments = createThreadMovePlanner(input)("env-w:b", "up");
+  expect(assignments).not.toBeNull();
+  expect(assignments!.map(({ id }) => id)).toEqual(["env-w:b"]);
+  const keys = new Map(assignments!.map(({ id, orderKey }) => [id, orderKey]));
+  const sorted = sortActiveThreadsByOrderKey(
+    ordered.map((row) => ({
+      ...row,
+      activeOrderKey: keys.get(`${row.environmentId}:${row.id}`) ?? row.activeOrderKey,
+    })),
+  );
+  expect(sorted.map((row) => row.id)).toEqual(["frozen", "b", "a"]);
+  expect(computeThreadMoveAvailability(input).get("env-w:b")?.canMoveUp).toBe(true);
 });
