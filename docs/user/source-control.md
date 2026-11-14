@@ -331,8 +331,9 @@ check fails or waits for a maintainer's approval, the required checks pass, some
 conflict. On github.com it also wakes the agent, with GitHub's reason, when the merge queue drops
 the pull request without merging it. Threads in a project that watch the same pull request share one check. On GitHub, a check
 first asks whether anything changed and reads the pull request only when it did, which keeps
-watching inside GitHub's rate limit. Comments from your own account do not wake it. Watching ends
-when the pull request merges or closes, after 10 wakes in a row that bring only comments, after 8
+watching inside GitHub's rate limit. Comments from your own account do not wake it. When the pull
+request merges or closes, watching ends, and the agent is woken once unless it merged or closed the
+pull request itself with the host's CLI. A reopened pull request needs a new watch. Watching also ends after 10 wakes in a row that bring only comments, after 8
 failed reads in a row, or when you press Stop on the thread. A rate limit only pauses watching.
 Settling or archiving a thread also ends all its watches. Unsettle the thread before starting a new
 watch. Watching a pull request again does not repeat check or conflict news its last

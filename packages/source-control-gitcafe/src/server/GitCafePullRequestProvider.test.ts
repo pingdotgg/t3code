@@ -1097,7 +1097,8 @@ describe("GitCafePullRequestProvider", () => {
 
   it.effect("reads a pull request GitHub merged as merged before the sync reports it", () => {
     const mergedAt = "2026-09-12T13:00:00Z";
-    const server = detailWith({ providerMerge: { mergedAt } });
+    const mergeCommitOid = "3b2f958603a51d8c42c4ede02eee7b8cb310b2d9";
+    const server = detailWith({ providerMerge: { mergedAt, mergeCommitOid } });
     return Effect.gen(function* () {
       const provider = yield* GitCafePullRequestProvider.make;
       const detail = yield* provider.getChangeRequest(target);
@@ -1105,6 +1106,7 @@ describe("GitCafePullRequestProvider", () => {
       assert.strictEqual(detail.mergedAt, mergedAt);
       const preview = yield* provider.getChangeRequestPreview!(target);
       assert.strictEqual(preview.state, "merged");
+      assert.strictEqual(detail.mergeCommitSha, mergeCommitOid);
     }).pipe(Effect.provide(server.layer));
   });
 

@@ -1,14 +1,22 @@
 import {
   CommandId,
+  isOrchestrationV2WorkActive,
   MessageId,
   type OrchestrationV2Notification,
   type PullRequestActivity,
   type PullRequestComment,
+  type PullRequestDetail,
   type PullRequestRef,
   type PullRequestThreadCommentsResult,
   type ThreadPullRequestLink,
+  type ThreadId,
   type ThreadPullRequestWatch,
 } from "@t3tools/contracts";
+import { commandIndicatesFailure } from "@t3tools/shared/toolOutput";
+import {
+  changeRequestsClosedBy,
+  isChangeRequestCloseCommand,
+} from "../sourceControl/sourceControlDefinitions.ts";
 import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeyOf,
@@ -37,10 +45,12 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { isTerminalRunStatus } from "./ThreadManagementService.ts";
 import {
   combinePullRequestWatchWakes,
   evaluatePullRequestWatch,
   PULL_REQUEST_WATCH_NO_CHECKS_MS,
+  pullRequestWatchEndMessage,
   pullRequestWatchMessage,
 } from "./pullRequestWatch.ts";
 
@@ -285,6 +295,17 @@ export const make = Effect.gen(function* () {
   // A pass reads watches and records new ones, so passes must not overlap.
   const passes = Semaphore.makeUnsafe(1);
   const lastReads = new Map<string, LastRead>();
+  /**
+   * Each thread's merge and close commands, by item, with the pull requests each names. One counts
+   * while it runs and, if it succeeded, until the read at its end is done.
+   */
+  const agentEnds = new Map<ThreadId, Map<string, ReadonlySet<number> | "any">>();
+  // The agent needs no wake for a merge or close it made itself. Anything ending later, as a
+  // `--auto` merge does, is news.
+  const endedByAgent = (target: WatchTarget) =>
+    [...(agentEnds.get(target.thread.id)?.values() ?? [])].some(
+      (named) => named === "any" || named.has(target.link.number),
+    );
   const threadTails = new Map<
     string,
     {
@@ -517,30 +538,26 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const closed = (groupKey: string, target: WatchTarget) =>
+  const finished = (groupKey: string, target: WatchTarget, detail: PullRequestDetail) =>
     hold({
       groupKey,
       target,
       next: null,
-      wake: {
-        text: `Pull request #${target.link.number} (${target.link.url}) was closed, so T3 Code stopped watching it. Call watch_pull_request if it reopens.`,
-        notification: {
-          source: { kind: "monitor" },
-          outcome: "updated",
-          summary: `#${target.link.number}: closed, stopped watching`,
-        },
-      },
-      reason: "closed",
+      wake: pullRequestWatchEndMessage({
+        number: target.link.number,
+        url: target.link.url,
+        detail,
+      }),
+      reason: detail.state === "merged" ? "merged" : "closed",
     });
 
-  const endsWithoutRead = ({ thread, link }: WatchTarget): WatchEndReason | undefined =>
-    link.snapshot?.state === "merged"
-      ? "merged"
-      : thread.settledOverride === "settled" || thread.settledAt !== null
-        ? "settled"
-        : thread.lineage.relationshipToParent === "subagent"
-          ? "subagent"
-          : undefined;
+  // A merged snapshot still gets one read, so the wake can name the merge commit.
+  const endsWithoutRead = ({ thread }: WatchTarget): WatchEndReason | undefined =>
+    thread.settledOverride === "settled" || thread.settledAt !== null
+      ? "settled"
+      : thread.lineage.relationshipToParent === "subagent"
+        ? "subagent"
+        : undefined;
 
   const eachTarget = <E>(
     group: WatchGroup,
@@ -652,10 +669,11 @@ export const make = Effect.gen(function* () {
     }
     if (detail.state !== "open") {
       lastReads.delete(group.key);
+      const reason = detail.state === "merged" ? "merged" : "closed";
       return yield* eachTarget(group, (target) =>
-        detail.state === "closed"
-          ? closed(group.key, target)
-          : record(target, null).pipe(Effect.tap(() => ended(target, "merged"))),
+        endedByAgent(target)
+          ? record(target, null).pipe(Effect.tap(() => ended(target, reason)))
+          : finished(group.key, target, detail),
       );
     }
 
@@ -827,9 +845,75 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("PullRequestWatchReactor.readOnChange"),
     );
 
+  // A full read, since an unchanged fingerprint or snapshot would otherwise skip the detail.
+  const readThreadWatches = (threadId: ThreadId) =>
+    projections.getThreadsWithPullRequests(threadId).pipe(
+      Effect.flatMap((threads) =>
+        Effect.forEach(
+          threads.flatMap((thread) =>
+            visibleThreadPullRequests(thread.pullRequests ?? [])
+              .filter((link) => link.watch !== undefined)
+              .map((link) => [thread.projectId, threadPullRequestKeyOf(link)] as const),
+          ),
+          ([projectId, pullRequest]) =>
+            // After any pass in flight, which could record a read from before the merge.
+            passes
+              .withPermit(Effect.sync(() => lastReads.delete(`${projectId} ${pullRequest}`)))
+              .pipe(Effect.andThen(readOnChange(pullRequest))),
+          { discard: true },
+        ),
+      ),
+      Effect.catchCause(logFailure("pull request watch read after a merge failed", { threadId })),
+    );
+
   const start: PullRequestWatchReactor["Service"]["start"] = Effect.fn(
     "PullRequestWatchReactor.start",
   )(function* () {
+    // Reading a thread's watches as its agent's merge or close ends lets them end at once.
+    const agentReads = yield* FiberMap.make<string>();
+    const finished = new Set<string>();
+    yield* forkParked(
+      Stream.runForEach(engine.streamDomainEvents, (event) => {
+        if (event.type === "run.updated") {
+          // A run can stop before its command reports that it ended.
+          const commands = agentEnds.get(event.threadId);
+          if (commands === undefined || !isTerminalRunStatus(event.payload.status)) {
+            return Effect.void;
+          }
+          for (const id of commands.keys()) if (!finished.has(id)) commands.delete(id);
+          if (commands.size === 0) agentEnds.delete(event.threadId);
+          return Effect.void;
+        }
+        if (event.type !== "turn-item.updated") return Effect.void;
+        const item = event.payload;
+        if (
+          item.type !== "command_execution" ||
+          finished.has(item.id) ||
+          !isChangeRequestCloseCommand(item.input)
+        ) {
+          return Effect.void;
+        }
+        const commands = agentEnds.get(event.threadId) ?? new Map();
+        agentEnds.set(event.threadId, commands);
+        commands.set(item.id, changeRequestsClosedBy(item.input));
+        if (isOrchestrationV2WorkActive(item.status)) return Effect.void;
+        finished.add(item.id);
+        const done = Effect.sync(() => {
+          commands.delete(item.id);
+          if (commands.size === 0 && agentEnds.get(event.threadId) === commands) {
+            agentEnds.delete(event.threadId);
+          }
+        });
+        // Some providers report a command that failed as completed.
+        return Effect.andThen(
+          item.status === "completed" && !commandIndicatesFailure(item) ? Effect.void : done,
+          FiberMap.run(
+            agentReads,
+            item.id,
+          )(readThreadWatches(event.threadId).pipe(Effect.ensuring(done))),
+        );
+      }).pipe(Effect.catchCause(logFailure("pull request watch command stream failed", {}))),
+    );
     // One feed per pull request: the host keeps one subscription per pull request and account.
     const feeds = yield* FiberMap.make<string>();
     const follow = Effect.gen(function* () {

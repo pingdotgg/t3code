@@ -277,6 +277,19 @@ export function toolOutputIndicatesFailure(text: string): boolean {
   );
 }
 
+/** Whether a command failed. A reported exit code outranks text in its output. */
+export function commandIndicatesFailure(command: {
+  readonly exitCode?: number | undefined;
+  readonly outputIndicatesFailure?: boolean | undefined;
+  readonly output?: string | undefined;
+}): boolean {
+  if (command.exitCode !== undefined) return command.exitCode !== 0;
+  return (
+    command.outputIndicatesFailure === true ||
+    (command.output !== undefined && toolOutputIndicatesFailure(command.output.slice(0, 32_768)))
+  );
+}
+
 export interface ToolOutputImage {
   readonly mimeType: string;
   readonly data?: string;

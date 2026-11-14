@@ -16,7 +16,10 @@ import {
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
 } from "../sourceControl/threadPullRequests.ts";
-import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import {
+  isChangeRequestCloseCommand,
+  sourceControlDefinitions,
+} from "../sourceControl/sourceControlDefinitions.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -47,11 +50,6 @@ export const QUIET_SYNC_INTERVAL_MS = 5 * 60 * 1_000;
 // A pull request closed this long ago is rarely reopened, so the sweep stops reading it, as it
 // does merged ones. A reader that sees it open, or a requested refresh, still reads it at once.
 const CLOSED_FINAL_AFTER_MS = 24 * 60 * 60 * 1_000;
-
-const isChangeRequestCloseCommand = (command: string) =>
-  sourceControlDefinitions.definitions.some(
-    (definition) => definition.changeRequestCloseCommand?.test(command) === true,
-  );
 
 // Where a shell starts a command, past `NAME=value` assignments and wrappers like `timeout 60`.
 // A create command anywhere else, as in `echo "gh pr create"`, is text, not a command that runs.

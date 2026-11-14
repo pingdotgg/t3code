@@ -138,6 +138,7 @@ const requiredChecksInput = {
 const requiredChecksLayer = (
   branch: Effect.Effect<unknown, ForgejoCli.ForgejoCliError>,
   statuses = requiredChecksStatuses,
+  pull: Readonly<Record<string, unknown>> = requiredChecksPullRequest,
 ) =>
   Layer.mock(ForgejoCli.ForgejoCli)({
     api: (input) => {
@@ -146,7 +147,7 @@ const requiredChecksLayer = (
         encodeJsonEffect(response).pipe(Effect.orDie, Effect.map(processOutput));
       switch (path) {
         case "repos/acme/web/pulls/7":
-          return respond(requiredChecksPullRequest);
+          return respond(pull);
         case "repos/acme/web/statuses/head":
           return respond(new URLSearchParams(query).get("page") === "1" ? statuses : []);
         case "repos/acme/web/branches/release/1.x":
@@ -420,6 +421,28 @@ it.effect.each([
     }
   }).pipe(Effect.provide(requiredChecksLayer(Effect.fail(cause))));
 });
+
+it.effect("reads a merged pull request's merge commit and who merged it", () =>
+  Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const detail = yield* provider.getChangeRequest(requiredChecksInput);
+    assert.strictEqual(detail.state, "merged");
+    assert.strictEqual(detail.mergeCommitSha, "394a757942c5c3a9fb3cca31e348849e8c6a6dbe");
+    assert.deepStrictEqual(detail.mergedBy, { login: "gusted", name: null, avatarUrl: null });
+  }).pipe(
+    Effect.provide(
+      requiredChecksLayer(Effect.succeed({ name: "release/1.x" }), [], {
+        ...requiredChecksPullRequest,
+        state: "closed",
+        merged: true,
+        closed_at: "2026-10-27T00:08:58+01:00",
+        merged_at: "2026-10-27T00:08:58+01:00",
+        merge_commit_sha: "394a757942c5c3a9fb3cca31e348849e8c6a6dbe",
+        merged_by: { login: "gusted" },
+      }),
+    ),
+  ),
+);
 
 it.effect("reads Forgejo jobs that did not run as finished checks", () =>
   Effect.gen(function* () {

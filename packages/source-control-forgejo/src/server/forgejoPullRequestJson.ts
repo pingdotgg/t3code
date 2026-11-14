@@ -61,6 +61,8 @@ export const ForgejoPullRequest = Schema.Struct({
   updated_at: Schema.String,
   closed_at: Schema.NullOr(Schema.String),
   merged_at: Schema.NullOr(Schema.String),
+  merge_commit_sha: Schema.optional(Schema.NullOr(Schema.String)),
+  merged_by: Schema.optional(Schema.NullOr(ForgejoUser)),
   additions: Schema.optional(Schema.NullOr(Schema.Int)),
   deletions: Schema.optional(Schema.NullOr(Schema.Int)),
   changed_files: Schema.optional(Schema.NullOr(Schema.Int)),

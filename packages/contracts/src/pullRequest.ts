@@ -662,6 +662,8 @@ export const PullRequestDetail = Schema.Struct({
   updatedAt: IsoDateTime,
   observedAt: Schema.optional(Schema.Finite),
   mergedAt: Schema.NullOr(IsoDateTime),
+  mergeCommitSha: Schema.optional(TrimmedNonEmptyString),
+  mergedBy: Schema.optional(PullRequestActor),
   closedAt: Schema.NullOr(IsoDateTime),
   reviewers: Schema.Array(PullRequestActor),
   labels: Schema.Array(PullRequestLabel),
