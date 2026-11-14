@@ -871,6 +871,33 @@ describe("RpcSessionFactory", () => {
     }),
   );
 
+  it.effect("closes the session when the server interrupts the config stream", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket);
+      yield* Fiber.join(readyFiber);
+
+      const closedFiber = yield* Effect.forkChild(Effect.flip(session.closed));
+      const request = yield* awaitRequest(socket);
+      socket.serverMessage(
+        encodeJson({
+          _tag: "Exit",
+          requestId: request.id,
+          exit: { _tag: "Failure", cause: [{ _tag: "Interrupt", fiberId: null }] },
+        }),
+      );
+
+      expect(yield* Fiber.join(closedFiber)).toMatchObject({
+        reason: "remote-unavailable",
+        detail: "Test environment config subscription ended.",
+      });
+    }),
+  );
+
   it.effect.each([{ failure: "defect" as const }, { failure: "typed" as const }])(
     "keeps durable config state alive after an owned $failure failure",
     ({ failure }) =>

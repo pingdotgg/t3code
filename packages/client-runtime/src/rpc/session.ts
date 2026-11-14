@@ -303,6 +303,8 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       reason: "remote-unavailable",
       detail: `${connection.label} config subscription ended.`,
     });
+    // An interrupt while the session is not closing came from the server; it ends the subscription.
+    let closingSession = false;
     const configRequestedAtMs = yield* Clock.currentTimeMillis;
     const serverConfigSource = protocolClient[WS_METHODS.subscribeServerConfig](
       onDemandSnapshots(serverConfigInput),
@@ -376,7 +378,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
           : Effect.die(defect),
       ),
       Effect.onExit((exit) => {
-        if (Exit.isSuccess(exit)) {
+        if (Exit.isSuccess(exit) || (Cause.hasInterruptsOnly(exit.cause) && !closingSession)) {
           return Effect.all([
             Deferred.succeed(serverConfigExit, undefined),
             Deferred.fail(configSubscriptionClosed, configSubscriptionEndedError),
@@ -392,6 +394,12 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       }),
     );
     yield* serverConfigSource.pipe(Effect.forkScoped);
+    // Finalizers run in reverse, so this is set before the fork above is interrupted.
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        closingSession = true;
+      }),
+    );
     const initialConfig = Effect.raceFirst(
       Deferred.await(initialConfigDeferred),
       Deferred.await(serverConfigExit).pipe(
