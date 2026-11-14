@@ -153,6 +153,8 @@ const layerCapabilities = Layer.effectContext(
         identity: Effect.sync(() =>
           Option.fromNullishOr(appAtomRegistry.get(managedRelaySessionAtom)),
         ),
+        // Native Clerk ships with the app, so there is no script load to fail.
+        signInFailed: Effect.succeed(false),
         clerkToken: Effect.gen(function* () {
           const session = appAtomRegistry.get(managedRelaySessionAtom);
           if (session === null) {

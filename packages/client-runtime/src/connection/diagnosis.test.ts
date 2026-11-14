@@ -163,6 +163,22 @@ describe("presentConnectionDiagnosis", () => {
     expect(diagnosis?.steps.join(" ")).toContain("t3 auth connect-device approve K7QM-2XFD");
   });
 
+  it("asks for a reload, not a wait, when this device's T3 Connect sign-in failed to load", () => {
+    const failure = new ConnectionBlockedError({
+      reason: "authentication",
+      detail: "T3 Connect sign-in could not load on this device.",
+      hop: "device",
+      failureCause: "sign_in_failed",
+    });
+    const diagnosis = diagnose({ ...backoff(failure), phase: "blocked", retryAt: null });
+    expect(diagnosis?.headline).toBe("T3 Connect sign-in could not load on this device");
+    expect(diagnosis?.hops.find((hop) => hop.result === "failed")?.hop).toBe("device");
+    expect(diagnosis?.steps.join(" ")).not.toContain("retries on its own");
+    expect(diagnosis?.reloadClient).toBe(true);
+    expect(diagnosis?.moreInfoUrl).toContain("sign-in-account-or-link-problems");
+    expect(diagnose(backoff(unavailable("tunnel_down")))?.reloadClient).toBe(false);
+  });
+
   it("does not report hops as working when the failure names none", () => {
     const failure = new ConnectionBlockedError({
       reason: "authentication",

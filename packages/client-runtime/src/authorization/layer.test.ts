@@ -137,6 +137,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
   const session = yield* Ref.make<Option.Option<ClientCapabilities.CloudSessionIdentity>>(
     Option.some({ accountId: "account-1" }),
   );
+  const signInFailed = yield* Ref.make(false);
   const thumbprint = yield* Ref.make("thumbprint-1");
   const tokenReads = yield* Queue.unbounded<EnvironmentId>();
   const proofInputs = yield* Ref.make<
@@ -211,6 +212,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
         Layer.succeed(ManagedRelay.ManagedRelayClient, relay),
         Layer.succeed(ClientCapabilities.CloudSession, {
           identity: Ref.get(session),
+          signInFailed: Ref.get(signInFailed),
           clerkToken: input.clerkToken ?? Effect.succeed("clerk-session"),
         }),
         Layer.succeed(ClientCapabilities.RelayDeviceIdentity, {
@@ -238,6 +240,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
     fetch,
     relayInputs,
     session,
+    signInFailed,
     thumbprint,
     tokenReads,
   };
@@ -1042,6 +1045,26 @@ describe("RemoteEnvironmentAuthorization", () => {
         expect(loaded.httpAuthorization.accessToken).toBe("loaded-token");
       }).pipe(Effect.provide(harness.layer));
       expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+    }),
+  );
+
+  it.effect("blocks instead of retrying when the cloud sign-in failed to load", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ responses: [] });
+      yield* Ref.set(harness.session, Option.none());
+      yield* Ref.set(harness.signInFailed, true);
+      const failure = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote
+          .authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID })
+          .pipe(Effect.flip);
+      }).pipe(Effect.provide(harness.layer));
+      expect(failure).toMatchObject({
+        _tag: "ConnectionBlockedError",
+        hop: "device",
+        failureCause: "sign_in_failed",
+      });
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
     }),
   );
 

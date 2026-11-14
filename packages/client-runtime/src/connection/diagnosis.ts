@@ -26,8 +26,10 @@ export interface ConnectionDiagnosis {
   readonly hops: ReadonlyArray<ConnectionDiagnosisHop>;
   readonly steps: ReadonlyArray<string>;
   readonly facts: ReadonlyArray<readonly [label: string, value: string]>;
-  /** The troubleshooting guide section for this failure. Null for direct routes, except a pending T3 Connect sign-in. */
+  /** The troubleshooting guide section for this failure. Null for direct routes, except a T3 Connect sign-in problem. */
   readonly moreInfoUrl: string | null;
+  /** Only reloading this client can fix the failure, so retrying the connection cannot. */
+  readonly reloadClient: boolean;
 }
 
 export interface ConnectionDiagnosisInput {
@@ -103,6 +105,8 @@ function headline(host: string, located: Located, failure: ConnectionAttemptErro
       return "This device is still loading its T3 Connect sign-in";
     case "approval_pending":
       return `${host} is waiting for someone to approve this device`;
+    case "sign_in_failed":
+      return "T3 Connect sign-in could not load on this device";
     case "outdated":
       return `${host} runs an older T3 Code`;
     case "clock_skew":
@@ -174,6 +178,11 @@ function steps(host: string, located: Located, failure: ConnectionAttemptError |
         `Or run \`t3 auth connect-device approve ${code ?? "<code>"}\` on ${host}.`,
       ];
     }
+    case "sign_in_failed":
+      return [
+        "Reload T3 Code on this device. You stay signed in.",
+        "If it keeps failing, check that this device can reach T3 Connect.",
+      ];
     case "outdated":
       return [`Update T3 Code on ${host}.`];
     case "clock_skew":
@@ -255,6 +264,7 @@ function helpSection(
       return "the-clock-is-off";
     case "session_pending":
     case "approval_pending":
+    case "sign_in_failed":
     case "not_linked":
     case "tunnel_not_enabled":
       return "sign-in-account-or-link-problems";
@@ -370,9 +380,10 @@ export function presentConnectionDiagnosis(
     steps: steps(host, located, failure),
     facts,
     moreInfoUrl:
-      relayPath || located.cause === "session_pending"
+      relayPath || located.cause === "session_pending" || located.cause === "sign_in_failed"
         ? t3ConnectTroubleshootingUrl(helpSection(located, failure))
         : null,
+    reloadClient: located.cause === "sign_in_failed",
   };
 }
 

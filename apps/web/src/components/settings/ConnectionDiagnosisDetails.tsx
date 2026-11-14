@@ -18,6 +18,7 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useDeadlinePassed } from "../../hooks/useDeadline";
 import { useNowSecond } from "../../hooks/useNowSecond";
 import { cn } from "../../lib/utils";
+import { retryClerkLoad } from "../clerk/clerkLoadFailure";
 import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
@@ -58,6 +59,24 @@ export function ConnectionDiagnosisHeadline({
   readonly environment: EnvironmentPresentation;
 }) {
   return useConnectionDiagnosis(environment).diagnosis?.headline ?? null;
+}
+
+/** Reconnects, or reloads when only reloading this client can fix the failure. */
+export function ConnectionRecoveryButton({
+  environment,
+  label,
+  onReconnect,
+}: {
+  readonly environment: EnvironmentPresentation;
+  readonly label: string;
+  readonly onReconnect: () => void;
+}) {
+  const reloadClient = useConnectionDiagnosis(environment).diagnosis?.reloadClient === true;
+  return (
+    <Button size="xs" variant="ghost" onClick={reloadClient ? retryClerkLoad : onReconnect}>
+      {reloadClient ? "Reload" : label}
+    </Button>
+  );
 }
 
 const HOP_MARK = { ok: "✓", failed: "✕", unchecked: "–" } as const;
@@ -184,9 +203,15 @@ export function ConnectionDiagnosisPanel({
         ))}
       </dl>
       <div className="flex flex-wrap gap-2">
-        <Button type="button" size="xs" variant="outline" onClick={onRetry}>
-          Retry now
-        </Button>
+        {diagnosis.reloadClient ? (
+          <Button type="button" size="xs" variant="outline" onClick={retryClerkLoad}>
+            Reload T3 Code
+          </Button>
+        ) : (
+          <Button type="button" size="xs" variant="outline" onClick={onRetry}>
+            Retry now
+          </Button>
+        )}
         <Button
           type="button"
           size="xs"

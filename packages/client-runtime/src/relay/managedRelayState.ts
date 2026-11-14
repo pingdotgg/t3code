@@ -68,6 +68,30 @@ export const managedRelaySessionAtom = Atom.make<ManagedRelaySession | null>(nul
   Atom.withLabel("managed-relay:session"),
 );
 
+/** True while this client's sign-in SDK has failed to load; only a reload recovers it. */
+export const managedRelaySignInFailedAtom = Atom.make(false).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("managed-relay:sign-in-failed"),
+);
+
+export function setManagedRelaySignInFailed(
+  registry: AtomRegistry.AtomRegistry,
+  failed: boolean,
+): void {
+  if (registry.get(managedRelaySignInFailedAtom) !== failed) {
+    registry.set(managedRelaySignInFailedAtom, failed);
+  }
+}
+
+export function managedRelaySignInFailedChanges(
+  registry: AtomRegistry.AtomRegistry,
+): Stream.Stream<boolean> {
+  return AtomRegistry.toStream(registry, managedRelaySignInFailedAtom).pipe(
+    Stream.changes,
+    Stream.drop(1),
+  );
+}
+
 const managedRelaySessionControls = new WeakMap<ManagedRelaySession, ManagedRelaySessionControl>();
 
 export function createManagedRelaySession(input: ManagedRelaySessionInput): ManagedRelaySession {
