@@ -100,7 +100,8 @@ export function sourceControlRefFromInput(input: {
 }
 
 export function repositoryPathFromRemoteUrl(url: string | null): string | null {
-  const trimmed = url?.trim() ?? "";
+  const remote = url?.trim() ?? "";
+  const trimmed = /^(?:ssh|https?|git):\/\//iu.test(remote) ? remote.split(/[?#]/u, 1)[0]! : remote;
   if (trimmed.length === 0) {
     return null;
   }
@@ -121,6 +122,8 @@ export class SourceControlProvider extends Context.Service<
     readonly headBranchProbe?: (input: {
       readonly headSelectors: ReadonlyArray<string>;
       readonly state: "open" | "all";
+      /** `owner:branch` when the head is the default branch, a name most forks share. */
+      readonly defaultBranchHeadSelector?: string | undefined;
     }) => { readonly headSelectors: ReadonlyArray<string>; readonly limit: number };
     readonly readChangeRequestTemplate?: (input: {
       readonly cwd: string;

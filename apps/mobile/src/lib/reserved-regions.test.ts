@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { deriveBottomControlInsets, type NativeLayoutMetrics } from "./reserved-regions";
+import {
+  deriveBottomControlInsets,
+  deriveContentSideInsets,
+  type NativeLayoutMetrics,
+} from "./reserved-regions";
 import { deriveLayout, deriveWorkspacePaneLayout } from "./layout";
 
 const innerDisplay: NativeLayoutMetrics = {
@@ -21,26 +25,27 @@ describe("bottom controls around reserved regions", () => {
     expect(innerDisplay.width - insets.left - insets.right).toBeGreaterThan(320);
   });
 
-  it("does not reserve a hinge twice when a native column starts at the division", () => {
+  it("starts the editor after a fold that covers a native column's leading edge", () => {
+    expect(
+      deriveBottomControlInsets({
+        ...innerDisplay,
+        width: 411.33,
+        height: 669,
+        safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
+        reservedRegions: [{ kind: "division", x: 0, y: 0, width: 39.83, height: 669 }],
+      }),
+    ).toEqual({ left: 39.83, right: 0, bottom: 0 });
+  });
+
+  it("does not reserve a hinge twice when the safe area already covers it", () => {
     expect(
       deriveBottomControlInsets({
         ...innerDisplay,
         width: 412,
-        safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
+        safeArea: { top: 82, bottom: 34, left: 40, right: 0 },
         reservedRegions: [{ kind: "division", x: 0, y: 0, width: 40, height: 560 }],
       }),
-    ).toEqual({ left: 0, right: 0, bottom: 0 });
-  });
-
-  it("keeps a native column's trailing division at its existing edge", () => {
-    expect(
-      deriveBottomControlInsets({
-        ...innerDisplay,
-        width: 456,
-        safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
-        reservedRegions: [{ kind: "division", x: 455.75, y: 0, width: 0.25, height: 560 }],
-      }),
-    ).toEqual({ left: 0, right: 0, bottom: 0 });
+    ).toEqual({ left: 40, right: 0, bottom: 0 });
   });
 
   it("keeps controls below a horizontal fold in a hands-free pose", () => {
@@ -62,6 +67,59 @@ describe("bottom controls around reserved regions", () => {
         ],
       }),
     ).toEqual({ left: 68, right: 72, bottom: 0 });
+  });
+});
+
+describe("content side insets around reserved regions", () => {
+  it("keeps transcript text on the wider side of a book fold", () => {
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        reservedRegions: [{ kind: "division", x: 456, y: 0, width: 48, height: 560 }],
+      }),
+    ).toEqual({ left: 8, right: 504 });
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        width: 800,
+        reservedRegions: [{ kind: "division", x: 240, y: 0, width: 40, height: 560 }],
+      }),
+    ).toEqual({ left: 280, right: 72 });
+  });
+
+  it("starts transcript text after a fold that covers a native column's leading edge", () => {
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        width: 411.33,
+        height: 669,
+        safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
+        reservedRegions: [{ kind: "division", x: 0, y: 0, width: 39.83, height: 669 }],
+      }),
+    ).toEqual({ left: 39.83, right: 0 });
+  });
+
+  it("ends transcript text before a fold at a native column's trailing edge", () => {
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        width: 456,
+        safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
+        reservedRegions: [{ kind: "division", x: 416, y: 0, width: 40, height: 560 }],
+      }),
+    ).toEqual({ left: 0, right: 40 });
+  });
+
+  it("ignores a horizontal fold and bottom cameras", () => {
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        reservedRegions: [
+          { kind: "division", x: 0, y: 240, width: 960, height: 40 },
+          { kind: "occlusion", x: 8, y: 510, width: 60, height: 50 },
+        ],
+      }),
+    ).toEqual({ left: 8, right: 72 });
   });
 });
 

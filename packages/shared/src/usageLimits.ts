@@ -14,10 +14,13 @@ import {
   type ServerProviderResetCredits,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
+  type UsageLimitSourceSnapshot,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 
 import * as DateTime from "effect/DateTime";
+
+import { isLocalLoopbackHost, isWildcardHost } from "./hostClassification.ts";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -32,6 +35,10 @@ export function exhaustedUsageWindow(
   const exhausted = windows.filter(
     (window) =>
       (window.usedPercent ?? 0) >= 100 &&
+      (model === undefined || window.modelIds === undefined || window.modelIds.includes(model)) &&
+      (model === undefined ||
+        window.providerIds === undefined ||
+        window.providerIds.includes(model.split("/")[0] ?? "")) &&
       (!window.resetsAt ||
         !Number.isFinite(Date.parse(window.resetsAt)) ||
         Date.parse(window.resetsAt) > now),
@@ -137,12 +144,16 @@ export const CURSOR_USAGE_WINDOWS = [
   {
     id: "apiPercentUsed",
     label: "Other Models",
-    description: "Claude, GPT, and Gemini use this pool. Grok and Composer fall back here.",
+    description: "Usage allowance for third-party models such as Claude, GPT, and Gemini.",
   },
 ] as const;
 
-export function cursorUsageWindowDetails(id: string) {
-  return CURSOR_USAGE_WINDOWS.find((window) => window.id === id);
+export function cursorUsageWindowDetails(id: string, pool: LimitPool) {
+  const details = CURSOR_USAGE_WINDOWS.find((window) => window.id === id);
+  return details &&
+    ((pool.windows.length === 1 && id === "totalPercentUsed") || hasDuplicateCursorTotal(pool))
+    ? { ...details, label: null, description: undefined }
+    : details;
 }
 
 function cursorUsageWindowRank(id: string): number {
@@ -243,6 +254,20 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
 }
 
 const hubAccountName = (account: { readonly id: string }) => account.id.replace(/\.json$/i, "");
+
+// Source ids are environment-local, so only a remote endpoint names the same hub across environments.
+function hubIdentity(environmentId: EnvironmentId, source: UsageLimitSourceSnapshot): string {
+  // The server supplies canonical endpoints; native URL polyfills can misparse IPv6 hosts.
+  const endpoint = source.endpoint;
+  const host = endpoint?.match(/^https?:\/\/(\[[\da-f:.]+\]|[^:/?#@]+)(?::\d+)?(?:\/|$)/)?.[1];
+  const local =
+    !host ||
+    isLocalLoopbackHost(host) ||
+    isWildcardHost(host) ||
+    // Each machine resolves these to itself too; shared host classification leaves them out.
+    /\.localhost\.*$|^\[::ffff:(?:127\.|7f[\da-f]{2}:)/i.test(host);
+  return endpoint && !local ? endpoint : `${environmentId}:${source.id}`;
+}
 
 export interface LimitAccount {
   readonly key: string;
@@ -370,8 +395,11 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         : source.label;
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
-        const key = `${source.id}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
-        merge(resolveKey(account) ?? key, {
+        const resolved = resolveKey(account);
+        // A resolved account already has an identity; its public key must stay distinct from others'.
+        const hub = resolved ? `${environmentId}:${source.id}` : hubIdentity(environmentId, source);
+        const key = `${hub}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
+        merge(resolved ?? key, {
           key,
           driver: account.driver,
           displayName: account.email ? null : hubAccountName(account),
@@ -451,6 +479,26 @@ export interface LimitPool {
   readonly windows: readonly LimitPoolWindow[];
 }
 
+function hasDuplicateCursorTotal(pool: LimitPool): boolean {
+  if (pool.windows.length !== 2) return false;
+  const total = pool.windows.find((window) => window.id === "totalPercentUsed");
+  const auto = pool.windows.find((window) => window.id === "autoPercentUsed");
+  return (
+    total !== undefined &&
+    auto !== undefined &&
+    total.members.length === auto.members.length &&
+    total.members.every(({ account, window }) =>
+      account.limits.windows.some(
+        (candidate) =>
+          candidate.id === auto.id &&
+          candidate.kind === auto.kind &&
+          candidate.usedPercent === window.usedPercent &&
+          candidate.resetsAt === window.resetsAt,
+      ),
+    )
+  );
+}
+
 export function displayLimitWindows(pool: LimitPool) {
   if (pool.driver === "antigravity") {
     return [...pool.windows].sort(
@@ -465,9 +513,9 @@ export function displayLimitWindows(pool: LimitPool) {
   if (pool.driver !== "cursor") return pool.windows;
   const hasAuto = pool.windows.some((window) => window.id === "autoPercentUsed");
   const hasApi = pool.windows.some((window) => window.id === "apiPercentUsed");
-  const hasBothPools = hasAuto && hasApi;
+  const hideTotal = (hasAuto && hasApi) || hasDuplicateCursorTotal(pool);
   return pool.windows
-    .filter((window) => !hasBothPools || window.id !== "totalPercentUsed")
+    .filter((window) => !hideTotal || window.id !== "totalPercentUsed")
     .sort((left, right) => cursorUsageWindowRank(left.id) - cursorUsageWindowRank(right.id));
 }
 
@@ -513,6 +561,25 @@ export function collectLimitPools(
 
 function accountSortName(account: LimitAccount): string {
   return (account.displayName ?? account.email ?? account.key).toLowerCase();
+}
+
+const CODEX_PLAN_CAPACITY: Record<string, number> = {
+  "ChatGPT Plus Subscription": 1,
+  "ChatGPT Pro 100 Subscription": 5,
+  "ChatGPT Pro 200 Subscription": 20,
+};
+// Claude's published plan multipliers describe the session allowance only.
+const CLAUDE_SESSION_CAPACITY: Record<string, number> = { Pro: 1, Max: 5, Ultra: 20 };
+
+function planCapacity(account: LimitAccount, kind: ServerProviderUsageWindow["kind"]) {
+  if (!account.plan) return undefined;
+  if (account.driver === "codex" && (kind === "session" || kind === "weekly")) {
+    return CODEX_PLAN_CAPACITY[account.plan];
+  }
+  if (account.driver === "claudeAgent" && kind === "session") {
+    return CLAUDE_SESSION_CAPACITY[account.plan];
+  }
+  return undefined;
 }
 
 // Codex ids name slots, so pool by kind; other drivers' ids identify distinct allowances.
@@ -583,15 +650,28 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     const memberByAccount = new Map(members.map((member) => [member.account.key, member]));
     const first = members[0]!.window;
     const id = members[0]!.account.driver === "codex" ? key : first.id;
-    const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
+    // One unknown plan makes the pool incomparable by plan, so every member then counts once.
+    const capacities = members.map((m) => planCapacity(m.account, first.kind));
+    const weights = capacities.every((capacity) => capacity !== undefined)
+      ? capacities
+      : members.map(() => 1);
+    const weightOf = new Map(members.map((m, index) => [m, weights[index]!]));
+    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+    const usedPercent =
+      members.reduce((sum, m) => sum + m.window.usedPercent * weightOf.get(m)!, 0) / totalWeight;
     // Judge pace only for windows with reset clocks; others add spend without elapsed time.
     const timed = members.flatMap((m) => {
       const share = elapsedShare(m.window, now);
-      return share === null ? [] : [{ used: m.window.usedPercent, elapsed: share }];
+      return share === null
+        ? []
+        : [{ used: m.window.usedPercent, elapsed: share, weight: weightOf.get(m)! }];
     });
-    const timedUsed = timed.reduce((sum, t) => sum + t.used, 0) / timed.length;
+    const timedWeight = timed.reduce((sum, t) => sum + t.weight, 0);
+    const timedUsed = timed.reduce((sum, t) => sum + t.used * t.weight, 0) / timedWeight;
     const meanElapsed =
-      timed.length > 0 ? timed.reduce((sum, t) => sum + t.elapsed, 0) / timed.length : null;
+      timed.length > 0
+        ? timed.reduce((sum, t) => sum + t.elapsed * t.weight, 0) / timedWeight
+        : null;
     const resets = members
       .flatMap((member) => {
         const at = resetMillis(member.window);
@@ -601,7 +681,9 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
               {
                 member,
                 at,
-                restoresPercent: Math.round(member.refillPercent / members.length),
+                restoresPercent: Math.round(
+                  (member.refillPercent * weightOf.get(member)!) / totalWeight,
+                ),
               },
             ];
       })
