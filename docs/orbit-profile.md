@@ -36,7 +36,7 @@ Five points carry the rest of the document:
 1. **A container is already served.** Every method a container needs is served. One `/mcp`
    tool is missing: `t3_background_wait`. Our own Claude instructions tell the agent to call
    it, so an agent call fails today [code, `R/crates/conn-mcp/src/claude-instructions.txt:5`].
-   Orbit's task-turn path also uses four CLI items that the Conn Server lacks (section 1b).
+   Orbit's task-turn path also uses four CLI items; they are built (section 1b).
 2. **Selectivity buys little in bytes.** The macOS release binary is 17.1 MB. The generated
    contract is 36% of its code, and SQLite is 15%. Turning off everything a container does
    not need saves about 3 to 4% [estimate from a symbol map]. It saves about 8% of the
@@ -121,17 +121,37 @@ How Orbit handles a question: the turn stops at its question. Orbit stores the q
 interrupts the run. The answer goes in as the next `t3 thread send`. **Orbit never calls
 `runtime-request.respond`** [docs, `O/docs/reference/development-containers.md:1605-1613`].
 
-**Gaps for a drop-in today.** `R/crates/conn-server/DROP-IN.md` §1 says Orbit "needs only a
-different binary". That was written against an older Orbit commit. The task-turn path now
-needs four things the Conn Server lacks [code, `R/crates/conn-server/src/cli.rs:25-46`]:
+**Gaps for a drop-in: none left on the task-turn path (2026-11-14).** The four CLI items this
+path needs are built [code, `R/crates/conn-server/src/cli_thread.rs`, `cli.rs`,
+`model_manifest.rs`]:
 
-1. The `t3 thread start|send|list|show` CLI commands.
-2. `auth session issue` with a repeated `--scope` flag. We take `--scopes <list>`.
-3. `model-manifest.json` in `userdata`. We do not write it.
-4. `auth session issue --json`, which prints the session id that `t3_copy_rpc.mjs` revokes.
-   This needs a check.
+1. `t3 thread start|send|list|show`, with every option Orbit passes, the same output, error
+   texts and exit codes as the T3 CLI (0, 1, and 2 for a run that waits for an answer).
+2. `auth session issue` with a repeated `--scope`; `--scopes <list>` stays.
+3. `model-manifest.json` in `userdata`, fetched and written as the T3 server writes it.
+4. `auth session issue --json` in T3's key order, with the `sessionId` that
+   `t3_copy_rpc.mjs` revokes with `t3 auth session revoke`.
+
+Proof [measured, macOS]: `R/crates/conn-server/tools/thread-cli-diff.mjs` runs Orbit's commands
+on the T3 server with its own `t3` and on the Conn Server with ours, with a stub `codex` and
+T3's recorded transcripts: 30 steps, no difference beyond two fields the engine fills
+differently (`branch`, `itemCount`). It covers a turn that completes, fails or asks, a send,
+unknown thread, model and provider, and `t3_copy_rpc.mjs`'s read, interrupt and revoke.
+`orbit-flow.mjs` runs the path in Orbit's order on the fake provider. Not proven: Linux and a
+real container. `R/crates/conn-server/DROP-IN.md` section 1 has the table.
 
 Section 4c proposes to replace the CLI path rather than copy it.
+
+**Closed on 2026-11-14: provider instance settings.** The server ignored `providerInstances`
+for Claude and Codex, so the binary, home, launch arguments, environment and `enabled` that a
+container's settings name did not apply, and the task copies' `claudeLow` … `claudeMax`
+instances did not exist. They are built now, from the settings written before the first
+start and again on each change, as the T3 server builds them [code,
+`R/crates/conn-server/src/instances.rs`; proof, `R/crates/conn-server/tools/instances-flow.mjs`
+and the Claude and Codex conformance checks]. Left: the Codex status probe (a broken Codex
+shows at the first turn, not in the provider list), `customModels`, Claude's
+`autoCompactWindow` [docs, `R/docs/status.md`, "Provider instance settings for Claude and
+Codex"].
 
 **The brief's facts, checked against Orbit's code and docs:**
 
@@ -142,7 +162,7 @@ Section 4c proposes to replace the CLI path rather than copy it.
 | About 1 s per `t3` CLI call | Not found in the docs. |
 | About 6 s for 48 servers | **Contradicted.** 43 servers take 150 to 190 ms per pass, and 200 servers take 0.6 s (`conn.md:371-376`). The poll is off by default. |
 | A sleeping container frees 408 to 496 MiB | Not found. A frozen clone holds about 13 MiB of RAM and about 340 MiB of swap (`development-containers.md:1263`). |
-| Five `providerInstances` | Only for task copies. Every clone gets `{"linkedEnvironmentsEnabled": true}` (`InstanceContainer.php:461-485`). |
+| Five `providerInstances` | Only for task copies. Every clone gets `{"linkedEnvironmentsEnabled": true}` (`InstanceContainer.php:461-485`). The Conn Server builds them since 2026-11-14. |
 | `401 invalid_mcp_credential` | Correct for T3: `M/apps/server/src/mcp/McpHttpServer.ts:132,288`. Orbit's docs only say "refused". |
 | Everything else (gate file, `model.env`, state path, label, ports, hourly renewal, two users, the AI router, the cloned files) | Confirmed in code. |
 
@@ -245,8 +265,8 @@ in section 11 agree: an item the list hides or removes is X or U.
 
 | Item | Served | C | H | Evidence |
 | --- | --- | --- | --- | --- |
-| Claude (Agent SDK through the SDK host) | yes | N | N | Every run Orbit has seen uses Claude [brief] |
-| Codex (`codex app-server`) | yes | U | N | Orbit writes `~/.codex/config.toml` for the router [code, `InstanceContainer.php:422-424`]. No live Codex turn has run here [docs, `R/docs/status.md`]. |
+| Claude (Agent SDK through the SDK host) | yes, every `providerInstances` instance | N | N | Every run Orbit has seen uses Claude [brief]; task copies use five instances, `claudeLow` to `claudeMax` |
+| Codex (`codex app-server`) | yes, every instance; no status probe | U | N | Orbit writes `~/.codex/config.toml` for the router [code, `InstanceContainer.php:422-424`]. No live Codex turn has run here [docs, `R/docs/status.md`]. |
 | Grok (ACP) | yes, off by default | U | U | See section 8 |
 | Kiro, fx, Antigravity, ACP registry (offline part) | no | U | U | Section 8 |
 | Cursor, OpenCode, Muse (SDK) | no | X | U | Not used by Orbit |
@@ -629,7 +649,7 @@ Every stage is built and proven in isolation first:
 | Stage | Proven before it (checkable) | State that moves | How it ships and starts | In isolation, in practice | First live step | Way back |
 | --- | --- | --- | --- | --- | --- | --- |
 | 0. The isolated client copy | The copy builds with its own identity. The 22 recorder scenarios pass against the Conn Server in the copy. No file in `nckrtl/conn` changes. | None | A separate repository or fork branch of the client, never merged into Conn | Its own bundle id, URL scheme and data folder, so it never reads Conn's saved environments | Nick installs the copy beside Conn | Delete the copy |
-| 1. Orbit containers | (a) is complete: `t3_background_wait`; either the four CLI items or Swamp on `/mcp`. Orbit's container flow passes in a scratch container on Linux. The 4b verifier, if chosen. The section 7 flags hide what a container does not serve. A week of real use shows no "not supported" on the paths people take. | New containers start fresh. An existing container keeps settings, keybindings, its environment id, attachments and annotations (same files). Threads, pairings and scheduled tasks need the converter (below). | The musl binary in the agent bundle; `bin/t3` points at it (`DROP-IN.md` §6a) | A scratch Instance only, opened from the isolated client copy | One new scratch Instance with the Conn Server, with Nick's word | Point `bin/t3` back at the T3 tarball, then `try-restart` |
+| 1. Orbit containers | (a) is complete: `t3_background_wait`; the four CLI items (built 2026-11-14) or Swamp on `/mcp`. Orbit's container flow passes in a scratch container on Linux. The 4b verifier, if chosen. The section 7 flags hide what a container does not serve. A week of real use shows no "not supported" on the paths people take. | New containers start fresh. An existing container keeps settings, keybindings, its environment id, attachments and annotations (same files). Threads, pairings and scheduled tasks need the converter (below). | The musl binary in the agent bundle; `bin/t3` points at it (`DROP-IN.md` §6a) | A scratch Instance only, opened from the isolated client copy | One new scratch Instance with the Conn Server, with Nick's word | Point `bin/t3` back at the T3 tarball, then `try-restart` |
 | 2. The Mac mini | (b) for what Nick uses there: `peerLinks`, linked environments, scheduled tasks, PR panels. A supervisor for `server.restart`. The converter, proven on a **copy** of a T3 home that Nick makes. | Threads and projects: one import event per thread from T3's projection rows, keeping ids. Scheduled tasks: from the `scheduled_tasks` table into JSON. Settings secrets: from `secrets/*.bin` back into `settings.json`. Sessions **cannot** move (T3 signs tokens; we store hashes), so devices pair again. | A launchd service running `conn-server serve`, with its own `--base-dir` and port | A second server with its own state folder and port, beside the T3 server; the T3 service is untouched | The isolated client connects to it; Nick runs one orchestrator thread there | Stop the Conn Server service; the T3 server never stopped |
 | 3. The Mac with the desktop app | (b) for the desktop: previews and the agent browser, devices, PR panels, provider sign-in. A native spawn path (no `ELECTRON_RUN_AS_NODE`, `--bootstrap-fd 3`). A replacement for fds 4 to 7 (updates, telemetry, the in-app browser), or an explicit drop. Signed binaries. | As stage 2, from a copy of the Mac's T3 home | The binary in the isolated desktop copy's bundle. The desktop updates the server by updating itself. The SDK host could run on Electron's own Node (`ELECTRON_RUN_AS_NODE`) instead of a 152 MB single executable [estimate]. | The isolated desktop copy, with its own data folder and home; Conn's desktop keeps its T3 server | Nick uses the isolated desktop for one project | Use the normal Conn app |
 | 4. The T3 server leaves Conn | Stages 1 to 3 have run for an agreed time. The loose fork's merge gate (section 10) works. | None new | Conn's desktop and mobile take the client copy's changes | Only now does `nckrtl/conn` change | A Conn release with the Conn Server | The previous Conn release, which still bundles the T3 server |

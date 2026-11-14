@@ -33,6 +33,8 @@ mkdir -p "$cargo_home"
 cargo_env=(HOME="$cargo_home" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
   GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1)
 mkdir -p "$OUT/workspace" "$OUT/attachments" "$OUT/claude-home" "$OUT/home"
+# The instance_launch_args scenario appends this file (one trailing newline is trimmed).
+printf 'From the append file.\n\n' > "$OUT/home/append.txt"
 echo "output: $OUT"
 
 # The image of e15, as the attachment both sides send.
@@ -98,6 +100,11 @@ base_env=(
   "CONFORMANCE_MARKER=1"
   "SHELL=$OUT/login-shell"
 )
+# Under the canary (tools/check.sh), its Node hook and logs reach both sides alike.
+if [ -n "${CONN_CANARY_ROOT:-}" ]; then
+  base_env+=("NODE_OPTIONS=${NODE_OPTIONS:-}" "CONN_CANARY_ROOT=$CONN_CANARY_ROOT"
+    "CONN_NETWORK_LOG=${CONN_NETWORK_LOG:-}" "CONN_CANARY_NODE_NETWORK_LOG=${CONN_CANARY_NODE_NETWORK_LOG:-}")
+fi
 if [ -n "${CONFORMANCE_BASE_JAVA_HOME:-}" ]; then
   base_env+=("JAVA_HOME=$CONFORMANCE_BASE_JAVA_HOME")
 fi
@@ -120,7 +127,11 @@ fi
 if [ "${CONFORMANCE_SKIP_T3:-}" != "1" ]; then
   echo "== T3 server (ClaudeAdapterV2)"
   trap 'rm -f "$copy"' EXIT
-  cp "$here/claudeConformance.test.ts" "$copy"
+  # T3's code reaches no outside service: the guard is the file's first import.
+  {
+    printf 'import "%s";\n' "$(cd "$here/../../../.." && pwd)/tools/no-outside-fetch.mjs"
+    cat "$here/claudeConformance.test.ts"
+  } >"$copy"
   set +e
   (
     cd "$repo/apps/server"

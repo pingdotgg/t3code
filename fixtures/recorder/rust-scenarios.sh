@@ -12,6 +12,8 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# The server never fetches model-manifest.json from GitHub during a recording.
+export CONN_MODEL_MANIFEST_URL=off
 mode="${1:-}"
 shift || true
 

@@ -50,7 +50,7 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 36 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14; 36 with the Claude probe conformance).
+`main` is in a working state. `tools/check.sh` passes 39 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14). The branch with provider instance settings passes 37 (`instances-flow` added).
 
 | Part | State |
 | --- | --- |
@@ -64,17 +64,25 @@ settings; about 140 MiB for the `claude` program alone).
 Proven:
 
 - **Claude** runs through Anthropic's official Claude Agent SDK in the SDK host
-  (`helpers/sdk-host`). In 15 scenarios (and one more with `JAVA_HOME` set) the `claude` CLI
+  (`helpers/sdk-host`). In 19 scenarios (and one more with `JAVA_HOME` set) the `claude` CLI
   gets the same argv, environment (with the login shell's `PATH`, `__MISE_DIFF` and
   `JAVA_HOME`) and stdin as from the T3 server. 18 of the T3 server's 39 Claude transcripts pass (all that the
   driver runs). 11 live tests
   pass on Claude Haiku on macOS.
-- **Codex** runs on `codex app-server`, as in the T3 server, subagents included. 40 scenarios
-  show no difference, 24 of them the T3 server's own recordings; two of them compare a thread
-  title through `codex exec`. **No live Codex turn has run.**
+- **Codex** runs on `codex app-server`, as in the T3 server, subagents included. 43 scenarios
+  show no difference, 24 of them the T3 server's own recordings; three of them compare a
+  thread title through `codex exec`. **No live Codex turn has run.**
+- **Provider instances** (Claude and Codex) follow `providerInstances` at start and on every
+  change, as in the T3 server; proven through the server on recording stubs
+  (`instances-flow.mjs`) and per field by the conformance checks. See "Provider instance
+  settings for Claude and Codex".
 - Orbit's container flow (start, add a project on the running server, a Swamp session, a
   thread through `/mcp`, wait, read, revoke, SIGTERM with no child left) passes on the fake
   provider and once with a live Haiku turn, on macOS.
+- Orbit's task-turn path (`task-copy-turn.yml`, `t3_copy_rpc.mjs`): the `t3 thread` commands,
+  a repeated `--scope`, `auth session issue --json` and `model-manifest.json` give what the
+  T3 server's own `t3` gives, on macOS (`thread-cli-diff`, `model-manifest-diff`; see "Orbit's
+  task-turn path").
 - **The real web client with a live model** (2026-11-14, macOS, Claude Haiku): all 22
   scenarios of `fixtures/recorder/rust-scenarios.sh live` passed, each checked by its result
   (a reply, a file in the worktree, a diff line, a key on disk), and 16 of them also on the
@@ -136,6 +144,56 @@ Not proven:
 - Conn desktop and mobile against this server.
 - Orbit's flow in a real container.
 - Codex on CLI 0.166 or 0.167 (the recordings are from 0.156).
+
+## Orbit's task-turn path (2026-11-14)
+
+Orbit runs a task turn with the `t3` CLI inside the container. Four items were missing; all
+are built and proven against the T3 server's own CLI on macOS.
+
+- **`t3 thread list|start|send|show`** (`crates/conn-server/src/cli_thread.rs`), as
+  `apps/server/src/cli/thread.ts`: find the server through `server-runtime.json`, issue a
+  30-day MCP client session (T3's scopes, label and subject) in the shared auth store, call
+  `/mcp`, revoke the session at the end. `--wait` follows T3's `waitForRun` (15 s slices; a
+  pending request ends it with exit 2; a completed run follows its wakes). JSON keys keep the
+  contract's order (from the `/mcp` catalog). Error texts and exit codes are T3's.
+- **`auth session issue --scope …`** repeated, besides `--scopes <list>`; `--json` in T3's
+  key order. Every `auth` output now ends with the blank line T3's `Console.log` adds.
+- **`model-manifest.json`** (`crates/conn-server/src/model_manifest.rs`), as T3's
+  `ModelManifest.ts`: fetched from T3 Code's GitHub at start and then at most hourly (5 minutes
+  after a failed try), only with `enableProviderUpdateChecks`, kept when it decodes and is not
+  older than the bundled or cached one, written atomically. The URL, the times and the bundled
+  `updatedAt` are generated (`gen-upstream.mjs`). **The server now makes this one outbound
+  request, as the T3 server does.** Test seam: `CONN_MODEL_MANIFEST_URL` (`off` never
+  fetches; an `http(s)` URL fetches from there). Every check sets `off`; `orbit-flow` fetches
+  from a loopback stub, and also starts once with a stub that answers 500 and once with no
+  listener (no file, the server ready).
+- **No check reaches the network for a manifest.** Our servers get the seam `off`
+  (`check.sh`, `sealed-env.mjs`, each tool that builds its own environment). T3's code in a
+  check (the vitest files the conformance and replay tools write, `policies.mjs`, the T3
+  servers and CLI of `parity` and `thread-cli-diff`) imports `tools/no-outside-fetch.mjs`
+  first, which limits `fetch` to loopback; `parity`'s T3 server also gets
+  `enableProviderUpdateChecks: false`. Before this, T3's code fetched T3 Code's manifest
+  from GitHub in Claude conformance, Claude probe conformance, Claude t3-replay, Codex
+  conformance and the fixture replay (37 lookups in one run, mDNSResponder's log), and
+  `parity`'s T3 server could (it ran with the real HOME and default settings).
+- **A project-folder launch records the folder's branch** (`EngineHost::current_branch`), as
+  T3's `launchBranch`.
+- Two `/mcp` faults found on the way and fixed: `t3_thread_wait` ended on a run in `waiting`
+  (the step between a provider's end and its checkpoint), and it ignored
+  `untilDelegatedWorkSettled` and `resultRun`; `t3_thread_launch` answered a text T3 does not
+  have for an unknown instance and left a thread behind. Both now follow T3.
+
+Proven (macOS): `thread-cli-diff` runs Orbit's commands on the T3 server with its `t3` and on
+this server with ours, each with a stub `codex` and T3's recorded transcripts: 30 steps, the
+same stdout, stderr and exit code, except `itemCount` (one less here): T3's launch starts
+its first message deferred and records a "Workspace ready" item
+(`ThreadLaunchService.ts:1209`, `Orchestrator.ts:8000-8025`); this engine starts at once and
+refuses `prepared-run.*` (`commands.rs:160-163`). Orbit reads neither `itemCount` nor
+`branch` (its result step, `task-copy-turn/mod.ts:77-80` at Orbit `aa33299`). It covers a turn that completes, fails and asks, a
+send, unknown thread, model and provider, usage errors, no server, and `t3_copy_rpc.mjs`'s
+ticket, `/ws`, `getThreadProjection`, `run.interrupt` and revoke. `model-manifest-diff`: our
+file text equals T3's `encodeManifestCache`, byte for byte. `orbit-flow` runs the path in
+Orbit's order on the fake provider. Not proven: Linux, a real container, a live model.
 
 ## Engine, part 3: buffered delivery (2026-11-14)
 
@@ -843,16 +901,78 @@ Established, not fixed:
   branch needs to know whether the provider accepted the turn, not only whether a provider
   turn row exists. Without MCP servers T3 emits the provider turn right after `query()`, and
   both servers take the normal interrupt path.
-- **`binaryPath` for Claude and Codex is not applied.** `crates/conn-server/src/main.rs`
-  builds `ClaudeConfig` and `CodexConfig` with their defaults (`claude`, `codex` on `PATH`) and
-  never reads `providerInstances.claudeAgent` or `.codex` from the settings; nothing applies a
-  later change either. The same holds for `homePath`, `launchArgs` and the instance
-  environment. T3 passes `binaryPath` (with `~` expanded) as `pathToClaudeCodeExecutable`
-  (`ClaudeAdapterV2.ts` 13884-13890 and 2145) and as the Codex command
-  (`CodexAdapterV2.ts` 1733). Only Grok follows its settings (`GrokSettings`, the server's
-  status task). This is an open parity gap: the fix needs the settings applied to the
-  provider configs at start and on change, as for Grok, with a conformance scenario that shows
-  the CLI each server starts.
+- **`binaryPath` for Claude and Codex was not applied.** Fixed: see "Provider instance
+  settings for Claude and Codex" below.
+
+## Provider instance settings for Claude and Codex (2026-11-14)
+
+Before, the server built Claude and Codex with their defaults and never read
+`providerInstances`: a container's binary path, home, launch arguments, environment and
+`enabled` were ignored, and Orbit's `claudeLow` … `claudeMax` did not exist. Now, as in the T3
+server (`ProviderInstanceRegistryHydration.ts`, `ProviderInstanceRegistry.ts`):
+
+- `claudeAgent` and `codex` always exist; each entry of either driver is one more instance.
+  `conn-server/src/instances.rs` builds them from the stored settings before the engine opens
+  (so settings Orbit writes before the first start apply to the first turn) and again on
+  every settings change. An entry that changes in any field gives a new provider for that id;
+  a removed one is dropped; a default instance with its entry removed goes back to its
+  defaults. **A live session keeps the provider it opened with** (its CLI, environment and
+  arguments) until it closes; the next session gets the new settings. The T3 server does the
+  same: an open session keeps its adapter, and the instance is rebuilt for the next one.
+- One `ProviderSet` (in `conn-provider`) holds the instances for the engine, titles, `/mcp`
+  and the server. `EngineConfig.provider_set` is additive; `EngineConfig.providers` stays.
+- The envelope (enabled rule, identity, environment with T3's `~` expansion) is shared by
+  Claude, Codex and Grok: `conn-provider-support::instance`. Its environment type prints
+  names only in `Debug`; `ClaudeConfig`, `CodexConfig` and `GrokSettings` use it.
+- Claude: `binaryPath` (`~`), `homePath` (`~`, made absolute), the environment, and
+  `launchArgs` as `makeClaudeQueryOptions` applies them (`--add-dir`, `--permission-mode`,
+  `--dangerously-skip-permissions`, both append flags, `--settings` in its own key order,
+  every other flag to `extraArgs` in T3's order). Codex: `binaryPath`, `homePath` or a
+  `CODEX_HOME` from the environment, the environment, `launchArgs`, and
+  `T3CODE_CODEX_LAUNCH_ARGS` from the instance's environment.
+- A disabled instance: refused at dispatch (as before, now for every instance), listed with
+  T3's disabled entry (also with the Claude probe off), probed never.
+
+Proven:
+
+- Claude conformance: 4 new scenarios (a second instance with a `~` binary and home; an
+  environment with plain, sensitive, `CLAUDE_CONFIG_DIR` with `~` and an entrypoint; launch
+  arguments; a launch-argument permission mode): all SAME, and the records hold the instance
+  values on both sides.
+- Claude probe conformance: 2 new (the status entry and a title for an instance with a `~`
+  binary, a sensitive variable and an identity): 16 of 16 SAME. T3's side now decodes the entry
+  with its own `ProviderInstanceConfig`; that found one harness fault (an untrimmed display
+  name), not a server one.
+- Codex conformance: 3 new (launch args and an environment with a sensitive value and an
+  originator override; `T3CODE_CODEX_LAUNCH_ARGS` from the instance; a title with an instance
+  environment): 0 open differences.
+- `instances-flow.mjs` (in `tools/check.sh`): settings written before start; a turn on
+  `claudeLow` (a `~` binary, a sensitive variable) and on `codexWork` (`homePath` with `~`)
+  each starts its recording stub with its environment; the disabled defaults are refused
+  with T3's text and listed `disabled`; after `server.updateSettings` the next `claudeLow`
+  session runs the new binary with the new environment and without the removed variable; a
+  removed instance leaves the list; the sensitive value is in no server output.
+- `effect-client.mjs`: the real client decodes a second Claude instance with its display name
+  and accent, and a disabled Codex.
+
+Not built, with the reason:
+
+- **The Codex status probe.** T3 starts the instance's `app-server` and asks `initialize`,
+  `account/read`, `skills/list`, models, `config/read` and rate limits. Our entry stays a fixed
+  `ready` one, so a broken Codex binary or home shows only at the first turn. A port of its
+  own, with a probe conformance check like Claude's.
+- `customModels` (both drivers), Claude's `autoCompactWindow`, Codex's `shadowHomePath` and
+  `setupMode` (T3's managed Codex home).
+- More than one instance of Grok (its default instance follows its settings as before).
+
+Deliberate differences: an enabled Codex instance whose binary is missing is not listed (T3
+lists it with an error status); it is tried again on each settings change. A launch-argument
+error text is ours (T3's error classes carry the same facts) and never holds the
+`--settings` text.
+
+Not proven: a live turn on a configured instance; the instances on Linux and in a real
+Orbit container; a change while a session is open beyond reading T3's code (the flow changes
+the settings between sessions).
 
 ## The canary: no check reads the home or the shell's secrets (2026-11-14)
 
@@ -993,7 +1113,9 @@ T3 Code.
    (`ProviderHost`: only the trait and a rooted file host exist; no terminals, and the
    server passes none); `/mcp` `t3_background_wait` (Claude's `await_background_tasks` is
    built; the engine lookup and the tool are not); titles through an agent provider (see
-   "Claude provider: background work, …"); Claude's workflow tasks and `stopTask`.
+   "Claude provider: background work, …"); Claude's workflow tasks and `stopTask`; the Codex
+   status probe, `customModels` and Claude's `autoCompactWindow` (see "Provider instance
+   settings for Claude and Codex").
 3. **Other providers.** One ACP provider for Grok, Kiro, fx, Antigravity and the ACP registry:
    `crates/conn-provider-acp`. **Grok is offered by the server (2026-11-14):** T3's default
    `grok` instance, off until `providerInstances.grok` enables it, probed as T3 probes the CLI
@@ -1092,7 +1214,12 @@ The check is the one to trust; several review findings did not hold.
 - `t3/32cd278b` (text generators, titles, `runNow`, the redacting `Debug`): all 31 checks pass
   on macOS (2026-11-14). No new dependency; the release binary grew by 93,648 bytes
   (16,558,944 to 16,652,592, macOS arm64).
-- `main`: verified. All 36 checks pass on macOS (2026-11-14, with the ACP provider, scheduled
+- `t3/ea388396` (Orbit's task-turn path, 2026-11-14, `main` `c5242fa` merged in): 38 checks
+  with `CONN_MONOREPO`. One run passed all 38; a second failed only `cargo test` on
+  `conn-terminal`'s `clears_and_reports_the_foreground_command` (no idle upsert after
+  Ctrl-C, while another agent's checks loaded the machine), which then passed alone twice
+  and in the crate's full run. macOS only.
+- `main`: verified. All 39 checks pass on macOS (2026-11-14, with the ACP provider, scheduled
   tasks and annotations). The last Linux pass (all tests, 20 runs on the gnu target and 5 on
   musl, 2026-11-14) is older than those merges.
 - Fixed on 2026-11-14: the T3 adapter closes the Claude query after an interrupt, and the next

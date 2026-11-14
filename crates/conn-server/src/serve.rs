@@ -106,6 +106,17 @@ impl ServeOptions {
 /// Runs until SIGTERM or SIGINT, then stops cleanly: no new connections, open sockets close,
 /// and the runtime drops every task, which kills provider children (`kill_on_drop`).
 pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
+    serve_with_instances(options, providers, None).await;
+}
+
+/// [`serve`] with Claude and Codex instances built from `providerInstances`: at start from the
+/// stored settings (as Orbit writes them before the first boot), and again on every change.
+/// `providers` are the fixed ones (Grok), listed after them.
+pub async fn serve_with_instances(
+    options: ServeOptions,
+    providers: Vec<Arc<dyn Provider>>,
+    instances: Option<Arc<crate::instances::Instances>>,
+) {
     let ServeOptions {
         listen,
         state_dir,
@@ -135,11 +146,6 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
             projects.push((root, Some(title)));
         }
     }
-    let provider_names = providers
-        .iter()
-        .map(|p| p.instance_id().as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
     let projects: Vec<ProjectConfig> = projects
         .iter()
         .map(|(root, title)| ProjectConfig {
@@ -155,6 +161,18 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
         "cannot load the state directory",
     ));
     let auth = environment.auth.clone();
+    let providers = conn_provider::ProviderSet::from(providers);
+    if let Some(instances) = &instances {
+        instances
+            .reconcile(&providers, &environment.settings.raw())
+            .await;
+    }
+    let provider_names = providers
+        .snapshot()
+        .iter()
+        .map(|p| p.instance_id().as_str().to_owned())
+        .collect::<Vec<_>>()
+        .join(", ");
     let is_desktop = desktop.is_some();
     if let Some(desktop) = desktop {
         auth.set_desktop_bootstrap(desktop);
@@ -177,7 +195,7 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
 
     let mut config = EngineConfig::new(state_dir.join("engine.sqlite"));
     config.projects = projects;
-    config.providers = providers.clone();
+    config.provider_set = Some(providers.clone());
     config.idle_session = session_idle;
     config.host = Some(host.clone());
     config.turn_observer = Some(host.clone());
@@ -212,6 +230,7 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
             Arc::new(conn_features::annotations::EngineProjects(engine.clone())),
         )),
         providers,
+        instances,
         environment: Some(environment.clone()),
         files,
         vcs,
@@ -263,6 +282,8 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
     println!("providers: {provider_names}");
     // Probes spawn provider CLIs; T3 starts them once the server is ready, too.
     crate::methods::provider::start_status_refresh(&state.deps);
+    // `model-manifest.json`, fetched and cached as the T3 server's provider checks do.
+    crate::model_manifest::start(state_dir.clone(), environment.clone());
     if !is_desktop {
         // One code, valid 24 hours, spent by the first device that pairs.
         match auth.issue_pairing_code(None, auth::STARTUP_PAIRING_CODE_TTL_MS) {

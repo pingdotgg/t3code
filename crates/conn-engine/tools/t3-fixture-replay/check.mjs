@@ -29,6 +29,7 @@ import * as NodeURL from "node:url";
 
 import { monorepo, repoRoot } from "../../../../tools/monorepo.mjs";
 import { cargoBuildEnv, sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
+import { GUARD_IMPORT } from "../../../../tools/no-outside-fetch.mjs";
 
 const MONOREPO = monorepo();
 const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -366,7 +367,8 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
 const reportFile = NodePath.join(work, "report.json");
 NodeFS.writeFileSync(
   testFile,
-  TEST_SOURCE.replaceAll("__CONFIG__", JSON.stringify(NodePath.join(work, "config.json"))),
+  GUARD_IMPORT +
+    TEST_SOURCE.replaceAll("__CONFIG__", JSON.stringify(NodePath.join(work, "config.json"))),
 );
 try {
   NodeChildProcess.spawnSync(

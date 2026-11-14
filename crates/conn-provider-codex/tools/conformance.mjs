@@ -28,6 +28,7 @@ import * as NodeURL from "node:url";
 
 import { monorepo, repoRoot } from "../../../tools/monorepo.mjs";
 import { sealedCargoEnv, sealedNodeEnv } from "../../../tools/sealed-env.mjs";
+import { GUARD_IMPORT } from "../../../tools/no-outside-fetch.mjs";
 
 const MONOREPO = monorepo();
 const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -104,6 +105,44 @@ const SCENARIOS = {
     covers: "a model and effort change between turns",
   },
   attachment: { fixture: "simple", attachments: true, covers: "a turn with attachments" },
+  // A `providerInstances` entry (`instance`: `config` over the scenario's binary and home, and
+  // `environment`), applied as each server applies it: T3's createCodexAdapterV2, our
+  // CodexConfig::with_instance. Sensitive values are fake.
+  instanceSettings: {
+    fixture: "simple",
+    instance: {
+      config: { launchArgs: "  --enable conn_feature -c model_verbosity=\"low\"  " },
+      environment: [
+        { name: "CONFORMANCE_PLAIN", value: "plain value" },
+        { name: "CONFORMANCE_SENSITIVE", value: "conformance-sensitive-value", sensitive: true },
+        { name: "CODEX_INTERNAL_ORIGINATOR_OVERRIDE", value: "Instance Origin" },
+      ],
+    },
+    covers: "an instance's launch args and environment (plain, sensitive, the originator overridden)",
+  },
+  instanceLaunchEnv: {
+    fixture: "simple",
+    instance: {
+      config: { launchArgs: "--enable from_setting" },
+      environment: [{ name: "T3CODE_CODEX_LAUNCH_ARGS", value: "--enable from_instance_env" }],
+    },
+    covers: "T3CODE_CODEX_LAUNCH_ARGS from the instance environment wins over the setting",
+  },
+  titleInstance: {
+    title: {
+      message: "Fix the login redirect after a password reset",
+      modelSelection: { instanceId: "codex", model: "gpt-6-astra", options: [] },
+      launchArgs: "--profile work",
+      mcpServers: [],
+    },
+    instance: {
+      environment: [
+        { name: "CONFORMANCE_SENSITIVE", value: "conformance-sensitive-value", sensitive: true },
+        { name: "CONFORMANCE_PLAIN", value: "plain value" },
+      ],
+    },
+    covers: "a title on an instance with its own environment (mcp list and exec get it)",
+  },
   rollback: { fixture: "thread_rollback", covers: "rollback to an earlier turn" },
   rollbackRestart: {
     fixture: "thread_rollback_after_restart",
@@ -431,6 +470,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it } from "@effect/vitest";
 import { CodexSettings } from "@t3tools/contracts";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -524,9 +564,16 @@ const harnessFor = (scenario: any, log: Array<unknown>) => {
       CodexAdapterV2.createCodexAdapterV2({
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
         displayName: undefined,
-        environment: [],
+        environment: scenario.instance?.environment ?? [],
         enabled: true,
-        config: { ...DEFAULT_CODEX_SETTINGS, binaryPath: scenario.tsCodex, homePath: PLAN.codexHome },
+        config: {
+          ...DEFAULT_CODEX_SETTINGS,
+          binaryPath: scenario.tsCodex,
+          homePath: PLAN.codexHome,
+          ...Schema.decodeSync(CodexSettings)(scenario.instance?.config ?? {}),
+          ...(scenario.instance?.config?.binaryPath ? {} : { binaryPath: scenario.tsCodex }),
+          ...(scenario.instance?.config?.homePath ? {} : { homePath: PLAN.codexHome }),
+        },
       }).pipe(Effect.map((adapter) => [adapter])),
     ).pipe(
       Layer.provide(
@@ -595,9 +642,11 @@ if (titleScenarios.length > 0) describe("conn codex title conformance", () => {
       const request = { prompt: built.prompt, outputSchema: JSON.stringify(toJsonSchemaObject(built.outputSchema)) };
       fs.writeFileSync(scenario.dir + "/ts/env.json", JSON.stringify(process.env));
       return Effect.gen(function* () {
+        // The Codex driver's processEnv: the instance's environment over the server's.
+        const processEnv = yield* mergeProviderInstanceEnvironment(scenario.instance?.environment, process.env);
         const generation = yield* makeCodexTextGeneration(
           { ...DEFAULT_CODEX_SETTINGS, binaryPath: scenario.tsCodex, homePath: PLAN.codexHome, launchArgs: title.launchArgs },
-          process.env,
+          processEnv,
           Effect.succeed(PLAN.titleModels),
         );
         return yield* generation.generateThreadTitle({
@@ -707,7 +756,8 @@ const testFile = NodePath.join(
 );
 NodeFS.writeFileSync(
   testFile,
-  TEST_SOURCE.replace("__PLAN__", JSON.stringify(NodePath.join(work, "plan.json"))),
+  GUARD_IMPORT +
+    TEST_SOURCE.replace("__PLAN__", JSON.stringify(NodePath.join(work, "plan.json"))),
 );
 let tsStatus;
 try {

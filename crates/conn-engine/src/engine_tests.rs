@@ -3316,6 +3316,73 @@ impl crate::EngineHost for OneInstanceOff {
     fn provider_instance_enabled(&self, _project_id: Option<&str>, instance_id: &str) -> bool {
         instance_id != "off"
     }
+
+    fn current_branch(&self, cwd: &str) -> conn_provider::BoxFuture<'_, Option<String>> {
+        let branch = (cwd == ROOT).then(|| "main".to_owned());
+        Box::pin(std::future::ready(branch))
+    }
+}
+
+/// `ThreadLaunchService`: a disabled instance is refused before the thread exists, and a
+/// project-folder launch that names no branch records the folder's checkout.
+#[tokio::test(flavor = "current_thread")]
+async fn a_launch_records_the_folder_branch_and_refuses_a_disabled_instance_first() {
+    let db = TempDb::new("launch-branch");
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.host = Some(Arc::new(OneInstanceOff));
+    let engine = SqliteEngine::open(config).unwrap();
+    let launch = |id: &str, instance: &str, strategy: Value| {
+        json!({
+            "commandId": format!("c-{id}"), "threadId": id, "projectId": project_id(),
+            "title": "T", "modelSelection": {"instanceId": instance, "model": "m"},
+            "runtimeMode": "full-access", "interactionMode": "default",
+            "workspaceStrategy": strategy,
+        })
+    };
+    let refused = engine
+        .launch_thread(launch("t-off", "off", json!({"type": "root"})))
+        .await;
+    let Err(EngineError::Rejected(error)) = refused else {
+        panic!("expected a refusal");
+    };
+    assert_eq!(
+        error["message"],
+        format!(
+            "Provider instance \"off\" is disabled for project {}.",
+            project_id()
+        )
+    );
+    assert!(
+        engine
+            .get_thread_projection(conn_contract::ThreadId::from("t-off"))
+            .await
+            .is_err()
+    );
+    engine
+        .launch_thread(launch("t-root", "claudeAgent", json!({"type": "root"})))
+        .await
+        .unwrap();
+    assert_eq!(
+        projection(&engine, "t-root").await["thread"]["branch"],
+        "main"
+    );
+    engine
+        .launch_thread(launch(
+            "t-named",
+            "claudeAgent",
+            json!({"type": "root", "branch": "dev"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        projection(&engine, "t-named").await["thread"]["branch"],
+        "dev"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

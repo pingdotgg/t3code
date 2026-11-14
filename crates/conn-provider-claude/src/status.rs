@@ -21,6 +21,7 @@ use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
+use conn_provider_support::instance::{InstanceEnv, InstanceEnvelope};
 use conn_provider_support::probe::{CommandError, CommandOutput, spawn_and_collect};
 
 use crate::DRIVER;
@@ -44,8 +45,8 @@ pub struct StatusSettings {
     pub home_path: String,
     pub display_name: Option<String>,
     pub accent_color: Option<String>,
-    /// The instance's `environment` entries with a plain value, in order.
-    pub environment: Vec<(String, String)>,
+    /// The instance's `environment` entries with a value, in order. `Debug` prints names only.
+    pub environment: InstanceEnv,
 }
 
 impl Default for StatusSettings {
@@ -56,17 +57,9 @@ impl Default for StatusSettings {
             home_path: String::new(),
             display_name: None,
             accent_color: None,
-            environment: Vec::new(),
+            environment: InstanceEnv::default(),
         }
     }
-}
-
-fn trimmed(value: &Value) -> Option<String> {
-    value
-        .as_str()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
 }
 
 impl StatusSettings {
@@ -76,41 +69,17 @@ impl StatusSettings {
         let Some(entry) = entry else {
             return Self::default();
         };
-        let config = entry.get("config").cloned().unwrap_or(Value::Null);
-        let envelope = entry.get("enabled").and_then(Value::as_bool);
-        let inner = config.get("enabled").and_then(Value::as_bool);
-        let enabled = if envelope == Some(false) || inner == Some(false) {
-            false
-        } else {
-            envelope.or(inner).unwrap_or(true)
-        };
-        let environment = entry
-            .get("environment")
-            .and_then(Value::as_array)
-            .map(|vars| {
-                vars.iter()
-                    .filter_map(|v| {
-                        let name = v.get("name")?.as_str()?.to_owned();
-                        let value = v.get("value")?.as_str()?.to_owned();
-                        Some((name, value))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let envelope = InstanceEnvelope::parse(Some(entry), true);
         Self {
-            enabled,
-            binary_path: trimmed(&config["binaryPath"]).map_or_else(
+            enabled: envelope.enabled,
+            binary_path: envelope.config_str("binaryPath").map_or_else(
                 || "claude".into(),
-                |p| {
-                    crate::launch::expand_home(&p)
-                        .to_string_lossy()
-                        .into_owned()
-                },
+                |p| conn_provider_support::instance::expand_home(&p),
             ),
-            home_path: trimmed(&config["homePath"]).unwrap_or_default(),
-            display_name: trimmed(&entry["displayName"]),
-            accent_color: trimmed(&entry["accentColor"]),
-            environment,
+            home_path: envelope.config_str("homePath").unwrap_or_default(),
+            display_name: envelope.display_name,
+            accent_color: envelope.accent_color,
+            environment: envelope.environment,
         }
     }
 

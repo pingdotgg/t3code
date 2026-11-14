@@ -429,6 +429,40 @@ const decodeEach = (client) =>
       grokEntry?.status === "ready" && grokEntry.models.some((m) => m.slug === "grok-4.6"),
       `${grokEntry?.status} ${grokEntry?.message ?? ""}`,
     );
+    // A second Claude instance (Orbit's effort instances) and the default Codex switched
+    // off, added while the server runs: the real client decodes both entries.
+    yield* call("server.updateSettings", {
+      patch: {},
+      providerInstanceMutation: {
+        operation: "create",
+        instanceId: "claudeLow",
+        instance: {
+          driver: "claudeAgent",
+          displayName: "Claude Low",
+          accentColor: "#336699",
+          config: { binaryPath: "/nonexistent/claude" },
+          environment: [{ name: "CONN_EFFECT_CLIENT", value: "1", sensitive: false }],
+        },
+      },
+    });
+    yield* call("server.updateSettings", {
+      patch: {},
+      providerInstanceMutation: { operation: "upsert", instanceId: "codex", instance: { driver: "codex", enabled: false } },
+    });
+    const instances = yield* call("server.refreshProviders", {});
+    const instanceEntries = Exit.isSuccess(instances) ? instances.value.providers : [];
+    const low = instanceEntries.find((p) => p.instanceId === "claudeLow");
+    check(
+      "a second Claude instance is listed with its identity",
+      low?.driver === "claudeAgent" && low.displayName === "Claude Low" && low.accentColor === "#336699",
+      JSON.stringify(low ?? null).slice(0, 200),
+    );
+    const codexEntry = instanceEntries.find((p) => p.instanceId === "codex");
+    check(
+      "a disabled Codex instance is listed disabled",
+      codexEntry?.enabled === false && codexEntry.status === "disabled",
+      JSON.stringify(codexEntry ?? null).slice(0, 200),
+    );
     yield* call("server.getHostResources", {});
     yield* call("server.getProcessDiagnostics", {});
     yield* call("server.upsertKeybinding", { key: "mod+shift+f12", command: "sidebar.toggle" });

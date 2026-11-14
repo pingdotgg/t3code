@@ -82,12 +82,9 @@ async fn title(scenario: &Value, settings: &StatusSettings) -> Value {
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or(Value::Null);
-    let config = ClaudeConfig {
-        binary: settings.binary_path.clone().into(),
-        home_path: (!settings.home_path.is_empty()).then(|| settings.home_path.clone().into()),
-        instance_env: settings.environment.clone(),
-        ..ClaudeConfig::default()
-    };
+    // The server's path: the instance entry applied to the defaults.
+    let _ = settings;
+    let config = ClaudeConfig::default().with_instance(scenario.get("instance"));
     let provider = ClaudeProvider::new("claudeAgent".into(), config);
     let selection = match serde_json::from_value(scenario["title"]["modelSelection"].clone()) {
         Ok(selection) => selection,

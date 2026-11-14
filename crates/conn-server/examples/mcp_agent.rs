@@ -47,7 +47,7 @@ async fn run(state_dir: &Path, project: &Path, config_out: &Path) {
     let engine: Arc<dyn Engine> = Arc::new(SqliteEngine::open(config).expect("engine"));
     let mut deps = Deps {
         engine: Some(engine.clone()),
-        providers: vec![provider],
+        providers: vec![provider].into(),
         environment: Some(environment.clone()),
         ..Deps::default()
     };

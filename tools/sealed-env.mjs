@@ -44,10 +44,24 @@ export function standInShell(dir) {
   return shell;
 }
 
-function runtimeVariables() {
+/** What `tools/canary.mjs` sets for a check run (its Node hook and logs); nothing outside one. */
+const CANARY_VARIABLES = ["NODE_OPTIONS", "CONN_CANARY_ROOT", "CONN_NETWORK_LOG", "CONN_CANARY_NODE_NETWORK_LOG"];
+
+/** The canary's variables while `tools/check.sh` runs under it, else none. */
+export function canaryEnv() {
+  if (!process.env.CONN_CANARY_ROOT) return {};
   return Object.fromEntries(
-    RUNTIME_VARIABLES.flatMap((name) => (process.env[name] === undefined ? [] : [[name, process.env[name]]])),
+    CANARY_VARIABLES.flatMap((name) => (process.env[name] === undefined ? [] : [[name, process.env[name]]])),
   );
+}
+
+function runtimeVariables() {
+  return {
+    ...Object.fromEntries(
+      RUNTIME_VARIABLES.flatMap((name) => (process.env[name] === undefined ? [] : [[name, process.env[name]]])),
+    ),
+    ...canaryEnv(),
+  };
 }
 
 /**
@@ -62,6 +76,8 @@ export function sealedEnv(dir) {
     HOME: freshHome(dir),
     SHELL: standInShell(dir),
     CONN_CLAUDE_STATUS_PROBE: "off",
+    // The server never fetches model-manifest.json from GitHub.
+    CONN_MODEL_MANIFEST_URL: "off",
   };
 }
 
@@ -79,7 +95,9 @@ export function sealedEnvTemp() {
  * real home. `dir` must be a fresh temp folder the check removes.
  */
 export function sealedNodeEnv(dir) {
-  return { ...runtimeVariables(), HOME: freshHome(dir), SHELL: standInShell(dir) };
+  // No server of ours reads CONN_MODEL_MANIFEST_URL there, but a check that starts one from
+  // this environment must not fetch either.
+  return { ...runtimeVariables(), HOME: freshHome(dir), SHELL: standInShell(dir), CONN_MODEL_MANIFEST_URL: "off" };
 }
 
 /**

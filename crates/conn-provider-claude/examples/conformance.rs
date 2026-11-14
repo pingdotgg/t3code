@@ -36,11 +36,13 @@ struct Run {
     policy_override: Value,
     cwd: String,
     attachments: PathBuf,
+    /// The scenario's instance id (`instance.id`, else `claudeAgent`).
+    instance: String,
 }
 
 impl Run {
     fn model_selection(&self, model: Option<&str>) -> Value {
-        json!({"instanceId": "claudeAgent", "model": model.unwrap_or(&self.model)})
+        json!({"instanceId": self.instance, "model": model.unwrap_or(&self.model)})
     }
 
     fn policy(&self) -> Value {
@@ -80,7 +82,7 @@ impl Run {
             app_thread: from_json(json!({
                 "createdBy": "user", "creationSource": "web", "id": app_thread,
                 "projectId": "project-conformance", "title": "Conformance",
-                "providerInstanceId": "claudeAgent",
+                "providerInstanceId": self.instance,
                 "modelSelection": self.model_selection(model), "runtimeMode": self.mode,
                 "interactionMode": "default", "branch": null, "worktreePath": null,
                 "activeProviderThreadId": null,
@@ -165,8 +167,35 @@ async fn open(
 async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) {
     let name = spec["name"].as_str().unwrap_or("scenario");
     let dir = root.join(name);
-    let config = ClaudeConfig {
-        binary: dir.join("stub-claude"),
+    // The `providerInstances` entry, as the server applies it (`ClaudeConfig::with_instance`).
+    // `{side}` in a string value is "rust" here; without `binaryPath` the stub runs.
+    let side = |v: &Value| match v {
+        Value::String(s) => json!(s.replace("{side}", "rust")),
+        other => other.clone(),
+    };
+    let mut entry = spec["instance"].clone();
+    if let Some(config) = entry.get_mut("config").and_then(Value::as_object_mut) {
+        for value in config.values_mut() {
+            *value = side(value);
+        }
+    }
+    if let Some(vars) = entry.get_mut("environment").and_then(Value::as_array_mut) {
+        for var in vars {
+            var["value"] = side(&var["value"]);
+        }
+    }
+    if entry
+        .get("config")
+        .and_then(|c| c.get("binaryPath"))
+        .is_none()
+    {
+        entry["config"]["binaryPath"] = json!(dir.join("stub-claude").to_string_lossy());
+    }
+    let instance = spec["instance"]["id"]
+        .as_str()
+        .unwrap_or("claudeAgent")
+        .to_owned();
+    let base = ClaudeConfig {
         attachments_dir: Some(run.attachments.clone()),
         helper: run.helper.clone(),
         idle_timeout: None,
@@ -177,7 +206,8 @@ async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) 
         )),
         ..ClaudeConfig::default()
     };
-    let provider = ClaudeProvider::new("claudeAgent".into(), config);
+    let config = base.with_instance(Some(&entry));
+    let provider = ClaudeProvider::new(instance.as_str().into(), config);
     let settings_file =
         std::env::var_os("CLAUDE_CONFIG_DIR").map(|dir| PathBuf::from(dir).join("settings.json"));
     if let (Some(file), Some(settings)) = (&settings_file, spec.get("claudeSettings")) {
@@ -190,6 +220,7 @@ async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) 
         policy_override: spec["policyOverride"].clone(),
         cwd: run.cwd.clone(),
         attachments: run.attachments.clone(),
+        instance,
     };
     let mcp = spec["mcp"] == json!(true);
     let (mut session, mut events) = open(&provider, &run, mcp).await;
@@ -382,6 +413,7 @@ fn main() {
         policy_override: Value::Null,
         cwd: cwd.clone(),
         attachments: PathBuf::from(attachments),
+        instance: "claudeAgent".into(),
     };
     // The server's start-up step (`serve.rs`): PATH, __MISE_DIFF and JAVA_HOME from the login
     // shell, which the provider gives the CLI (`ClaudeSession::environment`).

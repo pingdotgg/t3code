@@ -28,17 +28,94 @@
 //   node tools/canary.mjs watch <root>       scans <root>/tmp until <root>/stop exists
 //   node tools/canary.mjs mark <root> <check> after each check: names the decoy files it read
 //   node tools/canary.mjs verify <root> <output log> [more folders to scan]
+// Outside calls and real CLIs: marker executables named claude, codex, grok, gh, glab, fj, tea,
+// az and cafe go first on PATH and log each run; every Node process loads a hook
+// (NODE_OPTIONS=--import) that refuses and logs a socket or DNS lookup outside loopback; our
+// server refuses and logs one when CONN_NETWORK_LOG is set (conn_source_control::http). A
+// program that is none of these (git, cargo, a CLI found before the markers on a tool's own
+// PATH) is not seen; cargo and cargo-deny reach crates.io and the RustSec database on purpose.
+//
 //   node tools/canary.mjs selftest            proves verify fails on each kind of breach
 //   node tools/canary.mjs lint
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repo = NodePath.resolve(NodePath.dirname(fileURLToPath(import.meta.url)), "..");
 const OLD_ATIME = new Date("2000-01-01T00:00:00Z");
 const SCAN_LIMIT = 16 << 20;
+
+/** CLIs a check must never run for real: marker executables by these names go first on PATH. */
+const MARKER_CLIS = ["claude", "codex", "grok", "gh", "glab", "fj", "tea", "az", "cafe"];
+
+/** Logs of things a check must never do, each named per check by `mark`. */
+const EVENT_LOGS = [
+  ["cli.log", "real CLI started"],
+  ["network.log", "outside network (our server, CONN_NETWORK_LOG)"],
+  ["node-network.log", "outside network (a Node process)"],
+];
+
+/**
+ * Loaded into every Node process of the checks (`NODE_OPTIONS=--import`): a socket or a DNS
+ * lookup to a host outside loopback is refused and named in `node-network.log`. `fetch`,
+ * `http`, `https`, `tls` and `net` all connect through `net.Socket.prototype.connect`.
+ */
+const NODE_HOOK = `
+import * as fs from "node:fs";
+import net from "node:net";
+import dns from "node:dns";
+const LOG = process.env.CONN_CANARY_NODE_NETWORK_LOG;
+const loopback = (host) => {
+  const h = String(host ?? "localhost").replace(/^\\[|\\]$/g, "").toLowerCase();
+  return h === "" || h === "localhost" || h.endsWith(".localhost") || /^127\\./.test(h) ||
+    h === "::1" || /^::ffff:127\\./.test(h) || h === "0.0.0.0" || h === "::";
+};
+const record = (host, how) => {
+  if (!LOG) return;
+  try { fs.appendFileSync(LOG, host + " (" + how + ", " + (process.argv[1] ?? process.argv0) + ")\\n"); } catch {}
+};
+if (globalThis.__connCanaryNet !== true) {
+  globalThis.__connCanaryNet = true;
+  const connect = net.Socket.prototype.connect;
+  net.Socket.prototype.connect = function (...args) {
+    let first = args[0];
+    if (Array.isArray(first)) first = first[0];
+    let host;
+    let path;
+    if (first !== null && typeof first === "object") { host = first.host; path = first.path; }
+    else if (typeof first === "number" || (typeof first === "string" && /^\\d+$/.test(first))) host = typeof args[1] === "string" ? args[1] : "localhost";
+    else if (typeof first === "string") path = first;
+    if (path === undefined && !loopback(host)) {
+      record(host, "connect");
+      const error = Object.assign(new Error("connect to " + host + " refused: checks reach no outside host"), { code: "ECONNREFUSED" });
+      process.nextTick(() => this.destroy(error));
+      return this;
+    }
+    return connect.apply(this, args);
+  };
+  const lookup = dns.lookup;
+  dns.lookup = function (hostname, ...rest) {
+    if (!loopback(hostname) && net.isIP(String(hostname)) === 0) {
+      record(hostname, "dns.lookup");
+      const callback = rest.find((r) => typeof r === "function");
+      const error = Object.assign(new Error("lookup of " + hostname + " refused"), { code: "ENOTFOUND" });
+      if (callback) process.nextTick(() => callback(error));
+      return {};
+    }
+    return lookup.call(this, hostname, ...rest);
+  };
+  const plookup = dns.promises.lookup;
+  dns.promises.lookup = function (hostname, ...rest) {
+    if (!loopback(hostname) && net.isIP(String(hostname)) === 0) {
+      record(hostname, "dns.promises.lookup");
+      return Promise.reject(Object.assign(new Error("lookup of " + hostname + " refused"), { code: "ENOTFOUND" }));
+    }
+    return plookup.call(this, hostname, ...rest);
+  };
+}
+`;
 
 const MARKER_VARIABLES = [
   "ANTHROPIC_API_KEY",
@@ -167,10 +244,29 @@ function setup(root) {
   const state = { token, home, tmp, shell, files: files.map(({ path, kind }) => ({ path, kind })), listing };
   NodeFS.writeFileSync(NodePath.join(root, "state.json"), `${JSON.stringify(state, null, 1)}\n`);
 
+  // Marker CLIs, first on PATH: each run leaves a line in cli.log and fails.
+  const bin = NodePath.join(root, "bin");
+  NodeFS.mkdirSync(bin, { recursive: true });
+  for (const name of MARKER_CLIS) {
+    NodeFS.writeFileSync(
+      NodePath.join(bin, name),
+      `#!/bin/sh\nprintf '%s\\n' "${name} $*" >> ${shellQuote(NodePath.join(root, "cli.log"))}\necho "canary: ${name} is a marker; a check started a real CLI" >&2\nexit 1\n`,
+      { mode: 0o755 },
+    );
+  }
+  const hook = NodePath.join(root, "net-hook.mjs");
+  NodeFS.writeFileSync(hook, NODE_HOOK);
+  const nodeOptions = [process.env.NODE_OPTIONS, `--import=${pathToFileURL(hook).href}`].filter(Boolean).join(" ");
+
   const exports = [
     `export HOME=${shellQuote(home)}`,
     `export SHELL=${shellQuote(shell)}`,
     `export TMPDIR=${shellQuote(tmp)}`,
+    `export PATH=${shellQuote(`${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`)}`,
+    `export NODE_OPTIONS=${shellQuote(nodeOptions)}`,
+    `export CONN_CANARY_ROOT=${shellQuote(root)}`,
+    `export CONN_NETWORK_LOG=${shellQuote(NodePath.join(root, "network.log"))}`,
+    `export CONN_CANARY_NODE_NETWORK_LOG=${shellQuote(NodePath.join(root, "node-network.log"))}`,
     ...Object.entries(values).map(([name, value]) => `export ${name}=${shellQuote(value)}`),
   ];
   NodeFS.writeFileSync(NodePath.join(root, "env.sh"), `${exports.join("\n")}\n`);
@@ -285,6 +381,17 @@ function mark(root, check) {
       NodeFS.utimesSync(full, OLD_ATIME, stat.mtime);
     }
   }
+  for (const [file, what] of EVENT_LOGS) {
+    const full = NodePath.join(root, file);
+    let text = "";
+    try {
+      text = NodeFS.readFileSync(full, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split("\n").filter(Boolean)) lines.push(`${what}: ${line} during "${check}"\n`);
+    NodeFS.writeFileSync(full, "");
+  }
   if (lines.length > 0) NodeFS.appendFileSync(NodePath.join(root, "reads.txt"), lines.join(""));
 }
 
@@ -323,6 +430,13 @@ function verify(root, outputLog, extra) {
   const reads = NodePath.join(root, "reads.txt");
   if (NodeFS.existsSync(reads)) {
     for (const line of NodeFS.readFileSync(reads, "utf8").split("\n").filter(Boolean)) problems.push(line);
+  }
+
+  // CLI runs and outside connections that no `mark` named yet.
+  for (const [file, what] of EVENT_LOGS) {
+    const full = NodePath.join(root, file);
+    if (!NodeFS.existsSync(full)) continue;
+    for (const line of NodeFS.readFileSync(full, "utf8").split("\n").filter(Boolean)) problems.push(`${what}: ${line}`);
   }
 
   // 2. The git credential tripwire.
@@ -419,6 +533,16 @@ function lint() {
   return problems;
 }
 
+/** The variables `env.sh` exports, as an object. */
+function readEnv(root) {
+  const env = {};
+  for (const line of NodeFS.readFileSync(NodePath.join(root, "env.sh"), "utf8").split("\n")) {
+    const match = /^export (\w+)='(.*)'$/.exec(line);
+    if (match) env[match[1]] = match[2].replaceAll(`'\\''`, "'");
+  }
+  return env;
+}
+
 /**
  * Proves the canary is not blind: on fresh decoys, `verify` passes untouched and fails on
  * each kind of breach; every lint rule fires on a sample and stays quiet on its sealed form.
@@ -436,6 +560,19 @@ function selftest() {
     ["a new file in the home", (st) => NodeFS.writeFileSync(NodePath.join(st.home, ".bash_history"), "ls\n"), false],
     ["a changed mode in the home", (st) => NodeFS.chmodSync(NodePath.join(st.home, ".netrc"), 0o600), false],
     ["the git credential helper", (st, root) => NodeChildProcess.execFileSync(NodePath.join(root, "tripwire"), ["get"], { stdio: "ignore" }), false, true],
+    ["a run of a marker CLI", (st, root) => NodeChildProcess.execFileSync(NodePath.join(root, "bin", "codex"), ["--version"], { stdio: "ignore" }), false, true],
+    ["an outside fetch from Node", (st, root) => {
+      const env = readEnv(root);
+      NodeChildProcess.execFileSync(process.execPath, ["-e", 'fetch("https://example.invalid/").catch(() => {})'], { env: { ...process.env, ...env }, stdio: "ignore" });
+    }, false],
+    ["an outside socket from Node", (st, root) => {
+      const env = readEnv(root);
+      NodeChildProcess.execFileSync(process.execPath, ["-e", 'require("node:net").connect(443, "example.invalid").on("error", () => {})'], { env: { ...process.env, ...env }, stdio: "ignore" });
+    }, false],
+    ["a loopback socket from Node", (st, root) => {
+      const env = readEnv(root);
+      NodeChildProcess.execFileSync(process.execPath, ["-e", 'require("node:net").connect(9, "127.0.0.1").on("error", () => {})'], { env: { ...process.env, ...env }, stdio: "ignore" });
+    }, true],
   ];
   try {
     cases.forEach(([name, act, pass, mayExit], index) => {

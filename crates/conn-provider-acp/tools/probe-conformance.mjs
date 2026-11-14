@@ -28,6 +28,7 @@ import * as NodeURL from "node:url";
 
 import { monorepo, repoRoot } from "../../../tools/monorepo.mjs";
 import { sealedCargoEnv, sealedNodeEnv } from "../../../tools/sealed-env.mjs";
+import { GUARD_IMPORT } from "../../../tools/no-outside-fetch.mjs";
 
 const MONOREPO = monorepo();
 const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -39,7 +40,7 @@ const STUB = NodePath.join(HERE, "grok-cli-stub.mjs");
     NodePath.join(MONOREPO, "packages/provider-core/src/server/pathExpansion.ts"),
     "utf8",
   );
-  const rust = NodeFS.readFileSync(NodePath.join(HERE, "../src/grok_status.rs"), "utf8");
+  const rust = NodeFS.readFileSync(NodePath.join(HERE, "../../conn-provider-support/src/instance.rs"), "utf8");
   const names = (text, re) => [...(text.match(re)?.[1] ?? "").matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]).toSorted();
   const theirs = names(ts, /HOME_PATH_VARIABLES = new Set\(\[([^\]]*)\]/);
   const ours = names(rust, /HOME_PATH_VARIABLES: \[&str; \d+\] = \[([^\]]*)\]/);
@@ -279,7 +280,8 @@ const tsParentEnv = NodePath.join(work, "ts-parent-env.json");
 const tsServerCwd = NodePath.join(work, "ts-server-cwd.txt");
 NodeFS.writeFileSync(
   testFile,
-  TEST_SOURCE.replace("__PLAN__", JSON.stringify(plan))
+  GUARD_IMPORT +
+    TEST_SOURCE.replace("__PLAN__", JSON.stringify(plan))
     .replace("__PARENT_ENV__", JSON.stringify(tsParentEnv))
     .replace("__SERVER_CWD__", JSON.stringify(tsServerCwd)),
 );

@@ -39,6 +39,8 @@ pub struct EngineConfig {
     pub home: Option<PathBuf>,
     pub projects: Vec<ProjectConfig>,
     pub providers: Vec<Arc<dyn Provider>>,
+    /// The server's shared, changing list of instances. When set, it replaces `providers`.
+    pub provider_set: Option<conn_provider::ProviderSet>,
     /// A provider session with no turn for this long is closed, ending its process (a
     /// `claude` child holds about 140 MiB). Default 30 minutes, as T3's session manager;
     /// `None` keeps sessions open.
@@ -112,6 +114,7 @@ impl EngineConfig {
             home: None,
             projects: vec![],
             providers: vec![],
+            provider_set: None,
             idle_session: Some(DEFAULT_IDLE_SESSION),
             idle_max_hold: Duration::from_secs(4 * 60 * 60),
             host: None,
@@ -139,7 +142,7 @@ pub(crate) struct Inner {
     store: Arc<Mutex<Store>>,
     /// The latest committed sequence. Stream tasks wake on it and read from the store.
     pub(crate) notify: watch::Sender<u64>,
-    pub(crate) providers: Vec<Arc<dyn Provider>>,
+    pub(crate) providers: conn_provider::ProviderSet,
     /// Threads with an open provider session. The only per-thread state kept in memory.
     pub(crate) live: Mutex<HashMap<String, Arc<LiveThread>>>,
     pub(crate) home: PathBuf,
@@ -275,7 +278,9 @@ impl SqliteEngine {
             inner: Arc::new(Inner {
                 store: Arc::new(Mutex::new(store)),
                 notify: watch::Sender::new(high),
-                providers: config.providers,
+                providers: config
+                    .provider_set
+                    .unwrap_or_else(|| config.providers.into()),
                 live: Mutex::new(HashMap::new()),
                 command_output: crate::output::CommandOutputHub::default(),
                 shutting_down: std::sync::atomic::AtomicBool::new(false),
@@ -488,10 +493,7 @@ impl Inner {
         let same_instance = current["instanceId"] == target["instanceId"];
         let plan = match (same_instance && current != target, capabilities) {
             (true, Some(capabilities)) => {
-                let provider = self
-                    .providers
-                    .iter()
-                    .find(|p| p.instance_id().as_str() == instance);
+                let provider = self.providers.get(&instance);
                 let decoded = (from_json(current), from_json(target));
                 match (provider, decoded) {
                     (Some(provider), (Ok(current), Ok(target))) => provider
@@ -550,15 +552,7 @@ impl Inner {
         };
         // As a turn start finds it: only a thread that names no instance may use the one
         // configured provider.
-        let provider = self
-            .providers
-            .iter()
-            .find(|p| p.instance_id().as_str() == instance)
-            .or_else(|| {
-                (instance.is_empty() && self.providers.len() == 1)
-                    .then(|| self.providers.first())
-                    .flatten()
-            });
+        let provider = self.providers.resolve(&instance);
         command["providerCapabilities"] = match provider {
             Some(provider) => match provider.capabilities().await {
                 Ok(capabilities) => {
@@ -736,6 +730,23 @@ impl Inner {
         }
     }
 
+    /// The branch checked out in the launch's project folder; `None` without a host, a
+    /// project or a branch.
+    async fn project_branch(&self, input: &Value) -> Option<String> {
+        let host = self.host.as_ref()?;
+        let project_id = input["projectId"].as_str()?.to_owned();
+        let root = self
+            .db(move |store| -> Result<Option<String>, String> {
+                let tx = store.tx()?;
+                let project = tx.project(&project_id);
+                tx.rollback();
+                Ok(project?.and_then(|p| p["workspaceRoot"].as_str().map(str::to_owned)))
+            })
+            .await
+            .ok()??;
+        host.current_branch(&root).await
+    }
+
     async fn provision_worktree(
         &self,
         thread_id: &str,
@@ -774,6 +785,11 @@ impl Inner {
             .map_or_else(|| format!("thread:{command_id}"), str::to_owned);
         let strategy = &input["workspaceStrategy"];
         let (branch, worktree_path) = match strategy["type"].as_str() {
+            // `launchBranch`: a project-folder launch that names no branch records the
+            // folder's checkout, as the composer does.
+            Some("root") if !strategy["branch"].is_string() => {
+                (json!(self.project_branch(&input).await), Value::Null)
+            }
             Some("root") => (strategy["branch"].clone(), Value::Null),
             Some("existing_worktree") => {
                 (strategy["branch"].clone(), strategy["worktreePath"].clone())
@@ -1000,6 +1016,24 @@ impl Engine for SqliteEngine {
 
     fn launch_thread(&self, input: Value) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
         Box::pin(async move {
+            // `ThreadLaunchService` asks `assertProviderInstanceEnabled` before it makes the
+            // thread, so a refused launch leaves no thread behind.
+            if let Some(host) = &self.inner.host
+                && let (Some(project), Some(instance)) = (
+                    input["projectId"].as_str(),
+                    input["modelSelection"]["instanceId"].as_str(),
+                )
+                && !host.provider_instance_enabled(Some(project), instance)
+            {
+                return Err(EngineError::Rejected(json!({
+                    "_tag": "OrchestrationV2ThreadLaunchError",
+                    "commandId": input["commandId"],
+                    "projectId": input["projectId"],
+                    "message": format!(
+                        "Provider instance \"{instance}\" is disabled for project {project}."
+                    ),
+                })));
+            }
             self.inner
                 .launch(input.clone())
                 .await

@@ -28,13 +28,27 @@ Not used by Orbit: `T3CODE_*` variables, `--home-dir`, `environment link-orbit`,
 static web files, cookies, DPoP. Orbit never renews the 30-day Gateway session
 (`development-containers.md:832`).
 
-**This section is out of date (2026-11-14).** It was written against an older Orbit commit and
-said that Orbit needs only a different binary in the agent folder. That holds for the
-container create path. Orbit's task-turn path now also uses `t3 thread start`, `send`, `list`
-and `show`, a repeated `--scope` flag on `auth session issue` (this server takes
-`--scopes <list>`), `model-manifest.json` in `userdata`, and the session id that
-`auth session issue --json` prints. None of these is built. `docs/orbit-profile.md`, section
-1b, has the current list with its sources. `/api/projects/mutate` and `/mcp` are served.
+### Task turns (2026-11-14)
+
+Orbit's task-turn path (`swamp/ansible/task-copy-turn.yml` and `t3_copy_rpc.mjs` at Orbit
+`main` `569302a`, 2026-11-14) runs `t3` and Node in the container as `agent`, with `HOME=/home/agent`.
+Every item is built. `thread-cli-diff.mjs` runs the same commands on the T3 server with its own
+`t3` and on this server with ours and finds no difference (30 steps); `orbit-flow.mjs` runs the
+path in Orbit's order on the fake provider.
+
+| What | Orbit does | Reference | Conn Server |
+| --- | --- | --- | --- |
+| Model check | `cat ~/.t3/userdata/settings.json` and `model-manifest.json`; the driver's `manifest.providers[driver].models[].slug` and `aliases` must hold `--model`; no file, no check | `task-copy-turn.yml:68-133` | Writes `model-manifest.json` as T3's `ModelManifest.ts`: fetched from T3 Code's GitHub at most hourly while `enableProviderUpdateChecks` is on, `{"fetchedAtMs","manifest"}` (section 5) |
+| Settle, continue, read | `t3 thread list --project /srv/workspace --json`; finds threads by `title`, reads `threadId` and `status` | `:147, 251, 466` | Done |
+| The turn | `t3 thread start --provider P --model M --title T --wait --json /srv/workspace -` or `t3 thread send --wait --json <thread> -`, prompt on stdin, under `timeout --kill-after=30 <seconds>`; exit 0 done, 1 failed, 2 waits for an answer; stdout `{"threadId","runId","status","reply","error"}`, stderr kept on failure | `:376-402` | Done, same output, texts and exit codes |
+| Read back | `t3 thread show --messages 200 --json <thread>` | `:480` | Done |
+| A run that asks | `node - t3 read <thread>`, then `node - t3 interrupt <thread> <run> <request ids>` (`t3_copy_rpc.mjs`): `server-runtime.json`, `t3 auth session issue --scope orchestration:read [--scope orchestration:operate] --ttl 1m --label "orbit copy turn" --json`, `POST /api/auth/websocket-ticket`, `/ws`, `orchestration.getThreadProjection`, `orchestration.dispatchCommand {run.interrupt}`, `t3 auth session revoke <sessionId>` | `:406-461`; `t3_copy_rpc.mjs:30-145` | Done; the read, the interrupt and the revoke run in `thread-cli-diff.mjs` on both servers |
+
+How the `thread` commands reach the server, in both CLIs: read `userdata/server-runtime.json`
+(the origin, and a live `pid`), issue a session straight into the auth store (T3: an MCP client
+session, 30 days, scopes `orchestration:read`, `orchestration:operate`, `settings:write`,
+`source-control:write`, label `t3 thread cli`), call `/mcp` with it, revoke it when the command
+ends. No token from outside is needed; whoever may write the auth store may run them.
 
 ## 2. Conn desktop's local backend
 
@@ -65,10 +79,11 @@ What the desktop still needs before it can run the Conn Server (not done, not tr
 | `t3 serve [--host --port --base-dir --no-browser --mode --bootstrap-fd] [cwd]`                                                        | Done; `--tailscale-serve`, `--lan`, `--dev-url`, `--log-*` accepted and ignored                                                          |
 | `t3 [cwd]` (web mode, opens a browser, bootstraps the cwd as a project)                                                               | The bare form serves the current folder as a project; no browser, no web files                                                           |
 | `t3 pair [--scopes --ttl --label]`                                                                                                    | Done: finds the server through `server-runtime.json`, issues a link, prints `Pairing URL:`/`Token:`/`Expires:` (no QR code, no app link) |
-| `t3 auth pairing create                                                                                                               | list                                                                                                                                     | revoke`, `t3 auth session issue | list    | revoke`                                                                           | Done with the same flags and output (`--json`, `--token-only`, `--base-url`) |
+| `t3 auth pairing create                                                                                                               | list                                                                                                                                     | revoke`, `t3 auth session issue | list    | revoke`                                                                           | Done with the same flags and output (`--json`, `--token-only`, `--base-url`, a repeated `--scope`; also `--scopes <list>`) |
+| `t3 thread list [--project] [--json]`, `t3 thread start <project> <message or -> [--title --provider --model --worktree --branch --wait --json]`, `t3 thread send <thread> <message or -> [--wait --json]`, `t3 thread show <thread> [--messages --json]` | Done (section 1, "Task turns"); output, error texts and exit codes as the T3 CLI |
 | `t3 project add <path> [--title]`                                                                                                     | Done (see section 1); `remove` and `rename` not built                                                                                    |
 | `t3 environment link                                                                                                                  | link-orbit                                                                                                                               | list                            | unlink` | Not built: peer links need the engine's peer-link store. Orbit does not call them |
-| `thread`, `up`, `status`, `connect`, `service`, `update`, `install`, `doctor`, `policy`, `theme`, `trace`, `triage`, `browser`, `app` | Not built; none is used by Orbit or the desktop                                                                                          |
+| `up`, `status`, `connect`, `service`, `update`, `install`, `doctor`, `policy`, `theme`, `trace`, `triage`, `browser`, `app` | Not built; none is used by Orbit or the desktop                                                                                          |
 
 Environment read: `T3CODE_HOME`, `T3CODE_PORT`, `T3CODE_HOST`, `T3CODE_MODE`,
 `T3CODE_BOOTSTRAP_FD`; `CONN_SERVER_HOME` (the spike's) names a state directory when no
@@ -111,7 +126,8 @@ either server, never both at once.
 | `server-runtime.json`                                                                                                                                              | Running server's origin                                                                                     | **Writes the same format**; T3's `t3 pair`/`project` CLI finds a running Conn Server                                                                                                    |
 | `statev2.sqlite` (+ `-wal`/`-shm`), `state.sqlite`                                                                                                                 | Threads, projects, auth sessions and pairing links (`auth_sessions`, `auth_pairing_links`), everything else | **Ignored.** Threads need the migration below; T3 sessions are not carried over, so every device pairs again and Orbit issues new Gateway and Swamp sessions                            |
 | `secrets/` (`server-signing-key.bin`, …)                                                                                                                           | Secret store, signing keys                                                                                  | Ignored                                                                                                                                                                                 |
-| `attachments/`, `logs/`, `anonymous-id`, `themes/`, `browser-artifacts/`, `annotations/`, `speech/`, `providers/`, `model-manifest.json`, `usage-model-rates.json` | Feature data and caches                                                                                     | Ignored (other tracks may take attachments and logs)                                                                                                                                    |
+| `model-manifest.json` | The model catalog fetched from T3 Code's GitHub (`ModelManifest.ts`), `{"fetchedAtMs","manifest"}` | **Writes it the same way**: when (start, then at most hourly, 5 minutes after a failed try, only with `enableProviderUpdateChecks`), what (a manifest that decodes and is not older than the bundled or cached one) and the bytes (`model-manifest-diff.mjs`). Reads no model from it. Test seam: `CONN_MODEL_MANIFEST_URL` (`off` never fetches; an `http(s)` URL fetches from there); every check sets `off` |
+| `attachments/`, `logs/`, `anonymous-id`, `themes/`, `browser-artifacts/`, `annotations/`, `speech/`, `providers/`, `usage-model-rates.json` | Feature data and caches                                                                                     | Ignored (other tracks may take attachments and logs)                                                                                                                                    |
 | `<home>/worktrees`, `caches`, `runtime`, `tools`, `projects`, `scratch`                                                                                            | Worktrees, caches, managed tools                                                                            | Ignored                                                                                                                                                                                 |
 | `engine.sqlite`, `auth.json`, `auth.lock`, `projects.json`                                                                                                         | —                                                                                                           | **Conn Server only**: event store, sessions and links, projects added with `project add`                                                                                                |
 

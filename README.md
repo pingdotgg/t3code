@@ -21,7 +21,7 @@ cargo build --release
 ```
 
 The command line follows the T3 server's (`t3 serve`, `t3 pair`, `t3 auth …`,
-`t3 project add`); [`crates/conn-server/DROP-IN.md`](crates/conn-server/DROP-IN.md) lists what
+`t3 project add`, `t3 thread list|start|send|show`); [`crates/conn-server/DROP-IN.md`](crates/conn-server/DROP-IN.md) lists what
 Orbit and Conn desktop run and what the Conn Server does with it. `conn-server --help` prints
 every command.
 
@@ -33,6 +33,7 @@ every command.
 | `--project <dir>` (repeatable)              | the current folder in the short form; none with `serve` | Folders offered as projects, plus `projects.json` (`project add`)  |
 | `--label <name>`                            | the host name                                          | Environment label in clients                                       |
 | `--mode desktop`, `--bootstrap-fd <fd>`     | web                                                    | Conn desktop's start: reads its bootstrap line, accepts its token  |
+| `CONN_MODEL_MANIFEST_URL` (test seam)       | unset: T3 Code's manifest on GitHub                    | Where `model-manifest.json` is fetched from; `off` (or any value that is not an `http(s)` URL) never fetches. Every check sets `off` (`tools/check.sh`, `tools/sealed-env.mjs`); `orbit-flow.mjs` points it at a loopback stub |
 
 The default home is `~/.t3`, the T3 server's. To try the server next to a running T3 server,
 always pass `--base-dir` or `--state-dir` with a folder of its own.
@@ -98,7 +99,10 @@ line when the variable is missing. Without it, `tools/check.sh` runs the Rust ch
 | Claude probe conformance | `node crates/conn-provider-claude/tools/probe-conformance/run.mjs` (skipped with the Claude conformance) | Claude's `ServerProvider` entry and every CLI run of its status probe equal the T3 server's `checkClaudeProviderStatus`, and its thread titles equal `generateThreadTitle`, on a stub CLI |
 | T3 replay (Claude)  | `node crates/conn-provider-claude/tools/t3-replay/check.mjs`                                                                    | The T3 server's Claude transcripts: exactly the scenarios in `expected-failures.txt` fail            |
 | T3 fixture replay   | `node crates/conn-engine/tools/t3-fixture-replay/check.mjs`                                                                     | T3's testkit fixtures through this engine and our Claude, Codex and Grok providers pass T3's own assertions, except the variants in its `expected-failures.txt` (69 of 159 pass) |
-| Orbit flow          | `node crates/conn-server/tools/orbit-flow.mjs target/release/examples/replay_server`                                            | Orbit's container flow: start, project add, session issue, launch over `/mcp`, revoke, clean stop   |
+| Thread CLI diff     | `node crates/conn-server/tools/thread-cli-diff.mjs target/release/conn-server` | Orbit's task-turn commands (`t3 thread` start, send, list and show, `t3 auth session issue --scope … --json`, revoke, and `t3_copy_rpc.mjs`'s calls) give the same stdout, stderr and exit code as the T3 server's own `t3` CLI, on a stub `codex` with T3's transcripts |
+| Model manifest diff | `node crates/conn-server/tools/model-manifest-diff.mjs target/release/examples/model_manifest_cache` | `model-manifest.json` as this server writes it equals T3's `encodeManifestCache`, byte for byte |
+| Orbit flow          | `node crates/conn-server/tools/orbit-flow.mjs target/release/examples/replay_server`                                            | Orbit's container flow: start, project add, session issue, launch over `/mcp`, revoke, clean stop; then its task-turn path: the model check, `t3 thread` start, list, show, send, a turn that asks, and `t3_copy_rpc.mjs`'s read and interrupt   |
+| Instances flow      | `node crates/conn-server/tools/instances-flow.mjs target/release/conn-server` (skipped without `npm ci` in `helpers/sdk-host`)  | Claude and Codex instances from `providerInstances` written before start: a turn on each starts its stub with its settings; a change and a removal through `server.updateSettings` apply to the next session; disabled instances refused and listed disabled |
 | Canary (last)       | `node tools/canary.mjs verify` (set up by `tools/check.sh` before the first check) | No check read a decoy file of the home, changed the home, or let a marker variable or file reach any output or written file; no passwd home lookup in our code |
 
 **The canary.** `tools/check.sh` runs every check with a decoy HOME (marker files where
@@ -152,11 +156,11 @@ See [`fixtures/README.md`](fixtures/README.md) for every scenario and which need
 | `conn-wire`             | Effect RPC frame types and JSON codec                                 |
 | `conn-contract`         | Generated contract types (`tools/gen-contract.mjs`), method list, ids |
 | `conn-engine`           | `Engine` trait; SQLite event store, projections, streams, turn runner |
-| `conn-provider`         | `Provider` and `Session` traits, `ProviderEvent`                      |
+| `conn-provider`         | `Provider` and `Session` traits, `ProviderEvent`, `ProviderSet` (the instances, changed as the settings change) |
 | `conn-provider-claude`  | The Claude provider, through the official Agent SDK in the SDK host (see [Claude](#claude)) |
 | `conn-provider-codex`   | The Codex provider over `codex app-server` (JSON-RPC on stdio)        |
 | `conn-provider-acp`     | The ACP provider (Grok so far, offered by the server; off until settings enable it) |
-| `conn-provider-support` | Ids, line framing, the process supervisor, the SDK host client (`sdk_host`) and a rooted file host, shared by providers |
+| `conn-provider-support` | Ids, line framing, the process supervisor, the SDK host client (`sdk_host`), a rooted file host, and a provider instance's settings envelope (`instance`: enabled rule, identity, environment with T3's `~` expansion), shared by providers |
 | `conn-mcp`              | `/mcp`: T3 tools over MCP Streamable HTTP; see its README             |
 | `conn-vcs`              | Git status, refs, review diffs, worktrees and their setup             |
 | `conn-files`            | Project files, search, asset URLs, attachments                        |
@@ -213,6 +217,14 @@ runtime request (permission prompts and questions), plan, `turn.terminal`.
 injection, background tasks, subagent stop, MCP apps.
 
 Adding a provider: one new crate that implements both traits.
+
+**Instances.** As in the T3 server, a driver has a default instance whose id is the driver
+kind (`claudeAgent`, `codex`), and each `providerInstances` entry of that driver is one more
+instance (Orbit's `claudeLow` … `claudeMax`). `conn-server/src/instances.rs` builds them
+from the settings at start and again on every change: an entry that changes gives a new
+provider for that id, a removed one is dropped, and open sessions keep the provider they
+opened with, as T3's open sessions keep their adapter. The engine, titles, `/mcp` and the
+server share one `ProviderSet`. Grok's default instance follows its settings itself.
 
 ### 2. Engine (`crates/conn-engine/src/lib.rs`)
 
@@ -438,7 +450,7 @@ SIGTERM and SIGINT stop terminals and close every provider session before the se
 a restart with reconnect, an approved prompt, Stop during a tool call, settings and access,
 search, VCS views and the diff, files and uploads, terminals, a launch into a new worktree, and
 a turn that calls `/mcp`. `crates/conn-server/tools/orbit-flow.mjs` runs Orbit's container
-flow against a binary.
+flow and its task-turn path against a binary.
 
 **Memory on Linux**, measured 2026-11-14 (Conn pin `b12470dcad`) on the Orbit container host (x86_64, Ubuntu, kernel
 7.0). Figures are MiB from `/proc/<pid>/smaps_rollup`. The server is the musl release build of
@@ -503,7 +515,7 @@ What a real Conn session hits that this server does not do:
 - **`/mcp` serves 28 of 87 T3 tools** (`crates/conn-mcp/README.md`).
 - **Worktree launch:** the worktree is made before the thread exists; `prepared-run.*` stays
   refused and no project setup script runs.
-- **Providers:** Claude, Codex and Grok (Grok with `/compact`, background work and subagents; not subagents carried over to a later turn). Their gaps are in each crate's README.
+- **Providers:** Claude, Codex and Grok (Grok with `/compact`, background work and subagents; not subagents carried over to a later turn). Their gaps are in each crate's README. Claude and Codex instance settings apply (binary, home, launch arguments, environment, enabled, identity); not yet: `customModels`, Claude's `autoCompactWindow`, Codex's `shadowHomePath` and its status probe.
 - **Auth:** bearer and ticket only. No cookie sessions, DPoP or relay (`DROP-IN.md` §4).
 - **Desktop-local backend:** the `--bootstrap-fd` start works; the desktop itself still
   spawns the T3 server (`DROP-IN.md` §2).
