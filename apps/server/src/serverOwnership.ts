@@ -37,17 +37,25 @@ import {
   isProcessAlive,
   persistServerRuntimeState,
   readPersistedServerRuntimeState,
+  runtimeStateOtherMachine,
   type PersistedServerRuntimeState,
 } from "./serverRuntimeState.ts";
 
 export class ServerAlreadyRunningError extends Schema.TaggedError<ServerAlreadyRunningError>()(
   "ServerAlreadyRunningError",
-  { stateDir: Schema.String },
+  {
+    stateDir: Schema.String,
+    // Set when the owner's runtime record names a machine other than this one.
+    otherMachine: Schema.optional(Schema.String),
+  },
 ) {
   // Distinct exit codes let supervisors stop restarting an already-owned server.
   override readonly [Runtime.errorExitCode] = SERVER_EXIT_CODE_STATE_DIR_OWNED;
 
   override get message(): string {
+    if (this.otherMachine !== undefined) {
+      return `A T3 Code server on another machine (${this.otherMachine}) already owns ${this.stateDir}. To pair with it, run \`t3 pair\` on ${this.otherMachine}. To run a server on this machine, use a separate T3 home (\`--base-dir\`). No server was stopped. server-owner.sqlite is the ownership lock; do not delete it while a server is running.`;
+    }
     return `A T3 Code server already owns ${this.stateDir}. Stop that server, or use a separate T3 home and pair with it, then retry. No server was stopped. server-owner.sqlite is the ownership lock; do not delete it while a server is running.`;
   }
 }
@@ -207,13 +215,27 @@ const openOwnershipLock = (stateDir: string) =>
         : new ServerOwnershipError({ stateDir, cause }),
   });
 
+// The lock decides ownership; the holder's runtime record only says which machine to name.
+const lockOwnership = (statePath: string) =>
+  openOwnershipLock(NodePath.dirname(statePath)).pipe(
+    Effect.catchTags({
+      ServerAlreadyRunningError: Effect.fn("lockOwnership.nameOtherMachine")(function* (error) {
+        const owner = yield* readPersistedServerRuntimeState(statePath);
+        const otherMachine = Option.isSome(owner)
+          ? yield* runtimeStateOtherMachine(owner.value)
+          : undefined;
+        return yield* otherMachine === undefined
+          ? error
+          : new ServerAlreadyRunningError({ stateDir: error.stateDir, otherMachine });
+      }),
+    }),
+  );
+
 /** Hold only the ownership lock until the scope closes, without claiming the runtime state. */
 export const holdServerOwnershipLock = Effect.fn("holdServerOwnershipLock")(function* (
   statePath: string,
 ) {
-  yield* Effect.acquireRelease(openOwnershipLock(NodePath.dirname(statePath)), ({ db }) =>
-    Effect.sync(() => db.close()),
-  );
+  yield* Effect.acquireRelease(lockOwnership(statePath), ({ db }) => Effect.sync(() => db.close()));
 });
 
 /** Hold an exclusive lock on the state directory until the scope closes. */
@@ -226,7 +248,7 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
     .uuidV4()
     .pipe(Effect.mapError((cause) => new ServerOwnershipError({ stateDir, cause })));
   const lockPath = ownershipLockPath(stateDir);
-  const lock = yield* Effect.acquireRelease(openOwnershipLock(stateDir), ({ db }) =>
+  const lock = yield* Effect.acquireRelease(lockOwnership(statePath), ({ db }) =>
     readPersistedServerRuntimeState(statePath).pipe(
       Effect.flatMap((state) =>
         Option.isSome(state) && state.value.ownerId === ownerId

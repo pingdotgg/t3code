@@ -114,6 +114,17 @@ it.effect(
         `Stop T3 Code server process ${state.pid}, which the background service did not start, before repairing the database.`,
       );
       assert.deepEqual(calls, ["pause", "resume"]);
+
+      const refusedElsewhere = yield* Effect.scoped(
+        acquireServerOwnership(serverRuntimeStatePath).pipe(
+          Effect.tap((owner) => owner.publish({ ...state, hostname: "other-machine" })),
+          Effect.andThen(doctor(false)),
+        ),
+      ).pipe(Effect.flip);
+      assert.equal(
+        refusedElsewhere.message,
+        "A T3 Code server on another machine (other-machine) has this database open. Stop it on other-machine before repairing the database.",
+      );
     }).pipe(Effect.provide(layerHost)),
 );
 

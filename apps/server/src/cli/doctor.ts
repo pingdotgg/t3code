@@ -41,13 +41,18 @@ const lockServerHome = Effect.fn("runDoctor.lockServerHome")(function* (paths: {
   yield* ServerOwnership.holdServerOwnershipLock(paths.serverRuntimeStatePath).pipe(
     Effect.catchTags({
       ServerAlreadyRunningError: Effect.fn("runDoctor.nameServerHolder")(function* (cause) {
-        const owner = yield* readPersistedServerRuntimeState(paths.serverRuntimeStatePath).pipe(
-          Effect.map(Option.filter((state) => isProcessAlive(state.pid))),
-          Effect.orElseSucceed(() => Option.none()),
-        );
+        // Another machine's PID is not a process to stop here.
+        const owner =
+          cause.otherMachine === undefined
+            ? yield* readPersistedServerRuntimeState(paths.serverRuntimeStatePath).pipe(
+                Effect.map(Option.filter((state) => isProcessAlive(state.pid))),
+                Effect.orElseSucceed(() => Option.none()),
+              )
+            : Option.none();
         return yield* new DatabaseMaintenance.DatabaseInUseError({
           path: paths.dbPath,
           cause,
+          ...(cause.otherMachine !== undefined && { otherMachine: cause.otherMachine }),
           ...(Option.isSome(owner) && {
             pid: owner.value.pid,
             serviceManaged: owner.value.serviceManaged === true,

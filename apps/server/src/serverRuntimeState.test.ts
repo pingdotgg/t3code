@@ -188,6 +188,18 @@ describe("server ownership", () => {
           );
           assert.equal(refused._tag, "ServerAlreadyRunningError");
           assert.include(refused.message, "do not delete it while a server is running");
+          assert.notInclude(refused.message, "another machine");
+          // The same T3 home, read from a second machine over a shared filesystem.
+          const refusedElsewhere = yield* ServerOwnership.acquireServerOwnership(statePath).pipe(
+            Effect.provideService(HostProcess.Hostname, "second-machine"),
+            Effect.flip,
+          );
+          assert.equal(refusedElsewhere._tag, "ServerAlreadyRunningError");
+          assert.include(
+            refusedElsewhere.message,
+            `on another machine (${HostProcess.Hostname.defaultValue()})`,
+          );
+          assert.notInclude(refusedElsewhere.message, "Stop that server");
           assert.equal(yield* fs.readFileString(statePath), before);
         }),
       );
