@@ -120,6 +120,19 @@ describe("1Password driver", () => {
     }).pipe(Effect.provide(op.layer));
   });
 
+  it.effect("reads one at a time when a reference ends in a space `op inject` would trim", () => {
+    const op = fakeOp((args) => ({ stdout: args.at(-1)!.endsWith(" ") ? "TRAILING" : "PLAIN" }));
+    return Effect.gen(function* () {
+      const values = yield* driver.read({ account }, [
+        "op://Private/OpenAI/credential",
+        "op://Private/OpenAI/credential ",
+      ]);
+
+      assert.deepStrictEqual(values, ["PLAIN", "TRAILING"]);
+      assert.isFalse(op.invocations.some((args) => args.includes("inject")));
+    }).pipe(Effect.provide(op.layer));
+  });
+
   it.effect("falls back to one read at a time when the batch fails", () => {
     const op = fakeOp((args) =>
       args.includes("inject")

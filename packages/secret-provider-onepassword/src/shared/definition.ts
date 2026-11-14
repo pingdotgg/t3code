@@ -25,7 +25,7 @@ export type OnePasswordSecretProviderConfig = typeof OnePasswordSecretProviderCo
 
 // 1Password secret reference syntax: names outside this charset must be written as item ids.
 // It also keeps `{{`, `}}`, and line breaks out of the `op inject` template the server builds.
-const NAME = String.raw`[A-Za-z0-9._-](?:[A-Za-z0-9 ._-]*[A-Za-z0-9._-])?`;
+const NAME = String.raw` *[A-Za-z0-9._-][A-Za-z0-9 ._-]*`;
 const REFERENCE = new RegExp(
   String.raw`^op://${NAME}(?:/${NAME}){2,3}(?:\?[a-z-]+=[A-Za-z0-9_-]+)?$`,
 );

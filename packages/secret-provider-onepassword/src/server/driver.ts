@@ -99,7 +99,8 @@ export const driver = defineSecretProviderDriver({
   kind: definition.kind,
   definition,
   read: Effect.fn("OnePasswordDriver.read")(function* ({ account }, references) {
-    if (references.length > 1) {
+    // `op inject` trims a trailing space that `op read` keeps as part of a field name.
+    if (references.length > 1 && !references.some((reference) => reference.endsWith(" "))) {
       const together = yield* bounded("inject", readTogether(account, references));
       // Reading one by one after a timeout would only wait that long again for each reference.
       if (Option.isNone(together)) return references.map(() => undefined);
