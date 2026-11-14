@@ -496,12 +496,24 @@ impl Inner {
                 commands::refusal(&command_type).to_owned(),
             ));
         };
+        let host = self.host.clone();
         let outcome = self
             .db(move |store| {
                 if let Some(seq) = store.receipt(&command_id).map_err(CommandError::Store)? {
                     return Ok((vec![], seq, true));
                 }
                 let mut tx = store.tx().map_err(CommandError::Store)?;
+                if let Some(host) = &host
+                    && let Some((project, instance)) =
+                        dispatch_target(&tx, &command).map_err(CommandError::Store)?
+                    && !host.provider_instance_enabled(project.as_deref(), &instance)
+                {
+                    tx.rollback();
+                    return Err(CommandError::Rejected(format!(
+                        "Provider instance \"{instance}\" is disabled for project {}.",
+                        project.unwrap_or_default()
+                    )));
+                }
                 match handler(&mut tx, command) {
                     Ok(effects) => {
                         let seq = tx
@@ -931,6 +943,44 @@ impl Engine for SqliteEngine {
                 .map_err(EngineError::Internal)
         })
     }
+}
+
+/// The project and provider instance a command would start work on (T3's
+/// `assertDispatchTargetEnabled`), or `None` when it starts none or names no known thread.
+fn dispatch_target(
+    tx: &crate::store::Tx<'_>,
+    command: &Value,
+) -> crate::store::StoreResult<Option<(Option<String>, String)>> {
+    let text = |v: &Value| v.as_str().map(str::to_owned);
+    let thread_id = match command["type"].as_str().unwrap_or("") {
+        "delegated_task.request" => &command["parentThreadId"],
+        "thread.metadata.update" if command.get("continuation").is_none() => return Ok(None),
+        "message.dispatch"
+        | "thread.metadata.update"
+        | "prepared-run.release"
+        | "prepared-run.retry" => &command["threadId"],
+        _ => return Ok(None),
+    };
+    let Some(thread_id) = thread_id.as_str() else {
+        return Ok(None);
+    };
+    let Some(thread) = tx.thread(thread_id)? else {
+        return Ok(None);
+    };
+    let project = text(&thread["projectId"]);
+    let instance = match command["type"].as_str().unwrap_or("") {
+        "message.dispatch" => text(&command["modelSelection"]["instanceId"])
+            .or_else(|| text(&thread["modelSelection"]["instanceId"])),
+        "delegated_task.request" => text(&command["modelSelection"]["instanceId"]),
+        "thread.metadata.update" => text(&thread["modelSelection"]["instanceId"]),
+        _ => match command["runId"].as_str() {
+            Some(run_id) => tx
+                .entity(thread_id, "runs", run_id)?
+                .and_then(|run| text(&run["providerInstanceId"])),
+            None => None,
+        },
+    };
+    Ok(instance.map(|instance| (project, instance)))
 }
 
 #[cfg(test)]

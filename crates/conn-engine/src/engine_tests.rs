@@ -3151,3 +3151,54 @@ async fn a_scheduled_fresh_run_is_a_side_conversation() {
         3
     );
 }
+
+/// Allows every instance but `off`.
+struct OneInstanceOff;
+
+impl crate::EngineHost for OneInstanceOff {
+    fn provider_instance_enabled(&self, _project_id: Option<&str>, instance_id: &str) -> bool {
+        instance_id != "off"
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_message_to_a_disabled_instance_is_refused_at_dispatch() {
+    let db = TempDb::new("instance-off");
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.host = Some(Arc::new(OneInstanceOff));
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut off = message("t1", "c2", "hello");
+    off["modelSelection"] = json!({"instanceId": "off", "model": "m"});
+    let refused = engine.dispatch(from_json(off).unwrap()).await;
+    let Err(EngineError::Rejected(error)) = refused else {
+        panic!("expected a refusal");
+    };
+    assert_eq!(
+        to_json(&error)["message"],
+        format!(
+            "Provider instance \"off\" is disabled for project {}.",
+            project_id()
+        )
+    );
+    // Nothing of the refused message was written; a message to an enabled instance runs.
+    assert!(
+        projection(&engine, "t1").await["messages"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    dispatch(&engine, message("t1", "c3", "hello")).await;
+    assert_eq!(
+        projection(&engine, "t1").await["messages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
