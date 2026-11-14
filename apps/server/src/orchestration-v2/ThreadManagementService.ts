@@ -19,6 +19,9 @@ import {
   OrchestrationV2ForceStopThreadError,
   type OrchestrationV2ForceStopThreadInput,
   type OrchestrationV2ForceStopThreadResult,
+  OrchestrationV2RenameThreadTagError,
+  type OrchestrationV2RenameThreadTagInput,
+  type OrchestrationV2RenameThreadTagResult,
   type ModelSelection,
   type OrchestrationV2Actor,
   type OrchestrationV2Command,
@@ -502,6 +505,10 @@ export interface ThreadManagementServiceShape {
   readonly forceStopThread: (
     input: OrchestrationV2ForceStopThreadInput,
   ) => Effect.Effect<OrchestrationV2ForceStopThreadResult, OrchestrationV2ForceStopThreadError>;
+  /** One `thread.tag.rename` per thread carrying the tag, keyed off the input command id. */
+  readonly renameThreadTag: (
+    input: OrchestrationV2RenameThreadTagInput,
+  ) => Effect.Effect<OrchestrationV2RenameThreadTagResult, OrchestrationV2RenameThreadTagError>;
   readonly awaitBackgroundTasks: (input: {
     readonly threadId: ThreadId;
     readonly taskIds: ReadonlyArray<string>;
@@ -1448,6 +1455,35 @@ const make = Effect.gen(function* () {
       ),
   );
 
+  const renameThreadTag: ThreadManagementServiceShape["renameThreadTag"] = Effect.fn(
+    "ThreadManagementService.renameThreadTag",
+  )(
+    function* ({ commandId, from, to }) {
+      const threadIds = yield* orchestrator.listThreadIdsWithTag(from);
+      if (to !== from) {
+        yield* Effect.forEach(
+          threadIds,
+          (threadId) =>
+            orchestrator.dispatch({
+              type: "thread.tag.rename",
+              commandId: CommandId.make(`${commandId}:${threadId}`),
+              threadId,
+              from,
+              to,
+            }),
+          { discard: true },
+        );
+      }
+      return { threadCount: threadIds.length };
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.mapError(
+          (cause) => new OrchestrationV2RenameThreadTagError({ from: input.from, cause }),
+        ),
+      ),
+  );
+
   const stopWorkflow: ThreadManagementServiceShape["stopWorkflow"] = Effect.fn(
     "ThreadManagementService.stopWorkflow",
   )(
@@ -1756,6 +1792,7 @@ const make = Effect.gen(function* () {
     stopDelegatedTasks,
     stopWorkflow,
     forceStopThread,
+    renameThreadTag,
     awaitBackgroundTasks,
     getThreadEventSequence: orchestrator.getThreadEventSequence,
     recoverDelegatedTask: orchestrator.recoverDelegatedTask,

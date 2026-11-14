@@ -3488,6 +3488,123 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("renames a tag on every thread that carries it, archived and settled ones too", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const projectId = ProjectId.make("runtime-layer-tag-rename-project");
+      yield* seedProject({
+        projectId,
+        title: "Tag rename project",
+        workspaceRoot: "/workspace/tag-rename",
+        defaultModelSelection: null,
+        createdAt: "2026-09-07T00:00:00.000Z",
+      });
+      const threadId = (name: string) => ThreadId.make(`runtime-layer-tag-rename-${name}`);
+      const seedThread = Effect.fn(function* (name: string, tags: ReadonlyArray<string>) {
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-tag-rename-create-${name}`),
+          threadId: threadId(name),
+          projectId,
+          title: name,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        for (const tag of tags) {
+          yield* orchestrator.dispatch({
+            type: "thread.tag.set",
+            commandId: CommandId.make(`runtime-layer-tag-rename-tag-${name}-${tag}`),
+            threadId: threadId(name),
+            tag,
+            tagged: true,
+          });
+        }
+      });
+      yield* seedThread("plain", ["folder"]);
+      yield* seedThread("ordered", ["folder", "keep"]);
+      yield* seedThread("merged", ["folder", "renamed"]);
+      yield* seedThread("archived", ["folder"]);
+      yield* seedThread("settled", ["folder"]);
+      yield* seedThread("untagged", []);
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-layer-tag-rename-archive"),
+        threadId: threadId("archived"),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-tag-rename-settle"),
+        threadId: threadId("settled"),
+      });
+      const tagsOf = Effect.fn(function* () {
+        const entries: Record<string, ReadonlyArray<string>> = {};
+        for (const name of ["plain", "ordered", "merged", "archived", "settled", "untagged"]) {
+          entries[name] =
+            (yield* orchestrator.getThreadProjection(threadId(name))).thread.tags ?? [];
+        }
+        return entries;
+      });
+
+      const rename = {
+        commandId: CommandId.make("runtime-layer-tag-rename"),
+        from: "folder",
+        to: "renamed",
+      } as const;
+      assert.deepEqual(yield* threadManagement.renameThreadTag(rename), { threadCount: 5 });
+      const renamed = {
+        plain: ["renamed"],
+        ordered: ["renamed", "keep"],
+        merged: ["renamed"],
+        archived: ["renamed"],
+        settled: ["renamed"],
+        untagged: [],
+      };
+      assert.deepEqual(yield* tagsOf(), renamed);
+
+      // A retried rename finds nothing left to move, and a replayed thread command is a no-op.
+      assert.deepEqual(yield* threadManagement.renameThreadTag(rename), { threadCount: 0 });
+      const replayed = yield* orchestrator.dispatch({
+        type: "thread.tag.rename",
+        commandId: CommandId.make(`${rename.commandId}:${threadId("plain")}`),
+        threadId: threadId("plain"),
+        from: "folder",
+        to: "renamed",
+      });
+      assert.isTrue(replayed.replayed);
+      yield* orchestrator.dispatch({
+        type: "thread.tag.rename",
+        commandId: CommandId.make("runtime-layer-tag-rename-stale"),
+        threadId: threadId("plain"),
+        from: "folder",
+        to: "other",
+      });
+      assert.deepEqual(yield* tagsOf(), renamed);
+
+      assert.deepEqual(
+        yield* threadManagement.renameThreadTag({
+          commandId: CommandId.make("runtime-layer-tag-remove"),
+          from: "renamed",
+          to: null,
+        }),
+        { threadCount: 5 },
+      );
+      assert.deepEqual(yield* tagsOf(), {
+        plain: [],
+        ordered: ["keep"],
+        merged: [],
+        archived: [],
+        settled: [],
+        untagged: [],
+      });
+    }),
+  );
+
   it.effect("keeps the branch pull request when linking another pull request", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

@@ -3580,6 +3580,14 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  // One thread's share of `orchestration.renameThreadTag`; a null `to` removes the tag.
+  Schema.Struct({
+    type: Schema.Literal("thread.tag.rename"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    from: ThreadTag,
+    to: Schema.NullOr(ThreadTag),
+  }),
   // Guest share commands the server issues after checking T3 Connect and the guest token.
   Schema.Struct({
     type: Schema.Literal("thread.guest-share.open"),
@@ -3832,6 +3840,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getNativeChildWork: "orchestration.getNativeChildWork",
   stopWorkflow: "orchestration.stopWorkflow",
   forceStopThread: "orchestration.forceStopThread",
+  renameThreadTag: "orchestration.renameThreadTag",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
   subscribeShell: "orchestration.subscribeShell",
@@ -4024,6 +4033,16 @@ export const OrchestrationV2GetOlderSettledThreadsInput = Schema.Struct({
   before: OrchestrationV2OlderSettledCursor,
   /** Every project when absent. */
   projectIds: Schema.optionalKey(Schema.Array(ProjectId)),
+  /**
+   * `tagged` reads threads carrying any of `tags`; `untagged` reads threads with no tag. Every
+   * thread when absent. Send only to servers that advertise `threadTagRename`.
+   */
+  tagScope: Schema.optionalKey(
+    Schema.Union([
+      Schema.Struct({ type: Schema.Literal("tagged"), tags: Schema.NonEmptyArray(ThreadTag) }),
+      Schema.Struct({ type: Schema.Literal("untagged") }),
+    ]),
+  ),
   /** 0 reads only the counts. */
   limit: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 50 })),
 });
@@ -4250,6 +4269,35 @@ export class OrchestrationV2StopWorkflowError extends Schema.TaggedError<Orchest
       case "stop-failed":
         return "Failed to stop the workflow.";
     }
+  }
+}
+
+/**
+ * Renames a tag on every thread of the environment that carries it, archived and older settled
+ * ones included. A null `to` removes the tag; a thread that already has `to` keeps one copy.
+ */
+export const OrchestrationV2RenameThreadTagInput = Schema.Struct({
+  commandId: CommandId,
+  from: ThreadTag,
+  to: Schema.NullOr(ThreadTag),
+});
+export type OrchestrationV2RenameThreadTagInput = typeof OrchestrationV2RenameThreadTagInput.Type;
+
+export const OrchestrationV2RenameThreadTagResult = Schema.Struct({
+  /** Threads that carried `from` when the server read them. */
+  threadCount: NonNegativeInt,
+});
+export type OrchestrationV2RenameThreadTagResult = typeof OrchestrationV2RenameThreadTagResult.Type;
+
+export class OrchestrationV2RenameThreadTagError extends Schema.TaggedError<OrchestrationV2RenameThreadTagError>()(
+  "OrchestrationV2RenameThreadTagError",
+  {
+    from: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return "Failed to update the folder.";
   }
 }
 
@@ -4532,6 +4580,10 @@ export const OrchestrationV2RpcSchemas = {
   forceStopThread: {
     input: OrchestrationV2ForceStopThreadInput,
     output: OrchestrationV2ForceStopThreadResult,
+  },
+  renameThreadTag: {
+    input: OrchestrationV2RenameThreadTagInput,
+    output: OrchestrationV2RenameThreadTagResult,
   },
   getWorkflowScript: {
     input: OrchestrationV2GetWorkflowScriptInput,

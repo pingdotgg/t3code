@@ -5,6 +5,7 @@ import type {
   OrchestrationV2SearchThreadResult,
   OrchestrationV2ThreadHistoryPage,
   ProjectId,
+  ThreadTag,
 } from "@t3tools/contracts";
 import {
   latestExecutedRun,
@@ -512,6 +513,9 @@ export interface OrchestratorV2Shape {
   readonly listOlderSettledThreads: (
     query: OlderSettledThreadsQuery,
   ) => Effect.Effect<OlderSettledThreadsListing, OrchestratorV2Error>;
+  readonly listThreadIdsWithTag: (
+    tag: ThreadTag,
+  ) => Effect.Effect<ReadonlyArray<ThreadId>, OrchestratorV2Error>;
   readonly readShellSnapshot: (
     options?: ShellSnapshotOptions,
   ) => Effect.Effect<
@@ -637,6 +641,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pin.reorder":
     case "thread.active.reorder":
     case "thread.tag.set":
+    case "thread.tag.rename":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
@@ -4053,6 +4058,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.unpin"
           | "thread.pin.reorder"
           | "thread.tag.set"
+          | "thread.tag.rename"
           | "thread.active.reorder"
           | "thread.mark-unread"
           | "thread.metadata.update"
@@ -4736,6 +4742,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : current.filter((tag) => tag !== command.tag),
           };
         }
+        case "thread.tag.rename": {
+          const { from, to } = command;
+          const current = thread.tags ?? [];
+          const kept = current.filter((tag) => tag !== from);
+          return {
+            ...thread,
+            tags:
+              to === null || kept.includes(to)
+                ? kept
+                : current.map((tag) => (tag === from ? to : tag)),
+          };
+        }
         case "thread.mark-unread": {
           // Retire the wake before rewinding the visit, preserving its settlement timer.
           const snoozeExpired =
@@ -5154,6 +5172,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.active.reorder":
           return "thread.active-reordered" as const;
         case "thread.tag.set":
+        case "thread.tag.rename":
           return "thread.tags-updated" as const;
         case "thread.mark-unread":
           return "thread.marked-unread" as const;
@@ -14961,6 +14980,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pin.reorder":
       case "thread.active.reorder":
       case "thread.tag.set":
+      case "thread.tag.rename":
       case "thread.mark-unread":
       case "thread.pull-request.link":
       case "thread.pull-request.unlink":
@@ -16219,6 +16239,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return projectionStore
         .listOlderSettledThreads(query)
         .pipe(Effect.mapError(shellProjectionError));
+    }),
+    listThreadIdsWithTag: Effect.fn("OrchestratorV2.listThreadIdsWithTag")(function (tag) {
+      return projectionStore.listThreadIdsWithTag(tag).pipe(Effect.mapError(shellProjectionError));
     }),
     readShellSnapshot: Effect.fn("OrchestratorV2.readShellSnapshot")(function (options) {
       return projectionStore

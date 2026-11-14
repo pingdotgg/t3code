@@ -2851,6 +2851,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
       readonly subagent?: boolean;
       readonly archived?: boolean;
       readonly snoozedUntilDay?: number;
+      readonly tags?: ReadonlyArray<string>;
     }) =>
       store.apply({
         id: EventId.make(`event:older:${input.name}`),
@@ -2884,23 +2885,25 @@ it.effect("SQL list older settled threads below a cursor", () =>
           snoozedUntil: input.snoozedUntilDay === undefined ? null : at(input.snoozedUntilDay),
           lastVisitedAt: null,
           deletedAt: null,
+          ...(input.tags === undefined ? {} : { tags: input.tags }),
         },
       });
-    yield* createThread({ name: "a", settledDay: 5 });
-    yield* createThread({ name: "b", settledDay: 4 });
+    yield* createThread({ name: "a", settledDay: 5, tags: ["folder"] });
+    yield* createThread({ name: "b", settledDay: 4, tags: ["other", "folder"] });
     yield* createThread({ name: "c", settledDay: 4 });
     yield* createThread({ name: "d", settledDay: 3, project: "project:b" });
     yield* createThread({ name: "snoozed", settledDay: 2, snoozedUntilDay: 30 });
     yield* createThread({ name: "recent", settledDay: 20 });
     yield* createThread({ name: "unsettled", settledDay: null });
     yield* createThread({ name: "child", settledDay: 1, subagent: true });
-    yield* createThread({ name: "archived", settledDay: 1, archived: true });
+    yield* createThread({ name: "archived", settledDay: 1, archived: true, tags: ["folder"] });
 
     const list = (
       before: { readonly settledAt: string; readonly threadId?: ThreadId },
       limit: number,
       projectIds?: ReadonlyArray<ProjectId>,
-    ) => store.listOlderSettledThreads({ before, projectIds, limit });
+      tagScope?: ProjectionStore.OlderSettledThreadsQuery["tagScope"],
+    ) => store.listOlderSettledThreads({ before, projectIds, tagScope, limit });
     const before = { settledAt: DateTime.formatIso(at(10)) };
     const first = yield* list(before, 2);
     assert.deepEqual(first, { threadIds: [id("a"), id("b")], counts: [] });
@@ -2929,6 +2932,29 @@ it.effect("SQL list older settled threads below a cursor", () =>
       threadIds: [],
       counts: [{ projectId: ProjectId.make("project:b"), count: 1 }],
     });
+
+    const folder = { type: "tagged", tags: ["folder"] } as const;
+    assert.deepEqual((yield* list(before, 10, undefined, folder)).threadIds, [id("a"), id("b")]);
+    assert.deepEqual((yield* list(before, 0, undefined, folder)).counts, [
+      { projectId: ProjectId.make("project:a"), count: 2 },
+    ]);
+    assert.deepEqual(
+      (yield* list(before, 10, undefined, { type: "tagged", tags: ["other", "missing"] }))
+        .threadIds,
+      [id("b")],
+    );
+    assert.deepEqual((yield* list(before, 10, undefined, { type: "untagged" })).threadIds, [
+      id("c"),
+      id("d"),
+      id("snoozed"),
+    ]);
+    // Rename reaches archived threads too, which the older settled shelf never lists.
+    assert.deepEqual(yield* store.listThreadIdsWithTag("folder"), [
+      id("a"),
+      id("archived"),
+      id("b"),
+    ]);
+    assert.deepEqual(yield* store.listThreadIdsWithTag("fold"), []);
   }).pipe(Effect.provide(layerTest)),
 );
 

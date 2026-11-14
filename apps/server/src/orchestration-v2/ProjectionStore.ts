@@ -7,6 +7,8 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
 import { unsentManualContinuationSource } from "./manualContinuation.ts";
 import type {
+  OrchestrationV2GetOlderSettledThreadsInput,
+  ThreadTag,
   OrchestrationV2ThreadLinkMetadata,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -485,6 +487,7 @@ export type ActiveThreadListEntry = Pick<
 export interface OlderSettledThreadsQuery {
   readonly before: OrchestrationV2OlderSettledCursor;
   readonly projectIds?: ReadonlyArray<ProjectId> | undefined;
+  readonly tagScope?: OrchestrationV2GetOlderSettledThreadsInput["tagScope"];
   readonly limit: number;
 }
 
@@ -592,6 +595,10 @@ export interface ProjectionStoreV2Shape {
   readonly listOlderSettledThreads: (
     query: OlderSettledThreadsQuery,
   ) => Effect.Effect<OlderSettledThreadsListing, ProjectionStoreV2Error>;
+  /** Every thread that is not deleted and carries `tag`, archived and settled ones included. */
+  readonly listThreadIdsWithTag: (
+    tag: ThreadTag,
+  ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
   /**
    * Callers that combine the shell with other reads run this inside their own
    * transaction and the returned decode after it commits, so the shared
@@ -8935,7 +8942,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const listOlderSettledThreads: ProjectionStoreV2Shape["listOlderSettledThreads"] = Effect.fn(
       "ProjectionStore.listOlderSettledThreads",
-    )(function* ({ before, projectIds, limit }) {
+    )(function* ({ before, projectIds, tagScope, limit }) {
       // ISO strings in one format, so string order is time order.
       const older = sql`
         SELECT t.thread_id, t.project_id,
@@ -8948,6 +8955,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           AND json_extract(t.payload_json, '$.settledOverride') = 'settled'
           AND json_extract(t.payload_json, '$.settledAt') IS NOT NULL${
             projectIds === undefined ? sql`` : sql` AND t.project_id IN ${sql.in(projectIds)}`
+          }${
+            tagScope === undefined
+              ? sql``
+              : tagScope.type === "untagged"
+                ? sql` AND COALESCE(json_array_length(t.payload_json, '$.tags'), 0) = 0`
+                : sql` AND EXISTS (
+                    SELECT 1 FROM json_each(t.payload_json, '$.tags') tag
+                    WHERE tag.value IN ${sql.in(tagScope.tags)}
+                  )`
           }
       `;
       const belowCursor =
@@ -8981,6 +8997,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           count: row.count,
         })),
       };
+    }, Effect.mapError(shellSnapshotReadError));
+
+    const listThreadIdsWithTag: ProjectionStoreV2Shape["listThreadIdsWithTag"] = Effect.fn(
+      "ProjectionStore.listThreadIdsWithTag",
+    )(function* (tag) {
+      const rows = yield* sql<{ readonly thread_id: string }>`
+        SELECT t.thread_id
+        FROM orchestration_v2_projection_threads t
+        WHERE t.deleted_at IS NULL
+          AND EXISTS (
+            SELECT 1 FROM json_each(t.payload_json, '$.tags') tag WHERE tag.value = ${tag}
+          )
+        ORDER BY t.thread_id
+      `;
+      return rows.map((row) => ThreadId.make(row.thread_id));
     }, Effect.mapError(shellSnapshotReadError));
 
     const getThreadShell: ProjectionStoreV2Shape["getThreadShell"] = (threadId) =>
@@ -9085,6 +9116,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       listActiveThreads: readOnReader(listActiveThreads),
       readShellSnapshot: readOnReader(readShellSnapshot),
       listOlderSettledThreads: readOnReader(listOlderSettledThreads),
+      listThreadIdsWithTag: readOnReader(listThreadIdsWithTag),
       getThreadShell: readOnReader(getThreadShell),
       findGuestShareThreadId: readOnReader(findGuestShareThreadId),
       getThread: readOnReader(getThread),
