@@ -123,6 +123,8 @@ export function threadSupportsProviderHandoff(projection: Projection | null | un
 export function getUserQueuedThreadRuns(
   projection: Pick<Projection, "runs" | "messages">,
 ): ReadonlyArray<Run> {
+  if (!projection.runs.some((run) => run.status === "queued")) return [];
+
   const automaticCompletionMessageIds = new Set(
     projection.messages
       .filter(
