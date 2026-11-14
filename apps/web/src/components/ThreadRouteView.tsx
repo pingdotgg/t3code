@@ -5,8 +5,9 @@ import { visibilityParentKey } from "@t3tools/client-runtime/state/threads";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Navigate, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState, lazy, Suspense } from "react";
+import { useEffect, useState } from "react";
 
+import ChatView from "./ChatView";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { SidebarInset } from "./ui/sidebar";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -25,10 +26,6 @@ import {
   resolveThreadRouteRenderState,
   type ThreadRouteTarget,
 } from "../threadRoutes";
-
-// Dynamic import keeps the chat surface (markdown, highlighting, the composer) out of the startup
-// chunk graph, which the _chat route would otherwise pull in before any thread opens.
-const ChatView = lazy(() => import("./ChatView"));
 
 /**
  * Keeps the family of an open thread the shell leaves out (an older settled thread) in the shell
@@ -232,9 +229,7 @@ export function ThreadRouteView({
       className="h-svh min-h-0 overflow-hidden overscroll-y-none md:h-dvh"
       inert={background}
     >
-      <BackgroundThreadContext value={background}>
-        <Suspense fallback={null}>{view}</Suspense>
-      </BackgroundThreadContext>
+      <BackgroundThreadContext value={background}>{view}</BackgroundThreadContext>
       {background ? null : redirect}
     </SidebarInset>
   );
