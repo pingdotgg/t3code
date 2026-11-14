@@ -120,6 +120,18 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       expect(yield* checkpointStore.isGitRepository(nested)).toBe(true);
     }),
   );
+  it.effect("does not checkpoint a bare repository's root, which has no work tree", () =>
+    Effect.gen(function* () {
+      const source = yield* makeTmpDir();
+      const root = yield* makeTmpDir();
+      yield* initRepoWithCommit(source);
+      yield* git(root, ["clone", "--bare", source, ".bare"]);
+      yield* writeTextFile(NodePath.join(root, ".git"), "gitdir: ./.bare\n");
+      const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+      expect(yield* checkpointStore.isGitRepository(root)).toBe(false);
+    }),
+  );
   it.effect("fails the repository probe that other callers read as no repository", () =>
     Effect.gen(function* () {
       const tmp = yield* makeTmpDir();

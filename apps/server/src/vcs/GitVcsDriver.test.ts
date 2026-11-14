@@ -1511,20 +1511,24 @@ it.effect("GitVcsDriver fails repository probes when git cannot read the reposit
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
-it.effect("GitVcsDriver reports no repository for a deleted cwd or a bare repository", () =>
+it.effect("GitVcsDriver finds no work tree in a deleted cwd or at a bare repository's root", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-no-work-tree-" });
-    const bare = path.join(root, "bare.git");
-    yield* fileSystem.makeDirectory(bare);
-    yield* runGit(bare, ["init", "--bare"]);
+    const deleted = path.join(root, "deleted");
+    // The bare-root layout: `.bare` holds the repository and `.git` points at it.
+    const bareRoot = path.join(root, "project");
+    yield* fileSystem.makeDirectory(path.join(bareRoot, ".bare"), { recursive: true });
+    yield* runGit(path.join(bareRoot, ".bare"), ["init", "--bare"]);
+    yield* fileSystem.writeFileString(path.join(bareRoot, ".git"), "gitdir: ./.bare\n");
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
 
-    for (const cwd of [path.join(root, "deleted"), bare]) {
-      assert.equal(yield* driver.isInsideWorkTree(cwd), false, cwd);
-      assert.equal(yield* driver.detectRepository(cwd), null, cwd);
-    }
+    assert.equal(yield* driver.isInsideWorkTree(deleted), false);
+    assert.equal(yield* driver.detectRepository(deleted), null);
+    assert.equal(yield* driver.isInsideWorkTree(bareRoot), false);
+    // Worktree and branch commands work at a bare root, so it still counts as a repository.
+    assert.equal((yield* driver.detectRepository(bareRoot))?.rootPath, bareRoot);
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 

@@ -23,7 +23,8 @@ const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
 const normalizeGitArgs = (args: ReadonlyArray<string>): ReadonlyArray<string> =>
   args[0] === "-C" && args.length >= 2 ? args.slice(2) : args;
 
-const DETECT_COMMAND = "rev-parse --is-inside-work-tree --show-toplevel --git-common-dir";
+const DETECT_COMMAND =
+  "rev-parse --is-inside-work-tree --is-bare-repository --git-common-dir --show-toplevel";
 
 describe("VcsDriverRegistry", () => {
   const makeDiskBackedLayer = (rootDir: string, calls: string[]) =>
@@ -55,7 +56,7 @@ describe("VcsDriverRegistry", () => {
               }
               if (command === DETECT_COMMAND) {
                 return processOutput(
-                  `true\n${repoDir}\n${path.relative(input.cwd, path.join(repoDir, ".git"))}\n`,
+                  `true\nfalse\n${path.relative(input.cwd, path.join(repoDir, ".git"))}\n${repoDir}\n`,
                 );
               }
               return processOutput("");
@@ -172,7 +173,7 @@ describe("VcsDriverRegistry", () => {
       // A newline in the root path makes detection ask for it again, and main surfaced that failure.
       const fallbackFailure = yield* VcsDriverRegistry.VcsDriverRegistry.pipe(
         Effect.flatMap((registry) => registry.detect({ cwd: "/repo" })),
-        Effect.provide(makeFailingLayer(processOutput("true\n/re\npo\n.git\n"))),
+        Effect.provide(makeFailingLayer(processOutput("true\nfalse\n.git\n/re\npo\n"))),
         Effect.flip,
       );
       assert.equal(fallbackFailure._tag, "VcsProcessExitError");

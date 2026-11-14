@@ -2298,6 +2298,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       if (isNonRepositoryGitStderr(statusResult.stderr)) {
         return NON_REPOSITORY_STATUS_DETAILS;
       }
+      // A bare repository's root has branches and upstreams but no work tree to report on.
+      if (statusResult.stderr.toLowerCase().includes("must be run in a work tree")) {
+        const { defaultBranch: _, ...refStatus } = yield* readStatusDetailsRemote(cwd);
+        return {
+          ...NON_REPOSITORY_STATUS_DETAILS,
+          ...refStatus,
+          hasOriginRemote: hasPrimaryRemote,
+        };
+      }
       return yield* new GitCommandError({
         ...gitCommandContext({
           operation: "GitVcsDriver.statusDetails.status",

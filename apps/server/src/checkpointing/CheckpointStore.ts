@@ -87,13 +87,13 @@ export const make = Effect.gen(function* () {
     return handle.driver.checkpoints satisfies VcsCheckpointOps;
   });
 
-  // The registry reads an unreadable repository as none; ask Git again so that fails here.
+  // Asks Git directly: the registry reads an unreadable repository as none, and accepts a bare
+  // repository's root, which has no work tree to checkpoint.
   const isGitRepository: CheckpointStore["Service"]["isGitRepository"] = Effect.fn(
     "CheckpointStore.isGitRepository",
   )(function* (cwd) {
-    if ((yield* vcsRegistry.detect({ cwd, requestedKind: "git" })) !== null) return true;
     const git = yield* vcsRegistry.get("git");
-    return (yield* git.detectRepository(cwd)) !== null;
+    return yield* git.isInsideWorkTree(cwd);
   });
 
   const captureCheckpoint: CheckpointStore["Service"]["captureCheckpoint"] = Effect.fn(

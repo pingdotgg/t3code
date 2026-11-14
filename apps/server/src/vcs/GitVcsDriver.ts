@@ -601,7 +601,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const vcsProcess = yield* VcsProcess.VcsProcess;
   const random = yield* SecureRandom.SecureRandom;
   const hostPlatform = yield* HostProcess.Platform;
-  // Returns stdout, or null when there is no work tree. A non-repository exits 128 like a broken
+  // Returns stdout, or null when there is no repository. A non-repository exits 128 like a broken
   // one, so only Git's message (pinned to the C locale) or a missing cwd tells them apart.
   const probeWorkTree = Effect.fn("GitVcsDriver.probeWorkTree")(function* (
     operation: string,
@@ -616,11 +616,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       maxOutputBytes,
     }).pipe(Effect.catchIf(isMissingExecutable, () => Effect.succeed(null)));
     if (result === null) return null;
-    if (result.exitCode === 0) return result.stdout;
-    // Git before 2.38 answers "false" for a bare repo, then fails on --show-toplevel.
+    // Outside a work tree Git answers "false", then fails on a later work-tree-only flag.
+    if (result.exitCode === 0 || result.stdout.startsWith("false")) return result.stdout;
     // Match line prefixes only: a path inside a diagnostic may contain the same words.
     if (
-      result.stdout.startsWith("false") ||
       hasStderrLine(result.stderr, [
         "fatal: not a git repository",
         "fatal: cannot use bare repository",
@@ -662,18 +661,34 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const detectRepository: VcsDriver.VcsDriver["Service"]["detectRepository"] = Effect.fn(
     "detectRepository",
   )(function* (cwd) {
-    // One spawn answers all three; outside a work tree it exits non-zero or prints "false".
+    // One spawn answers all four; outside a work tree Git prints "false" and stops at --show-toplevel.
     const stdout = yield* probeWorkTree(
       "GitVcsDriver.detectRepository",
       cwd,
-      ["rev-parse", "--is-inside-work-tree", "--show-toplevel", "--git-common-dir"],
+      [
+        "rev-parse",
+        "--is-inside-work-tree",
+        "--is-bare-repository",
+        "--git-common-dir",
+        "--show-toplevel",
+      ],
       16_384,
     );
     if (stdout === null) return null;
     const lines = stdout.replace(/\r?\n$/u, "").split(/\r?\n/u);
-    if (lines[0]?.trim() !== "true") return null;
+    if (lines[0]?.trim() !== "true") {
+      // A bare repository's root (or a folder whose .git points at one) has no work tree,
+      // but `git worktree add` and branch commands work there.
+      if (lines[0]?.trim() !== "false" || lines[1]?.trim() !== "true") return null;
+      return {
+        kind: "git" as const,
+        rootPath: path.resolve(cwd),
+        metadataPath: lines.slice(2).join("\n").trim() || null,
+        freshness: yield* nowFreshness(),
+      };
+    }
     // A newline inside a path breaks the line framing; ask for each path on its own.
-    if (lines.length !== 3) {
+    if (lines.length !== 4) {
       const root = yield* gitCommand(vcsProcess, "GitVcsDriver.detectRepository", cwd, [
         "rev-parse",
         "--show-toplevel",
@@ -692,7 +707,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
     return {
       kind: "git" as const,
-      rootPath: lines[1]!.trim(),
+      rootPath: lines[3]!.trim(),
       metadataPath: lines[2]!.trim() || null,
       freshness: yield* nowFreshness(),
     };
