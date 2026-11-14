@@ -5,9 +5,8 @@ import type * as Stream from "effect/Stream";
 export type ConnectionWakeup =
   | "application-active"
   | "application-active-probe"
-  | "application-active-reconnect"
-  // Inactive-only mobile returns wake retries without probing or resubscribing.
-  | "application-refocused"
+  | "application-active-long"
+  | "application-focused"
   | "credentials-changed"
   | "network-changed";
 
@@ -15,8 +14,7 @@ function isApplicationActiveWakeup(reason: ConnectionWakeup): boolean {
   return (
     reason === "application-active" ||
     reason === "application-active-probe" ||
-    reason === "application-active-reconnect" ||
-    reason === "application-refocused"
+    reason === "application-active-long"
   );
 }
 
@@ -24,10 +22,22 @@ export function resetsRetryBackoff(reason: ConnectionWakeup): boolean {
   return isApplicationActiveWakeup(reason) || reason === "network-changed";
 }
 
-// A long resume replaces the session, and the new session subscribes on its own.
-// A refocus never suspended the socket, so its streams are still live.
 export function shouldResubscribeAfterWakeup(reason: ConnectionWakeup): boolean {
-  return reason === "application-active" || reason === "application-active-probe";
+  return isApplicationActiveWakeup(reason);
+}
+
+// A brief app switch (the mobile probe) does not justify listing the whole account again.
+export function shouldRelistAccountAfterWakeup(reason: ConnectionWakeup): boolean {
+  return (
+    reason === "application-active" ||
+    reason === "application-active-long" ||
+    reason === "application-focused"
+  );
+}
+
+// Focus fires on every window switch; any wakeup would arm a running probe's silent-socket check.
+export function reachesConnectionSupervisor(reason: ConnectionWakeup): boolean {
+  return reason !== "application-focused";
 }
 
 export class ConnectionWakeups extends Context.Service<
