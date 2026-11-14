@@ -245,7 +245,6 @@ function CommandPaletteRowContent({ item }: { item: CommandPaletteResultItem }) 
           <span
             className={cn(
               "flex min-w-0 items-center gap-1.5",
-              !stacked && "shrink-0",
               MENU_ROW_TEXT_CLASS,
               "text-foreground in-data-[active=true]:text-strong-foreground",
             )}
@@ -261,7 +260,7 @@ function CommandPaletteRowContent({ item }: { item: CommandPaletteResultItem }) 
             <span
               className={cn(
                 "min-w-0 text-dim-foreground text-meta font-normal",
-                !stacked && "truncate",
+                !stacked && "max-w-[45%] shrink-0 truncate",
               )}
             >
               {item.description}
