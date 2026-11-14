@@ -43,6 +43,7 @@ import type * as ProviderEventLoggers from "@t3tools/provider-core/server/Provid
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 
 import {
   advanceOpenCodePromptAdmission,
@@ -203,6 +204,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     startProviderThread: OrchestrationV2ProviderThread = providerThread,
     turnPolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy = policy,
     resume = false,
+    override: Partial<ProviderAdapter.ProviderAdapterV2TurnInput> = {},
   ) =>
     runtime.startTurn({
       appThread: {
@@ -245,6 +247,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
       },
       modelSelection,
       runtimePolicy: turnPolicy,
+      ...override,
     });
   return {
     nativeSessionId,
@@ -617,6 +620,264 @@ describe("OpenCodeAdapterV2", () => {
       );
       assert.equal(terminal?.status, "failed");
       assert.equal(terminal?.failure?.class, "usage_limit");
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
+  // Event order from a live 1.19.5 run: a finished background task prompts the idle session.
+  it.effect.each([
+    { case: "is still working when its run starts", endedFirst: false },
+    { case: "ended before its run started", endedFirst: true },
+  ])("gives a turn OpenCode starts on its own a run of its own ($case)", ({ endedFirst }) =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
+      const root = "ses_root";
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const prompts: Array<string> = [];
+      const harness = yield* makeOpenCodeRuntimeHarness("wake", root, {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
+          promptAsync: async (input: { messageID: string }) => {
+            prompts.push(input.messageID);
+            return { data: true };
+          },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+          get: async ({ sessionID }: { sessionID: string }) => ({
+            data: { id: sessionID, parentID: root, time: { created: 1, updated: 1 } },
+          }),
+          update: async ({ sessionID }: { sessionID: string }) => ({
+            data: { id: sessionID, time: { created: 1, updated: 2 } },
+          }),
+        },
+      }).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) => Effect.sync(() => void offers.push(request)),
+          take: Effect.never,
+        }),
+      );
+      const runEvents = harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const message = (id: string, info: object) => ({
+        type: "message.updated",
+        properties: { sessionID: root, info: { id, sessionID: root, ...info } },
+      });
+      const text = (messageID: string, part: object) => ({
+        type: "message.part.updated",
+        properties: {
+          sessionID: root,
+          part: { id: `prt_${messageID}`, sessionID: root, messageID, type: "text", ...part },
+        },
+      });
+      const status = (type: "busy" | "idle") => ({
+        type: "session.status",
+        properties: { sessionID: root, status: { type } },
+      });
+
+      yield* harness.startTurn();
+      const firstRun = yield* runEvents;
+      yield* push(message(prompts[0]!, { role: "user", time: { created: 1 } }));
+      yield* push(status("busy"));
+      yield* push(status("idle"));
+      yield* Fiber.join(firstRun);
+
+      yield* push(message("msg_progress_note", { role: "user", time: { created: 2 } }));
+      assert.deepEqual(offers, [], "a prompt that asks for no reply starts no turn");
+      yield* push(message("msg_task_result", { role: "user", time: { created: 2 } }));
+      yield* push(
+        text("msg_task_result", { synthetic: true, text: "CHILD_OK", time: { start: 2 } }),
+      );
+      yield* push(status("busy"));
+      const reply = { role: "assistant", parentID: "msg_task_result" };
+      yield* push(message("msg_reply", { ...reply, time: { created: 3 } }));
+      yield* push(text("msg_reply", { text: "WAKE", time: { start: 3 } }));
+      yield* push({
+        type: "permission.asked",
+        properties: {
+          id: "per_wake",
+          sessionID: root,
+          permission: "bash",
+          patterns: ["*"],
+          always: [],
+          metadata: {},
+        },
+      });
+      // The wake launches a subagent, which works before its run starts.
+      const child = "ses_wake_child";
+      yield* push(
+        text("msg_reply", {
+          id: "prt_task",
+          type: "tool",
+          tool: "task",
+          callID: "call_task",
+          state: {
+            status: "running",
+            input: { description: "Check", prompt: "check", subagent_type: "general" },
+            title: "Check",
+            metadata: { parentSessionId: root, sessionId: child },
+            time: { start: 3 },
+          },
+        }),
+      );
+      const childEvent = (type: string, info: object) => ({
+        type,
+        properties: { sessionID: child, ...info },
+      });
+      yield* push(
+        childEvent("message.updated", {
+          info: { id: "msg_child_prompt", sessionID: child, role: "user", time: { created: 3 } },
+        }),
+      );
+      yield* push(
+        childEvent("message.part.updated", {
+          part: {
+            id: "prt_child_text",
+            sessionID: child,
+            messageID: "msg_child_reply",
+            type: "text",
+            text: "CHILD_WAKE_OK",
+            time: { start: 3, end: 3 },
+          },
+        }),
+      );
+      // It keeps working and launches a subagent of its own, still before the run starts.
+      yield* push(childEvent("session.status", { status: { type: "busy" } }));
+      const grandchild = "ses_wake_grandchild";
+      yield* push(
+        childEvent("message.part.updated", {
+          part: {
+            id: "prt_child_task",
+            sessionID: child,
+            messageID: "msg_child_reply",
+            type: "tool",
+            tool: "task",
+            callID: "call_child_task",
+            state: {
+              status: "running",
+              input: { description: "Dig", prompt: "dig", subagent_type: "general" },
+              title: "Dig",
+              metadata: { parentSessionId: child, sessionId: grandchild },
+              time: { start: 3 },
+            },
+          },
+        }),
+      );
+      yield* push({
+        type: "message.updated",
+        properties: {
+          sessionID: grandchild,
+          info: {
+            id: "msg_grandchild_prompt",
+            sessionID: grandchild,
+            role: "user",
+            time: { created: 3 },
+          },
+        },
+      });
+      yield* push({
+        type: "message.part.updated",
+        properties: {
+          sessionID: grandchild,
+          part: {
+            id: "prt_grandchild_text",
+            sessionID: grandchild,
+            messageID: "msg_grandchild_reply",
+            type: "text",
+            text: "GRANDCHILD_WAKE_OK",
+            time: { start: 3, end: 3 },
+          },
+        },
+      });
+      const finish = Effect.gen(function* () {
+        yield* push(text("msg_reply", { text: "WAKE_OK", time: { start: 3, end: 4 } }));
+        yield* push(message("msg_reply", { ...reply, time: { created: 3, completed: 4 } }));
+        yield* push(status("idle"));
+      });
+      if (endedFirst) yield* finish;
+      assert.deepEqual(
+        offers.map((offer) => [offer.threadId, offer.delivery]),
+        [[harness.threadId, "adapter_buffered"]],
+      );
+      if (endedFirst) {
+        // A second task finishes before T3 starts the first run; its turn must not be lost in it.
+        yield* push(message("msg_task_2", { role: "user", time: { created: 5 } }));
+        yield* push(status("busy"));
+        const second = { role: "assistant", parentID: "msg_task_2" };
+        yield* push(message("msg_reply_2", { ...second, time: { created: 6, completed: 7 } }));
+        yield* push(text("msg_reply_2", { text: "WAKE_2_OK", time: { start: 6, end: 7 } }));
+        yield* push(status("idle"));
+      }
+
+      const wakeRun = yield* runEvents;
+      yield* harness.startTurn(
+        "Background task completed.",
+        harness.providerThread,
+        harness.policy,
+        false,
+        {
+          runId: RunId.make("run-opencode-wake-2"),
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+          attemptId: RunAttemptId.make("attempt-opencode-wake-2"),
+          rootNodeId: NodeId.make("node-opencode-wake-2"),
+          message: {
+            createdBy: "agent",
+            creationSource: "provider",
+            messageId: MessageId.make("message-opencode-wake-2"),
+            text: "Background task completed.",
+            attachments: [],
+          },
+        },
+      );
+      if (!endedFirst) yield* finish;
+      const events = yield* Fiber.join(wakeRun);
+      const terminal = events.at(-1);
+      assert.deepEqual(
+        terminal?.type === "turn.terminal" ? [terminal.status, terminal.runOrdinal] : terminal,
+        ["completed", 2],
+      );
+      assert.equal(
+        events
+          .flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []))
+          .findLast((item) => item.type === "assistant_message")?.text,
+        "WAKE_OK",
+      );
+      assert.deepEqual(
+        events.flatMap((event) =>
+          event.type === "node.updated" &&
+          event.node.kind === "approval_request" &&
+          event.node.status === "waiting"
+            ? [event.node.runId]
+            : [],
+        ),
+        [RunId.make("run-opencode-wake-2")],
+        "an approval OpenCode asks for before the run starts is shown in it",
+      );
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.threadId !== harness.threadId &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text === "CHILD_WAKE_OK",
+        ),
+        "a subagent the wake launched before its run started keeps its work",
+      );
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text === "GRANDCHILD_WAKE_OK",
+        ),
+        "so does a subagent it launched",
+      );
+      assert.equal(offers.length, endedFirst ? 2 : 1, "each turn OpenCode starts gets an offer");
+      assert.equal(prompts.length, 1, "OpenCode already runs this turn; prompting would repeat it");
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
