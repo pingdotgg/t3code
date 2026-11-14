@@ -18,6 +18,7 @@
 
 use std::{future::Future, pin::Pin};
 
+mod background;
 mod calls;
 mod commands;
 mod engine;

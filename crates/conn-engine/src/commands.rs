@@ -1444,10 +1444,17 @@ pub(crate) fn finish_run(
         }
     }
     for mut item in tx.entities_where(thread_id, "turnItems", "runId", run_id)? {
-        let open = matches!(
-            item["status"].as_str(),
-            Some("idle" | "pending" | "running" | "waiting")
-        );
+        // A completed run leaves its background work running (a command, tool or subagent
+        // the provider did not end): T3 settles only the rows its provider closes, and the
+        // shell lists the rest as pending background work.
+        let background = status == "completed"
+            && crate::background::BACKGROUND_ITEM_TYPES
+                .contains(&item["type"].as_str().unwrap_or_default());
+        let open = !background
+            && matches!(
+                item["status"].as_str(),
+                Some("idle" | "pending" | "running" | "waiting")
+            );
         if item["streaming"] == true || open {
             if item.get("streaming").is_some() {
                 item["streaming"] = json!(false);

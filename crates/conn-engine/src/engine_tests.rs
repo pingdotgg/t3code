@@ -2177,6 +2177,54 @@ async fn background_work_holds_an_idle_session_up_to_the_limit() {
     );
 }
 
+/// `background_work.updated` (pending) holds an idle session as the provider's own probe does,
+/// and the shell row lists the still-running background command as T3's
+/// `derivePendingBackgroundWork` does: `/mcp` and the client read it there.
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn reported_background_work_holds_the_session_and_shows_in_the_shell() {
+    let db = TempDb::new("bg-reported");
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![provider.clone()];
+    config.idle_session = Some(Duration::from_secs(60));
+    config.idle_max_hold = Duration::from_secs(600);
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "background-reported")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+
+    let shell = engine
+        .inner()
+        .db(|store| {
+            let tx = store.tx()?;
+            let row = crate::shell::thread_shell(&tx, "t1");
+            tx.rollback();
+            row
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        shell["pendingBackgroundTasks"],
+        json!([{"taskId": "bg-1", "description": "sleep 600", "kind": "command"}])
+    );
+    tokio::time::sleep(Duration::from_secs(300)).await;
+    assert_eq!(
+        engine.inner().live_count(),
+        1,
+        "held by reported background work"
+    );
+    tokio::time::sleep(Duration::from_secs(600)).await;
+    assert_eq!(
+        engine.inner().live_count(),
+        0,
+        "released after the hold limit"
+    );
+}
+
 #[derive(Default)]
 struct RecordingHost {
     revoked: Mutex<Vec<String>>,

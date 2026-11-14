@@ -247,7 +247,20 @@ impl Cx<'_> {
             }
             Err(other) => return Err(other),
         };
-        if !is_live_caller(&own, &caller.provider_instance_id) {
+        // The shell row holds the pending background work (`isLiveCallerShell` reads the
+        // shell); it is needed only when no run is active.
+        let shell_row = if has_active_run(&own) {
+            None
+        } else {
+            self.shell().await.ok().and_then(|shell| {
+                shell["threads"]
+                    .as_array()?
+                    .iter()
+                    .find(|row| row["id"] == caller.thread_id.as_str())
+                    .cloned()
+            })
+        };
+        if !is_live_caller(&own, shell_row.as_ref(), &caller.provider_instance_id) {
             return Err(fail(
                 "parent_not_active",
                 "The calling provider no longer owns an active thread run.",
@@ -383,10 +396,14 @@ fn has_active_run(projection: &Value) -> bool {
 /// TS `isLiveCallerShell`: an unarchived thread on the caller's provider instance with an
 /// active run, or with a background subagent of that instance still pending (background
 /// subagents keep their credential until the provider exits).
-fn is_live_caller(projection: &Value, provider_instance_id: &str) -> bool {
+fn is_live_caller(
+    projection: &Value,
+    shell_row: Option<&Value>,
+    provider_instance_id: &str,
+) -> bool {
     let thread = &projection["thread"];
-    let background = thread["pendingBackgroundTasks"]
-        .as_array()
+    let background = shell_row
+        .and_then(|row| row["pendingBackgroundTasks"].as_array())
         .is_some_and(|tasks| {
             tasks.iter().any(|task| {
                 task["kind"] == "subagent" && task["providerInstanceId"] == provider_instance_id
@@ -428,4 +445,36 @@ fn u64_arg(args: &Args, key: &str) -> Option<u64> {
 
 fn bool_arg(args: &Args, key: &str) -> Option<bool> {
     args.get(key).and_then(Value::as_bool)
+}
+
+#[cfg(test)]
+mod live_caller_tests {
+    use super::is_live_caller;
+    use serde_json::json;
+
+    /// `isLiveCallerShell`: with no active run, a background subagent of the caller's instance
+    /// in the shell row keeps the caller live; another instance's does not.
+    #[test]
+    fn a_background_subagent_in_the_shell_keeps_the_caller_live() {
+        let projection = json!({
+            "thread": {"archivedAt": null, "providerInstanceId": "claudeAgent"},
+            "runs": [{"id": "r1", "status": "completed"}],
+        });
+        let shell = |instance: &str| {
+            json!({"pendingBackgroundTasks": [
+                {"taskId": "a1", "kind": "subagent", "providerInstanceId": instance},
+            ]})
+        };
+        assert!(!is_live_caller(&projection, None, "claudeAgent"));
+        assert!(is_live_caller(
+            &projection,
+            Some(&shell("claudeAgent")),
+            "claudeAgent"
+        ));
+        assert!(!is_live_caller(
+            &projection,
+            Some(&shell("codex")),
+            "claudeAgent"
+        ));
+    }
 }

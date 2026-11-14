@@ -164,6 +164,21 @@ pub trait Session: Send + Sync {
         false
     }
 
+    /// `stopTask`: stops one background task the agent started on this thread (Claude: a
+    /// workflow task). Errors when no such task runs.
+    fn stop_task(&self, _input: StopTaskInput) -> BoxFuture<'_, ProviderResult<()>> {
+        unsupported("stop_task")
+    }
+
+    /// `awaitBackgroundTasks`: marks (or unmarks) background tasks the agent resumes from, by
+    /// the ids the agent saw. Returns the ids that run on this thread; others change nothing.
+    fn await_background_tasks(
+        &self,
+        _input: AwaitBackgroundTasksInput,
+    ) -> BoxFuture<'_, ProviderResult<Vec<String>>> {
+        unsupported("await_background_tasks")
+    }
+
     /// `injectHistory`: gives the native thread earlier conversation as context. `Ok(false)`
     /// means the native protocol cannot take it.
     fn inject_history(&self, _input: InjectHistoryInput) -> BoxFuture<'_, ProviderResult<bool>> {
@@ -194,6 +209,21 @@ impl std::fmt::Debug for McpServer {
             .field("headers", &headers)
             .finish()
     }
+}
+
+/// `ProviderAdapterV2SessionRuntime.stopTask` input.
+#[derive(Clone, Debug)]
+pub struct StopTaskInput {
+    pub provider_thread: ProviderThread,
+    pub task_id: String,
+}
+
+/// `ProviderAdapterV2SessionRuntime.awaitBackgroundTasks` input.
+#[derive(Clone, Debug)]
+pub struct AwaitBackgroundTasksInput {
+    pub provider_thread: ProviderThread,
+    pub task_ids: Vec<String>,
+    pub awaited: bool,
 }
 
 /// `ProviderAdapterV2RollbackTarget`.
@@ -409,6 +439,14 @@ pub enum ProviderEvent {
     },
     #[serde(rename = "plan.updated")]
     PlanUpdated { plan: PlanArtifact },
+    /// Work of this provider turn goes on after its terminal (`pending: true`, sent before the
+    /// terminal), or has ended. Not persisted; the engine holds the session while any is
+    /// pending.
+    #[serde(rename = "background_work.updated")]
+    BackgroundWorkUpdated {
+        provider_turn_id: ProviderTurnId,
+        pending: bool,
+    },
     #[serde(rename = "turn.terminal")]
     TurnTerminal(TurnTerminal),
     /// A provider-made thread, such as a subagent's child thread. `create_only`: create it

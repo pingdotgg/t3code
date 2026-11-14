@@ -141,6 +141,12 @@ Normalized in the comparison:
 - **Subagents:** no workflow subagents (`local_workflow`), no recovery of running subagents
   after a restart (`getSubagentMessages` is offered by the helper but not used), `stopSubagent`
   and `stop_task` / `background_tasks` not sent.
+- **Background roster:** T3 keeps a roster of background tasks per native thread (Bash
+  `run_in_background`, Monitor, background subagents) on `providerThread.pendingBackgroundTasks`,
+  emits `background_work.updated`, and serves `stopTask` (workflow tasks) and
+  `awaitBackgroundTasks`. This provider reports an empty roster, sends no
+  `background_work.updated`, and leaves both session methods unsupported. The engine still lists
+  running background rows from the turn items.
 - **Task list:** starts from the task tools it sees; TS first reads the list Claude saved on
   disk.
 - **Attachments:** PDFs stay path-only. No skill splitting of slash commands. The 28 MiB

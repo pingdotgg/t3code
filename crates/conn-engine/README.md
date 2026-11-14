@@ -54,6 +54,13 @@ with a reason the client shows (`commands::refusal`).
   build already has FTS5. Every word of three characters or more must match; shorter words
   only narrow, and a query without a long word searches no messages (two CJK characters count
   as long). Hidden threads drop out in SQL before the limit. Titles are the client's to match.
+- **Background work.** A run that completes leaves its open command, dynamic tool and
+  subagent rows running, as T3 does. The shell row's `pendingBackgroundTasks` is
+  `derivePendingBackgroundWork` (`src/background.rs`): provider thread rosters, then those
+  rows, then pull request watches; `/mcp` reads it for its thread list and the live-caller
+  rule. `background_work.updated` (not persisted) holds an idle session like the provider's
+  own probe, at most 64 provider turns tracked. `client-check.mjs` compares the roster with
+  T3's own function.
 - **Stop.** `thread.stop` and `run.interrupt` record a `run_interrupt_request` item on the
   active run (`markStoppedRun`, message "Stopped by user" or the command's reason); a run that
   ends interrupted gets a `run_interrupt_result` (`makeInterruptResultTurnItem`). When the

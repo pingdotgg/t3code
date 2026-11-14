@@ -1344,8 +1344,10 @@ done
             owner_node_id: None,
             model_selection: selection.map(|s| from_json(s).unwrap()),
             runtime_policy: cwd.map(|cwd| {
-                from_json(json!({"runtimeMode": "full-access", "interactionMode": "default", "cwd": cwd}))
-                    .unwrap()
+                from_json(
+                    json!({"runtimeMode": "full-access", "interactionMode": "default", "cwd": cwd}),
+                )
+                .unwrap()
             }),
         };
         session

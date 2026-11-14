@@ -48,7 +48,14 @@ pub(crate) struct LiveThread {
 struct LiveState {
     provider_thread: Option<ProviderThread>,
     active: Option<ActiveRun>,
+    /// Provider turns whose work goes on after their terminal (`background_work.updated`).
+    /// Bounded by [`MAX_BACKGROUND_TURNS`].
+    background_turns: std::collections::HashSet<String>,
 }
+
+/// At most this many provider turns are tracked as having background work; a provider that
+/// never clears them cannot grow the set without bound.
+const MAX_BACKGROUND_TURNS: usize = 64;
 
 #[derive(Clone)]
 struct ActiveRun {
@@ -69,7 +76,8 @@ impl LiveThread {
             return false;
         }
         let mut held = lock(&self.held_since);
-        if !self.session.has_pending_background_work() {
+        let reported = !lock(&self.state).background_turns.is_empty();
+        if !reported && !self.session.has_pending_background_work() {
             *held = None;
             return true;
         }
@@ -544,6 +552,25 @@ impl Inner {
             {
                 self.command_output
                     .append(output_thread.as_str(), item_id.as_str(), chunk);
+                continue;
+            }
+            // Not persisted (`ProviderEventIngestor`); it holds the idle session while any
+            // provider turn has work left (`RunExecutionService` pendingBackgroundProviderTurns).
+            if let ProviderEvent::BackgroundWorkUpdated {
+                provider_turn_id,
+                pending,
+            } = &event
+            {
+                let mut state = lock(&live.state);
+                if *pending {
+                    if state.background_turns.len() < MAX_BACKGROUND_TURNS {
+                        state
+                            .background_turns
+                            .insert(provider_turn_id.as_str().to_owned());
+                    }
+                } else {
+                    state.background_turns.remove(provider_turn_id.as_str());
+                }
                 continue;
             }
             let active = live.active();
@@ -1266,5 +1293,7 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
             },
         },
         ProviderEvent::ContinuationRequested(request) => Translated::Continuation(request.detail),
+        // Handled before translation.
+        ProviderEvent::BackgroundWorkUpdated { .. } => Translated::Ignore,
     }
 }

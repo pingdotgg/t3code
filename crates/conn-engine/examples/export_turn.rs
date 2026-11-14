@@ -237,6 +237,37 @@ async fn main() {
     read(&mut stuck, &mut stop_items, |_| false).await;
     drop(stuck);
 
+    // A turn that leaves a background command running after it completed.
+    let mut background_items = vec![];
+    engine
+        .launch_thread(launch_input("launch-5", "thread-5", "background-reported"))
+        .await
+        .unwrap();
+    let mut background = engine
+        .subscribe_thread(from_json(json!({"threadId": "thread-5"})).unwrap())
+        .await
+        .unwrap();
+    read(&mut background, &mut vec![], run_ended).await;
+    drop(background);
+    let mut background = engine
+        .subscribe_thread(
+            from_json(json!({"threadId": "thread-5", "requestCompletionMarker": true})).unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut background, &mut background_items, |item| {
+        item["kind"] == "synchronized"
+    })
+    .await;
+    drop(background);
+    let background_shell = engine.shell_snapshot().await.unwrap()["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == "thread-5")
+        .cloned()
+        .unwrap();
+
     // A client adds a project and removes it again.
     let added =
         std::env::temp_dir().join(format!("conn-engine-export-added-{}", std::process::id()));
@@ -322,6 +353,8 @@ async fn main() {
         "compactItems": compact_items,
         "queueItems": queue_items,
         "stopItems": stop_items,
+        "backgroundItems": background_items,
+        "backgroundShell": background_shell,
         "stopUnresponsiveAt": unresponsive_at,
         "restartShellItems": restart_shell,
         "restartThreadItems": restart_thread,

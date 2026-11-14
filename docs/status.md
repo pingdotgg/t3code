@@ -146,10 +146,10 @@ remembering: an own server brings its own defects.
    `Drop` on `CodexSession`, and the find offset in `reads.rs`, each with a test. Next stages
    (bool parameters, `clone_on_ref_ptr`, print lints with `tracing`, pedantic; then the cast
    lints) are in `CRATES.md`, "Lint set".
-2. **Provider interface.** A sandbox and approval policy (closes Claude's read-only sandbox and
-   `dontAsk`, and 3 failing transcripts); MCP servers at session open; a host handle for
-   agents that ask the server for files and terminals; `background_work.updated`; a
-   selection-transition hook; `stop_task` and `background_tasks`. Move the Rust side of the
+2. **Provider interface.** MCP servers at session open; a host handle for agents that ask the
+   server for files and terminals; a selection-transition hook; Claude's background roster
+   (`background_work.updated`, `stopTask`, `awaitBackgroundTasks`: in the trait, not built in
+   the provider). Move the Rust side of the
    SDK host (`helper.rs`) into `conn-provider-support` before a second SDK driver.
 3. **Other providers.** One ACP provider for Grok, Kiro, fx, Antigravity and the ACP registry.
    The T3 server offers ACP protocol version 2 with version 1 as fallback and uses a

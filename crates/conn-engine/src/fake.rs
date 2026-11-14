@@ -7,6 +7,8 @@
 //! - `subagent`: a subagent's child thread with one message, then the turn completes.
 //! - `background`: the turn completes with background work left, then asks for a
 //!   continuation turn, which answers `continued` and ends the work.
+//! - `background-reported`: like `background-hold`, but the work shows only as
+//!   `background_work.updated` (pending), and a running background command row.
 //! - anything else: streams `echo: <text>` in three chunks and completes.
 //!
 //! A steer into a running turn reports `steer.updated` pending then completed, answers
@@ -297,6 +299,24 @@ impl Session for FakeSession {
                     started.push(event(json!({"type": "continuation.requested",
                         "threadId": turn.thread_id, "providerThreadId": turn.provider_thread_id,
                         "detail": null})));
+                }
+                "background-reported" => {
+                    let item = format!("turn-item:bg:{}", turn.run_id);
+                    let now = now_iso();
+                    started.push(event(json!({"type": "turn_item.updated", "turnItem": {
+                        "id": item, "threadId": turn.thread_id, "runId": turn.run_id,
+                        "nodeId": null, "providerThreadId": turn.provider_thread_id,
+                        "providerTurnId": format!("turn:{}", turn.run_id),
+                        "nativeItemRef": {"driver": "claudeAgent", "nativeId": "bg-1", "strength": "strong"},
+                        "parentItemId": null, "ordinal": 1, "status": "running", "title": null,
+                        "startedAt": now, "completedAt": null, "updatedAt": now,
+                        "type": "command_execution", "input": "sleep 600",
+                    }})));
+                    started.push(event(json!({"type": "background_work.updated",
+                        "providerTurnId": format!("turn:{}", turn.run_id), "pending": true})));
+                    started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "left running", false));
+                    started.push(provider_turn(&turn, "completed"));
+                    started.push(terminal(&turn, TurnStatus::Completed, None));
                 }
                 "background-hold" => {
                     self.background.store(true, Ordering::SeqCst);

@@ -28,6 +28,9 @@ const { applyOrchestrationV2ProjectionEvent } = await load(
   "packages/client-runtime/src/state/orchestrationV2Projection.ts",
 );
 const { presentRunStop } = await load("packages/client-runtime/src/state/threadExecution.ts");
+const { derivePendingBackgroundWork } = await load(
+  "packages/shared/src/orchestrationV2PendingBackgroundWork.ts",
+);
 const { boundedSnapshotProjection } = await load(
   "packages/shared/src/orchestrationV2BoundedSnapshot.ts",
 );
@@ -257,7 +260,31 @@ check("stop: an unconfirmed Stop is unresponsive until Force stop", () => {
   assert.equal(presentRunStop(after.projection), null);
 });
 
-// 9. Projects added and removed at runtime reach the shell.
+// 9. Background work left running: the shell row's roster is what T3's own
+// derivePendingBackgroundWork makes of the same thread.
+check("background: the shell roster matches T3's derivePendingBackgroundWork", () => {
+  const [row] = Schema.decodeUnknownSync(
+    Schema.toCodecJson(Schema.NonEmptyArray(contracts.OrchestrationV2ThreadShell)),
+  )([exported.backgroundShell]);
+  const { projection } = followThread(exported.backgroundItems);
+  const started = projection.runs.filter((run) => run.status !== "queued");
+  const latestRun = started.reduce(
+    (latest, run) => (latest === null || run.ordinal > latest.ordinal ? run : latest),
+    null,
+  );
+  const expected = derivePendingBackgroundWork({
+    latestRun,
+    providerThreads: projection.providerThreads,
+    turnItems: projection.turnItems,
+    activeProviderThreadId: projection.thread.activeProviderThreadId,
+    runs: projection.runs,
+    pullRequests: projection.thread.pullRequests,
+  });
+  assert.ok(expected.length > 0, "the scenario leaves background work");
+  assert.deepEqual(row.pendingBackgroundTasks, expected);
+});
+
+// 10. Projects added and removed at runtime reach the shell.
 check("projects: added and removed at runtime", () => {
   const kinds = exported.shellItems.map((item) => item.kind);
   assert.ok(kinds.includes("project.updated") && kinds.includes("project.removed"));
