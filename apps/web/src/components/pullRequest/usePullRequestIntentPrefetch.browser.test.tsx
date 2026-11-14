@@ -9,6 +9,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
     pullRequestEnvironment: {
       ...actual.pullRequestEnvironment,
       detail: ((target: unknown) => target) as never,
+      activity: ((target: unknown) => ({ activity: target })) as never,
     },
   };
 });
@@ -46,7 +47,7 @@ function Rows() {
   );
 }
 
-it("reads the panel's detail once intent rests on a row for 150 ms", async () => {
+it("reads the panel's detail and activity once intent rests on a row for 150 ms", async () => {
   state.reads = [];
   await using screen = await render(<Rows />, {
     // A bare hook probe; nothing here navigates.
@@ -68,19 +69,17 @@ it("reads the panel's detail once intent rests on a row for 150 ms", async () =>
   expect(state.reads).toEqual([]);
   await act(() => vi.advanceTimersByTime(1));
   // Query atoms key on JSON order: this is the order the PRs page panel reads.
-  expect(JSON.stringify(state.reads.at(-1))).toBe(
-    JSON.stringify({
-      environmentId,
-      input: {
-        projectId: row.projectId,
-        repository: "owner/repo",
-        number: 7,
-        host: "github.com",
-        allowStale: false,
-      },
-    }),
-  );
+  const reference = {
+    projectId: row.projectId,
+    repository: "owner/repo",
+    number: 7,
+    host: "github.com",
+  };
+  expect(state.reads.slice(-2).map((read) => JSON.stringify(read))).toEqual([
+    JSON.stringify({ environmentId, input: { ...reference, allowStale: false } }),
+    JSON.stringify({ activity: { environmentId, input: reference } }),
+  ]);
 
   await act(() => leave.click());
-  expect(state.reads.at(-1)).toBeNull();
+  expect(state.reads.slice(-2)).toEqual([null, null]);
 });

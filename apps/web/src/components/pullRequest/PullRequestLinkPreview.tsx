@@ -1,4 +1,5 @@
 import type { PreviewCard as PreviewCardPrimitive } from "@base-ui/react/preview-card";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { parsePullRequestAnchor, pullRequestLinkCommit } from "@t3tools/shared/pullRequestAnchor";
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
@@ -13,6 +14,7 @@ import {
 } from "react";
 
 import { RelativeTime } from "~/components/RelativeTime";
+import { useClientSettings } from "~/hooks/useSettings";
 import { pullRequestEnvironment, useSharedPullRequestSummary } from "~/state/pullRequests";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useEnvironmentQuery } from "~/state/query";
@@ -25,6 +27,7 @@ import {
   PullRequestReviewOutcomeBadge,
   resolvePullRequestState,
 } from "./pullRequestPresentation";
+import { pullRequestPanelReference } from "./usePullRequestDetail";
 
 interface PullRequestLinkPreviewTarget {
   readonly environmentId: EnvironmentId;
@@ -80,6 +83,40 @@ export function PullRequestLinkPreview({
   const summary = useSharedPullRequestSummary(
     open ? target.environmentId : null,
     open ? target.input : null,
+  );
+  // An open card is intent to click: read what the panel will, keyed as a click names it.
+  const opensInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
+  const linked =
+    open && opensInApp
+      ? sourceControlClients.parseChangeRequestUrl(
+          // A bare #N links to its issues URL; the panel opens it as the change request.
+          sourceControlClients.changeRequestUrlFromReferenceAutolink(originalUrl) ?? originalUrl,
+        )?.link
+      : undefined;
+  const panelReference =
+    linked === undefined
+      ? null
+      : pullRequestPanelReference({
+          projectId: target.input.projectId,
+          repository: linked.repository,
+          number: linked.number,
+          host: linked.authority ?? linked.host,
+        });
+  useEnvironmentQuery(
+    panelReference === null
+      ? null
+      : pullRequestEnvironment.detail({
+          environmentId: target.environmentId,
+          input: { ...panelReference, allowStale: false },
+        }),
+  );
+  useEnvironmentQuery(
+    panelReference === null
+      ? null
+      : pullRequestEnvironment.activity({
+          environmentId: target.environmentId,
+          input: panelReference,
+        }),
   );
   const readPreview = useAtomQueryRunner(pullRequestEnvironment.preview, {
     reportFailure: false,
