@@ -1,0 +1,21 @@
+{
+  "fileStatus": {
+    "retryLoading": "重新加载差异",
+    "partialPreview": "部分差异预览",
+    "partialTooltip": "文件过大，无法完整显示。统计数字包含所有更改。"
+  },
+  "loading": "正在加载差异…",
+  "fileTree": {
+    "files": "文件",
+    "collapseAll": "折叠所有文件夹",
+    "expandAll": "展开所有文件夹"
+  },
+  "comment": {
+    "placeholder": "添加评论…",
+    "submit": "评论",
+    "delete": "删除评论",
+    "shortcutHint": "⌘/Ctrl Enter 发送",
+    "cancel": "取消",
+    "onLines": "评论第 {{lines}} 行"
+  }
+}

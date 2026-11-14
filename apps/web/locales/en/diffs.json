@@ -1,0 +1,21 @@
+{
+  "fileStatus": {
+    "retryLoading": "Retry loading diff",
+    "partialPreview": "Partial diff preview",
+    "partialTooltip": "This file is too large to show in full. Counts include all changes."
+  },
+  "loading": "Loading diff…",
+  "fileTree": {
+    "files": "Files",
+    "collapseAll": "Collapse all folders",
+    "expandAll": "Expand all folders"
+  },
+  "comment": {
+    "placeholder": "Add a comment…",
+    "submit": "Comment",
+    "delete": "Delete comment",
+    "shortcutHint": "⌘/Ctrl Enter to send",
+    "cancel": "Cancel",
+    "onLines": "Comment on lines {{lines}}"
+  }
+}

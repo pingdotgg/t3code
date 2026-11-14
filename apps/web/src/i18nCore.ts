@@ -1,9 +1,13 @@
 import enChat from "../locales/en/chat.json";
+import enDiffs from "../locales/en/diffs.json";
 import enPalette from "../locales/en/palette.json";
 import enSettings from "../locales/en/settings.json";
+import enTerminal from "../locales/en/terminal.json";
 import zhHansChat from "../locales/zh-Hans/chat.json";
+import zhHansDiffs from "../locales/zh-Hans/diffs.json";
 import zhHansPalette from "../locales/zh-Hans/palette.json";
 import zhHansSettings from "../locales/zh-Hans/settings.json";
+import zhHansTerminal from "../locales/zh-Hans/terminal.json";
 import enSidebar from "../locales/en/sidebar.json";
 import zhHansSidebar from "../locales/zh-Hans/sidebar.json";
 import { type UiLocale } from "@t3tools/contracts/settings";
@@ -21,6 +25,8 @@ declare module "i18next" {
       sidebar: typeof enSidebar;
       palette: typeof enPalette;
       chat: typeof enChat;
+      diffs: typeof enDiffs;
+      terminal: typeof enTerminal;
     };
   }
 }
@@ -43,14 +49,23 @@ if (!i18next.isInitialized) {
     lng: "en",
     fallbackLng: "en",
     defaultNS: "settings",
-    ns: ["settings", "sidebar", "palette", "chat"],
+    ns: ["settings", "sidebar", "palette", "chat", "diffs", "terminal"],
     resources: {
-      en: { settings: enSettings, sidebar: enSidebar, palette: enPalette, chat: enChat },
+      en: {
+        settings: enSettings,
+        sidebar: enSidebar,
+        palette: enPalette,
+        chat: enChat,
+        diffs: enDiffs,
+        terminal: enTerminal,
+      },
       "zh-Hans": {
         settings: zhHansSettings,
         sidebar: zhHansSidebar,
         palette: zhHansPalette,
         chat: zhHansChat,
+        diffs: zhHansDiffs,
+        terminal: zhHansTerminal,
       },
     },
     // Locale files are bundled per language, so nothing is fetched at runtime.
