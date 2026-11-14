@@ -496,8 +496,57 @@ export function parseMarkdownDocument(markdown: string): Root {
   return parser.parse(markdownForNativeParsing(markdown));
 }
 
+const isImage = (node: MarkdownNode) => node.type === "image" || node.type === "imageReference";
+
+/**
+ * The native view gives the media slot only to an image alone in a top-level paragraph and draws
+ * any other image at line height, so each image moves to its own paragraph.
+ */
+export function markdownWithBlockImages(markdown: string): string {
+  if (!markdown.includes("![")) return markdown;
+  const edits: MarkdownEdit[] = [];
+  for (const paragraph of parser.parse(markdown).children) {
+    const start = paragraph.position?.start.offset;
+    const end = paragraph.position?.end.offset;
+    if (paragraph.type !== "paragraph" || paragraph.children.length < 2) continue;
+    if (start === undefined || end === undefined || !paragraph.children.some(isImage)) continue;
+    // Spoilers and LaTeX math are native-only syntax remark misreads, so a split would break them.
+    if (/\|\||\$/.test(markdown.slice(start, end))) continue;
+    const runs: MarkdownNode[][] = [[]];
+    for (const child of paragraph.children) {
+      if (isImage(child)) runs.push([child], []);
+      else runs.at(-1)!.push(child);
+    }
+    const parts: string[] = [];
+    let splittable = true;
+    for (const run of runs) {
+      while (run[0]?.type === "break") run.shift();
+      while (run.at(-1)?.type === "break") run.pop();
+      const part = markdown
+        .slice(run[0]?.position?.start.offset ?? 0, run.at(-1)?.position?.end.offset ?? 0)
+        .trim();
+      if (!part) continue;
+      // Text that would open a different block on its own (a heading, list, definition) stays put.
+      if (!isImage(run[0]!)) {
+        const alone = parser.parse(part).children;
+        if (alone.length !== 1 || alone[0]!.type !== "paragraph") {
+          splittable = false;
+          break;
+        }
+      }
+      parts.push(part);
+    }
+    if (splittable) edits.push({ start, end, content: parts.join("\n\n") });
+  }
+  return applyMarkdownEdits(markdown, edits);
+}
+
 export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
-  return transformNativeMarkdown(markdownForNativeParsing(markdown), fileLink, true);
+  return transformNativeMarkdown(
+    markdownWithBlockImages(markdownForNativeParsing(markdown)),
+    fileLink,
+    true,
+  );
 }
 
 /** Native media slots only cover standalone images; nested file embeds must become links. */

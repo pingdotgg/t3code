@@ -407,3 +407,38 @@ it("keeps backslashes in drive paths in mobile Markdown prose", () => {
     { type: "paragraph", children: [{ type: "text", value: `${path} Then *this*.` }] },
   ]);
 });
+
+// regression: #31938 only an image alone in its paragraph gets the sized, gallery-aware media slot
+it("gives images that share a line with caption text their own paragraph", async () => {
+  const markdown = [
+    "**Petition: empty form** ![](/abs/path/empty.png)",
+    "**Petition: after an empty submit.** Errors fill the reserved lines. ![](/abs/path/errors.png)",
+  ].join("\n\n");
+
+  const native = await parseMarkdown(
+    markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+  );
+  expect(native.children).toMatchObject([
+    { type: "Paragraph", children: [{ type: "Strong" }] },
+    {
+      type: "Paragraph",
+      children: [{ type: "Image", attributes: { url: "/abs/path/empty.png" } }],
+    },
+    { type: "Paragraph", children: [{ type: "Strong" }, { type: "Text" }] },
+    {
+      type: "Paragraph",
+      children: [{ type: "Image", attributes: { url: "/abs/path/errors.png" } }],
+    },
+  ]);
+});
+
+it("leaves a captioned image in place when its caption alone would open another block or sits in math", () => {
+  for (const markdown of [
+    "Title\n--- ![a](a.png)",
+    "[id]: target.png ![a](a.png)",
+    "$\\text{![a](a.png)}$",
+    "$$\n\\text{![a](a.png)}\n$$",
+  ]) {
+    expect(markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX)).toBe(markdown);
+  }
+});
