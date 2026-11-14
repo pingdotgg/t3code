@@ -42,6 +42,10 @@ server starts: production and explicitly configured homes use
 `<worktree>/.t3/userdata/logs/server.trace.ndjson`, and an implicit dev run outside a linked
 worktree uses `~/.t3/dev/logs/server.trace.ndjson`.
 
+The file keeps a server span only when it took 10 ms or more, failed, was interrupted, or carries
+a log event, so its retained files cover hours of agent work. A kept span can name a
+`parentSpanId` that is not in the file. An OTLP exporter still receives every span.
+
 Important fields common to both record types:
 
 - `type`: `effect-span` or `otlp-span`
