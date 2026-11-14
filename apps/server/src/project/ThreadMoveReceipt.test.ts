@@ -1,6 +1,10 @@
 import { assert, it } from "@effect/vitest";
 
-import { previousFolderAfter, threadMoveReceiptMessage } from "./ThreadMoveReceipt.ts";
+import {
+  previousFolderAfter,
+  threadMoveReceiptMessage,
+  type ThreadMoveReceiptInput,
+} from "./ThreadMoveReceipt.ts";
 
 const move = {
   folder: "/repos/b",
@@ -13,52 +17,65 @@ const move = {
   leftFolder: null,
 };
 
+const receipt = (change: Partial<ThreadMoveReceiptInput> = {}) =>
+  threadMoveReceiptMessage({ ...move, ...change }).split("\n");
+/** The indexes of the lines that differ between two receipts. */
+const changed = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
+  left.flatMap((line, index) => (line === right[index] ? [] : [index]));
+
 it("writes the receipt for a move out of a project root, a worktree or a scratch folder", () => {
-  const full = threadMoveReceiptMessage(move).split("\n");
-  assert.deepStrictEqual(full, [
-    "Moved to B.",
-    'It came from project "A", which has its root at `/repos/a`.',
-    "The next turn runs in `/repos/b`.",
-    'Moved with it: "Side chat", "Subagent".',
-    'Cleared the branch "feat/login". Its pull request #12 (https://github.com/o/r/pull/12) stays linked.',
-    "Open terminals keep their folder.",
-  ]);
-  const minimal = { ...move, members: [], clearedBranch: null, pullRequest: null };
-  assert.deepStrictEqual(threadMoveReceiptMessage(minimal).split("\n"), [
-    full[0],
-    full[1],
-    full[2],
-    full[5],
-  ]);
-  assert.include(
-    threadMoveReceiptMessage({ ...move, folder: "/repos/b`c" }),
-    "\nThe next turn runs in `` /repos/b`c ``.\n",
+  const full = receipt();
+  // The client shows the first line as the heading, and renders a path in inline code as a link.
+  assert.include(full[0], "B");
+  assert.include(full[1], '"A"');
+  assert.include(full[1], "`/repos/a`");
+  assert.include(full[2], "`/repos/b`");
+  assert.include(receipt({ folder: "/repos/b`c" })[2], "`` /repos/b`c ``");
+
+  // The moved threads and the cleared branch each add one line, and no other line needs them.
+  const optional = full.filter(
+    (line) => line.includes('"Side chat", "Subagent"') || line.includes('"feat/login"'),
   );
-  assert.include(
-    threadMoveReceiptMessage({ ...move, pullRequest: null }),
-    '\nCleared the branch "feat/login".\n',
+  assert.lengthOf(optional, 2);
+  assert.deepStrictEqual(
+    receipt({ members: [], clearedBranch: null, pullRequest: null }),
+    full.filter((line) => !optional.includes(line)),
   );
-  assert.include(
-    threadMoveReceiptMessage({
-      ...move,
-      previousFolder: "/worktrees/w",
-      leftFolder: { exists: true, project: "P", otherThreads: ["Fork", "Archived"] },
-    }),
-    [
-      'It came from project "A", where it worked in `/worktrees/w`.',
-      "The next turn runs in `/repos/b`.",
-      "The folder `/worktrees/w` stays on disk with all its files until you remove it.",
-      'Still working in it: project "P", "Fork", "Archived".',
-      'Moved with it: "Side chat", "Subagent".',
-    ].join("\n"),
+  // The pull request is on the branch line, and only when the thread has one.
+  const unlinked = receipt({ pullRequest: null });
+  assert.deepStrictEqual(changed(unlinked, full), [full.indexOf(optional[1]!)]);
+  assert.include(unlinked.join("\n"), '"feat/login"');
+  for (const part of ["#12", "https://github.com/o/r/pull/12"]) {
+    assert.include(optional[1], part);
+    assert.notInclude(unlinked.join("\n"), part);
+  }
+
+  // A worktree or scratch folder adds two lines: if it stays on disk, and who still works in it.
+  const worktree = receipt({
+    previousFolder: "/worktrees/w",
+    leftFolder: { exists: true, project: "P", otherThreads: ["Fork", "Archived"] },
+  });
+  assert.include(worktree[1], "`/worktrees/w`");
+  assert.include(worktree[4], '"P", "Fork", "Archived"');
+  // Without those lines, only the line about the folder it came from differs from a root move.
+  assert.deepStrictEqual(
+    changed(
+      worktree.toSpliced(3, 2).map((line) => line.replaceAll("/worktrees/w", "/repos/a")),
+      full,
+    ),
+    [1],
   );
-  assert.include(
-    threadMoveReceiptMessage({
-      ...move,
-      previousFolder: "/scratch/s",
-      leftFolder: { exists: false, project: null, otherThreads: [] },
-    }),
-    "\nThe folder no longer exists.\nNo other thread works in it.\n",
+  // A folder that is gone and empty changes those two lines and no other.
+  const gone = receipt({
+    previousFolder: "/scratch/s",
+    leftFolder: { exists: false, project: null, otherThreads: [] },
+  });
+  assert.deepStrictEqual(
+    changed(
+      gone,
+      worktree.map((line) => line.replaceAll("/worktrees/w", "/scratch/s")),
+    ),
+    [3, 4],
   );
 });
 

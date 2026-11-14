@@ -2628,6 +2628,13 @@ describe("ClaudeAdapterV2 native fork", () => {
     { from: "the session cwd", folder: "/workspace" },
     { from: "its record", recorded: "/repo/a", history: "/repo/h", folder: "/repo/a" },
     { from: "run history", history: "/repo/a", folder: "/repo/a" },
+    {
+      from: "its record, as a whole session",
+      recorded: "/repo/a",
+      history: "/repo/h",
+      folder: "/repo/a",
+      whole: true,
+    },
   ])("forks a session from its original directory and records its folder from $from", (row) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2640,14 +2647,15 @@ describe("ClaudeAdapterV2 native fork", () => {
       });
       const sourceSessionId = "11111111-1111-4111-8111-111111111111";
       const sourceCursor = "aaaaaaaa-0000-4000-8000-000000000002";
-      const projectDir = NodePath.join(configDir, "projects", "-old-workspace");
+      // The transcript is under the row's folder only, so a lookup in another folder misses it.
+      const projectDir = NodePath.join(configDir, "projects", row.folder.replaceAll("/", "-"));
       yield* fileSystem.makeDirectory(projectDir, { recursive: true });
       const entry = (uuid: string, parentUuid: string | null, message: unknown) => ({
         type: parentUuid === null ? "user" : "assistant",
         uuid,
         parentUuid,
         sessionId: sourceSessionId,
-        cwd: "/old-workspace",
+        cwd: row.folder,
         isSidechain: false,
         timestamp: "2026-10-01T00:00:00.000Z",
         message,
@@ -2755,33 +2763,36 @@ describe("ClaudeAdapterV2 native fork", () => {
           ...(row.recorded === undefined ? {} : { nativeStorageFolder: row.recorded }),
         },
         ...(row.history === undefined ? {} : { sourceNativeStorageFolder: row.history }),
-        sourceProviderTurns: [
-          {
-            id: providerTurnId,
-            providerThreadId: sourceProviderThread.id,
-            nodeId: NodeId.make("node-claude-source"),
-            runAttemptId: RunAttemptId.make("run-attempt-claude-source"),
-            nativeTurnRef: {
-              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-              nativeId: sourceCursor,
-              strength: "weak",
-            },
-            ordinal: 1,
-            status: "completed",
-            startedAt: now,
-            completedAt: now,
-          },
-        ],
-        providerTurnId,
+        ...(row.whole === true
+          ? {}
+          : {
+              sourceProviderTurns: [
+                {
+                  id: providerTurnId,
+                  providerThreadId: sourceProviderThread.id,
+                  nodeId: NodeId.make("node-claude-source"),
+                  runAttemptId: RunAttemptId.make("run-attempt-claude-source"),
+                  nativeTurnRef: {
+                    driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+                    nativeId: sourceCursor,
+                    strength: "weak",
+                  },
+                  ordinal: 1,
+                  status: "completed",
+                  startedAt: now,
+                  completedAt: now,
+                },
+              ],
+              providerTurnId,
+            }),
         targetThreadId,
       });
 
+      // The fork names no folder: the SDK finds the session by id in this Claude home.
       assert.deepEqual(forkCalls, [
         {
           sessionId: sourceSessionId,
-          options: {
-            upToMessageId: sourceCursor,
-          },
+          options: row.whole === true ? {} : { upToMessageId: sourceCursor },
           environment: { CLAUDE_CONFIG_DIR: configDir },
           threadId: targetThreadId,
           providerSessionId,
@@ -2795,9 +2806,20 @@ describe("ClaudeAdapterV2 native fork", () => {
       );
       assert.include(forkedTranscript, "inherited answer");
       assert.equal(forkedProviderThread.forkedFrom?.providerThreadId, sourceProviderThread.id);
-      assert.equal(forkedProviderThread.forkedFrom?.providerTurnId, providerTurnId);
-      // Only a head lookup in the same storage finds the forked transcript's last message.
-      assert.isString(forkedProviderThread.nativeMetadata?.forkHeadMessageId);
+      assert.equal(
+        forkedProviderThread.forkedFrom?.providerTurnId,
+        row.whole === true ? undefined : providerTurnId,
+      );
+      // The fork's head is the last message of the transcript the fork wrote, under its new id.
+      assert.equal(
+        forkedProviderThread.nativeMetadata?.forkHeadMessageId,
+        forkedTranscript
+          .trimEnd()
+          .split("\n")
+          .map((line): { readonly type: string; readonly uuid: string } => JSON.parse(line))
+          .findLast((line) => line.type === "assistant")?.uuid,
+      );
+      // The forked transcript was read from the folder that the fork records.
       assert.equal(forkedProviderThread.nativeStorageFolder, row.folder);
 
       yield* runtime.startTurn({

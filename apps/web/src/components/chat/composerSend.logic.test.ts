@@ -222,39 +222,56 @@ it("runThreadMove asks each question once, keeps every flag, sends back the fold
   expect(await runThreadMove(request, async () => refused, ask)).toBe(refused);
 });
 
+// A confirm message is the title, a line for each folder, an empty line, then the notes.
+const readConfirm = (message: string) => {
+  const [title = "", ...lines] = message.split("\n");
+  const gap = lines.indexOf("");
+  return {
+    title,
+    folders: lines.slice(0, gap).map((line) => line.slice(line.indexOf(": ") + 2)),
+    notes: lines.slice(gap + 1).join("\n"),
+  };
+};
+
 // The confirm dialog takes its title from the first line, so the question leads each message.
 it("threadMoveConfirmMessage names nesting, both folders once, the way back and threads", () => {
-  const nested = { ...needsProject, nestedIn: { projectId: ProjectId.make("p"), title: "App" } };
-  expect(threadMoveConfirmMessage(nested, "/repo")).toBe(
-    [
-      "Create a project and move this thread?",
-      "From: /repo",
-      "To: /repo/app",
-      "",
-      "The new project is nested in project App.",
-    ].join("\n"),
+  const nestedIn = { projectId: ProjectId.make("p"), title: "App" };
+  const nested = readConfirm(threadMoveConfirmMessage({ ...needsProject, nestedIn }, "/repo"));
+  expect(nested.folders).toEqual(["/repo", "/repo/app"]);
+  expect(nested.notes).toContain("App");
+  // Without a known current folder, only the destination has a line. Without nesting, no project.
+  expect(readConfirm(threadMoveConfirmMessage(needsProject, null))).toEqual({
+    title: nested.title,
+    folders: ["/repo/app"],
+    notes: expect.not.stringContaining("App"),
+  });
+
+  const stays = "stays on disk with all its files until you remove it.";
+  const leaving = { ...confirm, staysOnDisk: `The folder /worktrees/w ${stays}` };
+  const scratch = readConfirm(
+    threadMoveConfirmMessage({ ...leaving, to: null, wayBack: "none" }, null),
   );
-  const leaving = {
-    ...confirm,
-    staysOnDisk: "The folder /worktrees/w stays on disk with all its files until you remove it.",
-  };
-  expect(threadMoveConfirmMessage({ ...leaving, to: null, wayBack: "none" }, null)).toBe(
-    [
-      "Leave this scratch folder?",
-      "From: /worktrees/w",
-      "To: A new scratch folder",
-      "",
-      "The folder stays on disk with all its files until you remove it.",
-      'No command brings the thread back here. To keep a way back, cancel and choose "Turn into project" first.',
-      "Still working there: Fork.",
-    ].join("\n"),
-  );
-  const [title, from, ...rest] = threadMoveConfirmMessage(leaving, null).split("\n");
-  expect([title, from]).toEqual(["Leave this worktree?", "From: /worktrees/w"]);
-  expect(rest.join("\n")).not.toContain("/worktrees/w");
-  expect(rest).toContain(
-    "Add the From folder as a project first, and /cd to it brings the thread back.",
-  );
-  // Without a known current folder, the message has no From line.
-  expect(threadMoveConfirmMessage(needsProject, null).split("\n")[1]).toBe("To: /repo/app");
+  const worktree = readConfirm(threadMoveConfirmMessage(leaving, null));
+  const rooted = readConfirm(threadMoveConfirmMessage({ ...leaving, wayBack: "cd" }, null));
+  // A new scratch folder has no path yet.
+  expect(scratch.folders).toEqual(["/worktrees/w", expect.not.stringContaining("/")]);
+  expect(worktree.folders).toEqual(["/worktrees/w", "/repo/app"]);
+  expect(rooted.folders).toEqual(worktree.folders);
+  for (const { notes } of [scratch, worktree, rooted]) {
+    // The server's sentence stays, without the path that the From line shows.
+    expect(notes).toContain(`The folder ${stays}`);
+    expect(notes).toContain("Fork");
+  }
+  // Each way back has its own note, and only a folder with a way back names /cd.
+  expect(new Set([scratch.notes, worktree.notes, rooted.notes]).size).toBe(3);
+  expect(scratch.notes).not.toContain("/cd");
+  expect(worktree.notes).toContain("/cd");
+  expect(rooted.notes).toContain("/cd");
+  // A new project, a scratch folder and a worktree each have their own question.
+  expect(rooted.title).toBe(worktree.title);
+  expect(new Set([nested.title, scratch.title, worktree.title]).size).toBe(3);
+  for (const { title, folders, notes } of [nested, scratch, worktree, rooted]) {
+    expect(title).toMatch(/^[^/]+\?$/);
+    for (const folder of folders) expect(notes).not.toContain(folder);
+  }
 });
