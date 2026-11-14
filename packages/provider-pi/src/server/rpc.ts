@@ -18,6 +18,7 @@ import {
   MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH,
 } from "@t3tools/shared/toolOutput";
 
+import { redactProviderFailureText } from "@t3tools/provider-core/server/failure";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 
 export class PiRpcError extends Schema.TaggedError<PiRpcError>()("PiRpcError", {
@@ -171,12 +172,30 @@ function summarizePiError(error: unknown): string {
     : text;
 }
 
+const PI_STDERR_TAIL_MAX_CHARS = 8_192;
+const PI_STDERR_LINE_MAX_CHARS = 240;
+const PI_STDERR_ERROR_LINE = /^[\w$.]*(?:Error|Exception)(?: \[[\w-]+\])?:/;
+
+// Only the last error line and its first stack frame: free-form stderr may echo prompts.
+function piStderrCause(stderrTail: string): string | undefined {
+  const lines = stderrTail.split(/\r?\n/).map((line) => line.trim());
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (!PI_STDERR_ERROR_LINE.test(lines[index]!)) continue;
+    const frame = lines[index + 1];
+    return [lines[index]!, ...(frame?.startsWith("at ") ? [frame] : [])]
+      .map((line) => redactProviderFailureText(line.slice(0, PI_STDERR_LINE_MAX_CHARS)))
+      .join(" ");
+  }
+  return undefined;
+}
+
 // Pi 0.84+ may exit 1 during import without any protocol output.
-function describePiStdoutClosure(exitCode: number | undefined): string {
+function describePiStdoutClosure(exitCode: number | undefined, stderrTail: string): string {
   if (exitCode === undefined || !Number.isFinite(exitCode)) {
     return "pi process closed stdout";
   }
-  return `pi process exited with code ${exitCode}`;
+  const cause = exitCode === 0 ? undefined : piStderrCause(stderrTail);
+  return `pi process exited with code ${exitCode}${cause === undefined ? "" : `: ${cause}`}`;
 }
 
 function parsePiRecord(line: string): PiRpcRecord | undefined {
@@ -273,6 +292,8 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   const outgoing = yield* Queue.unbounded<Uint8Array, PiRpcError>();
   const transportDown = yield* Deferred.make<never, PiRpcError>();
   const exitDeferred = yield* Deferred.make<number, PiRpcError>();
+  const stderrDrained = yield* Deferred.make<void>();
+  let stderrTail = "";
   let nextRequestId = 0;
 
   const failTransport = Effect.fn("PiRpc.failTransport")(function* (error: PiRpcError) {
@@ -371,11 +392,17 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
               Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
               Effect.orElseSucceed(() => Option.none<number>()),
             );
+        // Extension children that inherit stderr can hold it open after Pi exits.
+        yield* Deferred.await(stderrDrained).pipe(
+          Effect.timeoutOption(Duration.millis(250)),
+          Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+        );
         return yield* failTransport(
           new PiRpcError({
             operation: "read",
             detail: describePiStdoutClosure(
               Option.isSome(maybeExitCode) ? maybeExitCode.value : undefined,
+              stderrTail,
             ),
           }),
         );
@@ -386,13 +413,15 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
 
   yield* child.stderr.pipe(
     Stream.decodeText(),
-    Stream.runForEach((chunk) =>
-      chunk.trim().length === 0
+    Stream.runForEach((chunk) => {
+      stderrTail = `${stderrTail}${chunk}`.slice(-PI_STDERR_TAIL_MAX_CHARS);
+      return chunk.trim().length === 0
         ? Effect.void
         : // Log stderr length only; unbounded text may contain credentials or prompts.
-          Effect.logDebug("pi stderr", { stderrLength: chunk.length }),
-    ),
+          Effect.logDebug("pi stderr", { stderrLength: chunk.length });
+    }),
     Effect.ignore,
+    Effect.ensuring(Deferred.succeed(stderrDrained, undefined)),
     Effect.forkIn(scope),
   );
 
