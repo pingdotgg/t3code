@@ -185,10 +185,23 @@ export function claudeRateLimitEventToUpdate(
 
 /** get_usage percentages are already 0-100. */
 export function claudeUsageResponseToLimits(input: {
-  readonly response: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
+  readonly response: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits"> &
+    Partial<Pick<SDKControlGetUsageResponse, "subscription_type">>;
   readonly checkedAt: string;
 }): { readonly limits: ServerProviderUsageLimits; readonly names: ClaudeScopedLimitNames } {
   const { response, checkedAt } = input;
+  if (!response.rate_limits_available && response.subscription_type) {
+    // The CLI withholds limits from subscription tokens that lack the `user:profile` scope.
+    return {
+      limits: makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "probeFailed",
+        message:
+          "Claude Code's sign-in can't read plan limits. Run `claude auth login` on the machine running T3 Code, using the Claude config directory from T3 Code's Claude provider settings if one is set, to sign in again.",
+      }),
+      names: { overageIncluded: undefined },
+    };
+  }
   if (!response.rate_limits_available || !response.rate_limits) {
     return {
       limits: makeUnavailableUsageLimits({

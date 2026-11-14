@@ -305,7 +305,10 @@ export type ClaudeCapabilitiesProbe = {
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   readonly models?: ReadonlyArray<ClaudeModelInfo>;
   /** Undefined means get_usage failed; absent windows on success mean no subscription windows, as with API keys. */
-  readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
+  readonly usage?: Pick<
+    SDKControlGetUsageResponse,
+    "rate_limits_available" | "rate_limits" | "subscription_type"
+  >;
   readonly usageCheckedAt?: string;
   /** Each settings source's `maxEffortLevel` caps; Claude Code clamps every higher effort. */
   readonly effortCapSources?: ReadonlyArray<ClaudeEffortCapSource>;
@@ -556,6 +559,7 @@ const probeClaudeCapabilities = (
             ? {
                 rate_limits_available: usageResult.success.rate_limits_available,
                 rate_limits: usageResult.success.rate_limits,
+                subscription_type: usageResult.success.subscription_type,
               }
             : undefined;
         const effortCapSources = parseClaudeEffortCapSources(
