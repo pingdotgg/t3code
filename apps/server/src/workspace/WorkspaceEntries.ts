@@ -307,23 +307,30 @@ export const make = Effect.gen(function* () {
     ) {
       return [];
     }
-    const listed = yield* vcsProcess
-      .run({
-        operation: "WorkspaceEntries.listWorktrees",
-        command: "git",
-        args: ["worktree", "list", "--porcelain"],
-        cwd,
-        allowNonZeroExit: true,
-        timeoutMs: 5_000,
-      })
-      .pipe(Effect.orElseSucceed(() => undefined));
+    const listWorktrees = (args: ReadonlyArray<string>) =>
+      vcsProcess
+        .run({
+          operation: "WorkspaceEntries.listWorktrees",
+          command: "git",
+          args: ["worktree", "list", "--porcelain", ...args],
+          cwd,
+          allowNonZeroExit: true,
+          timeoutMs: 5_000,
+        })
+        .pipe(Effect.orElseSucceed(() => undefined));
+    // Only NUL framing keeps a newline in a worktree path. Pre-2.36 Git rejects `-z`.
+    let listed = yield* listWorktrees(["-z"]);
+    if (listed?.exitCode !== 0) {
+      const lineListed = yield* listWorktrees([]);
+      listed = lineListed && { ...lineListed, stdout: lineListed.stdout.replaceAll("\n", "\0") };
+    }
     if (!listed || listed.exitCode !== 0) return [];
     const realCwd = yield* Effect.promise(() => NodeFSP.realpath(cwd).catch(() => cwd));
-    const worktreeRoots = listed.stdout.split(/\n\s*\n/).flatMap((record) => {
-      const lines = record.split("\n");
-      const worktree = lines.find((line) => line.startsWith("worktree "));
+    const worktreeRoots = listed.stdout.split("\0\0").flatMap((record) => {
+      const fields = record.split("\0");
+      const worktree = fields.find((field) => field.startsWith("worktree "));
       // A `prunable` record's directory is gone; another checkout may now sit there.
-      if (worktree === undefined || lines.some((line) => line.startsWith("prunable"))) return [];
+      if (worktree === undefined || fields.some((field) => field.startsWith("prunable"))) return [];
       const root = worktree.slice("worktree ".length);
       const relativeRoot = path.relative(realCwd, root);
       return relativeRoot === "" ||
