@@ -7,6 +7,7 @@
 
 mod notices;
 mod presentation;
+mod roster;
 mod subagents;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -96,6 +97,10 @@ pub struct Mapper<E: Env> {
     ledger: Option<Vec<(String, Ledger)>>,
     /// The ledger growth of the result being handled (`resultLedgerUsage`).
     result_growth: Option<Ledger>,
+    /// Background Bash calls and Monitors (`pendingBackgroundTasksByNativeThread`).
+    roster: roster::Roster,
+    /// The provider thread as last sent (`lastProviderThreadByNativeThread`).
+    last_provider_thread: Option<Value>,
 }
 
 /// Input and output tokens (`ClaudeLedgerUsage`).
@@ -133,7 +138,6 @@ fn model_ledger(model_usage: Option<&Value>) -> Option<Vec<(String, Ledger)>> {
                     .and_then(Value::as_f64)
                     .filter(|n| n.is_finite() && *n >= 0.0)
             };
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let round = |n: f64| n.round() as u64;
             let input = round(count("inputTokens")?);
             let output = round(count("outputTokens")?);
@@ -313,12 +317,16 @@ impl<E: Env> Mapper<E> {
             plan_without_approvals: false,
             ledger: Some(Vec::new()),
             result_growth: None,
+            roster: roster::Roster::default(),
+            last_provider_thread: None,
         }
     }
 
     /// A new CLI process: its `modelUsage` starts from nothing (`modelLedger: new Map()`).
     pub fn new_process(&mut self) {
         self.ledger = Some(Vec::new());
+        // The SDK sends no first roster: a new process starts with none.
+        self.roster.clear();
     }
 
     /// `requiresClaudeApproval` from the query policy. Unset, the live permission mode decides
@@ -334,12 +342,12 @@ impl<E: Env> Mapper<E> {
 
     /// Subagents still running, or Claude output waiting for a continuation turn.
     pub fn has_pending_background_work(&self) -> bool {
-        self.subagents.any_running() || self.continuation_requested
+        self.subagents.any_running() || self.continuation_requested || !self.roster.is_empty()
     }
 
     /// Sizes of every collection that outlives a turn, for the memory checks.
     #[cfg(test)]
-    pub fn held_sizes(&self) -> [usize; 6] {
+    pub fn held_sizes(&self) -> [usize; 7] {
         [
             self.pending.len(),
             self.subagents.len(),
@@ -347,6 +355,7 @@ impl<E: Env> Mapper<E> {
             self.plan_ids.len(),
             self.context_windows.len(),
             self.task_list.as_ref().map_or(0, Vec::len),
+            self.roster.sizes(),
         ]
     }
 
@@ -481,6 +490,7 @@ impl<E: Env> Mapper<E> {
         provider_thread["status"] = json!("active");
         provider_thread["providerSessionId"] = json!(self.provider_session_id);
         provider_thread["updatedAt"] = json!(now);
+        self.last_provider_thread = Some(provider_thread.clone());
         emit(
             &mut out,
             |v| ProviderEvent::ProviderThreadUpdated { provider_thread: v },
@@ -504,6 +514,8 @@ impl<E: Env> Mapper<E> {
 
     pub fn handle(&mut self, message: Inbound) -> Vec<Out> {
         let mut out = Vec::new();
+        // Before routing: an idle Monitor reports its task before its call replays.
+        self.roster.track_monitor_calls(&message);
         if self.turn.is_none() && is_wake_frame(&message) {
             self.hold_wake(message, &mut out);
             return out;
@@ -837,10 +849,19 @@ impl<E: Env> Mapper<E> {
 
     fn on_system(&mut self, msg: SystemMsg, out: &mut Vec<Out>) {
         match msg.subtype.as_str() {
-            "task_started" => return self.on_task_started(&msg, out),
+            "task_started" => {
+                self.on_task_started(&msg, out);
+                self.apply_roster(&msg, out);
+                return;
+            }
             "task_progress" => return self.on_task_progress(&msg, out),
             "task_notification" => {
                 self.on_task_notification(&msg, out);
+                self.apply_roster(&msg, out);
+                return;
+            }
+            "background_tasks_changed" => {
+                self.apply_roster(&msg, out);
                 return;
             }
             _ => {}
@@ -1230,13 +1251,18 @@ impl<E: Env> Mapper<E> {
             thread["firstRunOrdinal"] = json!(turn.run_ordinal);
         }
         thread["lastRunOrdinal"] = json!(turn.run_ordinal);
-        thread["pendingBackgroundTasks"] = json!([]);
+        // A stopped or failed turn takes its background work with it.
+        if !completed {
+            self.roster.clear();
+        }
+        thread["pendingBackgroundTasks"] = self.roster.tasks();
         // A turn that wrote to the transcript moved past a rollback's pinned head.
         if completed || turn.cursor.is_some() {
             thread["nativeConversationHeadRef"] = Value::Null;
         }
         thread["status"] = json!(if completed { "active" } else { "idle" });
         thread["updatedAt"] = json!(now);
+        self.last_provider_thread = Some(thread.clone());
         emit(
             out,
             |v| ProviderEvent::ProviderThreadUpdated { provider_thread: v },

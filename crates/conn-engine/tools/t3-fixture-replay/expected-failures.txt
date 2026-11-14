@@ -26,7 +26,6 @@ claude_background_subagent_after_root/claudeAgent    provider: no background_wor
 claude_background_monitor_wake/claudeAgent           provider: Claude Monitor wakes are not built
 claude_nested_background_subagent_wake/claudeAgent   provider: no Claude background roster for nested subagents
 claude_background_subagent_lifecycle/claudeAgent     provider: no Claude background roster; the subagent statuses differ
-claude_background_task_interrupt/claudeAgent         provider: no Claude background roster ("the background task must reach the roster before interrupt")
 claude_background_wake_before_queued_prompt/claudeAgent  provider: Claude background wakes are not built; the wake and queued prompt order differs
 claude_compact_after_resume_wake/claudeAgent         provider: Claude background wakes are not built (the resumed wake's compaction differs)
 claude_compact_after_peer_turn/claudeAgent           provider: Claude background wakes are not built (the peer turn's run never reaches its status)

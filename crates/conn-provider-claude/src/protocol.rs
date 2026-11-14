@@ -282,6 +282,12 @@ pub struct SystemMsg {
     pub summary: Option<String>,
     #[serde(default)]
     pub is_backgrounded: Option<bool>,
+    /// `task_started`: the subagent task whose own background work this is (undeclared).
+    #[serde(default)]
+    pub parent_task_id: Option<Value>,
+    /// `background_tasks_changed`: the CLI's whole roster.
+    #[serde(default)]
+    pub tasks: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

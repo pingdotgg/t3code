@@ -262,7 +262,7 @@ async fn a_cold_start_shows_the_turn_before_the_host_answers() {
 async fn a_cold_start_that_cannot_open_fails_the_early_turn() {
     let scratch = Scratch::new("cold-start-fail");
     let helper = claude_host(
-        HelperCommand::from_path(&scratch.0.join("missing-host.mjs")),
+        HelperCommand::from_path(scratch.0.join("missing-host.mjs")),
         "claudeAgent",
     );
     let (session, mut events) = session(&helper);
