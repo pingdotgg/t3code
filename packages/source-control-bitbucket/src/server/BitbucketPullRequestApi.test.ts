@@ -377,6 +377,7 @@ layer("BitbucketPullRequestApi.layer", (it) => {
                   content: { raw: "rename this" },
                   user: { nickname: "bilal" },
                   created_on: "2026-06-16T05:04:32+00:00",
+                  updated_on: "2026-06-16T05:04:32+00:00",
                   inline: { path: "src/a.ts", to: 12, from: null },
                   resolution: { type: "pullrequest_comment_resolution" },
                 },
@@ -385,6 +386,7 @@ layer("BitbucketPullRequestApi.layer", (it) => {
                   content: { raw: "done" },
                   user: { nickname: "julius" },
                   created_on: "2026-06-16T06:04:32+00:00",
+                  updated_on: "2026-06-16T06:30:00.123456+00:00",
                   parent: { id: 10 },
                 },
                 {
@@ -392,6 +394,7 @@ layer("BitbucketPullRequestApi.layer", (it) => {
                   content: { raw: "thanks" },
                   user: { nickname: "bilal" },
                   created_on: "2026-06-16T07:04:32+00:00",
+                  updated_on: null,
                   parent: { id: 11 },
                 },
                 {
@@ -417,7 +420,11 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         side: "right",
         isResolved: true,
       });
-      expect(threads[0]?.comments.map((comment) => comment.id)).toEqual(["10", "11", "12"]);
+      expect(threads[0]?.comments.map(({ id, editedAt }) => ({ id, editedAt }))).toEqual([
+        { id: "10", editedAt: null },
+        { id: "11", editedAt: "2026-06-16T06:30:00.123Z" },
+        { id: "12", editedAt: null },
+      ]);
     }),
   );
 

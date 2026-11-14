@@ -162,6 +162,7 @@ describe("decodeCommentsJson", () => {
             content: { raw: "The issue is ready for review." },
             user: { display_name: "Release Bot", type: "app_user" },
             created_on: "2026-05-15T01:58:38.220690+00:00",
+            updated_on: "2026-05-15T03:58:38.220690+00:00",
             deleted: false,
             pending: false,
             links: { html: { href: "https://bitbucket.org/acme/web/pull-requests/892#c1" } },
@@ -189,6 +190,7 @@ describe("decodeCommentsJson", () => {
       kind: "issue-comment",
       author: { login: "Release Bot" },
       createdAt: "2026-05-15T01:58:38.220Z",
+      editedAt: "2026-05-15T03:58:38.220Z",
     });
   });
 

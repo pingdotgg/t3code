@@ -91,6 +91,8 @@ const RawCommentSchema = Schema.Struct({
   content: Schema.optional(Schema.NullOr(Schema.Struct({ raw: Schema.optional(Schema.String) }))),
   user: Schema.optional(Schema.NullOr(RawUserSchema)),
   created_on: Schema.String,
+  /** Last change of any kind, possibly not to the text. */
+  updated_on: Schema.optional(Schema.NullOr(Schema.String)),
   deleted: Schema.optional(Schema.Boolean),
   pending: Schema.optional(Schema.Boolean),
   parent: Schema.optional(Schema.NullOr(Schema.Struct({ id: Schema.Int }))),
@@ -351,6 +353,14 @@ export function decodeWorkspaceMembersJson(
 
 export type BitbucketRawComment = Schema.Schema.Type<typeof RawCommentSchema>;
 
+/** A stamp equal to `created_on` is no edit. */
+function toEditedAt(comment: BitbucketRawComment): string | null {
+  const updatedOn = trimmed(comment.updated_on);
+  if (updatedOn === null) return null;
+  const editedAt = toIsoUtc(updatedOn);
+  return editedAt === toIsoUtc(comment.created_on) ? null : editedAt;
+}
+
 export interface BitbucketComments {
   readonly comments: ReadonlyArray<PullRequestComment>;
   /** Raw entries for thread assembly across page boundaries. */
@@ -405,6 +415,7 @@ export function buildReviewThreads(
         author: toActor(comment.user),
         body: comment.content?.raw ?? "",
         createdAt: toIsoUtc(comment.created_on),
+        editedAt: toEditedAt(comment),
         url: trimmed(comment.links?.html?.href),
       }));
     return entries.length === 0 ? [] : [{ ...thread, comments: entries }];
@@ -433,6 +444,7 @@ export function decodeCommentsJson(raw: string): Result.Result<BitbucketComments
       author: toActor(comment.user),
       body,
       createdAt: toIsoUtc(comment.created_on),
+      editedAt: toEditedAt(comment),
       url: trimmed(comment.links?.html?.href),
       path,
       reviewState: null,
