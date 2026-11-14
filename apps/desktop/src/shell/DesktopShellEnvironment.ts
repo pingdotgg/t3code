@@ -3,6 +3,7 @@ import {
   applyShellEnvironment,
   buildEnvironmentCaptureCommand,
   listLoginShellCandidates,
+  mergePathValues,
   readUserLoginShell,
   setWindowsPath,
 } from "@t3tools/shared/shell";
@@ -88,6 +89,8 @@ export class DesktopShellEnvironment extends Context.Service<
 
 const LOGIN_SHELL_ENV_NAMES = [
   "PATH",
+  "ANDROID_HOME",
+  "ANDROID_SDK_ROOT",
   "DBUS_SESSION_BUS_ADDRESS",
   "DISPLAY",
   "LANG",
@@ -114,9 +117,12 @@ const LOGIN_SHELL_ENV_NAMES = [
 ] as const;
 const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
 const LOCALE_ENV_NAMES = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
+const ANDROID_SDK_ENV_NAMES = ["ANDROID_HOME", "ANDROID_SDK_ROOT"] as const;
 const FALLBACK_LC_CTYPE = "en_US.UTF-8";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 const LOGIN_SHELL_TIMEOUT = Duration.seconds(5);
+// A profile can be slow only while the machine boots; one longer wait covers it.
+const SLOW_LOGIN_SHELL_TIMEOUT = Duration.seconds(20);
 const LAUNCHCTL_TIMEOUT = Duration.seconds(2);
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
 
@@ -126,10 +132,12 @@ const trimNonEmpty = (value: string | null | undefined): Option.Option<string> =
     Option.filter((entry) => entry.length > 0),
   );
 
-const pathDelimiter = (platform: NodeJS.Platform) => (platform === "win32" ? ";" : ":");
+// POSIX directory names may begin or end with whitespace; mergePathValues trims only on Windows.
+const nonEmptyPath = (value: string | null | undefined): Option.Option<string> =>
+  Option.fromNullishOr(value).pipe(Option.filter((entry) => entry.length > 0));
 
 const readEnvPath = (env: NodeJS.ProcessEnv): Option.Option<string> =>
-  trimNonEmpty(env.PATH ?? env.Path ?? env.path);
+  nonEmptyPath(env.PATH ?? env.Path ?? env.path);
 
 const normalizeRuntimeDir = (value: string): string => value.replace(/\/+$/u, "");
 
@@ -148,39 +156,16 @@ const linuxRuntimeDirCandidates = (
   return candidates.filter((candidate) => candidate.length > 0);
 };
 
-const pathComparisonKey = (entry: string, platform: NodeJS.Platform) => {
-  const normalized = entry.trim().replace(/^"+|"+$/g, "");
-  return platform === "win32" ? normalized.toLowerCase() : normalized;
-};
-
-const sanitizePathEntry = (entry: string, platform: NodeJS.Platform) =>
-  platform === "win32" ? entry.replaceAll('"', "") : entry;
-
 const mergePaths = (
   platform: NodeJS.Platform,
   values: ReadonlyArray<Option.Option<string>>,
-): Option.Option<string> => {
-  const delimiter = pathDelimiter(platform);
-  const entries: string[] = [];
-  const seen = new Set<string>();
-
-  for (const value of values) {
-    if (Option.isNone(value)) continue;
-
-    for (const entry of value.value.split(delimiter)) {
-      const sanitized = sanitizePathEntry(entry.trim(), platform);
-      if (sanitized.length === 0) continue;
-
-      const key = pathComparisonKey(sanitized, platform);
-      if (key.length === 0 || seen.has(key)) continue;
-
-      seen.add(key);
-      entries.push(sanitized);
-    }
-  }
-
-  return entries.length > 0 ? Option.some(entries.join(delimiter)) : Option.none();
-};
+): Option.Option<string> =>
+  Option.fromNullishOr(
+    values.reduce<string | undefined>(
+      (merged, value) => mergePathValues(merged, Option.getOrUndefined(value), platform),
+      undefined,
+    ),
+  );
 
 const knownWindowsCliDirs = (env: NodeJS.ProcessEnv): ReadonlyArray<string> => [
   ...trimNonEmpty(env.APPDATA).pipe(
@@ -261,7 +246,11 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
   readonly env: NodeJS.ProcessEnv;
   readonly timeout: Duration.Duration;
   readonly shell?: boolean;
-}): Effect.fn.Return<string, never, ChildProcessSpawner.ChildProcessSpawner> {
+}): Effect.fn.Return<
+  string,
+  DesktopShellEnvironmentCommandTimeoutError,
+  ChildProcessSpawner.ChildProcessSpawner
+> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fiber = yield* Effect.scoped(
     Effect.gen(function* () {
@@ -317,21 +306,34 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
     return output.value;
   }
 
-  const error = new DesktopShellEnvironmentCommandTimeoutError({
+  return yield* new DesktopShellEnvironmentCommandTimeoutError({
     probe: input.probe,
     executable: executableName(input.command),
     argumentCount: input.args.length,
     timeoutMs: Duration.toMillis(input.timeout),
   });
-  yield* logShellEnvironmentCommandError(error);
-  return "";
 });
+
+const orEmptyOnTimeout = <R>(
+  effect: Effect.Effect<string, DesktopShellEnvironmentCommandTimeoutError, R>,
+): Effect.Effect<string, never, R> =>
+  effect.pipe(
+    Effect.catchTags({
+      DesktopShellEnvironmentCommandTimeoutError: (error) =>
+        logShellEnvironmentCommandError(error).pipe(Effect.as("")),
+    }),
+  );
 
 const readLoginShellEnvironment = (
   shell: string,
   names: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv,
-): Effect.Effect<EnvironmentPatch, never, ChildProcessSpawner.ChildProcessSpawner> =>
+  timeout: Duration.Duration,
+): Effect.Effect<
+  EnvironmentPatch,
+  DesktopShellEnvironmentCommandTimeoutError,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
   names.length === 0
     ? Effect.succeed({})
     : runCommandOutput({
@@ -339,7 +341,7 @@ const readLoginShellEnvironment = (
         command: shell,
         args: ["-ilc", buildEnvironmentCaptureCommand(shell, names)],
         env,
-        timeout: LOGIN_SHELL_TIMEOUT,
+        timeout,
       }).pipe(Effect.map((output) => extractEnvironment(output, names)));
 
 const readLaunchctlPath = (env: NodeJS.ProcessEnv) =>
@@ -349,7 +351,7 @@ const readLaunchctlPath = (env: NodeJS.ProcessEnv) =>
     command: "/bin/launchctl",
     args: ["getenv", "PATH"],
     timeout: LAUNCHCTL_TIMEOUT,
-  }).pipe(Effect.map(trimNonEmpty));
+  }).pipe(orEmptyOnTimeout, Effect.map(trimNonEmpty));
 
 const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEnvironment")(
   function* (
@@ -374,7 +376,7 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
         args,
         env,
         timeout: LOGIN_SHELL_TIMEOUT,
-      });
+      }).pipe(orEmptyOnTimeout);
       const environment = extractEnvironment(output, names);
       if (Object.keys(environment).length > 0) {
         return environment;
@@ -429,10 +431,27 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     const userShells = [config.env.SHELL?.trim(), readUserLoginShell()];
 
     let answeredBy: string | undefined;
+    let waitedForSlowShell = false;
     for (const shell of listLoginShellCandidates(config.platform, config.env.SHELL)) {
+      const read = (timeout: Duration.Duration) =>
+        readLoginShellEnvironment(shell, LOGIN_SHELL_ENV_NAMES, config.env, timeout);
       Object.assign(
         shellEnvironment,
-        yield* readLoginShellEnvironment(shell, LOGIN_SHELL_ENV_NAMES, config.env),
+        yield* read(LOGIN_SHELL_TIMEOUT).pipe(
+          Effect.catchTags({
+            DesktopShellEnvironmentCommandTimeoutError: (error) => {
+              const retry = !waitedForSlowShell;
+              waitedForSlowShell = true;
+              return logShellEnvironmentCommandError(error).pipe(
+                Effect.andThen(retry ? read(SLOW_LOGIN_SHELL_TIMEOUT) : Effect.succeed({})),
+              );
+            },
+          }),
+          Effect.catchTags({
+            DesktopShellEnvironmentCommandTimeoutError: (error) =>
+              logShellEnvironmentCommandError(error).pipe(Effect.as({})),
+          }),
+        ),
       );
       if (shellEnvironment.PATH) {
         answeredBy = shell;
@@ -445,7 +464,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
         ? yield* readLaunchctlPath(config.env)
         : Option.none<string>();
     const mergedPath = mergePaths(config.platform, [
-      trimNonEmpty(shellEnvironment.PATH).pipe(Option.orElse(() => launchctlPath)),
+      nonEmptyPath(shellEnvironment.PATH).pipe(Option.orElse(() => launchctlPath)),
       readEnvPath(config.env),
     ]);
 
@@ -489,6 +508,17 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     ] as const) {
       if (!config.env[name] && shellEnvironment[name]) {
         config.env[name] = shellEnvironment[name];
+      }
+    }
+
+    // The device host picks the Android SDK from ANDROID_HOME before ANDROID_SDK_ROOT,
+    // so a profile-only ANDROID_HOME must not shadow an inherited ANDROID_SDK_ROOT.
+    if (ANDROID_SDK_ENV_NAMES.every((name) => Option.isNone(trimNonEmpty(config.env[name])))) {
+      for (const name of ANDROID_SDK_ENV_NAMES) {
+        const value = trimNonEmpty(shellEnvironment[name]);
+        if (Option.isSome(value)) {
+          config.env[name] = value.value;
+        }
       }
     }
 
