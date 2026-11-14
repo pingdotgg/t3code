@@ -5184,6 +5184,17 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
         yield* orchestrator.dispatch({
           type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-due-change-policy-${fingerprinted}`),
+          threadId,
+          ...key,
+          watching: true,
+          includeOwnRemarks: true,
+        });
+        yield* sweep;
+        assert.equal(reads, readsAfterNotice + 1);
+
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
           commandId: CommandId.make(`pr-watch-due-end-${fingerprinted}`),
           threadId,
           ...key,

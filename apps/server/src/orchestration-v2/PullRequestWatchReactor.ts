@@ -115,7 +115,8 @@ interface HeldWake {
   readonly reason?: WatchEndReason;
 }
 
-const watchKey = ({ thread, watch }: WatchTarget) => `${thread.id} ${watch.startedAt}`;
+const watchKey = ({ thread, watch }: WatchTarget) =>
+  `${thread.id} ${watch.startedAt} ${watch.remarksPolicyRevision ?? 0}`;
 
 type WatchEndReason =
   | "merged"
