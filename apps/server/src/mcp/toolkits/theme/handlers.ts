@@ -30,50 +30,57 @@ export const layer = McpToolAccess.toLayer(ThemeToolkit, {
       return {
         current,
         builtIn: BUILT_IN_THEME_IDS,
-        published: published.map(({ id, name, css }) => ({ id, name, hasCss: Boolean(css) })),
-        ...(theme === undefined ? {} : { theme: Struct.omit(theme, ["id"]) }),
+        published: published.map(({ id, name, css, background }) => ({
+          id,
+          name,
+          hasCss: Boolean(css),
+          hasBackground: background !== undefined,
+        })),
+        ...(theme === undefined ? {} : { theme: Struct.omit(theme, ["id", "background"]) }),
         guide: THEME_GUIDE,
       };
     }),
   ),
-  t3_theme_set: McpToolAccess.writesEnvironment(({ themeId, theme, appearance }, check) =>
-    Effect.gen(function* () {
-      const input =
-        themeId !== undefined
-          ? { themeId, theme, appearance }
-          : theme === undefined && appearance !== undefined
-            ? { appearance }
-            : undefined;
-      if (input === undefined) {
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message: "Give `themeId`, `appearance`, or both. `theme` needs a `themeId`.",
+  t3_theme_set: McpToolAccess.writesEnvironment(
+    ({ themeId, theme, backgroundImage, appearance }, check) =>
+      Effect.gen(function* () {
+        const input =
+          themeId !== undefined
+            ? { themeId, theme, appearance, background: backgroundImage }
+            : theme === undefined && backgroundImage === undefined && appearance !== undefined
+              ? { appearance }
+              : undefined;
+        if (input === undefined) {
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message:
+              "Give `themeId`, `appearance`, or both. `theme` and `backgroundImage` need a `themeId`.",
+          });
+        }
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+        const set = Effect.gen(function* () {
+          // The turn may have ended, or the thread's modes changed, while this waited for the lock.
+          yield* check;
+          yield* themes.apply(input).pipe(
+            Effect.catchTags({
+              EnvironmentThemeRefusedError: (error) =>
+                Effect.fail(
+                  new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+                ),
+              EnvironmentThemeNotSelectedError: () => Effect.fail(unavailable()),
+            }),
+          );
+          return {
+            ...(themeId === undefined ? {} : { themeId }),
+            ...(appearance === undefined ? {} : { appearance }),
+            published: theme !== undefined,
+          };
         });
-      }
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-      const themes = yield* EnvironmentTheme.EnvironmentThemeService;
-      const set = Effect.gen(function* () {
-        // The turn may have ended, or the thread's modes changed, while this waited for the lock.
-        yield* check;
-        yield* themes.apply(input).pipe(
-          Effect.catchTags({
-            EnvironmentThemeRefusedError: (error) =>
-              Effect.fail(
-                new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
-              ),
-            EnvironmentThemeNotSelectedError: () => Effect.fail(unavailable()),
-          }),
-        );
-        return {
-          ...(themeId === undefined ? {} : { themeId }),
-          ...(appearance === undefined ? {} : { appearance }),
-          published: theme !== undefined,
-        };
-      });
-      return yield* scope.thread === undefined
-        ? set
-        : executor.withLock(scope.thread.threadId, set);
-    }),
+        return yield* scope.thread === undefined
+          ? set
+          : executor.withLock(scope.thread.threadId, set);
+      }),
   ),
 });

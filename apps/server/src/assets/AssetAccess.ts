@@ -17,6 +17,7 @@ import {
   ThreadId,
   NativeAppIconReference,
   TurnItemId,
+  EnvironmentThemeId,
 } from "@t3tools/contracts";
 import {
   hostPreviewMimeTypeFromExtension,
@@ -52,6 +53,7 @@ import * as AssetSigner from "./AssetSigner.ts";
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
 import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import { findThemeBackground } from "../environmentTheme.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
@@ -154,6 +156,12 @@ const AssetClaimsSchema = Schema.Union([
     version: Schema.Literal(1),
     kind: Schema.Literal("native-app-icon"),
     app: NativeAppIconReference,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("environment-theme-background"),
+    themeId: EnvironmentThemeId,
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -821,6 +829,17 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       imageDimensions = readImageDimensions(image.bytes);
       break;
     }
+    case "environment-theme-background": {
+      // Published themes go to every client, so any client may read their backgrounds.
+      claims = {
+        version: 1,
+        kind: "environment-theme-background",
+        themeId: input.resource.themeId,
+        expiresAt,
+      };
+      fileName = `${input.resource.themeId}-background`;
+      break;
+    }
     case "native-app-icon": {
       claims = {
         version: 1,
@@ -967,6 +986,24 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       Effect.orElseSucceed(() => null),
     );
     return image ? ({ kind: "bytes", ...image } satisfies ResolvedAsset) : null;
+  }
+
+  if (claims.kind === "environment-theme-background") {
+    const config = yield* ServerConfig.ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    // The themes directory may be a symlink; openMediaFile refuses any path that is not canonical.
+    const themesDir = yield* fileSystem
+      .realPath(config.environmentThemesDir)
+      .pipe(Effect.orElseSucceed(() => null));
+    const background = themesDir === null ? null : findThemeBackground(themesDir, claims.themeId);
+    if (background === null) return null;
+    const file = yield* openMediaFile(background.path).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to open theme background.", { path: background.path, cause }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    return file ? ({ kind: "file", path: background.path, file } satisfies ResolvedAsset) : null;
   }
 
   if (claims.kind === "native-app-icon") {

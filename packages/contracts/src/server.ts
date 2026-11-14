@@ -648,6 +648,8 @@ export type EnvironmentThemeFile = typeof EnvironmentThemeFile.Type;
 export const EnvironmentTheme = Schema.Struct({
   id: EnvironmentThemeId,
   ...environmentThemeFields,
+  /** Revision of the image file published beside the theme; absent without one. */
+  background: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
 });
 export type EnvironmentTheme = typeof EnvironmentTheme.Type;
 

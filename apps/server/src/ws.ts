@@ -3016,6 +3016,7 @@ export const layerWsRpc = (
             if (
               input.resource._tag === "attachment" ||
               input.resource._tag === "native-app-icon" ||
+              input.resource._tag === "environment-theme-background" ||
               input.resource._tag === "tool-output-image" ||
               input.resource._tag === SOURCE_CONTROL_MEDIA_ASSET ||
               // A network path is served only from the thread's project, looked up below.
