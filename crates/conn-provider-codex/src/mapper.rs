@@ -148,7 +148,9 @@ enum PendingKind {
         permissions: Value,
     },
     UserInput {
-        question_ids: Vec<String>,
+        /// (the id the client sees, Codex's own id), in question order. The client sees the
+        /// trimmed id, or `question-<n>` for an empty one (`nativeQuestionIds` in T3).
+        question_ids: Vec<(String, String)>,
     },
 }
 
@@ -1607,7 +1609,13 @@ impl<E: Env> Mapper<E> {
                     .as_array()
                     .into_iter()
                     .flatten()
-                    .filter_map(|q| q["id"].as_str().map(str::to_owned))
+                    .enumerate()
+                    .filter_map(|(i, q)| {
+                        let native = q["id"].as_str()?;
+                        let shown =
+                            trimmed(&q["id"]).unwrap_or_else(|| format!("question-{}", i + 1));
+                        Some((shown, native.to_owned()))
+                    })
                     .collect();
                 (
                     "user_input",
@@ -1688,8 +1696,14 @@ impl<E: Env> Mapper<E> {
                 let answers = to_json(answers);
                 let mut map = Map::new();
                 for (id, value) in answers.as_object().into_iter().flatten() {
-                    if question_ids.contains(id) {
-                        map.insert(id.clone(), json!({ "answers": answer_strings(value) }));
+                    // The last question with that shown id wins, as in T3's `new Map(...)`.
+                    let native = question_ids
+                        .iter()
+                        .rev()
+                        .find(|(shown, _)| shown == id)
+                        .map(|(_, native)| native);
+                    if let Some(native) = native {
+                        map.insert(native.clone(), json!({ "answers": answer_strings(value) }));
                     }
                 }
                 json!({ "answers": map })
