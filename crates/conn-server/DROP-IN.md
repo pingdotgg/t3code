@@ -28,8 +28,13 @@ Not used by Orbit: `T3CODE_*` variables, `--home-dir`, `environment link-orbit`,
 static web files, cookies, DPoP. Orbit never renews the 30-day Gateway session
 (`development-containers.md:832`).
 
-**For Orbit to run the Conn Server it needs only a different binary in the agent folder.**
-`/api/projects/mutate` and `/mcp` are served.
+**This section is out of date (2026-11-14).** It was written against an older Orbit commit and
+said that Orbit needs only a different binary in the agent folder. That holds for the
+container create path. Orbit's task-turn path now also uses `t3 thread start`, `send`, `list`
+and `show`, a repeated `--scope` flag on `auth session issue` (this server takes
+`--scopes <list>`), `model-manifest.json` in `userdata`, and the session id that
+`auth session issue --json` prints. None of these is built. `docs/orbit-profile.md`, section
+1b, has the current list with its sources. `/api/projects/mutate` and `/mcp` are served.
 
 ## 2. Conn desktop's local backend
 

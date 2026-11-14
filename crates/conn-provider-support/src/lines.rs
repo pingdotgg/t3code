@@ -36,6 +36,12 @@ pub async fn read_lines_keeping_last<F, Fut>(
 /// The line buffer is released after a line longer than this.
 const KEPT_BUFFER_BYTES: usize = 64 * 1024;
 
+/// The read buffer for a reader whose lines are at most `max_bytes`: 64 KiB, or less for a
+/// smaller cap (a 4 KiB stderr tail needs no 64 KiB buffer).
+fn read_buffer_bytes(max_bytes: usize) -> usize {
+    max_bytes.clamp(1024, 64 * 1024)
+}
+
 async fn frame<F, Fut>(
     reader: impl AsyncRead + Unpin,
     max_bytes: usize,
@@ -45,7 +51,7 @@ async fn frame<F, Fut>(
     F: FnMut(Line) -> Fut,
     Fut: std::future::Future<Output = bool>,
 {
-    let mut reader = BufReader::with_capacity(64 * 1024, reader);
+    let mut reader = BufReader::with_capacity(read_buffer_bytes(max_bytes), reader);
     let mut line: Vec<u8> = Vec::new();
     let mut dropped = 0usize;
     while let Ok(buf) = reader.fill_buf().await {
@@ -102,6 +108,35 @@ async fn frame<F, Fut>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Finding 9: a 4 KiB stderr tail reads through a 4 KiB buffer, not 64 KiB, and lines
+    /// longer than one fill still frame as before.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_small_cap_gets_a_small_buffer_and_frames_the_same() {
+        assert_eq!(read_buffer_bytes(4 * 1024), 4 * 1024);
+        assert_eq!(read_buffer_bytes(64 * 1024 * 1024), 64 * 1024);
+        assert_eq!(read_buffer_bytes(32), 1024);
+        let input = format!(
+            "{}\n{}\n{}",
+            "a".repeat(3_000),
+            "b".repeat(10_000),
+            "c".repeat(4_000)
+        );
+        let mut got = Vec::new();
+        read_lines_keeping_last(input.as_bytes(), 4 * 1024, |line| {
+            got.push(line);
+            async { true }
+        })
+        .await;
+        assert_eq!(
+            got,
+            vec![
+                Line::Text("a".repeat(3_000)),
+                Line::Oversized(10_000),
+                Line::Text("c".repeat(4_000)),
+            ]
+        );
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn invalid_utf8_and_a_final_line_survive_in_the_lossy_reader() {

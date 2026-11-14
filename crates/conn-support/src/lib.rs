@@ -7,7 +7,9 @@ pub mod hex;
 pub mod hmac;
 pub mod ids;
 pub mod login_env;
+pub mod secret_store;
 pub mod time;
+pub mod url;
 
 /// A random version 4 UUID from the OS random source, lowercase and hyphenated, as
 /// `crypto.randomUUID` makes them.

@@ -180,10 +180,11 @@ that list.
 
 - **Payload limits.** The generated contract types carry no schema checks. `limits.rs` now
   applies the length, pattern, range and entry-count checks of `assets.createUrl`,
+  `server.listTextGeneratorModels` (the `ProviderInstanceId` of `id`, the base URL's length),
   `terminal.open` and `terminal.attach`, generated from the schema AST by
   `tools/gen-upstream.mjs`. A terminal env entry with a bad key (`1FOO`) is dropped, as
   Effect's `Record` decode drops it; more than 128 entries, a key over 128 or a value over
-  8,192 UTF-16 units fail. Proof: `tools/limits-cases.json` (37 cases) through the T3
+  8,192 UTF-16 units fail. Proof: `tools/limits-cases.json` (43 cases) through the T3
   contract's decode (`limits-diff.mjs`, a check step) and through `limits::check` (a test).
   Add a method tag to `LIMITED_METHODS` to cover it. The hand limits in `methods/files.rs`
   could move to this table. Difference left: Effect trims a `TrimmedNonEmptyString` before it
@@ -216,35 +217,69 @@ that list.
   "Reply with OK." to one model. A thread title is generated for the first message of a thread
   launched with `generateTitle`, and on `regenerateTitle`, when the title model
   (`textGenerationModelSelection`, or the project's override) is a text generator.
-- **Agent title models are not called.** The default title model is Codex, and Claude can be
-  chosen; the T3 server then asks that provider's CLI or SDK (`ClaudeTextGeneration.ts`,
-  `CodexTextGeneration.ts`, also Antigravity, Grok and OpenCode). This server does not: the
-  request fails without a call. A first title keeps its seed (a short `titleRegeneration`
-  shows), a regenerate reports "This server generates titles only with a text generator.
-  Choose one as the title model in Settings."
-- **The key.** In `settings.json` (`textGenerators.<id>.apiKey`, file 0600), where this server
-  keeps every settings secret (`settings.rs`). When settings hold the redaction marker, the
-  key is read from the T3 server's store, `<state>/secrets/text-generator-<b64url id>-<b64url
-  "apiKey">.bin`. A secret provider reference cannot be read (no secret provider here) and
-  fails with T3's `SettingsSecretUnresolvedError` text. Only the request header holds the
+- **Agent title models.** The default title model is Codex, and Claude can be chosen; the T3
+  server then asks that provider's CLI or SDK (`ClaudeTextGeneration.ts`,
+  `CodexTextGeneration.ts`, also Antigravity, Grok and OpenCode). This server asks the
+  provider instance through `Provider::generate_text` (the prompt, T3's output schema text
+  generated as `TITLE_OUTPUT_SCHEMA`, the whole selection, the thread's folder and its image
+  attachments). Codex implements it (`codex mcp list`, then `codex exec`, as T3; proven by the
+  Codex conformance check, `titleListed` and `titleFallback`). A provider that does not
+  (Claude, for now, and Grok) fails the request without a call: a first title keeps its seed
+  (a short `titleRegeneration` shows), a regenerate reports "This server generates titles
+  only with a text generator. Choose one as the title model in Settings." Not built: T3's
+  fallback to another provider when the chosen one is unusable
+  (`fallbackTextGenerationModelSelection`).
+- **The key.** In the T3 server's secret store, `<state>/secrets/text-generator-<b64url
+  id>-<b64url "apiKey">.bin`, as every settings secret (see `docs/conn-only-areas.md`,
+  "Settings secrets"). A secret provider reference cannot be read (no secret provider here)
+  and fails with T3's `SettingsSecretUnresolvedError` text. Only the request header holds the
   key (`conn_source_control::Secret`); no `Debug`, error or log shows it.
 - **Proofs.** 22 unit tests (the cases of `TextGenerators.test.ts` on a loopback stub, the
   title retries on a paused clock, the project override); the client's decoders accept both
   answers (`effect-client.mjs`); `textgen-diff.mjs` (a check step) runs T3's own code and
   ours against one loopback stub: 102 comparisons of answers, request method, path, headers
   and body bytes, prompts, thread contexts, sanitized titles and the model order.
-- **Differences left on purpose.** The transport headers Node's fetch adds (`accept`,
-  `accept-language`, `accept-encoding`, `sec-fetch-mode`, `user-agent: node`, keep-alive) are
-  not sent. No managed policy, so no allow-list refusal. The model cache is capped at 32
-  lists. Titles: no fork source section, no linked pull request or issue context
-  (`ThreadTitleLinks.ts`), assistant citation links are not turned into plain text, no
-  fallback to another model when the chosen one is unusable.
+- **Headers.** Each request carries what Node's fetch adds for the T3 server: `accept: */*`,
+  `accept-language: *`, `sec-fetch-mode: cors`, `user-agent: node`, `accept-encoding: gzip,
+  deflate`, `connection: keep-alive` (this client still opens one connection per request).
+  A gzip or deflate answer (zlib or raw) is decoded off the runtime thread; more than 8 MiB
+  after decoding reads as an answer it could not read. `textgen-diff.mjs` compares all
+  headers but `host` and `content-length`, and has gzip, deflate and raw deflate answers.
+- **Title context.** Assistant quotes (`[Assistant quote](t3-citation://v1/...)`) become their
+  text and comment (`assistantCitationsToPlainText`, `text_generation/citations.rs`).
+- **Fallback.** None is needed here: T3 falls back to another model only when the chosen
+  title model is an agent provider that cannot run, and its fallbacks are agent providers.
+  A chosen text generator is always used as it is, in both servers.
+- **Differences left on purpose.** No managed policy, so no allow-list refusal. The model
+  cache is capped at 32 lists. Titles: no fork source section (it needs the engine's fork
+  chain with run ordinals, `ThreadTitleRegenerationService.forkSource`), no linked pull
+  request or issue context (`ThreadTitleLinks.ts`: needs the source control link lookup of
+  each host, which `conn-source-control` does not have yet).
+- **Managed policy (mapped, not built).** The T3 server reads `/etc/t3code/policy.json` on
+  Linux (`/Library/Application Support/T3Code/policy.json` on macOS; the Windows registry),
+  `apps/server/src/policy/` (about 2,900 lines with tests): locked settings, provider allow
+  lists and limits, a runtime-mode ceiling, update rules and `limits.webhookTasks`. It applies
+  in a container when the image has that file. Not built: it is not small, and whether Orbit
+  images will carry one is Nick's call.
+- **Stricter than the T3 server, on purpose** (security faults T3 also has; see
+  `docs/status.md`, "Faults found in the T3 server"):
+  - *The saved key and the marker.* An unsaved config whose key is the redaction marker gets
+    the saved key only when the caller holds `providers:manage`; otherwise no key is sent
+    (`methods/text_generation.rs`). T3 fills it in for any `settings:write` caller, to any
+    host. A legitimate user loses nothing: only the generator edit form sends the marker, and
+    saving that form needs `providers:manage`.
+  - *Link-local hosts.* A base URL whose host resolves to a link-local address
+    (169.254.0.0/16, fe80::/10, where a cloud host serves its metadata and credentials) is
+    refused: the check runs on the addresses of the one lookup, and only addresses that pass
+    are dialled (`LinkLocal::Refuse` in `conn_source_control::http`). The client sees "Couldn't
+    reach …". Loopback and private ranges stay open for Ollama, LM Studio and similar. A user
+    loses only a model server on a link-local address.
 
 ### Other uses of text generation in the T3 server
 
 | Use | Source | Here |
 | --- | --- | --- |
-| Thread titles | `orchestration-v2/ThreadTitleRegenerationService.ts` | built, text generators only |
+| Thread titles | `orchestration-v2/ThreadTitleRegenerationService.ts` | built: text generators and Codex |
 | Commit messages | `git/GitManager.ts:2210` (`generateCommitMessage`) | not built: needs the `git.*` stacked actions (source control worker) |
 | Pull request title and body | `git/GitManager.ts:2438` (`generatePrContent`) | not built: needs pull request creation |
 | Worktree branch names | `orchestration-v2/ThreadLaunchService.ts:475` (`generateBranchName`) | not built: needs prepared runs (worktree preparation is not built) |

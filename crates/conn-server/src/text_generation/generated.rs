@@ -54,3 +54,6 @@ pub(super) const REGENERATE_WITHOUT_PROJECT: &[Part] = &[
     ),
     Part::Message,
 ];
+
+/// The title's output schema, as T3 writes it for a CLI (`JSON.stringify(toJsonSchemaObject(...))`).
+pub(crate) const TITLE_OUTPUT_SCHEMA: &str = "{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\"},\"needsRefinement\":{\"type\":\"boolean\"}},\"required\":[\"title\",\"needsRefinement\"],\"additionalProperties\":false}";

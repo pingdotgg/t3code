@@ -1,8 +1,8 @@
 name: CI
 
-# Not active yet: this repository has no GitHub remote. Runner labels and action pins follow
-# the Conn monorepo's own workflows (GitHub-hosted `ubuntu-24.04`; Blacksmith labels are not
-# registered on Nick's repositories).
+# Runs on `hardimpactdev/conn-server`. Runner labels and action pins follow the Conn monorepo's
+# own workflows (GitHub-hosted `ubuntu-24.04`; Blacksmith labels are not registered on Nick's
+# repositories).
 #
 # Jobs:
 # - rust: format, clippy with warnings as errors, tests (with the SDK host installed, so its
@@ -44,6 +44,12 @@ jobs:
     if: ${{ github.event_name != 'schedule' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      # The test build of the whole workspace filled the runner's disk on 2026-11-14 ("No space
+      # left on device" in the Tests step). Smaller debug info and no incremental data keep
+      # `target` small; the tests do not need more.
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -54,6 +60,9 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy
 
+      - name: Disk space at the start
+        run: df -h /
+
       - name: Cache Cargo
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -62,8 +71,9 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-test-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-test-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+          # No restore-keys: a cache restored from another lock file keeps its old artifacts,
+          # so `target` only grows from run to run.
+          key: cargo-test-v2-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
 
       - name: Format
         run: cargo fmt --check
@@ -85,6 +95,10 @@ jobs:
       - name: Tests
         # --no-fail-fast: one run shows every failing crate, not only the first.
         run: cargo test --locked --workspace --no-fail-fast
+
+      - name: Disk space after the tests
+        if: ${{ !cancelled() }}
+        run: df -h / && du -sh target
 
       # Independent of the tests above: runs even when they fail.
       - name: Recordings decode

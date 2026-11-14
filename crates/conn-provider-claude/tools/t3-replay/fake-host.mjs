@@ -9,10 +9,10 @@
 //
 // The result file gets {cursor, total, done, mismatch?} when the host exits.
 //
-// The replay gate (T3's makeProviderReplayGate, for the engine's fixture replay): when the
-// transcript's folder holds `gates/labels.json`, an inbound entry whose label is listed waits
-// there. The host writes `gates/reached-<index>` and goes on once `gates/released-<index>`
-// exists. Without the folder nothing waits.
+// The replay gate (T3's makeProviderReplayGate, for `release_replay_gate` steps of the engine
+// replay): CONN_REPLAY_GATE_CONFIG names a JSON file {gates, gateDir}. Before the first
+// recorded frame with a gate's label the host stops, writes `<gateDir>/gate-<label>.reached`
+// and waits for `<gateDir>/gate-<label>.release`; commands that come meanwhile wait too.
 
 import * as fs from "node:fs";
 import { createInterface } from "node:readline";
@@ -39,31 +39,6 @@ let session = null; // {sessionId, driver, instanceId}
 const pendingRequests = new Map(); // our request id → expected answer
 let nextRequest = 0;
 const promptUuids = new Map(previous?.promptUuids ?? []); // recorded uuid → actual
-
-const gateDir = `${transcriptPath.replace(/[^/]*$/, "")}gates`;
-const gateLabels = (() => {
-  try {
-    return JSON.parse(fs.readFileSync(`${gateDir}/labels.json`, "utf8"));
-  } catch {
-    return [];
-  }
-})();
-let gateTimer = null;
-/** True when the entry must wait at its gate; pump runs again once it is released. */
-function heldAtGate(entry) {
-  const index = gateLabels.indexOf(entry.label);
-  if (index === -1 || fs.existsSync(`${gateDir}/released-${index}`)) return false;
-  fs.writeFileSync(`${gateDir}/reached-${index}`, "");
-  if (gateTimer === null) {
-    gateTimer = setInterval(() => {
-      if (!fs.existsSync(`${gateDir}/released-${index}`)) return;
-      clearInterval(gateTimer);
-      gateTimer = null;
-      pump();
-    }, 5);
-  }
-  return true;
-}
 
 const write = (v) => process.stdout.write(`${JSON.stringify(v)}\n`);
 // Written whole through a rename: a host that ends mid-write never leaves a cut file for the
@@ -144,6 +119,26 @@ function withReplayedUuids(frame) {
   return out;
 }
 
+const gateConfig = process.env.CONN_REPLAY_GATE_CONFIG
+  ? JSON.parse(fs.readFileSync(process.env.CONN_REPLAY_GATE_CONFIG, "utf8"))
+  : { gates: [], gateDir: "" };
+const gates = new Set(gateConfig.gates);
+let held = false;
+const heldLines = [];
+const gateFile = (label, state) => `${gateConfig.gateDir}/gate-${encodeURIComponent(label)}.${state}`;
+function hold(label) {
+  held = true;
+  fs.writeFileSync(gateFile(label, "reached"), "");
+  const poll = setInterval(() => {
+    if (!fs.existsSync(gateFile(label, "release"))) return;
+    clearInterval(poll);
+    gates.delete(label);
+    held = false;
+    pump();
+    while (!held && heldLines.length > 0) onLine(heldLines.shift());
+  }, 5);
+}
+
 let ended = false;
 function finish(error) {
   if (session === null || ended) return;
@@ -159,7 +154,10 @@ function pump() {
   while (cursor < entries.length && mismatch === null) {
     const entry = entries[cursor];
     if (entry.type === "expect_outbound") return;
-    if (entry.type === "emit_inbound" && heldAtGate(entry)) return;
+    if (entry.type === "emit_inbound" && gates.has(entry.label)) {
+      hold(entry.label);
+      return;
+    }
     cursor++;
     if (entry.type === "runtime_exit") {
       // A process exit; the next expected frame (if any) is a new query.open.
@@ -190,6 +188,10 @@ function pump() {
 const reply = (id, value) => write({ ch: "reply", id, ok: true, value: value ?? null });
 
 createInterface({ input: process.stdin }).on("line", (line) => {
+  if (held) heldLines.push(line);
+  else onLine(line);
+});
+function onLine(line) {
   const cmd = JSON.parse(line);
   switch (cmd.t) {
     case "open":
@@ -236,7 +238,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       save();
       process.exit(0);
   }
-});
+}
 process.stdin.on("end", () => {
   save();
   process.exit(0);

@@ -248,14 +248,51 @@ async fn refresh_login_path() {
     if !(cfg!(target_os = "macos") || cfg!(target_os = "linux")) {
         return;
     }
-    if !login_env::claim_refresh(std::time::Instant::now()) {
-        return;
+    static LOGIN_REFRESH: LoginRefresh = LoginRefresh::new();
+    LOGIN_REFRESH
+        .run(|| async {
+            let Some(shell) = login_env::login_shell(std::env::var_os("SHELL").as_deref(), None)
+            else {
+                return;
+            };
+            let _ =
+                tokio::task::spawn_blocking(move || login_env::refresh(&shell, login_env::TIMEOUT))
+                    .await;
+        })
+        .await;
+}
+
+/// One login-shell refresh at a time, and none within [`login_env::REFRESH_TTL`] of the last
+/// one's end. A caller that arrives while a refresh runs waits for it and then uses its result,
+/// as `Effect.cachedWithTTL` does in the T3 server's discovery.
+///
+/// [`login_env::REFRESH_TTL`]: conn_support::login_env::REFRESH_TTL
+struct LoginRefresh {
+    /// When the last refresh ended. The lock is held across a refresh.
+    finished_at: tokio::sync::Mutex<Option<std::time::Instant>>,
+}
+
+impl LoginRefresh {
+    const fn new() -> Self {
+        Self {
+            finished_at: tokio::sync::Mutex::const_new(None),
+        }
     }
-    let Some(shell) = login_env::login_shell(std::env::var_os("SHELL").as_deref(), None) else {
-        return;
-    };
-    let _ =
-        tokio::task::spawn_blocking(move || login_env::refresh(&shell, login_env::TIMEOUT)).await;
+
+    async fn run<F, Fut>(&self, refresh: F)
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
+        let mut finished_at = self.finished_at.lock().await;
+        let fresh =
+            finished_at.is_some_and(|at| at.elapsed() < conn_support::login_env::REFRESH_TTL);
+        if fresh {
+            return;
+        }
+        refresh().await;
+        *finished_at = Some(std::time::Instant::now());
+    }
 }
 
 /// `SourceControlProviderKind` and `TrimmedNonEmptyString` decode by trimming.
@@ -367,6 +404,36 @@ mod tests {
 
     use super::*;
     use crate::table::Handler;
+
+    /// A caller that arrives while a refresh runs waits for it and runs none of its own.
+    #[tokio::test(flavor = "current_thread")]
+    async fn concurrent_login_refreshes_coalesce() {
+        use std::{cell::RefCell, time::Duration};
+        let refresher = LoginRefresh::new();
+        let events = RefCell::new(Vec::new());
+        let first = async {
+            refresher
+                .run(|| async {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    events.borrow_mut().push("first refreshed");
+                })
+                .await;
+        };
+        let second = async {
+            tokio::task::yield_now().await;
+            refresher
+                .run(|| async { events.borrow_mut().push("second refreshed") })
+                .await;
+            events.borrow_mut().push("second returned");
+        };
+        tokio::join!(first, second);
+        assert_eq!(*events.borrow(), ["first refreshed", "second returned"]);
+        // Within the window, a later caller runs no refresh either.
+        refresher
+            .run(|| async { events.borrow_mut().push("third refreshed") })
+            .await;
+        assert_eq!(events.borrow().len(), 2);
+    }
 
     /// The answer has git and jj, then all seven hosts in the T3 server's order. No host CLI
     /// runs (the children's `PATH` is an empty folder) and no variable is read, so nothing on

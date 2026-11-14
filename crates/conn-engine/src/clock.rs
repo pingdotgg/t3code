@@ -9,6 +9,12 @@ use std::time::Duration;
 /// Milliseconds since the Unix epoch.
 pub trait Clock: Send + Sync {
     fn now_millis(&self) -> u64;
+
+    /// Whether the clock moves by itself, so a timer on it fires. A [`ManualClock`] does not:
+    /// what waits on it comes due only when it is moved, as a sleep on T3's `TestClock`.
+    fn timers_fire(&self) -> bool {
+        true
+    }
 }
 
 /// The system's wall clock, as T3's Effect `Clock`.
@@ -44,6 +50,10 @@ impl ManualClock {
 impl Clock for ManualClock {
     fn now_millis(&self) -> u64 {
         self.millis.load(Ordering::SeqCst)
+    }
+
+    fn timers_fire(&self) -> bool {
+        false
     }
 }
 

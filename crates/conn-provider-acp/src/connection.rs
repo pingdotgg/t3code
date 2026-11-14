@@ -77,6 +77,18 @@ impl std::fmt::Debug for Connection {
     }
 }
 
+/// A call's place in `waiting`, removed on drop.
+struct Waiting<'a> {
+    pending: &'a Mutex<Pending>,
+    id: i64,
+}
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        crate::lock(self.pending).waiting.remove(&self.id);
+    }
+}
+
 /// Effect's RPC client numbers requests from 2^30 (seen in T3's stdin, conformance check).
 const FIRST_REQUEST_ID: i64 = 1 << 30;
 
@@ -178,13 +190,17 @@ impl Connection {
             pending.waiting.insert(id, tx);
             id
         };
+        // Frees the id when the call ends, also when its caller stops waiting.
+        let _waiting = Waiting {
+            pending: &self.pending,
+            id,
+        };
         if self
             .writer
             .send(protocol::request(id, method, params))
             .await
             .is_err()
         {
-            crate::lock(&self.pending).waiting.remove(&id);
             return Err(CallError::Closed);
         }
         rx.await.unwrap_or(Err(CallError::Closed))
@@ -233,5 +249,31 @@ impl Connection {
             .send(protocol::error_response(id, code, message))
             .await
             .is_ok()
+    }
+}
+
+#[cfg(test)]
+mod waiting_tests {
+    use super::*;
+
+    /// Finding 9: a call whose caller stops waiting leaves no id in `waiting`.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_cancelled_call_frees_its_id() {
+        let (writer, mut written) = mpsc::channel(4);
+        let (_events_tx, events) = mpsc::channel(4);
+        let (connection, _incoming) = Connection::start(writer, events, 4);
+        let call = {
+            let connection = connection.clone();
+            tokio::spawn(async move {
+                connection
+                    .call("session/prompt", J::V(serde_json::Value::Null))
+                    .await
+            })
+        };
+        assert!(written.recv().await.is_some(), "the request went out");
+        assert_eq!(crate::lock(&connection.pending).waiting.len(), 1);
+        call.abort();
+        assert!(call.await.is_err(), "cancelled");
+        assert!(crate::lock(&connection.pending).waiting.is_empty());
     }
 }

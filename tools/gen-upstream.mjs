@@ -356,7 +356,12 @@ const upstreamRs = rustfmt(
 // before decode, as Effect's decode does. Only the methods in LIMITED_METHODS: add a tag here
 // to cover one more.
 
-const LIMITED_METHODS = ["assets.createUrl", "terminal.attach", "terminal.open"];
+const LIMITED_METHODS = [
+  "assets.createUrl",
+  "server.listTextGeneratorModels",
+  "terminal.attach",
+  "terminal.open",
+];
 const rpcGroups = [rpc.OfficialWsRpcGroup, rpc.ForkWsRpcGroup];
 const payloadOf = (tag) => {
   for (const group of rpcGroups) {
@@ -453,6 +458,16 @@ function promptParts(input) {
     throw new Error("title prompt placeholders not found");
   return `&[\n${parts.map((p) => `    ${p},`).join("\n")}\n]`;
 }
+// The title's output schema as T3 writes it for a CLI (`toJsonSchemaObject`, then
+// `JSON.stringify`): Codex reads it from `--output-schema`.
+const textGenerationUtils = await importSource(
+  "packages/provider-core/src/server/textGenerationUtils.ts",
+);
+const titleOutputSchema = JSON.stringify(
+  textGenerationUtils.toJsonSchemaObject(
+    prompts.buildThreadTitlePrompt({ message: "" }).outputSchema,
+  ),
+);
 const titlePromptsRs = rustfmt(
   [
     ...HEADER,
@@ -474,6 +489,9 @@ const titlePromptsRs = rustfmt(
     `pub(super) const INITIAL_WITHOUT_PROJECT: &[Part] = ${promptParts({})};`,
     `pub(super) const REGENERATE_WITH_PROJECT: &[Part] = ${promptParts({ projectTitle: "@@P@@", previousTitle: "@@T@@" })};`,
     `pub(super) const REGENERATE_WITHOUT_PROJECT: &[Part] = ${promptParts({ previousTitle: "@@T@@" })};`,
+    "",
+    "/// The title's output schema, as T3 writes it for a CLI (`JSON.stringify(toJsonSchemaObject(...))`).",
+    `pub(crate) const TITLE_OUTPUT_SCHEMA: &str = ${str(titleOutputSchema)};`,
     "",
   ].join("\n"),
 );

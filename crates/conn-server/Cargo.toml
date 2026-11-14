@@ -12,11 +12,15 @@ name = "conn-server"
 path = "src/main.rs"
 
 [dependencies]
+# Decodes compressed text generator answers (text_generation/drivers.rs).
+flate2.workspace = true
 conn-support.workspace = true
 conn-wire.workspace = true
 conn-contract.workspace = true
 conn-engine.workspace = true
 conn-provider.workspace = true
+# Image attachments of a title through an agent provider (`attachments::saved_path`).
+conn-provider-support.workspace = true
 conn-provider-claude.workspace = true
 conn-provider-codex.workspace = true
 conn-provider-acp.workspace = true

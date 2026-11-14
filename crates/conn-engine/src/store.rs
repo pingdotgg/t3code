@@ -61,6 +61,12 @@ CREATE TABLE IF NOT EXISTS message_keys (
   message_id TEXT NOT NULL,
   UNIQUE (thread_id, message_id)
 );
+CREATE TABLE IF NOT EXISTS turn_item_positions (
+  thread_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  ordinal INTEGER NOT NULL,
+  PRIMARY KEY (thread_id, item_id)
+);
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value INTEGER NOT NULL
@@ -70,7 +76,26 @@ CREATE TABLE IF NOT EXISTS receipts (
   command_type TEXT NOT NULL,
   sequence     INTEGER NOT NULL
 );
+-- Rollbacks admitted and not yet committed or failed, so a restart can finish them (T3 keeps
+-- `provider-thread.rollback` in its effect outbox). `phase`: `admitted`; `provider`, the
+-- provider rollback was sent; `provider_done`, its answer is in `snapshot`.
+CREATE TABLE IF NOT EXISTS pending_rollbacks (
+  command_id TEXT PRIMARY KEY,
+  thread_id  TEXT NOT NULL,
+  request    TEXT NOT NULL,
+  phase      TEXT NOT NULL,
+  snapshot   TEXT
+);
 ";
+
+/// A rollback a previous process left pending (`pending_rollbacks`).
+pub(crate) struct PendingRollback {
+    pub(crate) command_id: String,
+    pub(crate) thread_id: String,
+    pub(crate) request: Value,
+    pub(crate) phase: String,
+    pub(crate) snapshot: Option<Value>,
+}
 
 /// The projection collections of `OrchestrationV2ThreadProjection`, in its field order.
 pub(crate) const COLLECTIONS: [&str; 15] = [
@@ -315,6 +340,49 @@ impl Store {
         Ok(rows)
     }
 
+    /// T3's projection also lists the provider threads this thread's subagents run on
+    /// (`provider_thread_id IN (SELECT provider_thread_id FROM subagents WHERE thread_id =
+    /// …)` in `ProjectionStore`). Those rows live on the child threads; each is read by key.
+    fn add_subagent_provider_threads(
+        &self,
+        projection: &mut serde_json::Map<String, Value>,
+    ) -> StoreResult<()> {
+        let wanted: Vec<(String, String)> = projection
+            .get("subagents")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|s| {
+                Some((
+                    s["childThreadId"].as_str()?.to_owned(),
+                    s["providerThreadId"].as_str()?.to_owned(),
+                ))
+            })
+            .collect();
+        let Some(Value::Array(rows)) = projection.get_mut("providerThreads") else {
+            return Ok(());
+        };
+        for (child, id) in wanted {
+            if rows.iter().any(|row| row["id"] == id.as_str()) {
+                continue;
+            }
+            let row = self
+                .conn
+                .query_row(
+                    "SELECT body FROM entities
+                     WHERE thread_id = ?1 AND kind = 'providerThreads' AND id = ?2",
+                    params![child, id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(err)?;
+            if let Some(row) = row {
+                rows.push(parse(row)?);
+            }
+        }
+        Ok(())
+    }
+
     /// `OrchestrationV2ThreadProjection`, or `None` for an unknown or deleted thread.
     pub(crate) fn thread_projection(&self, thread_id: &str) -> StoreResult<Option<Value>> {
         Ok(self
@@ -360,6 +428,7 @@ impl Store {
             };
             projection.insert(kind.into(), Value::Array(rows));
         }
+        self.add_subagent_provider_threads(&mut projection)?;
         // Turn items in timeline order, read once and moved into their rows.
         let mut items = self.query_json(
             "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'turnItems'
@@ -387,6 +456,9 @@ impl Store {
                 }))
             })
             .collect();
+        if let Some(Value::Array(messages)) = projection.get_mut("messages") {
+            sort_messages_by_turn_items(messages, &items);
+        }
         if omitted {
             items.drain(..shown.len());
         }
@@ -477,6 +549,55 @@ impl Store {
         keyed_rows(rows)
     }
 
+    /// Rollbacks admitted and not yet committed or failed, in admission order.
+    pub(crate) fn pending_rollbacks(&self) -> StoreResult<Vec<PendingRollback>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT command_id, thread_id, request, phase, snapshot FROM pending_rollbacks
+                 ORDER BY rowid",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            })
+            .map_err(err)?;
+        rows.map(|row| {
+            let (command_id, thread_id, request, phase, snapshot) = row.map_err(err)?;
+            Ok(PendingRollback {
+                command_id,
+                thread_id,
+                request: parse(request)?,
+                phase,
+                snapshot: snapshot.map(parse).transpose()?,
+            })
+        })
+        .collect()
+    }
+
+    /// Moves a pending rollback to `phase`, with the provider's answer for `provider_done`.
+    pub(crate) fn set_rollback_phase(
+        &self,
+        command_id: &str,
+        phase: &str,
+        snapshot: Option<&Value>,
+    ) -> StoreResult<()> {
+        self.conn
+            .execute(
+                "UPDATE pending_rollbacks SET phase = ?2, snapshot = ?3 WHERE command_id = ?1",
+                rusqlite::params![command_id, phase, snapshot.map(Value::to_string)],
+            )
+            .map(drop)
+            .map_err(err)
+    }
+
     /// Runs that were live when the store was last written: `(thread_id, run)`.
     pub(crate) fn unfinished_runs(&self) -> StoreResult<Vec<(String, Value)>> {
         let mut stmt = self
@@ -561,20 +682,16 @@ impl Tx<'_> {
                 "turnItems" => {
                     // The engine owns turn item positions: a new item goes after every item
                     // of the thread, an update keeps the position it already has.
+                    // A held item's reserved position wins (`reserve_turn_item_position`).
                     let ordinal = match existing {
                         Some((_, Some(ordinal))) => ordinal,
-                        _ => {
-                            let max: Option<i64> = self
-                                .tx
-                                .query_row(
-                                    "SELECT MAX(ordinal) FROM entities WHERE thread_id = ?1 AND kind = 'turnItems'",
-                                    [&thread_id],
-                                    |row| row.get(0),
-                                )
-                                .map_err(err)?;
-                            let wanted = payload["ordinal"].as_i64().unwrap_or(0);
-                            wanted.max(max.unwrap_or(0) + 1)
-                        }
+                        _ => match take_reserved_position(&self.tx, &thread_id, &id)? {
+                            Some(ordinal) => ordinal,
+                            None => {
+                                let wanted = payload["ordinal"].as_i64().unwrap_or(0);
+                                wanted.max(next_turn_item_ordinal(&self.tx, &thread_id)?)
+                            }
+                        },
                     };
                     payload["ordinal"] = json!(ordinal);
                     Some(ordinal)
@@ -655,12 +772,32 @@ impl Tx<'_> {
         Ok(seq)
     }
 
-    /// Drops streaming versions of rows that have a final version, so the log keeps one event
-    /// per finished message instead of one per streamed chunk.
-    pub(crate) fn compact_streaming(&mut self, thread_id: &str) -> StoreResult<()> {
+    /// Takes the next turn item position for an item whose text is held and not stored yet
+    /// (T3's `TurnItemPositionStore.allocate`). The item gets it when it is written; nothing
+    /// changes when the item has a position already.
+    pub(crate) fn reserve_turn_item_position(
+        &mut self,
+        thread_id: &str,
+        item_id: &str,
+    ) -> StoreResult<()> {
+        if self.entity(thread_id, "turnItems", item_id)?.is_some() {
+            return Ok(());
+        }
+        let next = next_turn_item_ordinal(&self.tx, thread_id)?;
         self.tx
             .execute(
-                "DELETE FROM events WHERE thread_id = ?1 AND streaming = 1",
+                "INSERT OR IGNORE INTO turn_item_positions (thread_id, item_id, ordinal) VALUES (?1, ?2, ?3)",
+                params![thread_id, item_id, next],
+            )
+            .map(|_| ())
+            .map_err(err)
+    }
+
+    /// Drops the positions of a thread's held items that were never written (a run ended).
+    pub(crate) fn release_turn_item_positions(&mut self, thread_id: &str) -> StoreResult<()> {
+        self.tx
+            .execute(
+                "DELETE FROM turn_item_positions WHERE thread_id = ?1",
                 [thread_id],
             )
             .map(|_| ())
@@ -940,6 +1077,34 @@ impl Tx<'_> {
     /// counter only moves on a commit.
     pub(crate) fn rollback(self) {}
 
+    /// Records an admitted rollback until it commits or fails.
+    pub(crate) fn put_pending_rollback(
+        &self,
+        command_id: &str,
+        thread_id: &str,
+        request: &Value,
+    ) -> StoreResult<()> {
+        self.tx
+            .execute(
+                "INSERT OR REPLACE INTO pending_rollbacks (command_id, thread_id, request, phase)
+                 VALUES (?1, ?2, ?3, 'admitted')",
+                rusqlite::params![command_id, thread_id, request.to_string()],
+            )
+            .map(drop)
+            .map_err(err)
+    }
+
+    /// Forgets a rollback that committed or failed.
+    pub(crate) fn clear_pending_rollback(&self, command_id: &str) -> StoreResult<()> {
+        self.tx
+            .execute(
+                "DELETE FROM pending_rollbacks WHERE command_id = ?1",
+                [command_id],
+            )
+            .map(drop)
+            .map_err(err)
+    }
+
     // Raw access for the shell derivation in `shell.rs`.
     pub(crate) fn conn(&self) -> &Connection {
         &self.tx
@@ -967,6 +1132,45 @@ pub(crate) fn shell_project(project: &Value) -> Value {
         map.remove("deletedAt");
     }
     row
+}
+
+/// The position after every turn item of the thread and every reserved one.
+fn next_turn_item_ordinal(conn: &Connection, thread_id: &str) -> StoreResult<i64> {
+    let max: Option<i64> = conn
+        .query_row(
+            "SELECT MAX(ordinal) FROM (
+               SELECT MAX(ordinal) AS ordinal FROM entities WHERE thread_id = ?1 AND kind = 'turnItems'
+               UNION ALL
+               SELECT MAX(ordinal) FROM turn_item_positions WHERE thread_id = ?1)",
+            [thread_id],
+            |row| row.get(0),
+        )
+        .map_err(err)?;
+    Ok(max.unwrap_or(0) + 1)
+}
+
+/// A held item's reserved position, removed as the item takes it.
+fn take_reserved_position(
+    conn: &Connection,
+    thread_id: &str,
+    item_id: &str,
+) -> StoreResult<Option<i64>> {
+    let ordinal: Option<i64> = conn
+        .query_row(
+            "SELECT ordinal FROM turn_item_positions WHERE thread_id = ?1 AND item_id = ?2",
+            params![thread_id, item_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(err)?;
+    if ordinal.is_some() {
+        conn.execute(
+            "DELETE FROM turn_item_positions WHERE thread_id = ?1 AND item_id = ?2",
+            params![thread_id, item_id],
+        )
+        .map_err(err)?;
+    }
+    Ok(ordinal)
 }
 
 /// Schema steps beyond `CREATE ... IF NOT EXISTS`, by `PRAGMA user_version`.
@@ -999,6 +1203,15 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS events_streaming ON events(thread_id) WHERE streaming = 1;
              PRAGMA user_version = 2;",
+        )
+        .map_err(err)?;
+    }
+    if version < 3 {
+        // 3: streaming rows stay in the log (T3's buffered delivery), so the index for their
+        // deletion goes. A log written before keeps its gaps; nothing reads it as dense.
+        conn.execute_batch(
+            "DROP INDEX IF EXISTS events_streaming;
+             PRAGMA user_version = 3;",
         )
         .map_err(err)?;
     }
@@ -1060,6 +1273,7 @@ fn prune(conn: &Connection) -> StoreResult<()> {
 }
 
 /// One event before it gets its sequence, id and time.
+#[derive(Clone, Debug)]
 pub(crate) struct Draft {
     pub thread_id: String,
     pub event_type: &'static str,
@@ -1109,6 +1323,45 @@ fn thread(conn: &Connection, thread_id: &str) -> StoreResult<Option<Value>> {
     .transpose()
 }
 
+/// `sortMessagesByTurnItemOrder` in T3's `ProjectionStore`: a projection lists messages in
+/// the order of the lowest turn item ordinal that shows each (a user or assistant message
+/// item), then by `createdAt`, then by id. So a queued message sits after the answer before
+/// it, whatever the clock stamped.
+fn sort_messages_by_turn_items(messages: &mut [Value], items: &[Value]) {
+    let mut ordinals: std::collections::HashMap<&str, i64> = std::collections::HashMap::new();
+    for item in items {
+        if !matches!(
+            item["type"].as_str(),
+            Some("user_message" | "assistant_message")
+        ) {
+            continue;
+        }
+        let (Some(id), Some(ordinal)) = (item["messageId"].as_str(), item["ordinal"].as_i64())
+        else {
+            continue;
+        };
+        let lowest = ordinals.entry(id).or_insert(ordinal);
+        *lowest = (*lowest).min(ordinal);
+    }
+    let key = |message: &Value| {
+        (
+            message["id"]
+                .as_str()
+                .and_then(|id| ordinals.get(id).copied())
+                .unwrap_or(i64::MAX),
+            message["createdAt"]
+                .as_str()
+                .and_then(conn_support::time::millis_from_iso)
+                .unwrap_or(0),
+        )
+    };
+    messages.sort_by(|left, right| {
+        key(left)
+            .cmp(&key(right))
+            .then_with(|| left["id"].as_str().cmp(&right["id"].as_str()))
+    });
+}
+
 fn entities(conn: &Connection, thread_id: &str, kind: &str) -> StoreResult<Vec<Value>> {
     let mut stmt = conn
         .prepare("SELECT body FROM entities WHERE thread_id = ?1 AND kind = ?2 ORDER BY first_seq")
@@ -1123,6 +1376,31 @@ fn entities(conn: &Connection, thread_id: &str, kind: &str) -> StoreResult<Vec<V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T3's `sortMessagesByTurnItemOrder`: item ordinal first, so a queued message stamped
+    /// before the first answer still follows it; no item sorts last; then time, then id.
+    #[test]
+    fn messages_follow_their_turn_items() {
+        let message = |id: &str, at: &str| json!({"id": id, "createdAt": at});
+        let item = |kind: &str, message: &str, ordinal: i64| json!({"type": kind, "messageId": message, "ordinal": ordinal});
+        let mut messages = vec![
+            message("u1", "1970-01-01T00:00:00.001Z"),
+            message("u2", "1970-01-01T00:00:00.002Z"),
+            message("wake", "1970-01-01T00:00:00.000Z"),
+            message("a1", "2026-09-25T00:18:14.383Z"),
+            message("a2", "2026-09-25T00:18:16.292Z"),
+        ];
+        let items = [
+            item("user_message", "u1", 100),
+            item("assistant_message", "a1", 101),
+            item("user_message", "u2", 200),
+            item("assistant_message", "a2", 201),
+            item("notification", "wake", 0),
+        ];
+        sort_messages_by_turn_items(&mut messages, &items);
+        let order: Vec<&str> = messages.iter().filter_map(|m| m["id"].as_str()).collect();
+        assert_eq!(order, ["u1", "a1", "u2", "a2", "wake"]);
+    }
 
     /// A row the engine cannot read fails the read; it never turns into `null` or vanishes.
     #[test]
@@ -1247,38 +1525,114 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A store from before the index gets it when it opens, and the turn-end delete uses it.
+    /// A store written by the engine before buffered delivery (version 2: streaming rows
+    /// deleted at the turn end, so its log has gaps, and no position table) opens, loses the
+    /// deletion index, and goes on writing.
     #[test]
-    fn the_streaming_index_serves_compaction_on_an_old_store() {
+    fn a_store_from_before_buffered_delivery_opens_and_goes_on() {
         let dir = std::env::temp_dir().join(format!(
-            "conn-engine-{}-streaming-index",
+            "conn-engine-{}-buffered-delivery-migration",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("engine.sqlite");
         {
-            let store = Store::open(&path).unwrap();
+            let mut store = Store::open(&path).unwrap();
+            let mut tx = store.tx().unwrap();
+            for n in 0..3 {
+                let streaming = n == 1;
+                tx.append(Draft::new(
+                    "t1",
+                    "message.updated",
+                    json!({"id": "m1", "role": "assistant", "text": "x", "streaming": streaming}),
+                ))
+                .unwrap();
+            }
+            tx.commit(None).unwrap();
             store
                 .conn
-                .execute_batch("DROP INDEX IF EXISTS events_streaming; PRAGMA user_version = 1;")
+                .execute_batch(
+                    "DELETE FROM events WHERE thread_id = 't1' AND streaming = 1;
+                     DROP TABLE turn_item_positions;
+                     CREATE INDEX IF NOT EXISTS events_streaming ON events(thread_id) WHERE streaming = 1;
+                     PRAGMA user_version = 2;",
+                )
                 .unwrap();
         }
-        let store = Store::open(&path).unwrap();
+        let mut store = Store::open(&path).unwrap();
         let version: i64 = store
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 2);
-        let plan = store.query_plan(
-            "DELETE FROM events WHERE thread_id = ?1 AND streaming = 1",
-            ["t1"],
-        );
-        assert!(
-            plan.iter()
-                .any(|step| step.contains("USING INDEX events_streaming")),
-            "{plan:?}"
-        );
+        assert_eq!(version, 3);
+        let index: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'events_streaming'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index, 0);
+        let seqs: Vec<i64> = store
+            .conn
+            .prepare("SELECT seq FROM events ORDER BY seq")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(seqs.len(), 2, "the old gap stays: {seqs:?}");
+        let mut tx = store.tx().unwrap();
+        tx.reserve_turn_item_position("t1", "held").unwrap();
+        let seq = tx
+            .append(Draft::new("t1", "thread.activity-updated", json!({})))
+            .unwrap();
+        tx.commit(None).unwrap();
+        assert!(seq as i64 > *seqs.last().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A held item keeps the place it took when its text was first held: an item that began
+    /// after it, and was written first, still comes after it (T3's `TurnItemPositionStore`).
+    #[test]
+    fn a_held_turn_item_keeps_its_reserved_position() {
+        let dir = std::env::temp_dir().join(format!(
+            "conn-engine-{}-turn-item-positions",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = Store::open(&dir.join("engine.sqlite")).unwrap();
+        let mut tx = store.tx().unwrap();
+        let item = |id: &str| {
+            Draft::new(
+                "t1",
+                "turn-item.updated",
+                json!({"id": id, "type": "assistant_message", "text": "", "ordinal": 0}),
+            )
+        };
+        tx.append(item("first")).unwrap();
+        tx.reserve_turn_item_position("t1", "held").unwrap();
+        tx.reserve_turn_item_position("t1", "held").unwrap();
+        tx.append(item("tool")).unwrap();
+        tx.append(item("held")).unwrap();
+        tx.reserve_turn_item_position("t1", "first").unwrap();
+        let ordinal = |tx: &Tx<'_>, id: &str| {
+            tx.entity("t1", "turnItems", id).unwrap().unwrap()["ordinal"]
+                .as_i64()
+                .unwrap()
+        };
+        assert_eq!(ordinal(&tx, "first"), 1);
+        assert_eq!(ordinal(&tx, "held"), 2);
+        assert_eq!(ordinal(&tx, "tool"), 3);
+        tx.reserve_turn_item_position("t1", "never-written")
+            .unwrap();
+        tx.release_turn_item_positions("t1").unwrap();
+        tx.append(item("next")).unwrap();
+        assert_eq!(ordinal(&tx, "next"), 4);
+        tx.commit(None).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

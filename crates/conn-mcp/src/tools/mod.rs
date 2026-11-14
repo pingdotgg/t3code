@@ -15,6 +15,7 @@ mod annotations;
 mod manage;
 mod message;
 mod projects;
+mod pull_requests;
 mod scheduled;
 mod tasks;
 mod threads;
@@ -46,7 +47,12 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub(crate) const HANDLED: [&str; 28] = [
+pub(crate) const HANDLED: [&str; 33] = [
+    "link_pull_request",
+    "link_pull_requests",
+    "unlink_pull_request",
+    "unlink_pull_requests",
+    "list_thread_pull_requests",
     "annotations_list",
     "annotations_claim",
     "annotations_complete",
@@ -122,6 +128,11 @@ pub(crate) async fn call(
         "list_scheduled_tasks" => scheduled::list(&cx, &args).await,
         "delete_scheduled_task" => scheduled::delete(&cx, &args).await,
         "run_scheduled_task_now" => scheduled::run_now(&cx, &args).await,
+        "link_pull_request" => pull_requests::link(&cx, &args).await,
+        "link_pull_requests" => pull_requests::link_many(&cx, &args).await,
+        "unlink_pull_request" => pull_requests::unlink(&cx, &args).await,
+        "unlink_pull_requests" => pull_requests::unlink_many(&cx, &args).await,
+        "list_thread_pull_requests" => pull_requests::list_thread(&cx, &args).await,
         other => Err(fail(
             "capability_denied",
             format!("conn-server does not serve `{other}` yet."),

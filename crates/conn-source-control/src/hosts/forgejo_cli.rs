@@ -179,6 +179,18 @@ impl<'a> Session<'a> {
         Ok(parse_logins(&output.stdout))
     }
 
+    /// `ForgejoCli.listLogins` for one CLI, run in the session's folder.
+    pub async fn list_logins(
+        &self,
+        program: Program,
+        remote_url: Option<&str>,
+    ) -> ForgejoResult<Vec<Login>> {
+        match program {
+            Program::Fj => self.fj_logins(remote_url).await,
+            Program::Tea => self.tea_logins().await,
+        }
+    }
+
     /// `git remote -v` (with a host) or `git remote get-url origin`, as `ForgejoCli.remote`.
     async fn read_remote(&self, host: Option<&str>) -> ForgejoResult<Option<String>> {
         let args: &[&str] = if host.is_some() {

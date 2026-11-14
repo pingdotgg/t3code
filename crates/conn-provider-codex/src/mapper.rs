@@ -19,6 +19,14 @@ use serde_json::{Map, Value, json};
 
 use crate::protocol::{Inbound, reply, reply_error};
 
+mod subagents;
+
+use subagents::{Selection, Sub};
+
+/// Native turns that ended other than completed, remembered so a late child of one is
+/// stopped (`terminalizedNonCompletedNativeTurns`).
+const STOPPED_TURNS_KEPT: usize = 64;
+
 pub const DRIVER: &str = "codex";
 
 /// What the session must do after feeding the mapper.
@@ -33,6 +41,14 @@ pub enum Out {
     Write(String),
     /// Something the mapper skipped; the session logs each kind once.
     Skipped(String),
+    /// Read a child thread's model (`thread/read`, else `thread/resume`) and hand the answer
+    /// to [`Mapper::child_metadata`].
+    ChildMetadata(String),
+    /// A child of a stopped turn started a turn: stop it (`turn/interrupt`).
+    InterruptChild {
+        thread: String,
+        turn: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,14 +84,24 @@ struct RunningCommand {
     process_id: Option<String>,
 }
 
-/// One registered root turn (`ActiveCodexTurnContext`).
+/// One registered turn (`ActiveCodexTurnContext`): a root turn the engine started, or a
+/// subagent's turn on its child thread (`subagent` set; no run and no attempt).
 struct Turn {
     thread_id: String,
-    run_id: String,
+    run_id: Option<String>,
     run_ordinal: u32,
     turn_ordinal: u32,
-    attempt_id: String,
+    attempt_id: Option<String>,
     root_node_id: String,
+    /// `providerNodeStartedAt`: when a child turn's root node started.
+    node_started_at: Option<String>,
+    /// `projectionAppThread`, the parent of any subagent this turn spawns.
+    app_thread: Value,
+    /// `input.modelSelection`: a child turn keeps its root's.
+    model_selection: Value,
+    runtime_mode: String,
+    /// The child native thread when this is a subagent's turn (a key of `subagents`).
+    subagent: Option<String>,
     provider_thread_id: String,
     provider_session_id: Value,
     native_thread_id: String,
@@ -115,6 +141,7 @@ struct UsageAcc {
     output: u64,
     reasoning: u64,
     observed: bool,
+    has_subagents: bool,
 }
 
 #[derive(Default)]
@@ -132,6 +159,8 @@ struct PendingTurn {
     run_ordinal: u32,
     turn_ordinal: u32,
     attempt_id: String,
+    app_thread: Value,
+    model_selection: Value,
     root_node_id: String,
     provider_thread_id: String,
     provider_session_id: Value,
@@ -178,7 +207,15 @@ pub struct Mapper<E: Env> {
     plan_ids: HashMap<String, (String, String)>,
     bufs: Vec<Buf>,
     reasoning_parts: Vec<ReasoningPart>,
-    thread_models: HashMap<String, String>,
+    /// Native thread → the model selection Codex last reported (`subagentSelections`).
+    selections: HashMap<String, Selection>,
+    /// Child native thread → its subagent; at most `subagents::MAX_SUBAGENTS`.
+    subagents: HashMap<String, Sub>,
+    subagent_seq: u64,
+    /// Child native thread → turns that started before the child was known.
+    pending_child_turns: HashMap<String, Vec<(String, String)>>,
+    /// At most [`STOPPED_TURNS_KEPT`], newest last.
+    stopped: VecDeque<String>,
     rerouted_turn_models: HashMap<String, String>,
     rerouted_threads: HashSet<String>,
     usage: HashMap<String, UsageState>,
@@ -273,6 +310,17 @@ fn push_event(out: &mut Vec<Out>, mut value: Value) {
             })
         }),
         "turn.terminal" => from_json(value).map(ProviderEvent::TurnTerminal),
+        "subagent.updated" => {
+            take(&mut value, "subagent").map(|subagent| ProviderEvent::SubagentUpdated { subagent })
+        }
+        "provider_thread.updated" => take(&mut value, "providerThread")
+            .map(|provider_thread| ProviderEvent::ProviderThreadUpdated { provider_thread }),
+        "app_thread.created" => {
+            take(&mut value, "appThread").map(|app_thread| ProviderEvent::AppThreadCreated {
+                app_thread,
+                create_only: None,
+            })
+        }
         _ => {
             out.push(Out::Skipped(format!("event {kind}")));
             return;
@@ -296,7 +344,11 @@ impl<E: Env> Mapper<E> {
             plan_ids: HashMap::new(),
             bufs: Vec::new(),
             reasoning_parts: Vec::new(),
-            thread_models: HashMap::new(),
+            selections: HashMap::new(),
+            subagents: HashMap::new(),
+            subagent_seq: 0,
+            pending_child_turns: HashMap::new(),
+            stopped: VecDeque::new(),
             rerouted_turn_models: HashMap::new(),
             rerouted_threads: HashSet::new(),
             usage: HashMap::new(),
@@ -318,7 +370,10 @@ impl<E: Env> Mapper<E> {
             ("plan_ids", self.plan_ids.len()),
             ("bufs", self.bufs.len()),
             ("reasoning_parts", self.reasoning_parts.len()),
-            ("thread_models", self.thread_models.len()),
+            ("selections", self.selections.len()),
+            ("subagents", self.subagents.len()),
+            ("pending_child_turns", self.pending_child_turns.len()),
+            ("stopped", self.stopped.len()),
             ("rerouted_turn_models", self.rerouted_turn_models.len()),
             ("rerouted_threads", self.rerouted_threads.len()),
             ("usage", self.usage.len()),
@@ -348,6 +403,8 @@ impl<E: Env> Mapper<E> {
                 run_ordinal: input.run_ordinal,
                 turn_ordinal: input.provider_turn_ordinal,
                 attempt_id: input.attempt_id.as_str().to_owned(),
+                app_thread: to_json(&input.app_thread),
+                model_selection: to_json(&input.model_selection),
                 root_node_id: input.root_node_id.as_str().to_owned(),
                 provider_thread_id: thread["id"].as_str().unwrap_or_default().to_owned(),
                 provider_session_id: thread["providerSessionId"].clone(),
@@ -390,30 +447,20 @@ impl<E: Env> Mapper<E> {
             return;
         }
         let provider_turn_id = ids::provider_turn_id(DRIVER, native_turn_id);
-        // `endSessionApprovalsOnModeChange`.
-        let allowance = self
-            .allowances
-            .entry(native_thread_id.to_owned())
-            .or_insert_with(|| (p.runtime_mode.clone(), HashSet::new()));
-        if allowance.0 != p.runtime_mode {
-            *allowance = (p.runtime_mode.clone(), HashSet::new());
-        }
-        // `beginTurnTokenUsage`.
-        let usage = self.usage.entry(native_thread_id.to_owned()).or_default();
-        if usage.active_turn.as_deref() != Some(native_turn_id) {
-            usage.acc.clear();
-            usage.active_turn = Some(native_turn_id.to_owned());
-            usage
-                .acc
-                .insert(native_turn_id.to_owned(), UsageAcc::default());
-        }
+        self.end_allowances_on_mode_change(native_thread_id, &p.runtime_mode);
+        self.begin_usage(native_thread_id, native_turn_id);
         let turn = Turn {
             thread_id: p.thread_id,
-            run_id: p.run_id,
+            run_id: Some(p.run_id),
             run_ordinal: p.run_ordinal,
             turn_ordinal: p.turn_ordinal,
-            attempt_id: p.attempt_id,
+            attempt_id: Some(p.attempt_id),
             root_node_id: p.root_node_id,
+            node_started_at: None,
+            app_thread: p.app_thread,
+            model_selection: p.model_selection,
+            runtime_mode: p.runtime_mode,
+            subagent: None,
             provider_thread_id: p.provider_thread_id,
             provider_session_id: p.provider_session_id,
             native_thread_id: native_thread_id.to_owned(),
@@ -440,6 +487,29 @@ impl<E: Env> Mapper<E> {
         );
         self.turns.insert(native_turn_id.to_owned(), turn);
         self.emit_mcp_failures(native_turn_id, out);
+    }
+
+    /// `endSessionApprovalsOnModeChange`.
+    fn end_allowances_on_mode_change(&mut self, native_thread_id: &str, runtime_mode: &str) {
+        let allowance = self
+            .allowances
+            .entry(native_thread_id.to_owned())
+            .or_insert_with(|| (runtime_mode.to_owned(), HashSet::new()));
+        if allowance.0 != runtime_mode {
+            *allowance = (runtime_mode.to_owned(), HashSet::new());
+        }
+    }
+
+    /// `beginTurnTokenUsage`.
+    fn begin_usage(&mut self, native_thread_id: &str, native_turn_id: &str) {
+        let usage = self.usage.entry(native_thread_id.to_owned()).or_default();
+        if usage.active_turn.as_deref() != Some(native_turn_id) {
+            usage.acc.clear();
+            usage.active_turn = Some(native_turn_id.to_owned());
+            usage
+                .acc
+                .insert(native_turn_id.to_owned(), UsageAcc::default());
+        }
     }
 
     /// Whether a root turn on this native thread is running or starting.
@@ -559,11 +629,13 @@ impl<E: Env> Mapper<E> {
             "turn/started" => {
                 let native_turn = p["turn"]["id"].as_str().unwrap_or_default();
                 let thread = p["threadId"].as_str().unwrap_or_default();
-                if !self.turns.contains_key(native_turn)
-                    && let Some(pending) = self.pending_turns.remove(thread)
-                {
-                    let started_at = codex_time(&mut self.env, &p["turn"]["startedAt"]);
-                    self.register(thread, native_turn, pending, started_at, out);
+                if self.turns.contains_key(native_turn) {
+                    return;
+                }
+                let started_at = codex_time(&mut self.env, &p["turn"]["startedAt"]);
+                match self.pending_turns.remove(thread) {
+                    Some(pending) => self.register(thread, native_turn, pending, started_at, out),
+                    None => self.child_turn_seen(thread, native_turn, started_at, out),
                 }
             }
             "turn/completed" => self.turn_completed(p, out),
@@ -604,18 +676,22 @@ impl<E: Env> Mapper<E> {
             "thread/settings/updated" => {
                 let thread = p["threadId"].as_str().unwrap_or_default().to_owned();
                 self.rerouted_threads.remove(&thread);
-                if let Some(model) = trimmed(&p["threadSettings"]["model"]) {
-                    self.thread_models.insert(thread, model);
-                }
+                let settings = &p["threadSettings"];
+                self.update_selection(
+                    &thread,
+                    &settings["model"],
+                    settings.get("effort"),
+                    settings.get("serviceTier"),
+                    out,
+                );
             }
             "model/rerouted" => {
                 let thread = p["threadId"].as_str().unwrap_or_default().to_owned();
                 if let Some(model) = trimmed(&p["toModel"]) {
-                    self.rerouted_turn_models
-                        .insert(turn_id.to_owned(), model.clone());
-                    self.thread_models.insert(thread.clone(), model);
+                    self.rerouted_turn_models.insert(turn_id.to_owned(), model);
                 }
-                self.rerouted_threads.insert(thread);
+                self.rerouted_threads.insert(thread.clone());
+                self.update_selection(&thread, &p["toModel"], None, None, out);
             }
             "mcpServer/startupStatus/updated" => self.mcp_status(p, out),
             // Codex settled the request itself (its turn ended): forget it, so no late answer
@@ -927,7 +1003,7 @@ impl<E: Env> Mapper<E> {
         };
         let id = ids::plan_id(
             &turn.thread_id,
-            Some(&turn.run_id),
+            turn.run_id.as_deref(),
             DRIVER,
             &self.env.uuid(),
         );
@@ -951,9 +1027,12 @@ impl<E: Env> Mapper<E> {
                 emit_compaction(turn, &id, "running", &started_ms, out);
                 return;
             }
-            "userMessage" => return,
-            "subAgentActivity" | "collabAgentToolCall" => {
-                out.push(Out::Skipped(format!("item {kind}")));
+            "userMessage" => {
+                self.child_message(turn_id, item, Some(started), out);
+                return;
+            }
+            "subAgentActivity" => {
+                self.subagent_item_started(turn_id, item, out);
                 return;
             }
             _ => {}
@@ -992,16 +1071,25 @@ impl<E: Env> Mapper<E> {
                     });
                 }
                 command_artifacts(&mut self.env, turn, item, out);
+                self.report_progress(turn_id, item["command"].as_str(), out);
             }
             "mcpToolCall" | "dynamicToolCall" => {
                 if !item_status(&item["status"]).2 {
                     turn.running_tools.retain(|t| t["id"] != item["id"]);
                     turn.running_tools.push(item.clone());
                 }
-                tool_artifacts(&mut self.env, turn, item, None, out);
+                let (node, turn_item) = tool_rows(&mut self.env, turn, item, None);
+                let line = turn_item["toolName"].as_str().map(str::to_owned);
+                push_event(out, json!({"type": "node.updated", "node": node}));
+                push_event(
+                    out,
+                    json!({"type": "turn_item.updated", "turnItem": turn_item}),
+                );
+                self.report_progress(turn_id, line.as_deref(), out);
             }
             "webSearch" => web_search_artifacts(&mut self.env, turn, item, false, out),
-            "reasoning" | "plan" => {}
+            // A collab call only takes its place among the turn's items when it starts.
+            "reasoning" | "plan" | "collabAgentToolCall" => {}
             other => out.push(Out::Skipped(format!("item {other}"))),
         }
     }
@@ -1010,6 +1098,10 @@ impl<E: Env> Mapper<E> {
         let item = &p["item"];
         let id = item["id"].as_str().unwrap_or_default().to_owned();
         let kind = item["type"].as_str().unwrap_or_default();
+        if kind == "subAgentActivity" || kind == "collabAgentToolCall" {
+            self.subagent_item_completed(turn_id, item, out);
+            return;
+        }
         if !self.turns.contains_key(turn_id) {
             return;
         }
@@ -1053,9 +1145,17 @@ impl<E: Env> Mapper<E> {
                     }
                 }
                 let text = item["text"].as_str().unwrap_or_default().to_owned();
+                let emitted = self.turns.get(turn_id).is_some_and(|t| {
+                    !final_answer
+                        || t.completed_final_texts.is_empty()
+                        || (!text.is_empty() && !t.completed_final_texts.contains(&text))
+                });
                 self.complete_text(BufKind::Agent, turn_id, &id, Some(&text), true, out);
                 if let Some(turn) = self.turns.get_mut(turn_id) {
                     turn.final_answer_ids.retain(|i| *i != id);
+                }
+                if emitted && final_answer {
+                    self.child_result(turn_id, &text, out);
                 }
             }
             "plan" => {
@@ -1093,7 +1193,7 @@ impl<E: Env> Mapper<E> {
                         });
                         tool_artifacts(&mut self.env, turn, &tool, Some(path), out);
                     }
-                    "userMessage" => {}
+                    "userMessage" => self.child_message(turn_id, item, None, out),
                     other => out.push(Out::Skipped(format!("item {other}"))),
                 }
             }
@@ -1325,6 +1425,12 @@ impl<E: Env> Mapper<E> {
         }
         if status != "completed" {
             self.ended_unfinished.insert(native.to_owned());
+            if !self.stopped(native) {
+                self.stopped.push_back(native.to_owned());
+                while self.stopped.len() > STOPPED_TURNS_KEPT {
+                    self.stopped.pop_front();
+                }
+            }
         }
         self.flush_turn(native, out);
         self.reasoning_parts.retain(|p| p.turn != native);
@@ -1354,6 +1460,9 @@ impl<E: Env> Mapper<E> {
             out,
             json!({"type": "provider_turn.updated", "threadId": turn.thread_id, "providerTurn": provider_turn}),
         );
+        if let Some(child) = turn.subagent.clone() {
+            self.finish_child(&turn, &child, status, &completed_at, out);
+        }
         if status == "interrupted" || status == "failed" {
             for command in std::mem::take(&mut turn.running_commands) {
                 terminal_command(&mut turn, &command, status, &completed_at, out);
@@ -1412,6 +1521,10 @@ impl<E: Env> Mapper<E> {
         while self.ended.len() > ENDED_TURNS_KEPT {
             self.ended.pop_front();
         }
+        // A child's turn ends on its own thread; only a root turn ends the engine's run.
+        if turn.subagent.is_some() {
+            return;
+        }
         push_event(
             out,
             json!({
@@ -1436,7 +1549,7 @@ impl<E: Env> Mapper<E> {
         if self.rerouted_threads.contains(thread) {
             return None;
         }
-        self.thread_models.get(thread).cloned()
+        self.selections.get(thread).map(|s| s.model.clone())
     }
 
     // ---- server requests ------------------------------------------------------------------
@@ -1657,7 +1770,19 @@ impl<E: Env> Mapper<E> {
                 )
             }
         };
-        let Some(turn) = self.turns.get_mut(&native_turn) else {
+        // An approval a child raises shows on its root turn (`approvalOwnerCodexTurn`); a
+        // question stays on the child's own turn.
+        let (owner, subagent_node) = if request_kind == "user_input" {
+            (native_turn.clone(), None)
+        } else {
+            self.approval_owner(&native_turn)
+        };
+        let owner = if self.turns.contains_key(&owner) {
+            owner
+        } else {
+            native_turn
+        };
+        let Some(turn) = self.turns.get_mut(&owner) else {
             return;
         };
         let uuid = self.env.uuid();
@@ -1676,7 +1801,7 @@ impl<E: Env> Mapper<E> {
                 &now,
             )
         } else {
-            let (node, mut item, request) = approval_artifacts(
+            let (mut node, mut item, request) = approval_artifacts(
                 turn,
                 &item_id,
                 &native_request,
@@ -1686,6 +1811,9 @@ impl<E: Env> Mapper<E> {
                 &session,
                 &now,
             );
+            if let Some(parent) = subagent_node {
+                node["parentNodeId"] = json!(parent);
+            }
             if let Some((app_name, options)) = shown {
                 item["appName"] = json!(app_name);
                 item["options"] = Value::Array(options);
@@ -2532,12 +2660,13 @@ fn complete_usage(
     model: Option<&str>,
 ) -> Value {
     let acc = state.acc.remove(turn_id);
+    let has_subagents = acc.as_ref().is_some_and(|a| a.has_subagents);
     if state.active_turn.as_deref() == Some(turn_id) {
         state.active_turn = None;
     }
     let mut out = match acc.filter(|a| a.observed) {
         None => {
-            json!({"usageStatus": "unavailable", "usageScope": "main_agent", "hasSubagents": false})
+            json!({"usageStatus": "unavailable", "usageScope": "main_agent", "hasSubagents": has_subagents})
         }
         Some(a) => {
             let mut v = json!({
@@ -2547,7 +2676,7 @@ fn complete_usage(
                 "cachedInputTokens": a.cached.min(a.input),
                 "outputTokens": a.output,
                 "reasoningTokens": a.reasoning.min(a.output),
-                "hasSubagents": false,
+                "hasSubagents": a.has_subagents,
             });
             if let Some(c) = a.cache_creation {
                 v["cacheCreationTokens"] = json!(c.min(a.input));
@@ -2570,6 +2699,7 @@ impl Default for UsageAcc {
             output: 0,
             reasoning: 0,
             observed: false,
+            has_subagents: false,
         }
     }
 }

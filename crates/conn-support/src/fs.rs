@@ -9,13 +9,25 @@ pub fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
         fs::create_dir_all(dir)?;
     }
     let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    write_atomic_to(&tmp, path, bytes, mode)
+}
+
+/// Writes `bytes` to `tmp` with `mode`, syncs, and renames it to `path`. The caller picks a
+/// temp name no other writer uses, in the same folder.
+pub fn write_atomic_to(tmp: &Path, path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode);
     #[cfg(not(unix))]
     let _ = mode;
-    let mut file = options.open(&tmp)?;
+    let mut file = options.open(tmp)?;
+    // `mode` applies only to a new file, under the umask; set it on the open file as well.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(mode))?;
+    }
     file.write_all(bytes)?;
     file.sync_all()?;
     fs::rename(tmp, path)

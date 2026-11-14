@@ -55,6 +55,48 @@ const SCENARIOS = {
     covers: "an MCP form elicitation shown as an approval, and its answer",
   },
   interrupt: { fixture: "turn_interrupt", covers: "an interrupt" },
+  // Thread titles through Codex (`CodexTextGeneration.ts`): `codex mcp list --json`, then
+  // `codex exec` with the prompt on stdin. TS runs T3's `generateThreadTitle`; Rust gets the
+  // same prompt and schema and runs `CodexProvider::generate_text`.
+  titleListed: {
+    title: {
+      message: "Fix the login redirect after a password reset",
+      modelSelection: {
+        instanceId: "codex",
+        model: "gpt-6-astra",
+        options: [
+          { id: "reasoningEffort", value: "high" },
+          { id: "fastMode", value: true },
+        ],
+      },
+      launchArgs: "--profile work -c sandbox_mode=workspace-write --search --oss",
+      mcpServers: [
+        { name: "t3-code", enabled: true },
+        { name: "dotted.name", enabled: true },
+        { name: "off", enabled: false },
+      ],
+    },
+    covers: "a title on a listed model: mcp list, exec argv, effort, service tier, MCP servers off, schema file",
+  },
+  titleFallback: {
+    title: {
+      message: "Why does the build fail on CI only?",
+      modelSelection: {
+        instanceId: "codex",
+        model: "gpt-9-unknown",
+        options: [{ id: "reasoningEffort", value: "high" }, { id: "serviceTier", value: "flex" }],
+      },
+      launchArgs: "",
+      mcpServers: [],
+    },
+    covers: "a title on an unlisted model: the catalog's first model, the selection's options dropped",
+  },
+  subagentStop: {
+    fixture: "subagent_v2",
+    derive: "subagentStop",
+    addInterrupt: true,
+    covers: "Stop while a subagent's turn runs: turn/interrupt to the root, then the child",
+  },
   model: {
     fixture: "multi_turn",
     setModelBefore: { index: 1, model: "gpt-6-astra" },
@@ -109,14 +151,6 @@ const KNOWN = [
     match: (d) =>
       d.kind === "shutdown" && d.process === 0 && /SIGTERM@\d+ms > killed@0ms$/.test(d.ts),
   },
-  ...["subagent_v2", "subagent_v2_approval", "subagent_v2_nested", "subagent_v2_nested_approval"].map(
-    (fixture) => ({
-      scenario: `rec-${fixture}`,
-      reason:
-        "OPEN GAP: subagents are not implemented in conn-provider-codex (TS reads and resumes child threads and answers their approvals; Conn Server answers a child's request with an error)",
-      match: () => true,
-    }),
-  ),
 ];
 
 // Every fixture variant in the T3 test kit that replays a Codex recording runs as
@@ -145,7 +179,7 @@ const NOT_RUN = {
   delegated_task_status: "used by a delegated-task test with its own steps, not a fixture",
   thread_merge_back_siblings: "used by ThreadMergeBack.integration.test.ts with its own steps",
   queued_cancelled_while_active:
-    "its steps hold recorded frames back with the replay gate (finish_held_run); the stub sends them at once",
+    "its steps hold recorded frames back with the replay gate; the stub has one, but neither conformance driver runs release_replay_gate steps (the engine fixture replay does)",
 };
 delete SCENARIOS["rec-queued_cancelled_while_active"];
 
@@ -175,7 +209,20 @@ NodeFS.writeFileSync(
 );
 NodeFS.writeFileSync(NodePath.join(attachmentsDir, "conf-file-1.txt"), "conformance notes\n");
 
-const wrapper = (dir) => {
+// The Codex catalog both sides see: T3's snapshot models, and Codex's models_cache.json that
+// the Rust provider reads from CODEX_HOME.
+const TITLE_MODELS = [
+  { slug: "gpt-6-luna", name: "GPT-6-Luna", isCustom: false, capabilities: null },
+  { slug: "gpt-6-astra", name: "GPT-6-Astra", isCustom: false, capabilities: null },
+];
+NodeFS.writeFileSync(
+  NodePath.join(codexHome, "models_cache.json"),
+  JSON.stringify({
+    models: TITLE_MODELS.map((m, priority) => ({ slug: m.slug, display_name: m.name, visibility: "list", priority })),
+  }),
+);
+
+const wrapper = (dir, extra = {}) => {
   NodeFS.mkdirSync(dir, { recursive: true });
   const config = NodePath.join(dir, "stub-config.json");
   NodeFS.writeFileSync(
@@ -183,6 +230,7 @@ const wrapper = (dir) => {
     JSON.stringify({
       transcript: NodePath.join(NodePath.dirname(dir), "transcript.json"),
       log: NodePath.join(dir, "stub.ndjson"),
+      ...extra,
     }),
   );
   const script = NodePath.join(dir, "codex");
@@ -252,6 +300,57 @@ function deriveElicitation(fixture, dir) {
   return file;
 }
 
+/**
+ * T3's `subagent_v2` recording cut after the child's `turn/started`: Stop then sends
+ * `turn/interrupt` to the root turn and to the running child turn (T3's `interruptTurn`
+ * targets the lineage), and Codex ends both as interrupted. The two servers' frames are
+ * compared; the recording holds the order T3 sends them in.
+ */
+function deriveSubagentStop(fixture, dir) {
+  const source = NodePath.join(
+    MONOREPO,
+    `apps/server/src/orchestration-v2/testkit/fixtures/${fixture}/codex_transcript.ndjson`,
+  );
+  const entries = NodeFS.readFileSync(source, "utf8")
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line));
+  const rootStart = entries.find((e) => e.type === "expect_outbound" && e.frame?.method === "turn/start");
+  const rootThread = rootStart.frame.params.threadId;
+  const turnStarts = entries.filter((e) => e.type === "emit_inbound" && e.frame?.method === "turn/started");
+  const root = turnStarts.find((e) => e.frame.params.threadId === rootThread).frame.params;
+  const child = turnStarts.find((e) => e.frame.params.threadId !== rootThread).frame.params;
+  const cut = entries.findIndex((e) => e.type === "emit_inbound" && e.frame?.params === child) + 1;
+  const ended = (params, completedAt) => ({
+    type: "emit_inbound",
+    label: "turn/completed",
+    frame: {
+      method: "turn/completed",
+      params: {
+        threadId: params.threadId,
+        turn: { ...params.turn, items: [], itemsView: "notLoaded", status: "interrupted", error: null, completedAt },
+      },
+    },
+  });
+  const interrupt = (params, id) => [
+    { type: "expect_outbound", label: "turn/interrupt", frame: { id, method: "turn/interrupt", params: { threadId: params.threadId, turnId: params.turn.id } } },
+    { type: "emit_inbound", label: "turn/interrupt", frame: { id, result: {} } },
+  ];
+  const at = (root.turn.startedAt ?? 0) + 2;
+  const lines = [
+    ...entries.slice(0, cut),
+    ...interrupt(root, 900),
+    ...interrupt(child, 901),
+    ended(child, at),
+    ended(root, at),
+    { type: "runtime_exit", status: "success" },
+  ].map((e) => JSON.stringify(e));
+  const file = NodePath.join(dir, "derived_transcript.ndjson");
+  NodeFS.mkdirSync(dir, { recursive: true });
+  NodeFS.writeFileSync(file, lines.join("\n") + "\n");
+  return file;
+}
+
 /** The executable name the `login` scenario starts: only the stand-in shell's PATH has it. */
 const LOGIN_CODEX = "codex-conn-login";
 
@@ -288,8 +387,9 @@ function loginShell(sideDir) {
 const plan = selected.map((name) => {
   const dir = NodePath.join(work, name);
   const scenario = SCENARIOS[name];
-  const tsCodex = wrapper(NodePath.join(dir, "ts"));
-  const rustCodex = wrapper(NodePath.join(dir, "rust"));
+  const extra = scenario.title ? { mcpServers: scenario.title.mcpServers } : {};
+  const tsCodex = wrapper(NodePath.join(dir, "ts"), extra);
+  const rustCodex = wrapper(NodePath.join(dir, "rust"), extra);
   const login = scenario.loginShell
     ? { ts: loginShell(NodePath.join(dir, "ts")), rust: loginShell(NodePath.join(dir, "rust")) }
     : undefined;
@@ -308,13 +408,16 @@ const plan = selected.map((name) => {
     ...(scenario.derive === "elicitation"
       ? { transcriptFile: deriveElicitation(scenario.fixture, dir) }
       : {}),
+    ...(scenario.derive === "subagentStop"
+      ? { transcriptFile: deriveSubagentStop(scenario.fixture, dir) }
+      : {}),
     tsCodex: login ? LOGIN_CODEX : tsCodex,
     rustCodex: login ? LOGIN_CODEX : rustCodex,
   };
 });
 NodeFS.writeFileSync(
   NodePath.join(work, "plan.json"),
-  JSON.stringify({ codexHome, attachmentsDir, scenarios: plan }, null, 2),
+  JSON.stringify({ codexHome, attachmentsDir, titleModels: TITLE_MODELS, scenarios: plan }, null, 2),
 );
 
 // ---------------------------------------------------------------------------------------
@@ -345,6 +448,9 @@ import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testk
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import { makeReplayServerConfig } from "./ProviderReplayHarness.ts";
 import { findReplayFixture, runReplayFixture } from "./ProviderReplayFixtures.ts";
+import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneration.ts";
+import { buildThreadTitlePrompt } from "@t3tools/provider-core/server/textGenerationPrompts";
+import { toJsonSchemaObject } from "@t3tools/provider-core/server/textGenerationUtils";
 
 const PLAN = JSON.parse(fs.readFileSync(__PLAN__, "utf8"));
 const DEFAULT_CODEX_SETTINGS = Schema.decodeSync(CodexSettings)({});
@@ -365,6 +471,8 @@ const changedInput = (scenario: any, base: any) => {
     const first = steps.findIndex((s: any) => s.type === "message");
     steps[first] = { ...steps[first], attachments };
   }
+  // Stop the first run after its message (\`subagentStop\`).
+  if (scenario.addInterrupt) steps = [...steps, { type: "interrupt", targetRunIndex: 1 }];
   if (scenario.setModelBefore) {
     let seen = -1;
     const at = steps.findIndex((s: any) => s.type === "message" && ++seen === scenario.setModelBefore.index);
@@ -474,8 +582,53 @@ const harnessFor = (scenario: any, log: Array<unknown>) => {
   };
 };
 
-describe("conn codex conformance", () => {
-  for (const scenario of PLAN.scenarios) {
+// A describe block with no test fails, so each is made only when it has scenarios.
+const titleScenarios = PLAN.scenarios.filter((s: any) => s.title);
+const replayScenarios = PLAN.scenarios.filter((s: any) => !s.title);
+if (titleScenarios.length > 0) describe("conn codex title conformance", () => {
+  for (const scenario of titleScenarios) {
+    it.effect(scenario.name, () => {
+      const title = scenario.title;
+      // What the Rust side gets: T3's own prompt and output schema for this message.
+      const built = buildThreadTitlePrompt({ message: title.message });
+      const request = { prompt: built.prompt, outputSchema: JSON.stringify(toJsonSchemaObject(built.outputSchema)) };
+      fs.writeFileSync(scenario.dir + "/ts/env.json", JSON.stringify(process.env));
+      return Effect.gen(function* () {
+        const generation = yield* makeCodexTextGeneration(
+          { ...DEFAULT_CODEX_SETTINGS, binaryPath: scenario.tsCodex, homePath: PLAN.codexHome, launchArgs: title.launchArgs },
+          process.env,
+          Effect.succeed(PLAN.titleModels),
+        );
+        return yield* generation.generateThreadTitle({
+          cwd: scenario.dir,
+          message: title.message,
+          modelSelection: title.modelSelection,
+        });
+      }).pipe(
+        Effect.provide(
+          ServerConfig.ServerConfig.layerTest(scenario.dir, { prefix: "conn-codex-title-" }).pipe(
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+        Effect.exit,
+        Effect.map((exit) => {
+          fs.writeFileSync(
+            scenario.dir + "/ts/calls.json",
+            safeJson({
+              ok: Exit.isSuccess(exit),
+              failure: Exit.isSuccess(exit) ? null : String(exit.cause),
+              request,
+              log: [{ kind: "result", method: "generateThreadTitle", output: Exit.isSuccess(exit) ? exit.value : null }],
+            }),
+          );
+        }),
+      );
+    }, 30_000);
+  }
+});
+
+if (replayScenarios.length > 0) describe("conn codex conformance", () => {
+  for (const scenario of replayScenarios) {
     it.effect(scenario.name, () => {
       const log: Array<unknown> = [];
       const fixture = findReplayFixture(scenario.fixture)!;
@@ -598,10 +751,17 @@ const readLog = (path) =>
 const processes = (log) => {
   const out = [];
   for (const entry of log) {
-    if (entry.kind === "start") out.push({ start: entry, frames: [], extra: [], missing: [], end: [] });
+    if (entry.kind === "start") out.push({ start: entry, frames: [], childReads: [], extra: [], missing: [], end: [] });
     const current = out.at(-1);
     if (current === undefined) continue;
     if (entry.kind === "in") current.frames.push(entry.frame ?? { invalid: entry.line });
+    // A subagent's model read (the stub logs it as \`child-metadata\` right after its \`in\`):
+    // both servers send it from a background task, so it is compared as a set, not in order.
+    if (entry.kind === "child-metadata") {
+      const at = current.frames.findLastIndex((f) => f.id === entry.frame.id && f.method === entry.frame.method);
+      if (at !== -1) current.frames.splice(at, 1);
+      current.childReads.push(entry.frame);
+    }
     if (entry.kind === "extra") current.extra.push(entry.frame);
     if (entry.kind === "missing") current.missing.push(entry.expected);
     if (entry.kind === "alive") current.lastAlive = entry.afterMs;
@@ -736,9 +896,75 @@ const short = (v) => {
   return s === undefined ? "<absent>" : s.length > 160 ? `${s.slice(0, 157)}...` : s;
 };
 
+/**
+ * A title scenario's CLI runs, comparable across sides: each command's argv (the schema and
+ * output files as their T3 shape, `<tmp>/t3code-codex-<kind>-<pid>-XXXXXX/<12 hex>`),
+ * environment change, folder, and for `exec` the stdin bytes and the schema file.
+ */
+const titleRuns = (log, sideEnv) => {
+  const runs = [];
+  const tmp = NodeOS.tmpdir().replace(/\/+$/, "");
+  const shape = (value) => {
+    const m = /^(.*)\/t3code-codex-(schema|output)-(\d+)-([A-Za-z0-9]{6})\/([0-9a-f]{12})$/.exec(value);
+    if (m === null) return value;
+    const base = NodeFS.realpathSync(m[1]) === NodeFS.realpathSync(tmp) ? "<tmp>" : m[1];
+    // The digits are the server's process id, which differs by side.
+    return `${base}/t3code-codex-${m[2]}-<pid>-XXXXXX/<12 hex>`;
+  };
+  for (const entry of log) {
+    if (entry.kind === "start") {
+      runs.push({
+        argv: entry.argv.map(shape),
+        env: envDelta(entry.env, sideEnv),
+        cwd: entry.cwd,
+      });
+    } else if (entry.kind === "exec" && runs.length > 0) {
+      Object.assign(runs.at(-1), { stdin: entry.stdin, schema: entry.schema, schemaName: entry.schemaName });
+    } else if (entry.kind === "mcp-list" && runs.length > 0) {
+      runs.at(-1).mcpList = true;
+    }
+  }
+  return runs;
+};
+
 let unexplained = 0;
 const report = [];
 for (const scenario of plan) {
+  if (scenario.title) {
+    const tsCalls = JSON.parse(NodeFS.readFileSync(NodePath.join(scenario.dir, "ts/calls.json"), "utf8"));
+    const tsEnv = JSON.parse(NodeFS.readFileSync(NodePath.join(scenario.dir, "ts/env.json"), "utf8"));
+    const rustEnvPath = NodePath.join(scenario.dir, "rust/env.json");
+    const rustEnv = NodeFS.existsSync(rustEnvPath) ? JSON.parse(NodeFS.readFileSync(rustEnvPath, "utf8")) : {};
+    const rustResultsPath = NodePath.join(scenario.dir, "rust/results.json");
+    const rustResults = NodeFS.existsSync(rustResultsPath) ? JSON.parse(NodeFS.readFileSync(rustResultsPath, "utf8")) : [];
+    const ts = titleRuns(readLog(NodePath.join(scenario.dir, "ts/stub.ndjson")), tsEnv);
+    const rs = titleRuns(readLog(NodePath.join(scenario.dir, "rust/stub.ndjson")), rustEnv);
+    const diffs = [];
+    if (ts.length !== rs.length) diffs.push({ kind: "process-count", ts: ts.length, rust: rs.length });
+    for (let p = 0; p < Math.min(ts.length, rs.length); p += 1) {
+      const a = ts[p];
+      const b = rs[p];
+      for (const key of ["argv", "cwd", "stdin", "schema", "schemaName", "mcpList"]) {
+        if (JSON.stringify(a[key]) !== JSON.stringify(b[key])) diffs.push({ kind: "frame", method: `run ${p}`, path: key, ts: a[key], rust: b[key] });
+      }
+      for (const key of [...new Set([...Object.keys(a.env), ...Object.keys(b.env)])].sort()) {
+        if (HOST_NOISE.test(key)) continue;
+        if (a.env[key] !== b.env[key]) diffs.push({ kind: "env", process: p, key, ts: a.env[key], rust: b.env[key] });
+      }
+    }
+    const tsOut = tsCalls.log.find((e) => e.kind === "result")?.output ?? null;
+    const rsOut = rustResults[0]?.output ?? null;
+    if (JSON.stringify(stable(tsOut)) !== JSON.stringify(stable(rsOut))) {
+      diffs.push({ kind: "result", method: "generateThreadTitle", path: "<root>", ts: tsOut, rust: rsOut });
+    }
+    for (const d of diffs) {
+      const known = KNOWN.find((k) => (k.scenario == null || k.scenario === scenario.name) && k.match(d));
+      d.known = known?.reason;
+      if (!known) unexplained += 1;
+    }
+    report.push({ scenario: scenario.name, covers: scenario.covers, tsOk: tsCalls.ok, tsFailure: tsCalls.failure, processes: [ts.length, rs.length], frames: [0, 0], diffs });
+    continue;
+  }
   const tsCalls = JSON.parse(NodeFS.readFileSync(NodePath.join(scenario.dir, "ts/calls.json"), "utf8"));
   const tsEnv = JSON.parse(NodeFS.readFileSync(NodePath.join(scenario.dir, "ts/env.json"), "utf8"));
   const rustEnvPath = NodePath.join(scenario.dir, "rust/env.json");
@@ -803,6 +1029,11 @@ for (const scenario of plan) {
         add("ts-only-frame", { process: p, method: label(x), frame: x });
         i += 1;
       }
+    }
+    // Child model reads: the same requests on both sides, in any order.
+    const reads = (list) => list.map(({ id: _id, ...frame }) => JSON.stringify(stable(frame))).sort();
+    if (JSON.stringify(reads(a.childReads)) !== JSON.stringify(reads(b.childReads))) {
+      add("child-reads", { process: p, ts: reads(a.childReads), rust: reads(b.childReads) });
     }
     // Shutdown: the same steps in the same order, each within 500 ms of the other side's.
     const steps = (end) => end.map((e) => e.kind).join(" > ");

@@ -207,7 +207,7 @@ fn parse_selector(selector: &str, default_host: &str) -> Option<Locator> {
 /// github.com; otherwise a host the GitHub definition recognises (github.com, `*.ghe.com`, or a
 /// name with a `github` label, such as a GitHub Enterprise Server at `github.example.com`) is
 /// its own API host, with its port.
-fn api_host_for_remote(url: &str) -> Option<String> {
+pub(crate) fn api_host_for_remote(url: &str) -> Option<String> {
     let (hostname, _) = crate::remote::parse_git_remote_repository(url)?;
     let protocol = crate::remote::clone_url_protocol(url);
     let ssh = protocol == Some(crate::remote::CloneProtocol::Ssh);

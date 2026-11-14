@@ -13,43 +13,9 @@
 */pi            provider: out of scope (AGENTS.md)
 
 # --- Grok (conn-provider-acp; its own replay shows these adapter events equal to T3's) ---
-# Engine: T3's buffered delivery (RunExecutionService, `isStreamingAssistantEvent`) never stores a
-# running assistant node or a streaming message or turn item; this engine writes them and deletes
-# them at the turn end, which leaves gaps in the stored sequence. Codex and Claude replays do not
-# interleave such rows with other events, Grok's do.
-simple/grok                          engine: buffered delivery stores streaming assistant rows (see above)
-multi_turn/grok                      engine: buffered delivery stores streaming assistant rows
-tool_call_read_only/grok             engine: buffered delivery stores streaming assistant rows
-tool_call_read_only_on_request/grok  engine: buffered delivery stores streaming assistant rows
-todo_list/grok                       engine: buffered delivery stores streaming assistant rows
-plan_questions/grok                  engine: buffered delivery stores streaming assistant rows
-grok_prompt_error/grok               engine: buffered delivery stores streaming assistant rows
-grok_auto_blocked_command/grok       engine: buffered delivery stores streaming assistant rows
-queued_turn/grok                     engine: buffered delivery stores streaming assistant rows; then clock: as queued_turn/codex
 grok_subagent_lineage/grok           provider: Grok subagents are not built (crates/conn-provider-acp README)
 grok_background_bash/grok            driver: finish_held_run (no replay gate in acp-stub.mjs); provider: Grok background tasks are not built
 grok_background_bash_fast_wake/grok  driver: finish_held_run; provider: Grok background tasks are not built
 grok_background_subagent/grok        driver: finish_held_run; provider: Grok background tasks and subagents are not built
 grok_monitor/grok                    driver: finish_held_run; provider: Grok monitors are not built
 
-# --- Codex provider: subagents are not built (conn-provider-codex README) ---
-subagent/codex                      provider: Codex subagents (collabAgentToolCall, child threads) are not built
-subagent_continue/codex             provider: Codex subagents are not built
-subagent_v2/codex                   provider: Codex subagents are not built
-subagent_v2_approval/codex          provider: Codex subagents are not built (a child's approval gets an error reply)
-subagent_v2_nested/codex            provider: Codex subagents are not built
-subagent_v2_nested_approval/codex   provider: Codex subagents are not built
-
-# --- Claude provider: timing in the engine ---
-# T3's wake run queues behind run 1 while run 1's checkpoint capture is still pending, so T3 stores
-# run.updated "starting" for it. Here the capture of run 1 ends before the subagent's idle frames
-# arrive through the fake SDK host, so the wake run is created "starting" and no run.updated
-# "starting" is stored. Every other assertion of the fixture holds.
-claude_background_subagent_after_root/claudeAgent    engine: the wake run starts unqueued (run 1's checkpoint capture ends first; see above)
-
-# --- The replay driver: steps it cannot run yet ---
-queued_cancelled_while_active/codex           driver: release_replay_gate / finish_held_run (the stub sends frames at once; no replay gate)
-
-# --- Test clock: T3's expected order comes from ties on its TestClock ---
-queued_turn/codex         clock: T3 orders messages by createdAt then id; on its TestClock the queued message and the first answer tie and the id decides. Our providers stamp with the system clock (no clock seam in the providers)
-queued_turn/claudeAgent   clock: as queued_turn/codex

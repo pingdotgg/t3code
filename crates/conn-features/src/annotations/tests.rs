@@ -405,3 +405,220 @@ async fn reads_the_t3_servers_files() {
         (json!(5), json!(10))
     );
 }
+
+#[derive(Debug)]
+struct Any;
+
+impl ProjectLookup for Any {
+    fn exists(&self, _project_id: String) -> BoxFuture<'_, Result<bool, String>> {
+        Box::pin(async { Ok(true) })
+    }
+}
+
+/// Every file under `dir`, with its bytes, outside `dir/annotations/<one folder>`.
+fn files_outside_project_folders(dir: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).expect("state dir") {
+        let path = entry.expect("entry").path();
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        if name == "annotations" {
+            for inner in std::fs::read_dir(&path).expect("root") {
+                let inner = inner.expect("entry").path();
+                assert!(inner.is_dir(), "a file in the annotations root: {inner:?}");
+            }
+        } else {
+            found.push((name, std::fs::read(&path).expect("read")));
+        }
+    }
+    found.sort();
+    found
+}
+
+/// Finding 1: no project id reaches a file outside its own folder under the annotations
+/// root. The state files survive every call with every hostile id, and an id made only of
+/// dots gets an escaped folder of its own.
+#[tokio::test(flavor = "current_thread")]
+async fn no_project_id_leaves_the_annotations_root() {
+    let dir = std::env::temp_dir().join(format!(
+        "conn-annotations-hostile-{}-{}",
+        std::process::id(),
+        conn_support::uuid_v4()
+    ));
+    let _guard = Dir(dir.clone());
+    std::fs::create_dir_all(&dir).expect("dir");
+    std::fs::write(dir.join("auth.json"), r#"{"version":1,"sessions":[]}"#).expect("auth");
+    std::fs::write(dir.join("settings.json"), "{}").expect("settings");
+    let before = files_outside_project_folders(&dir);
+    let store = Annotations::new(&dir, Arc::new(SystemClock), Arc::new(Any));
+    let long = "a".repeat(300);
+    let hostile = [
+        "..",
+        ".",
+        "...",
+        "",
+        "/",
+        "../..",
+        "../../etc",
+        "a/../..",
+        "/tmp",
+        "\\..",
+        "..\0",
+        "\0",
+        ".. ",
+        " ..",
+        "%2E%2E",
+        "annotations",
+        "~",
+        long.as_str(),
+    ];
+    for id in hostile {
+        for file in ["auth", "settings", "_sequence", "_deleted"] {
+            if let Ok(created) = store.create(id, capture(file)).await {
+                assert_eq!(created["projectId"], id);
+            }
+            let _ = store.list(id).await;
+            let _ = store.claim(id, None).await;
+            let _ = store.subscribe(id).await;
+            let _ = store.screenshot_path(id, file.to_owned()).await;
+            let _ = store.remove(id, Some(vec![file.into()]), None).await;
+            let _ = store.remove(id, None, None).await;
+        }
+        assert_eq!(files_outside_project_folders(&dir), before, "id {id:?}");
+    }
+    let root = dir.join("annotations");
+    assert!(root.join("%2E%2E").is_dir(), "`..` has its own folder");
+    assert!(root.join("%2E").is_dir(), "`.` has its own folder");
+    assert!(
+        store.create("", capture("a")).await.is_err(),
+        "an empty id names no folder"
+    );
+}
+
+/// Finding 1: two ids that map to one folder share one lock and change counter.
+#[tokio::test(flavor = "current_thread")]
+async fn ids_that_share_a_folder_share_a_lock() {
+    let (_, dir) = store("shared-lock");
+    let store = Annotations::new(&dir.0, Arc::new(SystemClock), Arc::new(Any));
+    store.create("a:b", capture("one")).await.expect("a:b");
+    store.create("a_b", capture("two")).await.expect("a_b");
+    let entries = store.inner.entries.lock().expect("entries").len();
+    assert_eq!(entries, 1);
+}
+
+/// Finding 1: the engine refuses `.` and `..` as project ids.
+#[tokio::test(flavor = "current_thread")]
+async fn the_engine_refuses_dot_project_ids() {
+    let dir = std::env::temp_dir().join(format!(
+        "conn-annotations-dotdot-{}-{}",
+        std::process::id(),
+        conn_support::uuid_v4()
+    ));
+    let _guard = Dir(dir.clone());
+    std::fs::create_dir_all(dir.join("repo")).expect("repo");
+    let engine: Arc<dyn conn_engine::Engine> = Arc::new(
+        conn_engine::SqliteEngine::open(conn_engine::EngineConfig::new(dir.join("engine.sqlite")))
+            .expect("engine"),
+    );
+    for id in [".", ".."] {
+        let created = engine
+            .call(
+                "projects.mutate",
+                json!({"type": "project.create", "commandId": format!("c{id}"), "projectId": id,
+                       "title": "x", "workspaceRoot": dir.join("repo").to_string_lossy()}),
+            )
+            .await;
+        let Err(conn_engine::EngineError::Rejected(error)) = created else {
+            panic!("`{id}` is refused as a contract error: {created:?}");
+        };
+        assert_eq!(error["cause"]["_tag"], "ProjectInvalidError", "{error}");
+    }
+}
+
+/// Finding 10: a screenshot over `MAX_SCREENSHOT_BYTES` is refused with a clear error before
+/// it is decoded; one at the cap is stored.
+#[tokio::test(flavor = "current_thread")]
+async fn a_screenshot_over_the_cap_is_refused() {
+    let (store, _dir) = store("screenshot-cap");
+    let encode = |len: usize| {
+        format!(
+            "data:image/png;base64,{}",
+            conn_support::base64::encode(&vec![7u8; len])
+        )
+    };
+    let with = |id: &str, url: String| -> AnnotationCapture {
+        from_json(json!({"id": id, "comment": "c", "screenshot": url})).expect("capture")
+    };
+    let error = store
+        .create(
+            PROJECT,
+            with("big", encode(super::MAX_SCREENSHOT_BYTES + 1)),
+        )
+        .await
+        .expect_err("over the cap");
+    assert_eq!(
+        error,
+        AnnotationError::Invalid {
+            reason: "The screenshot is larger than 8 MB.".into()
+        }
+    );
+    let stored = store
+        .create(PROJECT, with("cap", encode(super::MAX_SCREENSHOT_BYTES)))
+        .await
+        .expect("at the cap");
+    assert_eq!(stored["hasScreenshot"], true);
+    let error = store
+        .create(PROJECT, with("bad", "data:image/gif;base64,AAAA".into()))
+        .await
+        .expect_err("not an image type");
+    assert_eq!(
+        error,
+        AnnotationError::Invalid {
+            reason: "The screenshot must be a base64 PNG, JPEG or WebP data URL.".into()
+        }
+    );
+}
+
+/// Finding 10: `_deleted.json` keeps at most `MAX_TOMBSTONES` ids, the oldest go first; a
+/// longer file the T3 server wrote still loads, and every id in it stays refused until a
+/// removal here trims it.
+#[tokio::test(flavor = "current_thread")]
+async fn removed_ids_are_bounded_and_a_longer_t3_file_loads() {
+    let (store, dir) = store("tombstones");
+    let folder = dir.0.join("annotations").join("project_annotations");
+    std::fs::create_dir_all(&folder).expect("dir");
+    let old: Vec<String> = (0..super::MAX_TOMBSTONES + 2)
+        .map(|i| format!("old{i}"))
+        .collect();
+    std::fs::write(folder.join("_deleted.json"), json!(old).to_string()).expect("deleted");
+    assert_eq!(
+        store.create(PROJECT, capture("old0")).await,
+        Err(AnnotationError::Removed { id: "old0".into() })
+    );
+    store.create(PROJECT, capture("new")).await.expect("new");
+    store
+        .remove(PROJECT, Some(vec!["new".into()]), None)
+        .await
+        .expect("remove");
+    let kept: Vec<String> =
+        serde_json::from_str(&std::fs::read_to_string(folder.join("_deleted.json")).expect("read"))
+            .expect("ids");
+    assert_eq!(kept.len(), super::MAX_TOMBSTONES);
+    assert_eq!(
+        kept.first().map(String::as_str),
+        Some("old3"),
+        "oldest first out"
+    );
+    assert_eq!(kept.last().map(String::as_str), Some("new"));
+    assert!(
+        store.create(PROJECT, capture("old2")).await.is_ok(),
+        "trimmed"
+    );
+    assert_eq!(
+        store.create(PROJECT, capture("new")).await,
+        Err(AnnotationError::Removed { id: "new".into() })
+    );
+}

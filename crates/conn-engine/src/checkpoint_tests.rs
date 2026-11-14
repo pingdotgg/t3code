@@ -84,7 +84,6 @@ pub(super) fn open_repo(db: &TempDb, repo: &Repo) -> (SqliteEngine, Arc<FakeProv
         workspace_root: repo.root(),
     }];
     config.providers = vec![provider.clone()];
-    config.stream_flush = Duration::from_millis(20);
     config.checkpoints = true;
     (SqliteEngine::open(config).unwrap(), provider)
 }
@@ -499,7 +498,6 @@ async fn with_turns(
         workspace_root: repo.root(),
     }];
     config.providers = vec![provider.clone()];
-    config.stream_flush = Duration::from_millis(20);
     config.checkpoints = true;
     let engine = SqliteEngine::open(config).unwrap();
     dispatch(&engine, thread).await;
@@ -894,4 +892,327 @@ async fn a_fork_refuses_a_missing_source_or_a_taken_target() {
         .dispatch(from_json(fork("f2", json!({"type": "latest_stable"}))).unwrap())
         .await;
     assert!(refused(taken).contains("t2"), "the target exists");
+}
+
+/// A file restore that keeps failing retries the restore only: the provider is rolled back
+/// once per request, and the store keeps every run (review finding 1; T3 sends it again on
+/// every retry).
+#[tokio::test(flavor = "current_thread")]
+async fn a_failing_restore_rolls_the_provider_back_once() {
+    let db = TempDb::new("rb-once");
+    let repo = Repo::new("rb-once");
+    let (engine, provider) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_worktree_thread(&repo),
+        &["write a.txt one", "write b.txt two", "write c.txt three"],
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    std::fs::write(repo.0.join(".git/index.lock"), "").unwrap();
+    dispatch(&engine, rollback("rb-1", &checkpoint_at(&p, 1), None)).await;
+    let p = until(&engine, |p| p["thread"]["rollbackFailure"].is_object()).await;
+    assert_eq!(
+        p["thread"]["rollbackFailure"]["message"],
+        "Git's index is locked. Wait for other Git operations to finish, then try again."
+    );
+    assert_eq!(p["runs"][2]["status"], "completed", "store unchanged");
+    assert_eq!(
+        *provider.rollbacks.lock().unwrap(),
+        ["turn 1"],
+        "the provider conversation is rolled back once"
+    );
+}
+
+/// A rollback whose file restore fails leaves the live session on the thread it had: the next
+/// turn continues the stored provider thread, not the one the provider rolled back to.
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_restore_leaves_the_live_session_on_its_thread() {
+    let db = TempDb::new("rb-live-kept");
+    let repo = Repo::new("rb-live-kept");
+    let (engine, provider) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_worktree_thread(&repo),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let lock = repo.0.join(".git/index.lock");
+    std::fs::write(&lock, "").unwrap();
+    dispatch(&engine, rollback("rb-1", &checkpoint_at(&p, 1), None)).await;
+    until(&engine, |p| p["thread"]["rollbackFailure"].is_object()).await;
+    std::fs::remove_file(&lock).unwrap();
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    turn(&engine, &mut stream, "c9", "after").await;
+    let heads = provider.turn_heads.lock().unwrap().clone();
+    assert_eq!(heads.len(), 3, "{heads:?}");
+    assert!(
+        heads[2].is_null(),
+        "the turn continues the stored thread: {heads:?}"
+    );
+}
+
+/// A store left with a rollback pending, as a crash leaves it (review finding 4.2): the
+/// previous process admitted the rollback and stopped with the provider rollback in flight.
+/// `phase` is what the store then says: `admitted` (sent nothing), `provider` (sent it, no
+/// answer), `provider_done` (its answer kept). A restart finishes the first and the last, as
+/// T3 requeues the effect, and records a failure for the middle one.
+#[tokio::test(flavor = "current_thread")]
+async fn a_restart_finishes_or_fails_a_rollback_left_pending() {
+    for phase in ["admitted", "provider", "provider_done"] {
+        let db = TempDb::new(&format!("rb-pending-{phase}"));
+        let repo = Repo::new(&format!("rb-pending-{phase}"));
+        let pending = || -> Vec<(String, String)> {
+            let conn = rusqlite::Connection::open(db.path()).unwrap();
+            let mut stmt = conn
+                .prepare("SELECT command_id, phase FROM pending_rollbacks")
+                .unwrap();
+            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+        let provider_thread = {
+            let (engine, _) = with_turns(
+                &db,
+                &repo,
+                FakeProvider::new("claudeAgent").with_control_delay(Duration::from_secs(60)),
+                create_worktree_thread(&repo),
+                &["write a.txt one", "write b.txt two", "write c.txt three"],
+            )
+            .await;
+            let p = projection(&engine, "t1").await;
+            dispatch(&engine, rollback("rb-1", &checkpoint_at(&p, 1), None)).await;
+            for _ in 0..250 {
+                if pending() == [("rb-1".to_owned(), "provider".to_owned())] {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert_eq!(pending(), [("rb-1".to_owned(), "provider".to_owned())]);
+            p["providerThreads"][0].clone()
+        };
+        let conn = rusqlite::Connection::open(db.path()).unwrap();
+        conn.execute(
+            "UPDATE pending_rollbacks SET phase = ?1, snapshot = ?2",
+            rusqlite::params![
+                phase,
+                (phase == "provider_done").then(|| provider_thread.to_string())
+            ],
+        )
+        .unwrap();
+        drop(conn);
+
+        let (engine, provider) = open_repo(&db, &repo);
+        let p = until(&engine, |p| {
+            p["runs"][2]["status"] == "rolled_back" || p["thread"]["rollbackFailure"].is_object()
+        })
+        .await;
+        assert!(pending().is_empty(), "{phase}: the row goes");
+        let statuses: Vec<_> = p["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["status"].as_str().unwrap().to_owned())
+            .collect();
+        if phase == "provider" {
+            assert_eq!(
+                p["thread"]["rollbackFailure"],
+                json!({"requestId": "rb-1", "message": crate::rollback::ROLLBACK_INTERRUPTED_MESSAGE}),
+                "{phase}"
+            );
+            assert_eq!(statuses, ["completed", "completed", "completed"], "{phase}");
+            assert_eq!(repo.read("c.txt").as_deref(), Some("three\n"), "{phase}");
+            assert!(provider.rollbacks.lock().unwrap().is_empty(), "{phase}");
+        } else {
+            assert!(
+                p["thread"]["rollbackFailure"].is_null(),
+                "{phase}: {}",
+                p["thread"]
+            );
+            assert_eq!(
+                statuses,
+                ["completed", "rolled_back", "rolled_back"],
+                "{phase}"
+            );
+            assert_eq!(repo.read("b.txt"), None, "{phase}: files restored");
+            assert_eq!(repo.read("c.txt"), None, "{phase}: files restored");
+            let sent = provider.rollbacks.lock().unwrap().clone();
+            let expected: &[&str] = if phase == "admitted" {
+                &["turn 1"]
+            } else {
+                &[]
+            };
+            assert_eq!(
+                sent, expected,
+                "{phase}: provider rollbacks after the restart"
+            );
+            assert_eq!(p["providerThreads"][0]["lastRunOrdinal"], 1, "{phase}");
+        }
+    }
+}
+
+/// A rollback admitted while a run still waits for its checkpoint runs after that capture, so
+/// it rolls that run back too (review finding 2.2): T3 runs `checkpoint.capture` as an effect
+/// in the thread's lane. The workspace lock holds the capture back while the rollback comes in.
+#[tokio::test(flavor = "current_thread")]
+async fn a_rollback_admitted_while_a_run_waits_for_its_capture_rolls_it_back() {
+    let db = TempDb::new("rb-waiting");
+    let repo = Repo::new("rb-waiting");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_worktree_thread(&repo),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let target = checkpoint_at(&p, 1);
+    let cwd = p["checkpointScopes"][0]["cwd"].as_str().unwrap().to_owned();
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    dispatch(&engine, message("t1", "c3", "hang")).await;
+    until_provider_turn(&mut stream).await;
+    let held = engine.test_hold_workspace(&cwd).await;
+    // The steer ends the provider turn; the run then waits for its capture.
+    dispatch(
+        &engine,
+        message_with(
+            "t1",
+            "c4",
+            "finish",
+            json!({"type": "steer_active", "targetRunId": "run:t1:3"}),
+            None,
+        ),
+    )
+    .await;
+    until(&engine, |p| p["runs"][2]["status"] == "waiting").await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    dispatch(&engine, rollback("rb-1", &target, None)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    drop(held);
+    let p = until(&engine, |p| {
+        p["runs"][1]["status"] == "rolled_back" || p["thread"]["rollbackFailure"].is_object()
+    })
+    .await;
+    // Both writes are done once the lane is empty again.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let p = if p["runs"][2]["status"] == "waiting" {
+        until(&engine, |p| p["runs"][2]["status"] != "waiting").await
+    } else {
+        projection(&engine, "t1").await
+    };
+    let statuses: Vec<_> = p["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["status"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        statuses,
+        ["completed", "rolled_back", "rolled_back"],
+        "the waiting run is rolled back too"
+    );
+    assert_eq!(
+        checkpoint_at(&p, 3)["status"],
+        "stale",
+        "its checkpoint too"
+    );
+}
+
+/// Admission asks the provider instance for its capabilities, as T3 does, not the stored
+/// session row (review finding 4.3): a provider that cannot roll back is refused with T3's
+/// reason, and nothing is sent to it.
+#[tokio::test(flavor = "current_thread")]
+async fn rollback_asks_the_provider_instance_whether_it_can_roll_back() {
+    let db = TempDb::new("rb-caps");
+    let repo = Repo::new("rb-caps");
+    let (engine, provider) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent").without_rollback(),
+        create_worktree_thread(&repo),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let refused = engine
+        .dispatch(from_json(rollback("rb-1", &checkpoint_at(&p, 1), None)).unwrap())
+        .await;
+    assert_eq!(
+        refused_message(refused),
+        "claudeAgent cannot satisfy rollback for command rb-1: providerInstanceId conversation rollback is unavailable"
+    );
+    assert!(provider.rollbacks.lock().unwrap().is_empty());
+    let p = projection(&engine, "t1").await;
+    assert!(
+        p["thread"]["rollbackRequestId"].is_null(),
+        "{}",
+        p["thread"]
+    );
+}
+
+fn refused_message<T, E: serde::Serialize>(result: Result<T, EngineError<E>>) -> String {
+    let Err(EngineError::Rejected(error)) = result else {
+        panic!("refused")
+    };
+    to_json(&error)["message"].as_str().unwrap().to_owned()
+}
+
+/// A rollback that opens its own session (no live one, as after a restart) lays the
+/// configured runtime policy override over it, as a turn start does (review finding 11).
+#[tokio::test(flavor = "current_thread")]
+async fn a_rollback_session_gets_the_runtime_policy_override() {
+    let db = TempDb::new("rb-override");
+    let repo = Repo::plain("rb-override");
+    let config = |provider: Arc<FakeProvider>| {
+        let mut config = EngineConfig::new(db.path());
+        config.projects = vec![ProjectConfig {
+            title: "Project".into(),
+            workspace_root: repo.root(),
+        }];
+        config.providers = vec![provider];
+        config.checkpoints = true;
+        config.runtime_policy_override = Some(crate::RuntimePolicyOverride {
+            cwd: None,
+            approval_policy: Some(json!("never")),
+            sandbox_policy: None,
+        });
+        config
+    };
+    {
+        let engine =
+            SqliteEngine::open(config(Arc::new(FakeProvider::new("claudeAgent")))).unwrap();
+        dispatch(&engine, create_in(&repo, "t1", "c1")).await;
+        let mut stream = engine
+            .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+            .await
+            .unwrap();
+        next(&mut stream).await;
+        turn(&engine, &mut stream, "c2", "one").await;
+        turn(&engine, &mut stream, "c3", "two").await;
+    }
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    let engine = SqliteEngine::open(config(provider.clone())).unwrap();
+    let p = projection(&engine, "t1").await;
+    dispatch(
+        &engine,
+        rollback("rb-1", &checkpoint_at(&p, 1), Some(false)),
+    )
+    .await;
+    until(&engine, |p| p["runs"][1]["status"] == "rolled_back").await;
+    let policies = provider.opened_policies.lock().unwrap().clone();
+    assert_eq!(policies.len(), 1, "{policies:?}");
+    assert_eq!(policies[0]["approvalPolicy"], "never", "{policies:?}");
 }

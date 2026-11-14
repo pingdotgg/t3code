@@ -57,10 +57,14 @@ impl Seen {
         wanted.iter().all(|w| have.contains(w))
     }
 
+    /// The running root turn. A subagent's turn runs outside the run (`runAttemptId` null).
     fn running_turn(&self) -> Option<String> {
         let mut running = None;
         for e in &self.events {
-            if e["type"] == "provider_turn.updated" && e["providerTurn"]["status"] == "running" {
+            if e["type"] == "provider_turn.updated"
+                && e["providerTurn"]["status"] == "running"
+                && !e["providerTurn"]["runAttemptId"].is_null()
+            {
                 running = e["providerTurn"]["id"].as_str().map(str::to_owned);
             }
             if e["type"] == "turn.terminal" {
@@ -76,6 +80,7 @@ impl Seen {
         for e in &self.events {
             if e["type"] == "provider_turn.updated"
                 && e["providerTurn"]["status"] == "running"
+                && !e["providerTurn"]["runAttemptId"].is_null()
                 && !running
             {
                 started += 1;
@@ -210,6 +215,9 @@ async fn run_scenario(
         attachments_dir: plan["attachmentsDir"].as_str().map(PathBuf::from),
         ..CodexConfig::default()
     };
+    if let Some(title) = scenario.get("title") {
+        return run_title(&config, title, dir, calls).await;
+    }
     let mut provider = Arc::new(CodexProvider::new("codex".into(), config.clone()));
     let mut session: Option<Box<dyn Session>> = None;
     let mut thread: Option<ProviderThread> = None;
@@ -401,6 +409,9 @@ async fn run_scenario(
             "interruptTurn" => {
                 run.wait_until("a running turn", |s| s.running_turn().is_some())
                     .await;
+                // T3 stops after the stub sent what comes before the Stop (a subagent's turn
+                // among it), so the lineage it interrupts is complete; wait the same way.
+                quiet(&dir.join("rust/stub.ndjson")).await;
                 let turn = run.seen.lock().await.running_turn().unwrap_or_default();
                 let s = session.as_ref().ok_or("no session")?;
                 s.interrupt_turn(InterruptInput {
@@ -506,6 +517,10 @@ async fn run_scenario(
     let done = turns;
     run.wait_until("every turn to end", |s| s.terminals() >= done)
         .await;
+    // The TS harness tears its session down about 150 ms after the last turn, so requests a
+    // server sends in the background (a subagent's model read) reach the stub first. Give
+    // ours the same chance.
+    quiet(&dir.join("rust/stub.ndjson")).await;
     for s in parked.into_iter().chain(session.take()) {
         s.close().await;
     }
@@ -554,4 +569,59 @@ fn main() {
         }
     }
     std::process::exit(i32::from(failed));
+}
+
+/// A title scenario: T3's prompt and schema (from the TS side's request) through
+/// [`Provider::generate_text`], as the title code calls it.
+async fn run_title(
+    config: &CodexConfig,
+    title: &Value,
+    dir: &std::path::Path,
+    calls: &Value,
+) -> Result<(), String> {
+    let config = CodexConfig {
+        launch_args: title["launchArgs"].as_str().unwrap_or_default().to_owned(),
+        ..config.clone()
+    };
+    let provider = CodexProvider::new("codex".into(), config);
+    let request = conn_provider::TextGenerationRequest {
+        operation: "generateThreadTitle".into(),
+        cwd: dir.to_string_lossy().into_owned(),
+        prompt: calls["request"]["prompt"]
+            .as_str()
+            .ok_or("no prompt from TS")?
+            .to_owned(),
+        output_schema: calls["request"]["outputSchema"]
+            .as_str()
+            .ok_or("no schema from TS")?
+            .to_owned(),
+        model_selection: json(&title["modelSelection"])?,
+        image_paths: Vec::new(),
+        timeout: None,
+    };
+    let output = provider
+        .generate_text(request)
+        .await
+        .map_err(|e| e.to_string());
+    let results = serde_json::json!([{
+        "method": "generateThreadTitle",
+        "output": output.as_ref().ok(),
+    }]);
+    std::fs::write(dir.join("rust/results.json"), results.to_string())
+        .map_err(|e| e.to_string())?;
+    output.map(|_| ())
+}
+
+/// Returns once the stub's log has not grown for 100 ms (at most 4 s).
+async fn quiet(log: &std::path::Path) {
+    let size = || std::fs::metadata(log).map(|m| m.len()).unwrap_or(0);
+    let mut last = size();
+    for _ in 0..40 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let now = size();
+        if now == last {
+            return;
+        }
+        last = now;
+    }
 }

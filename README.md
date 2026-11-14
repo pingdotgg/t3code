@@ -79,15 +79,17 @@ line when the variable is missing. Without it, `tools/check.sh` runs the Rust ch
 | Recordings decode   | `cargo test --manifest-path fixtures/decode-check/Cargo.toml`                                                                   | Every recorded frame decodes with `conn_wire`                                                        |
 | Contract current    | `node crates/conn-contract/tools/gen-contract.mjs --check`                                                                      | Generated types match `packages/contracts`                                                           |
 | MCP tools current   | `node crates/conn-mcp/tools/gen-tools.mjs --check`                                                                              | Served tool definitions match `apps/server`                                                          |
+| GitHub GraphQL current | `node crates/conn-source-control/tools/gen-graphql.mjs --check` | GitHub's GraphQL operation texts match T3's generated modules, printed by `effect/graphql` |
 | Keybinding defaults | `node crates/conn-server/tools/gen-keybindings.mjs --check`                                                                     | The compiled-in defaults match `packages/shared`                                                     |
 | Effect client       | `node crates/conn-server/tools/effect-client.mjs target/release/conn-server`                                                    | Pairing, ticket, connect streams decode in Effect's `RpcClient`                                      |
 | Ack window          | same, with `target/release/examples/effect_fixture --fixture`                                                                   | Ack window and `Interrupt`                                                                           |
 | Client reducers     | `cargo run -p conn-engine --features fake-provider --example export_turn -- x.json`, then `crates/conn-engine/tools/client-check.mjs x.json` | Shell and thread streams rebuild the right state in the client's reducers                            |
 | Replay              | `node crates/conn-server/tools/replay.mjs target/release/examples/replay_server`                                                | Every call in the `remote` and `turn` recordings gets a decodable answer or the not-supported defect |
 | Text generation     | `node crates/conn-server/tools/textgen-diff.mjs target/release/examples/text_generation` | Text generator requests and answers, title prompts, contexts and titles equal T3's own code, on a loopback stub |
+| Registry            | `node crates/conn-source-control/tools/registry-diff.mjs target/release/examples/registry_cases` | The host definition registry answers as T3's own on every literal of T3's definition tests and a fixed grid (24,085 cases) |
 | MCP parity          | `node crates/conn-mcp/tools/parity.mjs target/release/examples/replay_server`                                                   | `/mcp` answers as the T3 server's does, on the same calls                                            |
 | Codex instructions  | `node crates/conn-provider-codex/tools/gen-instructions.mjs --check`                                                             | T3's Codex `additionalContext` text is current, byte for byte                                         |
-| Codex conformance   | `node crates/conn-provider-codex/tools/conformance.mjs`                                                                         | Codex argv, environment, every stdin frame and shutdown equal the T3 server's, on a stub `codex`      |
+| Codex conformance   | `node crates/conn-provider-codex/tools/conformance.mjs`                                                                         | Codex argv, environment, every stdin frame and shutdown equal the T3 server's, on a stub `codex`; also the `codex mcp list` and `codex exec` runs of a thread title |
 | ACP instructions    | `node crates/conn-provider-acp/tools/gen-instructions.mjs --check` | T3's ACP prompt wrapper and runtime notes are current, byte for byte |
 | ACP conformance     | `node crates/conn-provider-acp/tools/conformance.mjs` | Grok argv, environment, every stdin line and shutdown equal the T3 server's, on a stub agent |
 | Grok probe conformance | `node crates/conn-provider-acp/tools/probe-conformance.mjs` | Grok's `ServerProvider` entry and every CLI run of its status probe equal the T3 server's, on a stub CLI |
@@ -95,7 +97,7 @@ line when the variable is missing. Without it, `tools/check.sh` runs the Rust ch
 | Claude conformance  | `crates/conn-provider-claude/tools/conformance/run.sh` (skipped, with one line, without `npm ci` in `helpers/sdk-host`)          | The `claude` CLI gets the same argv, environment and stdin as from the T3 server, on a stub CLI      |
 | Claude probe conformance | `node crates/conn-provider-claude/tools/probe-conformance/run.mjs` (skipped with the Claude conformance) | Claude's `ServerProvider` entry and every CLI run of its status probe equal the T3 server's `checkClaudeProviderStatus`, on a stub CLI |
 | T3 replay (Claude)  | `node crates/conn-provider-claude/tools/t3-replay/check.mjs`                                                                    | The T3 server's Claude transcripts: exactly the scenarios in `expected-failures.txt` fail            |
-| T3 fixture replay   | `node crates/conn-engine/tools/t3-fixture-replay/check.mjs`                                                                     | T3's testkit fixtures through this engine and our Claude, Codex and Grok providers pass T3's own assertions, except the variants in its `expected-failures.txt` (50 of 159 pass) |
+| T3 fixture replay   | `node crates/conn-engine/tools/t3-fixture-replay/check.mjs`                                                                     | T3's testkit fixtures through this engine and our Claude, Codex and Grok providers pass T3's own assertions, except the variants in its `expected-failures.txt` (69 of 159 pass) |
 | Orbit flow          | `node crates/conn-server/tools/orbit-flow.mjs target/release/examples/replay_server`                                            | Orbit's container flow: start, project add, session issue, launch over `/mcp`, revoke, clean stop   |
 
 `replay_server` is `conn-server` with the engine's scripted fake provider, so these checks call
@@ -148,10 +150,10 @@ See [`fixtures/README.md`](fixtures/README.md) for every scenario and which need
 | `conn-vcs`              | Git status, refs, review diffs, worktrees and their setup             |
 | `conn-files`            | Project files, search, asset URLs, attachments                        |
 | `conn-terminal`         | Shells on PTYs: sessions, scrollback, viewers (`terminal.*`)          |
-| `conn-source-control`   | Source control hosts (GitHub, GitLab, ...): discovery, sign-in, stars, repositories; later pull requests |
+| `conn-source-control`   | Source control hosts (GitHub, GitLab, ...): discovery, sign-in, stars, repositories, the host definition registry, provider detection, GitHub's GraphQL operations; later pull requests |
 | `conn-server`           | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
-| `conn-support`          | Helpers several crates share: time, hex, base64, HMAC, atomic writes, v4 ids |
-| `conn-features`         | Scheduled tasks and the Conn-only areas beside the engine; see its README |
+| `conn-support`          | Helpers several crates share: time, hex, base64, SHA-256 and HMAC, atomic writes, v4 ids, the T3 secret store, URL text |
+| `conn-features`         | Scheduled tasks (webhook tasks too) and the Conn-only areas beside the engine; see its README |
 
 Dependencies point one way: `conn-server` → `conn-engine` → `conn-provider` → `conn-contract`;
 `conn-provider-claude` → `conn-provider`; `conn-server` → `conn-wire`. `conn-wire` and
@@ -296,6 +298,11 @@ T3 adds on top (`apps/server/src/ws.ts`): the `/ws` URL must carry `orchestratio
   stripped. See [Status](#status) for its memory.
 - **rusqlite** with `bundled` SQLite for the event store; `tokio::process` for provider CLIs;
   `getrandom` and `sha2` for credentials.
+- **flate2** (`rust_backend`: miniz_oxide) decodes text generator answers sent gzip or
+  deflate encoded, which the T3 server's `fetch` asks for and this server now asks for too.
+- **Settings secrets** live in the T3 server's secret store, `<state>/secrets/<name>.bin`
+  (0700 folder, 0600 files); `settings.json` holds `••••••` in their place
+  (`docs/conn-only-areas.md`, "Settings secrets").
 - No `async-trait`, no `futures`: traits return `BoxFuture`, streams are `tokio::sync::mpsc`.
 
 ## What clients need (read from the code)
@@ -392,7 +399,7 @@ to the socket.
 
 ## Status
 
-**Coverage:** 99 of 236 methods (20 of 33 streams), from the method table at startup. Every
+**Coverage:** 102 of 236 methods (20 of 33 streams), from the method table at startup. Every
 registered method checks the scope the T3 server requires (`src/scopes.rs`, its table
 generated). `assets.createUrl`, `terminal.open` and `terminal.attach` also get the contract's
 length, pattern and range limits before decode (`src/limits.rs`, its table generated). Every registered method but two has a run that decodes its answer with the real
@@ -477,10 +484,11 @@ What a real Conn session hits that this server does not do:
   scheduled-task edits, provider sign-in and install, peer links, discovered local servers and
   the other methods the startup coverage line lists as missing.
 - **No checkpoints:** turns are not captured as git refs, so no turn diff or restore.
-- **Titles only through a text generator:** a thread title is generated when the title model
-  is a text generator (`crates/conn-server/src/text_generation/`). With an agent title model
-  (Codex, the default, or Claude) the thread keeps the client's seed title: the T3 server asks
-  that provider, this server does not (`docs/server-area.md`, "Text generators").
+- **Titles through a text generator or Codex:** a thread title is generated when the title
+  model is a text generator (`crates/conn-server/src/text_generation/`) or a Codex instance,
+  the default (`codex exec`, as T3; `crates/conn-provider-codex/README.md`). With Claude as
+  the title model the thread keeps the client's seed title until the Claude provider
+  implements `Provider::generate_text` (`docs/server-area.md`, "Text generators").
 - **`/mcp` serves 28 of 87 T3 tools** (`crates/conn-mcp/README.md`).
 - **Worktree launch:** the worktree is made before the thread exists; `prepared-run.*` stays
   refused and no project setup script runs.

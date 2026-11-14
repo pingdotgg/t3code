@@ -42,6 +42,8 @@ pub struct FakeProvider {
     pub mcp_servers: Arc<Mutex<Vec<McpServer>>>,
     /// Sessions closed so far.
     pub closed: Arc<AtomicUsize>,
+    /// The runtime policy each session was opened with, as JSON.
+    pub opened_policies: Arc<Mutex<Vec<Value>>>,
     /// Model selections sent to a running turn (`apply_model_selection`), as JSON.
     pub applied_selections: Arc<Mutex<Vec<Value>>>,
     /// Rollback targets asked for: `start` or `turn <app run ordinal>`.
@@ -53,6 +55,9 @@ pub struct FakeProvider {
     /// Session calls in order: `start <run>`, `interrupt <run>`, `interrupted <run>`,
     /// `rollback`, `rolled back`.
     pub calls: Arc<Mutex<Vec<String>>>,
+    /// The `nativeConversationHeadRef` of the provider thread each turn starts on. A rollback
+    /// sets it to `rolled-back:<target>`, so a test sees which row a turn continues.
+    pub turn_heads: Arc<Mutex<Vec<Value>>>,
     /// Provider threads made per app thread (`ensure_thread`); the second and later get a
     /// numbered id, as a real provider gives each new conversation its own.
     ensured: Arc<Mutex<std::collections::HashMap<String, usize>>>,
@@ -63,6 +68,8 @@ pub struct FakeProvider {
     steering: bool,
     close_delay: std::time::Duration,
     selection_plan: Option<conn_provider::SelectionTransitionPlan>,
+    /// What `capabilities` answers: the sessions' capabilities unless a test changes them.
+    capabilities: Value,
 }
 
 impl std::fmt::Debug for FakeProvider {
@@ -82,18 +89,28 @@ impl FakeProvider {
             sessions: Arc::new(AtomicUsize::new(0)),
             mcp_servers: Arc::new(Mutex::new(vec![])),
             closed: Arc::new(AtomicUsize::new(0)),
+            opened_policies: Arc::default(),
             applied_selections: Arc::new(Mutex::new(vec![])),
             rollbacks: Arc::new(Mutex::new(vec![])),
             forks: Arc::new(Mutex::new(vec![])),
             resumes: Arc::new(Mutex::new(vec![])),
             calls: Arc::new(Mutex::new(vec![])),
+            turn_heads: Arc::default(),
             ensured: Arc::default(),
             fail_rollbacks: Arc::new(AtomicUsize::new(0)),
             control_delay: std::time::Duration::ZERO,
             steering: true,
             close_delay: std::time::Duration::ZERO,
             selection_plan: None,
+            capabilities: conn_provider::testing::session_capabilities(),
         }
+    }
+
+    /// A provider whose `capabilities` say it cannot roll a conversation back; its sessions'
+    /// rows still say it can.
+    pub fn without_rollback(mut self) -> Self {
+        self.capabilities["threads"]["canRollbackThread"] = json!(false);
+        self
     }
 
     /// A provider whose `plan_selection_transition` answers `plan`.
@@ -132,6 +149,7 @@ impl FakeProvider {
     }
 }
 
+#[derive(Clone)]
 struct Turn {
     thread_id: String,
     run_id: String,
@@ -157,6 +175,7 @@ struct FakeSession {
     forks: Arc<Mutex<Vec<String>>>,
     resumes: Arc<Mutex<Vec<String>>>,
     calls: Arc<Mutex<Vec<String>>>,
+    turn_heads: Arc<Mutex<Vec<Value>>>,
     ensured: Arc<Mutex<std::collections::HashMap<String, usize>>>,
     fail_rollbacks: Arc<AtomicUsize>,
     control_delay: std::time::Duration,
@@ -179,7 +198,11 @@ impl Provider for FakeProvider {
             .unwrap_or(conn_provider::SelectionTransitionPlan::ApplyOnNextTurn)
     }
     fn capabilities(&self) -> BoxFuture<'_, ProviderResult<ProviderCapabilities>> {
-        Box::pin(async { Ok(from_json(json!({})).expect("placeholder")) })
+        Box::pin(async {
+            from_json(self.capabilities.clone()).map_err(|e| ProviderError::Protocol {
+                detail: e.to_string(),
+            })
+        })
     }
     fn open_session(
         &self,
@@ -187,6 +210,7 @@ impl Provider for FakeProvider {
     ) -> BoxFuture<'_, ProviderResult<OpenedSession>> {
         Box::pin(async move {
             self.sessions.fetch_add(1, Ordering::SeqCst);
+            crate::lock(&self.opened_policies).push(conn_contract::to_json(&input.runtime_policy));
             *crate::lock(&self.mcp_servers) = input.mcp_servers.clone();
             let (tx, rx) = mpsc::channel(64);
             Ok(OpenedSession {
@@ -216,6 +240,7 @@ impl Provider for FakeProvider {
                     forks: self.forks.clone(),
                     resumes: self.resumes.clone(),
                     calls: self.calls.clone(),
+                    turn_heads: self.turn_heads.clone(),
                     ensured: self.ensured.clone(),
                     fail_rollbacks: self.fail_rollbacks.clone(),
                     control_delay: self.control_delay,
@@ -397,7 +422,17 @@ impl Session for FakeSession {
                 ordinal: input.run_ordinal,
             };
             crate::lock(&self.calls).push(format!("start {}", turn.run_id));
+            crate::lock(&self.turn_heads).push(
+                conn_contract::to_json(&input.provider_thread)["nativeConversationHeadRef"].clone(),
+            );
             let text = input.message.text.clone();
+            // `slowstart`: a slow cold start that fails when the session was closed meanwhile.
+            if text.starts_with("slowstart") {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                if self.closed.load(Ordering::SeqCst) > 0 {
+                    return Err(ProviderError::SessionStopped);
+                }
+            }
             // `write <path> <text>`: writes `<text>\n` to `<path>` in the turn's folder, then
             // answers as any other message.
             if let (Some(rest), Some(cwd)) = (
@@ -503,6 +538,40 @@ impl Session for FakeSession {
                         "startedAt": now, "completedAt": null, "updatedAt": now,
                         "type": "command_execution", "input": "ls",
                     }})));
+                }
+                // `thread-idle`: the provider reports its thread `idle` before the turn ends,
+                // then answers.
+                "thread-idle" => {
+                    let mut row = conn_contract::to_json(&input.provider_thread);
+                    row["status"] = json!("idle");
+                    started.push(event(
+                        json!({"type": "provider_thread.updated", "providerThread": row}),
+                    ));
+                    started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "done", false));
+                    started.push(provider_turn(&turn, "completed"));
+                    started.push(terminal(&turn, TurnStatus::Completed, None));
+                }
+                // `long-stream`: 400 growing snapshots of one reply (about 40 KB at the end),
+                // 2 ms apart, then the final text. For memory under a long streaming turn.
+                "long-stream" => {
+                    let id = format!("{}:a", turn.run_id);
+                    let streamed = turn.clone();
+                    tokio::spawn(async move {
+                        let turn = streamed;
+                        emit(&tx, started).await;
+                        let mut reply = String::new();
+                        for n in 0..400 {
+                            reply.push_str(&format!(
+                                "Paragraph {n}: the borrow checker keeps one writer or many readers.\n\n"
+                            ));
+                            emit(&tx, assistant(&turn, &id, &reply, true)).await;
+                            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+                        }
+                        emit(&tx, assistant(&turn, &id, &reply, false)).await;
+                        emit(&tx, [provider_turn(&turn, "completed"), terminal(&turn, TurnStatus::Completed, None)]).await;
+                    });
+                    *crate::lock(&self.turn) = Some(turn);
+                    return Ok(());
                 }
                 "fail" => started.push(terminal(
                     &turn,
@@ -647,12 +716,13 @@ impl Session for FakeSession {
         input: conn_provider::RollbackThreadInput,
     ) -> BoxFuture<'_, ProviderResult<conn_provider::ThreadSnapshot>> {
         Box::pin(async move {
-            crate::lock(&self.rollbacks).push(match &input.target {
+            let target = match &input.target {
                 conn_provider::RollbackTarget::ThreadStart { .. } => "start".to_owned(),
                 conn_provider::RollbackTarget::ProviderTurn {
                     app_run_ordinal, ..
                 } => format!("turn {app_run_ordinal}"),
-            });
+            };
+            crate::lock(&self.rollbacks).push(target.clone());
             crate::lock(&self.calls).push("rollback".into());
             tokio::time::sleep(self.control_delay).await;
             let fail = self
@@ -669,8 +739,13 @@ impl Session for FakeSession {
                 });
             }
             crate::lock(&self.calls).push("rolled back".into());
+            let mut thread = conn_contract::to_json(&input.provider_thread);
+            thread["nativeConversationHeadRef"] = json!({"driver": self.driver,
+                "nativeId": format!("rolled-back:{target}"), "strength": "strong"});
             Ok(conn_provider::ThreadSnapshot {
-                provider_thread: input.provider_thread,
+                provider_thread: from_json(thread).map_err(|e| ProviderError::Protocol {
+                    detail: e.to_string(),
+                })?,
                 provider_turns: vec![],
                 messages: vec![],
                 runtime_requests: vec![],

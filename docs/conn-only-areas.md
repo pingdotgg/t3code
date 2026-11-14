@@ -18,9 +18,9 @@ Source: the T3 server at `conn.pin`. `S/` means `apps/server/src/`, `C/` means
 | scheduledTasks.setEnabled | S/ws.ts:2298 | Pauses or resumes; plans the next run from now | same | orchestration:operate | nothing |
 | scheduledTasks.delete | S/ws.ts:2302 | Removes a task and its webhook deliveries | same | orchestration:operate | nothing |
 | scheduledTasks.runNow | S/ws.ts:2306 | Runs a task at once: a new thread, or a queued message in its bound thread | same | orchestration:operate | engine |
-| scheduledTasks.rotateWebhookToken | S/ws.ts:2310 | New URL token for a webhook task | same | orchestration:operate | outside service (the relay that carries webhook calls) |
-| scheduledTasks.listWebhookDeliveries | S/ws.ts:2322 | The logged webhook requests of a task | SQLite `scheduled_task_webhook_deliveries` | orchestration:operate | outside service |
-| scheduledTasks.getWebhookDelivery | S/ws.ts:2326 | One logged request with headers, body and rendered prompt | same | orchestration:operate | outside service |
+| scheduledTasks.rotateWebhookToken | S/ws.ts:2310 | New URL token for a webhook task | same | orchestration:operate | nothing (served here; the relay is not built) |
+| scheduledTasks.listWebhookDeliveries | S/ws.ts:2322 | The logged webhook requests of a task | SQLite `scheduled_task_webhook_deliveries` | orchestration:operate | nothing (served here) |
+| scheduledTasks.getWebhookDelivery | S/ws.ts:2326 | One logged request with headers, body and rendered prompt | same | orchestration:operate | nothing (served here) |
 | schedule_task | S/mcp/toolkits/orchestrator/handlers.ts:88 | Creates (`startsThreads`) or with `scheduledTaskId` updates (`writes`) a task | as above | `either(startsThreads, writes)` | engine |
 | list_scheduled_tasks | same file:125 | The caller's project's tasks, or all outside a thread | as above | `reads` | nothing |
 | delete_scheduled_task | same file:132 | Deletes a task the caller may change | as above | `writes` | nothing |
@@ -34,13 +34,56 @@ its bound thread's queue. Run ids: `scheduled-task:<id>:<startMs>:<trigger>` and
 `scheduled-task-message:<...>`. Webhooks: 60 requests a minute per task, 20 queued per task,
 50 + 20 + 20 deliveries kept per task, bodies logged up to 64 KiB with secret headers and query
 values redacted (`S/scheduledTasks/ScheduledTaskService.ts:82-92`). The signing secret is
-stored in the `scheduled_tasks` row (`webhook_secret`), in clear text.
+stored in the `scheduled_tasks` row (`webhook_secret`), in clear text. This server serves the
+three webhook methods and the route (`crates/conn-features/README.md`, "Webhook tasks").
 
 Rules used for the tables:
 
 - **Needs** is one of `nothing`, `engine`, `desktop client`, `other Conn server`, `outside service`. When two apply, the table names the later one in this list and says both in the "does" column.
 - For MCP tools, the caller gate in `S/mcp/McpToolAccess.ts` (finds the calling thread, checks modes) is not counted. A tool counts as `engine` only when its work uses threads, turns or projects beyond that gate.
 - "T3 handler" is the file:line where the T3 server answers the tag or tool.
+
+## Settings secrets (the T3 server's secret store)
+
+Every secret a `ServerSettings` field holds. The T3 server keeps the value in its secret store,
+`<state>/secrets/<name>.bin` (`S/auth/ServerSecretStore.ts`: folder 0700, file 0600, a temp
+file `<name>.bin.<uuid>.tmp` and a rename), and `settings.json` holds `••••••` in its place.
+`e(x)` is base64url of the UTF-8 text without padding; `host` is a server host, trimmed and
+lowercase. Names come from `mapSecretFieldGroups` (`S/settingsSecrets.ts`) and
+`sourceControlHostSecretName` (`S/sourceControl/sourceControlHostSecrets.ts`).
+
+| Settings field | Store name |
+| --- | --- |
+| `providerInstances.<id>.config.<field>` (OpenCode `serverPassword`, Antigravity `apiKey`) | `provider-config-e(id)-e(driver)-e(field)[-e(host)]` |
+| `providerInstances.<id>.environment[]` with `sensitive: true` | `provider-env-e(id)-e(name)`; the file holds `value: ""` and `valueRedacted: true` |
+| `sourceControlHosts.<kind>.<field>` (GitHub `tokens` and `signIns` per host, Bitbucket `accessToken` and `apiToken`, GitCafe `token`) | `source-control-e(kind)-e(field)[-e(host)]` |
+| `usageLimitSources.<id>.managementKey` | `usage-limit-source-e(id)` |
+| `textGenerators.<id>.apiKey` | `text-generator-e(id)-e("apiKey")` |
+| `cloudSpeechCredentials.<openai, xai, openrouter>` | `voice-cloud-<field>` (not encoded) |
+| `easDeviceHosts[].accessToken` | `device-host-e(id)-e("accessToken")` |
+| `simlockDeviceHosts[].agentToken` | `simlock-device-host-e(id)-e("agentToken")` |
+
+- **When a value moves.** At start, a field secret that `settings.json` holds as a value moves
+  to the store and the file gets the marker (`moveInlineSettingsSecrets`); a value that cannot
+  be stored stays inline. A sensitive variable moves at the next save, not at start. On a save
+  (`persistSettingsSecrets`): a new value is written and the slot gets the marker; the marker
+  keeps the stored value; an empty slot, a variable no longer sensitive, or a slot that is
+  gone removes the stored value. A failed store or file write undoes the store changes.
+- **What a client sees.** `••••••` for a saved field secret (also for a secret provider
+  reference, to a client without `secretReferences`), `""` with `valueRedacted: true` for a
+  saved sensitive variable, `""` when nothing is saved (also a marker whose file is gone). A
+  client that sends the marker back keeps the stored value.
+- **A reference** (`{ provider, reference }`) is not a secret: it stays in `settings.json`.
+- **This server** (since 2026-11-14) does the same, in `crates/conn-server/src/settings/secrets.rs`
+  with `conn_support::secret_store`. The settings it hands its own code (`SettingsStore::raw`)
+  hold the values read from the store, kept in memory as before. Before, it kept every value
+  in `settings.json` (0600). Both servers can read and write the same state folder:
+  `crates/conn-server/tools/secrets-interop.mjs` runs the T3 server's own settings service and
+  this server on shared folders (a folder from before the change, saves by either server, a
+  key used for a text generator request) and checks that no value is lost or left in the file.
+- **Who can read a value.** The OS user that runs the server (and any process of that user,
+  such as an agent's shell): the files are 0600 in a 0700 folder, in clear text, as in T3.
+  No client can: no method returns a settings secret.
 
 ## Finding that changes the plan
 

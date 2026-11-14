@@ -448,6 +448,47 @@ async fn main() {
     .await;
     let _ = std::fs::remove_dir_all(&added);
 
+    // Pull request links on thread-1, as T3 keys them: a GitCafe link, a stack member, then
+    // the member unlinked (a tombstone) and linked again by hand.
+    let mut links_items = vec![];
+    let mut links = engine
+        .subscribe_thread(
+            from_json(json!({"threadId": "thread-1", "requestCompletionMarker": true})).unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut links, &mut links_items, |item| {
+        item["kind"] == "synchronized"
+    })
+    .await;
+    for (index, command) in [
+        json!({"type": "thread.pull-request.link", "host": "Git.Cafe", "repository": "O/R",
+               "number": 4, "url": "https://git.cafe/O/R/pull/4", "source": "manual"}),
+        json!({"type": "thread.pull-request.link", "host": "github.com", "repository": "o/r",
+               "number": 9, "url": "https://github.com/o/r/pull/9", "source": "stack"}),
+        json!({"type": "thread.pull-request.unlink", "host": "GitHub.com", "repository": "O/R",
+               "number": 9}),
+        json!({"type": "thread.pull-request.link", "host": "github.com", "repository": "o/r",
+               "number": 9, "url": "https://github.com/o/r/pull/9", "source": "manual"}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut command = command;
+        command["commandId"] = json!(format!("pr-link-{index}"));
+        command["threadId"] = json!("thread-1");
+        engine.dispatch(from_json(command).unwrap()).await.unwrap();
+    }
+    let synced = std::cell::Cell::new(0);
+    read(&mut links, &mut links_items, |item| {
+        if item["event"]["type"] == "thread.pull-request-synced" {
+            synced.set(synced.get() + 1);
+        }
+        synced.get() == 4
+    })
+    .await;
+    drop(links);
+
     // A turn that is still running when the server stops.
     engine
         .launch_thread(launch_input("launch-2", "thread-2", "hang"))
@@ -514,6 +555,7 @@ async fn main() {
         "stopUnresponsiveAt": unresponsive_at,
         "restartShellItems": restart_shell,
         "restartThreadItems": restart_thread,
+        "pullRequestLinkItems": links_items,
     });
     std::fs::write(&out, serde_json::to_string_pretty(&export).unwrap()).unwrap();
     let _ = std::fs::remove_dir_all(&dir);

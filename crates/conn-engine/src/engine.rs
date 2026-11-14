@@ -39,8 +39,6 @@ pub struct EngineConfig {
     pub home: Option<PathBuf>,
     pub projects: Vec<ProjectConfig>,
     pub providers: Vec<Arc<dyn Provider>>,
-    /// How long streamed assistant text may wait before it is written. Default 100 ms.
-    pub stream_flush: Duration,
     /// A provider session with no turn for this long is closed, ending its process (a
     /// `claude` child holds about 140 MiB). Default 30 minutes, as T3's session manager;
     /// `None` keeps sessions open.
@@ -101,7 +99,6 @@ impl std::fmt::Debug for EngineConfig {
             .field("home", &self.home)
             .field("projects", &self.projects)
             .field("providers", &self.providers.len())
-            .field("stream_flush", &self.stream_flush)
             .field("idle_session", &self.idle_session)
             .field("idle_max_hold", &self.idle_max_hold)
             .finish_non_exhaustive()
@@ -115,7 +112,6 @@ impl EngineConfig {
             home: None,
             projects: vec![],
             providers: vec![],
-            stream_flush: Duration::from_millis(100),
             idle_session: Some(DEFAULT_IDLE_SESSION),
             idle_max_hold: Duration::from_secs(4 * 60 * 60),
             host: None,
@@ -146,7 +142,6 @@ pub(crate) struct Inner {
     pub(crate) providers: Vec<Arc<dyn Provider>>,
     /// Threads with an open provider session. The only per-thread state kept in memory.
     pub(crate) live: Mutex<HashMap<String, Arc<LiveThread>>>,
-    pub(crate) stream_flush: Duration,
     pub(crate) home: PathBuf,
     pub(crate) titles: Option<Arc<dyn crate::TitleGenerator>>,
     pub(crate) observer: Option<Arc<dyn crate::TurnObserver>>,
@@ -175,6 +170,59 @@ pub(crate) struct Inner {
     pub(crate) effect_seq: std::sync::atomic::AtomicU64,
 }
 
+/// An effect with its place in its thread's lane. Dropped without [`Self::start`] (its commit
+/// failed), it gives its place up only after the effect before it ended, so the lane keeps its
+/// order.
+pub(crate) struct ReservedEffect {
+    inner: Arc<Inner>,
+    effect: Option<Effect>,
+    lane: Option<String>,
+    seq: u64,
+    previous: Option<oneshot::Receiver<()>>,
+    done: Option<oneshot::Sender<()>>,
+}
+
+impl ReservedEffect {
+    /// Runs the effect once every earlier effect of its thread ended.
+    pub(crate) fn start(mut self) {
+        let effect = self.effect.take();
+        self.spawn(effect);
+    }
+
+    fn spawn(&mut self, effect: Option<Effect>) {
+        let (inner, lane, seq) = (self.inner.clone(), self.lane.take(), self.seq);
+        let (previous, done) = (self.previous.take(), self.done.take());
+        let task = async move {
+            if let Some(previous) = previous {
+                // Ends when the earlier effect ends, or its task is gone.
+                let _ = previous.await;
+            }
+            if let Some(effect) = effect {
+                inner.clone().run_effect(effect).await;
+            }
+            drop(done);
+            if let Some(thread_id) = lane {
+                let mut lanes = crate::lock(&inner.effect_lanes);
+                if lanes.get(&thread_id).is_some_and(|(last, _)| *last == seq) {
+                    lanes.remove(&thread_id);
+                }
+            }
+        };
+        // No runtime (a store opened outside one): nothing can run, and nothing waits.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(task);
+        }
+    }
+}
+
+impl Drop for ReservedEffect {
+    fn drop(&mut self) {
+        if self.done.is_some() {
+            self.spawn(None);
+        }
+    }
+}
+
 /// Stable project id for a folder, so a fresh database gives clients the same ids.
 pub(crate) fn project_id(workspace_root: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
@@ -200,6 +248,7 @@ impl SqliteEngine {
         store.set_clock(config.clock.clone());
         store.generates_titles = config.title_generator.is_some();
         let unfinished = store.unfinished_runs()?;
+        let pending_rollbacks = store.pending_rollbacks()?;
         let mut tx = store.tx()?;
         for project in &config.projects {
             tx.ensure_project(
@@ -208,7 +257,12 @@ impl SqliteEngine {
                 &project.workspace_root,
             )?;
         }
+        // A rollback a previous process left pending goes first: it was admitted before the
+        // restart, and its lane holds the thread's next turn until it ends.
         let mut effects = vec![];
+        for pending in pending_rollbacks {
+            effects.extend(crate::rollback::recover_pending(&mut tx, pending)?);
+        }
         for (thread_id, run) in unfinished
             .iter()
             .filter(|(_, run)| commands::is_active(run))
@@ -225,7 +279,6 @@ impl SqliteEngine {
                 live: Mutex::new(HashMap::new()),
                 command_output: crate::output::CommandOutputHub::default(),
                 shutting_down: std::sync::atomic::AtomicBool::new(false),
-                stream_flush: config.stream_flush,
                 home,
                 titles: config.title_generator.clone(),
                 observer: config.turn_observer.clone(),
@@ -267,6 +320,20 @@ impl SqliteEngine {
 
     /// Puts a completed run back to `waiting` with no checkpoint, as a kill between the
     /// provider's end and the capture leaves it.
+    /// Holds a workspace's checkpoint lock, so a capture or a rollback there waits.
+    #[cfg(test)]
+    pub(crate) async fn test_hold_workspace(
+        &self,
+        cwd: &str,
+    ) -> crate::checkpoint::WorkspaceLock<'_> {
+        self.inner
+            .checkpoints
+            .as_ref()
+            .expect("checkpoints on")
+            .workspace(cwd)
+            .await
+    }
+
     #[cfg(test)]
     pub(crate) async fn test_force_waiting(&self, thread_id: &str, run_id: &str) {
         let (tid, rid) = (thread_id.to_owned(), run_id.to_owned());
@@ -379,6 +446,7 @@ impl Inner {
     ) -> Result<(u64, bool), DispatchError> {
         let (command, claimed) = self.claim_attachments(command).await?;
         let command = self.plan_selection(command).await?;
+        let command = self.rollback_capabilities(command).await?;
         let result = self.dispatch_claimed(command).await;
         if let (Err(_), Some(claimed), Some(host)) = (&result, claimed, &self.host) {
             host.release_attachments(claimed).await;
@@ -454,6 +522,56 @@ impl Inner {
         Ok(command)
     }
 
+    /// `checkpoint.rollback` asks the thread's provider instance for its capabilities, as T3's
+    /// admission does (`providerAdapters.get(..).getCapabilities()`); the handler checks them
+    /// (`providerCapabilities`: the instance and its capabilities, or why there are none).
+    async fn rollback_capabilities(&self, mut command: Value) -> Result<Value, DispatchError> {
+        if command["type"] != "checkpoint.rollback" {
+            return Ok(command);
+        }
+        let tid = command["threadId"].as_str().unwrap_or_default().to_owned();
+        let instance = self
+            .db(move |store| -> Result<Option<String>, String> {
+                let tx = store.tx()?;
+                let thread = tx.thread(&tid)?;
+                tx.rollback();
+                Ok(thread.map(|t| {
+                    t["modelSelection"]["instanceId"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned()
+                }))
+            })
+            .await
+            .map_err(DispatchError::Internal)?;
+        // No thread: the handler refuses the command.
+        let Some(instance) = instance else {
+            return Ok(command);
+        };
+        // As a turn start finds it: only a thread that names no instance may use the one
+        // configured provider.
+        let provider = self
+            .providers
+            .iter()
+            .find(|p| p.instance_id().as_str() == instance)
+            .or_else(|| {
+                (instance.is_empty() && self.providers.len() == 1)
+                    .then(|| self.providers.first())
+                    .flatten()
+            });
+        command["providerCapabilities"] = match provider {
+            Some(provider) => match provider.capabilities().await {
+                Ok(capabilities) => {
+                    json!({"instanceId": instance, "capabilities": to_json(&capabilities)})
+                }
+                Err(e) => json!({"instanceId": instance, "error": e.to_string()}),
+            },
+            None => json!({"instanceId": instance,
+                "error": format!("No provider instance `{instance}` is configured on this server.")}),
+        };
+        Ok(command)
+    }
+
     /// A new message's pending uploads become the thread's files before the message is
     /// written (`AttachmentStore` claim). A retried command keeps what it claimed first.
     async fn claim_attachments(
@@ -501,6 +619,7 @@ impl Inner {
             ));
         };
         let host = self.host.clone();
+        let inner = self.clone();
         let outcome = self
             .db(move |store| {
                 if let Some(seq) = store.receipt(&command_id).map_err(CommandError::Store)? {
@@ -523,7 +642,13 @@ impl Inner {
                         let seq = tx
                             .commit(Some((&command_id, &command_type)))
                             .map_err(CommandError::Store)?;
-                        Ok((effects, seq, false))
+                        // Lane slots are taken under the store lock, so a thread's effects
+                        // run in the order their commands committed.
+                        let reserved = effects
+                            .into_iter()
+                            .map(|effect| inner.reserve_effect(effect))
+                            .collect::<Vec<_>>();
+                        Ok((reserved, seq, false))
                     }
                     Err(e) => {
                         tx.rollback();
@@ -540,7 +665,7 @@ impl Inner {
             self.notify.send_replace(seq);
         }
         for effect in effects {
-            self.spawn_effect(effect);
+            effect.start();
         }
         Ok((seq, replayed))
     }
@@ -548,7 +673,13 @@ impl Inner {
     /// Runs an effect after every earlier effect of its thread. Title generation has its own
     /// lane in T3 and runs at once here.
     pub(crate) fn spawn_effect(self: &Arc<Self>, effect: Effect) {
-        let inner = self.clone();
+        self.reserve_effect(effect).start();
+    }
+
+    /// Takes the effect's place at the end of its thread's lane now; it runs once
+    /// [`ReservedEffect::start`] is called and every earlier effect of the thread ended. Call it
+    /// inside the store closure that commits the effect's cause, so lane order is commit order.
+    pub(crate) fn reserve_effect(self: &Arc<Self>, effect: Effect) -> ReservedEffect {
         let lane = effect.lane().map(str::to_owned);
         let seq = self
             .effect_seq
@@ -560,20 +691,14 @@ impl Inner {
                 .insert(thread_id.clone(), (seq, ended))
                 .map(|(_, previous)| previous)
         });
-        tokio::spawn(async move {
-            if let Some(previous) = previous {
-                // Ends when the earlier effect ends, or its task is gone.
-                let _ = previous.await;
-            }
-            inner.clone().run_effect(effect).await;
-            drop(done);
-            if let Some(thread_id) = lane {
-                let mut lanes = crate::lock(&inner.effect_lanes);
-                if lanes.get(&thread_id).is_some_and(|(last, _)| *last == seq) {
-                    lanes.remove(&thread_id);
-                }
-            }
-        });
+        ReservedEffect {
+            inner: self.clone(),
+            effect: Some(effect),
+            lane,
+            seq,
+            previous,
+            done: Some(done),
+        }
     }
 
     async fn run_effect(self: Arc<Self>, effect: Effect) {
@@ -779,6 +904,34 @@ pub(crate) fn rejected<E>(built: Result<E, String>) -> EngineError<E> {
     }
 }
 
+/// T3's generic dispatch failure texts (`GENERIC_ERROR_PREFIXES` in `UserFacingErrors.ts`).
+const GENERIC_DISPATCH_PREFIXES: [&str; 3] = [
+    "Failed to dispatch orchestration V2 command",
+    "Failed to dispatch orchestration command ",
+    "Provider adapter failed while dispatching orchestration command ",
+];
+
+/// An `OrchestrationV2DispatchCommandError` as T3's `ws.ts` builds it: a user-facing reason
+/// is both the `message` and the `detail`; without one, the generic message and no `detail`.
+fn dispatch_error_body(command_id: &str, command_type: &str, reason: &str) -> Value {
+    let reason = reason.trim();
+    let user_facing = (!reason.is_empty()
+        && !GENERIC_DISPATCH_PREFIXES
+            .iter()
+            .any(|prefix| reason.starts_with(prefix)))
+    .then_some(reason);
+    let mut body = json!({
+        "_tag": "OrchestrationV2DispatchCommandError",
+        "commandId": command_id,
+        "commandType": command_type,
+        "message": user_facing.unwrap_or(GENERIC_DISPATCH_PREFIXES[0]),
+    });
+    if let Some(detail) = user_facing {
+        body["detail"] = json!(detail);
+    }
+    body
+}
+
 fn projection_error(
     thread_id: &str,
     message: impl Into<String>,
@@ -798,12 +951,11 @@ impl Engine for SqliteEngine {
         Box::pin(async move {
             let command = to_json(&command);
             let refusal = |message: String| -> Result<DispatchCommandError, String> {
-                contract_error(json!({
-                    "_tag": "OrchestrationV2DispatchCommandError",
-                    "commandId": command["commandId"].as_str().unwrap_or(""),
-                    "commandType": command["type"].as_str().unwrap_or(""),
-                    "message": message,
-                }))
+                contract_error(dispatch_error_body(
+                    command["commandId"].as_str().unwrap_or(""),
+                    command["type"].as_str().unwrap_or(""),
+                    &message,
+                ))
             };
             match self.inner.dispatch_value(command.clone()).await {
                 Ok((sequence, _)) => from_json(json!({"sequence": sequence}))
@@ -1012,5 +1164,40 @@ mod tests {
             rejected(projection_error("t1", "gone")),
             EngineError::Rejected(_)
         ));
+    }
+}
+
+#[cfg(test)]
+mod dispatch_error_tests {
+    use super::dispatch_error_body;
+
+    #[test]
+    fn a_reason_is_message_and_detail_as_t3_sends_it() {
+        let body = dispatch_error_body(
+            "c",
+            "message.dispatch",
+            " Provider instance \"grok\" is disabled for project p. ",
+        );
+        assert_eq!(
+            body["message"],
+            "Provider instance \"grok\" is disabled for project p."
+        );
+        assert_eq!(body["detail"], body["message"]);
+    }
+
+    #[test]
+    fn a_generic_or_empty_reason_has_no_detail() {
+        for reason in [
+            "",
+            "  ",
+            "Failed to dispatch orchestration V2 command: boom",
+        ] {
+            let body = dispatch_error_body("c", "x", reason);
+            assert_eq!(
+                body["message"],
+                "Failed to dispatch orchestration V2 command"
+            );
+            assert!(body.get("detail").is_none());
+        }
     }
 }

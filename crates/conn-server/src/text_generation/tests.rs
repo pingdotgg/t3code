@@ -148,7 +148,7 @@ pub(crate) fn fixture(name: &str, settings: Value) -> Fixture {
     let settings = Arc::new(Mutex::new(map));
     let read = settings.clone();
     Fixture {
-        generators: TextGenerators::new(move || read.lock().unwrap().clone(), &dir.0),
+        generators: TextGenerators::new(move || read.lock().unwrap().clone()),
         settings,
         _dir: dir,
     }
@@ -389,22 +389,28 @@ async fn a_missing_generator_and_an_unreadable_reference_fail_in_words() {
 #[tokio::test(flavor = "current_thread")]
 async fn a_marker_reads_the_key_from_the_t3_secret_store() {
     let stub = Stub::start(|_| (200, json!({"data": []}).to_string())).await;
-    let f = fixture(
-        "store",
-        generator(
-            &stub.base,
-            json!({"apiKey": crate::settings::SECRET_REDACTED}),
-        ),
-    );
-    let secrets = f.generators.secrets_dir.clone();
-    std::fs::create_dir_all(&secrets).unwrap();
-    // `text-generator-${base64url(id)}-${base64url("apiKey")}.bin`
+    let dir = temp_dir("store");
+    let Value::Object(settings) = generator(
+        &stub.base,
+        json!({"apiKey": crate::settings::SECRET_REDACTED}),
+    ) else {
+        panic!("settings must be an object")
+    };
     std::fs::write(
-        secrets.join("text-generator-cm91dGVy-YXBpS2V5.bin"),
-        "stored-key",
+        dir.0.join("settings.json"),
+        Value::Object(settings).to_string(),
     )
     .unwrap();
-    f.generators
+    // `text-generator-${base64url(id)}-${base64url("apiKey")}.bin`
+    conn_support::secret_store::write(
+        &dir.0.join("secrets"),
+        "text-generator-cm91dGVy-YXBpS2V5",
+        b"stored-key",
+    )
+    .unwrap();
+    let store = crate::settings::SettingsStore::open(dir.0.join("settings.json"));
+    let generators = TextGenerators::new(move || store.raw());
+    generators
         .list_models(input(json!({"id": ID})))
         .await
         .unwrap();
@@ -530,8 +536,66 @@ mod titles {
         settings
     }
 
+    /// An agent provider for titles: answers `generate_text` with `answer`, or does not
+    /// generate text at all (`None`), and keeps the requests it got.
+    struct AgentProvider {
+        id: conn_contract::ProviderInstanceId,
+        driver: &'static str,
+        answer: Option<Value>,
+        requests: std::sync::Mutex<Vec<conn_provider::TextGenerationRequest>>,
+    }
+
+    impl AgentProvider {
+        fn new(id: &str, driver: &'static str, answer: Option<Value>) -> Arc<Self> {
+            Arc::new(Self {
+                id: id.into(),
+                driver,
+                answer,
+                requests: std::sync::Mutex::default(),
+            })
+        }
+    }
+
+    impl conn_provider::Provider for AgentProvider {
+        fn instance_id(&self) -> &conn_contract::ProviderInstanceId {
+            &self.id
+        }
+        fn driver(&self) -> &str {
+            self.driver
+        }
+        fn capabilities(
+            &self,
+        ) -> conn_provider::BoxFuture<
+            '_,
+            conn_provider::ProviderResult<conn_contract::ProviderCapabilities>,
+        > {
+            Box::pin(async { Err(conn_provider::ProviderError::SessionStopped) })
+        }
+        fn open_session(
+            &self,
+            _input: conn_provider::OpenSessionInput,
+        ) -> conn_provider::BoxFuture<'_, conn_provider::ProviderResult<conn_provider::OpenedSession>>
+        {
+            Box::pin(async { Err(conn_provider::ProviderError::SessionStopped) })
+        }
+        fn generate_text(
+            &self,
+            request: conn_provider::TextGenerationRequest,
+        ) -> conn_provider::BoxFuture<'_, conn_provider::ProviderResult<Value>> {
+            if let Ok(mut requests) = self.requests.lock() {
+                requests.push(request);
+            }
+            let answer = self.answer.clone();
+            Box::pin(async move {
+                answer.ok_or(conn_provider::ProviderError::Unsupported {
+                    operation: "generate_text",
+                })
+            })
+        }
+    }
+
     #[tokio::test(flavor = "current_thread")]
-    async fn an_agent_title_model_is_refused_without_a_call() {
+    async fn an_agent_title_model_without_text_generation_is_refused_without_a_call() {
         let stub = Stub::start(|_| (200, "{}".into())).await;
         // The default selection is Codex; a saved Claude selection is the same.
         for settings in [
@@ -542,11 +606,67 @@ mod titles {
             ),
         ] {
             let f = fixture("agent", settings);
-            let titles = Titles::new(Arc::new(f.generators));
+            let providers: Vec<Arc<dyn conn_provider::Provider>> = vec![
+                AgentProvider::new("codex", "codex", None),
+                AgentProvider::new("claudeAgent", "claudeAgent", None),
+            ];
+            let titles = Titles::new(Arc::new(f.generators)).with_providers(providers, None);
             let error = titles.title(initial("hello")).await.unwrap_err();
             assert_eq!(error, AGENT_TITLES_NOT_SERVED);
         }
         assert!(stub.taken().is_empty(), "no request");
+    }
+
+    /// The default title model is Codex: the prompt goes to the Codex instance with T3's
+    /// schema text and the whole selection, and its answer is the title.
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_agent_title_model_asks_its_provider() {
+        let stub = Stub::start(|_| (200, "{}".into())).await;
+        let f = fixture(
+            "agent-codex",
+            settings_for(
+                &stub.base,
+                json!({"instanceId": "codex", "model": "gpt-6-luna",
+                    "options": [{"id": "reasoningEffort", "value": "high"}]}),
+            ),
+        );
+        let codex = AgentProvider::new(
+            "codex",
+            "codex",
+            Some(json!({"title": " Login Redirect Fix ", "needsRefinement": false})),
+        );
+        let titles = Titles::new(Arc::new(f.generators)).with_providers(
+            vec![codex.clone() as Arc<dyn conn_provider::Provider>],
+            None,
+        );
+        assert_eq!(
+            titles.title(initial("the login fails")).await.unwrap(),
+            "Login Redirect Fix"
+        );
+        let request = codex.requests.lock().unwrap().remove(0);
+        assert_eq!(request.operation, "generateThreadTitle");
+        assert_eq!(request.output_schema, prompts::TITLE_OUTPUT_SCHEMA);
+        assert!(request.prompt.ends_with("User message:\nthe login fails"));
+        assert_eq!(
+            conn_contract::to_json(&request.model_selection),
+            json!({"instanceId": "codex", "model": "gpt-6-luna",
+                "options": [{"id": "reasoningEffort", "value": "high"}]})
+        );
+        assert!(stub.taken().is_empty(), "no text generator call");
+
+        // An answer without a title is "invalid structured output", named by the driver.
+        let f = fixture(
+            "agent-codex-bad",
+            settings_for(&stub.base, json!({"instanceId": "codex", "model": "m"})),
+        );
+        let bad = AgentProvider::new("codex", "codex", Some(json!({"name": "x"})));
+        let titles = Titles::new(Arc::new(f.generators))
+            .with_providers(vec![bad as Arc<dyn conn_provider::Provider>], None)
+            .with_retry_delays(&[]);
+        assert_eq!(
+            titles.title(initial("x")).await.unwrap_err(),
+            "Codex returned invalid structured output."
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -644,6 +764,26 @@ mod titles {
         assert_eq!(
             title_selection(&map(&settings), Some("p1")),
             ("codex".into(), "gpt".into())
+        );
+    }
+}
+
+/// A deliberate difference from the T3 server: a link-local base URL (a cloud host's metadata
+/// service) is refused without a connection; loopback, as every case here shows, stays open.
+#[tokio::test(flavor = "current_thread")]
+async fn a_link_local_base_url_is_refused_without_a_call() {
+    for base in ["http://169.254.169.254", "http://[fe80::1]:11434"] {
+        let f = fixture("link-local", generator(base, json!({"apiKey": "k"})));
+        let started = std::time::Instant::now();
+        let error = f
+            .generators
+            .list_models(input(json!({"id": ID})))
+            .await
+            .unwrap_err();
+        assert!(error.starts_with("Couldn't reach "), "{error}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "{base}"
         );
     }
 }

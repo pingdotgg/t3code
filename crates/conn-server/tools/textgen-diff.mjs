@@ -8,13 +8,15 @@
 //   and `fromRunner(...).generateThreadTitle` (apps/server/src/textGeneration,
 //   packages/provider-core) with the real fetch client, against `crates/conn-server/examples/
 //   text_generation.rs`. Each request's method, path with query, body bytes and headers must be
-//   equal, apart from the transport headers each HTTP client adds itself (`TRANSPORT`, listed
-//   once). The answer or the error text must be equal.
+//   equal, the headers Node's fetch adds included; only `host` and `content-length` are
+//   left out (`TRANSPORT`, listed once). Some answers come gzip or deflate encoded. The answer
+//   or the error text must be equal.
 // - Functions: `buildThreadTitlePrompt`, `formatThreadTitleContext`, `sanitizeThreadTitle`
 //   and `localeCompare` on model ids, on generated cases.
 // No outside call: the only server is the stub on 127.0.0.1. No model is called.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeHttp from "node:http";
+import * as NodeZlib from "node:zlib";
 
 import { importSource, packageImporter } from "../../../tools/monorepo.mjs";
 
@@ -39,17 +41,9 @@ const TextGenerators = await importSource("apps/server/src/textGeneration/TextGe
 const [binary] = process.argv.slice(2);
 if (!binary) throw new Error("usage: textgen-diff.mjs <examples/text_generation binary>");
 
-/** Headers an HTTP client adds on its own; reported, not compared. */
-const TRANSPORT = new Set([
-  "host",
-  "connection",
-  "content-length",
-  "user-agent",
-  "accept",
-  "accept-language",
-  "accept-encoding",
-  "sec-fetch-mode",
-]);
+/** Headers whose value is the connection's own (the port, the body length); reported, not
+ * compared. Every other header, the ones Node's fetch adds included, must be equal. */
+const TRANSPORT = new Set(["host", "content-length"]);
 
 // ---- The stub ----------------------------------------------------------------------------
 
@@ -68,9 +62,18 @@ const stub = NodeHttp.createServer((request, response) => {
       body: Buffer.concat(chunks).toString("utf8"),
     };
     recorded.push(entry);
-    const { status, body } = script(entry);
-    response.writeHead(status, { "content-type": "application/json" });
-    response.end(typeof body === "string" ? body : JSON.stringify(body));
+    const { status, body, encoding } = script(entry);
+    const text = Buffer.from(typeof body === "string" ? body : JSON.stringify(body));
+    // An endpoint may compress its answer, as fetch asked; both sides must decode it.
+    const encoded =
+      encoding === "gzip" ? NodeZlib.gzipSync(text)
+      : encoding === "deflate" ? NodeZlib.deflateSync(text)
+      : encoding === "deflate-raw" ? NodeZlib.deflateRawSync(text)
+      : text;
+    const headers = { "content-type": "application/json" };
+    if (encoding !== undefined) headers["content-encoding"] = encoding === "deflate-raw" ? "deflate" : encoding;
+    response.writeHead(status, headers);
+    response.end(encoded);
   });
 });
 await new Promise((resolve) => stub.listen(0, "127.0.0.1", resolve));
@@ -174,6 +177,14 @@ const png = (id, name) => ({ type: "image", id, name, mimeType: "image/png", siz
 const requestCases = [
   { name: "openai list", settings: generator({ apiKey: "k1" }), input: { id: "tg" },
     reply: () => ({ status: 200, body: { data: [{ id: " b " }, { id: "A", name: "Model A" }, { id: "" }, { id: "a-1" }] } }) },
+  { name: "gzip answer", settings: generator({ apiKey: "k1" }), input: { id: "tg" },
+    reply: () => ({ status: 200, encoding: "gzip", body: { data: [{ id: "z" }, { id: "a" }] } }) },
+  { name: "deflate answer", settings: generator({ apiKey: "k1" }), input: { id: "tg" },
+    reply: () => ({ status: 200, encoding: "deflate", body: { data: [{ id: "d" }] } }) },
+  { name: "raw deflate answer", settings: generator({ apiKey: "k1" }), input: { id: "tg" },
+    reply: () => ({ status: 200, encoding: "deflate-raw", body: { data: [{ id: "r" }] } }) },
+  { name: "gzip error answer", settings: generator({ apiKey: "k1" }), input: { id: "tg" },
+    reply: () => ({ status: 401, encoding: "gzip", body: { error: { message: "zipped no" } } }) },
   { name: "openai list without key", settings: generator({}), input: { id: "tg" },
     reply: () => ({ status: 200, body: { data: [] } }) },
   { name: "anthropic list with pages", settings: generator({ kind: "anthropic", apiKey: "k2", baseUrl: `${base}/v1/` }), input: { id: "tg" },
@@ -272,6 +283,13 @@ const contexts = [
   Array.from({ length: 40 }, (_, i) => (i % 3 === 2 ? { role: "assistant", text: `a${i} ${"x".repeat(3000)}` } : message(`u${i} ${"😀y".repeat(1500)}`, i % 5 ? [] : [png(`i${i}`, `i${i}.png`)]))),
   [message("u".repeat(10_000)), { role: "assistant", text: "a".repeat(10_000) }],
   [message("[User attached one or more files without additional text. Respond using the conversation context and the attached files.]", [png("only", "only.png")])],
+  // Assistant quotes become their text (assistantCitationsToPlainText); broken ones stay.
+  [
+    message(`About [Assistant quote](t3-citation://v1/env/thread-1/msg%201?text=Use+the+cache&start=3&end=17&prefix=a&suffix=b) please`),
+    { role: "assistant", text: "[Assistant quote](t3-citation://v1/e/t/m?text=x&start=1&end=2&prefix=&suffix=&comment=Why%3F%20%E2%82%AC) and [Assistant quote](t3-citation://v1/e/t/m?text=x&start=2&end=1&prefix=&suffix=)" },
+    message("[Assistant quote](t3-citation://v1/e/t?text=x&start=1&end=2&prefix=&suffix=) [Assistant quote](t3-citation://v1/e/t/%E0?text=x&start=1&end=2&prefix=&suffix=) [Assistant quote](t3-citation://v1/e/t/m?text=x&start=1&end=2&prefix=&suffix=&extra=1) [Assistant quote](t3-citation://v1/e/t/m?text=%20&start=1&end=2&prefix=&suffix=)"),
+    message("[Assistant quote](t3-citation://v1/e/t/m?text=x&start=1&end=2&prefix=&suffix=#frag) [Assistant quote](t3-citation://v1/e/t/m?text=x&start=1&end=99999999999999999&prefix=&suffix=) [Assistant quote](t3-citation://v1/e/t/m?text=x&text=y&start=1&end=2&prefix=&suffix=)"),
+  ],
 ].map((list) => list.map((m) => ({ attachments: [], ...m })));
 for (const messages of contexts) {
   const theirs = Context.formatThreadTitleContext(messages);

@@ -47,7 +47,6 @@ fn open_with(db: &TempDb, provider: FakeProvider) -> (SqliteEngine, Arc<FakeProv
         workspace_root: ROOT.into(),
     }];
     config.providers = vec![provider.clone()];
-    config.stream_flush = Duration::from_millis(20);
     (SqliteEngine::open(config).unwrap(), provider)
 }
 
@@ -953,7 +952,6 @@ fn open_home(db: &TempDb) -> SqliteEngine {
         workspace_root: ROOT.into(),
     }];
     config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
-    config.stream_flush = Duration::from_millis(20);
     SqliteEngine::open(config).unwrap()
 }
 
@@ -1800,7 +1798,7 @@ async fn a_delegated_task_runs_as_a_child_thread_and_wakes_its_parent() {
         .map(|m| m["text"].as_str().unwrap().to_owned())
         .collect();
     assert_eq!(texts.len(), 2);
-    assert!(texts[1].contains("echo: look around"));
+    assert!(texts.iter().any(|t| t.contains("echo: look around")));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -2187,7 +2185,14 @@ async fn a_continuation_request_runs_a_provider_turn_after_the_run() {
             ("run:t1:2".into(), "completed".into())
         ]
     );
-    let wake = &p["messages"][2];
+    // T3 lists messages by the turn item that shows them; the wake has a notification item,
+    // so it is found by its source, not by its place.
+    let wake = p["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["creationSource"] == "provider" && m["role"] == "user")
+        .unwrap();
     assert_eq!(wake["createdBy"], "agent");
     assert_eq!(wake["creationSource"], "provider");
     assert_eq!(wake["text"], "Background task completed.");
@@ -2221,7 +2226,14 @@ async fn a_continuation_request_runs_a_provider_turn_after_the_run() {
         item.get("messageId").is_none(),
         "a notice names no message: {item}"
     );
-    assert_eq!(p["messages"][3]["text"], "continued");
+    // The wake run's answer has a message item, so it comes before the notice.
+    assert!(
+        p["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["text"] == "continued" && m["role"] == "assistant")
+    );
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
@@ -2423,7 +2435,6 @@ fn open_two(db: &TempDb) -> (SqliteEngine, Arc<FakeProvider>, Arc<FakeProvider>)
         workspace_root: ROOT.into(),
     }];
     config.providers = vec![claude.clone(), codex.clone()];
-    config.stream_flush = Duration::from_millis(20);
     (SqliteEngine::open(config).unwrap(), claude, codex)
 }
 
@@ -3276,6 +3287,28 @@ async fn the_provider_thread_is_active_during_a_turn_and_idle_after() {
     assert_eq!(p["providerThreads"][0]["lastRunOrdinal"], 2);
 }
 
+/// T3's `writeFinalRunEvents` writes the run's provider thread at every turn end, also when
+/// the provider already reported it `idle` during the turn (before, ours wrote it only from
+/// `active`).
+#[tokio::test(flavor = "current_thread")]
+async fn every_turn_end_writes_the_provider_thread_idle() {
+    let db = TempDb::new("thread-idle-every-end");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "thread-idle")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(p["providerThreads"][0]["status"], "idle");
+    let events = engine.stored_events(0, 10_000).await.unwrap();
+    let idle = events
+        .iter()
+        .filter(|stored| {
+            stored["event"]["type"] == "provider-thread.updated"
+                && stored["event"]["payload"]["status"] == "idle"
+        })
+        .count();
+    assert_eq!(idle, 2, "the provider's own idle, then the turn end's");
+}
+
 /// Allows every instance but `off`.
 struct OneInstanceOff;
 
@@ -3373,5 +3406,96 @@ async fn stop_without_a_run_reaches_background_work() {
             .count(),
         1,
         "{calls:?}"
+    );
+}
+
+/// Force stop while the provider still starts the turn: the start's late failure finds the run
+/// ended and must not hold the queue (review finding 2.3). `hang` is the control: no late
+/// failure.
+#[tokio::test(flavor = "current_thread")]
+async fn a_late_start_failure_after_force_stop_does_not_hold_the_queue() {
+    for (case, text) in [("control", "hang"), ("race", "slowstart")] {
+        let db = TempDb::new(&format!("checker-force-{case}"));
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        let mut thread = engine
+            .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+            .await
+            .unwrap();
+        next(&mut thread).await;
+        dispatch(&engine, message("t1", "c2", text)).await;
+        if case == "control" {
+            until_provider_turn(&mut thread).await;
+        } else {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        dispatch(&engine, message("t1", "c3", "later")).await;
+        dispatch(&engine, message("t1", "c4", "even later")).await;
+        let stopped = call(
+            &engine,
+            "orchestration.forceStopThread",
+            json!({"threadId": "t1"}),
+        )
+        .await;
+        assert!(stopped.is_ok(), "{case}: {stopped:?}");
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        let p = projection(&engine, "t1").await;
+        let runs: Vec<_> = p["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                (
+                    r["ordinal"].clone(),
+                    r["status"].clone(),
+                    r["queueHeld"] == true,
+                )
+            })
+            .collect();
+        assert_eq!(
+            runs,
+            [
+                (json!(1), json!("interrupted"), false),
+                (json!(2), json!("completed"), false),
+                (json!(3), json!("completed"), false),
+            ],
+            "{case}: a late failure of an ended run does not hold the queue"
+        );
+    }
+}
+
+/// A thread's effects run in the order their lane slots were taken, not the order they were
+/// started (review finding 2.1: dispatch takes the slot inside the store closure, so lane order
+/// is commit order). A slot given up without running (its commit failed) keeps that order.
+#[tokio::test(flavor = "current_thread")]
+async fn lane_order_is_reservation_order() {
+    let db = TempDb::new("lane-reserve");
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    let inner = engine.inner();
+    let close = |reason| crate::commands::Effect::ThreadClosed {
+        thread_id: "t1".into(),
+        reason,
+    };
+    let first = inner.reserve_effect(close(crate::ThreadClose::Archived));
+    let given_up = inner.reserve_effect(close(crate::ThreadClose::Settled));
+    let last = inner.reserve_effect(close(crate::ThreadClose::Deleted));
+    drop(given_up);
+    last.start();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(
+        host.closed.lock().unwrap().is_empty(),
+        "waits for the first"
+    );
+    first.start();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert_eq!(
+        *host.closed.lock().unwrap(),
+        [
+            ("t1".to_owned(), crate::ThreadClose::Archived),
+            ("t1".to_owned(), crate::ThreadClose::Deleted),
+        ]
     );
 }

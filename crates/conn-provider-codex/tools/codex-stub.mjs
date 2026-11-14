@@ -17,11 +17,19 @@
 //   the id the client used.
 // - A request that matches nothing gets a canned answer (`model/list`) or a -32601 error, and
 //   is logged as `extra`.
+// - A subagent's metadata read (`thread/read` without turns, or `thread/resume` without
+//   turns, for a child thread the recording names) is answered `{thread: {id}, model: null}`
+//   and logged as `child-metadata`, not `extra`: the TS test kit answers these itself
+//   (`withCodexReplayChildMetadata`), so its recordings never hold them.
 // - `runtime_exit` marks where the recorded process ended. The stub stops replaying and waits
 //   for the client to end it (end of stdin or a signal), so the client's shutdown is
 //   recorded. A later start of the stub (a new process) continues after that point; the
 //   cursor is kept in `<log>.cursor`.
 // - SIGTERM, SIGINT, SIGHUP and the end of stdin are logged (see LINGER_MS below).
+// - The replay gate (T3's `makeProviderReplayGate`, used by `release_replay_gate` steps):
+//   for each label in `config.gates`, the stub stops before it emits the first recorded
+//   frame with that label, writes `<gateDir>/gate-<label>.reached` and waits for
+//   `<gateDir>/gate-<label>.release`. Frames the client sends meanwhile wait too.
 import * as NodeFS from "node:fs";
 import * as NodeReadline from "node:readline";
 
@@ -32,6 +40,33 @@ const log = (entry) =>
   NodeFS.appendFileSync(config.log, `${JSON.stringify({ t: Date.now(), ...entry })}\n`);
 
 log({ kind: "start", argv, env: { ...process.env }, cwd: process.cwd(), pid: process.pid });
+
+// Text generation (`CodexTextGeneration.ts`) runs short CLI commands, not the app-server:
+// - `mcp list --json` prints `config.mcpServers` (default: none);
+// - `exec … -` reads the prompt on stdin, records it and the `--output-schema` file, and
+//   writes `config.execOutput` (default `{"title":"Stub title"}`) to `--output-last-message`.
+if (argv.includes("mcp") && argv.includes("list")) {
+  log({ kind: "mcp-list" });
+  process.stdout.write(JSON.stringify(config.mcpServers ?? []));
+  process.exit(0);
+}
+if (argv[0] === "exec") {
+  const after = (flag) => argv[argv.indexOf(flag) + 1];
+  const chunks = [];
+  process.stdin.on("data", (chunk) => chunks.push(chunk));
+  process.stdin.on("end", () => {
+    const schemaPath = after("--output-schema");
+    log({
+      kind: "exec",
+      stdin: Buffer.concat(chunks).toString("utf8"),
+      schema: NodeFS.readFileSync(schemaPath, "utf8"),
+      schemaName: schemaPath.split("/").at(-1).length,
+      schemaDir: schemaPath.split("/").at(-2).replace(/[A-Za-z0-9]{6}$/, "XXXXXX"),
+    });
+    NodeFS.writeFileSync(after("--output-last-message"), config.execOutput ?? '{"title":"Stub title"}');
+    process.exit(config.execExit ?? 0);
+  });
+} else {
 
 const readTranscript = (path) => {
   const text = NodeFS.readFileSync(path, "utf8");
@@ -46,9 +81,36 @@ const readTranscript = (path) => {
 };
 
 const entries = readTranscript(config.transcript);
+// `withCodexReplayChildMetadata`: the child threads the recording names.
+const childThreadIds = new Set(
+  entries.flatMap((entry) => {
+    const item = entry.type === "emit_inbound" ? entry.frame?.params?.item : undefined;
+    if (item?.type === "subAgentActivity" && typeof item.agentThreadId === "string") {
+      return [item.agentThreadId];
+    }
+    return item?.type === "collabAgentToolCall" && Array.isArray(item.receiverThreadIds)
+      ? item.receiverThreadIds.filter((id) => typeof id === "string")
+      : [];
+  }),
+);
+const isChildMetadataRead = (frame) => {
+  const params = frame.params ?? {};
+  return (
+    (frame.method === "thread/read" ? params.includeTurns === false : frame.method === "thread/resume" && params.excludeTurns === true) &&
+    typeof params.threadId === "string" &&
+    childThreadIds.has(params.threadId)
+  );
+};
 const cursorFile = `${config.log}.cursor`;
 let cursor = NodeFS.existsSync(cursorFile) ? Number(NodeFS.readFileSync(cursorFile, "utf8")) : 0;
 let ended = false;
+// The replay gate: labels not yet released, the label the stub is held at, and the frames
+// that came in while it was held.
+const gates = new Set(config.gates ?? []);
+let held = null;
+const heldFrames = [];
+const gateFile = (label, state) =>
+  `${config.gateDir}/gate-${encodeURIComponent(label)}.${state}`;
 const saveCursor = () => NodeFS.writeFileSync(cursorFile, String(cursor));
 // recorded request id -> id the client used
 const responseIds = new Map();
@@ -78,9 +140,29 @@ const send = (frame) => {
   process.stdout.write(`${JSON.stringify(upgrade(frame))}\n`);
 };
 
+const hold = (label) => {
+  held = label;
+  NodeFS.writeFileSync(gateFile(label, "reached"), "");
+  log({ kind: "gate-reached", label });
+  const poll = setInterval(() => {
+    if (!NodeFS.existsSync(gateFile(label, "release"))) return;
+    clearInterval(poll);
+    gates.delete(label);
+    held = null;
+    log({ kind: "gate-released", label });
+    emitUntilExpectation();
+    saveCursor();
+    while (held === null && heldFrames.length > 0) onFrame(heldFrames.shift());
+  }, 5);
+};
+
 const emitUntilExpectation = () => {
   while (cursor < entries.length && entries[cursor].type !== "expect_outbound") {
     const entry = entries[cursor];
+    if (entry.type === "emit_inbound" && gates.has(entry.label)) {
+      hold(entry.label);
+      return;
+    }
     cursor += 1;
     if (entry.type === "runtime_exit") {
       log({ kind: "runtime_exit", status: entry.status ?? null });
@@ -129,6 +211,16 @@ const canned = (frame) => {
 };
 
 const onFrame = (frame) => {
+  // Answered the same before and after the recorded end: when it comes is timing.
+  if (frame.id !== undefined && isChildMetadataRead(frame)) {
+    log({ kind: "child-metadata", frame });
+    send({ id: frame.id, result: { thread: { id: frame.params.threadId }, model: null } });
+    return;
+  }
+  if (held !== null) {
+    heldFrames.push(frame);
+    return;
+  }
   if (ended) {
     // Past the recorded end: answer requests with an empty result so the client is not left
     // waiting on its request timeout.
@@ -208,3 +300,4 @@ lines.on("line", (line) => {
   onFrame(frame);
 });
 lines.on("close", () => beginShutdown("stdin-end"));
+}

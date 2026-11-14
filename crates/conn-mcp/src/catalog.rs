@@ -156,6 +156,14 @@ pub(crate) fn check_arguments(
             continue;
         }
         let optional = !required.contains(&key.as_str());
+        // An array's elements decode before its own checks, each at its index.
+        if let (Some(item), Some(items)) = (properties[key].get("items"), value.as_array()) {
+            for (index, element) in items.iter().enumerate() {
+                if let Some(problem) = type_problem(item, element, false) {
+                    return Err(format!("{problem}\n  at [\"{key}\"][{index}]"));
+                }
+            }
+        }
         if let Some(problem) = type_problem(&properties[key], value, optional) {
             return Err(format!("{problem}\n  at [\"{key}\"]"));
         }
@@ -208,10 +216,16 @@ fn type_problem(schema: &Value, value: &Value, optional: bool) -> Option<String>
             }
             range_problem(schema, n)
         }
-        Value::Array(items) => schema["maxItems"]
-            .as_u64()
-            .filter(|max| items.len() as u64 > *max)
-            .map(|max| format!("Expected a value with a length of at most {max}")),
+        Value::Array(items) => {
+            let length = items.len() as u64;
+            if let Some(min) = schema["minItems"].as_u64().filter(|min| length < *min) {
+                return Some(format!("Expected a value with a length of at least {min}"));
+            }
+            schema["maxItems"]
+                .as_u64()
+                .filter(|max| length > *max)
+                .map(|max| format!("Expected a value with a length of at most {max}"))
+        }
         _ => None,
     }
 }

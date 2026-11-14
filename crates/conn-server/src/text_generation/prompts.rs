@@ -15,6 +15,7 @@ use super::js::{self, char_code_at, is_high_surrogate, is_low_surrogate, len16, 
 #[path = "generated.rs"]
 mod generated;
 use generated::Part;
+pub(crate) use generated::TITLE_OUTPUT_SCHEMA;
 
 /// `EARLIER_CONTENT_TRUNCATION_MARKER` and `OMITTED`.
 const OMITTED: &str = "[Earlier content truncated]\n\n";
@@ -251,8 +252,8 @@ struct Section<'a> {
 }
 
 /// `formatThreadTitleContext`: the thread's messages within 8,000 units, the first and the
-/// latest user messages first, and the attachments to name. Assistant citation links stay as
-/// written (`assistantCitationsToPlainText` is not ported).
+/// latest user messages first, and the attachments to name. Assistant citation links become
+/// their quoted text (`assistantCitationsToPlainText`).
 pub fn format_thread_title_context(messages: &[Message]) -> (String, Vec<Attachment>) {
     let sections: Vec<Section<'_>> = messages
         .iter()
@@ -274,7 +275,8 @@ pub fn format_thread_title_context(messages: &[Message]) -> (String, Vec<Attachm
                 .map(|a| a.name.as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
-            let trimmed = js_trim(text);
+            let plain = super::citations::assistant_citations_to_plain_text(text);
+            let trimmed = js_trim(&plain);
             let mut parts = Vec::new();
             if !trimmed.is_empty() {
                 parts.push(trimmed.to_owned());

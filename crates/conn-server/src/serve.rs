@@ -23,6 +23,17 @@ use crate::{
     router,
 };
 
+/// Grok's `providerInstances.grok` settings as stored in `<state_dir>/settings.json`, so a Grok
+/// task due at start does not meet a disabled instance before the first status refresh. Reads
+/// the file with `std::fs`: call it before the runtime starts. A file that does not parse
+/// gives Grok's default (off); the settings store logs it.
+pub fn stored_grok_settings(state_dir: &std::path::Path) -> conn_provider_acp::GrokSettings {
+    let stored = crate::settings::read(&state_dir.join("settings.json")).unwrap_or_default();
+    conn_provider_acp::GrokSettings::from_instance(
+        stored.get("providerInstances").and_then(|p| p.get("grok")),
+    )
+}
+
 #[derive(Debug)]
 pub struct ServeOptions {
     pub listen: SocketAddr,
@@ -89,6 +100,9 @@ impl ServeOptions {
     }
 }
 
+/// The caller reads the login environment first (`conn_support::login_env::hydrate`), before
+/// it detects `providers`.
+///
 /// Runs until SIGTERM or SIGINT, then stops cleanly: no new connections, open sockets close,
 /// and the runtime drops every task, which kills provider children (`kill_on_drop`).
 pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
@@ -116,13 +130,16 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
             std::process::exit(1);
         }
     };
-    // `fixPath`: the login shell's PATH for every child, read before any provider starts.
-    let _ = tokio::task::spawn_blocking(conn_support::login_env::hydrate).await;
     for (root, title) in home::read_projects(&state_dir) {
         if !projects.iter().any(|(r, _)| *r == root) {
             projects.push((root, Some(title)));
         }
     }
+    let provider_names = providers
+        .iter()
+        .map(|p| p.instance_id().as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
     let projects: Vec<ProjectConfig> = projects
         .iter()
         .map(|(root, title)| ProjectConfig {
@@ -168,9 +185,10 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
     let text_generators = Arc::new(crate::text_generation::TextGenerators::for_environment(
         environment.clone(),
     ));
-    config.title_generator = Some(Arc::new(crate::text_generation::title::Titles::new(
-        text_generators.clone(),
-    )));
+    config.title_generator = Some(Arc::new(
+        crate::text_generation::title::Titles::new(text_generators.clone())
+            .with_providers(providers.clone(), Some(state_dir.join("attachments"))),
+    ));
     let engine: Arc<dyn Engine> = Arc::new(or_exit(
         SqliteEngine::open(config),
         "cannot open the engine",
@@ -222,8 +240,15 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
     };
     let addr = or_exit(listener.local_addr(), "cannot read the listening address");
     let runtime = RuntimeState::new(&addr.ip().to_string(), addr.port(), conn_support::uuid_v4());
-    if let Err(error) = runtime.publish(&state_dir) {
-        eprintln!("conn-server: could not write server-runtime.json: {error}");
+    // The write and its fsync run on a blocking thread, as all file work here does.
+    let published = {
+        let (runtime, state_dir) = (runtime.clone(), state_dir.clone());
+        tokio::task::spawn_blocking(move || runtime.publish(&state_dir)).await
+    };
+    match published {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => eprintln!("conn-server: could not write server-runtime.json: {error}"),
+        Err(error) => eprintln!("conn-server: could not write server-runtime.json: {error}"),
     }
     if let Some(mcp) = &state.deps.mcp {
         mcp.set_listen_address(addr);
@@ -235,6 +260,7 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
         state_dir.display()
     );
     println!("methods: {}", state.table.coverage());
+    println!("providers: {provider_names}");
     // Probes spawn provider CLIs; T3 starts them once the server is ready, too.
     crate::methods::provider::start_status_refresh(&state.deps);
     if !is_desktop {
@@ -268,7 +294,7 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
     // started outlives the server.
     terminals.shutdown().await;
     engine.shutdown().await;
-    runtime.clear(&state_dir);
+    let _ = tokio::task::spawn_blocking(move || runtime.clear(&state_dir)).await;
 }
 
 /// A start-up step that failed: print why and exit with status 1 instead of a panic.
@@ -314,5 +340,35 @@ async fn shutdown_signal(watch_parent: bool) -> &'static str {
         let _ = watch_parent;
         let _ = tokio::signal::ctrl_c().await;
         "Ctrl-C"
+    }
+}
+
+#[cfg(test)]
+mod stored_grok_settings_tests {
+    use super::stored_grok_settings;
+
+    /// Finding 6: Grok starts with the stored settings, not the default (off).
+    #[test]
+    fn grok_starts_with_the_stored_settings() {
+        let dir = std::env::temp_dir().join(format!(
+            "conn-serve-grok-{}-{}",
+            std::process::id(),
+            conn_support::uuid_v4()
+        ));
+        std::fs::create_dir_all(&dir).expect("dir");
+        assert!(!stored_grok_settings(&dir).enabled, "no file: off");
+        std::fs::write(
+            dir.join("settings.json"),
+            r#"{"providerInstances":{"grok":{"driver":"grok","enabled":true,
+                "config":{"binaryPath":"/opt/grok"}}}}"#,
+        )
+        .expect("settings");
+        let settings = stored_grok_settings(&dir);
+        std::fs::write(dir.join("settings.json"), "{not json").expect("settings");
+        let broken = stored_grok_settings(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(settings.enabled);
+        assert_eq!(settings.binary_path, "/opt/grok");
+        assert!(!broken.enabled, "a broken file: off");
     }
 }

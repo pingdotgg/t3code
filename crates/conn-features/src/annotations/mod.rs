@@ -24,6 +24,13 @@ use crate::clock::Clock;
 /// call's folder read and each list on the wire small.
 pub const MAX_PER_PROJECT: usize = 1_000;
 const SCREENSHOT_EXTENSIONS: [&str; 3] = ["jpg", "png", "webp"];
+/// The largest screenshot, decoded. The T3 server has no cap. A full-page capture is a few
+/// megabytes; this cap refuses a larger one with a clear error before it is decoded, well
+/// below the 16 MiB WebSocket message limit, so one call holds at most this much.
+pub const MAX_SCREENSHOT_BYTES: usize = 8 * 1024 * 1024;
+/// The most removed ids `_deleted.json` keeps per project; the oldest go first. The T3 server
+/// keeps every one. Ten times [`MAX_PER_PROJECT`], so a removal never drops its own ids.
+pub const MAX_TOMBSTONES: usize = 10 * MAX_PER_PROJECT;
 
 /// The contract's annotation errors, each with its `_tag` and fields.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -116,6 +123,8 @@ struct ProjectData {
     last_number: u64,
     revision: u64,
     deleted: BTreeSet<String>,
+    /// The removed ids in the file's order, oldest first.
+    deleted_order: Vec<String>,
     records: Vec<Map<String, Value>>,
 }
 
@@ -149,14 +158,16 @@ impl ProjectData {
             Some(text) => serde_json::from_str(&text).map_err(|_| invalid("_sequence.json"))?,
             None => json!({"lastNumber": 0, "revision": 0}),
         };
-        let deleted: BTreeSet<String> = match read_if_exists(&dir.join("_deleted.json"))? {
+        let deleted_order: Vec<String> = match read_if_exists(&dir.join("_deleted.json"))? {
             Some(text) => serde_json::from_str(&text).map_err(|_| invalid("_deleted.json"))?,
-            None => BTreeSet::new(),
+            None => Vec::new(),
         };
+        let deleted: BTreeSet<String> = deleted_order.iter().cloned().collect();
         let mut data = Self {
             last_number: sequence["lastNumber"].as_u64().unwrap_or(0),
             revision: sequence["revision"].as_u64().unwrap_or(0),
             deleted,
+            deleted_order,
             records: Vec::new(),
             dir,
         };
@@ -268,25 +279,63 @@ struct Screenshot {
     bytes: Vec<u8>,
 }
 
-/// `SCREENSHOT_DATA_URL`: PNG, JPEG or WebP; whitespace in the data is ignored.
-fn decode_screenshot(data_url: &str) -> Option<Screenshot> {
-    let rest = data_url.strip_prefix("data:image/")?;
-    let (kind, data) = rest.split_once(";base64,")?;
+/// Why a screenshot was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+enum ScreenshotError {
+    #[error("The screenshot must be a base64 PNG, JPEG or WebP data URL.")]
+    Invalid,
+    #[error("The screenshot is larger than 8 MB.")]
+    TooLarge,
+}
+
+/// `SCREENSHOT_DATA_URL`: PNG, JPEG or WebP; whitespace in the data is ignored. Refuses a
+/// screenshot over [`MAX_SCREENSHOT_BYTES`] before it decodes it. Blocking: call it on a
+/// blocking thread.
+fn decode_screenshot(data_url: &str) -> Result<Screenshot, ScreenshotError> {
+    let invalid = ScreenshotError::Invalid;
+    let rest = data_url.strip_prefix("data:image/").ok_or(invalid)?;
+    let (kind, data) = rest.split_once(";base64,").ok_or(invalid)?;
     let extension = match kind {
         "png" => "png",
         "webp" => "webp",
         "jpg" | "jpeg" => "jpg",
-        _ => return None,
+        _ => return Err(invalid),
     };
     let compact: String = data.chars().filter(|c| !c.is_whitespace()).collect();
     if compact.is_empty() {
-        return None;
+        return Err(invalid);
     }
-    let bytes = conn_support::base64::decode(&compact)?;
-    Some(Screenshot { extension, bytes })
+    if compact.len() / 4 * 3 > MAX_SCREENSHOT_BYTES + 3 {
+        return Err(ScreenshotError::TooLarge);
+    }
+    let bytes = conn_support::base64::decode(&compact).ok_or(invalid)?;
+    if bytes.len() > MAX_SCREENSHOT_BYTES {
+        return Err(ScreenshotError::TooLarge);
+    }
+    Ok(Screenshot { extension, bytes })
 }
 
-/// One project's lock and change counter.
+/// The project's folder name under the annotations root: `directoryFor`, with a name made
+/// only of dots escaped.
+fn folder_name(project_id: &str) -> String {
+    let name: String = project_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if name.bytes().all(|b| b == b'.') {
+        name.replace('.', "%2E")
+    } else {
+        name
+    }
+}
+
+/// One folder's lock and change counter.
 #[derive(Debug)]
 struct Entry {
     lock: Mutex<()>,
@@ -304,7 +353,7 @@ struct Inner {
     root: PathBuf,
     clock: Arc<dyn Clock>,
     projects: Arc<dyn ProjectLookup>,
-    /// One entry per project that was used; projects are few and bounded by the engine.
+    /// One entry per folder that was used; projects are few and bounded by the engine.
     entries: StdMutex<HashMap<String, Arc<Entry>>>,
 }
 
@@ -320,19 +369,24 @@ impl Annotations {
         }
     }
 
-    /// `directoryFor`: characters outside `[A-Za-z0-9._-]` become `_`.
-    fn directory(&self, project_id: &str) -> PathBuf {
-        let name: String = project_id
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        self.inner.root.join(name)
+    /// `directoryFor`: characters outside `[A-Za-z0-9._-]` become `_`. Unlike the T3 server,
+    /// a name made only of dots (`.`, `..`) has each dot written as `%2E`, so no project id
+    /// names the annotations root or the state folder; no other name can hold a `%`. The
+    /// result must be one folder right under the root, or the call is refused.
+    fn directory(&self, project_id: &str) -> Result<(String, PathBuf), AnnotationError> {
+        let name = folder_name(project_id);
+        let dir = self.inner.root.join(&name);
+        let one_child = matches!(
+            Path::new(&name).components().collect::<Vec<_>>().as_slice(),
+            [std::path::Component::Normal(part)] if *part == name.as_str()
+        );
+        if one_child && dir.parent() == Some(self.inner.root.as_path()) {
+            Ok((name, dir))
+        } else {
+            Err(AnnotationError::invalid(
+                "This project id cannot name a folder.",
+            ))
+        }
     }
 
     fn now(&self) -> String {
@@ -354,13 +408,14 @@ impl Annotations {
         }
     }
 
-    fn entry(&self, project_id: &str) -> Arc<Entry> {
+    /// The entry of a folder name, so two project ids that map to one folder share one lock.
+    fn entry(&self, folder: &str) -> Arc<Entry> {
         let mut entries = match self.inner.entries.lock() {
             Ok(entries) => entries,
             Err(poisoned) => poisoned.into_inner(),
         };
         entries
-            .entry(project_id.to_owned())
+            .entry(folder.to_owned())
             .or_insert_with(|| {
                 Arc::new(Entry {
                     lock: Mutex::new(()),
@@ -378,9 +433,9 @@ impl Annotations {
         work: impl FnOnce(&mut ProjectData) -> Result<T, AnnotationError> + Send + 'static,
     ) -> Result<T, AnnotationError> {
         self.require_project(project_id).await?;
-        let entry = self.entry(project_id);
+        let (folder, dir) = self.directory(project_id)?;
+        let entry = self.entry(&folder);
         let _guard = entry.lock.lock().await;
-        let dir = self.directory(project_id);
         let (result, changed) = tokio::task::spawn_blocking(move || {
             let mut data = ProjectData::load(dir)
                 .map_err(AnnotationError::store("Could not read the annotations."))?;
@@ -413,7 +468,8 @@ impl Annotations {
         project_id: &str,
     ) -> Result<mpsc::Receiver<Result<Value, AnnotationError>>, AnnotationError> {
         self.require_project(project_id).await?;
-        let mut changes = self.entry(project_id).changes.subscribe();
+        let (folder, _) = self.directory(project_id)?;
+        let mut changes = self.entry(&folder).changes.subscribe();
         let first = self.list(project_id).await?;
         let (tx, rx) = mpsc::channel(1);
         let store = self.clone();
@@ -450,18 +506,17 @@ impl Annotations {
         if comment.is_empty() {
             return Err(AnnotationError::invalid("An annotation needs a comment."));
         }
-        let image = match &capture.screenshot {
+        let mut capture = capture;
+        let image = match capture.screenshot.take() {
             None => None,
-            Some(url) => Some(decode_screenshot(url).ok_or_else(|| {
-                AnnotationError::invalid(
-                    "The screenshot must be a base64 PNG, JPEG or WebP data URL.",
-                )
-            })?),
+            Some(url) => Some(
+                tokio::task::spawn_blocking(move || decode_screenshot(&url))
+                    .await
+                    .unwrap_or(Err(ScreenshotError::Invalid))
+                    .map_err(|error| AnnotationError::invalid(&error.to_string()))?,
+            ),
         };
-        let mut fields = match to_json(&AnnotationCapture {
-            screenshot: None,
-            ..capture
-        }) {
+        let mut fields = match to_json(&capture) {
             Value::Object(fields) => fields,
             _ => Map::new(),
         };
@@ -548,11 +603,19 @@ impl Annotations {
             if removed.is_empty() {
                 return Ok(removed);
             }
-            let mut deleted = data.deleted.clone();
-            deleted.extend(removed.iter().cloned());
-            let body = Value::from(deleted.iter().cloned().collect::<Vec<_>>()).to_string();
+            let mut order = data.deleted_order.clone();
+            order.extend(
+                removed
+                    .iter()
+                    .filter(|id| !data.deleted.contains(*id))
+                    .cloned(),
+            );
+            let excess = order.len().saturating_sub(MAX_TOMBSTONES);
+            order.drain(..excess);
+            let body = Value::from(order.clone()).to_string();
             write(&data.dir.join("_deleted.json"), body.as_bytes()).map_err(&failed)?;
-            data.deleted = deleted;
+            data.deleted = order.iter().cloned().collect();
+            data.deleted_order = order;
             let (last, revision) = (data.last_number, data.revision + 1);
             data.save_sequence(last, revision).map_err(&failed)?;
             for id in &removed {

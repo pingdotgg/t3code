@@ -25,6 +25,8 @@ pub const NAMES: [&str; 3] = ["PATH", "__MISE_DIFF", "JAVA_HOME"];
 /// `LOGIN_SHELL_TIMEOUT`.
 pub const TIMEOUT: Duration = Duration::from_secs(5);
 /// How long one refresh serves (`Effect.cachedWithTTL(Duration.seconds(10))` in discovery).
+/// The caller keeps the time and coalesces concurrent refreshes (conn-server's
+/// `methods/source_control.rs`).
 pub const REFRESH_TTL: Duration = Duration::from_secs(10);
 /// The most of the shell's output that is read.
 const MAX_OUTPUT_BYTES: u64 = 1024 * 1024;
@@ -32,13 +34,9 @@ const MAX_OUTPUT_BYTES: u64 = 1024 * 1024;
 #[derive(Debug, Default)]
 struct Overlay {
     values: Vec<(&'static str, OsString)>,
-    refreshed_at: Option<Instant>,
 }
 
-static OVERLAY: RwLock<Overlay> = RwLock::new(Overlay {
-    values: Vec::new(),
-    refreshed_at: None,
-});
+static OVERLAY: RwLock<Overlay> = RwLock::new(Overlay { values: Vec::new() });
 
 /// The values to add to a child's environment: empty until a login shell answered.
 pub fn vars() -> Vec<(&'static str, OsString)> {
@@ -143,21 +141,6 @@ pub fn clear() {
     if let Ok(mut overlay) = OVERLAY.write() {
         *overlay = Overlay::default();
     }
-}
-
-/// Marks a refresh as started; `false` when one ran less than [`REFRESH_TTL`] ago.
-pub fn claim_refresh(now: Instant) -> bool {
-    let Ok(mut overlay) = OVERLAY.write() else {
-        return false;
-    };
-    if overlay
-        .refreshed_at
-        .is_some_and(|at| now.saturating_duration_since(at) < REFRESH_TTL)
-    {
-        return false;
-    }
-    overlay.refreshed_at = Some(now);
-    true
 }
 
 fn start_marker(name: &str) -> String {
@@ -473,7 +456,5 @@ mod tests {
             .output()
             .expect("sh");
         assert!(String::from_utf8_lossy(&probe.stdout).starts_with(fake_shell_path));
-        assert!(claim_refresh(Instant::now()), "first refresh");
-        assert!(!claim_refresh(Instant::now()), "within the 10 s window");
     }
 }

@@ -28,3 +28,8 @@ annotations_list
 annotations_claim
 annotations_complete
 annotations_release
+link_pull_request
+link_pull_requests
+unlink_pull_request
+unlink_pull_requests
+list_thread_pull_requests

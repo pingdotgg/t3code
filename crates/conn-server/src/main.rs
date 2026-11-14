@@ -7,6 +7,10 @@ use conn_server::serve::{ServeOptions, serve};
 fn main() {
     // Runs and exits for every command but `serve`.
     let options = ServeOptions::from_args();
+    // `fixPath`: the login shell's PATH for every child and every program lookup, read before
+    // the providers are detected (Codex looks for its binary on that PATH). Blocking is fine:
+    // the runtime does not exist yet.
+    conn_support::login_env::hydrate();
     let mut claude = ClaudeConfig {
         // `conn-files` stores attachments here; the CLI may read them.
         attachments_dir: Some(options.state_dir.join("attachments")),
@@ -37,8 +41,9 @@ fn main() {
     if let Some(codex) = conn_provider_codex::CodexProvider::detect("codex".into(), codex) {
         providers.push(Arc::new(codex));
     }
-    // T3's default `grok` instance: off until `providerInstances.grok` enables it; the
-    // server's status task applies the stored settings and probes the CLI.
+    // T3's default `grok` instance: off until `providerInstances.grok` enables it. It starts
+    // with the stored settings, so a Grok task due at start can run; the server's status task
+    // applies later changes and probes the CLI.
     providers.push(Arc::new(conn_provider_acp::AcpProvider::with_settings(
         "grok".into(),
         &conn_provider_acp::GROK,
@@ -46,7 +51,7 @@ fn main() {
             workspace_cwd: Some(options.cwd.clone()),
             ..Default::default()
         },
-        conn_provider_acp::GrokSettings::default(),
+        conn_server::serve::stored_grok_settings(&options.state_dir),
     )));
     // One thread: a container serves a handful of clients, and each worker thread costs
     // stack and allocator arenas.

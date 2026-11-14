@@ -1,9 +1,9 @@
 //! Drives providers: opens a session per thread, starts turns, and turns `ProviderEvent`s into
 //! domain events.
 //!
-//! Streaming rows (`streaming: true` messages and turn items) are held for at most
-//! `stream_flush` and only their newest version is written, as TS coalesces them on the wire.
-//! When the turn ends, every row gets a final version and the streaming versions leave the log.
+//! Streamed assistant text goes through T3's buffered delivery ([`crate::streaming`]): a
+//! running assistant node is never stored, and a streaming message or turn item is stored only
+//! at a Markdown boundary or after it was idle. What is stored stays in the log.
 
 use std::{
     sync::{Arc, Mutex, atomic::Ordering},
@@ -26,6 +26,7 @@ use crate::commands::{failure, finish_run_as, hold_queue, start_next_queued};
 use crate::engine::Inner;
 use crate::lock;
 use crate::store::Draft;
+use crate::streaming::AssistantStreaming;
 
 /// A thread whose provider session is open.
 pub(crate) struct LiveThread {
@@ -59,6 +60,9 @@ struct LiveState {
     /// Provider turns whose work goes on after their terminal (`background_work.updated`).
     /// Bounded by [`MAX_BACKGROUND_TURNS`].
     background_turns: std::collections::HashSet<String>,
+    /// `responseStreamingMode` of the run's project, read at each turn start, as T3's
+    /// `RunExecutionService` reads it per run.
+    streaming_mode: crate::ResponseStreamingMode,
 }
 
 /// At most this many provider turns are tracked as having background work; a provider that
@@ -187,6 +191,7 @@ impl Inner {
             .as_ref()
             .is_some_and(|f| f["class"] != "validation_error");
         let checkpointing = self.checkpoints.is_some();
+        let inner = self.clone();
         let next = self
             .write(move |tx| {
                 // A run with a checkpoint scope is captured first (`checkpoint.capture`): a
@@ -205,22 +210,51 @@ impl Inner {
                 } else {
                     status
                 };
-                finish_run_as(tx, &thread_id, &run_id, status, persisted, failure)?;
-                // A failure holds the queue, so queued messages do not hit the same wall.
-                if held_on_failure {
+                let ended = finish_run_as(
+                    tx,
+                    &thread_id,
+                    &run_id,
+                    status,
+                    persisted,
+                    failure,
+                    crate::commands::IdleWrite::TurnEnd,
+                )?;
+                // A failure holds the queue, so queued messages do not hit the same wall. A
+                // late end of a run that already ended (a start failing after Force stop)
+                // holds nothing.
+                if held_on_failure && ended {
                     hold_queue(tx, &thread_id)?;
                 }
-                if captured {
-                    return Ok(None);
-                }
-                let mut effects = crate::families::on_run_end(tx, &thread_id, &run_id)?;
-                effects.extend(start_next_queued(tx, &thread_id, None)?);
-                Ok(Some(effects))
+                // `checkpoint.capture` waits in the thread's lane, as T3's effect: a rollback
+                // admitted meanwhile runs after it and sees the run completed. The capture ends
+                // the run's end.
+                let effects = if captured {
+                    vec![crate::commands::Effect::CaptureCheckpoint {
+                        thread_id: thread_id.clone(),
+                        run_id: run_id.clone(),
+                    }]
+                } else {
+                    let mut effects = crate::families::on_run_end(tx, &thread_id, &run_id)?;
+                    effects.extend(start_next_queued(tx, &thread_id, None)?);
+                    effects
+                };
+                // Lane slots are taken under the store lock, so lane order is commit order.
+                let reserved = effects
+                    .into_iter()
+                    .map(|effect| inner.reserve_effect(effect))
+                    .collect::<Vec<_>>();
+                Ok((reserved, captured))
             })
             .await;
         match next {
-            Ok(Some(effects)) => effects.into_iter().for_each(|e| self.spawn_effect(e)),
-            Ok(None) => return self.capture_run(thread, run).await,
+            Ok((reserved, captured)) => {
+                reserved
+                    .into_iter()
+                    .for_each(crate::engine::ReservedEffect::start);
+                if captured {
+                    return;
+                }
+            }
             Err(e) => eprintln!("conn-engine: could not end run: {e}"),
         }
         if let Some(observer) = &self.observer {
@@ -234,7 +268,13 @@ impl Inner {
         let (tid, rid) = (thread_id.to_owned(), run_id.to_owned());
         let result = self
             .write(move |tx| match tx.entity(&tid, "runs", &rid)? {
-                Some(run) => crate::commands::settle_provider_thread(tx, &tid, &run, "error"),
+                Some(run) => crate::commands::settle_provider_thread(
+                    tx,
+                    &tid,
+                    &run,
+                    "error",
+                    crate::commands::IdleWrite::TurnEnd,
+                ),
                 None => Ok(()),
             })
             .await;
@@ -610,6 +650,12 @@ impl Inner {
         {
             let mut state = lock(&live.state);
             state.provider_thread = Some(provider_thread.clone());
+            state.streaming_mode = self
+                .host
+                .as_ref()
+                .map_or_else(crate::ResponseStreamingMode::default, |host| {
+                    host.response_streaming_mode(context.thread["projectId"].as_str())
+                });
             state.active = Some(ActiveRun {
                 run_id: run_id.to_owned(),
                 root_node_id: root.clone(),
@@ -780,16 +826,28 @@ impl Inner {
         live: Arc<LiveThread>,
         mut events: mpsc::Receiver<ProviderEvent>,
     ) {
-        let mut held: Vec<(String, Draft)> = Vec::new();
-        let mut deadline: Option<Instant> = None;
+        let mut streaming = AssistantStreaming::new(lock(&live.state).streaming_mode);
+        // Held turn items whose position is taken (T3's `reservedHeldTurnItemIds`).
+        let mut reserved: Vec<(String, String)> = Vec::new();
         loop {
-            let event = match deadline {
-                Some(at) => tokio::select! {
+            // A held snapshot is stored once its message was idle long enough. The timer
+            // only runs on a clock that moves by itself; on a `ManualClock` a snapshot comes
+            // due when the clock is moved, as a sleep on T3's `TestClock`.
+            let wake = streaming
+                .next_idle_flush_at()
+                .filter(|_| self.clock.timers_fire())
+                .map(|at| {
+                    let wait = at.saturating_sub(self.clock.now_millis());
+                    (at, Instant::now() + Duration::from_millis(wait))
+                });
+            let event = match wake {
+                Some((at, when)) => tokio::select! {
                     event = events.recv() => event,
                     () = live.closed.notified() => None,
-                    () = sleep_until(at) => {
-                        deadline = None;
-                        self.commit(std::mem::take(&mut held).into_iter().map(|(_, d)| d).collect()).await;
+                    () = sleep_until(when) => {
+                        // The timer slept until `at`; the clock may read a little earlier.
+                        let now = self.clock.now_millis().max(at);
+                        self.commit(streaming.take_idle_flushes(now)).await;
                         continue;
                     }
                 },
@@ -799,7 +857,13 @@ impl Inner {
                 },
             };
             let Some(event) = event else { break };
-            live.touch(self.clock.now_millis());
+            let now = self.clock.now_millis();
+            live.touch(now);
+            // Snapshots that came due before this event go first, as T3's idle tick would.
+            if streaming.next_idle_flush_at().is_some_and(|at| at <= now) {
+                self.commit(streaming.take_idle_flushes(now)).await;
+            }
+            streaming.set_mode(lock(&live.state).streaming_mode);
             // Live command output goes to the hub, not the store.
             if let ProviderEvent::CommandOutputDelta {
                 thread_id: output_thread,
@@ -870,44 +934,56 @@ impl Inner {
                         active.provider_turn_id = Some(id);
                     }
                     let running = draft.payload["status"] == "running";
-                    self.commit_after(&mut held, &mut deadline, vec![draft])
-                        .await;
+                    self.commit(vec![draft]).await;
                     if running && let Some(run_id) = &run_id {
                         self.deliver_deferred_steers(&thread_id, run_id).await;
                     }
                 }
-                Translated::Event(draft) if draft.payload["streaming"] == true => {
-                    let key = format!("{}:{}", draft.event_type, draft.payload["id"]);
-                    match held.iter_mut().find(|(k, _)| *k == key) {
-                        Some(slot) => slot.1 = draft,
-                        None => held.push((key, draft)),
-                    }
-                    deadline.get_or_insert_with(|| Instant::now() + self.stream_flush);
-                }
                 Translated::Event(draft) => {
-                    self.commit_after(&mut held, &mut deadline, vec![draft])
-                        .await;
+                    let held_item = (draft.event_type == "turn-item.updated"
+                        && draft.payload["streaming"] == true)
+                        .then(|| {
+                            (
+                                draft.thread_id.clone(),
+                                draft.payload["id"].as_str().unwrap_or_default().to_owned(),
+                            )
+                        });
+                    match streaming.filter(draft, self.clock.now_millis()) {
+                        Some(draft) => self.commit(vec![draft]).await,
+                        // Held text writes nothing, so its item would take a position only
+                        // when written, behind every item that began after it.
+                        None => {
+                            if let Some(key) = held_item
+                                && !key.1.is_empty()
+                                && !reserved.contains(&key)
+                            {
+                                self.reserve_position(&key.0, &key.1).await;
+                                if reserved.len() >= crate::streaming::MAX_TRACKS {
+                                    reserved.remove(0);
+                                }
+                                reserved.push(key);
+                            }
+                        }
+                    }
                 }
                 Translated::CreateThread(thread) => {
-                    self.commit_after(&mut held, &mut deadline, vec![]).await;
                     self.create_provider_thread(thread).await;
                 }
                 Translated::Subagent(draft, subagent) => {
-                    self.commit_after(&mut held, &mut deadline, vec![draft])
-                        .await;
+                    self.commit(vec![draft]).await;
                     self.sync_subagent_thread_model(subagent).await;
                 }
                 Translated::Steer { message_id, status } => {
-                    self.commit_after(&mut held, &mut deadline, vec![]).await;
                     self.steer_updated(&thread_id, message_id, status).await;
                 }
                 Translated::Continuation(detail, notification) => {
-                    self.commit_after(&mut held, &mut deadline, vec![]).await;
                     self.request_continuation(&thread_id, detail, notification)
                         .await;
                 }
                 Translated::Terminal(status, failure, broken) => {
-                    self.commit_after(&mut held, &mut deadline, vec![]).await;
+                    // The root run's messages are closed; none of its text is flushed later.
+                    streaming.forget_thread(&thread_id);
+                    reserved.retain(|(tid, _)| *tid != thread_id);
                     if let Some(run_id) = run_id {
                         live.take_active();
                         self.end_run(&thread_id, &run_id, status, failure).await;
@@ -918,8 +994,6 @@ impl Inner {
                 }
             }
         }
-        self.commit(held.into_iter().map(|(_, d)| d).collect())
-            .await;
         if let Some(active) = live.take_active() {
             self.end_run(
                 &thread_id,
@@ -1081,17 +1155,15 @@ impl Inner {
         }
     }
 
-    /// Writes held streaming rows first, so the log keeps the provider's order.
-    async fn commit_after(
-        &self,
-        held: &mut Vec<(String, Draft)>,
-        deadline: &mut Option<Instant>,
-        drafts: Vec<Draft>,
-    ) {
-        *deadline = None;
-        let mut all: Vec<Draft> = std::mem::take(held).into_iter().map(|(_, d)| d).collect();
-        all.extend(drafts);
-        self.commit(all).await;
+    /// Takes the next position for a held turn item (T3's `TurnItemPositionStore.allocate`).
+    async fn reserve_position(&self, thread_id: &str, item_id: &str) {
+        let (tid, iid) = (thread_id.to_owned(), item_id.to_owned());
+        if let Err(e) = self
+            .write(move |tx| tx.reserve_turn_item_position(&tid, &iid))
+            .await
+        {
+            eprintln!("conn-engine: could not reserve a turn item position: {e}");
+        }
     }
 
     async fn commit(&self, drafts: Vec<Draft>) {
@@ -1708,11 +1780,28 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
                 to_json(&provider_session),
             ))
         }
-        ProviderEvent::ProviderThreadUpdated { provider_thread } => Translated::Event(Draft::new(
-            thread_id,
-            "provider-thread.updated",
-            to_json(&provider_thread),
-        )),
+        // T3's `ProviderEventIngestor`: a provider thread goes to its app thread (a subagent's
+        // child thread has its own).
+        ProviderEvent::ProviderThreadUpdated { provider_thread } => {
+            let payload = to_json(&provider_thread);
+            let target = payload["appThreadId"]
+                .as_str()
+                .unwrap_or(thread_id)
+                .to_owned();
+            Translated::Event(Draft::new(&target, "provider-thread.updated", payload))
+        }
+        // A provider turn of another thread (a subagent's turn on its child thread) goes to
+        // that thread, under its own node, outside the run.
+        ProviderEvent::ProviderTurnUpdated {
+            thread_id: Some(other),
+            provider_turn,
+        } if other.as_str() != thread_id => {
+            let payload = to_json(&provider_turn);
+            let node = payload["nodeId"].as_str().map(str::to_owned);
+            Translated::Event(
+                Draft::new(other.as_str(), "provider-turn.updated", payload).node(node.as_deref()),
+            )
+        }
         ProviderEvent::ProviderTurnUpdated { provider_turn, .. } => {
             let payload = to_json(&provider_turn);
             let id = from_json(payload["id"].clone());
@@ -1736,6 +1825,17 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
         }
         ProviderEvent::TurnItemUpdated { turn_item } => {
             Translated::Event(scoped("turn-item.updated", to_json(&turn_item)))
+        }
+        ProviderEvent::RuntimeRequestUpdated {
+            thread_id: Some(other),
+            runtime_request,
+        } if other.as_str() != thread_id => {
+            let payload = to_json(&runtime_request);
+            let node = payload["nodeId"].as_str().map(str::to_owned);
+            Translated::Event(
+                Draft::new(other.as_str(), "runtime-request.updated", payload)
+                    .node(node.as_deref()),
+            )
         }
         ProviderEvent::RuntimeRequestUpdated {
             runtime_request, ..

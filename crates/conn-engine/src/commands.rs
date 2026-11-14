@@ -1336,6 +1336,7 @@ struct RuntimeRequestRespond {
     decision: Option<Value>,
     feedback: Option<String>,
     answers: Option<Value>,
+    attachments_by_question_id: Option<Value>,
 }
 
 fn runtime_request_respond(tx: &mut Tx<'_>, command: Value) -> Outcome {
@@ -1360,6 +1361,7 @@ fn runtime_request_respond(tx: &mut Tx<'_>, command: Value) -> Outcome {
     }
     let node = request["nodeId"].as_str().map(str::to_owned);
     tx.append(Draft::new(&c.thread_id, "runtime-request.updated", request).node(node.as_deref()))?;
+    settle_request_rows(tx, &c, node.as_deref())?;
     Ok(vec![Effect::Respond {
         thread_id: c.thread_id,
         request: json!({
@@ -1369,6 +1371,85 @@ fn runtime_request_respond(tx: &mut Tx<'_>, command: Value) -> Outcome {
             "answers": c.answers,
         }),
     }])
+}
+
+/// The answered request's node and its turn item end (`runtime-request.respond` in T3's
+/// `Orchestrator`): `cancelled` for a declined or cancelled request, else `completed`; a
+/// question's item carries the answer (`questionAnswer`).
+fn settle_request_rows(
+    tx: &mut Tx<'_>,
+    c: &RuntimeRequestRespond,
+    node_id: Option<&str>,
+) -> StoreResult<()> {
+    let Some(node_id) = node_id else {
+        return Ok(());
+    };
+    let status = match c.decision.as_ref().and_then(Value::as_str) {
+        Some("decline" | "cancel") => "cancelled",
+        _ => "completed",
+    };
+    let now = tx.now().to_owned();
+    if let Some(mut node) = tx.entity(&c.thread_id, "nodes", node_id)? {
+        node["status"] = json!(status);
+        node["completedAt"] = json!(now);
+        let run = node["runId"].as_str().map(str::to_owned);
+        tx.append(
+            Draft::new(&c.thread_id, "node.updated", node)
+                .run(run.as_deref())
+                .node(Some(node_id)),
+        )?;
+    }
+    let item = tx
+        .entities_where(&c.thread_id, "turnItems", "nodeId", node_id)?
+        .into_iter()
+        .filter(|item| {
+            matches!(
+                item["type"].as_str(),
+                Some("approval_request" | "user_input_request")
+            ) && item["requestId"] == c.request_id.as_str()
+        })
+        .min_by_key(|item| item["ordinal"].as_u64().unwrap_or(u64::MAX));
+    if let Some(mut item) = item {
+        if item["type"] == "user_input_request"
+            && let Some(answers) = &c.answers
+        {
+            // T3 keeps each question's answer list (`{answers: [...]}` → `[...]`).
+            let answers: serde_json::Map<String, Value> = answers
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(id, answer)| {
+                    let answer = answer
+                        .get("answers")
+                        .cloned()
+                        .unwrap_or_else(|| answer.clone());
+                    (id.clone(), answer)
+                })
+                .collect();
+            let questions: serde_json::Map<String, Value> = item["questions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|q| Some((q["id"].as_str()?.to_owned(), q["question"].clone())))
+                .collect();
+            item["questionAnswer"] = json!({
+                "requestId": c.request_id,
+                "answers": answers,
+                "attachmentsByQuestionId": c.attachments_by_question_id.clone().unwrap_or_else(|| json!({})),
+                "questionTextById": questions,
+            });
+        }
+        item["status"] = json!(status);
+        item["completedAt"] = json!(now);
+        item["updatedAt"] = json!(now);
+        let run = item["runId"].as_str().map(str::to_owned);
+        tx.append(
+            Draft::new(&c.thread_id, "turn-item.updated", item)
+                .run(run.as_deref())
+                .node(Some(node_id)),
+        )?;
+    }
+    Ok(())
 }
 
 /// Replaces fields of the thread record and records it as `event_type`.
@@ -1625,12 +1706,33 @@ pub(crate) fn finish_run(
     status: &str,
     failure: Option<Value>,
 ) -> StoreResult<()> {
-    finish_run_as(tx, thread_id, run_id, status, status, failure)
+    finish_run_as(
+        tx,
+        thread_id,
+        run_id,
+        status,
+        status,
+        failure,
+        IdleWrite::WhileActive,
+    )
+    .map(drop)
+}
+
+/// When a run's end writes its provider thread `idle`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum IdleWrite {
+    /// A provider terminal or a failed start: always, as T3's `writeFinalRunEvents` writes
+    /// the run's provider thread at every turn end.
+    TurnEnd,
+    /// A cancel, Force stop, delete or restart recovery: only while the row still says
+    /// `active`.
+    WhileActive,
 }
 
 /// Ends a run's items with `status`, and the run and its root node with `persisted`: a
 /// completed provider turn whose checkpoint is still to be taken persists `waiting`, with no
-/// `completedAt` (`RunExecutionService.ts`).
+/// `completedAt` (`RunExecutionService.ts`). Returns whether it ended the run: `false` when
+/// the run is gone or already ended.
 pub(crate) fn finish_run_as(
     tx: &mut Tx<'_>,
     thread_id: &str,
@@ -1638,12 +1740,13 @@ pub(crate) fn finish_run_as(
     status: &str,
     persisted: &str,
     failure: Option<Value>,
-) -> StoreResult<()> {
+    idle: IdleWrite,
+) -> StoreResult<bool> {
     let Some(mut run) = tx.entity(thread_id, "runs", run_id)? else {
-        return Ok(());
+        return Ok(false);
     };
     if !is_live(&run) {
-        return Ok(());
+        return Ok(false);
     }
     if status == "interrupted" {
         write_interrupt_result(tx, thread_id, &run, None)?;
@@ -1747,19 +1850,22 @@ pub(crate) fn finish_run_as(
         node["completedAt"] = completed_at;
         tx.append(draft("node.updated", node))?;
     }
-    settle_provider_thread(tx, thread_id, &run, "idle")?;
-    tx.compact_streaming(thread_id)
+    settle_provider_thread(tx, thread_id, &run, "idle", idle)?;
+    // Positions held text took and never used.
+    tx.release_turn_item_positions(thread_id)?;
+    Ok(true)
 }
 
-/// The run's provider thread goes back from `active` when the run ends: `idle`, or `error`
-/// when the provider says the native thread cannot take another turn
-/// (`finalProviderThreadStatus` in T3's `RunExecutionService`). Only while this run is the
-/// thread's last (`lastRunOrdinal`), so a later run's row is never overwritten.
+/// The run's provider thread when the run ends: `idle`, or `error` when the provider says the
+/// native thread cannot take another turn (`finalProviderThreadStatus` in T3's
+/// `RunExecutionService`). Only while this run is the thread's last (`lastRunOrdinal`), so a
+/// later run's row is never overwritten; with [`IdleWrite::WhileActive`] only from `active`.
 pub(crate) fn settle_provider_thread(
     tx: &mut Tx<'_>,
     thread_id: &str,
     run: &Value,
     status: &str,
+    idle: IdleWrite,
 ) -> StoreResult<()> {
     let Some(id) = run["providerThreadId"].as_str() else {
         return Ok(());
@@ -1768,9 +1874,11 @@ pub(crate) fn settle_provider_thread(
         return Ok(());
     };
     let current = thread["status"].as_str().unwrap_or_default();
-    if !(current == "active" || (status == "error" && current == "idle"))
-        || thread["lastRunOrdinal"] != run["ordinal"]
-    {
+    let from_ok = match idle {
+        IdleWrite::TurnEnd => true,
+        IdleWrite::WhileActive => current == "active" || (status == "error" && current == "idle"),
+    };
+    if !from_ok || thread["lastRunOrdinal"] != run["ordinal"] {
         return Ok(());
     }
     thread["status"] = json!(status);
@@ -2045,58 +2153,22 @@ fn thread_mark_unread(tx: &mut Tx<'_>, command: Value) -> Outcome {
     })
 }
 
-fn pull_request_key(link: &Value) -> (Value, Value, Value) {
-    let lower = |v: &Value| json!(v.as_str().unwrap_or_default().to_lowercase());
-    (
-        lower(&link["host"]),
-        lower(&link["repository"]),
-        link["number"].clone(),
-    )
-}
-
+/// `thread.pull-request.link` and `unlink`: T3's decider (`pull_requests.rs`). T3 emits
+/// `thread.pull-request-synced` with the thread also when nothing changed.
 fn thread_pull_request_link(tx: &mut Tx<'_>, command: Value) -> Outcome {
-    let key = pull_request_key(&command);
-    let mut link = json!({
-        "host": command["host"],
-        "repository": command["repository"],
-        "number": command["number"],
-        "url": command["url"],
-        "source": command["source"],
-        "linkedAt": tx.now(),
-        "snapshot": null,
-        "stack": null,
-    });
-    if command["repositoryWebUrl"].is_string() {
-        link["repositoryWebUrl"] = command["repositoryWebUrl"].clone();
-    }
-    thread_patch(tx, &command, "thread.metadata-updated", |t, now| {
-        let mut links = t["pullRequests"].as_array().cloned().unwrap_or_default();
-        if links
-            .iter()
-            .any(|l| pull_request_key(l) == key && l["source"] != "stack-dismissed")
-        {
-            return Ok(());
-        }
-        links.retain(|l| pull_request_key(l) != key);
-        links.push(link);
-        t["pullRequests"] = json!(links);
-        t["updatedAt"] = json!(now);
-        Ok(())
-    })
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    let thread = live_thread(tx, &thread_id)?;
+    let now = tx.now().to_owned();
+    let updated = crate::pull_requests::decide(&thread, &command, &now).unwrap_or(thread);
+    let cid = command["commandId"].as_str().map(str::to_owned);
+    tx.append(
+        Draft::new(&thread_id, "thread.pull-request-synced", updated).command(cid.as_deref()),
+    )?;
+    Ok(vec![])
 }
 
 fn thread_pull_request_unlink(tx: &mut Tx<'_>, command: Value) -> Outcome {
-    let key = pull_request_key(&command);
-    thread_patch(tx, &command, "thread.metadata-updated", |t, now| {
-        let mut links = t["pullRequests"].as_array().cloned().unwrap_or_default();
-        let before = links.len();
-        links.retain(|l| pull_request_key(l) != key);
-        if links.len() != before {
-            t["pullRequests"] = json!(links);
-            t["updatedAt"] = json!(now);
-        }
-        Ok(())
-    })
+    thread_pull_request_link(tx, command)
 }
 
 /// Dismisses a pending user question without an answer: the provider gets an empty answer.

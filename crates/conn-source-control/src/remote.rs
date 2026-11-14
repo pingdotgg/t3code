@@ -160,7 +160,7 @@ pub fn clone_url_protocol(url: &str) -> Option<CloneProtocol> {
 }
 
 /// `decodeURIComponent`: `None` where JavaScript throws.
-fn decode_uri_component(text: &str) -> Option<String> {
+pub(crate) fn decode_uri_component(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut index = 0;
@@ -245,30 +245,17 @@ fn lower_case_remote(value: &str) -> String {
 /// `parseGitRemoteRepository`: the host and repository path a remote names, lower case and
 /// without a port, or `None` for a remote that names no host, such as a local path.
 ///
-/// For a URL this reads the authority and path the way `new URL` splits them; it does not
-/// apply the URL parser's percent-encoding or IDNA steps.
+/// A URL goes through the WHATWG parser (`url`), as `new URL` reads it.
 pub fn parse_git_remote_repository(value: &str) -> Option<(String, String)> {
     let normalized = lower_case_remote(value);
     let is_url = ["ssh://", "https://", "http://", "git://"]
         .iter()
         .any(|scheme| normalized.starts_with(scheme));
     if is_url {
-        let raw = value.trim().to_lowercase();
-        let (scheme, rest) = raw.split_once("://")?;
-        let special = matches!(scheme, "http" | "https");
-        let end = rest
-            .find(|c: char| matches!(c, '/' | '?' | '#') || (special && c == '\\'))
-            .unwrap_or(rest.len());
-        let authority = rest.get(..end)?;
-        let tail = rest.get(end..)?;
-        let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-        let hostname = if host_port.starts_with('[') {
-            host_port.get(..=host_port.find(']')?)?
-        } else {
-            host_port.split(':').next().unwrap_or_default()
-        };
-        let path_end = tail.find(['?', '#']).unwrap_or(tail.len());
-        let path = tail.get(..path_end)?.trim_end_matches('/');
+        // `new URL(value.trim().toLowerCase())`: the WHATWG parser, IDNA and escapes included.
+        let url = url::Url::parse(&value.trim().to_lowercase()).ok()?;
+        let hostname = url.host_str().unwrap_or_default();
+        let path = url.path().trim_end_matches('/');
         let path = path.strip_suffix(".git").unwrap_or(path);
         let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         return (!hostname.is_empty() && segments.len() > 1)
