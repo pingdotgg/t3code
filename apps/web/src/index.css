@@ -151,16 +151,19 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+/* env() goes undefined in a minimized window, so Windows supplies --wco-fallback-* below. */
 .wco {
-  --native-titlebar-height: env(titlebar-area-height, 0px);
-  --workspace-topbar-height: max(40px, env(titlebar-area-height, 52px));
+  --native-titlebar-height: env(titlebar-area-height, var(--wco-fallback-height, 0px));
+  --workspace-topbar-height: max(40px, env(titlebar-area-height, var(--wco-fallback-height, 52px)));
   --workspace-controls-top: env(titlebar-area-y, 0px);
   --workspace-controls-left: calc(env(titlebar-area-x, 0px) + 0.75rem);
   --workspace-controls-right: calc(
-    100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 0.75rem
+    100vw - env(titlebar-area-width, calc(100vw - var(--wco-fallback-controls-width, 0px))) -
+      env(titlebar-area-x, 0px) + 0.75rem
   );
   --workspace-native-controls-inset: calc(
-    100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 0.75rem
+    100vw - env(titlebar-area-width, calc(100vw - var(--wco-fallback-controls-width, 0px))) -
+      env(titlebar-area-x, 0px) + 0.75rem
   );
 }
 
@@ -1756,6 +1759,9 @@ body {
 
 .electron-windows {
   --desktop-window-right-resize-inset: 6px;
+  /* Matches DesktopWindow TITLEBAR_HEIGHT and the width of the native window buttons at 100% zoom. */
+  --wco-fallback-height: 40px;
+  --wco-fallback-controls-width: 137px;
 }
 
 /* App-chrome grain. Baked into each surface's own background (behind
