@@ -3039,6 +3039,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           while (state.parentSubagent !== null) state = state.parentSubagent.parentState;
           if (state.wake?.replaying === true) {
             state.wake.events.push(event);
+            noteHeldEvent(state, sessionId, event);
             return true;
           }
           if (!isRoot && !isRequest) return false;
