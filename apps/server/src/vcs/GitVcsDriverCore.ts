@@ -4738,12 +4738,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const { stdout } = yield* executeWorktreeList("GitVcsDriver.createWorktree.cancel", cwd, []);
     const registered = parseWorktreeBranchPaths(stdout).get(branch);
     if (registered === undefined) return;
-    // Git records the real path.
+    // Git ran in cwd and records the real path.
+    const requested = path.resolve(cwd, worktreePath);
     const target = yield* fileSystem
-      .realPath(worktreePath)
-      .pipe(Effect.orElseSucceed(() => path.resolve(worktreePath)));
+      .realPath(requested)
+      .pipe(Effect.orElseSucceed(() => requested));
     if (path.resolve(cwd, registered) !== target) return;
-    yield* removeWorktree({ cwd, path: worktreePath, force: true });
+    yield* removeWorktree({ cwd, path: requested, force: true });
   });
 
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
@@ -4850,7 +4851,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : {}),
       },
     );
-    // Until the caller claims the worktree, a cancel leaves its cleanup to this call.
+    // Set inside the claim's uninterruptible region: a pending cancel still surfaces as it ends.
     let claimed = false;
     const onWorktreeClaimed = progress?.onWorktreeClaimed;
     yield* (
