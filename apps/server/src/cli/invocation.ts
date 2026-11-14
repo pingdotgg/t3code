@@ -9,11 +9,14 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { resolveLauncherPath } from "../cloud/pinnedRuntime.ts";
+
+const PINNED_RUNTIME_ENTRY = /^(.*)\/runtime\/versions\/[^/]+\/t3$/;
 
 export type CliRunner = "npx" | "pnpm dlx" | "bunx";
 
 /** Detection is best-effort; callers must fail closed to a plain `t3` command. */
-function detectCliRunner(entryPath: string): CliRunner | null {
+export function detectCliRunner(entryPath: string): CliRunner | null {
   const path = entryPath.replaceAll("\\", "/");
   if (path.includes("/_npx/")) {
     return "npx";
@@ -67,6 +70,21 @@ export const resolveServerInstallation = Effect.gen(function* () {
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const entry = yield* fs.realPath(yield* resolveEntryPath);
+  const runtime = PINNED_RUNTIME_ENTRY.exec(entry);
+  if (runtime) {
+    const launcher = yield* resolveLauncherPath;
+    if (launcher === undefined) return null;
+    // Fails for a runtime started directly, as SSH launches do, or through a copy.
+    const link = yield* fs.readLink(launcher);
+    // Keep the home as the link spells it; `t3 update` only repoints links into that spelling.
+    const linked = PINNED_RUNTIME_ENTRY.exec(path.resolve(path.dirname(launcher), link));
+    if (!linked || (yield* fs.realPath(linked[1] || "/")) !== (runtime[1] || "/")) return null;
+    return {
+      kind: "t3-launcher",
+      launcher,
+      baseDir: linked[1] || "/",
+    } satisfies ServerInstallation;
+  }
   const match = /^(.*)\/lib\/node_modules\/t3\/(?:dist\/bin\.mjs|bin\/t3\.mjs)$/.exec(entry);
   if (!match) {
     const runner = detectCliRunner(entry);
@@ -127,7 +145,7 @@ const powershellWord = (value: string) =>
     .replaceAll("$", "`$")
     .replace(/["\u201C\u201D\u201E]/g, "$&$&")}"`;
 
-const hostShellWord = (platform: NodeJS.Platform, value: string) =>
+export const hostShellWord = (platform: NodeJS.Platform, value: string) =>
   platform === "win32" ? powershellWord(value) : shellWord(value);
 
 /** Script installs have no single launcher; desktop shims and standalone binaries do. */
@@ -160,8 +178,17 @@ export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand
     const shim = (yield* HostProcess.Environment).T3CODE_CLI_PATH?.trim();
     const fs = yield* FileSystem.FileSystem;
     const real = (file: string) => fs.realPath(file).pipe(Effect.orElseSucceed(() => null));
-    const shimReal = shim ? yield* real(shim) : null;
-    if (shimReal === null || shimReal === (yield* real(onPath))) {
+    // Windows `t3.cmd` shims are text files that never realpath to the executable they run.
+    const own = shim
+      ? yield* real(shim)
+      : platform !== "win32" && (yield* HostProcess.IsExecutable)
+        ? yield* resolveEntryPath.pipe(
+            Effect.flatMap((entry) =>
+              real(entry).pipe(Effect.map((resolved) => resolved ?? entry)),
+            ),
+          )
+        : null;
+    if (own === null || own === (yield* real(onPath))) {
       return { command: withArgs(command), launcher: false };
     }
   }

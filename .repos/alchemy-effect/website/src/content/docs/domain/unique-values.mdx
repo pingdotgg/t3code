@@ -1,0 +1,172 @@
+---
+title: Unique values
+description: Keep a value unique across every customer by making the value itself an aggregate.
+---
+
+Usernames must be unique across all customers, but each customer is its own aggregate and can't see the others. Make the rule its own aggregate, keyed by the value it protects.
+
+## Make the username an aggregate
+
+Each username is one instance. Two customers claiming the same name send commands to the same instance, which handles one at a time, so one of them wins.
+
+```typescript
+// packages/domain/src/Customer/UsernameClaim.aggregate.ts
+import * as Domain from "@alchemy.run/domain";
+import * as Schema from "effect/Schema";
+import { ClaimUsername, UsernameClaimed, UsernameTaken } from "./ClaimUsername.command.ts";
+import { CustomerId } from "./Customer.id.ts";
+import { Username } from "./Username.ts";
+
+/**
+ * One username, and who holds it. Uniqueness spans every customer, so the
+ * invariant is its own aggregate, keyed by the username: two customers
+ * claiming the same name race on this one instance, and one of them wins.
+ */
+export class UsernameClaim extends Domain.Aggregate("UsernameClaim", {
+  id: Username,
+  state: Schema.Union([
+    Schema.TaggedStruct("Free", {}),
+    Schema.TaggedStruct("Claimed", { customerId: CustomerId }),
+  ]),
+  initial: { _tag: "Free" },
+  commands: [ClaimUsername],
+  decide: {
+    ClaimUsername: (s, cmd) =>
+      s._tag === "Free"
+        ? [new UsernameClaimed({ customerId: cmd.customerId })]
+        : s.customerId === cmd.customerId
+          ? []
+          : new UsernameTaken(),
+  },
+  evolve: {
+    UsernameClaimed: (_, e) => ({ _tag: "Claimed" as const, customerId: e.customerId }),
+  },
+}) {}
+```
+
+Claiming a name you already hold records nothing, so a repeated claim is harmless.
+
+## Declare the claim
+
+```typescript
+// packages/domain/src/Customer/ClaimUsername.command.ts
+import * as Domain from "@alchemy.run/domain";
+import { CustomerId } from "./Customer.id.ts";
+import { Username } from "./Username.ts";
+
+/** Someone else holds this username. */
+export class UsernameTaken extends Domain.Rejection("UsernameTaken") {}
+
+export class UsernameClaimed extends Domain.Event("UsernameClaimed", { customerId: CustomerId }) {}
+
+/**
+ * Reserve a username for a customer. Sent by `UsernameReservation`; claiming
+ * a username the customer already holds records nothing.
+ */
+export class ClaimUsername extends Domain.Command("ClaimUsername", {
+  target: Username,
+  input: { customerId: CustomerId },
+  events: [UsernameClaimed],
+  rejects: [UsernameTaken],
+}) {}
+```
+
+## Claim it before registering
+
+Registration records a request, and a policy claims the username before the customer counts as registered. A taken name rejects the registration, and nothing that follows a registration happens.
+
+```typescript
+// packages/domain/src/Customer/UsernameReservation.policy.ts
+import * as Domain from "@alchemy.run/domain";
+import * as Effect from "effect/Effect";
+import { ClaimUsername } from "./ClaimUsername.command.ts";
+import { ConfirmRegistration } from "./ConfirmRegistration.command.ts";
+import { Customer } from "./Customer.aggregate.ts";
+import { RegistrationRequested } from "./RegisterCustomer.command.ts";
+import { RejectRegistration } from "./RejectRegistration.command.ts";
+import { UsernameClaim } from "./UsernameClaim.aggregate.ts";
+
+/**
+ * Reserve first, then commit: claim the username, and only then register the
+ * customer. Nothing downstream (the main account) happens for a registration
+ * whose username is taken.
+ */
+export class UsernameReservation extends Domain.Policy("UsernameReservation", {
+  from: Customer,
+  on: [RegistrationRequested],
+}) {}
+
+export const UsernameReservationLive = UsernameReservation.toLayer(
+  Effect.gen(function* () {
+    const claims = yield* UsernameClaim;
+    const customers = yield* Customer;
+    return Effect.fn(function* ({ source, event }) {
+      yield* claims.send(event.username, new ClaimUsername({ customerId: source.id })).pipe(
+        Effect.andThen(customers.send(source, new ConfirmRegistration())),
+        Effect.catchTag("UsernameTaken", () =>
+          customers.send(source, new RejectRegistration({ reason: "username taken" })),
+        ),
+      );
+    });
+  }),
+);
+```
+
+See [Saga](/domain/saga#take-the-step-you-cant-undo-first) for why the claim comes first.
+
+## Test it
+
+```typescript
+// packages/domain/test/usernames.test.ts
+import { it } from "@effect/vitest";
+import { Story } from "@alchemy.run/domain/Story";
+import { customer } from "../src/Actor.ts";
+import * as Layer from "effect/Layer";
+import { Bank, BankHandlers } from "../src/Bank.model.ts";
+import { MemoryLedgerStore } from "../src/Ledger/LedgerStore.ts";
+import { CurrentActor } from "../src/CurrentActor.context.ts";
+import { ClaimUsername, UsernameClaimed, UsernameTaken } from "../src/Customer/ClaimUsername.command.ts";
+import { CustomerId } from "../src/Customer/Customer.id.ts";
+import { Customer } from "../src/Customer/Customer.aggregate.ts";
+import { RegisterCustomer, RegistrationRequested } from "../src/Customer/RegisterCustomer.command.ts";
+import { RegistrationRejected } from "../src/Customer/RejectRegistration.command.ts";
+import { UsernameClaim } from "../src/Customer/UsernameClaim.aggregate.ts";
+import { Username } from "../src/Customer/Username.ts";
+import { FraudCheck } from "../src/Fraud/FraudCheck.external.ts";
+import { Payments } from "../src/Settlement/Payments.external.ts";
+
+const story = Story.make(Bank, {
+  layer: BankHandlers.pipe(Layer.provide(MemoryLedgerStore)),
+  stub: [FraudCheck, Payments],
+});
+const sam = Username.make("sam");
+const samsClaim = UsernameClaim.ref("sam");
+
+it.effect("a username can only be claimed once", () =>
+  story(
+    Story.when(samsClaim, new ClaimUsername({ customerId: CustomerId.make("c-1") })),
+    Story.then(samsClaim, new UsernameClaimed({ customerId: CustomerId.make("c-1") })),
+    Story.when(samsClaim, new ClaimUsername({ customerId: CustomerId.make("c-2") })),
+    Story.rejected(new UsernameTaken()),
+  ),
+);
+
+it.effect("registering with a taken username is rejected", () =>
+  story(
+    Story.given(samsClaim, new UsernameClaimed({ customerId: CustomerId.make("c-1") })),
+    Story.provide(CurrentActor, customer("c-2")),
+    Story.when(Customer.ref("c-2"), new RegisterCustomer({ name: "alex", username: sam })),
+    Story.then(
+      Customer.ref("c-2"),
+      new RegistrationRequested({ name: "alex", username: sam }),
+      new RegistrationRejected({ username: sam, reason: "username taken" }),
+    ),
+  ),
+);
+```
+
+The second customer's registration is requested, the policy finds the name taken, and the registration is rejected. No account is opened for it.
+
+:::note
+The full registration flow is in the [bank example](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-domain/packages/domain/src/Customer).
+:::

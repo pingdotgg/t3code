@@ -5,35 +5,31 @@ import { localRuntimeLayer, startTestWorker } from "./helpers/runtime.ts";
 
 layer(localRuntimeLayer)("Module registry defaults", (it) => {
   for (const legacy of [false, true]) {
-    it.effect(
-      `queries D1 with the ${legacy ? "legacy" : "default"} registry`,
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startTestWorker({
-            name: `module-registry-d1-${legacy ? "legacy" : "default"}`,
-            compatibilityDate: "2026-08-31",
-            compatibilityFlags: legacy ? ["legacy_module_registry"] : [],
-            bindings: [
-              D1.local({ binding: "DB", id: `module-registry-${legacy}` }),
-            ],
-            modules: [
-              {
-                name: "main.js",
-                type: "ESModule",
-                content: `export default {
+    it.effect(`queries D1 with the ${legacy ? "legacy" : "default"} registry`, () =>
+      Effect.gen(function* () {
+        const worker = yield* startTestWorker({
+          name: `module-registry-d1-${legacy ? "legacy" : "default"}`,
+          compatibilityDate: "2026-08-31",
+          compatibilityFlags: legacy ? ["legacy_module_registry"] : [],
+          bindings: [D1.local({ binding: "DB", id: `module-registry-${legacy}` })],
+          modules: [
+            {
+              name: "main.js",
+              type: "ESModule",
+              content: `export default {
                 async fetch(request, env) {
                   const row = await env.DB.prepare('SELECT 42 AS value').first();
                   return Response.json({ value: row.value, resolve: typeof import.meta.resolve });
                 },
               };`,
-              },
-            ],
-          });
-          expect(yield* worker.fetchJson("/")).toEqual({
-            value: 42,
-            resolve: legacy ? "undefined" : "function",
-          });
-        }),
+            },
+          ],
+        });
+        expect(yield* worker.fetchJson("/")).toEqual({
+          value: 42,
+          resolve: legacy ? "undefined" : "function",
+        });
+      }),
     );
   }
 
