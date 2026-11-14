@@ -864,7 +864,11 @@ export const make = Effect.gen(function* () {
   ) {
     if (!detailedSubscribers.has(cwd)) {
       yield* refreshBranchStatusCore(cwd);
-    } else if ((yield* getCachedStatus(cwd))?.remote) {
+      return;
+    }
+    const { observation, refName, isRepo } = yield* readHeadBranch(cwd);
+    yield* publishBranch(cwd, { refName, isRepo }, observation);
+    if ((yield* getCachedStatus(cwd))?.remote) {
       yield* refreshRemoteStatus(cwd, { refreshUpstream: false });
     } else {
       yield* refreshLocalStatusCore(cwd);

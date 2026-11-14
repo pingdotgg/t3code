@@ -1493,6 +1493,45 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("a terminal checkout updates the branch before pending detailed status completes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const gitDir = yield* fs.makeTempDirectoryScoped({ prefix: "vcs-head-watch-" });
+      const headPath = path.join(gitDir, "HEAD");
+      yield* fs.writeFileString(headPath, "ref: refs/heads/main\n");
+      const state: Parameters<typeof layerTestFor>[0] = {
+        currentLocalStatus: { ...baseLocalStatus, refName: "main" },
+        currentRemoteStatus: null,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+        headPath,
+      };
+
+      yield* Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const branches = yield* Stream.toPull(broadcaster.streamBranchStatus({ cwd: "/repo" }));
+        yield* branches;
+        const details = yield* Stream.toPull(
+          broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }),
+        );
+        yield* details;
+
+        const resume = yield* Deferred.make<void>();
+        state.beforeLocalStatus = Deferred.await(resume);
+        state.currentLocalStatus = { ...baseLocalStatus, refName: "repro" };
+        const lockPath = path.join(gitDir, "HEAD.lock");
+        yield* fs.writeFileString(lockPath, "ref: refs/heads/repro\n");
+        yield* fs.rename(lockPath, headPath);
+
+        assert.deepEqual(yield* branches, [{ refName: "repro", isRepo: true }]);
+        yield* Deferred.succeed(resume, undefined);
+      }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("a checkout read that fails while index.lock is held retries until it succeeds", () =>
     Effect.gen(function* () {
       const events = yield* Queue.unbounded<FileSystem.WatchEvent>();
