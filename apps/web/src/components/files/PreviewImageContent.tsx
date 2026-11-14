@@ -9,6 +9,7 @@ export default function PreviewImageContent(props: {
   readonly src: string;
   readonly name: string;
   readonly mimeType?: string;
+  readonly onLoad?: () => void;
   readonly onError?: () => void;
 }) {
   const [failed, setFailed] = useState(false);
@@ -100,12 +101,13 @@ export default function PreviewImageContent(props: {
                   ? { width: natural.width * scale, height: natural.height * scale }
                   : { maxWidth: "100%" }
               }
-              onLoad={(event) =>
+              onLoad={(event) => {
                 setNatural({
                   width: event.currentTarget.naturalWidth,
                   height: event.currentTarget.naturalHeight,
-                })
-              }
+                });
+                props.onLoad?.();
+              }}
               onError={() => {
                 setFailed(true);
                 props.onError?.();

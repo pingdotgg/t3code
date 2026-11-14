@@ -13,15 +13,18 @@ function visit(path: string): Disposable {
 }
 
 describe("connectionAtomRuntime", () => {
-  it("connects to no environment on the guest page", async () => {
-    using _page = visit("/guest?share=share-1");
+  it.each([
+    ["the guest page", "/guest?share=share-1"],
+    ["the mobile app's 3D view", "/model-viewer#name=part.stl"],
+  ])("connects to no environment on %s", async (_name, path) => {
+    using _page = visit(path);
     using socket = vi.spyOn(window, "WebSocket");
     const registry = AtomRegistry.make();
     using _mounted = { [Symbol.dispose]: registry.mount(connectionAtomRuntime) };
     await vi.waitFor(() => {
       const result = registry.get(connectionAtomRuntime);
       expect(AsyncResult.isFailure(result) && String(Cause.squash(result.cause))).toContain(
-        "The guest page has no environment connection.",
+        "This page has no environment connection.",
       );
     });
     expect(socket).not.toHaveBeenCalled();
