@@ -8209,17 +8209,23 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     it.effect.each([
       { pushUrls: [], status: "skipped_up_to_date" },
       { pushUrls: ["mirror"], status: "pushed" },
+      { pushUrls: ["mirror"], status: "pushed", whitespace: true },
       { pushUrls: ["fork", "mirror"], status: "pushed" },
     ] as const)(
       "skips an up-to-date tracked branch only when every push URL has it (pushurl $pushUrls)",
-      ({ pushUrls, status }) =>
+      (scenario) =>
         Effect.gen(function* () {
+          const { pushUrls, status } = scenario;
           const cwd = yield* makeTmpDir();
           const upstreamRemote = yield* makeTmpDir("git-upstream-remote-");
+          const fork = NodePath.join(yield* makeTmpDir("git-fork-remote-"), "repo");
           const remotes = {
-            fork: yield* makeTmpDir("git-fork-remote-"),
-            mirror: yield* makeTmpDir("git-mirror-remote-"),
+            fork,
+            mirror: "whitespace" in scenario ? `${fork} ` : yield* makeTmpDir("git-mirror-remote-"),
           };
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.makeDirectory(remotes.fork);
+          yield* fs.makeDirectory(remotes.mirror, { recursive: true });
           yield* initRepoWithCommit(cwd);
           const driver = yield* GitVcsDriver.GitVcsDriver;
           yield* git(upstreamRemote, ["init", "--bare"]);

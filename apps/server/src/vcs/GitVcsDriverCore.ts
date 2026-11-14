@@ -1886,8 +1886,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           remoteName,
         ]),
       ]);
-      // Several push URLs print one per line, so they never equal the single fetch URL.
-      return pushUrls.trim() === fetchUrl.trim();
+      // Preserve whitespace in URLs and reject ambiguous multiline fetch URLs.
+      return (
+        fetchUrl.endsWith("\n") && !fetchUrl.slice(0, -1).includes("\n") && pushUrls === fetchUrl
+      );
     },
     Effect.orElseSucceed(() => false),
   );
