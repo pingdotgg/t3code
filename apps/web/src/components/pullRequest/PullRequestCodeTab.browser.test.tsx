@@ -56,12 +56,43 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
   };
 });
 
-const mocks = vi.hoisted(() => ({ paged: false, diffCommits: [] as Array<string | undefined> }));
+const mocks = vi.hoisted(() => ({
+  paged: false,
+  diffCommits: [] as Array<string | undefined>,
+  viewedPaths: null as ReadonlySet<string> | null,
+  viewedListeners: new Set<() => void>(),
+}));
+
+function deliverViewedPaths(paths: ReadonlySet<string> | null) {
+  mocks.viewedPaths = paths;
+  for (const listener of mocks.viewedListeners) listener();
+}
 
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: (() => vi.fn()) as never,
 }));
+vi.mock(import("./usePullRequestFilesViewed"), async () => {
+  const { useSyncExternalStore } = await import("react");
+  const subscribe = (listener: () => void) => {
+    mocks.viewedListeners.add(listener);
+    return () => mocks.viewedListeners.delete(listener);
+  };
+  return {
+    usePullRequestFilesViewed: () => {
+      const viewedPaths = useSyncExternalStore(subscribe, () => mocks.viewedPaths);
+      return {
+        enabled: viewedPaths !== null,
+        isViewed: (path: string) => viewedPaths?.has(path) === true,
+        isStale: () => false,
+        setViewed: () => {},
+        truncated: false,
+        error: null,
+        refresh: () => {},
+      };
+    },
+  };
+});
 vi.mock(import("~/state/pullRequests"), async (original) => {
   const actual = await original();
   return {
@@ -136,6 +167,8 @@ function setup({ paged }: { paged: boolean }) {
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   mocks.paged = paged;
   mocks.diffCommits = [];
+  mocks.viewedPaths = null;
+  mocks.viewedListeners.clear();
 }
 
 const tab = (
@@ -172,6 +205,30 @@ it("keeps the diff after a refresh that brings back the same page", async () => 
     .element(screen.getByText("This pull request has no file changes."))
     .not.toBeInTheDocument();
   await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+});
+
+// regression: #13279 a Viewed answer that lands after a link reveals a file must not fold it
+it("keeps a revealed file open when its Viewed mark loads afterwards", async () => {
+  setup({ paged: false });
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
+  using _preferences = {
+    [Symbol.dispose]() {
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    },
+  };
+  mocks.viewedPaths = new Set();
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(tab(0, { path: "a.ts", nonce: 1 }), { container });
+  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
+
+  deliverViewedPaths(new Set(["a.ts"]));
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeChecked();
+
+  await expect
+    .element(screen.getByRole("button", { name: "Collapse diff" }))
+    .toHaveAttribute("aria-expanded", "true");
+  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
 });
 
 function pagedContainer() {
@@ -297,4 +354,96 @@ it("answers a commit's diff link only once that commit's diff is shown", async (
   expect(settled).not.toHaveBeenCalled();
   await screen.rerender(scoped(oid, url));
   await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
+});
+
+it("hides a resolved conversation behind avatars on its line until they are clicked", async () => {
+  setup({ paged: false });
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
+  using _preferences = {
+    [Symbol.dispose]() {
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    },
+  };
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  const comment = {
+    author: { login: "reviewer", name: null, avatarUrl: null },
+    body: "Rename this.",
+    createdAt: "2026-09-01T00:00:00Z",
+    url: null,
+  };
+  const withThread = (isResolved: boolean, oldSideToo = false) => (
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      reference={detail}
+      detail={{
+        ...detail,
+        capabilities: {
+          ...detail.capabilities,
+          review: { ...detail.capabilities.review, reply: true },
+        },
+        viewerPermissions: { ...detail.viewerPermissions, comment: true },
+        reviewThreads: [
+          {
+            id: "thread",
+            path: "a.ts",
+            line: 3,
+            side: "right",
+            isResolved,
+            isOutdated: false,
+            comments: [{ id: "comment", ...comment }],
+          },
+          ...(oldSideToo
+            ? [
+                {
+                  id: "old-side",
+                  path: "a.ts",
+                  line: 3,
+                  side: "left" as const,
+                  isResolved: true,
+                  isOutdated: false,
+                  comments: [{ id: "old-side-comment", ...comment }],
+                },
+              ]
+            : []),
+        ],
+      }}
+      selectedCommitOid={null}
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+    />
+  );
+  await using screen = await render(withThread(true), { container });
+  const marker = screen.getByRole("button", { name: "Resolved conversation", exact: true });
+  const card = (state: string) => screen.getByRole("button", { name: `${state} · 1 comment` });
+  const reply = () => screen.getByRole("textbox", { name: "Reply to this conversation" });
+
+  await expect.element(marker).toHaveAttribute("aria-expanded", "false");
+  await expect.element(card("Resolved")).not.toBeInTheDocument();
+
+  await marker.click();
+  await expect.element(marker).toHaveAttribute("aria-expanded", "true");
+  await expect.element(card("Resolved")).toHaveAttribute("aria-expanded", "true");
+  await screen.getByRole("button", { name: "Reply", exact: true }).click();
+  await reply().fill("Unsent");
+
+  // Hidden conversations stay mounted, so the unsent reply is still there.
+  await marker.click();
+  await expect.element(card("Resolved")).not.toBeInTheDocument();
+  await marker.click();
+  await expect.element(reply()).toHaveValue("Unsent");
+  await marker.click();
+
+  // Seen open and then resolved, it stays until the avatars are clicked.
+  await screen.rerender(withThread(false));
+  await expect.element(card("Open")).toBeVisible();
+  await screen.rerender(withThread(true));
+  await expect.element(card("Resolved")).toBeVisible();
+
+  // Stacked view draws a context row once, so both sides' conversations share the avatars.
+  await screen.rerender(withThread(true, true));
+  await expect
+    .element(screen.getByRole("button", { name: "2 resolved conversations" }))
+    .toBeVisible();
 });

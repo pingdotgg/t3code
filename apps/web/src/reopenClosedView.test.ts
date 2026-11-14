@@ -7,6 +7,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import * as previewRuntime from "./browser/previewRuntime";
 import { type ClosedViewEntry, useClosedViewStore } from "./closedViewStore";
 import { __setClientSettingsForTests } from "./hooks/useSettings";
 import { readThreadPreviewState, resetPreviewStateForTests } from "./previewStateStore";
@@ -30,6 +31,8 @@ const snapshot: PreviewSessionSnapshot = {
   canGoForward: false,
   viewport: { _tag: "freeform", width: 1200, height: 800 },
   profileId: "work",
+  zoomFactor: 1.5,
+  colorScheme: "dark",
   updatedAt: "2026-09-22T12:00:00.000Z",
 };
 
@@ -185,7 +188,8 @@ describe("reopenClosedView", () => {
     ).toEqual([]);
   });
 
-  it("recreates a browser tab with saved URL, viewport and profile, then selects its new ID", async () => {
+  it("recreates a server browser tab with its saved URL, viewport, profile, zoom and appearance, then selects its new ID", async () => {
+    using _runtime = vi.spyOn(previewRuntime, "previewRuntimeFor").mockReturnValue("server");
     const openPreview = vi.fn(async () => AsyncResult.success({ ...snapshot, tabId: "new-tab" }));
     const result = await reopenClosedView(
       { kind: "browser", threadRef, snapshot },
@@ -199,6 +203,9 @@ describe("reopenClosedView", () => {
         url: "https://example.com",
         viewport: snapshot.viewport,
         profileId: "work",
+        runtime: "server",
+        zoomFactor: 1.5,
+        colorScheme: "dark",
       },
     });
     expect(readThreadPreviewState(threadRef).snapshot?.tabId).toBe("new-tab");

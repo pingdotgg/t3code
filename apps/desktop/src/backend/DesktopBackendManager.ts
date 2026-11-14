@@ -1,5 +1,6 @@
 import * as Brand from "effect/Brand";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -25,6 +26,7 @@ import {
   DesktopTelemetryControlMessage,
   type DesktopTelemetryControlMessage as DesktopTelemetryControlMessageValue,
 } from "@t3tools/contracts";
+import { isRunningDatabaseMigrations } from "@t3tools/shared/databaseMigrationLog";
 import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
@@ -204,7 +206,7 @@ interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   readonly outputDrainTimeout?: Duration.Duration;
   readonly onStarted?: (pid: number) => Effect.Effect<void>;
   readonly onExitObserved?: () => Effect.Effect<void>;
-  readonly onReady?: () => Effect.Effect<void>;
+  readonly onReady?: (pid: number) => Effect.Effect<void>;
   readonly onReadinessFailure?: (error: BackendReadinessTimeoutError) => Effect.Effect<void>;
   readonly onOutput?: (
     streamName: BackendProcessOutputStream,
@@ -240,6 +242,7 @@ export interface DesktopBackendInstance {
   readonly id: BackendInstanceId;
   readonly label: Effect.Effect<string>;
   readonly start: Effect.Effect<void>;
+  /** Timeout controls the warning; stop still waits for process teardown and exit. */
   readonly stop: (options?: { readonly timeout?: Duration.Duration }) => Effect.Effect<void>;
   readonly currentConfig: Effect.Effect<Option.Option<DesktopBackendStartConfig>>;
   readonly snapshot: Effect.Effect<DesktopBackendSnapshot>;
@@ -250,8 +253,8 @@ export interface BackendInstanceSpec {
   readonly id: BackendInstanceId;
   readonly label: Effect.Effect<string>;
   readonly configResolve: Effect.Effect<DesktopBackendStartConfig, PlatformError.PlatformError>;
-  /** Receives the ready run's resolved URL; reading current config could race a subsequent restart. */
-  readonly onReady?: (httpBaseUrl: URL) => Effect.Effect<void>;
+  /** Receives the ready run's URL and pid; reading current config could race a subsequent restart. */
+  readonly onReady?: (httpBaseUrl: URL, pid: number) => Effect.Effect<void>;
   readonly onShutdown?: () => Effect.Effect<void>;
   readonly onPreflightFailed?: (failure: PreflightFailure) => Effect.Effect<boolean>;
   readonly onStateDirOwned?: () => Effect.Effect<void>;
@@ -307,7 +310,7 @@ const closeRun = (
   run: ActiveBackendRun,
   parentScope: Scope.Scope,
   options?: { readonly timeout?: Duration.Duration },
-): Effect.Effect<boolean> => {
+) => {
   const waitForFiber = Option.match(run.fiber, {
     onNone: () => Effect.void,
     onSome: (fiber) => Fiber.await(fiber).pipe(Effect.asVoid),
@@ -319,12 +322,24 @@ const closeRun = (
   const timeout = options?.timeout;
 
   if (!timeout) {
-    return close.pipe(Effect.as(true));
+    return close;
   }
 
-  return Effect.forkIn(close, parentScope).pipe(
+  return Effect.forkIn(close, parentScope, { startImmediately: true }).pipe(
     Effect.flatMap((closeFiber) =>
-      Fiber.await(closeFiber).pipe(Effect.timeoutOption(timeout), Effect.map(Option.isSome)),
+      Fiber.await(closeFiber).pipe(
+        Effect.timeoutOption(timeout),
+        Effect.tap((completed) =>
+          Option.isNone(completed)
+            ? logBackendProcessWarning("backend shutdown exceeded timeout; waiting for exit", {
+                timeoutMs: Duration.toMillis(timeout),
+              })
+            : Effect.void,
+        ),
+        // Parent-scope interruption still finishes release; do not cancel sibling stops.
+        Effect.andThen(Fiber.await(closeFiber)),
+        Effect.asVoid,
+      ),
     ),
   );
 };
@@ -470,21 +485,23 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     ),
   );
   const outputFibers: Array<Fiber.Fiber<void, never>> = [];
+  const serverReady = yield* Deferred.make<void>();
 
   yield* options.onStarted?.(handle.pid) ?? Effect.void;
-  if (
-    options.bootstrap.desktopTelemetryControlFd !== undefined &&
-    options.onDesktopTelemetryControl !== undefined
-  ) {
+  if (options.bootstrap.desktopTelemetryControlFd !== undefined) {
     const controlFd = options.bootstrap.desktopTelemetryControlFd;
-    const handleControl = options.onDesktopTelemetryControl;
+    const handleControl = options.onDesktopTelemetryControl ?? (() => Effect.void);
     yield* handle.getOutputFd(controlFd).pipe(
       Stream.decodeText(),
       Stream.splitLines,
       Stream.filter((line) => line.trim().length > 0),
       Stream.runForEach((line) =>
         decodeDesktopTelemetryControlLine(line).pipe(
-          Effect.flatMap(handleControl),
+          Effect.flatMap((message) =>
+            message.type === "serverReady"
+              ? Deferred.succeed(serverReady, undefined)
+              : handleControl(message),
+          ),
           Effect.catchCause((cause) =>
             logBackendProcessWarning("ignored invalid desktop telemetry control message", {
               fd: controlFd,
@@ -556,15 +573,19 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     );
   }
   // Cold WSL boots across /mnt/c can exceed one probe budget; retry while the backend is alive.
+  // HTTP polling stays as the fallback for backends without the control fd, such as WSL.
   const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(() =>
-    waitForHttpReady({
-      executablePath: options.executablePath,
-      entryPath: options.entryPath,
-      cwd: options.cwd,
-      httpBaseUrl: options.httpBaseUrl,
-      timeout: options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
-    }).pipe(
-      Effect.flatMap(() => options.onReady?.() ?? Effect.void),
+    Effect.raceFirst(
+      waitForHttpReady({
+        executablePath: options.executablePath,
+        entryPath: options.entryPath,
+        cwd: options.cwd,
+        httpBaseUrl: options.httpBaseUrl,
+        timeout: options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
+      }),
+      Deferred.await(serverReady),
+    ).pipe(
+      Effect.flatMap(() => options.onReady?.(handle.pid) ?? Effect.void),
       Effect.as(true),
       Effect.catchTags({
         BackendReadinessTimeoutError: (error) =>
@@ -925,7 +946,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               ...run,
               exitObserved: true,
             })),
-          onReady: Effect.fn("desktop.backendInstance.onReady")(function* () {
+          onReady: Effect.fn("desktop.backendInstance.onReady")(function* (pid) {
             const isCurrentRun = yield* SubscriptionRef.modify(state, (latest) => {
               const activeRun = Option.getOrUndefined(latest.active);
               if (activeRun?.id !== runId) {
@@ -945,7 +966,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               return;
             }
 
-            yield* spec.onReady?.(config.value.httpBaseUrl) ?? Effect.void;
+            yield* spec.onReady?.(config.value.httpBaseUrl, pid) ?? Effect.void;
             if (
               config.value.runningDistro !== undefined &&
               config.value.wslRuntimeId !== undefined
@@ -958,6 +979,12 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           }),
           onReadinessFailure: Effect.fn("desktop.backendInstance.onReadinessFailure")(
             function* (error) {
+              if (isRunningDatabaseMigrations(yield* Ref.get(outputTail))) {
+                yield* logInstanceWarning("backend is still migrating its database; waiting", {
+                  error: error.message,
+                });
+                return;
+              }
               yield* logInstanceWarning("backend readiness check failed during bootstrap", {
                 error: error.message,
               });
@@ -1099,10 +1126,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
       onNone: () => Effect.void,
       // The enclosing operation owns the span for this inline handler.
       onSome: Effect.fnUntraced(function* (run) {
-        const closed = yield* closeRun(run, parentScope, options);
-        if (!closed) {
-          return;
-        }
+        yield* closeRun(run, parentScope, options);
         const cleanup = yield* mutex.withPermits(1)(
           SubscriptionRef.modify(
             state,
