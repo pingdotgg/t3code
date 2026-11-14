@@ -42,6 +42,7 @@ import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 import {
@@ -1392,6 +1393,159 @@ describe("OpenCodeAdapterV2", () => {
         const assistant = items.filter((item) => item.type === "assistant_message");
         assert.equal(assistant.at(-1)?.text, "Tool results received");
         assert.equal(assistant.at(-1)?.status, "completed");
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
+  it.effect.each([
+    { state: "settled", expectedOffers: 1 },
+    { state: "active", expectedOffers: 0 },
+  ])(
+    "routes the OpenCode 1.19.5 root background prompt while $state",
+    ({ state, expectedOffers }) =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
+        const root = "ses_root";
+        let promptId = "";
+        const aborted: Array<string> = [];
+        const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+        const harness = yield* makeOpenCodeRuntimeHarness("root-background-wake", root, {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          session: {
+            create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
+            get: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
+            promptAsync: async (input: { messageID: string }) => {
+              promptId = input.messageID;
+              return { data: true };
+            },
+            messages: async () => ({ data: [] }),
+            children: async () => ({ data: [] }),
+            abort: async (input: { sessionID: string }) => {
+              aborted.push(input.sessionID);
+              return { data: true };
+            },
+          },
+        }).pipe(
+          Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+            offer: (offer) =>
+              Effect.sync(() => {
+                offers.push(offer);
+              }),
+            take: Effect.never,
+          }),
+        );
+        const user = (id: string) => ({
+          type: "message.updated",
+          properties: {
+            sessionID: root,
+            info: { id, sessionID: root, role: "user", time: { created: 1 } },
+          },
+        });
+        const status = (type: "busy" | "idle") => ({
+          type: "session.status",
+          properties: { sessionID: root, status: { type } },
+        });
+        yield* harness.startTurn();
+        yield* push(user(promptId));
+        yield* push(status("busy"));
+        if (state === "settled") {
+          yield* push(status("idle"));
+          yield* harness.runtime.events.pipe(
+            Stream.filter((event) => event.type === "turn.terminal"),
+            Stream.take(1),
+            Stream.runDrain,
+          );
+        }
+        assert.equal(offers.length, 0, "foreground admission must not offer a continuation");
+        const before = yield* harness.runtime.readThreadSnapshot({
+          providerThread: harness.providerThread,
+        });
+        assert.equal(before.providerTurns.length, 1);
+        assert.equal(
+          before.providerTurns[0]?.status,
+          state === "settled" ? "completed" : "running",
+        );
+
+        // Pinned task.ts injects a synthetic root prompt; prompt.ts saves it before starting its loop.
+        yield* push(user("msg_background_result"));
+        yield* push({
+          type: "message.part.updated",
+          properties: {
+            sessionID: root,
+            time: 2,
+            part: {
+              id: "prt_result",
+              sessionID: root,
+              messageID: "msg_background_result",
+              type: "text",
+              synthetic: true,
+              text: '<task id="ses_child" state="completed">\n<summary>Background task completed: Sleep and reply</summary>\n<task_result>\nCHILD_OK\n</task_result>\n</task>',
+            },
+          },
+        });
+        yield* push(status("busy"));
+        yield* push({
+          type: "message.updated",
+          properties: {
+            sessionID: root,
+            info: {
+              id: "msg_wake_assistant",
+              sessionID: root,
+              role: "assistant",
+              parentID: "msg_background_result",
+              time: { created: 2 },
+            },
+          },
+        });
+        yield* push({
+          type: "message.part.updated",
+          properties: {
+            sessionID: root,
+            time: 2,
+            part: {
+              id: "prt_wake",
+              sessionID: root,
+              messageID: "msg_wake_assistant",
+              type: "text",
+              text: "WAKE_OK",
+              time: { start: 2, end: 3 },
+            },
+          },
+        });
+        yield* push({
+          type: "message.updated",
+          properties: {
+            sessionID: root,
+            info: {
+              id: "msg_wake_assistant",
+              sessionID: root,
+              role: "assistant",
+              parentID: "msg_background_result",
+              time: { created: 2, completed: 3 },
+            },
+          },
+        });
+        yield* push(status("idle"));
+        yield* push({ type: "session.idle", properties: { sessionID: root } });
+        assert.equal(offers.length, expectedOffers, "only a settled root needs a new continuation");
+        yield* push(user("msg_background_result"));
+        yield* push(status("idle"));
+        yield* push({ type: "session.idle", properties: { sessionID: root } });
+        assert.equal(
+          offers.length,
+          expectedOffers,
+          "duplicate message and idle events must not offer twice",
+        );
+        const offer = offers[0];
+        if (offer?.dispatchIfCurrent === undefined) return;
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: ProviderTurnId.make("provider-turn:settled"),
+          requestRuntimeRestart: true,
+        });
+        assert.deepEqual(aborted, [root], "Stop aborts the wake OpenCode is running");
+        const dispatched = yield* offer.dispatchIfCurrent(Effect.succeed("run"));
+        assert.isTrue(Option.isNone(dispatched), "a stopped wake must not start a run");
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
