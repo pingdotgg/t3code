@@ -140,29 +140,40 @@ vi.mock("./use-thread-outbox", async () => {
     threadOutboxShellStatusesAtom: Atom.make(new Map([["secondary", "live"]])),
   };
 });
-vi.mock("./use-composer-drafts", async () => {
-  const { Atom } = await import("effect/reactivity");
-  return {
-    composerDraftsAtom: Atom.make({}),
-    removeDeliveredCloudQueuedMessage: async () => {},
-    appendComposerDraftAttachments: vi.fn(),
-    flushComposerDrafts: vi.fn(),
-    getComposerDraftSnapshot: vi.fn(() => ({ text: state.draftText, attachments: [] })),
-    mergeComposerDraftContent: vi.fn(async (_key: string, input: { text: string }) => {
-      state.draftText += `\n${input.text}`;
-    }),
-    replaceComposerDraftAttachments: vi.fn(),
-    setFreshSessionPending: vi.fn(),
-    undoComposerDraftMerge: vi.fn(),
-    updateComposerDraftSettings: vi.fn(),
-    waitForComposerDraftsLoaded: vi.fn(),
-  };
-});
+vi.mock("expo-file-system", () => ({
+  Directory: class {
+    create() {}
+  },
+  File: class {
+    exists = false;
+    create() {}
+    write() {}
+    moveSync() {}
+  },
+  Paths: { document: { uri: "file:///documents" } },
+}));
+// The real draft store keeps mode picks; draft text stays a fake the restore tests read.
+vi.mock("./use-composer-drafts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./use-composer-drafts")>()),
+  removeDeliveredCloudQueuedMessage: async () => {},
+  appendComposerDraftAttachments: vi.fn(),
+  flushComposerDrafts: vi.fn(),
+  getComposerDraftSnapshot: vi.fn(() => ({ text: state.draftText, attachments: [] })),
+  mergeComposerDraftContent: vi.fn(async (_key: string, input: { text: string }) => {
+    state.draftText += `\n${input.text}`;
+  }),
+  replaceComposerDraftAttachments: vi.fn(),
+  setFreshSessionPending: vi.fn(),
+  undoComposerDraftMerge: vi.fn(),
+  updateComposerDraftSettings: vi.fn(),
+  waitForComposerDraftsLoaded: vi.fn(async () => {}),
+}));
 
 import { appAtomRegistry } from "./atom-registry";
 import { environmentSession } from "./session";
 import { dispatchingQueuedMessageIdAtom, editingQueuedMessageIdsAtom } from "./use-thread-outbox";
 import { createThreadOutboxDelivery } from "./threadOutboxDelivery";
+import { composerDraftsAtom, waitForComposerDraftsLoaded } from "./use-composer-drafts";
 
 const message = (overrides: Partial<QueuedThreadMessage> = {}): QueuedThreadMessage => ({
   environmentId: EnvironmentId.make("secondary"),
@@ -213,6 +224,7 @@ beforeEach(() => {
   state.config.shellThreadFamilies = false;
   state.modelUnavailable.mockReset().mockReturnValue(false);
   state.familyMount.mockReset().mockReturnValue(() => {});
+  appAtomRegistry.set(composerDraftsAtom, {});
   appAtomRegistry.set(state.threadShells, [state.thread]);
   appAtomRegistry.set(state.manager.queuedMessagesByThreadKeyAtom, {});
   appAtomRegistry.set(dispatchingQueuedMessageIdAtom, null);
@@ -405,6 +417,69 @@ describe("queued task operation access", () => {
     expect(state.start).not.toHaveBeenCalled();
     expect(remaining()).toEqual([queued]);
   });
+
+  it.each([
+    { queued: ["approval-required"], pick: "approval-required", failed: null, kept: false },
+    { queued: ["full-access"], pick: "full-access", failed: null, kept: false },
+    { queued: ["approval-required"], pick: "approval-required", failed: "mode", kept: true },
+    // Saved drafts could still load afterwards and bring back the draft the release emptied.
+    { queued: ["approval-required"], pick: "approval-required", failed: "drafts", kept: true },
+    // Picked again after the Full access message was queued; that message still moves the thread.
+    {
+      queued: ["approval-required", "full-access"],
+      pick: "approval-required",
+      failed: null,
+      kept: true,
+    },
+    // A message without a mode, as an MCP app sends, follows the thread and moves nothing.
+    {
+      queued: ["approval-required", undefined],
+      pick: "approval-required",
+      failed: null,
+      kept: false,
+    },
+  ] as const)(
+    "keeps the composer's mode pick until a delivered send applied it last ($queued, failed: $failed)",
+    async ({ queued, pick, failed, kept }) => {
+      setOperateGrant("secondary", true);
+      const draft = { text: "unsent follow-up", attachments: [] };
+      appAtomRegistry.set(composerDraftsAtom, {
+        "secondary:thread": { ...draft, runtimeMode: pick },
+      });
+      for (const [index, runtimeMode] of queued.entries()) {
+        await state.manager.enqueue(
+          message({
+            messageId: MessageId.make(`message-${index}`),
+            commandId: CommandId.make(`command-${index}`),
+            createdAt: `2026-09-05T00:00:0${index}.000Z`,
+            ...(runtimeMode === undefined ? {} : { runtimeMode }),
+          }),
+        );
+      }
+      if (failed === "drafts") {
+        vi.mocked(waitForComposerDraftsLoaded).mockRejectedValueOnce(new Error("Read failed."));
+      }
+      if (failed === "mode") {
+        state.runtime.mockResolvedValueOnce(
+          AsyncResult.failure(Cause.fail(new Error("Mode change refused."))),
+        );
+        await runDrain();
+      } else {
+        const delivered = Promise.withResolvers<void>();
+        const release = appAtomRegistry.subscribe(
+          state.manager.queuedMessagesByThreadKeyAtom,
+          () => {
+            if (remaining().length === 0) delivered.resolve();
+          },
+        );
+        startDelivery();
+        await delivered.promise.finally(release);
+      }
+      expect(appAtomRegistry.get(composerDraftsAtom)["secondary:thread"]).toEqual(
+        kept ? { ...draft, runtimeMode: pick } : draft,
+      );
+    },
+  );
 
   it.each([
     { isCreation: false, accepted: false },

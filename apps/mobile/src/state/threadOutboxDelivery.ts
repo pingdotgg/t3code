@@ -78,6 +78,7 @@ import {
   type ComposerDraft,
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
+  releaseComposerDraftRuntimeMode,
   replaceComposerDraftAttachments,
   removeDeliveredCloudQueuedMessage,
   undoComposerDraftMerge,
@@ -830,6 +831,24 @@ export function createThreadOutboxDelivery(): {
         reportCommandFailure(queuedMessage, runtimeResult, "settings-sync");
         return false;
       }
+    }
+    // Loading restores the saved draft for a key this release empties, so it must finish first.
+    const draftsLoaded = await waitForComposerDraftsLoaded().then(
+      () => true,
+      () => false,
+    );
+    const threadKey = scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId);
+    // A newer pick can share this mode while another queued message still moves the thread off it.
+    const modeChangeQueued = (
+      appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom)[threadKey] ?? []
+    ).some(
+      (message) =>
+        message.messageId !== queuedMessage.messageId &&
+        message.runtimeMode !== undefined &&
+        message.runtimeMode !== settings.runtimeMode,
+    );
+    if (draftsLoaded && !modeChangeQueued) {
+      releaseComposerDraftRuntimeMode(threadKey, settings.runtimeMode);
     }
 
     if (settings.interactionMode !== thread.interactionMode) {

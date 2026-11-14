@@ -1556,6 +1556,17 @@ export function releaseComposerDraftModelSelection(
   });
 }
 
+/** Lets the thread's mode show again once a send applied this pick, so later changes elsewhere hold. */
+export function releaseComposerDraftRuntimeMode(draftKey: string, runtimeMode: RuntimeMode): void {
+  updateComposerDrafts((current) => {
+    const existing = current[draftKey];
+    // A different pick made after this message was queued still waits for its own send.
+    if (existing?.runtimeMode !== runtimeMode) return current;
+    const { runtimeMode: _runtimeMode, ...draft } = existing;
+    return withComposerDraft(current, draftKey, draft);
+  });
+}
+
 export function setFreshSessionPending(draftKey: string, pending: boolean): void {
   if ((getComposerDraftSnapshot(draftKey).freshContext === true) === pending) return;
   updateComposerDraftSettings(draftKey, { freshContext: pending ? true : undefined });
