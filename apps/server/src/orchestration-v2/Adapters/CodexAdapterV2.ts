@@ -96,6 +96,7 @@ import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -1856,6 +1857,27 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     threadId === null ? Effect.undefined : mcpSessions.read(threadId);
   const { clientFactory, digest, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
+
+  // macOS Seatbelt refuses a symlinked writable root, so workspace-write turns run in the physical
+  // directory. Thread requests keep the registered path for Codex's project trust and config.
+  const resolveCodexTurnCwd = Effect.fn("CodexAdapterV2.resolveCodexTurnCwd")(function* (
+    policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+  ) {
+    const cwd = policy.cwd;
+    const sandboxPolicy =
+      policy.sandboxPolicy ?? codexRuntimeModeTurnDefaults(policy.runtimeMode).sandboxPolicy;
+    if (
+      cwd === null ||
+      (yield* HostProcess.Platform) !== "darwin" ||
+      !Predicate.hasProperty(sandboxPolicy, "type") ||
+      sandboxPolicy.type !== "workspaceWrite"
+    )
+      return policy;
+    return {
+      ...policy,
+      cwd: yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd)),
+    };
+  });
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -7377,7 +7399,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               cyberAccess: codexCyberAccess(models, turnInput.modelSelection.model),
               nativeThreadId: threadId,
               codexInput,
-              runtimePolicy: turnInput.runtimePolicy,
+              runtimePolicy: yield* resolveCodexTurnCwd(turnInput.runtimePolicy),
               modelSelection: turnInput.modelSelection,
               hasT3Mcp: mcpSession !== undefined,
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
