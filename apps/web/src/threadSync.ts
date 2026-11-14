@@ -16,8 +16,8 @@ export function resolveThreadSyncPhase(input: {
     case "empty":
     case "cached":
     case "synchronizing":
-      if (input.hasError) return "failed";
-      return input.detailExists ? "syncing" : "loading";
+      if (!input.detailExists) return "loading";
+      return input.hasError ? "failed" : "syncing";
     case "deleted":
     case "live":
       return null;

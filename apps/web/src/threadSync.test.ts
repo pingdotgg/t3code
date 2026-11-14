@@ -14,6 +14,14 @@ describe("resolveThreadSyncPhase", () => {
     ).toBe("failed");
     expect(
       resolveThreadSyncPhase({
+        detailExists: false,
+        shellExists: true,
+        status: "synchronizing",
+        hasError: true,
+      }),
+    ).toBe("loading");
+    expect(
+      resolveThreadSyncPhase({
         detailExists: true,
         shellExists: true,
         status: "synchronizing",
