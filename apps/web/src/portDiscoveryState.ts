@@ -42,20 +42,15 @@ export function boundConfiguredLocalServerUrls(
   return bounded;
 }
 
-const lastDiscoveredServersAtom = Atom.family((_environmentId: EnvironmentId) =>
-  Atom.make<ReadonlyArray<DiscoveredLocalServer> | null>(null).pipe(Atom.keepAlive),
-);
-
-// The subscription closes with its last reader, so fall back to its last answer until it reopens.
+// Stays subscribed briefly after its last reader so a reopened panel shows the live list at once.
 const discoveredServersAtom = Atom.family((environmentId: EnvironmentId) =>
-  Atom.make((get) => {
-    const last = lastDiscoveredServersAtom(environmentId);
-    const result = get(previewEnvironment.discoveredServers({ environmentId, input: {} }));
-    const live = AsyncResult.getOrElse(result, () => null)?.servers;
-    if (live === undefined) return get.once(last) ?? EMPTY_PORTS;
-    get.set(last, live);
-    return live;
-  }),
+  Atom.make(
+    (get) =>
+      AsyncResult.getOrElse(
+        get(previewEnvironment.discoveredServers({ environmentId, input: {} })),
+        () => null,
+      )?.servers ?? EMPTY_PORTS,
+  ).pipe(Atom.setIdleTTL(60_000)),
 );
 
 const NO_ENVIRONMENT_SERVERS_ATOM = Atom.make(EMPTY_PORTS);
