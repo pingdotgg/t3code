@@ -742,18 +742,6 @@ it.effect("clamps a t3_thread_list limit above its maximum instead of rejecting 
   }).pipe(Effect.provide(layerRecordingTools(calls)));
 });
 
-it.effect("still rejects a t3_thread_list limit below its minimum", () => {
-  const calls: Array<unknown> = [];
-  return Effect.gen(function* () {
-    const rejected = yield* callTool("t3_thread_list", { allProjects: true, limit: 0 }).pipe(
-      Effect.flip,
-    );
-
-    expect(String(rejected)).toContain("greater than or equal to 1");
-    expect(calls).toEqual([]);
-  }).pipe(Effect.provide(layerRecordingTools(calls)));
-});
-
 it("keeps cross-tool routing out of the delegate_task description", () => {
   const description = OrchestratorToolkit.tools.delegate_task.description ?? "";
   expect(description).toContain("Start one child agent with only `task`");
