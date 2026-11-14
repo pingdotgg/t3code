@@ -199,6 +199,12 @@ Not proven:
 - **Memory:** one idle Grok session holds about 314 KiB of live heap after one turn (+321 KB;
   318 KB before); about 180 KiB of it is two 64 KiB line readers and the event channel's first
   block (see the crate README).
+- **Review fixes (features review, sections 5 and 7):** Grok now gets T3's stdio `/mcp`
+  bridge (`conn-server acp-mcp-bridge`, 3.9 MiB resident per agent session) instead of an
+  HTTP entry; attachment paths and image blocks; `~` expanded only in T3's three variables
+  (checked against the monorepo); `reasoningEffort` sent as T3 sends it on protocol 1. The
+  stub conformance gained a `/mcp` scenario; the bridge's executable is the one accepted
+  difference.
 - **Not built in this part:** Kiro (ACP protocol 2 replies), fx, Antigravity, the file and
   terminal host (`ProviderHost`), the registry's two offline methods and local agents.
 

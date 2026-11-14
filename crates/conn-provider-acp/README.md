@@ -54,8 +54,27 @@ write is built from `ordered::J`, which keeps T3's key order.
   request on both sides. Replies to agent requests: `{"jsonrpc","id","result"}`.
 - **Handshake:** `initialize` (protocol 2, the negotiating v2+v1 shape, `clientInfo`
   `t3-code` `0.0.0`, Grok's `_meta.clientType: extension`), then `session/new` with `cwd` and
-  `mcpServers` (HTTP servers when the agent offers HTTP), then `session/set_model` when the
-  selection names another model than the session's.
+  `mcpServers`, then `session/set_model` when the selection names another model than the
+  session's, or (protocol 1) a reasoning effort the model offers, as `_meta.reasoningEffort`;
+  a rejected effort is dropped and the switch sent again without it.
+- **`/mcp` (`acpMcpContext`, `sessionMcpServers`):** the `t3-code` server goes as the stdio
+  bridge `{name, command, args: ["acp-mcp-bridge"], env: [ELECTRON_RUN_AS_NODE=1,
+  T3_ACP_MCP_ENDPOINT, T3_ACP_MCP_AUTHORIZATION]}`; as `{type: http, …}` only when the
+  agent offers HTTP and the flavor sets `mcpOverHttp` (T3: Grok, Kiro and fx no;
+  Antigravity yes; the registry only for Copilot). `conn-server acp-mcp-bridge` relays the
+  agent's stdio MCP to `/mcp` as T3's `AcpMcpStdioBridge` does (`crates/conn-server/src/
+  acp_mcp_bridge.rs`). **One accepted difference:** `command` is this server's executable,
+  not T3's Node binary and script (`selfInvocationArgs`); the stub conformance normalizes
+  it. `ELECTRON_RUN_AS_NODE=1` is kept: T3 sets it so an Electron executable runs as Node,
+  our binary ignores it, and the agent sees T3's list. T3's `acp` entry (MCP over ACP) is not
+  built; no built flavor's agent offers `acp`. The bridge is one more process per agent
+  session: 3.9 MiB resident, 2.0 MiB physical footprint while idle (release, macOS arm64).
+- **Attachments:** each saved path in the prompt text (`providerMessageTextWithAttachmentPaths`,
+  from `AcpConfig::attachments_dir`), and native images as `{type: image, data, mimeType}`
+  blocks after the text (`supportsImagePrompts`: Grok sends them even without
+  `promptCapabilities.image`).
+- **Instance environment:** `~` is expanded only in `CODEX_HOME`, `CLAUDE_CONFIG_DIR` and
+  `GROK_HOME` (`HOME_PATH_VARIABLES`; `probe-conformance.mjs` checks the list).
 - **Prompt:** T3's instruction wrapper on the first prompt and when the mode or tools change,
   the runtime notes until a prompt carrying them succeeds; Grok's `_meta.promptId` and
   `requestId` `t3-xai-prompt-N`. A prompt settles on its reply or Grok's `prompt_complete` /
@@ -178,8 +197,9 @@ prompts; our replay and the stub conformance check compare against those.
   continuation request as a notification (`ContinuationRequest` has no field for it), the
   `subagentsIdleOnTurnCompletion` and agent-work-state rules (not Grok's), MCP tool
   presentation in subagent tool rows.
-- **Grok extras:** `x.ai/exit_plan_mode`, skill mentions (`rewriteUserText`), the reasoning effort in `session/set_model` meta, model slug
-  aliases, `promptInactivityTimeout`, image attachments as blocks (text paths only), MCP tool
+- **Grok extras:** `x.ai/exit_plan_mode`, skill mentions (`rewriteUserText`), model slug
+  aliases, `promptInactivityTimeout`, the reasoning effort on ACP protocol 2 (Grok answers
+  protocol 1), MCP tool
   presentation (`extractMcpToolCallIdentity`), web search and fetch projections, structured
   file changes, notices, retries.
 - **Shared runtime:** ACP protocol 2 responses (Kiro answers with v2), `session/load` and
@@ -262,7 +282,8 @@ CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/capture-ts-event
 - **Stub conformance (`tools/conformance.mjs`, in `tools/check.sh`):** the same stub agent
   under T3's real Grok adapter and spawn path and under `AcpProvider`; argv, environment,
   every stdin line byte for byte (workspace path and trace ids normalized) and the shutdown
-  order compared. **17 of 17 scenarios the same** (every fixture and both compaction
+  order compared. **17 of 17 scenarios the same**, `simple` with a T3 MCP session (the `/mcp`
+  scenario: the bridge entry and the prompt's T3 tool notes) (every fixture and both compaction
   scenarios). The stub holds a gated frame across processes (`gates` in its config): T3's
   side bridges its fixture gate and finish hook to it, ours releases it once the run ended.
   It found three differences, fixed: ids from 2^30, the trace context after the id, and
