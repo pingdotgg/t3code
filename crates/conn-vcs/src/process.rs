@@ -565,15 +565,25 @@ mod tests {
     /// runs. Each case runs `sh`, which writes its pid and then sleeps.
     #[tokio::test]
     async fn cancelled_and_timed_out_children_are_reaped() {
-        let dir = tempdir();
+        // Its own folder: other tests here remove the shared `tempdir()`.
+        let dir = std::env::temp_dir().join(format!("conn-vcs-reap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
         for (case, cancel) in [("cancelled", true), ("timed-out", false)] {
             let pid_file = dir.join(format!("{case}.pid"));
             let script = format!("echo $$ > '{}'; exec sleep 30", pid_file.display());
             let command = GitCommand::host_cli("test", "sh", &dir, ["-c", script.as_str()])
-                .timeout(Duration::from_millis(if cancel { 30_000 } else { 300 }));
+                .timeout(Duration::from_secs(if cancel { 30 } else { 2 }));
+            let written = async {
+                while std::fs::read_to_string(&pid_file).map_or(true, |t| !t.ends_with('\n')) {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            };
             if cancel {
-                let ran = tokio::time::timeout(Duration::from_millis(300), command.run()).await;
-                assert!(ran.is_err(), "{case}: the run is cancelled");
+                // Drop the run once the child is up, as a client call that ends drops it.
+                tokio::select! {
+                    ran = command.run() => panic!("{case}: the run ended: {ran:?}"),
+                    () = written => {}
+                }
             } else {
                 let err = command.run().await.unwrap_err();
                 assert!(
