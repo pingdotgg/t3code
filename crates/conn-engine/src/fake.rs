@@ -582,6 +582,17 @@ impl Session for FakeSession {
         })
     }
 
+    fn stop_background_work(&self, input: InterruptInput) -> BoxFuture<'_, ProviderResult<()>> {
+        Box::pin(async move {
+            self.background.store(false, Ordering::SeqCst);
+            crate::lock(&self.calls).push(format!(
+                "stop background {}",
+                input.provider_turn_id.as_str()
+            ));
+            Ok(())
+        })
+    }
+
     fn respond_to_runtime_request(
         &self,
         input: RuntimeRequestResponse,

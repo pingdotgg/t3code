@@ -142,6 +142,14 @@ pub trait Session: Send + Sync {
     /// Stops the running turn. Its `TurnTerminal` reports `interrupted`.
     fn interrupt_turn(&self, input: InterruptInput) -> BoxFuture<'_, ProviderResult<()>>;
 
+    /// `interruptTurn` with `requestRuntimeRestart` on a settled turn: Stop on a thread whose
+    /// latest run ended while its background work still runs (`ProviderTurnControlService`
+    /// calls it for settled turns too). A provider that holds such work ends it (Claude
+    /// closes its idle query); the default changes nothing.
+    fn stop_background_work(&self, _input: InterruptInput) -> BoxFuture<'_, ProviderResult<()>> {
+        Box::pin(async { Ok(()) })
+    }
+
     /// Applies a new model to the running process. `Unsupported` means it applies next turn.
     fn apply_model_selection(
         &self,

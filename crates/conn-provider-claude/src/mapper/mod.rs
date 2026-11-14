@@ -454,6 +454,30 @@ impl<E: Env> Mapper<E> {
         vec![steer_event(turn, &message_id, SteerStatus::Completed)]
     }
 
+    /// Stop with no turn running: the process and its background work are gone
+    /// (`clearWakeStateForNativeThread`, `resetBackgroundTaskStateForNativeThreadProcess`).
+    /// Running subagents end as cancelled; a thread that showed background work is sent idle
+    /// with none.
+    pub fn stop_background_work(&mut self) -> Vec<Out> {
+        let mut out = Vec::new();
+        self.end_running_subagents("cancelled", &mut out);
+        let shown = self
+            .last_provider_thread
+            .as_ref()
+            .and_then(|t| t["pendingBackgroundTasks"].as_array())
+            .is_some_and(|tasks| !tasks.is_empty());
+        let had = self.roster.clear() || shown;
+        self.roster.forget_wakes();
+        self.scheduled.clear();
+        self.wakes.clear();
+        self.wake.clear();
+        self.continuation_requested = false;
+        if had {
+            self.emit_roster(&mut out);
+        }
+        out
+    }
+
     /// The uuid of the prompt written for the running turn: frames before its echo may
     /// belong to a wake Claude runs first.
     pub fn set_prompt_uuid(&mut self, uuid: &str) {

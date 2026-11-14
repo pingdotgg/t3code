@@ -589,6 +589,9 @@ impl Inner {
                 message_id,
             } => self.steer(thread_id, run_id, message_id).await,
             Effect::Interrupt { thread_id, run_id } => self.interrupt(thread_id, run_id).await,
+            Effect::StopBackgroundWork { thread_id, run_id } => {
+                self.stop_background_work(thread_id, run_id).await;
+            }
             Effect::Respond { thread_id, request } => self.respond(thread_id, request).await,
             Effect::CloseSession { thread_id } => self.close_session(&thread_id).await,
             Effect::ApplyModelSelection {

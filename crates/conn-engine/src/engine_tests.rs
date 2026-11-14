@@ -3326,3 +3326,52 @@ async fn a_message_to_a_disabled_instance_is_refused_at_dispatch() {
         1
     );
 }
+
+/// `dispatchThreadStop` with no active run: background work that outlives the latest run
+/// is the Stop's target, and the provider gets the settled turn (`interruptTurn` with
+/// `requestRuntimeRestart`). Without such work, Stop calls no provider.
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn stop_without_a_run_reaches_background_work() {
+    let db = TempDb::new("bg-stop");
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![provider.clone()];
+    config.clock = paused_clock();
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "hello")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "c3", "threadId": "t1"}),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let calls = crate::lock(&provider.calls).clone();
+    assert!(
+        !calls.iter().any(|c| c.starts_with("stop background")),
+        "{calls:?}"
+    );
+
+    dispatch(&engine, message("t1", "c4", "background-reported")).await;
+    run_to_end(&engine, "t1", "run:t1:2").await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "c5", "threadId": "t1"}),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let calls = crate::lock(&provider.calls).clone();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| c.starts_with("stop background"))
+            .count(),
+        1,
+        "{calls:?}"
+    );
+}

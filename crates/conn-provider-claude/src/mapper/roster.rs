@@ -465,7 +465,7 @@ impl<E: Env> Mapper<E> {
 
     /// `emitRosterUpdate`: the provider thread with the roster. Idle with no turn running;
     /// with one, `active` in place of `idle`.
-    fn emit_roster(&mut self, out: &mut Vec<Out>) {
+    pub(super) fn emit_roster(&mut self, out: &mut Vec<Out>) {
         let base = match &self.turn {
             Some(turn) => Some(turn.provider_thread.clone()),
             None => self.last_provider_thread.clone(),

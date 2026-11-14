@@ -66,6 +66,8 @@ interface Step {
   readonly image?: boolean;
   readonly answers?: ReadonlyArray<string>;
   readonly interrupt?: boolean;
+  // Stop with no turn running: the latest turn settled while background work still runs.
+  readonly stop?: boolean;
   readonly reopen?: boolean;
   readonly fork?: boolean;
   readonly model?: string;
@@ -242,6 +244,17 @@ const runScenario = (scenario: Scenario) =>
           threadId: ThreadId.make(THREAD),
           modelSelection: selection(),
           runtimePolicy,
+        });
+        continue;
+      }
+      if (step.stop === true) {
+        // As ProviderTurnControlService.interrupt calls it for a Stop on a settled turn.
+        const latest = [...turns.values()].at(-1);
+        if (latest === undefined) throw new Error("stop needs a turn before it");
+        yield* session.runtime.interruptTurn({
+          providerThread: thread,
+          providerTurnId: latest.id,
+          requestRuntimeRestart: true,
         });
         continue;
       }

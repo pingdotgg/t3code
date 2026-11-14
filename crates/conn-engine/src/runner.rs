@@ -1158,6 +1158,60 @@ impl Inner {
         self.end_run(&thread_id, &run_id, "interrupted", None).await;
     }
 
+    /// Stop with no active run (`ProviderTurnControlService.interrupt` on a settled turn):
+    /// the live session gets the run's provider thread and its latest provider turn, and ends
+    /// the background work it holds. With no live session nothing runs anymore.
+    pub(crate) async fn stop_background_work(self: Arc<Self>, thread_id: String, run_id: String) {
+        let Some(live) = self.live_thread(&thread_id) else {
+            return;
+        };
+        if live.active().is_some() {
+            return;
+        }
+        let (tid, rid) = (thread_id.clone(), run_id);
+        let target = self
+            .db(move |store| -> Result<Option<(Value, Value)>, String> {
+                let tx = store.tx()?;
+                let Some(run) = tx.entity(&tid, "runs", &rid)? else {
+                    tx.rollback();
+                    return Ok(None);
+                };
+                let provider_thread_id = run["providerThreadId"].clone();
+                let provider_thread = tx
+                    .entities(&tid, "providerThreads")?
+                    .into_iter()
+                    .find(|pt| pt["id"] == provider_thread_id);
+                let turn = tx
+                    .entities(&tid, "providerTurns")?
+                    .into_iter()
+                    .filter(|t| t["providerThreadId"] == provider_thread_id)
+                    .max_by_key(|t| t["ordinal"].as_u64().unwrap_or(0));
+                tx.rollback();
+                Ok(provider_thread.zip(turn))
+            })
+            .await
+            .ok()
+            .flatten();
+        let Some((provider_thread, turn)) = target else {
+            return;
+        };
+        let (Ok(provider_thread), Ok(provider_turn_id)) =
+            (from_json(provider_thread), from_json(turn["id"].clone()))
+        else {
+            return;
+        };
+        if let Err(e) = live
+            .session
+            .stop_background_work(InterruptInput {
+                provider_thread,
+                provider_turn_id,
+            })
+            .await
+        {
+            eprintln!("conn-engine: the provider did not stop its background work: {e}");
+        }
+    }
+
     /// `ProviderTurnControlService.applyModelSelection`: only a running provider turn on the
     /// live session gets the selection. A provider that cannot apply it live keeps it for the
     /// next turn, which carries the thread's selection anyway.

@@ -58,6 +58,7 @@ A stdin line that differs only in JSON key order is reported as such and fails t
 | `settings_bypass_disabled` | settings forbid bypass (downgrade to `auto`), settings entrypoint |
 | `live_selection_effort`    | a new effort sent to the running turn: `apply_flag_settings` during the turn |
 | `live_selection_model`     | a new model sent to the running turn: nothing until the next turn |
+| `stop_background_idle`     | Stop with no turn running while a background task holds the CLI (`interruptTurn` with `requestRuntimeRestart` on the settled turn): the CLI is closed, the next turn resumes in a new one; 2 starts. Its first script is constructed (`constructed/README.md`) |
 | `read_only_sandbox`        | `approvalPolicy: never` and a read-only sandbox (`policyOverride`), with `t3-code`: `dontAsk`, the read-only tools and allow rules |
 
 Not covered here: steering, subagents, elicitation and dialogs, and a CLI that fails to start.

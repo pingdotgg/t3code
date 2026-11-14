@@ -1503,6 +1503,34 @@ impl Session for ClaudeSession {
         })
     }
 
+    /// `interruptTurn` with `requestRuntimeRestart` and no current turn: closes the thread's
+    /// idle query (its background work ends with the CLI) and clears the wake and roster
+    /// state, as T3 does. The next turn resumes in a new CLI.
+    fn stop_background_work(&self, input: InterruptInput) -> BoxFuture<'_, ProviderResult<()>> {
+        Box::pin(async move {
+            let _serial = self.inner.turn_control.lock().await;
+            let Some(native) = native_thread_id(&input.provider_thread) else {
+                return Ok(());
+            };
+            let live = {
+                let mut state = self.inner.lock();
+                if state.mapper.turn_active() {
+                    return Ok(());
+                }
+                match &state.live {
+                    Some(live) if live.native_thread_id == native => state.live.take(),
+                    _ => None,
+                }
+            };
+            if let Some(live) = live {
+                end_query(&self.inner.helper, live).await;
+            }
+            let outs = self.inner.lock().mapper.stop_background_work();
+            self.inner.deliver(None, outs).await;
+            Ok(())
+        })
+    }
+
     /// `ClaudeAdapterV2.applyModelSelection`: effort and settings apply to the live query of
     /// this thread; a new model waits for the next turn. A failed update is logged, as T3 does.
     fn apply_model_selection(

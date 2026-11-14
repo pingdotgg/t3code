@@ -1,5 +1,5 @@
 {
-  "note": "Inputs for the conformance check. Each scenario runs through the T3 server's ClaudeAdapterV2 and through conn-provider-claude, both against stub-claude. `scripts` are the transcripts (testdata/cli) the stub replays, one per CLI start. Steps: turn (text, optional image, answers to permission prompts in order, interrupt after the first output), reopen (a new provider session on the same thread: the next start resumes), fork (fork the thread after its last turn; later turns run on the fork), model (the turn's model). An interrupt closes the CLI as T3 does; the next turn resumes in a new one, so each interrupt adds a script. model_change_live runs where the CLI's init reports the policy's mode, so the model changes live; model_change_restart runs where it does not, so T3 opens a new CLI. claudeSettings is written to $CLAUDE_CONFIG_DIR/settings.json for that scenario only.",
+  "note": "Inputs for the conformance check. Each scenario runs through the T3 server's ClaudeAdapterV2 and through conn-provider-claude, both against stub-claude. `scripts` are the transcripts (testdata/cli) the stub replays, one per CLI start. Steps: stop (Stop with no turn running: T3's interruptTurn with requestRuntimeRestart on the settled turn; Claude closes the idle query that holds background work), turn (text, optional image, answers to permission prompts in order, interrupt after the first output), reopen (a new provider session on the same thread: the next start resumes), fork (fork the thread after its last turn; later turns run on the fork), model (the turn's model). An interrupt closes the CLI as T3 does; the next turn resumes in a new one, so each interrupt adds a script. model_change_live runs where the CLI's init reports the policy's mode, so the model changes live; model_change_restart runs where it does not, so T3 opens a new CLI. claudeSettings is written to $CLAUDE_CONFIG_DIR/settings.json for that scenario only.",
   "model": "claude-haiku-5-5",
   "scenarios": [
     {
@@ -241,6 +241,25 @@
           "liveSelection": {
             "model": "claude-sonnet-4-6"
           }
+        }
+      ]
+    },
+    {
+      "name": "stop_background_idle",
+      "runtimeMode": "full-access",
+      "scripts": [
+        "e16_background_task",
+        "e01_turn"
+      ],
+      "steps": [
+        {
+          "turn": "Reply with exactly: pong"
+        },
+        {
+          "stop": true
+        },
+        {
+          "turn": "Reply only: alive"
         }
       ]
     }
