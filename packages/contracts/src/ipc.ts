@@ -1148,6 +1148,8 @@ export interface DesktopBridge {
   onQuitShortcut: (listener: (event: QuitShortcutHintEvent) => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
+  /** The machine woke from sleep or was unlocked. */
+  onSystemWake: (listener: () => void) => () => void;
   getWindowZoomFactor: () => number;
   getUpdateState: () => Promise<DesktopUpdateState>;
   /** `minimumVersion` is a track switch's checked release; nothing older is offered after. */

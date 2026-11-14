@@ -92,6 +92,7 @@ function testSession(
     client,
     initialConfig: initialConfig as never,
     subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
+    opened: Effect.void,
     ready: Effect.void,
     probe: Effect.void,
     inboundFrames: Effect.succeed(0),

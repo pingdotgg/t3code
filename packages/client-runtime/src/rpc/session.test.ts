@@ -325,11 +325,17 @@ describe("RpcSessionFactory", () => {
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
       const session = yield* factory.connect(PREPARED);
-      const readyFiber = yield* Effect.forkChild(session.ready);
+      const ready = yield* Deferred.make<void>();
+      const readyFiber = yield* Effect.forkChild(
+        session.ready.pipe(Effect.tap(() => Deferred.succeed(ready, undefined))),
+      );
+      const openedFiber = yield* Effect.forkChild(session.opened);
       const socket = yield* awaitSocket(sockets);
 
       expect(socket.url).toBe(`${PREPARED.socketUrl}&frameParts=1`);
       socket.open();
+      yield* Fiber.join(openedFiber);
+      expect(yield* Deferred.isDone(ready)).toBe(false);
       yield* completeInitialConfig(socket);
       yield* Fiber.join(readyFiber);
 

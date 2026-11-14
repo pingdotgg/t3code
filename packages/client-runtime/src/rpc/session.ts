@@ -57,6 +57,8 @@ export interface RpcSession {
   readonly subscribeServerConfig: (
     input?: ServerConfigSubscriptionInput,
   ) => ServerConfigSubscription;
+  /** Succeeds once the WebSocket has opened, before the first snapshot. */
+  readonly opened: Effect.Effect<void, ConnectionAttemptError>;
   readonly ready: Effect.Effect<void, ConnectionAttemptError>;
   readonly probe: Effect.Effect<void, ConnectionAttemptError>;
   /** Frames received so far: proof the socket is alive that needs no reply. */
@@ -454,11 +456,13 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       Effect.withSpan("clientRuntime.connection.rpcSession.probe"),
     );
 
+    const opened = Deferred.await(connected).pipe(Effect.raceFirst(Deferred.await(disconnected)));
     return {
       client: protocolClient,
       initialConfig,
       subscribeServerConfig,
-      ready: Deferred.await(connected).pipe(
+      opened,
+      ready: opened.pipe(
         Effect.andThen(initialConfig),
         Effect.asVoid,
         Effect.raceFirst(Deferred.await(disconnected)),

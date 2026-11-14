@@ -316,6 +316,16 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.WINDOW_FULLSCREEN_STATE_CHANNEL, wrappedListener);
     };
   },
+  onSystemWake: (listener) => {
+    const wrappedListener = () => {
+      listener();
+    };
+
+    ipcRenderer.on(IpcChannels.SYSTEM_WAKE_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.SYSTEM_WAKE_CHANNEL, wrappedListener);
+    };
+  },
   getUpdateState: () => ipcRenderer.invoke(IpcChannels.UPDATE_GET_STATE_CHANNEL),
   setUpdateChannel: (channel, minimumVersion) =>
     ipcRenderer.invoke(IpcChannels.UPDATE_SET_CHANNEL_CHANNEL, { channel, minimumVersion }),

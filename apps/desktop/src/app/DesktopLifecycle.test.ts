@@ -11,12 +11,14 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import type * as Electron from "electron";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
+import { SYSTEM_WAKE_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 
 function layerElectronApp(
@@ -68,7 +70,31 @@ const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
   onUpdated: () => Effect.void,
 });
 
-function layerElectronWindow(destroyAll: Effect.Effect<void> = Effect.void) {
+function layerElectronPowerMonitor(listeners: Map<string, () => void> = new Map()) {
+  return Layer.succeed(ElectronPowerMonitor.ElectronPowerMonitor, {
+    isOnBatteryPower: Effect.succeed(false),
+    getSystemIdleTime: Effect.succeed(0),
+    getSystemIdleState: () => Effect.succeed("active" as const),
+    getCurrentThermalState: Effect.succeed("nominal" as const),
+    onSimpleEvent: (eventName, listener) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          listeners.set(eventName, listener);
+        }),
+        () =>
+          Effect.sync(() => {
+            listeners.delete(eventName);
+          }),
+      ).pipe(Effect.asVoid),
+    onThermalStateChange: () => Effect.void,
+    onSpeedLimitChange: () => Effect.void,
+  });
+}
+
+function layerElectronWindow(
+  destroyAll: Effect.Effect<void> = Effect.void,
+  sendAll: ElectronWindow.ElectronWindow["Service"]["sendAll"] = () => Effect.void,
+) {
   return Layer.succeed(ElectronWindow.ElectronWindow, {
     create: () => Effect.die("unexpected window creation"),
     main: Effect.die("unexpected main window read"),
@@ -78,7 +104,7 @@ function layerElectronWindow(destroyAll: Effect.Effect<void> = Effect.void) {
     clearMain: () => Effect.void,
     prepareReveal: () => Effect.succeed(false),
     reveal: () => Effect.void,
-    sendAll: () => Effect.void,
+    sendAll,
     destroyAll,
     syncAllAppearance: () => Effect.void,
   });
@@ -124,6 +150,7 @@ describe("DesktopLifecycle", () => {
       const layer = DesktopLifecycle.layer.pipe(
         Layer.provideMerge(layerElectronApp(appListeners)),
         Layer.provideMerge(layerElectronTheme),
+        Layer.provideMerge(layerElectronPowerMonitor()),
         Layer.provideMerge(
           layerElectronWindow(
             Effect.sync(() => {
@@ -202,6 +229,7 @@ describe("DesktopLifecycle", () => {
       const layer = DesktopLifecycle.layer.pipe(
         Layer.provideMerge(layerElectronApp(appListeners, quit)),
         Layer.provideMerge(layerElectronTheme),
+        Layer.provideMerge(layerElectronPowerMonitor()),
         Layer.provideMerge(layerElectronWindow(destroyAll)),
         Layer.provideMerge(layerDesktopWindow({ flushMainWindowBounds })),
         Layer.provideMerge(layerEnvironment),
@@ -288,6 +316,7 @@ describe("DesktopLifecycle", () => {
       const layer = DesktopLifecycle.layer.pipe(
         Layer.provideMerge(layerElectronApp(appListeners, Effect.void, exit)),
         Layer.provideMerge(layerElectronTheme),
+        Layer.provideMerge(layerElectronPowerMonitor()),
         Layer.provideMerge(layerElectronWindow()),
         Layer.provideMerge(layerDesktopWindow()),
         Layer.provideMerge(layerEnvironment),
@@ -341,6 +370,7 @@ describe("DesktopLifecycle", () => {
       const layer = DesktopLifecycle.layer.pipe(
         Layer.provideMerge(layerElectronApp(appListeners)),
         Layer.provideMerge(layerElectronTheme),
+        Layer.provideMerge(layerElectronPowerMonitor()),
         Layer.provideMerge(layerElectronWindow()),
         Layer.provideMerge(layerDesktopWindow({ activate })),
         Layer.provideMerge(layerEnvironment),
@@ -358,6 +388,53 @@ describe("DesktopLifecycle", () => {
           appListeners.get("activate")?.();
 
           assert.equal(activationCount, 0);
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("tells windows to reconnect once per sleep or lock", () =>
+    Effect.gen(function* () {
+      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      const powerListeners = new Map<string, () => void>();
+      const sent: string[] = [];
+      const sendAll = (channel: string) =>
+        Effect.sync(() => {
+          sent.push(channel);
+        });
+      const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "darwin",
+        isDevelopment: false,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(layerElectronApp(appListeners)),
+        Layer.provideMerge(layerElectronTheme),
+        Layer.provideMerge(layerElectronPowerMonitor(powerListeners)),
+        Layer.provideMerge(layerElectronWindow(Effect.void, sendAll)),
+        Layer.provideMerge(layerDesktopWindow()),
+        Layer.provideMerge(layerEnvironment),
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+          yield* lifecycle.register;
+          const emit = (eventName: string) => powerListeners.get(eventName)?.();
+
+          // A wake from sleep reports resume, then unlock-screen.
+          emit("suspend");
+          emit("resume");
+          emit("unlock-screen");
+          yield* Effect.yieldNow;
+          assert.deepEqual(sent, [SYSTEM_WAKE_CHANNEL]);
+
+          // A lock without sleep reports only unlock-screen.
+          emit("lock-screen");
+          emit("unlock-screen");
+          yield* Effect.yieldNow;
+          assert.deepEqual(sent, [SYSTEM_WAKE_CHANNEL, SYSTEM_WAKE_CHANNEL]);
         }),
       ).pipe(Effect.provide(layer));
     }),

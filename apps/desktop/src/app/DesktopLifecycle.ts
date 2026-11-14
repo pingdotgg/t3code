@@ -17,10 +17,12 @@ import { stopChildProcessesBeforeExit, stopZygotesBeforeExit } from "./DesktopEx
 import { makeComponentLogger } from "./DesktopObservability.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopState from "./DesktopState.ts";
+import { SYSTEM_WAKE_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 
 export class DesktopLifecycleRelaunchError extends Schema.TaggedError<DesktopLifecycleRelaunchError>()(
@@ -45,10 +47,11 @@ export type DesktopLifecycleRuntimeServices =
 
 type DesktopLifecycleRegistrationServices =
   | DesktopLifecycleRuntimeServices
+  | ElectronPowerMonitor.ElectronPowerMonitor
   | ElectronWindow.ElectronWindow;
 
 /**
- * @effect-expect-leaking DesktopEnvironment | DesktopShutdown | DesktopState | DesktopWindow | ElectronApp | ElectronTheme | ElectronWindow
+ * @effect-expect-leaking DesktopEnvironment | DesktopShutdown | DesktopState | DesktopWindow | ElectronApp | ElectronPowerMonitor | ElectronTheme | ElectronWindow
  */
 export class DesktopLifecycle extends Context.Service<
   DesktopLifecycle,
@@ -304,6 +307,28 @@ export const make = DesktopLifecycle.of({
         }).pipe(Effect.withSpan("desktop.lifecycle.windowAllClosed")),
       );
     });
+
+    // Sockets and setup attempts from before a sleep or lock are often dead
+    // without a close. A wake from sleep reports resume and then
+    // unlock-screen, so windows hear one wake per sleep or lock.
+    const powerMonitor = yield* ElectronPowerMonitor.ElectronPowerMonitor;
+    let wakePending = false;
+    const markWakePending = () => {
+      wakePending = true;
+    };
+    const sendWake = () => {
+      if (!wakePending) return;
+      wakePending = false;
+      void runEffect(
+        electronWindow
+          .sendAll(SYSTEM_WAKE_CHANNEL)
+          .pipe(Effect.withSpan("desktop.lifecycle.systemWake")),
+      );
+    };
+    yield* powerMonitor.onSimpleEvent("suspend", markWakePending);
+    yield* powerMonitor.onSimpleEvent("lock-screen", markWakePending);
+    yield* powerMonitor.onSimpleEvent("resume", sendWake);
+    yield* powerMonitor.onSimpleEvent("unlock-screen", sendWake);
 
     // Electron can exit without before-quit, e.g. when the X11/Wayland connection drops.
     // Children (the backend too) get SIGTERM while main still holds an AppImage mount open.

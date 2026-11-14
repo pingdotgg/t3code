@@ -62,6 +62,7 @@ function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
       environment: { serverVersion: "1.0.0" },
     } as never),
     subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
+    opened: Effect.void,
     ready: Effect.void,
     probe: Effect.void,
     inboundFrames: Effect.succeed(0),
