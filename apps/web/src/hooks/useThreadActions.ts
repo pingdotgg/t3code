@@ -46,6 +46,7 @@ import {
   readThreadShell,
   readThreadShells,
 } from "../state/entities";
+import { setNewThreadFolder } from "../newThreadFolderStore";
 import { useUiStateStore } from "../uiStateStore";
 import { useDiffPanelStore } from "../diffPanelStore";
 import { usePreviewMiniPlayerStore } from "../previewMiniPlayerStore";
@@ -767,6 +768,7 @@ export function useThreadActions() {
   ) => {
     const permissionFailure = threadOperationFailure(target);
     if (permissionFailure) return permissionFailure;
+    setNewThreadFolder(scopedThreadKey(target), null);
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
       return AsyncResult.failure(
         Cause.fail(

@@ -161,6 +161,7 @@ import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import {
   resolveThreadActionProjectRef,
   startNewThreadFromContext,
+  startNewThreadInSidebarScope,
   threadHasStarted,
 } from "../lib/chatThreadActions";
 import {
@@ -886,7 +887,8 @@ function OpenCommandPaletteDialog(props: {
                 projectRef.environmentId === contextualProjectRef.environmentId &&
                 projectRef.projectId === contextualProjectRef.projectId,
             );
-          await handleNewThread(
+          await startNewThreadInSidebarScope(
+            handleNewThread,
             contextualRefBelongsToGroup
               ? contextualProjectRef
               : scopeProjectRef(project.environmentId, project.id),

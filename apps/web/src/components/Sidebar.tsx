@@ -56,6 +56,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import {
   AuthOrchestrationOperateScope,
+  AuthSettingsWriteScope,
   ProjectId,
   type ScopedThreadRef,
   type ThreadId,
@@ -151,6 +152,7 @@ import {
 import {
   readThreadShell,
   readThreadShells,
+  readVisibleThreadShells,
   useAllEnvironmentProjectSnapshotsReady,
   useDelegatedUnderParent,
   useProjects,
@@ -239,8 +241,12 @@ import {
   railKeysAfterFolderEdit,
   folderIconsPatchAfterEdit,
   type ProjectRailTile,
+  pruneStaleFolderKeys,
   railOrderAfterMove,
+  threadFilterTarget,
+  withNewThreadFolderTags,
 } from "./sidebar/ProjectRail.logic";
+import { useNewThreadFolderStore } from "../newThreadFolderStore";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import { createSidebarShiftGuard } from "./Sidebar.shiftGuard";
 import {
@@ -1128,7 +1134,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // loaded. The stored keys are left alone, so the scope returns with its project.
   // An archived project's scope reads as all projects, matching the menu.
   const scopeGroups = pickableProjectGroups(projectGroups);
-  const threads = useQuietThreadShells();
+  const threads = withNewThreadFolderTags(
+    useQuietThreadShells(),
+    useNewThreadFolderStore((store) => store.tagByThreadKey),
+    threadShellKey,
+  );
   const archivedProjectKeys = new Set(
     projectGroups.filter((project) => project.archived).map((project) => project.projectKey),
   );
@@ -1346,21 +1356,37 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         applyThreadTagChanges(scopeThreadRef(thread.environmentId, thread.id), changes),
       ),
     );
-    // While every thread still carries the old tag, the folder keeps its place, filter and icon.
-    if (plan.length === 0 || results.some((result) => result._tag === "Success")) {
+    const fromSurvives = results.some((result) => result._tag === "Failure");
+    // While every thread still carries the old tag, the folder keeps its filter and icon.
+    const anyMoved = plan.length === 0 || results.some((result) => result._tag === "Success");
+    if (anyMoved) {
       const iconsPatch = folderIconsPatchAfterEdit(
         appAtomRegistry.get(primaryServerSettingsAtom).folderIcons,
         from,
         to,
-        results.some((result) => result._tag === "Failure"),
+        fromSurvives,
       );
       if (iconsPatch !== null) updatePrimarySettings({ folderIcons: iconsPatch });
-      const { railOrder, projectOrder, sidebarProjectScopeKeys } = useUiStateStore.getState();
-      setRailOrder({ railOrder: railKeysAfterFolderEdit(railOrder, from, to), projectOrder });
-      const scopeKeys = railKeysAfterFolderEdit(sidebarProjectScopeKeys, from, to);
-      if (scopeKeys.join("\n") !== sidebarProjectScopeKeys.join("\n")) {
-        setProjectScopeKeys(scopeKeys);
-      }
+    }
+    const { railOrder, projectOrder, sidebarProjectScopeKeys } = useUiStateStore.getState();
+    const scopeKeys = anyMoved
+      ? railKeysAfterFolderEdit(sidebarProjectScopeKeys, from, to, fromSurvives)
+      : sidebarProjectScopeKeys;
+    // A thread that failed halfway may already carry `to`, so its tile is placed even then.
+    const liveTags = new Set([
+      ...threadFolderNames(readThreadShells()),
+      ...scopeKeys.flatMap((key) => folderTagOfScopeKey(key) ?? []),
+      ...(to === null ? [] : [to]),
+    ]);
+    setRailOrder({
+      railOrder: pruneStaleFolderKeys(
+        railKeysAfterFolderEdit(railOrder, from, to, fromSurvives),
+        liveTags,
+      ),
+      projectOrder,
+    });
+    if (scopeKeys.join("\n") !== sidebarProjectScopeKeys.join("\n")) {
+      setProjectScopeKeys(scopeKeys);
     }
     toastThreadCommandFailures(
       results,
@@ -1420,20 +1446,44 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const api = readLocalApi();
       if (!api || contextMenuOpenRef.current) return;
       contextMenuOpenRef.current = true;
+      const canEdit = canOperateThreads(
+        folderEditPlan(readThreadShells(), tile.tag, null).map(({ thread }) => thread),
+      );
+      const canWriteIcons =
+        primaryEnvironmentId !== null &&
+        readEnvironmentScope(primaryEnvironmentId, AuthSettingsWriteScope);
       void (async () => {
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             [
               ...(folderIconsAvailable
                 ? [
-                    { id: "icon", label: "Change icon…", icon: "folder" },
+                    {
+                      id: "icon",
+                      label: "Change icon…",
+                      icon: "folder",
+                      disabled: !canWriteIcons,
+                    },
                     ...(folderIcons[tile.tag]
-                      ? [{ id: "icon-reset", label: "Reset icon", icon: "refresh-cw" }]
+                      ? [
+                          {
+                            id: "icon-reset",
+                            label: "Reset icon",
+                            icon: "refresh-cw",
+                            disabled: !canWriteIcons,
+                          },
+                        ]
                       : []),
                   ]
                 : []),
-              { id: "rename", label: "Rename folder…", icon: "pencil" },
-              { id: "delete", label: "Delete folder", icon: "trash", destructive: true },
+              { id: "rename", label: "Rename folder…", icon: "pencil", disabled: !canEdit },
+              {
+                id: "delete",
+                label: "Delete folder",
+                icon: "trash",
+                destructive: true,
+                disabled: !canEdit,
+              },
             ],
             position,
           ),
@@ -2543,9 +2593,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               ? [
                   {
                     ...buildFolderMenuItem({
-                      names: threadFolderNames(
-                        Array.from(threadByKeyRef.current.values(), (t) => t.source),
-                      ),
+                      names: threadFolderNames(readVisibleThreadShells()),
                       threadTags: selectedThreads.map((thread) => thread.source.tags ?? []),
                     }),
                     disabled: !canOperateThreads(selectedThreads),
@@ -2816,6 +2864,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 projectRef.projectId === thread.projectId,
             ),
           ) ?? null;
+        const filterTarget = threadFilterTarget(
+          thread.source,
+          threadProjectGroup,
+          projectScopeKeys,
+        );
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -2824,14 +2877,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 AuthOrchestrationOperateScope,
               ),
               branch: thread.branch ?? null,
-              // An archived project is not a filter choice.
-              projectFilter:
-                threadProjectGroup && !threadProjectGroup.archived
-                  ? {
-                      label: threadProjectGroup.displayName,
-                      isActive: projectScopeKeys.includes(threadProjectGroup.projectKey),
-                    }
-                  : null,
+              projectFilter: filterTarget && {
+                label: filterTarget.label,
+                isActive: projectScopeKeys.includes(filterTarget.key),
+              },
               isPinned,
               isSettled,
               autoSettleEnabled: thread.autoSettleDisabledAt == null,
@@ -2845,9 +2894,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
               folders: configLoaded
                 ? {
-                    names: threadFolderNames(
-                      Array.from(threadByKeyRef.current.values(), (t) => t.source),
-                    ),
+                    names: threadFolderNames(readVisibleThreadShells()),
                     threadTags: [thread.source.tags ?? []],
                   }
                 : null,
@@ -2896,11 +2943,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         }
         switch (clicked.value) {
           case "filter-by-project":
-            if (threadProjectGroup) {
+            if (filterTarget) {
               setProjectScopeKeys(
-                projectScopeKeys.includes(threadProjectGroup.projectKey)
-                  ? []
-                  : [threadProjectGroup.projectKey],
+                projectScopeKeys.includes(filterTarget.key) ? [] : [filterTarget.key],
               );
             }
             return;

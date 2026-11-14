@@ -181,20 +181,43 @@ export function folderEditPlan<TThread extends Pick<RailThread, "tags">>(
   });
 }
 
-/** Rail order or scope keys with folder `from` renamed to `to` in place, or dropped when `to` is null. */
+/**
+ * Rail order or scope keys with folder `from` renamed to `to` in place, or dropped when `to` is
+ * null. A `from` that kept threads after a partial failure keeps its key, with `to` beside it.
+ */
 export function railKeysAfterFolderEdit(
   keys: readonly string[],
   from: string,
   to: string | null,
+  fromSurvives = false,
 ): string[] {
   const fromKey = folderScopeKey(from);
   const toKey = to === null ? null : folderScopeKey(to);
   const next: string[] = [];
+  const push = (key: string | null) => {
+    if (key !== null && !next.includes(key)) next.push(key);
+  };
   for (const key of keys) {
-    const mapped = key === fromKey ? toKey : key;
-    if (mapped !== null && !next.includes(mapped)) next.push(mapped);
+    if (key !== fromKey) push(key);
+    else if (!fromSurvives) push(toKey);
+    else {
+      push(key);
+      // A merge target keeps its own place.
+      if (toKey !== null && !keys.includes(toKey)) push(toKey);
+    }
   }
   return next;
+}
+
+/** Folder keys whose tag no live folder holds, dropped so a later folder of that name starts fresh. */
+export function pruneStaleFolderKeys(
+  keys: readonly string[],
+  liveTags: ReadonlySet<string>,
+): string[] {
+  return keys.filter((key) => {
+    const tag = folderTagOfScopeKey(key);
+    return tag === null || liveTags.has(tag);
+  });
 }
 
 /**
@@ -213,4 +236,42 @@ export function folderIconsPatchAfterEdit(
   const patch: Record<string, ProjectIconOverride | null> = fromSurvives ? {} : { [from]: null };
   if (to !== null && icons[to] === undefined) patch[to] = icon;
   return Object.keys(patch).length > 0 ? patch : null;
+}
+
+/** What "Filter by" on a thread picks: its folder when tagged, else its project unless archived. */
+export function threadFilterTarget(
+  thread: { readonly tags?: ReadonlyArray<string> | undefined },
+  projectGroup: Pick<SidebarProjectSnapshot, "projectKey" | "displayName" | "archived"> | null,
+  scopeKeys: readonly string[] = [],
+): { readonly key: string; readonly label: string } | null {
+  const tags = thread.tags ?? [];
+  const tag = tags.find((candidate) => scopeKeys.includes(folderScopeKey(candidate))) ?? tags[0];
+  if (tag !== undefined) return { key: folderScopeKey(tag), label: tag };
+  if (projectGroup === null || projectGroup.archived) return null;
+  return { key: projectGroup.projectKey, label: projectGroup.displayName };
+}
+
+/** A thread started while the sidebar shows exactly one folder, and nothing else, is born in it. */
+export function newThreadFolderTag(scopeKeys: readonly string[]): string | null {
+  return scopeKeys.length === 1 ? folderTagOfScopeKey(scopeKeys[0]!) : null;
+}
+
+/** New threads read as in their folder until their own tag arrives from the server. */
+export function withNewThreadFolderTags<
+  TThread extends { readonly tags?: ReadonlyArray<string> | undefined },
+>(
+  threads: readonly TThread[],
+  tagByThreadKey: Readonly<Record<string, string>>,
+  keyOf: (thread: TThread) => string,
+): readonly TThread[] {
+  if (Object.keys(tagByThreadKey).length === 0) return threads;
+  let changed = false;
+  const next = threads.map((thread) => {
+    const tag = tagByThreadKey[keyOf(thread)];
+    if (tag === undefined || (thread.tags ?? []).length > 0) return thread;
+    changed = true;
+    return { ...thread, tags: [tag] };
+  });
+  // The shell list keeps its identity so the sidebar's derived lists stay memoized.
+  return changed ? next : threads;
 }

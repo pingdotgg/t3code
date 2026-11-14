@@ -150,6 +150,10 @@ export function ProjectRail(props: {
         }}
         onDragMove={onDragMove}
         onDragEnd={onDragEnd}
+        onDragCancel={() => {
+          draggedRef.current = false;
+          touchLiftedRef.current = false;
+        }}
       >
         <SortableContext
           items={tiles.map((tile) => tile.key)}

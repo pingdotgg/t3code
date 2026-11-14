@@ -8,7 +8,11 @@ import {
   railOrderAfterMove,
   railKeysAfterFolderEdit,
   folderIconsPatchAfterEdit,
+  newThreadFolderTag,
+  pruneStaleFolderKeys,
   resolveProjectRailTileStates,
+  threadFilterTarget,
+  withNewThreadFolderTags,
 } from "./ProjectRail.logic";
 
 const environmentId = EnvironmentId.make("environment-local");
@@ -211,6 +215,21 @@ describe("folder rename and delete", () => {
       "group:a",
     ]);
     expect(railKeysAfterFolderEdit(keys, "ops", null)).toEqual(["group:a", "tag:infra"]);
+    // A folder that kept threads after a partial failure keeps its place, and the new one sits beside it.
+    expect(railKeysAfterFolderEdit(keys, "ops", "build", true)).toEqual([
+      "group:a",
+      "tag:ops",
+      "tag:build",
+      "tag:infra",
+    ]);
+    expect(railKeysAfterFolderEdit(keys, "ops", "infra", true)).toEqual(keys);
+    expect(railKeysAfterFolderEdit(keys, "ops", null, true)).toEqual(keys);
+  });
+
+  it("prunes folder keys no live folder holds, so a later folder of that name starts fresh", () => {
+    expect(
+      pruneStaleFolderKeys(["group:a", "tag:gone", "tag:ops", "group:b"], new Set(["ops"])),
+    ).toEqual(["group:a", "tag:ops", "group:b"]);
   });
 
   it("moves a renamed folder's icon and drops a deleted one", () => {
@@ -225,5 +244,53 @@ describe("folder rename and delete", () => {
     // A folder that kept threads after a partial failure keeps its icon.
     expect(folderIconsPatchAfterEdit(icons, "ops", "build", true)).toEqual({ build: rocket });
     expect(folderIconsPatchAfterEdit(icons, "ops", null, true)).toBeNull();
+  });
+});
+
+describe("thread filter target", () => {
+  const projectGroup = { projectKey: "group:a", displayName: "Alpha", archived: false };
+  it("filters an untagged thread by its project and a tagged one by its folder", () => {
+    expect(threadFilterTarget({ tags: [] }, projectGroup)).toEqual({
+      key: "group:a",
+      label: "Alpha",
+    });
+    expect(threadFilterTarget({ tags: ["ops"] }, projectGroup)).toEqual({
+      key: "tag:ops",
+      label: "ops",
+    });
+    expect(threadFilterTarget({ tags: [] }, { ...projectGroup, archived: true })).toBeNull();
+    expect(threadFilterTarget({ tags: ["ops"] }, null)).toEqual({ key: "tag:ops", label: "ops" });
+    // A thread in several folders offers the one already shown, so the filter can be turned off.
+    expect(threadFilterTarget({ tags: ["infra", "ops"] }, null, ["tag:ops"])).toEqual({
+      key: "tag:ops",
+      label: "ops",
+    });
+  });
+});
+
+describe("new thread in a folder scope", () => {
+  it("takes the folder only when it is the whole scope", () => {
+    expect(newThreadFolderTag(["tag:ops"])).toBe("ops");
+    expect(newThreadFolderTag([])).toBeNull();
+    expect(newThreadFolderTag(["group:a"])).toBeNull();
+    expect(newThreadFolderTag(["tag:ops", "group:a"])).toBeNull();
+    expect(newThreadFolderTag(["tag:ops", "tag:infra"])).toBeNull();
+  });
+
+  it("shows a new thread in its folder before the tag lands", () => {
+    const threads: { id: string; tags?: readonly string[] }[] = [
+      { id: "t1", tags: [] },
+      { id: "t2", tags: ["infra"] },
+      { id: "t3" },
+    ];
+    const result = withNewThreadFolderTags(
+      threads,
+      { t1: "ops", t2: "ops" },
+      (thread) => thread.id,
+    );
+    expect(result.map((thread) => thread.tags)).toEqual([["ops"], ["infra"], undefined]);
+    expect(withNewThreadFolderTags(threads, {}, () => "")).toBe(threads);
+    // A leftover entry for a thread that is not listed keeps the list as it was.
+    expect(withNewThreadFolderTags(threads, { gone: "ops" }, (thread) => thread.id)).toBe(threads);
   });
 });
