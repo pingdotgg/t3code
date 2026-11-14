@@ -3053,7 +3053,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           const agent =
             getModelSelectionStringOptionValue(turn.modelSelection, "agent") ??
             (turn.runtimePolicy.interactionMode === "plan" ? "plan" : undefined);
-          const variant = getModelSelectionStringOptionValue(turn.modelSelection, "variant");
+          const variant = OpenCodeRuntime.openCodeVariant(turn.modelSelection);
           return {
             ...(agent === undefined ? {} : { agent }),
             ...(variant === undefined ? {} : { variant }),

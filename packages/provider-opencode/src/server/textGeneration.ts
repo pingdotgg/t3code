@@ -243,7 +243,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         const selectedVariant = yield* OpenCodeRuntime.resolveOpenCodeVariant(
           client,
           parsedModel,
-          getModelSelectionStringOptionValue(input.modelSelection, "variant"),
+          OpenCodeRuntime.openCodeVariant(input.modelSelection),
         );
         const promptContext = {
           operation: input.operation,

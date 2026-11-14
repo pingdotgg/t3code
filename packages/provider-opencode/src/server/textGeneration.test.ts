@@ -20,6 +20,7 @@ import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import * as OpenCodeTextGeneration from "./textGeneration.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
+import { DEFAULT_VARIANT_CHOICE_ID } from "@t3tools/shared/model";
 
 const runtimeMock = {
   state: {
@@ -567,6 +568,30 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
         expect(runtimeMock.state.sessionCalls).toEqual(["delete http://127.0.0.1:4301/session"]);
       }),
     ),
+  );
+
+  it.effect(
+    "sends no variant for a custom model's Default choice and keeps a variant named default",
+    () =>
+      withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+        Effect.gen(function* () {
+          for (const value of [DEFAULT_VARIANT_CHOICE_ID, "default"]) {
+            yield* textGeneration.generateCommitMessage({
+              ...DEFAULT_COMMIT_MESSAGE_INPUT,
+              modelSelection: {
+                ...DEFAULT_TEST_MODEL_SELECTION,
+                model: "acme/custom-chat",
+                options: [{ id: "variant", value }],
+              },
+            });
+          }
+
+          expect(runtimeMock.state.promptInputs.map((input) => input.variant)).toEqual([
+            undefined,
+            "default",
+          ]);
+        }),
+      ),
   );
 
   it.effect("parses JSON returned as plain text output", () =>
