@@ -65,24 +65,27 @@ describe("ReadOnlySourcePreview", () => {
     expect(copiedText(rows()[0]!)).toBeNull();
   });
 
-  it("copies the whole of a file whose lines end in a lone carriage return", async () => {
-    const carriageReturns = text.replaceAll("\n", "\r");
+  it.each([
+    ["a lone carriage return", "\r"],
+    ["a carriage return and line feed", "\r\n"],
+  ])("copies the whole of a file whose lines end in %s", async (_name, ending) => {
+    const contents = text.replaceAll("\n", ending);
     await getSyntaxHighlighterPromise("text");
     await using screen = await render(
       <div className="flex h-[400px] flex-col">
-        <ReadOnlySourcePreview name="notes.txt" text={carriageReturns} wordWrap={false} />
+        <ReadOnlySourcePreview name="notes.txt" text={contents} wordWrap={false} />
       </div>,
     );
     const root = screen.container.querySelector("diffs-container")!.shadowRoot!;
     const rows = () => root.querySelectorAll("[data-line]");
     await vi.waitFor(() => expect(rows()[0]?.textContent).toBe("line 1"));
 
+    await userEvent.click(rows()[0]!);
+    await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
     const scroller = screen.container.querySelector(".file-preview-virtualizer")!;
     scroller.scrollTop = scroller.scrollHeight;
     await vi.waitFor(() => expect(rows()[0]?.textContent).not.toBe("line 1"));
-    await userEvent.click(rows()[rows().length - 1]!);
-    await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
-    expect(copiedText(rows()[0]!)).toBe(carriageReturns);
+    expect(copiedText(rows()[0]!)).toBe(contents);
   });
 
   it("copies a partial selection after its rows scroll out of the mounted window", async () => {

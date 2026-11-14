@@ -66,7 +66,8 @@ export class SourceSelection {
 
   #lineEnd(line: number) {
     const next = this.#starts[line + 1];
-    return next === undefined ? this.#text.length : next - 1;
+    if (next === undefined) return this.#text.length;
+    return this.#text.startsWith("\r\n", next - 2) ? next - 2 : next - 1;
   }
 
   #lineAt(offset: number) {
