@@ -558,9 +558,9 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       "Which approach?": "Simple, Safe",
       "Deploy now?": "Yes",
       "Anything else?":
-        "/wait-what [The user invoked this skill. Follow the instructions at: /skills/wait-what/SKILL.md] then /review it",
+        "/wait-what (my answer is to use my wait-what skill instead; read /skills/wait-what/SKILL.md and do what it says) then /review it",
       "Typed command?":
-        "/wait-what [The user invoked this skill. Follow the instructions at: /skills/wait-what/SKILL.md] please",
+        "/wait-what (my answer is to use my wait-what skill instead; read /skills/wait-what/SKILL.md and do what it says) please",
       "A path?": "/srv/wait-what",
       "A path and a skill?": "/srv/app then /review it",
     });

@@ -33,12 +33,22 @@ function matchSkillMentions(
   });
 }
 
+type UserOnlySkillNote = (name: string, path: string) => string;
+
+const promptSkillNote: UserOnlySkillNote = (_name, path) =>
+  ` [The user invoked this skill. Follow the instructions at: ${path}]`;
+
+// Claude declines instructions in a tool result unless they read as the user's own answer.
+const answerSkillNote: UserOnlySkillNote = (name, path) =>
+  ` (my answer is to use my ${name} skill instead; read ${path} and do what it says)`;
+
 // Claude's Skill tool refuses user-only skills, so any mention Claude will not
 // expand natively points at the skill's raw file instead.
 function inlineSkillMentions(
   prompt: string,
   mentions: ReturnType<typeof matchSkillMentions>,
   nativelyExpanded: string | undefined,
+  note: UserOnlySkillNote,
 ): string {
   const annotated = new Set(nativelyExpanded === undefined ? [] : [nativelyExpanded]);
   let text = "";
@@ -46,7 +56,7 @@ function inlineSkillMentions(
   for (const mention of mentions) {
     text += `${prompt.slice(cursor, mention.start)}/${mention.name}`;
     if (mention.skill.userInvocationOnly === true && !annotated.has(mention.name)) {
-      text += ` [The user invoked this skill. Follow the instructions at: ${mention.skill.path}]`;
+      text += note(mention.name, mention.skill.path);
       annotated.add(mention.name);
     }
     cursor = mention.end;
@@ -68,7 +78,7 @@ export function planClaudeSkillDispatch(
   return {
     leadingText:
       prompt.slice(0, last.start).trim().length > 0
-        ? inlineSkillMentions(prompt, mentions, last.name)
+        ? inlineSkillMentions(prompt, mentions, last.name, promptSkillNote)
         : undefined,
     commandText: `/${last.name}${prompt.slice(last.end)}`.trimEnd(),
   };
@@ -99,9 +109,11 @@ export function rewriteClaudeSkillMentionsInAnswer(
   if (leading) {
     const mentions = matchSkillMentions(leading.text, skills);
     if (mentions[0]?.start === leading.indent.length) {
-      return inlineSkillMentions(leading.text, mentions, undefined);
+      return inlineSkillMentions(leading.text, mentions, undefined, answerSkillNote);
     }
   }
   const mentions = matchSkillMentions(answer, skills);
-  return mentions.length === 0 ? answer : inlineSkillMentions(answer, mentions, undefined);
+  return mentions.length === 0
+    ? answer
+    : inlineSkillMentions(answer, mentions, undefined, answerSkillNote);
 }
