@@ -1,12 +1,13 @@
-import {
-  DurableObject,
-  WorkerEntrypoint,
-  WorkflowEntrypoint,
-} from "cloudflare:workers";
-
-import { INIT_PATH } from "./constants.shared.ts";
+import { DurableObject, WorkerEntrypoint, WorkflowEntrypoint } from "cloudflare:workers";
+import { HEADER_ERROR_STACK, INIT_PATH } from "./constants.shared.ts";
 import type { Env as WrapperEnv } from "./env.worker.ts";
-import { stripInternalEnv } from "./env.worker.ts";
+import { getEntryEnvironment, stripInternalEnv } from "./env.worker.ts";
+import {
+  DURABLE_OBJECT_KEYS,
+  IGNORED_KEYS,
+  WORKER_ENTRYPOINT_KEYS,
+  WORKFLOW_ENTRYPOINT_KEYS,
+} from "./keys.shared.ts";
 import { getWorkerEntryExport } from "./module-runner.worker.ts";
 
 /**
@@ -14,9 +15,7 @@ import { getWorkerEntryExport } from "./module-runner.worker.ts";
  * @template T - The `env` type
  */
 interface WorkerEntrypointConstructor<T = Cloudflare.Env> {
-  new (
-    ...args: ConstructorParameters<typeof WorkerEntrypoint<T>>
-  ): WorkerEntrypoint<T>;
+  new (...args: ConstructorParameters<typeof WorkerEntrypoint<T>>): WorkerEntrypoint<T>;
 }
 
 /**
@@ -24,9 +23,7 @@ interface WorkerEntrypointConstructor<T = Cloudflare.Env> {
  * @template T - The `env` type
  */
 interface DurableObjectConstructor<T = Cloudflare.Env> {
-  new (
-    ...args: ConstructorParameters<typeof DurableObject<T>>
-  ): DurableObject<T>;
+  new (...args: ConstructorParameters<typeof DurableObject<T>>): DurableObject<T>;
 }
 
 /**
@@ -34,39 +31,15 @@ interface DurableObjectConstructor<T = Cloudflare.Env> {
  * @template T - The `env` type
  */
 interface WorkflowEntrypointConstructor<T = Cloudflare.Env> {
-  new (
-    ...args: ConstructorParameters<typeof WorkflowEntrypoint<T>>
-  ): WorkflowEntrypoint<T>;
+  new (...args: ConstructorParameters<typeof WorkflowEntrypoint<T>>): WorkflowEntrypoint<T>;
 }
 
-/** Keys that should be ignored during RPC property access */
-export const IGNORED_KEYS = ["self"] as const;
-
-/** Available methods for `WorkerEntrypoint` class */
-export const WORKER_ENTRYPOINT_KEYS = [
-  "connect",
-  "email",
-  "fetch",
-  "queue",
-  "tail",
-  "tailStream",
-  "test",
-  "trace",
-  "scheduled",
-] as const;
-
-/** Available methods for `DurableObject` class */
-export const DURABLE_OBJECT_KEYS = [
-  "alarm",
-  "connect",
-  "fetch",
-  "webSocketClose",
-  "webSocketError",
-  "webSocketMessage",
-] as const;
-
-/** Available methods for `WorkflowEntrypoint` classes */
-export const WORKFLOW_ENTRYPOINT_KEYS = ["run"] as const;
+export {
+  DURABLE_OBJECT_KEYS,
+  IGNORED_KEYS,
+  WORKER_ENTRYPOINT_KEYS,
+  WORKFLOW_ENTRYPOINT_KEYS,
+} from "./keys.shared.ts";
 
 /**
  * Creates a proxy wrapper for `WorkerEntrypoint` classes that enables RPC functionality.
@@ -99,11 +72,7 @@ export function createWorkerEntrypointWrapper(
             return;
           }
 
-          const property = getWorkerEntrypointRpcProperty.call(
-            receiver,
-            exportName,
-            key,
-          );
+          const property = getWorkerEntrypointRpcProperty.call(receiver, exportName, key);
 
           return getRpcPropertyCallableThenable(key, property);
         },
@@ -123,7 +92,7 @@ export function createWorkerEntrypointWrapper(
 
           if (typeof maybeFn !== "function") {
             throw new TypeError(
-              `Expected "${exportName}" export of "${this.env.__DISTILLED_ENVIRONMENT__.entryName}" to define a \`${key}()\` function.`,
+              `Expected "${exportName}" export of "${getEntryEnvironment().entryName}" to define a \`${key}()\` function.`,
             );
           }
 
@@ -135,7 +104,7 @@ export function createWorkerEntrypointWrapper(
 
           if (!(instance instanceof WorkerEntrypoint)) {
             throw new TypeError(
-              `Expected "${exportName}" export of "${this.env.__DISTILLED_ENVIRONMENT__.entryName}" to be a subclass of \`WorkerEntrypoint\`.`,
+              `Expected "${exportName}" export of "${getEntryEnvironment().entryName}" to be a subclass of \`WorkerEntrypoint\`.`,
             );
           }
 
@@ -143,14 +112,14 @@ export function createWorkerEntrypointWrapper(
 
           if (typeof maybeFn !== "function") {
             throw new TypeError(
-              `Expected "${exportName}" export of "${this.env.__DISTILLED_ENVIRONMENT__.entryName}" to define a \`${key}()\` method.`,
+              `Expected "${exportName}" export of "${getEntryEnvironment().entryName}" to define a \`${key}()\` method.`,
             );
           }
 
           return (maybeFn as (arg: unknown) => unknown).call(instance, arg);
         } else {
           throw new TypeError(
-            `Expected "${exportName}" export of "${this.env.__DISTILLED_ENVIRONMENT__.entryName}" to be an object or a class.`,
+            `Expected "${exportName}" export of "${getEntryEnvironment().entryName}" to be an object or a class.`,
           );
         }
       };
@@ -166,7 +135,14 @@ export function createWorkerEntrypointWrapper(
         try {
           return await proxy();
         } catch (error) {
-          // oxlint-disable no-console
+          // The default export's errors go to Vite's error page, as under
+          // `@cloudflare/vite-plugin`: the dev server revives this response.
+          if (exportName === "default") {
+            return Response.json(reduceError(error), {
+              status: 500,
+              headers: { [HEADER_ERROR_STACK]: "true" },
+            });
+          }
           console.error("Error calling fetch", error);
           throw error;
         }
@@ -190,12 +166,9 @@ async function getWorkerEntrypointRpcProperty(
   exportName: string,
   key: string,
 ): Promise<unknown> {
-  const ctor = (await getWorkerEntryExport(
-    this.env,
-    exportName,
-  )) as WorkerEntrypointConstructor;
+  const ctor = (await getWorkerEntryExport(this.env, exportName)) as WorkerEntrypointConstructor;
   const userEnv = stripInternalEnv(this.env);
-  const expectedWorkerEntrypointMessage = `Expected "${exportName}" export of "${this.env.__DISTILLED_ENVIRONMENT__.entryName}" to be a subclass of \`WorkerEntrypoint\` for RPC.`;
+  const expectedWorkerEntrypointMessage = `Expected "${exportName}" export of "${getEntryEnvironment().entryName}" to be a subclass of \`WorkerEntrypoint\` for RPC.`;
 
   if (typeof ctor !== "function") {
     throw new TypeError(expectedWorkerEntrypointMessage);
@@ -253,7 +226,7 @@ async function getDurableObjectRpcProperty(
 
   if (!(instance instanceof DurableObject)) {
     throw new TypeError(
-      `Expected "${exportName}" export of "${this.env.__DISTILLED_ENVIRONMENT__.entryName}" to be a subclass of \`DurableObject\` for RPC.`,
+      `Expected "${exportName}" export of "${getEntryEnvironment().entryName}" to be a subclass of \`DurableObject\` for RPC.`,
     );
   }
 
@@ -275,10 +248,7 @@ async function getDurableObjectRpcProperty(
 export function createDurableObjectWrapper(
   exportName: string,
 ): DurableObjectConstructor<WrapperEnv> {
-  class Wrapper
-    extends DurableObject<WrapperEnv>
-    implements DurableObjectWrapper
-  {
+  class Wrapper extends DurableObject<WrapperEnv> implements DurableObjectWrapper {
     [kInstance]?: DurableObjectInstance;
 
     constructor(ctx: DurableObjectState, env: WrapperEnv) {
@@ -302,11 +272,7 @@ export function createDurableObjectWrapper(
             return;
           }
 
-          const property = getDurableObjectRpcProperty.call(
-            receiver,
-            exportName,
-            key,
-          );
+          const property = getDurableObjectRpcProperty.call(receiver, exportName, key);
 
           return getRpcPropertyCallableThenable(key, property);
         },
@@ -314,14 +280,11 @@ export function createDurableObjectWrapper(
     }
 
     async [kEnsureInstance]() {
-      const ctor = (await getWorkerEntryExport(
-        this.env,
-        exportName,
-      )) as DurableObjectConstructor;
+      const ctor = (await getWorkerEntryExport(this.env, exportName)) as DurableObjectConstructor;
 
       if (typeof ctor !== "function") {
         throw new TypeError(
-          `Expected "${exportName}" export of "${this.env.__DISTILLED_ENVIRONMENT__.entryName}" to be a subclass of \`DurableObject\`.`,
+          `Expected "${exportName}" export of "${getEntryEnvironment().entryName}" to be a subclass of \`DurableObject\`.`,
         );
       }
 
@@ -347,15 +310,11 @@ export function createDurableObjectWrapper(
 
       if (typeof maybeFn !== "function") {
         throw new TypeError(
-          `Expected "${exportName}" export of "${this.env.__DISTILLED_ENVIRONMENT__.entryName}" to define a \`${key}()\` function.`,
+          `Expected "${exportName}" export of "${getEntryEnvironment().entryName}" to define a \`${key}()\` function.`,
         );
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return (maybeFn as (...args: Array<unknown>) => any).apply(
-        instance,
-        args,
-      );
+      return (maybeFn as (...args: Array<unknown>) => any).apply(instance, args);
     };
   }
 
@@ -384,7 +343,7 @@ export function createWorkflowEntrypointWrapper(
 
       if (!(instance instanceof WorkflowEntrypoint)) {
         throw new TypeError(
-          `Expected "${exportName}" export of "${this.env.__DISTILLED_ENVIRONMENT__.entryName}" to be a subclass of \`WorkflowEntrypoint\`.`,
+          `Expected "${exportName}" export of "${getEntryEnvironment().entryName}" to be a subclass of \`WorkflowEntrypoint\`.`,
         );
       }
 
@@ -392,15 +351,11 @@ export function createWorkflowEntrypointWrapper(
 
       if (typeof maybeFn !== "function") {
         throw new TypeError(
-          `Expected "${exportName}" export of "${this.env.__DISTILLED_ENVIRONMENT__.entryName}" to define a \`${key}()\` function.`,
+          `Expected "${exportName}" export of "${getEntryEnvironment().entryName}" to define a \`${key}()\` function.`,
         );
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return (maybeFn as (...args: Array<unknown>) => any).apply(
-        instance,
-        args,
-      );
+      return (maybeFn as (...args: Array<unknown>) => any).apply(instance, args);
     };
   }
 
@@ -429,6 +384,7 @@ function getRpcPropertyCallableThenable(
     return maybeFn(...args);
   } as Promise<unknown> & ((...args: Array<unknown>) => Promise<unknown>);
 
+  // oxlint-disable-next-line unicorn/no-thenable
   fn.then = (onFulfilled, onRejected) => property.then(onFulfilled, onRejected);
   fn.catch = (onRejected) => property.catch(onRejected);
   fn.finally = (onFinally) => property.finally(onFinally);
@@ -469,4 +425,18 @@ function getRpcProperty(
   }
 
   return Reflect.get(ctor.prototype, key, instance);
+}
+
+/**
+ * Serializes an error for the dev server to revive (Wrangler's
+ * `middleware-miniflare3-json-error.ts`).
+ */
+function reduceError(e: unknown): unknown {
+  const errorObj = (e ?? {}) as Record<string, unknown>;
+  return {
+    name: errorObj.name,
+    message: errorObj.message ?? String(e),
+    stack: errorObj.stack,
+    cause: errorObj.cause === undefined ? undefined : reduceError(errorObj.cause),
+  };
 }

@@ -22,6 +22,8 @@ export interface TurnItemPositionStoreV2Shape {
     readonly turnItemId: TurnItemId;
     readonly runId: RunId | null;
     readonly runOrdinal?: number;
+    // `run_start` takes the run's unused first slot, ahead of its items, and appends once it is taken.
+    readonly placement?: "append" | "run_start";
   }) => Effect.Effect<number, TurnItemPositionStoreError>;
   readonly normalize: (
     item: OrchestrationV2TurnItem,
@@ -42,7 +44,13 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
     const allocate: TurnItemPositionStoreV2Shape["allocate"] =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(
-        function* ({ threadId, turnItemId, runId, runOrdinal: suppliedRunOrdinal }) {
+        function* ({
+          threadId,
+          turnItemId,
+          runId,
+          runOrdinal: suppliedRunOrdinal,
+          placement = "append",
+        }) {
           const existing = yield* sql<{ readonly ordinal: number }>`
           SELECT ordinal
           FROM orchestration_v2_turn_item_positions
@@ -68,7 +76,11 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           SELECT
             ${threadId},
             ${turnItemId},
-            COALESCE(MAX(ordinal), ${lowerBound}) + 1
+            ${
+              placement === "run_start"
+                ? sql`CASE WHEN COALESCE(MIN(ordinal), ${upperBound}) > ${lowerBound} THEN ${lowerBound} ELSE MAX(ordinal) + 1 END`
+                : sql`COALESCE(MAX(ordinal), ${lowerBound}) + 1`
+            }
           FROM orchestration_v2_turn_item_positions
           WHERE thread_id = ${threadId}
             AND ordinal >= ${lowerBound}
@@ -103,13 +115,15 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
 
     return TurnItemPositionStoreV2.of({
       allocate,
-      normalize: (item, runOrdinal) =>
-        allocate({
+      // Per-event normalization shares the enclosing orchestration span.
+      normalize: Effect.fnUntraced(function* (item, runOrdinal) {
+        return yield* allocate({
           threadId: item.threadId,
           turnItemId: item.id,
           runId: item.runId,
           ...(runOrdinal === undefined ? {} : { runOrdinal }),
-        }).pipe(Effect.map((ordinal) => (item.ordinal === ordinal ? item : { ...item, ordinal }))),
+        }).pipe(Effect.map((ordinal) => (item.ordinal === ordinal ? item : { ...item, ordinal })));
+      }),
     });
   }),
 );

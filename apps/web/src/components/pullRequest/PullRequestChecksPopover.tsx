@@ -79,36 +79,38 @@ function ChecksBody({
               : "grid-cols-[auto_minmax(0,1fr)_auto]",
           )}
         >
-          {visibleChecks.map((check, index) => (
-            <li
-              key={`${index}:${check.name}`}
-              className="col-span-full grid grid-cols-subgrid items-center text-xs"
-            >
-              <PullRequestCheckStatusIcon status={check.status} />
-              <Tooltip>
-                <TooltipTrigger render={<span className="min-w-0 truncate">{check.name}</span>} />
-                <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
-              </Tooltip>
-              <span className="justify-self-end whitespace-nowrap text-muted-foreground">
-                {pullRequestCheckStatusLabel(check)}
-              </span>
-              {check.url === null ? null : (
-                <button
-                  type="button"
-                  className="text-primary hover:underline"
-                  onClick={() => {
-                    if (!check.url) return;
-                    void openLink(check.url).catch((error: unknown) => {
-                      console.error(error);
-                      toastManager.add({ type: "error", title: "Unable to open check details" });
-                    });
-                  }}
-                >
-                  Details
-                </button>
-              )}
-            </li>
-          ))}
+          {visibleChecks.map(
+            (check, index) => (
+              /* oxlint-disable react/no-array-index-key -- Check names can repeat; these status rows have no local state. */ <li
+                key={`${index}:${check.name}`}
+                className="col-span-full grid grid-cols-subgrid items-center text-xs"
+              >
+                <PullRequestCheckStatusIcon status={check.status} />
+                <Tooltip>
+                  <TooltipTrigger render={<span className="min-w-0 truncate">{check.name}</span>} />
+                  <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
+                </Tooltip>
+                <span className="justify-self-end whitespace-nowrap text-muted-foreground">
+                  {pullRequestCheckStatusLabel(check)}
+                </span>
+                {check.url === null ? null : (
+                  <button
+                    type="button"
+                    className="text-primary hover:underline"
+                    onClick={() => {
+                      if (!check.url) return;
+                      void openLink(check.url).catch((error: unknown) => {
+                        console.error(error);
+                        toastManager.add({ type: "error", title: "Unable to open check details" });
+                      });
+                    }}
+                  >
+                    Details
+                  </button>
+                )}
+              </li>
+            ) /* oxlint-enable react/no-array-index-key */,
+          )}
         </ul>
       </ScrollArea>
       {canCollapse ? (
@@ -180,11 +182,15 @@ export function PullRequestChecksPopover({
         {variant === "count" ? (
           <>
             {checks !== undefined && incompleteCount > 0 ? (
-              <span className="tabular-nums">
-                {checks.length - incompleteCount}/{checks.length}
+              // Clip the second line so "checks" disappears whole when the count must shrink.
+              <span className="h-lh min-w-0 overflow-hidden text-left whitespace-normal tabular-nums">
+                <span className="whitespace-nowrap">
+                  {checks.length - incompleteCount}/{checks.length}
+                </span>{" "}
+                checks
               </span>
             ) : failedCount > 0 ? (
-              <span className="tabular-nums">{failedCount} failed</span>
+              <span className="min-w-0 truncate tabular-nums">{failedCount} failed</span>
             ) : null}
           </>
         ) : null}

@@ -68,9 +68,10 @@ function drawPowerlineShape(
   color: string,
   left: number,
   top: number,
-  metrics: GhosttyCellMetrics,
+  width: number,
+  height: number,
+  seamOverlap: number,
 ): void {
-  const { width, height } = metrics;
   const filled = shape.kind === "fill" || (shape.kind === "cap" && shape.filled);
   context.save();
   if (!filled) {
@@ -81,15 +82,24 @@ function drawPowerlineShape(
   context.beginPath();
   if (shape.kind === "cap") {
     const inset = filled ? 0 : POWERLINE_LINE_WIDTH / 2;
-    const capTop = top + inset;
-    const capBottom = top + height - inset;
-    const radius = Math.min(width - inset, (capBottom - capTop) / 2);
-    const flatX = shape.flatEdge === "left" ? left : left + width;
-    const bulgeX = shape.flatEdge === "left" ? flatX + radius : flatX - radius;
-    context.moveTo(flatX, capTop);
-    context.arcTo(bulgeX, capTop, bulgeX, capTop + radius, radius);
-    context.lineTo(bulgeX, capBottom - radius);
-    context.arcTo(bulgeX, capBottom, flatX, capBottom, radius);
+    const [base, start] =
+      shape.flatEdge === "left" ? [left, -Math.PI / 2] : [left + width, Math.PI / 2];
+    context.ellipse(
+      base,
+      top + height / 2,
+      width - inset,
+      height / 2 - inset,
+      0,
+      start,
+      start + Math.PI,
+    );
+    if (filled) {
+      context.closePath();
+      // Overlap the segment this cap closes so anti-aliasing at a fractional
+      // cell edge does not leave a hairline seam.
+      const inward = shape.flatEdge === "left" ? -1 : 1;
+      context.rect(Math.min(base, base + inward * seamOverlap), top, seamOverlap, height);
+    }
   } else {
     for (const [x, y] of shape.points) context.lineTo(left + x * width, top + y * height);
   }
@@ -122,6 +132,55 @@ function ghosttyTextRunEnd(
     end += 1;
   }
   return end;
+}
+
+// Snapshots decode `wide` only for empty cells, so a wide glyph is known by its spacer tail.
+function isWideGlyph(cells: readonly GhosttyCell[], index: number): boolean {
+  return cells[index + 1]?.wide === GHOSTTY_CELL_WIDE.spacerTail;
+}
+
+// Wide glyphs rarely advance exactly two cells, so each is centred in its own box
+// and the narrow text after it restarts at its own column instead of drifting.
+function fillGhosttyRunText(
+  context: CanvasRenderingContext2D,
+  cells: readonly GhosttyCell[],
+  start: number,
+  end: number,
+  text: string,
+  left: number,
+  baseline: number,
+  cellWidth: number,
+): void {
+  let segment = start;
+  while (segment < end) {
+    let segmentEnd = segment;
+    while (segmentEnd < end && !isWideGlyph(cells, segmentEnd)) segmentEnd += 1;
+    if (segmentEnd > segment) {
+      const segmentText =
+        segment === start && segmentEnd === end
+          ? text
+          : cells
+              .slice(segment, segmentEnd)
+              .map((cell) => cell.text)
+              .join("");
+      context.fillText(
+        segmentText,
+        left + (segment - start) * cellWidth,
+        baseline,
+        (segmentEnd - segment) * cellWidth,
+      );
+    }
+    if (segmentEnd === end) break;
+    context.textAlign = "center";
+    context.fillText(
+      cells[segmentEnd]?.text ?? "",
+      left + (segmentEnd - start + 1) * cellWidth,
+      baseline,
+      cellWidth * 2,
+    );
+    context.textAlign = "start";
+    segment = segmentEnd + 2;
+  }
 }
 
 function fontForCell(cell: GhosttyCell, fontSize: number, fontFamily: string): string {
@@ -191,6 +250,12 @@ export function renderGhosttySnapshot(options: {
   const selectionBackground = options.selectionBackground ?? DEFAULT_SELECTION_BACKGROUND;
   const hoveredLinkRange = options.hoveredLinkRange ?? null;
   const originY = options.originY ?? padding;
+  // Rows start on whole device pixels and clear the full canvas width, so repainting
+  // a row replaces every pixel the last frame drew in it, including a cursor's edges.
+  const transform = context.getTransform();
+  const rowTop = (row: number) =>
+    Math.round((originY + row * metrics.height) * transform.d) / transform.d;
+  const rowWidth = context.canvas.width / transform.a;
   const rowsToDraw = forceFull
     ? Array.from({ length: snapshot.rows }, (_, index) => index)
     : [...snapshot.dirtyRows];
@@ -218,10 +283,11 @@ export function renderGhosttySnapshot(options: {
   for (const rowIndex of rowsToDraw) {
     const row = snapshot.rowData[rowIndex];
     if (!row) continue;
-    const top = originY + rowIndex * metrics.height;
+    const top = rowTop(rowIndex);
+    const height = rowTop(rowIndex + 1) - top;
 
     context.fillStyle = cssColor(snapshot.background);
-    context.fillRect(padding, top, snapshot.cols * metrics.width, metrics.height);
+    context.fillRect(0, top, rowWidth, height);
 
     let backgroundStart = 0;
     while (backgroundStart < row.cells.length) {
@@ -244,11 +310,11 @@ export function renderGhosttySnapshot(options: {
         const width = (backgroundEnd - backgroundStart) * metrics.width;
         if (!ghosttyColorsEqual(first.background, snapshot.background)) {
           context.fillStyle = cssColor(first.background);
-          context.fillRect(left, top, width, metrics.height);
+          context.fillRect(left, top, width, height);
         }
         if (first.selected) {
           context.fillStyle = selectionBackground;
-          context.fillRect(left, top, width, metrics.height);
+          context.fillRect(left, top, width, height);
         }
       }
       backgroundStart = backgroundEnd;
@@ -271,7 +337,9 @@ export function renderGhosttySnapshot(options: {
             cssColor(first.foreground),
             padding + runStart * metrics.width,
             top,
-            metrics,
+            metrics.width,
+            height,
+            1,
           );
         }
         runStart += 1;
@@ -289,16 +357,20 @@ export function renderGhosttySnapshot(options: {
           padding + runStart * metrics.width,
           top,
           (runEnd - runStart) * metrics.width,
-          metrics.height,
+          height,
         );
         context.clip();
         context.font = fontForCell(first, fontSize, fontFamily);
         context.fillStyle = cssColor(first.foreground);
-        context.fillText(
+        fillGhosttyRunText(
+          context,
+          row.cells,
+          runStart,
+          runEnd,
           text,
           padding + runStart * metrics.width,
           top + metrics.baseline,
-          (runEnd - runStart) * metrics.width,
+          metrics.width,
         );
         context.restore();
       }
@@ -330,21 +402,22 @@ export function renderGhosttySnapshot(options: {
 
   if (cursorOn && snapshot.cursorVisible && snapshot.cursorX >= 0 && snapshot.cursorY >= 0) {
     const left = padding + snapshot.cursorX * metrics.width;
-    const top = originY + snapshot.cursorY * metrics.height;
+    const top = rowTop(snapshot.cursorY);
+    const height = rowTop(snapshot.cursorY + 1) - top;
+    const cells = snapshot.rowData[snapshot.cursorY]?.cells ?? [];
+    const wide = isWideGlyph(cells, snapshot.cursorX);
+    const width = wide ? metrics.width * 2 : metrics.width;
     context.fillStyle = cssColor(snapshot.cursor);
-    if (!focused) {
+    if (!focused || snapshot.cursorStyle === 3) {
       context.strokeStyle = cssColor(snapshot.cursor);
-      context.strokeRect(left + 0.5, top + 0.5, metrics.width - 1, metrics.height - 1);
+      context.strokeRect(left + 0.5, top + 0.5, width - 1, height - 1);
     } else if (snapshot.cursorStyle === 0) {
-      context.fillRect(left, top, 2, metrics.height);
+      context.fillRect(left, top, 2, height);
     } else if (snapshot.cursorStyle === 2) {
-      context.fillRect(left, top + metrics.height - 2, metrics.width, 2);
-    } else if (snapshot.cursorStyle === 3) {
-      context.strokeStyle = cssColor(snapshot.cursor);
-      context.strokeRect(left + 0.5, top + 0.5, metrics.width - 1, metrics.height - 1);
+      context.fillRect(left, top + height - 2, width, 2);
     } else {
-      context.fillRect(left, top, metrics.width, metrics.height);
-      const cell = snapshot.rowData[snapshot.cursorY]?.cells[snapshot.cursorX];
+      const cell = cells[snapshot.cursorX];
+      context.fillRect(left, top, width, height);
       if (cell?.text) {
         const powerlineShape = POWERLINE_SHAPES.get(cell.text);
         if (powerlineShape) {
@@ -354,12 +427,21 @@ export function renderGhosttySnapshot(options: {
             cssColor(snapshot.background),
             left,
             top,
-            metrics,
+            metrics.width,
+            height,
+            0,
           );
         } else {
           context.fillStyle = cssColor(snapshot.background);
           context.font = fontForCell(cell, fontSize, fontFamily);
-          context.fillText(cell.text, left, top + metrics.baseline, metrics.width);
+          context.textAlign = wide ? "center" : "start";
+          context.fillText(
+            cell.text,
+            wide ? left + metrics.width : left,
+            top + metrics.baseline,
+            width,
+          );
+          context.textAlign = "start";
         }
       }
     }

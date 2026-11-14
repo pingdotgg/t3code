@@ -1,3 +1,4 @@
+import { createChildThreadApprovalsAtom } from "@t3tools/client-runtime/state/thread-requests";
 import { useAtomValue } from "@effect/atom-react";
 import {
   createEnvironmentThreadDetailAtoms,
@@ -9,15 +10,21 @@ import {
   createThreadEnvironmentAtoms,
   createThreadFamilyAtoms,
 } from "@t3tools/client-runtime/state/threads";
+import { createSteadyShellAtoms } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useEffect } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
+import { scopedThreadKey } from "../lib/scopedEntities";
 import { appAtomRegistry } from "./atom-registry";
+import {
+  pendingThreadCreationOutcomesAtom,
+  selectThreadCreationDetail,
+} from "./pending-thread-creation";
+import { serverEnvironment } from "./server";
 import { environmentShell } from "./shell";
+import { threadOutboxManager } from "./thread-outbox";
 
 export const threadFamilies = createThreadFamilyAtoms(
   connectionAtomRuntime,
@@ -38,18 +45,29 @@ export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
 export const environmentThreadShells = createEnvironmentThreadShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   snapshotAtom: threadEnvironment.snapshotAtom,
+  hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
 });
-
-/** Keeps the subagent tree under `rootThreadId` in the thread list while the caller shows it. */
-export function useThreadFamily(
-  environmentId: EnvironmentId | null,
-  rootThreadId: ThreadId | null,
-): void {
-  useEffect(() => {
-    if (environmentId === null || rootThreadId === null) return;
-    return threadFamilies.mount(appAtomRegistry, environmentId, rootThreadId);
-  }, [environmentId, rootThreadId]);
-}
+const steadyShells = createSteadyShellAtoms({
+  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  snapshotAtom: threadEnvironment.snapshotAtom,
+  shellStateAtom: environmentShell.stateValueAtom,
+  rowActionsAtom: threadEnvironment.rowActionsAtom,
+  connectionStateAtom: environmentCatalog.stateAtom,
+});
+/**
+ * The threads that lists arrange. Rows wait while their environment synchronizes, so a list
+ * changes once when environments connect, not once per environment.
+ */
+export const steadyShellsHoldingAtom = steadyShells.holdingAtom;
+export const steadyNavigationThreadShellsAtom = createEnvironmentThreadShellAtoms({
+  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  snapshotAtom: steadyShells.snapshotAtom,
+  hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
+}).navigationThreadShellsAtom;
+export const childThreadApprovalsAtom = createChildThreadApprovalsAtom({
+  childThreadInputsAtom: environmentThreadShells.childThreadInputsAtom,
+  pendingRequestsAtom: environmentThreadDetails.pendingRequestsAtom,
+});
 
 // Long enough for the opened screen to subscribe; its subscription keeps the thread after this.
 const OPENING_THREAD_HOLD_MS = 3_000;
@@ -59,6 +77,17 @@ const OPENING_THREAD_HOLD_MS = 3_000;
  * otherwise waits for navigation to commit.
  */
 export function startOpeningEnvironmentThread(environmentId: EnvironmentId, threadId: ThreadId) {
+  // A thread whose creation is still queued would load as not found and stay deleted;
+  // the opened screen loads it once creation is delivered.
+  const { detailRef } = selectThreadCreationDetail({
+    threadRef: { environmentId, threadId },
+    threadKey: scopedThreadKey(environmentId, threadId),
+    queuedMessagesByThreadKey: appAtomRegistry.get(
+      threadOutboxManager.queuedMessagesByThreadKeyAtom,
+    ),
+    outcomes: appAtomRegistry.get(pendingThreadCreationOutcomesAtom),
+  });
+  if (detailRef === null) return;
   const release = appAtomRegistry.mount(environmentThreads.stateAtom(environmentId, threadId));
   setTimeout(release, OPENING_THREAD_HOLD_MS);
 }
@@ -76,8 +105,8 @@ export function useEnvironmentThread(
       ? environmentThreads.stateAtom(environmentId, threadId)
       : EMPTY_THREAD_STATE_ATOM,
   );
-  const state = Option.getOrElse(
-    AsyncResult.value(result),
+  const state = AsyncResult.getOrElse(
+    result,
     () => EMPTY_ENVIRONMENT_THREAD_STATE,
   ) as EnvironmentThreadState;
   return state;

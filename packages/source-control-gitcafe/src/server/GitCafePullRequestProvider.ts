@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import {
+  IsoDateTime,
   NonNegativeInt,
   resolvePullRequestAuthorFilter,
   TrimmedNonEmptyString,
@@ -33,6 +34,8 @@ const CAPABILITIES: PullRequestCapabilities = {
   stacks: true,
   stackActions: true,
   reactions: true,
+  mentions: true,
+  referenceSigils: [],
   labels: true,
   // Line comments go through GitCafe's review drafts, which arrive with revision fencing.
   review: {
@@ -41,7 +44,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     resolve: true,
     verdicts: ["approve", "request-changes", "comment"],
   },
-  reviewers: { request: true, listCandidates: true },
+  reviewers: { request: true, listCandidates: true, searchCandidates: false },
   edit: { changeRequest: true, comment: true },
 };
 
@@ -165,6 +168,17 @@ const MergeOutcome = Schema.Struct({
 });
 const StackOutcome = Schema.Struct({ id: Schema.String, state: Schema.String });
 const FAILED_STACK_STATES = new Set(["failed", "stopped", "cancelled", "reconciliation_required"]);
+
+// A pull action replies with the pull it left; `closedAt`/`mergedAt` are read only when sent.
+const decodeActionReply = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      ...Json.GitCafePull.fields,
+      closedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+      mergedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+    }),
+  ),
+);
 
 type PullRef = ProviderRepositoryRef & { readonly number: number };
 
@@ -413,12 +427,12 @@ export const make = Effect.gen(function* () {
         { path: `/users/${encodeURIComponent(handle)}` },
         User,
       ).pipe(
-        Effect.map(Option.some),
+        Effect.asSome,
         Effect.catchTags({
           PullRequestProviderError: (error) =>
             error.reason === "unauthenticated" || error.reason === "rate-limited"
               ? Effect.fail(error)
-              : Effect.succeed(Option.none()),
+              : Effect.succeedNone,
         }),
       );
       const actorId = Option.isSome(user)
@@ -636,11 +650,19 @@ export const make = Effect.gen(function* () {
   // so hunk totals are held per compared pair of commits. The file list that names the pair is
   // cheap; a retarget or a landed parent layer moves the base without moving the head.
   const lineTotals = new Map<string, { readonly additions: number; readonly deletions: number }>();
+  // The compared pair follows from the head and the target tip the pull reports, so while neither
+  // moves the stats are reused without listing the files again.
+  const statsByTips = new Map<
+    string,
+    { readonly changedFiles: number; readonly additions?: number; readonly deletions?: number }
+  >();
+  const remember = <K, V>(cache: Map<K, V>, key: K, value: V) => {
+    if (cache.size >= LINE_STATS_CACHE_SIZE) cache.delete(cache.keys().next().value!);
+    cache.set(key, value);
+  };
 
-  const readLineStats = Effect.fn("GitCafePullRequestProvider.readLineStats")(function* (
-    input: PullRef,
-    version: number,
-  ) {
+  // readLineStats owns the span.
+  const countLines = Effect.fnUntraced(function* (input: PullRef, version: number) {
     const path = yield* pullPath("getChangeRequest", input);
     const files: Array<Json.GitCafeDiffFile> = [];
     let revision: { version: number; headOid: string; baseOid: string } | undefined;
@@ -667,13 +689,23 @@ export const make = Effect.gen(function* () {
       after = batch.next;
       if (after === null || after === previous || batch.items.length === 0) break;
     }
-    if (revision === undefined) return { changedFiles: 0, additions: 0, deletions: 0 };
+    if (revision === undefined)
+      return {
+        headOid: null,
+        complete: true,
+        stats: { changedFiles: 0, additions: 0, deletions: 0 },
+      };
     const key = `${input.host} ${input.repository.toLowerCase()} ${input.number} ${revision.baseOid} ${revision.headOid}`;
     const held = lineTotals.get(key);
-    if (held !== undefined) return { changedFiles: files.length, ...held };
+    const { headOid } = revision;
+    // A listing that stopped before its last page counts only part of the diff, so nothing is held.
+    const listed = after === null;
+    if (held !== undefined)
+      return { headOid, complete: listed, stats: { changedFiles: files.length, ...held } };
+    const tooMany = files.length > LINE_STATS_MAX_FILES;
     const details = files.some((file) => file.additions !== undefined)
       ? Option.some(files)
-      : files.length > LINE_STATS_MAX_FILES
+      : tooMany
         ? Option.none()
         : yield* Effect.forEach(
             chunk(detailablePaths(files), DIFF_FILES_BATCH),
@@ -684,16 +716,33 @@ export const make = Effect.gen(function* () {
             Effect.option,
           );
     // Unread hunks leave the lines unknown rather than zero; the file count still stands.
-    if (Option.isNone(details)) return { changedFiles: files.length };
+    if (Option.isNone(details))
+      return { headOid, complete: listed && tooMany, stats: { changedFiles: files.length } };
     const counted = details.value;
     const totals = {
       additions: counted.reduce((total, file) => total + (file.additions ?? 0), 0),
       deletions: counted.reduce((total, file) => total + (file.deletions ?? 0), 0),
     };
-    if (lineTotals.size >= LINE_STATS_CACHE_SIZE)
-      lineTotals.delete(lineTotals.keys().next().value!);
-    lineTotals.set(key, totals);
-    return { changedFiles: files.length, ...totals };
+    if (listed) remember(lineTotals, key, totals);
+    return { headOid, complete: listed, stats: { changedFiles: files.length, ...totals } };
+  });
+
+  const readLineStats = Effect.fn("GitCafePullRequestProvider.readLineStats")(function* (
+    input: PullRef,
+    pull: Json.GitCafePullDetail,
+  ) {
+    const tipsKey =
+      pull.headOid === null || pull.observedBaseOid == null
+        ? null
+        : `${input.host} ${input.repository.toLowerCase()} ${input.number} ${pull.targetBranch} ${pull.observedBaseOid} ${pull.headOid}`;
+    const heldStats = tipsKey === null ? undefined : statsByTips.get(tipsKey);
+    if (heldStats !== undefined) return heldStats;
+    const stats = yield* countLines(input, pull.version);
+    // A failed hunk read is retried next time rather than held as unknown, and a head that moved
+    // between the two reads would hold another pair's stats.
+    if (tipsKey !== null && stats.complete && stats.headOid === pull.headOid)
+      remember(statsByTips, tipsKey, stats.stats);
+    return stats.stats;
   });
 
   const merge = Effect.fn("GitCafePullRequestProvider.merge")(function* (
@@ -768,12 +817,12 @@ export const make = Effect.gen(function* () {
             { path: "/auth/principal" },
             Principal,
           ).pipe(
-            Effect.map(Option.some),
+            Effect.asSome,
             Effect.catchTags({
               PullRequestProviderError: (error) =>
                 error.reason === "unauthenticated" || error.reason === "rate-limited"
                   ? Effect.fail(error)
-                  : Effect.succeed(Option.none()),
+                  : Effect.succeedNone,
             }),
           );
           if (Option.isSome(principal)) {
@@ -786,7 +835,7 @@ export const make = Effect.gen(function* () {
           { ...input, authorNarrowed: actorId !== undefined && input.involvement === "authored" },
           base,
         );
-        const readPage = (rows: number, after: string | null) => {
+        const readPage = Effect.fn("readPage")(function (rows: number, after: string | null) {
           const query = new URLSearchParams({ limit: String(rows), sort: "newest" });
           if (input.state !== "all") query.set("state", input.state);
           if (input.query?.trim()) query.set("q", input.query.trim());
@@ -803,7 +852,7 @@ export const make = Effect.gen(function* () {
             { path: `${base}/pulls?${query}` },
             Json.GitCafePulls,
           ).pipe(Effect.tap((page) => Effect.sync(() => learnAuthors(input.host, page.items))));
-        };
+        });
         if (unresolvedAuthor !== null) {
           // Rows are only ever handed out narrowed by actor, so a continuation always carries on
           // the same narrowed listing.
@@ -860,13 +909,17 @@ export const make = Effect.gen(function* () {
         };
       },
     ),
+    getChangeRequestPreview: (input) =>
+      readPull("getChangeRequestPreview", input).pipe(
+        Effect.map((pull) => ({ ...Json.toChangeRequest(pull, input), ...settledMerge(pull) })),
+      ),
     getChangeRequestSummary: Effect.fn("GitCafePullRequestProvider.getChangeRequestSummary")(
       function* (input) {
         const pull = yield* readPull("getChangeRequestSummary", input);
         const changes =
           pull.headOid === null
             ? null
-            : yield* readLineStats(input, pull.version).pipe(Effect.orElseSucceed(() => null));
+            : yield* readLineStats(input, pull).pipe(Effect.orElseSucceed(() => null));
         // A count that could not be read is absent rather than zero.
         const {
           additions: _additions,
@@ -900,9 +953,10 @@ export const make = Effect.gen(function* () {
               ),
           pull.headOid === null
             ? Effect.succeed(null)
-            : readLineStats(input, pull.version).pipe(Effect.orElseSucceed(() => null)),
+            : readLineStats(input, pull).pipe(Effect.orElseSucceed(() => null)),
           // Reviewers need `pr:review:read`, which a contents-only token lacks.
           readPages("getChangeRequest", input, `${path}/reviewers`, Json.GitCafeActorEntries).pipe(
+            // @effect-diagnostics-next-line catchConditionalRefailToCatchIf:off - catchIf widens this paginated result to any in tsc-rs.
             Effect.catch((error) =>
               isForbidden(error) ? Effect.succeed({ items: [], next: null }) : Effect.fail(error),
             ),
@@ -985,6 +1039,7 @@ export const make = Effect.gen(function* () {
               : // A closed pull request whose branch is gone keeps its head, but git.cafe answers
                 // 404 for commits it no longer has; the conversation still stands without them.
                 readPages(operation, input, `${path}/commits`, Json.GitCafeCommits).pipe(
+                  // @effect-diagnostics-next-line catchConditionalRefailToCatchIf:off - catchIf widens this paginated result to any in tsc-rs.
                   Effect.catch((error) =>
                     error.reason === "not-found"
                       ? Effect.succeed({ items: [], next: null })
@@ -1086,12 +1141,26 @@ export const make = Effect.gen(function* () {
         case "reopen": {
           const pull = yield* readPull(input.action, input);
           const path = yield* pullPath(input.action, input);
-          yield* send(input.action, input, {
+          const reply = yield* send(input.action, input, {
             method: "POST",
             path: `${path}/${input.action}`,
             body: { expectedVersion: pull.version },
           });
-          return;
+          const left = decodeActionReply(reply);
+          if (Option.isNone(left)) return;
+          // The reply carries no line totals or conflict state, so they stay absent.
+          const {
+            additions: _additions,
+            deletions: _deletions,
+            mergeability: _mergeability,
+            ...summary
+          } = Json.toChangeRequest(left.value, input);
+          return {
+            ...summary,
+            ...(left.value.headOid === null ? {} : { headSha: left.value.headOid }),
+            ...(left.value.closedAt === undefined ? {} : { closedAt: left.value.closedAt }),
+            ...(left.value.mergedAt === undefined ? {} : { mergedAt: left.value.mergedAt }),
+          };
         }
         default:
           return yield* failure(input.action, `GitCafe cannot ${input.action} from T3 Code.`);

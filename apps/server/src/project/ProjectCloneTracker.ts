@@ -5,6 +5,7 @@ import type {
   ProjectCloneStartInput,
   ProjectCloneStartResult,
   ProjectId,
+  SourceControlCloneProtocol,
   SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
 import {
@@ -30,6 +31,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import type { ProjectConflictError } from "./ProjectService.ts";
 
 export class ProjectCloneTracker extends Context.Service<
   ProjectCloneTracker,
@@ -52,12 +54,13 @@ export class ProjectCloneTracker extends Context.Service<
 >()("t3/project/ProjectCloneTracker") {}
 
 export interface ProjectCloneHooks {
+  /** Fails with `ProjectConflictError` when another project already owns the destination. */
   readonly createProject: (input: {
     readonly projectId: ProjectId;
     readonly title: string;
     readonly workspaceRoot: string;
     readonly createdAt: string;
-  }) => Effect.Effect<void, OrchestrationDispatchCommandError>;
+  }) => Effect.Effect<void, OrchestrationDispatchCommandError | ProjectConflictError>;
   readonly onCloned: (input: {
     readonly projectId: ProjectId;
     readonly workspaceRoot: string;
@@ -85,6 +88,7 @@ interface TrackedClone {
     readonly cloneUrl: string;
     readonly destinationPath: string;
     readonly repository: SourceControlRepositoryInfo | null;
+    readonly protocol: SourceControlCloneProtocol;
   };
 }
 
@@ -216,7 +220,11 @@ export const make = Effect.gen(function* () {
     const pulses = yield* Queue.sliding<void>(1);
     yield* watchForStall(projectId, pulses).pipe(Effect.forkScoped);
     return yield* repositories.cloneRepository(
-      { remoteUrl: tracked.input.cloneUrl, destinationPath: tracked.input.destinationPath },
+      {
+        remoteUrl: tracked.input.cloneUrl,
+        destinationPath: tracked.input.destinationPath,
+        protocol: tracked.input.protocol,
+      },
       {
         onProgress: (update) =>
           Queue.offer(pulses, undefined).pipe(Effect.andThen(progress(projectId, update))),
@@ -260,6 +268,16 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  const moveClaim = (from: ProjectId, to: ProjectId) =>
+    Ref.modify(clones, (current) => {
+      const claim = current.get(from);
+      if (!claim || current.has(to)) return [false, current] as const;
+      const next = new Map(current);
+      next.delete(from);
+      next.set(to, { ...claim, snapshot: { ...claim.snapshot, projectId: to } });
+      return [true, next] as const;
+    });
+
   const start: ProjectCloneTracker["Service"]["start"] = Effect.fn("ProjectCloneTracker.start")(
     function* (input, hooks) {
       const prepared = yield* repositories.prepareClone(input);
@@ -295,34 +313,49 @@ export const make = Effect.gen(function* () {
             cloneUrl: prepared.cloneUrl,
             destinationPath: prepared.destinationPath,
             repository: prepared.repository,
+            protocol: input.protocol ?? "auto",
           },
         });
         return [true, next] as const;
       });
-      if (!claimed) {
-        return yield* new SourceControlRepositoryError({
-          operation: "cloneRepository",
-          provider: input.provider ?? SourceControlProviderKind.make("unknown"),
-          detail: "A clone into this destination is already in progress.",
-        });
-      }
+      const alreadyInProgress = new SourceControlRepositoryError({
+        operation: "cloneRepository",
+        provider: input.provider ?? SourceControlProviderKind.make("unknown"),
+        detail: "A clone into this destination is already in progress.",
+      });
+      if (!claimed) return yield* alreadyInProgress;
       // Finish or release the claim despite disconnects; a claim without a fiber cannot be cancelled or retried.
-      yield* Effect.uninterruptible(
+      const projectId = yield* Effect.uninterruptible(
         Effect.gen(function* () {
           yield* clearRetention(input.projectId);
           // Register before creation so racing thread.create and project.delete see the clone.
-          yield* hooks.createProject({
-            projectId: input.projectId,
-            title: input.title,
-            workspaceRoot: prepared.destinationPath,
-            createdAt: input.createdAt,
-          });
+          const projectId = yield* hooks
+            .createProject({
+              projectId: input.projectId,
+              title: input.title,
+              workspaceRoot: prepared.destinationPath,
+              createdAt: input.createdAt,
+            })
+            .pipe(
+              Effect.as(input.projectId),
+              // A failed clone's project still owns its empty folder after a restart
+              // forgets the clone; clone for that project instead.
+              Effect.catchTags({
+                ProjectConflictError: (conflict) =>
+                  moveClaim(input.projectId, conflict.conflictingProjectId).pipe(
+                    Effect.flatMap((moved) =>
+                      moved ? Effect.succeed(conflict.conflictingProjectId) : alreadyInProgress,
+                    ),
+                  ),
+              }),
+            );
           yield* publish;
-          yield* launch(input.projectId);
+          yield* launch(projectId);
+          return projectId;
         }).pipe(Effect.tapError(() => remove(input.projectId))),
       );
       return {
-        projectId: input.projectId,
+        projectId,
         cwd: prepared.destinationPath,
         remoteUrl: prepared.remoteUrl,
         repository: prepared.repository,
@@ -417,11 +450,20 @@ export const make = Effect.gen(function* () {
     { bufferSize: 1, strategy: "sliding" },
   );
 
+  // Forwarders retain the underlying operation spans.
   return ProjectCloneTracker.of({
-    start: (input, hooks) => locked(start(input, hooks)),
-    cancel: (projectId) => locked(cancel(projectId)),
-    retry: (projectId) => locked(retry(projectId)),
-    discard: (projectId) => locked(discard(projectId)),
+    start: Effect.fnUntraced(function* (input, hooks) {
+      return yield* locked(start(input, hooks));
+    }),
+    cancel: Effect.fnUntraced(function* (projectId) {
+      return yield* locked(cancel(projectId));
+    }),
+    retry: Effect.fnUntraced(function* (projectId) {
+      return yield* locked(retry(projectId));
+    }),
+    discard: Effect.fnUntraced(function* (projectId) {
+      return yield* locked(discard(projectId));
+    }),
     get,
     stream,
   });
