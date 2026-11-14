@@ -298,6 +298,27 @@ export class ExternalLauncherUnsupportedTargetError extends Schema.TaggedError<E
   }
 }
 
+export class ExternalLauncherRevealTargetError extends Schema.TaggedError<ExternalLauncherRevealTargetError>()(
+  "ExternalLauncherRevealTargetError",
+  {
+    editor: EditorId,
+    target: Schema.String,
+    /** `windows-name`: a path segment Windows would resolve to a different item. */
+    reason: Schema.Literals(["missing", "relative", "windows-name"]),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "missing":
+        return `No file or folder exists at ${this.target}`;
+      case "relative":
+        return `Reveal needs an absolute path, not ${this.target}`;
+      case "windows-name":
+        return `${this.target} has a name Windows reads differently, so it cannot be revealed`;
+    }
+  }
+}
+
 const ExternalLauncherSpawnFields = {
   command: Schema.String,
   args: Schema.Array(Schema.String),
@@ -334,6 +355,7 @@ export const ExternalLauncherError = Schema.Union([
   ExternalLauncherUnsupportedEditorError,
   ExternalLauncherCommandNotFoundError,
   ExternalLauncherUnsupportedTargetError,
+  ExternalLauncherRevealTargetError,
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherEditorSpawnError,
 ]);

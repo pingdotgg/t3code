@@ -6,6 +6,7 @@ import {
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherCommandNotFoundError,
   ExternalLauncherEditorSpawnError,
+  ExternalLauncherRevealTargetError,
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
   ExternalLauncherUnsupportedTargetError,
@@ -39,6 +40,7 @@ export {
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherCommandNotFoundError,
   ExternalLauncherEditorSpawnError,
+  ExternalLauncherRevealTargetError,
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
   ExternalLauncherUnsupportedTargetError,
@@ -519,7 +521,12 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
 
   const target = expandHomePath(input.cwd, yield* HostProcess.HomeDirectory);
   if (input.reveal === true) {
-    return yield* resolveFileManagerRevealLaunch(target, platform, env, command);
+    const revealTarget = yield* resolveRevealTarget(
+      target,
+      platform,
+      platform === "win32" || command === "explorer.exe",
+    );
+    return yield* resolveFileManagerRevealLaunch(revealTarget, platform, env, command);
   }
 
   return {
@@ -536,12 +543,62 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   };
 });
 
+// Explorer opens a default folder for a missing /select target, so reveal fails instead.
+// Windows resolves `..` lexically and drops trailing dots and spaces, and on WSL a Linux name may
+// hold `\` or `:`, so the folder Windows opens could differ from the one checked here.
+const WINDOWS_AMBIGUOUS_SEGMENT = /[\\:]|[. ]$/;
+
+const resolveRevealTarget = Effect.fn("externalLauncher.resolveRevealTarget")(function* (
+  target: string,
+  platform: NodeJS.Platform,
+  windowsBound: boolean,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path =
+    platform === "win32"
+      ? yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32))
+      : yield* Path.Path;
+  const revealTarget = windowsBound ? path.normalize(target) : target;
+  // Relative paths resolve against the server's cwd here but the file manager's own cwd there.
+  if (!path.isAbsolute(revealTarget)) {
+    return yield* new ExternalLauncherRevealTargetError({
+      editor: "file-manager",
+      target,
+      reason: "relative",
+    });
+  }
+  if (windowsBound) {
+    const segments = revealTarget.slice(path.parse(revealTarget).root.length).split(/[\\/]/);
+    if (segments.some((segment) => WINDOWS_AMBIGUOUS_SEGMENT.test(segment))) {
+      return yield* new ExternalLauncherRevealTargetError({
+        editor: "file-manager",
+        target,
+        reason: "windows-name",
+      });
+    }
+  }
+  const exists = yield* fileSystem.exists(revealTarget).pipe(Effect.orElseSucceed(() => false));
+  if (!exists) {
+    return yield* new ExternalLauncherRevealTargetError({
+      editor: "file-manager",
+      target,
+      reason: "missing",
+    });
+  }
+  return revealTarget;
+});
+
 // A replacement manager registers a default Directory shell verb; stock Windows
 // uses "none". Explorer needs its /select argument passed verbatim through
 // PowerShell because Node's argument quoting changes how Explorer parses it.
 function buildFileManagerRevealPowerShellSource(target: string, parent: string): string {
   const literal = escapePowerShellStringLiteral(target);
-  return `$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { Start-Process 'explorer.exe' -ArgumentList ('/select,"' + ${literal} + '"') }`;
+  return `$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none' -and ${testFolderPowerShellSource(parent)}) { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { Start-Process 'explorer.exe' -ArgumentList ('/select,"' + ${literal} + '"') }`;
+}
+
+// Invoke-Item runs a file, so Windows itself must agree the parent is a folder.
+function testFolderPowerShellSource(folder: string): string {
+  return `(Test-Path -LiteralPath ${escapePowerShellStringLiteral(folder)} -PathType Container)`;
 }
 
 function powerShellFileManagerLaunch(
@@ -568,7 +625,7 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
   command: string,
 ): Effect.fn.Return<
   EditorLaunch,
-  never,
+  ExternalLauncherUnsupportedEditorError,
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
 > {
   if (platform === "darwin") {
@@ -601,7 +658,7 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
       // .NET path parsing rejects characters that are legal in WSL filenames.
       const parent = resolveWslFileManagerPath(path.dirname(target), env.WSL_DISTRO_NAME);
       const source = explorerTarget.includes('"')
-        ? `Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)}`
+        ? `if ${testFolderPowerShellSource(parent)} { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} }`
         : buildFileManagerRevealPowerShellSource(explorerTarget, parent);
       return powerShellFileManagerLaunch(target, source, WSL_POWERSHELL_COMMAND);
     }
@@ -609,13 +666,8 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
       const path = yield* Path.Path;
       return { editor: "file-manager", target, command: "xdg-open", args: [path.dirname(target)] };
     }
-    const path = yield* Path.Path;
-    return {
-      editor: "file-manager",
-      target,
-      command: "explorer.exe",
-      args: [resolveWslFileManagerPath(path.dirname(target), env.WSL_DISTRO_NAME)],
-    };
+    // Without PowerShell nothing on the Windows side can confirm the parent is a folder.
+    return yield* new ExternalLauncherUnsupportedEditorError({ editor: "file-manager" });
   }
 
   const path = yield* Path.Path;
