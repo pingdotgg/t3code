@@ -18,6 +18,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import {
   GitActionProgressEvent,
@@ -189,6 +190,9 @@ const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
 const PR_LOOKUP_GIT_STATE_TTL = Duration.minutes(5);
 const SETTLED_PR_LOOKUP_RECHECK_INTERVAL = Duration.minutes(15);
+// Shared by every background caller (backfill, settlement, cleanup), so startup discovery
+// cannot fill the git and forge process slots that foreground work also needs.
+const BRANCH_PR_LOOKUP_CONCURRENCY = 4;
 const PR_THREAD_CONTEXT_BYTES = 16_000;
 const PR_THREAD_COMMAND_OUTPUT_CHARS = 2_000;
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
@@ -2376,6 +2380,7 @@ export const make = Effect.gen(function* () {
     fallbackBranch: string | null,
     threadId: ThreadId | undefined,
     emit: GitActionProgressEmitter,
+    pushRemoteRef?: { readonly remoteName: string; readonly upstreamRef: string },
   ) {
     const provider = yield* sourceControlProvider(cwd);
     const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
@@ -2396,10 +2401,12 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const headContext = yield* resolveBranchHeadContext(cwd, {
-      branch,
-      upstreamRef: details.upstreamRef,
-    });
+    // A configured push remote receives the commits while the branch keeps
+    // tracking its upstream, so the PR head is the push remote's branch.
+    const headContext = yield* resolveBranchHeadContext(
+      cwd,
+      pushRemoteRef ? { branch, ...pushRemoteRef } : { branch, upstreamRef: details.upstreamRef },
+    );
 
     const existing = yield* findOpenPr(cwd, headContext);
     if (existing) {
@@ -2576,6 +2583,7 @@ export const make = Effect.gen(function* () {
     prLookupGitStateByKey.set(entryKey, { readAtMs, value });
     return value;
   });
+  const branchPrLookups = yield* Semaphore.make(BRANCH_PR_LOOKUP_CONCURRENCY);
   const settledPrLookupByBranchKey = new Map<
     string,
     { readonly url: string; readonly fingerprint: string; readonly confirmedAtMs: number }
@@ -2876,7 +2884,7 @@ export const make = Effect.gen(function* () {
       });
     }
     return confirmed;
-  });
+  }, branchPrLookups.withPermits(1));
 
   const checkedOutPullRequest: GitManager["Service"]["checkedOutPullRequest"] = Effect.fn(
     "checkedOutPullRequest",
@@ -3412,12 +3420,26 @@ export const make = Effect.gen(function* () {
       > {
         const initialStatus = yield* gitCore.statusDetails(input.cwd);
         const wantsCommit = isCommitAction(input.action);
+        const upToDateBranch =
+          input.action === "create_pr" &&
+          initialStatus.hasUpstream &&
+          initialStatus.aheadCount === 0
+            ? initialStatus.branch
+            : null;
+        // A current upstream says nothing about a separate push remote, which may lack HEAD.
+        const pushTarget = upToDateBranch
+          ? yield* gitCore
+              .resolvePushTarget(input.cwd, { branch: upToDateBranch, hasUpstream: true })
+              .pipe(Effect.orElseSucceed(() => null))
+          : null;
         const wantsPush =
           input.action === "push" ||
           input.action === "commit_push" ||
           input.action === "commit_push_pr" ||
           (input.action === "create_pr" &&
-            (!initialStatus.hasUpstream || initialStatus.aheadCount > 0));
+            (!initialStatus.hasUpstream ||
+              initialStatus.aheadCount > 0 ||
+              pushTarget?.viaPushRemote === true));
         const wantsPr = input.action === "create_pr" || input.action === "commit_push_pr";
 
         if (input.featureBranch && !wantsCommit) {
@@ -3570,6 +3592,9 @@ export const make = Effect.gen(function* () {
                     currentBranch,
                     input.threadId,
                     progress.emit,
+                    "pushRemote" in push && push.pushRemote && push.upstreamBranch
+                      ? { remoteName: push.pushRemote, upstreamRef: push.upstreamBranch }
+                      : undefined,
                   ),
                 ),
               )
