@@ -190,6 +190,8 @@ const inlineButtonVariants = cva(
         default: "text-foreground",
         muted: "text-muted-foreground hover:text-foreground",
         destructive: "text-destructive/80 hover:text-destructive",
+        // A link inside running text: the sentence's weight, always underlined.
+        link: "[font-weight:inherit] text-foreground underline decoration-muted-foreground/50 hover:decoration-foreground",
         ghost:
           "rounded-kbd px-0.5 [font-weight:inherit] text-muted-foreground hover:surface-ghost-hover hover:text-foreground hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         "ghost-dim":

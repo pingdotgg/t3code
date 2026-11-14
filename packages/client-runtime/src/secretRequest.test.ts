@@ -13,6 +13,7 @@ import {
   secretRequestFailureMessage,
   secretRequestLink,
   secretRequestPrivacyNote,
+  secretRequestReasonParts,
   secretRequestSources,
 } from "./secretRequest.ts";
 
@@ -74,6 +75,29 @@ describe("secretRequestLink", () => {
       secretRequestLink({ url: "https://auth.acme.dev/a", reason: "See https://docs.acme.dev" })
         ?.host,
     ).toBe("auth.acme.dev");
+  });
+});
+
+describe("secretRequestReasonParts", () => {
+  it("shows a link once: in place when the reason has it, else after the reason", () => {
+    expect(
+      secretRequestReasonParts({ reason: "Sign in at https://a.dev/login. Then paste it." }),
+    ).toEqual({
+      before: "Sign in at ",
+      link: { href: "https://a.dev/login", host: "a.dev" },
+      after: ". Then paste it.",
+    });
+    expect(
+      secretRequestReasonParts({ url: "https://a.dev", reason: "Open https://a.dev to sign in" }),
+    ).toMatchObject({ before: "Open ", after: " to sign in" });
+    expect(
+      secretRequestReasonParts({ url: "https://a.dev/keys", reason: "to create checkouts " }),
+    ).toMatchObject({ before: "to create checkouts ", after: "" });
+    expect(secretRequestReasonParts({ reason: "Paste the code." })).toEqual({
+      before: "Paste the code.",
+      link: null,
+      after: "",
+    });
   });
 });
 
