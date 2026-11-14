@@ -64,6 +64,7 @@ import { MediaActions, type MediaActionSource } from "~/components/media/MediaAc
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
+import { useDeadlinePassed } from "~/hooks/useDeadline";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
@@ -261,12 +262,40 @@ export function WorkspaceBrowserPreview(props: {
   ) {
     setSettledMutationId(props.workspaceMutationId);
   }
-  const fileRevision = pdf && assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
+  // HTML revisions cover the assets the page loaded; without one (older servers, pages with
+  // too many assets) the preview reloads on every workspace mutation.
+  const fileRevision = assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
   const revision = fileRevision ?? (pdf ? props.workspaceMutationId : settledMutationId);
   const revisionSuffix =
     revision === null
       ? ""
       : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}${fileRevision !== undefined ? "file" : "workspace"}-revision=${encodeURIComponent(revision)}`;
+  const documentKey = `${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}:${revision}`;
+  // The page's later asset requests use the grant it loaded with, so a page kept open across
+  // commands reloads with a renewed URL shortly before that grant expires.
+  const [grant, setGrant] = useState<{ documentKey: string; expiresAt: number } | null>(null);
+  const grantExpiring = useDeadlinePassed(grant === null ? null : grant.expiresAt - 60_000);
+  if (
+    !pdf &&
+    assetUrl._tag === "Success" &&
+    (grant === null ||
+      grant.documentKey !== documentKey ||
+      (grantExpiring && assetUrl.expiresAt > grant.expiresAt))
+  ) {
+    setGrant({ documentKey, expiresAt: assetUrl.expiresAt });
+  }
+  // An idle preview keeps its shown URL until it nears expiry, so ask for a fresh one at the deadline.
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
+  const renewGrant = useStableCallback(() => void refreshAssetUrl().catch(() => undefined));
+  const grantStale =
+    !pdf &&
+    grantExpiring &&
+    assetUrl._tag === "Success" &&
+    assetUrl.expiresAt <= (grant?.expiresAt ?? 0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests a fresh grant from the server when the retained one is about to expire
+  useEffect(() => {
+    if (grantStale) renewGrant();
+  }, [grantStale, renewGrant]);
 
   if (assetUrl._tag === "Failure") {
     return (
@@ -288,7 +317,7 @@ export function WorkspaceBrowserPreview(props: {
   return (
     <BrowserDocumentFrame
       src={`${assetUrl.url}${revisionSuffix}`}
-      documentKey={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}:${revision}`}
+      documentKey={pdf ? documentKey : `${documentKey}:${grant?.expiresAt}`}
       documentId={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}`}
       title={props.title}
       pdf={pdf}

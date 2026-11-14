@@ -56,6 +56,7 @@ import { vi } from "vite-plus/test";
 
 import * as AssetSigner from "./assets/AssetSigner.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as WorkspacePreviewRevisions from "./assets/WorkspacePreviewRevisions.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
@@ -799,6 +800,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(SecretCheck.SecretCheck)({}),
   Layer.mock(WorkspacePaths.WorkspacePaths)({}),
+  Layer.mock(WorkspacePreviewRevisions.WorkspacePreviewRevisions)({}),
   Layer.mock(TraceDiagnostics.TraceDiagnostics)({}),
   Layer.mock(TriageService.TriageService)({}),
   Layer.mock(TextGenerators.TextGenerators)({}),
