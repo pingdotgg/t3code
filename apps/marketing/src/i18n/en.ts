@@ -23,7 +23,7 @@ export const en = {
     description: "T3 Code. The open-source control plane for coding agents.",
     heroTitle: ["The open-source", "control plane", "for coding agents."],
     heroSub:
-      "Orchestrate Claude Code, Codex, Antigravity, OpenCode, Cursor, and Grok from one surface. Bring your own subscription. Fork the whole thing.",
+      "Orchestrate Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok, and Kiro from one surface. Bring your own subscription. Fork the whole thing.",
     downloadForMac: "Download for macOS",
     downloadForWindows: "Download for Windows",
     downloadForLinux: "Download for Linux",
@@ -38,7 +38,7 @@ export const en = {
     readPost: "Read {handle}'s post on X",
     harnessTitle: "Bring your own sub",
     harnessBody:
-      "T3 Code doesn't resell tokens. Plug in Claude Code, Codex, Antigravity, OpenCode, Cursor, or Grok with the credentials you already have. We orchestrate them, you keep your plan.",
+      "T3 Code doesn't resell tokens. Plug in Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok, or Kiro with the credentials you already have. We orchestrate them, you keep your plan.",
     googleSignIn: "Google sign-in",
     harnessPoints: [
       "No keys resold. No quota caps.",

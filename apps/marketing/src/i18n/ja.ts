@@ -24,7 +24,7 @@ export const ja: Messages = {
     description: "T3 Code。コーディングエージェントのためのオープンソースのコントロールプレーン。",
     heroTitle: ["コーディングエージェントの", "オープンソース", "コントロールプレーン。"],
     heroSub:
-      "Claude Code、Codex、Antigravity、OpenCode、Cursor、Grok をひとつの画面からオーケストレーション。サブスクリプションは手持ちのものをそのまま。まるごとフォークも自由です。",
+      "Claude Code、Codex、Antigravity、OpenCode、Cursor、Grok、Kiro をひとつの画面からオーケストレーション。サブスクリプションは手持ちのものをそのまま。まるごとフォークも自由です。",
     downloadForMac: "macOS 版をダウンロード",
     downloadForWindows: "Windows 版をダウンロード",
     downloadForLinux: "Linux 版をダウンロード",
@@ -40,7 +40,7 @@ export const ja: Messages = {
     readPost: "X で {handle} の投稿を読む",
     harnessTitle: "サブスクは持ち込みで",
     harnessBody:
-      "T3 Code はトークンを転売しません。Claude Code、Codex、Antigravity、OpenCode、Cursor、Grok を、すでに持っている認証情報でつなぐだけ。オーケストレーションは私たちに任せて、プランは今のままで。",
+      "T3 Code はトークンを転売しません。Claude Code、Codex、Antigravity、OpenCode、Cursor、Grok、Kiro を、すでに持っている認証情報でつなぐだけ。オーケストレーションは私たちに任せて、プランは今のままで。",
     googleSignIn: "Google でサインイン",
     harnessPoints: [
       "キーの転売なし。使用量の上限なし。",

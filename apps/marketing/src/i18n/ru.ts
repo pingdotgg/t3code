@@ -23,7 +23,7 @@ export const ru: Messages = {
     description: "T3 Code. Открытый пульт управления ИИ-агентами для программирования.",
     heroTitle: ["Открытый пульт", "управления", "ИИ-агентами для кода."],
     heroSub:
-      "Управляйте Claude Code, Codex, Antigravity, OpenCode, Cursor и Grok из одного окна. Пользуйтесь своей подпиской. Форкайте всё целиком.",
+      "Управляйте Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok и Kiro из одного окна. Пользуйтесь своей подпиской. Форкайте всё целиком.",
     downloadForMac: "Скачать для macOS",
     downloadForWindows: "Скачать для Windows",
     downloadForLinux: "Скачать для Linux",
@@ -38,7 +38,7 @@ export const ru: Messages = {
     readPost: "Читать пост {handle} в X",
     harnessTitle: "Со своей подпиской",
     harnessBody:
-      "T3 Code не перепродаёт токены. Подключайте Claude Code, Codex, Antigravity, OpenCode, Cursor или Grok с учётными данными, которые у вас уже есть. Мы управляем агентами, тариф остаётся вашим.",
+      "T3 Code не перепродаёт токены. Подключайте Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok или Kiro с учётными данными, которые у вас уже есть. Мы управляем агентами, тариф остаётся вашим.",
     googleSignIn: "Вход через Google",
     harnessPoints: [
       "Никакой перепродажи ключей. Никаких лимитов.",

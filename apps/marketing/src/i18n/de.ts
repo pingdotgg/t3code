@@ -23,7 +23,7 @@ export const de: Messages = {
     description: "T3 Code. Die Open-Source-Steuerzentrale für Coding-Agents.",
     heroTitle: ["Die Open-Source-", "Steuerzentrale", "für Coding-Agents."],
     heroSub:
-      "Steuere Claude Code, Codex, Antigravity, OpenCode, Cursor und Grok von einer Oberfläche aus. Nutze dein eigenes Abo. Forke das ganze Ding.",
+      "Steuere Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok und Kiro von einer Oberfläche aus. Nutze dein eigenes Abo. Forke das ganze Ding.",
     downloadForMac: "Für macOS herunterladen",
     downloadForWindows: "Für Windows herunterladen",
     downloadForLinux: "Für Linux herunterladen",
@@ -38,7 +38,7 @@ export const de: Messages = {
     readPost: "Beitrag von {handle} auf X lesen",
     harnessTitle: "Bring dein eigenes Abo mit",
     harnessBody:
-      "T3 Code verkauft keine Tokens weiter. Verbinde Claude Code, Codex, Antigravity, OpenCode, Cursor oder Grok mit den Zugangsdaten, die du schon hast. Wir orchestrieren sie, du behältst dein Abo.",
+      "T3 Code verkauft keine Tokens weiter. Verbinde Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok oder Kiro mit den Zugangsdaten, die du schon hast. Wir orchestrieren sie, du behältst dein Abo.",
     googleSignIn: "Google-Anmeldung",
     harnessPoints: [
       "Keine weiterverkauften Keys. Keine Kontingentgrenzen.",
