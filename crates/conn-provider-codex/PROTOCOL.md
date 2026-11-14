@@ -185,7 +185,8 @@ fuzzy-search and fs families.
 - The process exits: the event stream fails, so every open turn ends.
 - A request error is `{"code", "message"}`. TS checks these codes:
   - `-32600 "Already initialized"`: success
-  - `-32600` "already has an active writer": thread in use
+  - `-32600` "already has an active writer": thread in use (`ProviderError::ThreadInUse` with
+    T3's `CODEX_THREAD_IN_USE_MESSAGE`; `tools/check-copies.mjs` holds the text)
   - `-32601`: unknown method; `thread/inject_items` falls back
   - `-32600 "thread not found:"` on terminate: nothing is left to stop
 - A usage limit: the `error` notification or `turn.error` carries `codexErrorInfo` (HTTP

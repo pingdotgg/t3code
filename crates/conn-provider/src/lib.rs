@@ -514,6 +514,11 @@ pub enum ProviderError {
     SignInRequired,
     /// The native protocol sent something unexpected.
     Protocol { detail: String },
+    /// `ProviderAdapterThreadInUseError`: another process owns the native thread's writes
+    /// (Codex: "already has an active writer"). Starting a replacement would split the
+    /// conversation, so the engine must not fall back to a new native thread; `detail` is
+    /// T3's text and is shown as the failure message.
+    ThreadInUse { detail: String },
     /// `ProviderAdapterInterruptTimeoutError`: the provider did not confirm a stop in time and
     /// its turn stays open, so the agent may still run. The engine marks the Stop unresponsive
     /// and leaves the run to the provider's own terminal or to Force stop.
@@ -532,6 +537,7 @@ impl std::fmt::Display for ProviderError {
             Self::SessionStopped => f.write_str("no running provider session owns this thread"),
             Self::SignInRequired => f.write_str("provider requires sign-in"),
             Self::Protocol { detail } => write!(f, "provider protocol error: {detail}"),
+            Self::ThreadInUse { detail } => f.write_str(detail),
             Self::InterruptTimeout { timeout_ms } => write!(
                 f,
                 "the provider did not confirm stopping the turn within {timeout_ms} ms"

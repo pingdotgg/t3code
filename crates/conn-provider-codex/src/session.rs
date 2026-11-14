@@ -25,6 +25,8 @@ use crate::launch;
 use crate::mapper::{DRIVER, Mapper, Out};
 
 pub const EVENT_CAPACITY: usize = 256;
+/// `CODEX_THREAD_IN_USE_MESSAGE`.
+const CODEX_THREAD_IN_USE_MESSAGE: &str = "This conversation is open in another Codex client, such as the Codex app, the Codex CLI, or an IDE extension. Codex lets one client write to a conversation at a time. Quit that client, then send your message again.";
 const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 const PLAN_FLUSH_INTERVAL: Duration = Duration::from_millis(400);
 
@@ -244,10 +246,14 @@ impl Inner {
             other => other,
         };
         let result = result.map_err(|e| match &e {
-            CallError::Rpc(rpc) if rpc.message.contains("already has an active writer") => failed(
-                "resume_thread",
-                "This conversation is open in another Codex client, such as the Codex app, the Codex CLI, or an IDE extension. Codex lets one client write to a conversation at a time. Quit that client, then send your message again.",
-            ),
+            // `isCodexActiveWriterError`.
+            CallError::Rpc(rpc)
+                if rpc.code == -32600 && rpc.message.contains("already has an active writer") =>
+            {
+                ProviderError::ThreadInUse {
+                    detail: CODEX_THREAD_IN_USE_MESSAGE.to_owned(),
+                }
+            }
             _ => call_failed("resume_thread")(e),
         })?;
         self.server.mark_loaded(native);
@@ -999,6 +1005,8 @@ while IFS= read -r line; do
       emit "{\"id\":$id,\"result\":{}}"
       emit '{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"tu2","status":"interrupted","completedAt":3}}}' ;;
     *'"method":"thread/unsubscribe"'*) emit "{\"id\":$id,\"result\":{}}" ;;
+    *'"method":"thread/resume"'*'th-busy'*)
+      emit "{\"id\":$id,\"error\":{\"code\":-32600,\"message\":\"thread th-busy already has an active writer\"}}" ;;
     *'"method":"thread/fork"'*) emit "{\"id\":$id,\"result\":{\"thread\":{\"id\":\"th9\",\"createdAt\":1,\"updatedAt\":2}}}" ;;
   esac
 done
@@ -1372,5 +1380,54 @@ done
         assert!(forks[1].get("model").is_none(), "{:?}", forks[1]);
         assert!(forks[1].get("cwd").is_none(), "{:?}", forks[1]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `isCodexActiveWriterError` on resume becomes `ProviderAdapterThreadInUseError` with T3's
+    /// text, which the engine shows as the failure message.
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_active_writer_on_resume_is_thread_in_use() {
+        let provider = provider();
+        let OpenedSession { session, .. } = provider
+            .open_session(OpenSessionInput {
+                thread_id: "t1".into(),
+                provider_session_id: "s1".into(),
+                model_selection: from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                resume_from_session: None,
+            })
+            .await
+            .unwrap();
+        let stored: ProviderThread = from_json(json!({
+            "id": "provider-thread:codex:th-busy", "driver": "codex",
+            "providerInstanceId": "codex", "providerSessionId": "s0", "appThreadId": "t1",
+            "ownerNodeId": null,
+            "nativeThreadRef": {"driver": "codex", "nativeId": "th-busy", "strength": "strong"},
+            "nativeConversationHeadRef": null, "status": "idle", "firstRunOrdinal": 1,
+            "lastRunOrdinal": 1, "handoffIds": [], "forkedFrom": null,
+            "createdAt": "2026-11-14T00:00:00.000Z", "updatedAt": "2026-11-14T00:00:00.000Z",
+        }))
+        .unwrap();
+        let resumed = session
+            .resume_thread(conn_provider::ResumeThreadInput {
+                provider_thread: stored,
+                thread_id: Some("t1".into()),
+                model_selection: None,
+                runtime_policy: Some(policy()),
+            })
+            .await;
+        let Err(ProviderError::ThreadInUse { detail }) = resumed else {
+            panic!("expected ThreadInUse, got {resumed:?}")
+        };
+        assert_eq!(detail, CODEX_THREAD_IN_USE_MESSAGE);
+        assert_eq!(
+            ProviderError::ThreadInUse {
+                detail: detail.clone()
+            }
+            .to_string(),
+            detail,
+            "the engine's failure message is T3's text alone"
+        );
+        session.close().await;
     }
 }
