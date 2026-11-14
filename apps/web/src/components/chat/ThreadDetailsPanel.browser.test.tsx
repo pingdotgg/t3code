@@ -140,6 +140,7 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
         detailsCardTopInset: 0,
         preferredDetailsCard: placement,
         detailsCardPlacement: placement,
+        modelPickerSlot: null,
       }}
     >
       <ThreadDetailsPanel

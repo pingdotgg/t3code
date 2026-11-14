@@ -22,6 +22,8 @@ export const ChatCanvasContext = createContext<{
   preferredDetailsCard: ReturnType<typeof resolveThreadDetailsCardLayout>;
   /** Where the inline card sits now; null when it shows as a popover. */
   detailsCardPlacement: ReturnType<typeof resolveThreadDetailsCardLayout>;
+  /** Where the composer's model picker opens; null when it opens over the composer. */
+  modelPickerSlot: ReturnType<typeof resolveThreadDetailsCardLayout>;
 } | null>(null);
 
 export const useChatCanvas = () => useContext(ChatCanvasContext);

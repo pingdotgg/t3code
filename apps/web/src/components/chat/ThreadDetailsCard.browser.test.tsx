@@ -70,6 +70,7 @@ function Card({
           detailsCardTopInset: 0,
           preferredDetailsCard: placement,
           detailsCardPlacement: inline ? placement : null,
+          modelPickerSlot: null,
         }}
       >
         <ThreadDetailsCard

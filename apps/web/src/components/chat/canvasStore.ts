@@ -3,7 +3,7 @@ import { createStore } from "zustand";
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import type { DetailsCardMeasurement } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout, type ChatCanvasPreview } from "./chatCanvasLayout";
-import { resolveThreadDetailsCardLayout } from "./threadDetailsCardLayout";
+import { resolveThreadDetailsCardLayout, THREAD_DETAILS_CARD_GAP } from "./threadDetailsCardLayout";
 
 interface CanvasEdges {
   readonly left: number;
@@ -145,6 +145,12 @@ export function resolveChatCanvasModel({
     topInset: detailsCardTopInset,
   });
   const detailsCardMode: ThreadPanelPresentation = detailsCardPlacement ? "inline" : "popover";
+  // The composer's model picker opens in the card's slot only where the chat lane leaves it clear.
+  const modelPickerSlot =
+    preferredDetailsCard &&
+    layout.chat.left + layout.chat.width + THREAD_DETAILS_CARD_GAP <= preferredDetailsCard.x
+      ? preferredDetailsCard
+      : null;
   return {
     container,
     lane,
@@ -153,5 +159,6 @@ export function resolveChatCanvasModel({
     preferredDetailsCard,
     detailsCardPlacement,
     detailsCardMode,
+    modelPickerSlot,
   };
 }

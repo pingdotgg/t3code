@@ -24,6 +24,7 @@ import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPick
 import { retainedModelWhileProviderLocked } from "./ProviderModelPicker.logic";
 import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import { useChatCanvas } from "./ChatCanvasContext";
 import { ModelEsque, getDisplayModelName, getTriggerDisplayModelName } from "./providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import { ComposerControl, type ComposerControlSize } from "./ComposerControl";
@@ -83,8 +84,14 @@ function lockBackgroundScroll(popup: HTMLElement | null) {
   };
 }
 
-/** What a docked effort column needs from its picker: the model it serves. */
-export const DockedPickerContext = createContext<{ modelLabel: string }>({ modelLabel: "" });
+/** What a docked effort column and footer need from their picker. */
+export const DockedPickerContext = createContext<{
+  modelLabel: string;
+  /** The picker sits in the canvas's narrow side slot, so its parts stack in one column. */
+  stacked: boolean;
+}>({ modelLabel: "", stacked: false });
+
+const STACKED_PICKER_MAX_HEIGHT = 680;
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   environmentId: EnvironmentId | null;
@@ -151,6 +158,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const popupRef = useRef<HTMLDivElement | null>(null);
   const size = props.size ?? "sm";
   const docked = props.effortColumn !== undefined;
+  const canvas = useChatCanvas();
+  const slot = docked && props.isComposerOwned ? (canvas?.modelPickerSlot ?? null) : null;
 
   const activeEntry =
     props.instanceEntries.find((entry) => entry.instanceId === props.activeInstanceId) ?? null;
@@ -309,6 +318,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       {...(docked
         ? {
             docked,
+            stacked: slot !== null,
             onFocusEffort: () => void focusEffort("any"),
             // Inside the fixed height, so switching to or from a ChatGPT plan never resizes it.
             ...(props.selectedModels === undefined
@@ -452,12 +462,52 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         {...(docked
           ? { side: "top" as const, collisionAvoidance: { side: "shift", align: "shift" } as const }
           : {})}
+        // With a free side slot, the popup fills it from the bottom up and leaves the prompt visible.
+        {...(slot
+          ? {
+              anchor: {
+                getBoundingClientRect: () => {
+                  const canvasBounds = triggerRef.current
+                    ?.closest("[data-chat-canvas]")
+                    ?.getBoundingClientRect();
+                  return new DOMRect(
+                    (canvasBounds?.left ?? 0) + slot.x,
+                    (canvasBounds?.top ?? 0) + slot.y + slot.height,
+                    slot.width,
+                    0,
+                  );
+                },
+              },
+              align: "end" as const,
+              sideOffset: 0,
+              collisionAvoidance: { side: "none", align: "shift" } as const,
+            }
+          : {})}
         className="before:hidden"
         padding="none"
         touchBackdrop
       >
-        {props.effortColumn ? (
-          <DockedPickerContext value={{ modelLabel: triggerTitle }}>
+        {props.effortColumn && slot ? (
+          <DockedPickerContext value={{ modelLabel: triggerTitle, stacked: true }}>
+            <div
+              className="flex flex-col"
+              style={{
+                width: slot.width,
+                height: Math.min(slot.height, STACKED_PICKER_MAX_HEIGHT),
+              }}
+            >
+              {picker}
+              <div
+                data-model-picker-effort
+                className="flex shrink-0 flex-col border-t border-border/70 bg-muted/40"
+              >
+                {props.effortColumn}
+              </div>
+              {props.footer}
+            </div>
+          </DockedPickerContext>
+        ) : props.effortColumn ? (
+          <DockedPickerContext value={{ modelLabel: triggerTitle, stacked: false }}>
             <div className="flex max-h-(--available-height) flex-col">
               {/* One fixed height, so a model with more options never resizes the popup. Short
                   windows shrink it and keep the footer. */}

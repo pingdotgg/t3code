@@ -28,6 +28,7 @@ function describeUnavailableInstance(entry: ProviderInstanceEntry): string {
 
 const PICKER_TOOLTIP_SIDE = "left" as const;
 const PICKER_TOOLTIP_SIDE_OFFSET = 8;
+const ITEM_CLASS = { vertical: "relative w-full", horizontal: "relative w-9 shrink-0" } as const;
 
 export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
   selectedInstanceId: ProviderInstanceId | "favorites";
@@ -38,14 +39,19 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
   disabledInstanceIds?: ReadonlySet<ProviderInstanceId>;
   selectableUnavailableInstanceIds?: ReadonlySet<ProviderInstanceId>;
   getDisabledInstanceTooltip?: (entry: ProviderInstanceEntry) => string;
+  /** Horizontal runs the rail across the top of a narrow picker. */
+  orientation?: "vertical" | "horizontal";
 }) {
+  const horizontal = props.orientation === "horizontal";
+  const orientationKey = horizontal ? "horizontal" : "vertical";
+  const tooltipSide = horizontal ? ("top" as const) : PICKER_TOOLTIP_SIDE;
   const handleSelect = (instanceId: ProviderInstanceId | "favorites") => {
     props.onSelectInstance(instanceId);
   };
   const showFavorites = props.showFavorites ?? true;
   const [hoveredInstanceId, setHoveredInstanceId] = useState<ProviderInstanceId | null>(null);
   const sidebarContentRef = useRef<HTMLDivElement>(null);
-  const [selectedIndicatorTop, setSelectedIndicatorTop] = useState<number | null>(null);
+  const [selectedIndicatorOffset, setSelectedIndicatorOffset] = useState<number | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the selected provider item's DOM offset to position the selection indicator
   useLayoutEffect(() => {
     const content = sidebarContentRef.current;
@@ -56,44 +62,67 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
       content.querySelectorAll<HTMLElement>("[data-model-picker-provider]"),
     ).find((item) => item.dataset.modelPickerProvider === props.selectedInstanceId);
     if (!selectedItem) {
-      setSelectedIndicatorTop(null);
+      setSelectedIndicatorOffset(null);
       return;
     }
-    setSelectedIndicatorTop(selectedItem.offsetTop + selectedItem.offsetHeight / 2 - 10);
+    setSelectedIndicatorOffset(
+      horizontal
+        ? selectedItem.offsetLeft + selectedItem.offsetWidth / 2 - 10
+        : selectedItem.offsetTop + selectedItem.offsetHeight / 2 - 10,
+    );
   }, [
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Adding, removing or reordering providers moves the selected item, so the indicator re-measures.
     props.instanceEntries,
     props.selectedInstanceId,
     showFavorites,
+    horizontal,
   ]);
 
   return (
     <Toolbar.Root
-      className="w-11 shrink-0 overflow-hidden bg-muted/30"
+      className={cn("shrink-0 overflow-hidden bg-muted/30", horizontal ? "w-full" : "w-11")}
       data-model-picker-sidebar="true"
       aria-label="Providers"
-      orientation="vertical"
+      orientation={horizontal ? "horizontal" : "vertical"}
       onKeyDown={(event) => {
         if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-        if (event.key === "ArrowRight") {
+        if (event.key === (horizontal ? "ArrowDown" : "ArrowRight")) {
           event.preventDefault();
           props.onFocusSearch();
           return;
         }
       }}
     >
-      <div className="h-full overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div ref={sidebarContentRef} className="relative flex min-h-full flex-col gap-1 p-1">
-          {selectedIndicatorTop !== null ? (
+      <div
+        className={cn(
+          "overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+          horizontal ? "overflow-x-auto" : "h-full overflow-y-auto",
+        )}
+      >
+        <div
+          ref={sidebarContentRef}
+          className={cn(
+            "relative flex gap-1 p-1",
+            horizontal ? "items-center" : "min-h-full flex-col",
+          )}
+        >
+          {selectedIndicatorOffset !== null ? (
             <div
               data-model-picker-selected-indicator="true"
-              className="pointer-events-none absolute right-1 z-10 h-5 w-0.75 rounded-full bg-primary transition-[top] duration-200 ease-out"
-              style={{ top: selectedIndicatorTop }}
+              className={cn(
+                "pointer-events-none absolute z-10 rounded-full bg-primary duration-200 ease-out",
+                horizontal
+                  ? "bottom-0.5 h-0.75 w-5 transition-[left]"
+                  : "right-1 h-5 w-0.75 transition-[top]",
+              )}
+              style={
+                horizontal ? { left: selectedIndicatorOffset } : { top: selectedIndicatorOffset }
+              }
             />
           ) : null}
           {showFavorites ? (
             <>
-              <div className="relative w-full" data-model-picker-provider="favorites">
+              <div className={ITEM_CLASS[orientationKey]} data-model-picker-provider="favorites">
                 <Tooltip>
                   <TooltipTrigger
                     render={
@@ -111,7 +140,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                     }
                   />
                   <TooltipPopup
-                    side={PICKER_TOOLTIP_SIDE}
+                    side={tooltipSide}
                     sideOffset={PICKER_TOOLTIP_SIDE_OFFSET}
                     align="center"
                   >
@@ -119,7 +148,10 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                   </TooltipPopup>
                 </Tooltip>
               </div>
-              <div className="border-b border-border/70" aria-hidden="true" />
+              <div
+                className={cn("border-border/70", horizontal ? "mx-0.5 h-5 border-l" : "border-b")}
+                aria-hidden="true"
+              />
             </>
           ) : null}
 
@@ -192,13 +224,13 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
             return (
               <div
                 key={entry.instanceId}
-                className="relative w-full"
+                className={ITEM_CLASS[orientationKey]}
                 data-model-picker-provider={entry.instanceId}
               >
                 <Tooltip>
                   <TooltipTrigger render={trigger} />
                   <TooltipPopup
-                    side={PICKER_TOOLTIP_SIDE}
+                    side={tooltipSide}
                     sideOffset={PICKER_TOOLTIP_SIDE_OFFSET}
                     align="center"
                   >

@@ -346,6 +346,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   searchInputRef: RefObject<HTMLInputElement | null>;
   /** Sits beside an effort column: fills the shared row, and stacks above it on narrow screens. */
   docked?: boolean;
+  /** Docked in a narrow column: the provider rail runs across the top and the list fills the rest. */
+  stacked?: boolean;
   /** Right at the end of the search text moves into the popup's effort column. */
   onFocusEffort?: () => void;
   /** Closes the list column, inside the popup's fixed height. */
@@ -842,8 +844,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       <div
         ref={pickerContentRef}
         className={cn(
-          "relative flex w-screen max-w-90 flex-row overflow-hidden",
-          props.docked ? "max-sm:h-56 max-sm:w-full max-sm:max-w-none" : "max-h-86.5",
+          "relative flex overflow-hidden",
+          props.stacked
+            ? "min-h-0 w-full flex-1 flex-col"
+            : cn(
+                "w-screen max-w-90 flex-row",
+                props.docked ? "max-sm:h-56 max-sm:w-full max-sm:max-w-none" : "max-h-86.5",
+              ),
         )}
         // Docked, the popup sets the height; a minimum here would overflow short windows.
         style={
@@ -864,6 +871,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             onFocusSearch={focusSearchInput}
             instanceEntries={sidebarInstanceEntries}
             showFavorites
+            {...(props.stacked ? { orientation: "horizontal" as const } : {})}
             {...(selectableUnavailableInstanceIds ? { selectableUnavailableInstanceIds } : {})}
             {...(lockedDisabledInstanceIds
               ? {
@@ -920,7 +928,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           <div
             className={cn(
               "flex min-h-0 flex-1 flex-col overflow-hidden bg-muted/40",
-              showSidebar && "border-l border-border/70",
+              showSidebar &&
+                (props.stacked ? "border-t border-border/70" : "border-l border-border/70"),
             )}
           >
             <ComboboxSearchInput

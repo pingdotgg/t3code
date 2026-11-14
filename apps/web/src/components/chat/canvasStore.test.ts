@@ -43,6 +43,21 @@ describe("chat canvas model", () => {
     expect(resolve(900)).toBe("popover");
   });
 
+  it("opens the model picker in the card's slot only where the chat lane leaves it clear", () => {
+    const resolve = (width: number) =>
+      resolveChatCanvasModel({
+        measurements: measurements(width),
+        detailsCardMeasurement: null,
+        threadRef,
+        preview: null,
+        detailsCardInlineOpen: false,
+      });
+    expect(resolve(1400).modelPickerSlot).toMatchObject({ x: 1108, width: 280 });
+    const centeredOverSlot = resolve(1300);
+    expect(centeredOverSlot.preferredDetailsCard).not.toBeNull();
+    expect(centeredOverSlot.modelPickerSlot).toBeNull();
+  });
+
   it("moves the card into a popover when a preview below it leaves too little height", () => {
     const resolve = (fullContentHeight: number) =>
       resolveChatCanvasModel({

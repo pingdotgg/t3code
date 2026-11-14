@@ -7,7 +7,14 @@ import {
 import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
-import { CheckIcon, ChevronRightIcon, ChevronUpIcon, WorkflowIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronRightIcon,
+  ChevronUpIcon,
+  ChevronsUpDownIcon,
+  WorkflowIcon,
+  ZapIcon,
+} from "lucide-react";
 import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -497,14 +504,33 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
     props.traits && visibility
       ? columnControls(visibility.selectDescriptors, visibility.booleanDescriptors)
       : null;
+  const label =
+    controls?.effort?.descriptor.label ?? (controls?.others.length ? "Options" : "Effort");
+  if (picker.stacked) {
+    return (
+      <div className="flex min-h-0 flex-col gap-1 px-2 pt-2.5 pb-1.5">
+        <div className="flex items-center gap-2 px-2 text-sm">
+          <span className="text-muted-foreground">{label}</span>
+          <span className="ms-auto min-w-0 truncate text-muted-foreground text-xs">
+            {picker.modelLabel}
+          </span>
+        </div>
+        {/* Capped, so a model with many levels scrolls here and leaves room for the model list. */}
+        <div
+          className="flex max-h-56 flex-col gap-0.5 overflow-y-auto overscroll-contain"
+          onKeyDownCapture={moveBetweenRows}
+        >
+          {props.traits ? <EffortLevels traits={props.traits} /> : <NoEffortRow />}
+        </div>
+      </div>
+    );
+  }
   return (
     <>
       {/* Matches the search row's box, so one rule runs across the top of the popup. */}
       <div className="shrink-0 px-3 pt-2.5">
         <div className="flex h-8.25 -translate-y-px items-center gap-2 border-b border-border/70 pb-1.5 text-sm">
-          <span className="text-muted-foreground">
-            {controls?.effort?.descriptor.label ?? (controls?.others.length ? "Options" : "Effort")}
-          </span>
+          <span className="text-muted-foreground">{label}</span>
           <span className="ms-auto min-w-0 truncate text-muted-foreground text-xs">
             {picker.modelLabel}
           </span>
@@ -556,14 +582,25 @@ function SpeedSegment(props: {
   );
 }
 
-function SpeedControl(props: { traits: TraitsSelectionInput }) {
+/** The stacked footer's row: a muted icon and name, with the control at the end. */
+function SettingRow(props: { icon: ReactNode; label: string; children: ReactNode }) {
+  return (
+    <div className="flex h-8 items-center gap-2 px-1 text-muted-foreground text-xs">
+      {props.icon}
+      <span className="min-w-0 truncate">{props.label}</span>
+      <div className="ms-auto flex shrink-0 items-center">{props.children}</div>
+    </div>
+  );
+}
+
+function SpeedControl(props: { traits: TraitsSelectionInput; stacked: boolean }) {
   const traits = useTraitsSelection(props.traits);
   const { speedSelect, fastToggle } = splitSpeed(
     traits.selectDescriptors,
     traits.booleanDescriptors,
   );
   if (traits.modelIsUnavailable || (!speedSelect && !fastToggle)) return null;
-  return (
+  const control = (
     <div
       role="radiogroup"
       aria-label={speedSelect?.label ?? fastToggle?.label}
@@ -591,13 +628,34 @@ function SpeedControl(props: { traits: TraitsSelectionInput }) {
           : null}
     </div>
   );
+  if (!props.stacked) return control;
+  return (
+    <SettingRow icon={<ZapIcon aria-hidden="true" className="size-3.5" />} label="Speed">
+      {control}
+    </SettingRow>
+  );
 }
 
-function UltracodeControl(props: { traits: TraitsSelectionInput }) {
+function UltracodeControl(props: { traits: TraitsSelectionInput; stacked: boolean }) {
   const traits = useTraitsSelection(props.traits);
   const { ultracodeToggle } = splitSpeed(traits.selectDescriptors, traits.booleanDescriptors);
   if (traits.modelIsUnavailable || !ultracodeToggle) return null;
   const on = ultracodeToggle.currentValue === true;
+  if (props.stacked) {
+    return (
+      <SettingRow
+        icon={<WorkflowIcon aria-hidden="true" className="size-3.5" />}
+        label={ultracodeToggle.label}
+      >
+        <Switch
+          size="sm"
+          checked={on}
+          onCheckedChange={(next) => traits.changeBoolean(ultracodeToggle.id, next)}
+          aria-label={ultracodeToggle.label}
+        />
+      </SettingRow>
+    );
+  }
   return (
     <div className="flex rounded-lg bg-input/40 p-0.5">
       <button
@@ -619,12 +677,13 @@ function PermissionsMenu(props: {
   runtimeMode: RuntimeMode;
   options: ReadonlyArray<RuntimeModeOption>;
   onChange: (mode: RuntimeMode) => void;
+  stacked: boolean;
 }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const current = props.options.find((option) => option.mode === props.runtimeMode);
   if (!current) return null;
   const CurrentIcon = current.icon;
-  return (
+  const menu = (
     <Menu
       onOpenChangeComplete={(open) => {
         if (open) focusCheckedPermission(triggerRef.current);
@@ -641,9 +700,13 @@ function PermissionsMenu(props: {
           />
         }
       >
-        <CurrentIcon aria-hidden="true" className="size-3.5" />
+        {props.stacked ? null : <CurrentIcon aria-hidden="true" className="size-3.5" />}
         {current.label}
-        <ChevronUpIcon aria-hidden="true" className="size-3" />
+        {props.stacked ? (
+          <ChevronsUpDownIcon aria-hidden="true" className="size-3" />
+        ) : (
+          <ChevronUpIcon aria-hidden="true" className="size-3" />
+        )}
       </MenuTrigger>
       <MenuPopup side="top" align="end" {...composerFloatingLayerProps}>
         <ComposerPermissionsSection
@@ -654,6 +717,12 @@ function PermissionsMenu(props: {
       </MenuPopup>
     </Menu>
   );
+  if (!props.stacked) return menu;
+  return (
+    <SettingRow icon={<CurrentIcon aria-hidden="true" className="size-3.5" />} label="Permissions">
+      {menu}
+    </SettingRow>
+  );
 }
 
 /** The model picker's footer: speed stays one click away, permissions sit one menu deeper. */
@@ -663,14 +732,23 @@ export function ComposerPickerFooter(props: {
   runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
+  const { stacked } = use(DockedPickerContext);
   return (
-    <div className="flex flex-wrap items-center gap-2 border-t border-border/70 bg-muted/40 px-3 py-2">
-      {props.traits ? <SpeedControl traits={props.traits} /> : null}
-      {props.traits ? <UltracodeControl traits={props.traits} /> : null}
+    <div
+      className={cn(
+        "border-t border-border/70 bg-muted/40",
+        stacked
+          ? "flex shrink-0 flex-col px-2 py-1.5"
+          : "flex flex-wrap items-center gap-2 px-3 py-2",
+      )}
+    >
+      {props.traits ? <SpeedControl traits={props.traits} stacked={stacked} /> : null}
+      {props.traits ? <UltracodeControl traits={props.traits} stacked={stacked} /> : null}
       <PermissionsMenu
         runtimeMode={props.runtimeMode}
         options={props.runtimeModeOptions}
         onChange={props.onRuntimeModeChange}
+        stacked={stacked}
       />
     </div>
   );
