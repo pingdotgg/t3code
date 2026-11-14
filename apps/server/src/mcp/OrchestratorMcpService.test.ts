@@ -2388,6 +2388,117 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect.each(["async", "wait"] as const)(
+    "prepares a delegated child whose %s caller goes away after its run commits",
+    (mode) =>
+      Effect.gen(function* () {
+        const runCommitted = yield* Deferred.make<void>();
+        const wakePolicies = yield* Ref.make<ReadonlyArray<string>>([]);
+        const finishDispatch = yield* Deferred.make<void>();
+        const prepared = yield* Deferred.make<void>();
+        const childRunId = RunId.make("run:mcp-delegate-caller-gone");
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          runId: parentRunId,
+          parentNodeId,
+          origin: "app_owned",
+          createdBy: "agent",
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          providerThreadId: null,
+          childThreadId,
+          nativeTaskRef: null,
+          prompt: "Summarize the diff.",
+          title: null,
+          model: "gpt-5.4",
+          status: "running",
+          result: null,
+          startedAt: null,
+          completedAt: null,
+        };
+        const layerDependencies = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            getThreadRecords: (threadId) =>
+              Effect.succeed(threadId === parentThreadId ? parentProjection([]) : childProjection),
+            isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+            assertProviderInstanceEnabled: () => Effect.void,
+            dispatch: (command) =>
+              command.type === "delegated_task.wake-policy"
+                ? Ref.update(wakePolicies, (policies) => [
+                    ...policies,
+                    command.completionWake,
+                  ]).pipe(Effect.as({ sequence: 3, storedEvents: [] } as never))
+                : Deferred.succeed(runCommitted, undefined).pipe(
+                    Effect.andThen(Deferred.await(finishDispatch)),
+                    Effect.as({
+                      sequence: 2,
+                      storedEvents: [
+                        {
+                          sequence: 1,
+                          commandId: null,
+                          event: { type: "subagent.updated", payload: task },
+                        },
+                        {
+                          sequence: 2,
+                          commandId: null,
+                          event: {
+                            type: "run.created",
+                            threadId: childThreadId,
+                            payload: { id: childRunId, workspacePreparation: { type: "root" } },
+                          },
+                        },
+                      ],
+                    } as never),
+                  ),
+          }),
+          providerRegistryLayer([
+            providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+          ]),
+          adapterRegistryLayer([codexInstanceId]),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          ServerSettings.layerTest(),
+        );
+        const layerService = OrchestratorMcpService.layer.pipe(
+          Layer.provide(
+            Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+              prepareRun: (input) =>
+                input.runId === childRunId ? Deferred.succeed(prepared, undefined) : Effect.void,
+            }),
+          ),
+          Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+        );
+
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const delegation = yield* Effect.forkChild(
+            service.delegateTask(scope, {
+              task: "Summarize the diff.",
+              target: { driverKind: ProviderDriverKind.make("codex") },
+              mode,
+              clientRequestId: `delegate-caller-gone-${mode}`,
+            }),
+          );
+          yield* Deferred.await(runCommitted);
+          yield* Effect.sync(() => delegation.interruptUnsafe());
+          yield* Deferred.succeed(finishDispatch, undefined);
+          yield* Fiber.await(delegation);
+          yield* Deferred.await(prepared);
+          assert.deepEqual(yield* Ref.get(wakePolicies), mode === "wait" ? ["always"] : []);
+        }).pipe(Effect.provide(layerService.pipe(Layer.provide(layerDependencies))));
+      }),
+  );
+
   it.effect(
     "retrying an accepted driver-only delegation replays even after the project disables every candidate",
     () =>
