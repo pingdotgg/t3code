@@ -6,6 +6,7 @@ const {
   resolve,
   upsertCommentForCurrentHead,
   validateResult,
+  validateScenarios,
 } = require("./thread-transfer-report.cjs");
 
 function result(overrides = {}) {
@@ -41,6 +42,29 @@ function result(overrides = {}) {
   };
 }
 
+function scenarios(overrides = {}) {
+  const rows = [
+    {
+      phase: "long turn finished, cold open",
+      metric: "HTTP decoded",
+      unit: "bytes",
+      observed: 390_000,
+      ceiling: 420_000,
+    },
+    {
+      phase: "idle thread resume",
+      metric: "WebSocket messages",
+      unit: "count",
+      observed: 1,
+      ceiling: 1,
+    },
+  ];
+  return {
+    schemaVersion: 1,
+    providers: { codex: [{ ...rows[0], ...overrides }, rows[1]], claudeAgent: rows },
+  };
+}
+
 test("validates the fixed artifact schema", () => {
   assert.equal(validateResult(result()).schemaVersion, 1);
   assert.throws(
@@ -51,45 +75,77 @@ test("validates the fixed artifact schema", () => {
     () => validateResult(result({ totalWireBytes: "lots" })),
     /non-negative safe integer/,
   );
+
+  assert.equal(validateScenarios(scenarios()).schemaVersion, 1);
+  for (const phase of ["@everyone", "[link](https://example.com)", "a | b", "<img>", ""]) {
+    assert.throws(() => validateScenarios(scenarios({ phase })), /short plain label/);
+  }
+  assert.throws(() => validateScenarios(scenarios({ note: "extra" })), /unexpected fields/);
+  assert.throws(() => validateScenarios(scenarios({ ceiling: null })), /non-negative safe integer/);
+  assert.throws(
+    () =>
+      validateScenarios(scenarios({ phase: "idle thread resume", metric: "WebSocket messages" })),
+    /repeats an earlier row/,
+  );
 });
 
-test("renders baseline, impact, ceiling, and ceiling changes", () => {
-  const baseline = result();
-  const current = result({ measuredTurnWebSocketWireBytes: 260_000 });
-  current.providers.codex.ceiling = {
-    ...current.providers.codex.ceiling,
-    measuredTurnWebSocketWireBytes: 330_000,
-  };
-  const comment = renderComment({
-    current,
-    baseline,
-    currentRun: {
-      sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      conclusion: "success",
-      url: "https://github.com/pingdotgg/t3code/actions/runs/2",
-    },
-    baselineRun: {
-      sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      matchesBase: true,
-      url: "https://github.com/pingdotgg/t3code/actions/runs/1",
-    },
-  });
+test("lists scenario rows that changed or failed above the collapsed table", () => {
+  const run = { sha: "abcdef1234", url: "https://example.com/run", conclusion: "success" };
+  const render = (currentScenarios, baselineScenarios) =>
+    renderComment({
+      current: result(),
+      baseline: result(),
+      currentScenarios,
+      baselineScenarios,
+      currentRun: run,
+      baselineRun: { ...run, matchesBase: true },
+    });
+  const open = (body) => body.slice(0, body.indexOf("<details>"));
 
-  assert.match(comment, /Main baseline \| This PR \| Impact \| PR ceiling/);
-  assert.match(comment, /\+9\.8 KiB \(\+4\.0%\)/);
-  assert.match(comment, /This PR changes transfer ceilings/);
-  assert.match(comment, /312\.5 KiB → 322\.3 KiB/);
-  assert.match(comment, /<!-- t3-thread-transfer-report -->/);
+  const unchanged = render(scenarios(), scenarios());
+  assert.match(unchanged, /✅ Thread transfer remains within every enforced ceiling/);
+  assert.match(open(unchanged), /All 4 scenario measurements match `main`/);
+  assert.doesNotMatch(open(unchanged), /long turn finished, cold open/);
+
+  const grown = render(scenarios({ observed: 400_000 }), scenarios());
+  assert.match(open(grown), /1 of 4 scenario measurements changed or failed/);
   assert.match(
-    comment,
-    /<!-- t3-thread-transfer-result-sha:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->/,
+    open(grown),
+    /\| Codex \| `long turn finished, cold open` \| `HTTP decoded` \| 380\.9 KiB \| 390\.6 KiB \| \+9\.8 KiB \(\+2\.6%\) \| 410\.2 KiB \| ✅ \|/,
   );
+
+  const over = render(scenarios({ observed: 430_000, ceiling: 425_000 }), scenarios());
+  assert.match(over, /❌ One or more thread transfer ceilings were exceeded/);
+  assert.match(
+    over,
+    /Codex `long turn finished, cold open` `HTTP decoded`: 410\.2 KiB → 415\.0 KiB/,
+  );
+
+  // A row `main` does not have is not reported as matching it.
+  const added = render(scenarios({ phase: "GH-26" }), scenarios());
+  assert.match(open(added), /3 scenario measurements match `main`\. 1 have no `main` baseline\./);
+  assert.match(added, /\| Codex \| `GH-26` \|/);
+
+  // A main run from before the scenario file has nothing to compare; a PR run from before it has no section.
+  assert.match(open(render(scenarios(), undefined)), /No `main` baseline exists yet/);
+  assert.doesNotMatch(render(undefined, scenarios()), /Other scenarios/);
 });
 
 test("resolves a fallback PR with a redacted head repo and exact main baseline", async () => {
   const outputs = {};
   const listWorkflowRunArtifacts = () => {};
-  const listWorkflowRuns = () => {};
+  // The exact base run sits far past the newest page of main CI runs.
+  const mainRuns = Array.from({ length: 1_000 }, (_, index) => ({
+    id: 1_000 - index,
+    head_sha: index === 900 ? "base-sha" : `main-sha-${index}`,
+  }));
+  const listWorkflowRuns = async ({ head_sha, per_page }) => ({
+    data: {
+      workflow_runs: mainRuns
+        .filter((run) => head_sha === undefined || run.head_sha === head_sha)
+        .slice(0, per_page),
+    },
+  });
   const listPullRequestsAssociatedWithCommit = () => {};
   const github = {
     paginate: async (method, input) => {
@@ -110,9 +166,6 @@ test("resolves a fallback PR with a redacted head repo and exact main baseline",
             runId: input.run_id,
           },
         ];
-      }
-      if (method === listWorkflowRuns) {
-        return [{ id: 1, head_sha: "base-sha" }];
       }
       throw new Error("unexpected pagination call");
     },
@@ -157,7 +210,7 @@ test("resolves a fallback PR with a redacted head repo and exact main baseline",
   assert.equal(outputs.publish, "true");
   assert.equal(outputs.pull_number, "5350");
   assert.equal(outputs.pr_artifact, "true");
-  assert.equal(outputs.baseline_run_id, "1");
+  assert.equal(outputs.baseline_run_id, "100");
   assert.equal(outputs.baseline_matches_base, "true");
 });
 
@@ -214,6 +267,47 @@ test("does not guess when a fallback commit belongs to multiple PRs", async () =
 
   assert.equal(outputs.publish, "false");
   assert.equal(fetchedPull, false);
+});
+
+test("skips a missing PR commit but preserves other lookup failures", async () => {
+  for (const [status, message, shouldSkip] of [
+    [422, "No commit found for SHA: old-head", true],
+    [422, "Validation Failed", false],
+    [403, "API rate limit exceeded", false],
+  ]) {
+    const outputs = {};
+    const error = Object.assign(new Error(message), {
+      status,
+      response: { data: { message } },
+    });
+    const run = resolve({
+      github: {
+        paginate: async () => {
+          throw error;
+        },
+        rest: { repos: { listPullRequestsAssociatedWithCommit: () => {} } },
+      },
+      context: {
+        repo: { owner: "pingdotgg", repo: "t3code" },
+        payload: {
+          workflow_run: { event: "pull_request", head_sha: "old-head", pull_requests: [] },
+        },
+      },
+      core: {
+        info: () => {},
+        setOutput: (key, value) => {
+          outputs[key] = value;
+        },
+      },
+    });
+    if (shouldSkip) {
+      await run;
+      assert.equal(outputs.publish, "false");
+    } else {
+      await assert.rejects(run, (caught) => caught === error);
+      assert.deepEqual(outputs, {});
+    }
+  }
 });
 
 test("does not report a passing run that skipped the server tests", async () => {
@@ -331,22 +425,4 @@ test("preserves a successful result when a same-SHA rerun has no artifact", asyn
 
   assert.equal(published, true);
   assert.equal(updatedComment, false);
-});
-
-test("accepts V2 without comparing it to the V1 scenario", () => {
-  const current = result();
-  current.scenario.id = "thread-transfer-v2";
-  current.providers.codex.ceiling = { ...current.providers.codex.ceiling, totalWireBytes: 3000000 };
-  assert.equal(validateResult(current), current);
-  const comment = renderComment({
-    current,
-    baseline: result(),
-    currentRun: { sha: "bbbbbbbb", conclusion: "success", url: "https://example.com/current" },
-    baselineRun: { sha: "aaaaaaaa", matchesBase: true, url: "https://example.com/baseline" },
-  });
-  assert.match(comment, /fixture changed/);
-  assert.doesNotMatch(comment, /This PR changes transfer ceilings/);
-  assert.doesNotMatch(comment, /[+-]\d+\.\d+%/);
-  current.scenario.id = "unrecognized";
-  assert.throws(() => validateResult(current), /not supported/);
 });

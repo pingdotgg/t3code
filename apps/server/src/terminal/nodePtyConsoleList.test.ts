@@ -3,9 +3,7 @@ import * as NodeModule from "node:module";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-// Exercises the patched console-list helper in patches/node-pty@1.2.0-beta.15.patch.
-// The agent calls `require("child_process").fork` at call time, so replacing it on
-// the shared CJS module stands in for the forked helper on every platform.
+// The agent forks via the shared CJS module at call time; replace it to stub the helper on every platform.
 const requireCjs = NodeModule.createRequire(import.meta.url);
 const childProcess: typeof import("node:child_process") = requireCjs("child_process");
 const {
@@ -61,6 +59,7 @@ describe("node-pty console process list helper", () => {
     expect(list).toEqual([SHELL_PID]);
   });
 
+  // regression: #18519 Windows terminal kill waited on timeouts
   it("falls back to the shell PID when the helper fails to spawn", async () => {
     const list = await getConsoleProcessList((helper) => {
       helper.emit("error", Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }));

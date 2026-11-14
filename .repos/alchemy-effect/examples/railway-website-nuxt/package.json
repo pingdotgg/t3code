@@ -2,6 +2,11 @@
   "name": "railway-website-nuxt",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/railway-website-nuxt"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -10,11 +15,13 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/railway": "workspace:*",
     "alchemy": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@distilled.cloud/railway": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@tailwindcss/vite": "catalog:",
@@ -23,10 +30,5 @@
     "nuxt": "catalog:",
     "tailwindcss": "catalog:",
     "typescript": "catalog:"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/railway-website-nuxt"
   }
 }

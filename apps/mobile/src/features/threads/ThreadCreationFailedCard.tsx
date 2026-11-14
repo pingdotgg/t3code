@@ -1,4 +1,4 @@
-import { RequestActionButton } from "./RequestActionButton";
+import { Button } from "../../components/ui/Button";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -19,7 +19,7 @@ export function ThreadCreationFailedCard(props: {
         Your prompt was kept in the project draft.
       </Text>
       <View className="flex-row">
-        <RequestActionButton label="Edit task" onPress={props.onEditTask} />
+        <Button label="Edit task" tone="primary" onPress={props.onEditTask} />
       </View>
     </View>
   );

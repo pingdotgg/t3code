@@ -1,6 +1,6 @@
+import { readFile } from "node:fs/promises";
 import * as Playwright from "@alchemy.run/cloudflare-test-tools/e2e/Playwright";
 import { expect, test } from "@playwright/test";
-import { readFile } from "node:fs/promises";
 
 // The static-output path: a pure `output: "static"` Astro site deploys
 // ASSETS-ONLY (no worker, `BuildOutput.serverModules` undefined/empty).
@@ -23,10 +23,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       await expect(page.locator("#mode")).toHaveText("static");
     });
 
-    it("navigates the whole site through the nav (sitemap-ish)", async ({
-      page,
-      server,
-    }) => {
+    it("navigates the whole site through the nav (sitemap-ish)", async ({ page, server }) => {
       await page.goto(server.url.toString());
       await page.locator("#nav-about").click();
       await expect(page.locator("#title")).toHaveText("About");
@@ -67,9 +64,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       expect(await response.text()).toContain("User-agent");
     });
 
-    it("returns the custom 404 page for unmatched routes", async ({
-      server,
-    }) => {
+    it("returns the custom 404 page for unmatched routes", async ({ server }) => {
       const response = await server.fetch("/definitely-not-a-route");
       expect(response.status).toBe(404);
       expect(await response.text()).toContain("Page not found");
@@ -77,9 +72,7 @@ for (const mode of Playwright.SERVER_METHODS) {
 
     // Live-only assertions: the production artifact itself.
     if (mode === "live") {
-      it("serves build-frozen HTML (no per-request rendering)", async ({
-        server,
-      }) => {
+      it("serves build-frozen HTML (no per-request rendering)", async ({ server }) => {
         // `#built-at` is stamped at BUILD time; two requests must be
         // byte-identical. (Dev renders on demand by design, so live-only.)
         const first = await (await server.fetch("/")).text();
@@ -89,16 +82,11 @@ for (const mode of Playwright.SERVER_METHODS) {
       });
 
       // THE POINT of this fixture: a fully-static build must be assets-only.
-      it("build output contains NO server modules (assets-only)", async ({
-        server,
-      }) => {
+      it("build output contains NO server modules (assets-only)", async ({ server }) => {
         // The harness builds before serving live mode, so dist/build.json
         // exists once the worker-scoped server fixture is up.
         void server;
-        const raw = await readFile(
-          new URL("../dist/build.json", import.meta.url),
-          "utf8",
-        );
+        const raw = await readFile(new URL("../dist/build.json", import.meta.url), "utf8");
         const build = JSON.parse(raw) as {
           serverModules?: Array<{ name: string }> | undefined;
         };

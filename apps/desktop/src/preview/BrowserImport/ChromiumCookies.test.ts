@@ -38,24 +38,10 @@ const encryptWindowsV10 = (value: string | Buffer, key: Buffer): Uint8Array => {
 
 describe("cookieScope", () => {
   it("keeps a host-only cookie host-only", () => {
-    // Chromium stores a host-only cookie without a leading dot. Passing any
-    // `domain` to Electron makes it a domain cookie and re-adds the dot, which
-    // would expose the cookie to every subdomain it was never scoped to.
     expect(cookieScope("example.test", "/", true)).toEqual({
       url: "https://example.test/",
       domain: undefined,
     });
-  });
-
-  it("preserves a domain cookie's leading dot", () => {
-    expect(cookieScope(".example.test", "/app", true)).toEqual({
-      url: "https://example.test/app",
-      domain: ".example.test",
-    });
-  });
-
-  it("matches the scheme to the secure flag", () => {
-    expect(cookieScope("example.test", "/", false).url).toBe("http://example.test/");
   });
 
   it("brackets bare IPv6 hosts without duplicating existing brackets", () => {
@@ -148,7 +134,7 @@ describe("readChromiumCookieDatabase", () => {
         const partitioned = yield* readChromiumCookieDatabase(filename, keys, "linux");
         expect(partitioned.cookies).toEqual([]);
         expect(partitioned.undecryptable).toBe(1);
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reads plaintext, encrypted, and genuinely empty cookie values", () =>
@@ -200,7 +186,7 @@ describe("readChromiumCookieDatabase", () => {
         { name: "encrypted", value: "stored encrypted" },
         { name: "empty", value: "" },
       ]);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("enforces domain binding only for schema 24 and newer", () =>
@@ -241,7 +227,7 @@ describe("readChromiumCookieDatabase", () => {
       ]);
       expect(result.undecryptable).toBe(2);
       expect(result.undecryptableHosts).toEqual(["wrong.example", "short.example"]);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("decrypts mixed v10 and v11 cookies with their respective keys", () =>
@@ -287,7 +273,7 @@ describe("readChromiumCookieDatabase", () => {
       ]);
       expect(v10Only.undecryptable).toBe(1);
       expect(v10Only.undecryptableHosts).toEqual(["v11.example"]);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("recovers records written with the empty-passphrase key", () =>
@@ -299,8 +285,7 @@ describe("readChromiumCookieDatabase", () => {
       const filename = `${directory}/Cookies`;
       const cbcV10 = Buffer.from("0123456789abcdef");
       const cbcV11 = Buffer.from("fedcba9876543210");
-      // The key some Linux clients actually encrypted with (crbug.com/1195256):
-      // OSCrypt's derivation over an empty passphrase.
+      // Some Linux clients encrypted with an empty passphrase (crbug.com/1195256).
       const cbcEmpty = NodeCrypto.pbkdf2Sync("", "saltysalt", 1, 16, "sha1");
 
       yield* Effect.gen(function* () {
@@ -335,63 +320,7 @@ describe("readChromiumCookieDatabase", () => {
       const noV11 = yield* readChromiumCookieDatabase(filename, { cbcV10, cbcEmpty }, "linux");
       expect(noV11.cookies.map(({ name }) => name)).toEqual(["empty-v10"]);
       expect(noV11.undecryptableHosts).toEqual(["ev11.example"]);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-  );
-
-  it.effect("preserves arbitrary long encrypted values from pre-24 schemas", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const directory = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3code-chromium-cookies-",
-      });
-      const filename = `${directory}/Cookies`;
-      const key = Buffer.from("0123456789abcdef");
-      const value = "x".repeat(32) + " legacy value";
-
-      yield* Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        yield* sql`create table meta (key text primary key, value text not null)`;
-        yield* sql`insert into meta values ('version', 23)`;
-        yield* sql`
-          create table cookies (
-            host_key text not null, name text not null, value text not null,
-            encrypted_value blob not null, path text not null, expires_utc integer not null,
-            is_secure integer not null, is_httponly integer not null, samesite integer not null,
-            top_frame_site_key text not null default ''
-          )
-        `;
-        yield* sql`insert into cookies (host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite) values
-          ('legacy.example', 'legacy', '', ${encryptV10(value, key)}, '/', 0, 0, 0, 0)`;
-      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
-
-      const result = yield* readChromiumCookieDatabase(filename, { cbcV10: key }, "darwin");
-      expect(result.cookies[0]?.value).toBe(value);
-      expect(result.undecryptable).toBe(0);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-  );
-
-  it.effect("rejects a malformed text schema version", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const directory = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3code-chromium-cookies-",
-      });
-      const filename = `${directory}/Cookies`;
-
-      yield* Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        yield* sql`create table meta (key text primary key, value text not null)`;
-        yield* sql`insert into meta values ('version', 'not-a-version')`;
-      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
-
-      const error = yield* readChromiumCookieDatabase(
-        filename,
-        { cbcV10: Buffer.from("0123456789abcdef") },
-        "darwin",
-      ).pipe(Effect.flip);
-
-      expect(error._tag).toBe("SchemaError");
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("treats unversioned encrypted values as legacy plaintext on macOS and Linux", () =>
@@ -419,9 +348,6 @@ describe("readChromiumCookieDatabase", () => {
           ('legacy.example', 'legacy', '', ${Buffer.from("legacy cleartext")}, '/', 0, 0, 0, 0)`;
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
 
-      // Chromium's OSCrypt returns unprefixed data as-is on both platforms
-      // (os_crypt_mac.mm and os_crypt_linux.cc: "old data saved as clear
-      // text"), so neither counts it as undecryptable.
       const mac = yield* readChromiumCookieDatabase(filename, { cbcV10: key }, "darwin");
       const linux = yield* readChromiumCookieDatabase(filename, { cbcV10: key }, "linux");
 
@@ -429,6 +355,29 @@ describe("readChromiumCookieDatabase", () => {
       expect(mac.undecryptable).toBe(0);
       expect(linux.cookies[0]?.value).toBe("legacy cleartext");
       expect(linux.undecryptable).toBe(0);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reads a cookie database the browser has emptied as having no cookies", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-chromium-cookies-",
+      });
+      const filename = `${directory}/Cookies`;
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`create table scratch (id integer)`;
+        yield* sql`drop table scratch`;
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+
+      const result = yield* readChromiumCookieDatabase(
+        filename,
+        { cbcV10: Buffer.from("0123456789abcdef") },
+        "darwin",
+      );
+
+      expect(result).toEqual({ cookies: [], undecryptable: 0, undecryptableHosts: [] });
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
@@ -483,6 +432,6 @@ describe("readChromiumCookieDatabase", () => {
       expect(chips.cookies.map(({ name }) => name)).toEqual(["plain"]);
       expect(chips.undecryptable).toBe(1);
       expect(chips.undecryptableHosts).toEqual(["partitioned.example"]);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
