@@ -149,19 +149,39 @@ const collect = <E>(stream: Stream.Stream<Uint8Array, E>) =>
       (a, b) => a + b,
     ),
   );
+/** Gradle needs the SDK location; fall back to Android Studio's default install like the device host does. */
+export const androidSdk = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const environment = yield* HostProcess.Environment;
+  const home = environment.HOME ?? environment.USERPROFILE ?? "";
+  const candidates = [
+    environment.ANDROID_HOME?.trim(),
+    environment.ANDROID_SDK_ROOT?.trim(),
+    path.join(home, "Library", "Android", "sdk"),
+    path.join(home, "Android", "Sdk"),
+    path.join(environment.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "Android", "Sdk"),
+  ];
+  for (const sdk of candidates) {
+    if (!sdk) continue;
+    const platformTools = path.join(sdk, "platform-tools");
+    if (yield* fs.exists(platformTools).pipe(Effect.orElseSucceed(() => false))) return sdk;
+  }
+  return undefined;
+});
+
 export const resolveAdb = Effect.gen(function* () {
   if (yield* isCommandAvailable("adb")) return "adb";
-  const environment = yield* HostProcess.Environment;
   const path = yield* Path.Path;
   const executable = (yield* HostProcess.Platform) === "win32" ? "adb.exe" : "adb";
-  for (const sdk of [environment.ANDROID_SDK_ROOT, environment.ANDROID_HOME]) {
-    if (!sdk) continue;
+  const sdk = yield* androidSdk;
+  if (sdk) {
     const candidate = path.join(sdk, "platform-tools", executable);
     if (yield* isCommandAvailable(candidate)) return candidate;
   }
   return yield* new NativeClientError({
     message:
-      "adb was not found on PATH or in ANDROID_SDK_ROOT/ANDROID_HOME. Install Android SDK platform-tools.",
+      "adb was not found on PATH, in ANDROID_HOME/ANDROID_SDK_ROOT, or in Android Studio's default SDK location. Install Android SDK platform-tools.",
   });
 });
 
@@ -185,12 +205,14 @@ const command = Effect.fn("nativeClient.command")(function* (
   );
   const log = inherit ? yield* BuildLog : null;
   const spawn = yield* resolveSpawnCommand(program === "adb" ? yield* resolveAdb : program, args);
+  const sdk = yield* androidSdk;
   const child = yield* spawner.spawn(
     ChildProcess.make(spawn.command, spawn.args, {
       shell: spawn.shell,
       cwd: cwd ?? (yield* roots).mobile,
       env: {
         ...environment,
+        ...(sdk ? { ANDROID_HOME: sdk } : {}),
         APP_VARIANT: "development",
         MOBILE_VERSION_POLICY: "appVersion",
         T3CODE_IOS_PERSONAL_TEAM: "0",
