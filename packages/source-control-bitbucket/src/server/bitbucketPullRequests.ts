@@ -1,3 +1,4 @@
+import { trimOptionalString } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -58,11 +59,6 @@ export const BitbucketPullRequestListSchema = Schema.Struct({
   values: Schema.Array(BitbucketPullRequestSchema),
   next: Schema.optional(TrimmedNonEmptyString),
 });
-
-function trimOptionalString(value: string | null | undefined): string | null {
-  const trimmed = value?.trim() ?? "";
-  return trimmed.length > 0 ? trimmed : null;
-}
 
 function repositoryOwner(repository: Schema.Schema.Type<typeof BitbucketRepositoryRefSchema>) {
   return (

@@ -8,6 +8,7 @@ import {
   ClientWebDeployment,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { RuntimeMode } from "./providerPolicy.ts";
 
 export const ServerAuthPolicy = Schema.Literals([
   "desktop-managed-local",
@@ -95,8 +96,7 @@ const authScopeResponseFields = {
   permissions: Schema.optionalKey(ForwardCompatibleArray(AuthEnvironmentScope)),
 };
 
-// Only clients talking to an old server use these parent checks. Servers never
-// expand stored grants, and an explicitly empty permissions array grants nothing.
+// Client-only fallback for old servers. Servers never expand grants; empty permissions grant nothing.
 const legacyParents: Partial<Record<AuthEnvironmentScope, AuthEnvironmentScope>> = {
   [AuthFilesystemReadScope]: AuthOrchestrationReadScope,
   [AuthDiagnosticsReadScope]: AuthOrchestrationReadScope,
@@ -146,9 +146,7 @@ export function sessionHasLegacyPermissions(session: SessionGrantInput): boolean
   );
 }
 
-// Access and relay management are included because terminal:operate and
-// orchestration:operate already reach that authority through a shell or a
-// full-access agent. Narrowing a grant means choosing explicit scopes.
+// Shell and full-access agent scopes already confer access and relay authority.
 export const AuthStandardClientScopes = [
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -241,40 +239,102 @@ export const AuthAccessTokenResult = Schema.Struct({
 export type AuthAccessTokenResult = typeof AuthAccessTokenResult.Type;
 
 export const AuthWebSocketTicketResult = Schema.Struct({
-  ticket: TrimmedNonEmptyString,
+  ticket: Schema.RedactedFromValue(TrimmedNonEmptyString),
   expiresAt: Schema.DateTimeUtc,
 });
 export type AuthWebSocketTicketResult = typeof AuthWebSocketTicketResult.Type;
 
 /**
- * The route a WebSocket ticket opens: the RPC socket, or the media routes
- * (device hub, preview stream) that share one ticket across many requests.
- * It is a path segment so a DPoP mint proof covers it; a query parameter is
- * outside the proof's `htu` and could be stripped on the way to the server.
- * Clients that predate this mint at the bare path and get tickets that open either.
+ * Media routes share a ticket across requests; RPC uses a separate ticket.
+ * Use a path segment so the DPoP mint proof covers it; `htu` excludes query parameters,
+ * which could be stripped to change the ticket's use.
+ * Older clients mint at the bare path and receive tickets valid for either use.
  */
 export const AuthWebSocketTicketUse = Schema.Literals(["rpc", "media"]);
 export type AuthWebSocketTicketUse = typeof AuthWebSocketTicketUse.Type;
 
 export const AuthWebSocketTicketParams = Schema.Struct({ use: AuthWebSocketTicketUse });
 
+export const AuthMcpClientAccess = Schema.Literals([
+  "read-only",
+  "approval-required",
+  "auto-accept-edits",
+  "auto",
+  "full-access",
+]);
+export type AuthMcpClientAccess = typeof AuthMcpClientAccess.Type;
+
+/** The scopes an agent session gets for an access level, and a pairing code must carry. */
+export const mcpClientScopes = (access: AuthMcpClientAccess): ReadonlyArray<AuthGrantScope> =>
+  access === "read-only"
+    ? [AuthOrchestrationReadScope]
+    : access === "full-access"
+      ? [
+          AuthOrchestrationReadScope,
+          AuthOrchestrationOperateScope,
+          AuthSettingsWriteScope,
+          AuthSourceControlWriteScope,
+        ]
+      : [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
+
+/** The random part of a one-time pairing code: this many characters from this alphabet. */
+export const PAIRING_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+export const PAIRING_CODE_LENGTH = 12;
+
+const MCP_APPROVAL_CODE_PREFIXES = {
+  "read-only": "READ",
+  "approval-required": "SUPERVISED",
+  "auto-accept-edits": "EDITS",
+  auto: "AUTO",
+  "full-access": "FULL",
+} as const satisfies Record<AuthMcpClientAccess, string>;
+
+const MCP_APPROVAL_CODE_PATTERN = new RegExp(
+  `^(${Object.values(MCP_APPROVAL_CODE_PREFIXES).join("|")})-([${PAIRING_CODE_ALPHABET}]{${PAIRING_CODE_LENGTH}})$`,
+  "i",
+);
+
+/** A pairing code that approves one agent sign-in at `access`, such as `AUTO-Q8RZ3NWD5KTC`. */
+export const mcpApprovalCode = (access: AuthMcpClientAccess, token: string): string =>
+  `${MCP_APPROVAL_CODE_PREFIXES[access]}-${token}`;
+
+/** The level a code approves and the code as issued, or undefined for any other code. */
+export function parseMcpApprovalCode(
+  code: string,
+): { readonly access: AuthMcpClientAccess; readonly code: string } | undefined {
+  const match = MCP_APPROVAL_CODE_PATTERN.exec(code.trim());
+  if (match === null) return undefined;
+  const prefix = match[1]!.toUpperCase();
+  const access = AuthMcpClientAccess.literals.find(
+    (level) => MCP_APPROVAL_CODE_PREFIXES[level] === prefix,
+  );
+  return access && { access, code: mcpApprovalCode(access, match[2]!.toUpperCase()) };
+}
+
 export const AuthPairingCredentialResult = Schema.Struct({
   id: TrimmedNonEmptyString,
   credential: TrimmedNonEmptyString,
   label: Schema.optionalKey(TrimmedNonEmptyString),
   expiresAt: Schema.DateTimeUtc,
+  /** Set when the code approves one agent sign-in at this level. Older servers omit it. */
+  access: Schema.optionalKey(AuthMcpClientAccess),
 });
 export type AuthPairingCredentialResult = typeof AuthPairingCredentialResult.Type;
 
-export const AuthPairingLink = Schema.Struct({
-  id: TrimmedNonEmptyString,
-  ...authScopeResponseFields,
-  subject: TrimmedNonEmptyString,
-  label: Schema.optionalKey(TrimmedNonEmptyString),
-  createdAt: Schema.DateTimeUtc,
-  expiresAt: Schema.DateTimeUtc,
-});
-export type AuthPairingLink = typeof AuthPairingLink.Type;
+const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+/**
+ * A short code both sides show for a T3 Connect device, read from its proof key thumbprint.
+ * The waiting device and the approver compare it so an approval lands on the device in hand.
+ */
+export function connectDeviceVerificationCode(proofKeyThumbprint: string): string {
+  let code = "";
+  for (const character of proofKeyThumbprint.slice(0, 8)) {
+    const value = Math.max(0, BASE64URL_ALPHABET.indexOf(character));
+    code += PAIRING_CODE_ALPHABET[value % PAIRING_CODE_ALPHABET.length]!;
+  }
+  return `${code.slice(0, 4)}-${code.slice(4)}`;
+}
 
 export const AuthClientMetadata = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
@@ -285,6 +345,35 @@ export const AuthClientMetadata = Schema.Struct({
   browser: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type AuthClientMetadata = typeof AuthClientMetadata.Type;
+
+/** A T3 Connect device waiting for someone on this environment to approve it. */
+export const AuthConnectDeviceRequest = Schema.Struct({
+  verificationCode: TrimmedNonEmptyString,
+  /** What the device said about itself when it first asked. Absent until it does. */
+  client: Schema.optionalKey(AuthClientMetadata),
+});
+export type AuthConnectDeviceRequest = typeof AuthConnectDeviceRequest.Type;
+
+export const AuthPairingLink = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  ...authScopeResponseFields,
+  subject: TrimmedNonEmptyString,
+  label: Schema.optionalKey(TrimmedNonEmptyString),
+  createdAt: Schema.DateTimeUtc,
+  expiresAt: Schema.DateTimeUtc,
+  /** Set while a T3 Connect device waits for approval. Older servers never send it. */
+  connectDeviceRequest: Schema.optionalKey(AuthConnectDeviceRequest),
+});
+export type AuthPairingLink = typeof AuthPairingLink.Type;
+
+/** A T3 Connect device key this environment trusts to connect without asking again. */
+export const AuthConnectDevice = Schema.Struct({
+  proofKeyThumbprint: TrimmedNonEmptyString,
+  verificationCode: TrimmedNonEmptyString,
+  client: Schema.optionalKey(AuthClientMetadata),
+  approvedAt: Schema.DateTimeUtc,
+});
+export type AuthConnectDevice = typeof AuthConnectDevice.Type;
 
 export const AuthClientSession = Schema.Struct({
   sessionId: AuthSessionId,
@@ -303,6 +392,8 @@ export type AuthClientSession = typeof AuthClientSession.Type;
 export const AuthAccessSnapshot = Schema.Struct({
   pairingLinks: Schema.Array(AuthPairingLink),
   clientSessions: Schema.Array(AuthClientSession),
+  /** Older servers omit it; they have no device approval. */
+  connectDevices: Schema.optionalKey(Schema.Array(AuthConnectDevice)),
 });
 export type AuthAccessSnapshot = typeof AuthAccessSnapshot.Type;
 
@@ -387,9 +478,31 @@ export const AuthRevokeClientSessionInput = Schema.Struct({
 });
 export type AuthRevokeClientSessionInput = typeof AuthRevokeClientSessionInput.Type;
 
+export const AuthApproveConnectDeviceInput = Schema.Struct({
+  pairingLinkId: TrimmedNonEmptyString,
+});
+export type AuthApproveConnectDeviceInput = typeof AuthApproveConnectDeviceInput.Type;
+
+export const AuthApproveConnectDeviceResult = Schema.Struct({
+  approved: Schema.Boolean,
+});
+export type AuthApproveConnectDeviceResult = typeof AuthApproveConnectDeviceResult.Type;
+
+export const AuthRevokeConnectDeviceInput = Schema.Struct({
+  proofKeyThumbprint: TrimmedNonEmptyString,
+});
+export type AuthRevokeConnectDeviceInput = typeof AuthRevokeConnectDeviceInput.Type;
+
+export const AuthRevokeConnectDeviceResult = Schema.Struct({
+  revoked: Schema.Boolean,
+});
+export type AuthRevokeConnectDeviceResult = typeof AuthRevokeConnectDeviceResult.Type;
+
 export const AuthCreatePairingCredentialInput = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
   scopes: Schema.optionalKey(AuthGrantScopes),
+  /** Binds the code to one agent sign-in at this level. The server derives the scopes from it. */
+  access: Schema.optionalKey(AuthMcpClientAccess),
 });
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
 
@@ -402,15 +515,6 @@ export const AuthSessionState = Schema.Struct({
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
 });
 export type AuthSessionState = typeof AuthSessionState.Type;
-
-export const AuthMcpClientAccess = Schema.Literals([
-  "read-only",
-  "approval-required",
-  "auto-accept-edits",
-  "auto",
-  "full-access",
-]);
-export type AuthMcpClientAccess = typeof AuthMcpClientAccess.Type;
 
 export const AuthMcpProtectedResourceMetadata = Schema.Struct({
   resource: Schema.String,
@@ -435,8 +539,16 @@ export const AuthMcpAuthorizationServerMetadata = Schema.Struct({
 });
 export type AuthMcpAuthorizationServerMetadata = typeof AuthMcpAuthorizationServerMetadata.Type;
 
+/**
+ * The `software_id` another T3 Code environment registers with when it links
+ * to this one. Its session is then a peer link: the work it starts here stays
+ * within that link. Claiming it only ever adds limits.
+ */
+export const MCP_PEER_LINK_SOFTWARE_ID = "t3code-peer-link";
+
 export const AuthMcpClientRegistration = Schema.Struct({
   client_name: Schema.optionalKey(Schema.String),
+  software_id: Schema.optionalKey(Schema.String),
   redirect_uris: Schema.optionalKey(Schema.Array(Schema.String)),
   token_endpoint_auth_method: Schema.optionalKey(Schema.String),
 });
@@ -466,35 +578,31 @@ export class AuthMcpRegistrationError extends Schema.Error<AuthMcpRegistrationEr
   }
 }
 
-/**
- * Every field is checked by the server, so all are optional here.
- */
+/** Fields are optional here because the server validates them. */
 export const AuthMcpAuthorizationRequest = Schema.Struct({
   response_type: Schema.optionalKey(Schema.String),
   client_id: Schema.optionalKey(Schema.String),
   redirect_uri: Schema.optionalKey(Schema.String),
   code_challenge: Schema.optionalKey(Schema.String),
   code_challenge_method: Schema.optionalKey(Schema.String),
-  state: Schema.optionalKey(Schema.String),
+  state: Schema.optionalKey(Schema.RedactedFromValue(Schema.String)),
   resource: Schema.optionalKey(Schema.String),
 });
 export type AuthMcpAuthorizationRequest = typeof AuthMcpAuthorizationRequest.Type;
 
-/**
- * The server has already validated the request; nothing here is trusted by the
- * client except for display.
- */
+/** Server-validated request details, trusted by the client only for display. */
 export const AuthMcpApprovalDetails = Schema.Struct({
   /** Self-declared by the client, so shown as such. */
   clientName: Schema.String,
   redirectHost: Schema.String,
   environmentHost: Schema.String,
   csrfToken: Schema.optionalKey(Schema.String),
-  /**
-   * What that session may approve in one click: only access whose scopes it
-   * holds. Anything else still needs a pairing code. Absent with `csrfToken`.
-   */
+  /** Only scopes held by this session qualify; others need a pairing code. Absent with `csrfToken`. */
   oneClickAccess: Schema.optionalKey(Schema.Array(AuthMcpClientAccess)),
+  /** A managed policy's runtime-mode ceiling; the page loads without the server's config. */
+  runtimeModeCeiling: Schema.optionalKey(
+    Schema.Struct({ organization: Schema.String, maxRuntimeMode: RuntimeMode }),
+  ),
 });
 export type AuthMcpApprovalDetails = typeof AuthMcpApprovalDetails.Type;
 
@@ -530,10 +638,10 @@ export class AuthMcpApprovalError extends Schema.TaggedError<AuthMcpApprovalErro
 
 export const AuthMcpTokenRequest = Schema.Struct({
   grant_type: Schema.optionalKey(Schema.String),
-  code: Schema.optionalKey(Schema.String),
+  code: Schema.optionalKey(Schema.RedactedFromValue(Schema.String)),
   redirect_uri: Schema.optionalKey(Schema.String),
   client_id: Schema.optionalKey(Schema.String),
-  code_verifier: Schema.optionalKey(Schema.String),
+  code_verifier: Schema.optionalKey(Schema.RedactedFromValue(Schema.String)),
   resource: Schema.optionalKey(Schema.String),
 }).pipe(HttpApiSchema.asFormUrlEncoded());
 export type AuthMcpTokenRequest = typeof AuthMcpTokenRequest.Type;

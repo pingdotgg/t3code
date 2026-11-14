@@ -1,0 +1,48 @@
+import type * as notifications from "@distilled.cloud/aws/notifications";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Request for {@link ListNotificationEvents}.
+ */
+export interface ListNotificationEventsRequest
+  extends notifications.ListNotificationEventsRequest {}
+
+/**
+ * Runtime binding for `notifications:ListNotificationEvents`.
+ *
+ * List the account's notification events, optionally filtered by time
+ * range, EventBridge source, or aggregate parent event. Provide the
+ * implementation with
+ * `Effect.provide(AWS.Notifications.ListNotificationEventsHttp)`.
+ * ### Reading Notification Events
+ * **Example:** List Recent Notification Events
+ * ```typescript
+ * // init — account-level binding takes no resource
+ * const listNotificationEvents = yield* AWS.Notifications.ListNotificationEvents();
+ *
+ * // runtime
+ * const result = yield* listNotificationEvents({ source: "aws.s3" });
+ * const headlines = result.notificationEvents.map(
+ *   (e) => e.notificationEvent.messageComponents.headline,
+ * );
+ * ```
+ *
+ * @binding
+ */
+export interface ListNotificationEvents extends Binding.Service<
+  ListNotificationEvents,
+  "AWS.Notifications.ListNotificationEvents",
+  () => Effect.Effect<
+    (
+      request?: ListNotificationEventsRequest,
+    ) => Effect.Effect<
+      notifications.ListNotificationEventsResponse,
+      notifications.ListNotificationEventsError
+    >
+  >
+> {}
+
+export const ListNotificationEvents = Binding.Service<ListNotificationEvents>(
+  "AWS.Notifications.ListNotificationEvents",
+);

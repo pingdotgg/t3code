@@ -4,13 +4,20 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeZlib from "node:zlib";
 
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
-import type { TranscriptUsageFormat } from "@t3tools/provider-core/server/usage";
+import { totalTokens, type TranscriptUsageFormat } from "@t3tools/provider-core/server/usage";
 import * as Schema from "effect/Schema";
 
 import { TEST_FORMATS } from "./usageTestFormats.ts";
-import { readTranscriptRecords, transcriptLineGate } from "./usageTranscriptReader.ts";
+import {
+  listTranscriptFiles,
+  physicalSourceIdOf,
+  readPhysicalSourceId,
+  readTranscriptRecords,
+  transcriptLineGate,
+} from "./usageTranscriptReader.ts";
 
 let dir: string;
 
@@ -70,6 +77,127 @@ function codexUsageLine(outputTokens: number, secondsOffset: number): string {
     },
   })}\n`;
 }
+
+describe("compressed transcripts", () => {
+  it("discovers nested plain and zstd JSONL files within the requested window", async () => {
+    const nested = NodePath.join(dir, "nested");
+    await NodeFSP.mkdir(nested);
+    const plain = NodePath.join(dir, "active.jsonl");
+    const compressed = NodePath.join(nested, "archived.jsonl.zst");
+    const old = NodePath.join(nested, "old.jsonl.zst");
+    await NodeFSP.writeFile(plain, claudeLine(1, 5));
+    await NodeFSP.writeFile(compressed, NodeZlib.zstdCompressSync(claudeLine(2, 7)));
+    await NodeFSP.writeFile(old, NodeZlib.zstdCompressSync(claudeLine(3, 11)));
+    await NodeFSP.writeFile(NodePath.join(nested, "unrelated.zst"), "ignored");
+    await NodeFSP.writeFile(NodePath.join(nested, "partial.jsonl.zst.tmp"), "ignored");
+    await NodeFSP.utimes(old, 1, 1);
+
+    const listed = await listTranscriptFiles(dir, Date.parse("2026-01-01T00:00:00Z"));
+    assert.deepStrictEqual(
+      listed.files.map((file) => file.path).sort(),
+      [plain, compressed].sort(),
+    );
+    assert.strictEqual(listed.failedPaths, 0);
+    assert.isAbove(listed.files.find((file) => file.path === compressed)?.size ?? 0, 0);
+  });
+
+  it("lists files in directory order when more directories wait than it reads at once", async () => {
+    for (let index = 0; index < 40; index += 1) {
+      const nested = NodePath.join(dir, `project-${index}`, "sessions");
+      await NodeFSP.mkdir(nested, { recursive: true });
+      await NodeFSP.writeFile(NodePath.join(nested, "a.jsonl"), "");
+      await NodeFSP.writeFile(NodePath.join(nested, "..", "b.jsonl"), "");
+    }
+    // Usage that two transcripts share counts in the first one listed, so the order is part of the result.
+    const inOrder = async (folder: string): Promise<string[]> => {
+      const paths: string[] = [];
+      for (const entry of await NodeFSP.readdir(folder, { withFileTypes: true })) {
+        const child = NodePath.join(folder, entry.name);
+        if (entry.isDirectory()) paths.push(...(await inOrder(child)));
+        else paths.push(child);
+      }
+      return paths;
+    };
+    const listed = await listTranscriptFiles(dir, 0);
+    assert.deepStrictEqual(
+      listed.files.map((file) => file.path),
+      await inOrder(dir),
+    );
+  });
+
+  it.each([
+    { parser: "native", streamingThresholdBytes: undefined },
+    { parser: "projected", streamingThresholdBytes: 1024 },
+  ])(
+    "matches plain Codex records and unfinished tails through long lines ($parser)",
+    async ({ streamingThresholdBytes }) => {
+      const plain = NodePath.join(dir, "rollout.jsonl");
+      const compressed = plain + ".zst";
+      const large = codexUsageLine(9, 5).replace(
+        '"payload":',
+        '"padding":' + JSON.stringify("日本語 é".repeat(128 * 1024)) + ',"payload":',
+      );
+      const content =
+        codexMetaLine() +
+        codexModelLine("gpt-6-astra") +
+        codexTierLine("ultrafast") +
+        large +
+        codexUsageLine(13, 6).replace('"output_tokens":13', '"output_tokens":"invalid"') +
+        codexUsageLine(21, 8).trimEnd();
+      await NodeFSP.writeFile(plain, content);
+      await NodeFSP.writeFile(compressed, NodeZlib.zstdCompressSync(content));
+
+      const options =
+        streamingThresholdBytes === undefined ? undefined : { streamingThresholdBytes };
+      const expected = await readTranscriptRecords(plain, TEST_FORMATS.codex, undefined, options);
+      const actual = await readTranscriptRecords(
+        compressed,
+        TEST_FORMATS.codex,
+        undefined,
+        options,
+      );
+      assert.isNotNull(expected);
+      assert.isNotNull(actual);
+      assert.strictEqual(expected.records.length, 1);
+      assert.strictEqual(expected.tailRecords.length, 1);
+      assert.deepStrictEqual(actual.records, expected.records);
+      assert.deepStrictEqual(actual.tailRecords, expected.tailRecords);
+      assert.strictEqual(expected.malformedRecords, 1);
+      assert.strictEqual(actual.malformedRecords, expected.malformedRecords);
+      assert.strictEqual(actual.records[0]?.speed, "ultrafast");
+      assert.isFalse(actual.resumed);
+      assert.strictEqual(actual.position.resumeOffset, 0);
+    },
+  );
+
+  it("ignores a prior resume position and rereads compressed rollouts from their start", async () => {
+    const plain = NodePath.join(dir, "rollout.jsonl");
+    const content = codexMetaLine() + codexModelLine("gpt-6-astra") + codexUsageLine(9, 5);
+    await NodeFSP.writeFile(plain, content);
+    const first = await readTranscriptRecords(plain, TEST_FORMATS.codex);
+    assert.isNotNull(first);
+
+    const compressed = plain + ".zst";
+    await NodeFSP.writeFile(compressed, NodeZlib.zstdCompressSync(content + codexUsageLine(21, 8)));
+    const actual = await readTranscriptRecords(compressed, TEST_FORMATS.codex, first.position);
+    assert.isNotNull(actual);
+    assert.isFalse(actual.resumed);
+    assert.deepStrictEqual(
+      actual.records.map((record) => record.totals.outputTokens),
+      [9, 21],
+    );
+    const repeated = await readTranscriptRecords(compressed, TEST_FORMATS.codex, actual.position);
+    assert.isNotNull(repeated);
+    assert.isFalse(repeated.resumed);
+    assert.deepStrictEqual(repeated.records, actual.records);
+  });
+
+  it("returns null for zstd decoder errors rather than caching an empty parse", async () => {
+    const path = NodePath.join(dir, "corrupt.jsonl.zst");
+    await NodeFSP.writeFile(path, "not a zstd frame");
+    assert.isNull(await readTranscriptRecords(path, TEST_FORMATS.claude));
+  });
+});
 
 describe("readTranscriptRecords resume", () => {
   it.each([
@@ -188,8 +316,7 @@ describe("readTranscriptRecords resume", () => {
     assert.isNotNull(first);
     assert.strictEqual(first.records.length, 1);
 
-    // Codex re-emits an unchanged token_count on stream boundaries; the copy
-    // lands after the resume point and must still be dropped.
+    // Codex duplicates token_count at stream boundaries, including after resume points.
     await NodeFSP.appendFile(path, codexUsageLine(9, 5) + codexUsageLine(21, 8));
     const second = await readTranscriptRecords(path, TEST_FORMATS.codex, first.position);
     assert.isNotNull(second);
@@ -277,6 +404,82 @@ describe("readTranscriptRecords resume", () => {
       assert.deepStrictEqual(resumed.tailRecords, []);
       assert.strictEqual(resumed.malformedRecords, 0);
       assert.deepStrictEqual(resumed.position, full.position);
+    },
+  );
+
+  it.each([
+    { mode: "buffered", streamingThresholdBytes: Infinity },
+    { mode: "streaming", streamingThresholdBytes: 0 },
+  ])(
+    "bills a Codex request whose turn was interrupted before its token_count ($mode)",
+    async (options) => {
+      const path = NodePath.join(dir, "rollout.jsonl");
+      const usage = (input: number, output: number) => ({
+        input_tokens: input,
+        cached_input_tokens: 0,
+        cache_write_input_tokens: 0,
+        output_tokens: output,
+        reasoning_output_tokens: 0,
+        total_tokens: input + output,
+      });
+      const context = (turn: number) => ({
+        type: "turn_context",
+        timestamp: `2026-11-02T10:00:0${turn * 4 - 4}.000Z`,
+        payload: { turn_id: `turn-${turn}`, model: "gpt-6-sol" },
+      });
+      const request = (turn: number, id: number, timestamp: string, last: unknown) => ({
+        type: "token_usage_record",
+        timestamp,
+        payload: { turn_id: `turn-${turn}`, response_id: `resp_${id}`, usage: last },
+      });
+      const tokenCount = (timestamp: string, last: unknown, total: unknown) => ({
+        type: "event_msg",
+        timestamp,
+        payload: {
+          type: "token_count",
+          info: { last_token_usage: last, total_token_usage: total },
+        },
+      });
+      const lines = [
+        {
+          type: "session_meta",
+          timestamp: "2026-11-02T10:00:00.000Z",
+          payload: { id: "aborted-turn-repro", model_provider: "openai" },
+        },
+        context(1),
+        request(1, 1, "2026-11-02T10:00:01.000Z", usage(100, 20)),
+        tokenCount("2026-11-02T10:00:01.001Z", usage(100, 20), usage(100, 20)),
+        // Interrupted after this request finished: no token_count reports it.
+        request(1, 2, "2026-11-02T10:00:02.000Z", usage(150, 10)),
+        {
+          type: "event_msg",
+          timestamp: "2026-11-02T10:00:03.000Z",
+          payload: { type: "turn_aborted", turn_id: "turn-1", reason: "interrupted" },
+        },
+        context(2),
+        request(2, 3, "2026-11-02T10:00:05.000Z", usage(200, 30)),
+        tokenCount("2026-11-02T10:00:05.001Z", usage(200, 30), usage(450, 60)),
+      ];
+      // Lines longer than a read chunk take the projected path when streaming.
+      const padding = "x".repeat(256 * 1024);
+      await NodeFSP.writeFile(
+        path,
+        lines.map((line) => `${JSON.stringify({ padding, ...line })}\n`).join(""),
+      );
+
+      const result = await readTranscriptRecords(path, TEST_FORMATS.codex, undefined, options);
+      assert.isNotNull(result);
+      const requests = [...result.records, ...result.tailRecords]
+        .map((record) => totalTokens(record.totals))
+        .toSorted((a, b) => a - b);
+      assert.deepStrictEqual(
+        {
+          billedTokens: requests.reduce((sum, tokens) => sum + tokens, 0),
+          requests,
+          malformedRecords: result.malformedRecords,
+        },
+        { billedTokens: 510, requests: [120, 160, 230], malformedRecords: 0 },
+      );
     },
   );
 
@@ -374,5 +577,51 @@ describe("transcriptLineGate", () => {
         assert.isFalse(gates[kind](Buffer.from(`{"text":"日本語 é ${marker.slice(1, -1)}"}`)));
       }
     }
+  });
+});
+
+describe("readPhysicalSourceId", () => {
+  const scope = "0123456789abcdef0123456789abcdef";
+  const windowsPath = "C:\\Users\\User\\.claude\\projects";
+
+  // One NTFS directory the Windows server reads natively and the WSL server
+  // through drvfs. The temp dir stands in for the drive's mount point.
+  async function drvfsFixture(extraMounts: (escapedMountPoint: string) => string = () => "") {
+    const mountPoint = NodePath.join(dir, "drive c");
+    await NodeFSP.mkdir(NodePath.join(mountPoint, "Users", "User", ".claude", "projects"), {
+      recursive: true,
+    });
+    const escaped = mountPoint.replaceAll(" ", "\\040");
+    const mountInfoPath = NodePath.join(dir, "mountinfo");
+    await NodeFSP.writeFile(
+      mountInfoPath,
+      [
+        "24 1 8:32 / / rw,relatime shared:1 - ext4 /dev/sdc rw,discard",
+        `81 24 0:61 / ${escaped} rw,noatime shared:2 - 9p C:\\134 rw,dirsync,aname=drvfs;path=C:\\;uid=1000;gid=1000;symlinkroot=/mnt/,mmap,access=client,msize=65536,trans=fd`,
+        extraMounts(escaped),
+      ].join("\n"),
+    );
+    return { mountPoint, mountInfoPath };
+  }
+
+  it("names a drvfs directory as the Windows server names it, whatever its typed case", async () => {
+    const { mountPoint, mountInfoPath } = await drvfsFixture();
+    const wslId = await readPhysicalSourceId(
+      `${mountPoint}/users/user/.claude/projects`,
+      scope,
+      "linux",
+      mountInfoPath,
+    );
+    assert.strictEqual(wslId, physicalSourceIdOf(scope, windowsPath));
+  });
+
+  it("gives no identity to native or shadowing Linux mounts, or without a desktop scope", async () => {
+    const { mountPoint, mountInfoPath } = await drvfsFixture(
+      (escaped) => `90 81 8:48 / ${escaped}/Users rw,relatime - ext4 /dev/sdd rw`,
+    );
+    const projects = `${mountPoint}/Users/User/.claude/projects`;
+    assert.isUndefined(await readPhysicalSourceId(projects, scope, "linux", mountInfoPath));
+    assert.isUndefined(await readPhysicalSourceId(dir, scope, "linux", mountInfoPath));
+    assert.isUndefined(await readPhysicalSourceId(projects, undefined, "linux", mountInfoPath));
   });
 });
