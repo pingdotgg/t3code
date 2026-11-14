@@ -173,7 +173,7 @@ const decodeElicitationComplete = Schema.decodeUnknownEffect(
 );
 const parserFactory = RpcSerialization.ndJsonRpc();
 // ndJsonRpc skips lines that are not JSON. A malformed agent line has to end the
-// session, so frames are split here and each one goes through the strict codec.
+// session, so frames are split here and each nonblank one goes through the strict codec.
 const makeStrictNdJsonRpcParser = () => {
   const codec = RpcSerialization.jsonRpc().makeUnsafe();
   const decoder = new TextDecoder();
@@ -197,7 +197,7 @@ const makeStrictNdJsonRpcParser = () => {
       }
       const lines = (buffer + chunk.slice(0, lastNewline)).split("\n");
       buffer = chunk.slice(lastNewline + 1);
-      return lines.flatMap(decodeLine);
+      return lines.flatMap((line) => (line.trim() === "" ? [] : decodeLine(line)));
     },
     // A truncated final line is left to the exit status, which explains a crash better.
     end: (): ReadonlyArray<AcpDecodedWireMessage> => {
