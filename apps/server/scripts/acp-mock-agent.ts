@@ -544,10 +544,10 @@ const program = Effect.gen(function* () {
         legacyTerminalAuth && request.capabilities?._meta?.["terminal-auth"] === true
           ? [
               {
-                type: "terminal",
+                type: "agent",
                 methodId: "legacy-login",
                 name: "Terminal login",
-                args: ["login"],
+                _meta: { "terminal-auth": { command: "mock-agent-login", args: ["login"] } },
               },
             ]
           : [];

@@ -439,7 +439,11 @@ describe("ACP Registry probe", () => {
             true,
           );
           expect(result.probe.authMethods).toContainEqual(
-            expect.objectContaining({ id: "legacy-login", type: "terminal" }),
+            expect.objectContaining({
+              id: "legacy-login",
+              type: "terminal",
+              command: "mock-agent-login login",
+            }),
           );
         } else {
           expect(requests[0]?.params).not.toHaveProperty(
