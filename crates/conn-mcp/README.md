@@ -70,8 +70,8 @@ Measured on a live T3 server at the pinned commit (`tools/mcp-client.mjs` drives
   target thread other than the caller's own may not run in broader modes than the caller.
   `t3_thread_launch` takes the live check; `send`, `interrupt`, `update`, `organize`, the
   `respond` action of `t3_pending_request`, the write actions of `t3_queue` and a model change
-  in `t3_thread_configure` take both; `delegate_task`, `task_status`, `task_cancel` and
-  `send_to_user` act as the caller and take the live check. Reads take neither. The engine records no
+  in `t3_thread_configure` take both; `delegate_task`, `task_status`, `task_cancel`,
+  `send_to_user` and `t3_background_wait` act as the caller and take the live check. Reads take neither. The engine records no
   background tasks yet, so the background-subagent exception never applies today.
 - 401 carries `www-authenticate: Bearer` and no `resource_metadata`, so no agent starts a sign-in.
 
@@ -83,7 +83,7 @@ hidden while linked environments are off; `watch_pull_request`/`unwatch_pull_req
 from delegated children. Preview, device and panel tools are listed to everyone and fail without
 the capability.
 
-**Served: 33 of 87.** Definitions come byte for byte from `apps/server`. Each served tool has
+**Served: 34 of 87.** Definitions come byte for byte from `apps/server`. Each served tool has
 a unit test and `parity.mjs` steps.
 
 Where they differ, because the engine does not do it yet:
@@ -172,7 +172,7 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `t3_thread_transfer` | not served | either(reads, writesThreads) | engine: `thread.fork`, `thread.merge_back`, context transfers | |
 | `t3_worktree_handoff` | not served | actsAsCaller | engine: bind a new worktree to a live thread and end its session; server: setup scripts the T3 way | |
 | `t3_workflow_stop` | not served | writesThreads | engine and provider: `stopWorkflow` (a provider's workflow stop) | |
-| `t3_background_wait` | not served | actsAsCaller | provider: background tasks (see below) | C |
+| `t3_background_wait` | served (new) | actsAsCaller | | C |
 | `link_pull_request` | served (part 4) | writesWithCapability | | P |
 | `link_pull_requests` | served (part 4) | writesWithCapability | | P |
 | `unlink_pull_request` | served (part 4) | writesWithCapability | | |
@@ -217,34 +217,42 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `t3_theme_set` | not served | writesEnvironment | server: themes | |
 | `t3_project_clone` | not served | writesEnvironment | server: project clone tracking (`ProjectCloneTracker`, source control repositories) | |
 
-Totals: served 33 (the five pull request link tools since source control part 4); needs nothing new 11; needs an engine or provider feature 4; needs a part of
-the server or a client we do not have 52.
+Totals: served 34 (the five pull request link tools since source control part 4,
+`t3_background_wait` since 2026-11-14); needs nothing new 11; needs an engine or provider
+feature 3; needs a part of the server or a client we do not have 52. (`schedule_task` and
+three more scheduled task tools, and the four annotation tools, are served too but still
+counted in the rows above; the table's State column is behind for them.)
 
-**Named but not served (15):** `create_threads`, `device_list`, `device_open`,
-`device_screenshot`, `html_preview`, `html_render`,
-`preview_open`, `preview_status` (and the other 11 through `preview_*`), `request_secret`,
-`schedule_task`, `t3_background_wait`, `t3_environment_link`, `t3_environment_links`,
-`unwatch_pull_request`, `watch_pull_request`. Earlier batches took `send_to_user`, `t3_thread_organize`, `schedule_task`,
-`link_pull_request` and `link_pull_requests` off it. The test `agent_texts_name_only_known_unserved_tools`
-holds this list: it fails when a text names a new unserved tool, and when a listed tool becomes
-served.
+**Named but not served (13):** `create_threads`, `device_list`, `device_open`,
+`device_screenshot`, `html_preview`, `html_render`, `preview_open`, `preview_status` (and the
+other 11 through `preview_*`), `request_secret`, `t3_environment_link`,
+`t3_environment_links`, `unwatch_pull_request`, `watch_pull_request`. Earlier batches took
+`send_to_user`, `t3_thread_organize`, `schedule_task`, `link_pull_request`,
+`link_pull_requests` and `t3_background_wait` off it. The texts checked: the orchestration
+and Claude texts, the running task `next` text, Codex's texts, Claude's pull request text, the
+ACP prompt prefixes (`conn-provider-acp/src/instructions.rs`, added 2026-11-14; it names
+nothing new) and the served tools' descriptions. The test
+`agent_texts_name_only_known_unserved_tools` holds this list: it fails when a text names a new
+unserved tool, and when a listed tool becomes served.
 
-**`t3_background_wait` needs** (from `awaitBackgroundTasks` in `ThreadManagementService.ts` and
-`ClaudeAdapterV2.ts`): a session method that takes the thread's active provider thread, task
-ids and `awaited`, and answers `{matched}`. In Claude it matches the ids against the roster of
-pending background tasks of that native thread, adds them to (or, with `waiting: false`,
-removes them from) the awaited set, and emits a roster update so the thread stays Working; the
-engine must find the thread's active provider thread and its live session. The tool answers
-`{matched, unmatched}`; no live session is `orchestration_error` (`unavailable`), a provider
-without the method or no match while waiting is `invalid_request` (`unsupported`,
-`unmatched`), a failure or a 15 s timeout is `orchestration_error`. Its rule is
-`actsAsCaller`; `taskIds` holds 1 to 20 trimmed, non-empty strings.
+**`t3_background_wait`** (`tools/background.rs`; T3: `toolkits/orchestrator/handlers.ts`,
+`ThreadManagementService.awaitBackgroundTasks`): `actsAsCaller`, so a live thread caller only.
+`taskIds` holds 1 to 20 strings, each trimmed as JavaScript trims; a blank one is `-32602`
+(`Expected a non-blank string` at its index). `waiting` defaults to `true`. The engine
+(`Engine::await_background_tasks`) asks the live session of the caller's active provider
+thread, with a 15 s limit; Claude marks (or clears) the ids on its roster and reports it, so
+the thread stays Working. The answer is `{matched, unmatched}`: matched ids once each, the
+others in the given order. Refusals, with T3's messages: no live session `orchestration_error`
+(`unavailable`); a provider without a roster (Codex, Grok) `invalid_request`
+(`unsupported`); marking that matches nothing `invalid_request` (`unmatched`); a provider
+failure or timeout `orchestration_error` (`failed`). Clearing that matches nothing succeeds.
 
 ### What each caller may do with the new tools
 
 | Tool | Thread caller (agent) | Session with `orchestration:operate` | Read-only session |
 | --- | --- | --- | --- |
 | `send_to_user` | while live | refused: `thread_credential_required` | refused: `thread_credential_required` |
+| `t3_background_wait` | while live; only its own thread's tasks | refused: `thread_credential_required` | refused: `thread_credential_required` |
 | `t3_thread_organize` | while live; other threads only within its modes; its own settle mid-turn waits for the turn | any thread | refused: `capability_denied` |
 | `t3_queue` | `list`, `read` always; writes while live, other threads within its modes | any thread | `list`, `read` |
 | `t3_thread_configure` | read always; set while live, other threads within its modes | any thread | read |

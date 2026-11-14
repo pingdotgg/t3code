@@ -499,6 +499,18 @@ const steps = [
   ["send_to_user", () => ({ message: "hi" })],
   ["send_to_user", () => ({ message: "" })],
   ["send_to_user", () => ({ message: "x".repeat(4001) })],
+  // t3_background_wait acts as the calling thread; its argument check runs first, and the
+  // decode messages are compared.
+  ["t3_background_wait", () => ({ taskIds: ["bg-1"] })],
+  ["t3_background_wait", () => ({ taskIds: [" bg-1 ", "x"], waiting: false })],
+  ["t3_background_wait", () => ({ taskIds: [] })],
+  ["t3_background_wait", () => ({ taskIds: Array.from({ length: 21 }, (_, i) => `t${i}`) })],
+  ["t3_background_wait", () => ({ taskIds: ["bg-1", " "] })],
+  ["t3_background_wait", () => ({ taskIds: [""] })],
+  ["t3_background_wait", () => ({ taskIds: ["bg-1", 5] })],
+  ["t3_background_wait", () => ({ taskIds: "bg-1" })],
+  ["t3_background_wait", () => ({ taskIds: ["bg-1"], waiting: "yes" })],
+  ["t3_background_wait", () => ({ waiting: true })],
 ];
 // The steps that launch a thread (a model turn on the T3 server) or act on it.
 const onLaunchedThread = (tool, input, options) =>

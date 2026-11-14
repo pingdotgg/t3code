@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 use crate::{Caller, McpConfig, McpService};
 
 mod annotations;
+mod background;
 mod manage;
 mod message;
 mod projects;
@@ -47,7 +48,8 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub(crate) const HANDLED: [&str; 33] = [
+pub(crate) const HANDLED: [&str; 34] = [
+    "t3_background_wait",
     "link_pull_request",
     "link_pull_requests",
     "unlink_pull_request",
@@ -117,6 +119,7 @@ pub(crate) async fn call(
         "t3_thread_configure" => manage::configure(&cx, &args).await,
         "t3_thread_organize" => manage::organize(&cx, &args).await,
         "send_to_user" => message::send_to_user(&cx, &args).await,
+        "t3_background_wait" => background::wait(&cx, &args).await,
         "delegate_task" => tasks::delegate(&cx, &args).await,
         "task_status" => tasks::status(&cx, &args).await,
         "task_cancel" => tasks::cancel(&cx, &args).await,
