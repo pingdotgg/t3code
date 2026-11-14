@@ -10,11 +10,7 @@ import { Pressable, View } from "react-native";
 import { Image } from "expo-image";
 import { AppText } from "../../components/ui/AppText";
 import { pullRequestMediaResource } from "@t3tools/client-runtime/pull-request-markdown";
-import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
-import * as Option from "effect/Option";
-import { assetEnvironment, useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
-import { usePreparedConnection } from "../../state/session";
-import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
+import { refreshAssetUrl, useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import type { MarkdownImageSourceResolver } from "../../native/SelectableMarkdownText.types";
 import { assetImageCacheKey } from "../../lib/assetImageSource";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
@@ -51,18 +47,12 @@ export function usePullRequestImageSource(
   resolveUrl: (href: string) => string,
 ): MarkdownImageSourceResolver {
   const context = useContext(PullRequestMediaContext);
-  const connection = usePreparedConnection(context?.environmentId ?? null);
-  const httpBaseUrl = Option.isSome(connection) ? connection.value.httpBaseUrl : null;
-  const createUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
   return async (image) => {
     const url = resolveUrl(image.href);
     const resource = context && pullRequestMediaResource(url, context.cwd, context.repository);
     if (!resource) return { uri: url };
-    if (httpBaseUrl === null) throw new Error("Pull request image is unavailable");
-    const result = await createUrl({ environmentId: context.environmentId, input: { resource } });
-    const uri =
-      result._tag === "Success" ? resolveAssetUrl(httpBaseUrl, result.value.relativeUrl) : null;
-    if (uri === null) throw new Error("Could not authorize pull request image");
+    const uri = await refreshAssetUrl(context.environmentId, resource);
+    if (uri === null) throw new Error("Pull request image is unavailable");
     return { uri };
   };
 }
