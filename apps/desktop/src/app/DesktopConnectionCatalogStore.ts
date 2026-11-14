@@ -21,9 +21,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
+import { decryptChromiumValue } from "../preview/BrowserImport/ChromiumCookies.ts";
+import { resolveChromiumKeys } from "../preview/BrowserImport/ChromiumKeys.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
+import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 const EncryptedConnectionCatalogDocument = Schema.Struct({
@@ -45,6 +50,13 @@ const RuntimeConnectionCatalogDocumentJson = Schema.fromJsonString(
 const encodeRuntimeConnectionCatalogDocumentJson = Schema.encodeEffect(
   RuntimeConnectionCatalogDocumentJson,
 );
+const decodeRuntimeConnectionCatalogDocumentJsonOption = Schema.decodeOption(
+  RuntimeConnectionCatalogDocumentJson,
+);
+const decodeJsonOption = Schema.decodeOption(Schema.fromJsonString(Schema.Unknown));
+
+// Only Nightly 0.1.1-nightly.20261020.3399 saved catalogs under this safe storage name.
+const OLD_NIGHTLY_SAFE_STORAGE_NAME = "T3 Code (Nightly)";
 
 const DesktopConnectionCatalogStoreWriteOperation = Schema.Literals([
   "create-temporary-file-name",
@@ -375,6 +387,37 @@ const migrateSavedEnvironmentRecords = Effect.fn(
   };
 });
 
+const decryptWithOldNightlyKey = Effect.fn(
+  "desktop.connectionCatalogStore.decryptWithOldNightlyKey",
+)(function* (platform: "darwin" | "linux", encrypted: Uint8Array) {
+  // decryptChromiumValue also accepts plaintext, so require safeStorage's prefix. Linux v10 uses a
+  // fixed passphrase, so only v11 can depend on the old name.
+  const prefix = Buffer.from(encrypted.subarray(0, 3)).toString("latin1");
+  if (prefix !== (platform === "darwin" ? "v10" : "v11")) {
+    return Option.none<string>();
+  }
+  const keys = yield* resolveChromiumKeys({
+    platform,
+    keychainService: `${OLD_NIGHTLY_SAFE_STORAGE_NAME} Safe Storage`,
+    keychainAccount: `${OLD_NIGHTLY_SAFE_STORAGE_NAME} Key`,
+    linuxSecretApplication: OLD_NIGHTLY_SAFE_STORAGE_NAME,
+  }).pipe(
+    Effect.tapError((error) =>
+      Effect.logWarning("Could not read the old Nightly safe storage key.", {
+        reason: error.reason,
+      }),
+    ),
+    Effect.option,
+  );
+  return Option.flatMapNullishOr(keys, (material) =>
+    decryptChromiumValue(encrypted, material, "", undefined, platform),
+  ).pipe(
+    Option.filter((catalog) =>
+      Option.isSome(decodeRuntimeConnectionCatalogDocumentJsonOption(catalog)),
+    ),
+  );
+});
+
 /** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -383,7 +426,14 @@ export const make = Effect.gen(function* () {
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const random = yield* SecureRandom.SecureRandom;
   const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+  const services = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>();
+  const writeLock = yield* Semaphore.make(1);
   const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
+  const oldNightlyPlatform =
+    isNightlyDesktopVersion(environment.appVersion) &&
+    (environment.platform === "darwin" || environment.platform === "linux")
+      ? environment.platform
+      : undefined;
   const encryptionAvailable = safeStorage.isEncryptionAvailable.pipe(
     Effect.mapError(
       (cause) =>
@@ -461,6 +511,37 @@ export const make = Effect.gen(function* () {
     return Option.some(encoded);
   });
 
+  const recoverOldNightlyCatalog = Effect.fn(
+    "desktop.connectionCatalogStore.recoverOldNightlyCatalog",
+  )(function* (
+    platform: "darwin" | "linux",
+    document: EncryptedConnectionCatalogDocument,
+    encryptedCatalog: Uint8Array,
+  ) {
+    const recovered = yield* decryptWithOldNightlyKey(platform, encryptedCatalog).pipe(
+      Effect.provide(services),
+    );
+    if (Option.isNone(recovered)) {
+      return recovered;
+    }
+    // Reading the old key can wait on a Keychain prompt; keep any catalog saved meanwhile.
+    yield* Effect.gen(function* () {
+      const current = yield* readDocument(fileSystem, catalogPath);
+      if (Option.isSome(current) && current.value.encryptedCatalog === document.encryptedCatalog) {
+        yield* writeCatalog(recovered.value);
+      }
+    }).pipe(
+      writeLock.withPermits(1),
+      Effect.catch((error) =>
+        Effect.logWarning("Could not re-encrypt the recovered connection catalog.", {
+          catalogPath,
+          errorTag: error._tag,
+        }),
+      ),
+    );
+    return recovered;
+  });
+
   return DesktopConnectionCatalogStore.of({
     get: Effect.gen(function* () {
       const document = yield* readDocument(fileSystem, catalogPath);
@@ -470,27 +551,39 @@ export const make = Effect.gen(function* () {
       if (!(yield* encryptionAvailable)) {
         return Option.none<string>();
       }
-      const decrypted = yield* decodeSecretBytes(catalogPath, document.value.encryptedCatalog).pipe(
-        Effect.flatMap((encryptedCatalog) =>
-          safeStorage.decryptString(encryptedCatalog).pipe(
-            Effect.mapError(
-              (cause) =>
-                new DesktopConnectionCatalogStoreProtectionError({
-                  operation: "decrypt-catalog",
-                  catalogPath,
-                  cause,
-                }),
-            ),
-          ),
-        ),
+      const encryptedCatalog = yield* decodeSecretBytes(
+        catalogPath,
+        document.value.encryptedCatalog,
       );
-      return Option.some(decrypted);
+      const decrypted = yield* Effect.result(safeStorage.decryptString(encryptedCatalog));
+      // AES-CBC under the wrong key passes its padding check about 1 time in 256.
+      if (
+        oldNightlyPlatform !== undefined &&
+        (decrypted._tag === "Failure" || Option.isNone(decodeJsonOption(decrypted.success)))
+      ) {
+        const recovered = yield* recoverOldNightlyCatalog(
+          oldNightlyPlatform,
+          document.value,
+          encryptedCatalog,
+        );
+        if (Option.isSome(recovered)) {
+          return recovered;
+        }
+      }
+      if (decrypted._tag === "Failure") {
+        return yield* new DesktopConnectionCatalogStoreProtectionError({
+          operation: "decrypt-catalog",
+          catalogPath,
+          cause: decrypted.failure,
+        });
+      }
+      return Option.some(decrypted.success);
     }).pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
     set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {
       if (!(yield* encryptionAvailable)) {
         return false;
       }
-      yield* writeCatalog(catalog);
+      yield* writeCatalog(catalog).pipe(writeLock.withPermits(1));
       return true;
     }),
   });
