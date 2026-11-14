@@ -423,12 +423,12 @@ function notebookText(value: unknown, limit = 256_000): string {
   if (result.length > limit) throw new Error("A notebook cell is too large to preview.");
   return result;
 }
-// Each traceback entry is a line; Context/Verbose frames omit the newline that Plain/Minimal end with.
+// IPython traceback frames may omit a final newline or follow it with ANSI SGR sequences.
 function tracebackLines(value: unknown): unknown {
   if (!Array.isArray(value)) return value;
   const frames = value.filter((frame): frame is string => typeof frame === "string");
   return frames.map((frame, index) =>
-    index && !frames[index - 1]!.endsWith("\n") ? `\n${frame}` : frame,
+    index && !/\n(?:\u001b\[[\d;:]*m)*$/.test(frames[index - 1]!) ? `\n${frame}` : frame,
   );
 }
 export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
