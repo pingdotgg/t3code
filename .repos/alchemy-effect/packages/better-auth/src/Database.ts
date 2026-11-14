@@ -25,10 +25,7 @@ export type DatabaseInput = NonNullable<BetterAuthOptions["database"]>;
  * on adapter factories, so excluding them statically keeps that landmine
  * unreachable.
  */
-export type DirectDatabase = Exclude<
-  DatabaseInput,
-  (...args: never[]) => unknown
->;
+export type DirectDatabase = Exclude<DatabaseInput, (...args: never[]) => unknown>;
 
 export interface DatabaseService {
   /** Dialect family of the database this layer connects to. */
@@ -43,11 +40,7 @@ export interface DatabaseService {
    * Deploy/plan evaluation never runs this effect: construction is deferred
    * to the first `api`/`fetch`/`getSession` use inside an execution scope.
    */
-  readonly runtime: Effect.Effect<
-    DatabaseInput,
-    never,
-    RuntimeContext | Scope.Scope
-  >;
+  readonly runtime: Effect.Effect<DatabaseInput, never, RuntimeContext | Scope.Scope>;
   /**
    * Deploy-time migration support. `undefined` means this platform cannot
    * auto-migrate (memory, drizzle, custom adapters): {@link BetterAuth}
@@ -100,6 +93,4 @@ export interface DatabaseService {
  * }).pipe(Effect.provide(CloudflareD1(Db)))
  * ```
  */
-export class Database extends Context.Service<Database, DatabaseService>()(
-  "BetterAuth.Database",
-) {}
+export class Database extends Context.Service<Database, DatabaseService>()("BetterAuth.Database") {}
