@@ -1,5 +1,5 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { ChartNoAxesColumnIcon, PlusIcon, SettingsIcon, SquareDashedIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
@@ -16,7 +16,7 @@ import {
 import { PANE_BODY_UNDER_HEADER_CLASS, PANE_TAB_CLASS, PaneNotch } from "../components/PaneNotch";
 import {
   SURFACE_LAUNCHER_ENTRIES,
-  SurfaceLauncherRows,
+  SurfaceLauncherGrid,
   useLauncherElement,
   useSurfaceLauncherKeys,
   type SurfaceLauncherAction,
@@ -39,6 +39,7 @@ import { primaryServerKeybindingsAtom } from "../state/server";
 import { useThreadShell } from "../state/entities";
 import type { ThreadRouteTarget } from "../threadRoutes";
 import { useThreadSurfaceOpeners } from "../components/ThreadSurfaceTab";
+import { ThreadContextChip } from "../components/ThreadContextChip";
 import type { LauncherSurfaceKind } from "../components/SurfaceLauncher";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import {
@@ -136,7 +137,8 @@ const NO_OPENERS: SurfaceOpeners = {
 
 function NewTabLauncher(props: NewTabLauncherProps) {
   const contextThreadRef = useContextThreadRef(props.context);
-  const model = useProjectPickerModel(useContextProjectRef(props.context));
+  const contextProjectRef = useContextProjectRef(props.context);
+  const model = useProjectPickerModel(contextProjectRef);
   // Its context's project leads: Enter starts the next thread there. Without
   // a thread, the project row the keyboard is on leads and holds its
   // surfaces (null on "No project": the server's home); before one is, the
@@ -168,6 +170,7 @@ function NewTabLauncher(props: NewTabLauncherProps) {
     selectedProjectKey,
     onFocusProjectKey: contextThreadRef === null ? setFocusedProjectKey : undefined,
     contextThreadRef,
+    contextProjectId: contextProjectRef?.projectId ?? null,
   };
   return surfacesRef === null ? (
     <NewTabLauncherBody {...body} surfacesRef={null} openers={NO_OPENERS} />
@@ -183,6 +186,7 @@ interface NewTabLauncherBodyProps extends NewTabLauncherProps {
   onFocusProjectKey: ((projectKey: string | null) => void) | undefined;
   /** The thread it was opened from, which answers cmd+J; null when threadless. */
   contextThreadRef: ScopedThreadRef | null;
+  contextProjectId: ProjectId | null;
   /** What its surfaces open for: `contextThreadRef`, or a threadless ref. */
   surfacesRef: ScopedThreadRef | null;
   openers: SurfaceOpeners;
@@ -202,6 +206,7 @@ function NewTabLauncherBody({
   selectedProjectKey,
   onFocusProjectKey,
   contextThreadRef,
+  contextProjectId,
   surfacesRef,
   openers,
 }: NewTabLauncherBodyProps) {
@@ -336,8 +341,13 @@ function NewTabLauncherBody({
         {actions.some((action) => action.available) ? (
           <>
             <div aria-hidden className="h-2 shrink-0" />
-            <SurfaceLauncherRows
-              actions={actions.filter((action) => action.available)}
+            {contextThreadRef === null ? (
+              <DraftProjectGroupLabel>Open a surface</DraftProjectGroupLabel>
+            ) : (
+              <LauncherThreadLabel threadRef={contextThreadRef} projectId={contextProjectId} />
+            )}
+            <SurfaceLauncherGrid
+              actions={actions}
               browserProfiles={browserProfiles}
               onAddBrowserInProfile={(profileId) => openSurface("browser", profileId)}
             />
@@ -365,6 +375,31 @@ function NewTabLauncherBody({
         />
         <LayoutLearningTips />
       </div>
+    </div>
+  );
+}
+
+function LauncherThreadLabel({
+  threadRef,
+  projectId,
+}: {
+  threadRef: ScopedThreadRef;
+  projectId: ProjectId | null;
+}) {
+  const thread = useThreadShell(threadRef);
+  return (
+    <div
+      role="presentation"
+      className="flex min-w-0 items-baseline gap-1 px-2.5 pt-2 pb-1 text-caption text-dim-foreground"
+    >
+      <span className="shrink-0">Open for</span>
+      <span className="flex min-w-0">
+        <ThreadContextChip
+          record={{ ...threadRef, title: thread?.title ?? "New thread" }}
+          projectId={projectId}
+          link={false}
+        />
+      </span>
     </div>
   );
 }

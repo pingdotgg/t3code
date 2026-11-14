@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import {
   type ComponentType,
+  type ReactNode,
   type RefObject,
   useEffect,
   useEffectEvent,
@@ -34,7 +35,14 @@ import { openLayerMatches } from "~/lib/openLayers";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { registerCommands } from "~/shortcuts/dispatcher";
 
-import { DraftProjectGroupLabel, DraftProjectRow } from "./chat/DraftHeroHeadline";
+import {
+  DRAFT_PROJECT_ROW_ACTION_CLASS,
+  DRAFT_PROJECT_ROW_BUTTON_CLASS,
+  DRAFT_PROJECT_ROW_CLASS,
+  DRAFT_PROJECT_ROW_LABEL_CLASS,
+  DraftProjectGroupLabel,
+  DraftProjectRow,
+} from "./chat/DraftHeroHeadline";
 
 /** What a launcher can open for a thread. */
 export type LauncherSurfaceKind =
@@ -309,17 +317,40 @@ function launcherRows(launcher: HTMLElement): HTMLButtonElement[] {
   );
 }
 
+function verticalLauncherNeighbor(
+  rows: readonly HTMLButtonElement[],
+  index: number,
+  forward: boolean,
+): HTMLButtonElement | undefined {
+  const rectOf = (row: HTMLButtonElement) => (row.parentElement ?? row).getBoundingClientRect();
+  const from = rectOf(rows[index]!);
+  const column = rows.flatMap((row, candidate) => {
+    if (candidate === index) return [];
+    const rect = rectOf(row);
+    return rect.left < from.right && rect.right > from.left ? [{ row, top: rect.top }] : [];
+  });
+  const ahead = column.filter(({ top }) => (forward ? top > from.top : top < from.top));
+  const pool = ahead.length > 0 ? ahead : column;
+  const target = (forward ? Math.min : Math.max)(...pool.map(({ top }) => top));
+  return pool.find(({ top }) => top === target)?.row;
+}
+
 function moveLauncherFocus(launcher: HTMLElement | null, event: KeyboardEvent): boolean {
   if (!launcher || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) {
     return false;
   }
+  const vertical = event.key === "ArrowDown" || event.key === "ArrowUp";
   const forward = event.key === "ArrowDown" || event.key === "ArrowRight";
-  if (!forward && event.key !== "ArrowUp" && event.key !== "ArrowLeft") return false;
+  if (!vertical && event.key !== "ArrowRight" && event.key !== "ArrowLeft") return false;
   if (!launcherHasFocus(launcher)) return false;
   const active = document.activeElement;
   const rows = launcherRows(launcher);
   if (rows.length === 0) return false;
   const index = rows.findIndex((row) => row === active);
+  if (index !== -1 && vertical) {
+    (verticalLauncherNeighbor(rows, index, forward) ?? rows[index])?.focus();
+    return true;
+  }
   const next =
     index === -1
       ? forward
@@ -378,6 +409,30 @@ export function useSurfaceLauncherKeys(input: {
   );
 }
 
+function BrowserProfileChooser(props: {
+  readonly browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  readonly onAddBrowserInProfile: (profileId: string) => void;
+}) {
+  return (
+    <Menu>
+      <MenuTrigger
+        render={
+          <Button aria-label="Open browser in a profile" size="icon-micro" variant="ghost-muted" />
+        }
+      >
+        <ChevronDown />
+      </MenuTrigger>
+      <MenuPopup align="end" side="bottom" sideOffset={6} className="max-w-56">
+        {props.browserProfiles.map((profile) => (
+          <MenuItem key={profile.id} onClick={() => props.onAddBrowserInProfile(profile.id)}>
+            <span className="min-w-0 truncate">{profile.name}</span>
+          </MenuItem>
+        ))}
+      </MenuPopup>
+    </Menu>
+  );
+}
+
 /**
  * The "Open a surface" rows, in the new thread hero's style. Unavailable
  * surfaces stay visible with a one-line reason. The browser row offers its
@@ -399,29 +454,10 @@ export function SurfaceLauncherRows(props: {
         // default profile, the chevron picks another.
         const profileChooser =
           entry.kind === "browser" && action.available && props.browserProfiles.length > 1 ? (
-            <Menu>
-              <MenuTrigger
-                render={
-                  <Button
-                    aria-label="Open browser in a profile"
-                    size="icon-micro"
-                    variant="ghost-muted"
-                  />
-                }
-              >
-                <ChevronDown />
-              </MenuTrigger>
-              <MenuPopup align="end" side="bottom" sideOffset={6} className="max-w-56">
-                {props.browserProfiles.map((profile) => (
-                  <MenuItem
-                    key={profile.id}
-                    onClick={() => props.onAddBrowserInProfile(profile.id)}
-                  >
-                    <span className="min-w-0 truncate">{profile.name}</span>
-                  </MenuItem>
-                ))}
-              </MenuPopup>
-            </Menu>
+            <BrowserProfileChooser
+              browserProfiles={props.browserProfiles}
+              onAddBrowserInProfile={props.onAddBrowserInProfile}
+            />
           ) : null;
         return (
           <DraftProjectRow
@@ -437,6 +473,64 @@ export function SurfaceLauncherRows(props: {
         );
       })}
     </>
+  );
+}
+
+function SurfaceLauncherCell(props: {
+  readonly icon: ReactNode;
+  readonly label: ReactNode;
+  readonly detail?: ReactNode;
+  readonly shortcut: string;
+  readonly action?: ReactNode;
+  readonly onSelect: () => void;
+}) {
+  return (
+    <div role="listitem" className={DRAFT_PROJECT_ROW_CLASS}>
+      <button type="button" onClick={props.onSelect} className={DRAFT_PROJECT_ROW_BUTTON_CLASS}>
+        {props.icon}
+        <span className={DRAFT_PROJECT_ROW_LABEL_CLASS}>{props.label}</span>
+        <span className="flex min-w-0 flex-1 items-center justify-end gap-2 ps-3.5 text-dim-foreground text-meta">
+          {props.detail ? <span className="shrink-0 whitespace-nowrap">{props.detail}</span> : null}
+          <Kbd>{props.shortcut}</Kbd>
+        </span>
+      </button>
+      {props.action ? <div className={DRAFT_PROJECT_ROW_ACTION_CLASS}>{props.action}</div> : null}
+    </div>
+  );
+}
+
+export function SurfaceLauncherGrid(props: {
+  readonly actions: readonly SurfaceLauncherAction[];
+  readonly browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  readonly onAddBrowserInProfile: (profileId: string) => void;
+}) {
+  return (
+    <div className="@container">
+      <div className="grid grid-cols-[repeat(2,minmax(max-content,1fr))] gap-x-7 gap-y-0.5 @max-[26.75rem]:grid-cols-[minmax(0,1fr)]">
+        {SURFACE_LAUNCHER_ENTRIES.map((entry) => {
+          const action = props.actions.find((candidate) => candidate.kind === entry.kind);
+          if (!action?.available) return null;
+          const Icon = entry.icon;
+          return (
+            <SurfaceLauncherCell
+              key={entry.kind}
+              icon={<Icon className="size-4 shrink-0 text-muted-foreground" />}
+              label={entry.label}
+              shortcut={entry.shortcut}
+              action={
+                entry.kind === "browser" && props.browserProfiles.length > 1 ? (
+                  <BrowserProfileChooser
+                    browserProfiles={props.browserProfiles}
+                    onAddBrowserInProfile={props.onAddBrowserInProfile}
+                  />
+                ) : null
+              }
+              onSelect={action.onClick}
+            />
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

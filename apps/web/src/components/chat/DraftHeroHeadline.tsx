@@ -474,6 +474,15 @@ export function DraftProjectGroupLabel({ children }: { readonly children: string
   );
 }
 
+export const DRAFT_PROJECT_ROW_CLASS =
+  "group/row relative flex h-8.5 shrink-0 items-center rounded-item not-data-disabled:hover:surface-ghost-hover has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-ring data-selected:surface-selected-soft";
+export const DRAFT_PROJECT_ROW_BUTTON_CLASS =
+  "flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-item px-2.5 text-left outline-none disabled:cursor-default disabled:opacity-64";
+export const DRAFT_PROJECT_ROW_LABEL_CLASS =
+  "min-w-0 shrink truncate font-medium text-label text-foreground group-data-selected/row:text-strong-foreground";
+export const DRAFT_PROJECT_ROW_ACTION_CLASS =
+  "flex w-0 shrink-0 justify-end overflow-hidden opacity-0 group-focus-within/row:-ml-1 group-focus-within/row:w-7 group-focus-within/row:pe-2 group-focus-within/row:opacity-100 group-hover/row:-ml-1 group-hover/row:w-7 group-hover/row:pe-2 group-hover/row:opacity-100";
+
 export function DraftProjectRow(props: {
   readonly icon: ReactNode;
   readonly label: string;
@@ -495,7 +504,7 @@ export function DraftProjectRow(props: {
       onKeyDown={props.onKeyDown}
       data-selected={props.selected ? "" : undefined}
       data-disabled={props.disabled ? "" : undefined}
-      className="group/row relative flex h-8.5 shrink-0 items-center rounded-item not-data-disabled:hover:surface-ghost-hover has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-ring data-selected:surface-selected-soft"
+      className={DRAFT_PROJECT_ROW_CLASS}
     >
       <button
         type="button"
@@ -503,10 +512,10 @@ export function DraftProjectRow(props: {
         disabled={props.disabled}
         onClick={props.onSelect}
         onFocus={props.onFocus}
-        className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-item px-2.5 text-left outline-none disabled:cursor-default disabled:opacity-64"
+        className={DRAFT_PROJECT_ROW_BUTTON_CLASS}
       >
         {props.icon}
-        <span className="min-w-0 shrink truncate font-medium text-label text-foreground group-data-selected/row:text-strong-foreground">
+        <span className={DRAFT_PROJECT_ROW_LABEL_CLASS}>
           <DraftProjectName value={props.label} singleLine />
         </span>
         {/* Paths keep their folder name; the rest of the row's width goes to it. */}
@@ -523,9 +532,7 @@ export function DraftProjectRow(props: {
       {props.action ? (
         // Hidden, it takes no width, so the detail ends on the same line as
         // rows without an action.
-        <div className="flex w-0 shrink-0 justify-end overflow-hidden opacity-0 group-focus-within/row:-ml-1 group-focus-within/row:w-7 group-focus-within/row:pe-2 group-focus-within/row:opacity-100 group-hover/row:-ml-1 group-hover/row:w-7 group-hover/row:pe-2 group-hover/row:opacity-100">
-          {props.action}
-        </div>
+        <div className={DRAFT_PROJECT_ROW_ACTION_CLASS}>{props.action}</div>
       ) : null}
     </div>
   );

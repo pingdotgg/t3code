@@ -15,6 +15,7 @@ export function ThreadContextChip(props: {
   projectId?: ProjectId | null;
   copyMarkdown?: string;
   unreadable?: boolean;
+  link?: boolean;
 }) {
   const { environmentId, threadId } = props.record;
   const shell = useThreadShell({ environmentId, threadId });
@@ -30,6 +31,19 @@ export function ThreadContextChip(props: {
   const projectId = shell?.projectId ?? props.projectId ?? metadata?.projectId;
   const project = useProject(projectId ? scopeProjectRef(environmentId, projectId) : null);
   const title = shell?.title?.trim() || metadata?.title.trim() || props.record.title;
+  const icon = project ? (
+    <ProjectFavicon project={project} className="size-[1em] self-center" />
+  ) : (
+    <MessagesSquareIcon />
+  );
+  if (props.link === false) {
+    return (
+      <ContextChip kind="thread" aria-label={`Thread, ${title}`}>
+        {icon}
+        <ContextChipLabel>{title}</ContextChipLabel>
+      </ContextChip>
+    );
+  }
   return (
     <Tooltip>
       <TooltipTrigger
@@ -48,11 +62,7 @@ export function ThreadContextChip(props: {
             data-markdown-copy={props.copyMarkdown}
             className="no-underline"
           >
-            {project ? (
-              <ProjectFavicon project={project} className="size-[1em] self-center" />
-            ) : (
-              <MessagesSquareIcon />
-            )}
+            {icon}
             <ContextChipLabel>{title}</ContextChipLabel>
           </ContextChip>
         }
