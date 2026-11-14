@@ -68,3 +68,12 @@ export const AcpRegistrySettings = makeProviderSettingsSchema(
   },
 );
 export type AcpRegistrySettings = typeof AcpRegistrySettings.Type;
+
+export function isCopilotAcpRegistrySettings(
+  settings: Pick<AcpRegistrySettings, "source" | "agentId" | "commandPath">,
+): boolean {
+  // Local installs launch the `copilot` binary directly with no registry id.
+  return settings.source === "local"
+    ? /^copilot(\.exe|\.cmd)?$/i.test(settings.commandPath.split(/[\\/]/).pop() ?? "")
+    : settings.agentId === "github-copilot-cli";
+}

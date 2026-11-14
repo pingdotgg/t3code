@@ -78,6 +78,14 @@ run before the prompt. They reject profiles with such configuration before launc
 instructions and tool denial do not create a native sandbox.
 See [helper constraints](../../apps/server/src/textGeneration/AntigravityTextGeneration.ts).
 
+Copilot is the only text-generation-capable Registry agent, because isolating a helper depends on
+each agent's own flags. Its helper removes native tools at launch, since an ACP tool report can
+arrive after the tool ran, and uses a throwaway `COPILOT_HOME` that receives only the sign-in keys
+from the user's `config.json`, which also holds hooks, MCP servers and plugins. See
+[helper constraints](../../packages/provider-acp-registry/src/server/copilotTextGeneration.ts).
+Automatic fallback never picks a Registry agent because each request spends the user's plan; the
+web picker previews only the drivers the server would fall back to.
+
 ## Provider updates run only through the owning installer
 
 A package manager runs only when the resolved executable's path proves it owns the install. Homebrew

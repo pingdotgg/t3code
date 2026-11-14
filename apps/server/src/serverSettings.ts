@@ -22,6 +22,10 @@ import {
   type SecretReference,
   withIdleCompaction,
 } from "@t3tools/contracts";
+import {
+  AcpRegistrySettings,
+  isCopilotAcpRegistrySettings,
+} from "@t3tools/provider-acp-registry/settings";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -497,11 +501,17 @@ function migrateLegacyProviderSettings(
 
 const ACP_REGISTRY_DRIVER = ProviderDriverKind.make("acpRegistry");
 
+const decodeAcpRegistrySettings = Schema.decodeUnknownOption(AcpRegistrySettings);
+
 function selectionSupportsTextGeneration(
   settings: ServerSettings,
   selection: ModelSelection,
 ): boolean {
-  return settings.providerInstances[selection.instanceId]?.driver !== ACP_REGISTRY_DRIVER;
+  const instance = settings.providerInstances[selection.instanceId];
+  return (
+    instance?.driver !== ACP_REGISTRY_DRIVER ||
+    Option.exists(decodeAcpRegistrySettings(instance.config ?? {}), isCopilotAcpRegistrySettings)
+  );
 }
 
 type DriverAllowed = (driver: ProviderDriverKind) => boolean;
