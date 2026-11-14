@@ -149,6 +149,18 @@ function isoFromString(value: string | null | undefined): string | undefined {
   return Option.isSome(dt) ? DateTime.formatIso(dt.value) : undefined;
 }
 
+// get_usage omits the spend reset; Anthropic documents it as 00:00 UTC on the 1st of each month.
+function calendarMonthWindow(checkedAt: string) {
+  const at = DateTime.make(checkedAt);
+  if (Option.isNone(at)) return {};
+  const start = DateTime.startOf(at.value, "month");
+  const end = DateTime.add(start, { months: 1 });
+  return {
+    resetsAt: DateTime.formatIso(end),
+    windowDurationMins: (DateTime.toEpochMillis(end) - DateTime.toEpochMillis(start)) / 60_000,
+  };
+}
+
 function makeWindow(
   id: keyof typeof WINDOWS & string,
   usedPercent: number,
@@ -221,6 +233,7 @@ export function claudeUsageResponseToLimits(input: {
       kind: "monthly",
       label: "Monthly spend",
       usedPercent: spendPercent,
+      ...calendarMonthWindow(checkedAt),
     });
   }
   return {
