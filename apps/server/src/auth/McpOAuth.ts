@@ -229,6 +229,10 @@ export class McpOAuth extends Context.Service<
       readonly urls: McpOAuthUrls;
       readonly token: AuthMcpTokenRequest;
     }) => Effect.Effect<AuthMcpTokenResult, AuthMcpTokenError>;
+    /** RFC 7009: ends the MCP client session `token` belongs to. Any other token is left alone. */
+    readonly revoke: (
+      token: Redacted.Redacted<string>,
+    ) => Effect.Effect<void, EnvironmentAuth.ServerAuthInternalError>;
   }
 >()("t3/auth/McpOAuth") {}
 
@@ -567,6 +571,21 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const revoke: McpOAuth["Service"]["revoke"] = Effect.fn("McpOAuth.revoke")(function* (token) {
+    yield* environmentAuth.authenticateMcpClientToken(Redacted.value(token)).pipe(
+      Effect.flatMap((client) =>
+        environmentAuth.revokeSession(client.sessionId).pipe(
+          Effect.andThen(
+            Effect.logInfo("Revoked an MCP client session at its holder's request.", {
+              client: client.label,
+            }),
+          ),
+        ),
+      ),
+      Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, () => Effect.void),
+    );
+  });
+
   const managedPolicy = serverSettings.managedPolicy;
   const maxRuntimeMode = managedPolicy?.limits?.maxRuntimeMode;
   return McpOAuth.of({
@@ -580,6 +599,7 @@ const make = Effect.gen(function* () {
     approve,
     deny,
     exchangeCode,
+    revoke,
   });
 });
 

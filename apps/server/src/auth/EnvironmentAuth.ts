@@ -608,6 +608,9 @@ export class EnvironmentAuth extends Context.Service<
     readonly authenticateMcpClient: (
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<McpClientSession, ServerAuthCredentialError | ServerAuthInternalError>;
+    readonly authenticateMcpClientToken: (
+      token: string,
+    ) => Effect.Effect<McpClientSession, ServerAuthCredentialError | ServerAuthInternalError>;
     readonly issueMcpClientSession: (input: {
       readonly label: string;
       readonly access: AuthMcpClientAccess;
@@ -1521,10 +1524,8 @@ export const make = Effect.gen(function* () {
       return yield* authenticateRequest(request);
     });
 
-  const authenticateMcpClient: EnvironmentAuth["Service"]["authenticateMcpClient"] = (request) => {
-    const token = parseBearerToken(request);
-    if (token === null) return Effect.fail(new ServerAuthMissingCredentialError({}));
-    return sessions.verify(token).pipe(
+  const verifyMcpClientToken = (token: string) =>
+    sessions.verify(token).pipe(
       mapSessionVerificationErrors,
       Effect.flatMap((session) =>
         session.subject === MCP_CLIENT_SUBJECT && session.method === "bearer-access-token"
@@ -1542,9 +1543,20 @@ export const make = Effect.gen(function* () {
               }),
             ),
       ),
+    );
+
+  const authenticateMcpClient: EnvironmentAuth["Service"]["authenticateMcpClient"] = (request) => {
+    const token = parseBearerToken(request);
+    if (token === null) return Effect.fail(new ServerAuthMissingCredentialError({}));
+    return verifyMcpClientToken(token).pipe(
       Effect.withSpan("EnvironmentAuth.authenticateMcpClient"),
     );
   };
+
+  const authenticateMcpClientToken: EnvironmentAuth["Service"]["authenticateMcpClientToken"] = (
+    token,
+  ) =>
+    verifyMcpClientToken(token).pipe(Effect.withSpan("EnvironmentAuth.authenticateMcpClientToken"));
 
   const issueMcpClientSession: EnvironmentAuth["Service"]["issueMcpClientSession"] = (input) =>
     sessions
@@ -1625,6 +1637,7 @@ export const make = Effect.gen(function* () {
     issueWebSocketTicket,
     issueStartupPairingUrl,
     authenticateMcpClient,
+    authenticateMcpClientToken,
     issueMcpClientSession,
     consumeMcpApprovalCode,
   });
