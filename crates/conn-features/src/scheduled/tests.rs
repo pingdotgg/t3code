@@ -1444,3 +1444,103 @@ async fn a_failed_scheduled_save_is_logged_once_per_state() {
     assert_eq!(log.report(&third), ["due tasks move on again"]);
     drop(service);
 }
+
+/// Finding 4: `runNow` 1 is interrupted while its launch waits, and `runNow` 2 arrives in
+/// the same read of the socket. The session aborts call 1 and spawns call 2 before either is
+/// polled, as `session.rs` does for `Interrupt` then `Request`. As in T3, run 1's reservation
+/// holds until its release has recorded it, so run 2 is refused as already running; a run
+/// after that records its own end.
+#[tokio::test(start_paused = true)]
+async fn an_interrupted_run_now_is_released_before_the_next_run() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let env = Env::new("run-now-race", "2026-07-01T09:00:00.000Z");
+    let launches = Arc::new(AtomicUsize::new(0));
+    let counted = launches.clone();
+    let fake = Fake {
+        launch: Box::new(move |_| {
+            let n = counted.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                if n == 0 {
+                    std::future::pending::<()>().await;
+                }
+                Ok("thread:next".to_owned())
+            })
+        }),
+        ..Fake::default()
+    };
+    let service = env.start(fake, "UTC", false).await;
+    let task = upsert(
+        &service,
+        json!({"id": "task:race", "projectId": "project:test", "threadId": null,
+               "threadMode": "new_thread"}),
+    )
+    .await;
+    let first = {
+        let service = service.clone();
+        let id = task.id.clone();
+        tokio::spawn(async move { service.run_now(&id).await })
+    };
+    while launches.load(Ordering::SeqCst) == 0 {
+        tokio::task::yield_now().await;
+    }
+    first.abort();
+    let second = {
+        let service = service.clone();
+        let id = task.id.clone();
+        tokio::spawn(async move { service.run_now(&id).await })
+    };
+    let refused = second
+        .await
+        .expect("join")
+        .expect_err("run 1 still holds the task");
+    assert_eq!(refused.message, "Schedule task is already running.");
+    for _ in 0..50 {
+        tokio::task::yield_now().await;
+    }
+    let row = tasks(&service).await.into_iter().next().expect("row");
+    assert_eq!(row.last_run_status, ScheduledTaskRunStatus::Failed);
+    assert_eq!(row.last_run_error.as_deref(), Some(super::INTERRUPTED_RUN));
+    assert_eq!(row.run_count, 1);
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let third = service.run_now(&task.id).await.expect("run 3");
+    assert_eq!(third.thread_id.as_deref(), Some("thread:next"));
+    let row = tasks(&service).await.into_iter().next().expect("row");
+    assert_eq!(
+        (
+            row.last_run_status,
+            row.last_run_error.as_deref(),
+            row.run_count
+        ),
+        (ScheduledTaskRunStatus::Succeeded, None, 2)
+    );
+}
+
+/// Finding 4: a release for an earlier run leaves a row a later run marked running.
+#[tokio::test(start_paused = true)]
+async fn a_release_only_ends_its_own_run() {
+    let env = Env::new("release-own-run", "2026-07-01T09:00:00.000Z");
+    let service = env.start(Fake::default(), "UTC", false).await;
+    let task = upsert(
+        &service,
+        json!({"id": "task:own", "projectId": "project:test", "threadId": null,
+               "threadMode": "new_thread"}),
+    )
+    .await;
+    let later = format_iso(ms("2026-07-01T09:00:05.000Z"));
+    service
+        .mark_running(&task.id, &later, super::Trigger::Manual)
+        .await
+        .expect("mark");
+    service
+        .release_stuck_run(&task.id, "2026-07-01T09:00:00.000Z", super::INTERRUPTED_RUN)
+        .await;
+    let row = tasks(&service).await.into_iter().next().expect("row");
+    assert_eq!(row.last_run_status, ScheduledTaskRunStatus::Running);
+    assert_eq!(row.run_count, 0);
+    service
+        .release_stuck_run(&task.id, &later, super::INTERRUPTED_RUN)
+        .await;
+    let row = tasks(&service).await.into_iter().next().expect("row");
+    assert_eq!(row.last_run_status, ScheduledTaskRunStatus::Failed);
+}

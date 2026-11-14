@@ -69,7 +69,9 @@ with its state and what it needs from outside the server.
   thread and follow it when it moves to another project. The run's end is recorded only on the
   row it marked running. `runNow` runs in the caller's future, as in T3: a caller that stops
   waiting stops the run, which is recorded as failed with T3's interrupt text ("All fibers
-  interrupted without error"), counted and planned again (`releaseStuckRun`). A follower watches the run up to 24 hours and records a provider
+  interrupted without error"), counted and planned again (`releaseStuckRun`). As in T3, the
+  task stays reserved until that release is written, and a release only ends the run it
+  belongs to (the row's start time must match). A follower watches the run up to 24 hours and records a provider
   failure after an accepted message (`recordRunFailure`); one follower per task.
 - **Restarts:** rows left `running` are recorded as failed ("Run was interrupted by a server
   restart.") and planned again; a one-time run counts from its start.

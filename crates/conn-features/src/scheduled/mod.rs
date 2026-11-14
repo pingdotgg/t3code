@@ -728,15 +728,16 @@ impl ScheduledTasks {
     }
 
     /// `releaseStuckRun`: a run that stopped before it recorded its end is recorded as failed,
-    /// while its row is still marked running.
+    /// while its row is still marked running by that run.
     async fn release_stuck_run(&self, id: &str, started_iso: &str, message: &str) {
         let now = self.now();
         let mut tasks = self.inner.tasks.lock().await;
         let mut next_tasks = tasks.clone();
-        let Some(slot) = next_tasks
-            .iter_mut()
-            .find(|t| t.id == id && t.last_run_status == ScheduledTaskRunStatus::Running)
-        else {
+        let Some(slot) = next_tasks.iter_mut().find(|t| {
+            t.id == id
+                && t.last_run_status == ScheduledTaskRunStatus::Running
+                && t.last_run_at.as_deref() == Some(started_iso)
+        }) else {
             return;
         };
         let mut source = slot.clone();
@@ -760,7 +761,7 @@ impl ScheduledTasks {
         trigger: Trigger,
     ) -> Result<RunOutcome, TaskError> {
         let started = self.now();
-        let Some(_reservation) = Reservation::take(&self.inner, &task.id) else {
+        let Some(reservation) = Reservation::take(&self.inner, &task.id) else {
             return match trigger {
                 Trigger::Manual => Err(TaskError::new(
                     "Schedule task is already running.",
@@ -810,11 +811,13 @@ impl ScheduledTasks {
         }
         let started_iso = format_iso(started);
         self.mark_running(&active.id, &started_iso, trigger).await?;
-        // From here a dropped run records its failure, as T3's `onError` does.
+        // From here a dropped run records its failure, as T3's `onError` does, and frees the
+        // reservation only after that, as T3 does inside its bracket.
         let mut stuck = StuckRun {
             service: Some(self.clone()),
             id: active.id.clone(),
             started_iso: started_iso.clone(),
+            reservation: Some(reservation),
         };
         let fire_key = format!("{}:{started}:{}", active.id, trigger.as_str());
         let command_id = format!("scheduled-task:{fire_key}");
@@ -1316,6 +1319,8 @@ struct StuckRun {
     service: Option<ScheduledTasks>,
     id: String,
     started_iso: String,
+    /// The run's reservation: freed with this guard, or after the release when armed.
+    reservation: Option<Reservation>,
 }
 
 impl Drop for StuckRun {
@@ -1326,36 +1331,38 @@ impl Drop for StuckRun {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
-        let (id, started_iso) = (
+        let (id, started_iso, reservation) = (
             std::mem::take(&mut self.id),
             std::mem::take(&mut self.started_iso),
+            self.reservation.take(),
         );
         runtime.spawn(async move {
             service
                 .release_stuck_run(&id, &started_iso, INTERRUPTED_RUN)
                 .await;
+            drop(reservation);
         });
     }
 }
 
 /// A task's place in `active` for the length of one run; released on drop, also when the
 /// run's future is dropped.
-struct Reservation<'a> {
-    inner: &'a Inner,
+struct Reservation {
+    inner: Arc<Inner>,
     id: String,
 }
 
-impl<'a> Reservation<'a> {
-    fn take(inner: &'a Inner, id: &str) -> Option<Self> {
+impl Reservation {
+    fn take(inner: &Arc<Inner>, id: &str) -> Option<Self> {
         let mut active = inner.active.lock().ok()?;
         active.insert(id.to_owned()).then(|| Self {
-            inner,
+            inner: inner.clone(),
             id: id.to_owned(),
         })
     }
 }
 
-impl Drop for Reservation<'_> {
+impl Drop for Reservation {
     fn drop(&mut self) {
         if let Ok(mut active) = self.inner.active.lock() {
             active.remove(&self.id);
