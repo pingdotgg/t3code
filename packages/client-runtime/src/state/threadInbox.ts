@@ -134,6 +134,13 @@ type ThreadKeyInput = Pick<EnvironmentThreadShell, "environmentId" | "id">;
 const WORKING_EXIT_GRACE_MS = 2_000;
 
 /**
+ * A run that ended this long ago has no continuation about to start, so its thread gets no
+ * grace. A client sees this for work that ended while it was closed or disconnected; the
+ * margin is wide so a client clock that runs ahead of the server does not cancel the grace.
+ */
+const STALE_EXIT_MS = 60_000;
+
+/**
  * Keep one at module scope so placement survives routes that unmount the list. Call
  * `observe` when the shells or the snapshot version change, or with null while the beta
  * is off. Its result stays fixed, so a list built from it can be cached.
@@ -234,8 +241,10 @@ export function createInboxReturnTracker() {
           thread.settledOverride === "settled" ||
           effectiveSnoozed(thread, { now: observedAt });
         // Only shelf placement is held: execution state and attention requests stay authoritative.
+        const endedAt = toSortableTimestamp(thread.latestRun?.completedAt ?? undefined);
+        const endedLongAgo = endedAt !== null && endedAt <= at - STALE_EXIT_MS;
         const deadline =
-          !actual && previous?.working && !actionable && !moved && !excluded
+          !actual && previous?.working && !actionable && !moved && !excluded && !endedLongAgo
             ? (previous.deadline ?? at + WORKING_EXIT_GRACE_MS)
             : null;
         const working = actual || (deadline !== null && deadline > at);
