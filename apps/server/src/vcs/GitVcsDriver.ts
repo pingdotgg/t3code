@@ -658,6 +658,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const execute: VcsDriver.VcsDriver["Service"]["execute"] = (input) =>
     gitCommand(vcsProcess, input.operation, input.cwd, input.args, {
       ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+      ...(input.onSpawn !== undefined ? { onSpawn: input.onSpawn } : {}),
       ...(input.env !== undefined ? { env: input.env } : {}),
       ...(input.allowNonZeroExit !== undefined ? { allowNonZeroExit: input.allowNonZeroExit } : {}),
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
