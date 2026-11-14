@@ -26,7 +26,12 @@ const CHANGE_REQUEST_REFERENCE =
 function repositoryKeyFromRemote(key: string): string | null {
   const match =
     /^(ssh\.dev\.azure\.com|vs-ssh\.visualstudio\.com)\/v3\/([^/]+)\/([^/]+)\/([^/]+)$/u.exec(key);
-  if (match === null) return null;
+  if (match === null) {
+    // Azure takes a name as written, so a web key keeps the `.git` other hosts drop.
+    return /^(?:dev\.azure\.com|[^/]+\.visualstudio\.com)\/(?:[^/]+\/)+_git\/[^/]+$/u.test(key)
+      ? key
+      : null;
+  }
   const [, host, organization, project, repository] = match;
   return host === "ssh.dev.azure.com"
     ? `dev.azure.com/${organization}/${project}/_git/${repository}`

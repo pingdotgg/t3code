@@ -122,30 +122,29 @@ export function isTemporaryWorktreeBranch(refName: string): boolean {
   return TEMP_WORKTREE_BRANCH_PATTERN.test(refName.trim().toLowerCase());
 }
 
+const stripGitSuffix = (path: string) => path.replace(/\.git$/i, "");
+
 function lowerCaseRemote(value: string): string {
-  return value
-    .trim()
-    .replace(/\/+$/g, "")
-    .replace(/\.git$/i, "")
-    .toLowerCase();
+  return stripGitSuffix(value.trim().replace(/\/+$/g, "")).toLowerCase();
 }
 
 /**
  * The host and repository path a remote names, lower case and without a port, or null for a
- * remote that names no host, such as a local path.
+ * remote that names no host, such as a local path. Most hosts serve `name.git` as `name`, so the
+ * path drops that suffix unless `keepGitSuffix` asks for the name as written.
  */
 export function parseGitRemoteRepository(
   value: string,
+  options?: { readonly keepGitSuffix?: boolean },
 ): { readonly host: string; readonly path: string } | null {
-  const normalized = lowerCaseRemote(value);
+  const dropSuffix = options?.keepGitSuffix ? (path: string) => path : stripGitSuffix;
+  const normalized = dropSuffix(value.trim().replace(/\/+$/g, "")).toLowerCase();
 
   if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
     try {
       // Parse the raw remote: `.git` may sit before a query or fragment, so strip it from the path once.
       const url = new URL(value.trim().toLowerCase());
-      const repositorySegments = url.pathname
-        .replace(/\/+$/, "")
-        .replace(/\.git$/, "")
+      const repositorySegments = dropSuffix(url.pathname.replace(/\/+$/, ""))
         .split("/")
         .filter((segment) => segment.length > 0);
       if (url.hostname && repositorySegments.length > 1) {
