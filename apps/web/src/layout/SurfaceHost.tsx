@@ -4,7 +4,6 @@ import { memo, useDeferredValue, useEffect, useLayoutEffect, useRef, useState } 
 
 import { kickBrowserSurfaceTracking } from "../browser/browserSurfaceTracking";
 import { ThreadRouteView } from "../components/ThreadRouteView";
-import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { launcherFocusTarget } from "../components/SurfaceLauncher";
 import { observeResize } from "../lib/observeResize";
 import { holdSurfaceFocusOrigin } from "../lib/workspaceFocus";
@@ -2030,8 +2029,6 @@ function LayoutEmptyWorkspace({
   active: boolean;
 }) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  // Its surfaces open for the thread the URL still shows, if any.
-  const routeTarget = useThreadRouteTarget();
   // The way back only means something while another workspace holds tabs.
   const scrollingWorkspaces = useScrollingWorkspacesEnabled();
   const othersHoldTabs = useLayoutStore(
@@ -2074,7 +2071,7 @@ function LayoutEmptyWorkspace({
       <LayoutPaneContext value={paneState}>
         <LayoutLauncherPane
           tabId={null}
-          context={routeTarget}
+          context={null}
           footer={
             back || overview ? (
               <p className="pointer-events-none absolute inset-x-0 bottom-4 text-center text-meta text-dim-foreground">
