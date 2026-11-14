@@ -3151,3 +3151,124 @@ async fn a_scheduled_fresh_run_is_a_side_conversation() {
         3
     );
 }
+
+fn calls(provider: &FakeProvider) -> Vec<String> {
+    provider.calls.lock().unwrap().clone()
+}
+
+/// T3's effect outbox runs a thread's effects one at a time: a Stop the provider is still
+/// finishing holds back the next turn start.
+#[tokio::test(flavor = "current_thread")]
+async fn a_stop_finishes_before_the_next_send_starts() {
+    let db = TempDb::new("lane-stop");
+    let (engine, provider) = open_with(
+        &db,
+        FakeProvider::new("claudeAgent").with_control_delay(Duration::from_millis(200)),
+    );
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "c3", "threadId": "t1"}),
+    )
+    .await;
+    // The run ends with the provider's terminal, while its Stop still runs.
+    until_run_ends(&mut thread).await;
+    dispatch(&engine, message("t1", "c4", "next")).await;
+    run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(
+        calls(&provider),
+        [
+            "start run:t1:1",
+            "interrupt run:t1:1",
+            "interrupted run:t1:1",
+            "start run:t1:2"
+        ]
+    );
+}
+
+/// Two sends start their turns in order, each after the one before.
+#[tokio::test(flavor = "current_thread")]
+async fn two_sends_start_in_order() {
+    let db = TempDb::new("lane-two");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "first")).await;
+    dispatch(&engine, message("t1", "c3", "second")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(calls(&provider), ["start run:t1:1", "start run:t1:2"]);
+    assert_eq!(
+        run_statuses(&p),
+        [
+            ("run:t1:1".into(), "completed".into()),
+            ("run:t1:2".into(), "completed".into())
+        ]
+    );
+}
+
+/// `providerThreadLoadKey`: the session loads the native thread again only when the thread,
+/// the selection or the policy changed since its last load.
+#[tokio::test(flavor = "current_thread")]
+async fn a_turn_start_resumes_the_thread_only_when_its_load_changes() {
+    let db = TempDb::new("load-key");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "one")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    dispatch(&engine, message("t1", "c3", "two")).await;
+    run_to_end(&engine, "t1", "run:t1:2").await;
+    assert!(provider.resumes.lock().unwrap().is_empty());
+    dispatch(
+        &engine,
+        json!({
+            "type": "thread.model-selection.set", "commandId": "c4", "threadId": "t1",
+            "modelSelection": {"instanceId": "claudeAgent", "model": "claude-sonnet-4-5"},
+        }),
+    )
+    .await;
+    dispatch(&engine, message("t1", "c5", "three")).await;
+    run_to_end(&engine, "t1", "run:t1:3").await;
+    dispatch(&engine, message("t1", "c6", "four")).await;
+    run_to_end(&engine, "t1", "run:t1:4").await;
+    assert_eq!(
+        *provider.resumes.lock().unwrap(),
+        ["native-1 claude-sonnet-4-5"]
+    );
+}
+
+/// T3 marks the provider thread `active` at the turn start and `idle` when the run ends
+/// (`runningProviderThread`, `finalProviderThreadStatus`).
+#[tokio::test(flavor = "current_thread")]
+async fn the_provider_thread_is_active_during_a_turn_and_idle_after() {
+    let db = TempDb::new("thread-status");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["providerThreads"][0]["status"], "active");
+    assert_eq!(p["providerThreads"][0]["lastRunOrdinal"], 1);
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "c3", "threadId": "t1"}),
+    )
+    .await;
+    until_run_ends(&mut thread).await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["providerThreads"][0]["status"], "idle");
+    dispatch(&engine, message("t1", "c4", "done")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(p["providerThreads"][0]["status"], "idle");
+    assert_eq!(p["providerThreads"][0]["lastRunOrdinal"], 2);
+}

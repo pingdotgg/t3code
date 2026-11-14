@@ -48,10 +48,18 @@ pub struct FakeProvider {
     pub rollbacks: Arc<Mutex<Vec<String>>>,
     /// Forks asked for: `<target thread> <provider turn id or "-">`.
     pub forks: Arc<Mutex<Vec<String>>>,
+    /// Native threads loaded again (`resume_thread`): `<native id> <model>`.
+    pub resumes: Arc<Mutex<Vec<String>>>,
+    /// Session calls in order: `start <run>`, `interrupt <run>`, `interrupted <run>`,
+    /// `rollback`, `rolled back`.
+    pub calls: Arc<Mutex<Vec<String>>>,
     /// Provider threads made per app thread (`ensure_thread`); the second and later get a
     /// numbered id, as a real provider gives each new conversation its own.
     ensured: Arc<Mutex<std::collections::HashMap<String, usize>>>,
-    fail_rollback: bool,
+    /// Rollbacks left to fail; `usize::MAX` fails every one.
+    fail_rollbacks: Arc<AtomicUsize>,
+    /// Stop and rollback take this long after their work, as a slow provider.
+    control_delay: std::time::Duration,
     steering: bool,
     close_delay: std::time::Duration,
     selection_plan: Option<conn_provider::SelectionTransitionPlan>,
@@ -77,8 +85,11 @@ impl FakeProvider {
             applied_selections: Arc::new(Mutex::new(vec![])),
             rollbacks: Arc::new(Mutex::new(vec![])),
             forks: Arc::new(Mutex::new(vec![])),
+            resumes: Arc::new(Mutex::new(vec![])),
+            calls: Arc::new(Mutex::new(vec![])),
             ensured: Arc::default(),
-            fail_rollback: false,
+            fail_rollbacks: Arc::new(AtomicUsize::new(0)),
+            control_delay: std::time::Duration::ZERO,
             steering: true,
             close_delay: std::time::Duration::ZERO,
             selection_plan: None,
@@ -98,8 +109,19 @@ impl FakeProvider {
     }
 
     /// A provider whose `rollback_thread` fails.
-    pub fn with_failing_rollback(mut self) -> Self {
-        self.fail_rollback = true;
+    pub fn with_failing_rollback(self) -> Self {
+        self.with_rollback_failures(usize::MAX)
+    }
+
+    /// A provider whose first `count` rollbacks fail.
+    pub fn with_rollback_failures(self, count: usize) -> Self {
+        self.fail_rollbacks.store(count, Ordering::SeqCst);
+        self
+    }
+
+    /// A provider whose Stop and rollback take `delay` after their work.
+    pub fn with_control_delay(mut self, delay: std::time::Duration) -> Self {
+        self.control_delay = delay;
         self
     }
 
@@ -133,8 +155,11 @@ struct FakeSession {
     applied_selections: Arc<Mutex<Vec<Value>>>,
     rollbacks: Arc<Mutex<Vec<String>>>,
     forks: Arc<Mutex<Vec<String>>>,
+    resumes: Arc<Mutex<Vec<String>>>,
+    calls: Arc<Mutex<Vec<String>>>,
     ensured: Arc<Mutex<std::collections::HashMap<String, usize>>>,
-    fail_rollback: bool,
+    fail_rollbacks: Arc<AtomicUsize>,
+    control_delay: std::time::Duration,
     close_delay: std::time::Duration,
 }
 
@@ -189,8 +214,11 @@ impl Provider for FakeProvider {
                     applied_selections: self.applied_selections.clone(),
                     rollbacks: self.rollbacks.clone(),
                     forks: self.forks.clone(),
-                ensured: self.ensured.clone(),
-                    fail_rollback: self.fail_rollback,
+                    resumes: self.resumes.clone(),
+                    calls: self.calls.clone(),
+                    ensured: self.ensured.clone(),
+                    fail_rollbacks: self.fail_rollbacks.clone(),
+                    control_delay: self.control_delay,
                     close_delay: self.close_delay,
                 }),
                 events: rx,
@@ -331,7 +359,20 @@ impl Session for FakeSession {
         &self,
         input: ResumeThreadInput,
     ) -> BoxFuture<'_, ProviderResult<ProviderThread>> {
-        Box::pin(async move { Ok(input.provider_thread) })
+        Box::pin(async move {
+            let native = conn_contract::to_json(&input.provider_thread)["nativeThreadRef"]
+                ["nativeId"]
+                .as_str()
+                .unwrap_or("-")
+                .to_owned();
+            let model = input
+                .model_selection
+                .as_ref()
+                .map(|s| conn_contract::to_json(s)["model"].as_str().unwrap_or("-").to_owned())
+                .unwrap_or_else(|| "-".into());
+            crate::lock(&self.resumes).push(format!("{native} {model}"));
+            Ok(input.provider_thread)
+        })
     }
 
     fn start_turn(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
@@ -350,6 +391,7 @@ impl Session for FakeSession {
                 provider_thread_id,
                 ordinal: input.run_ordinal,
             };
+            crate::lock(&self.calls).push(format!("start {}", turn.run_id));
             let text = input.message.text.clone();
             // `write <path> <text>`: writes `<text>\n` to `<path>` in the turn's folder, then
             // answers as any other message.
@@ -516,15 +558,21 @@ impl Session for FakeSession {
             if self.stuck.load(Ordering::SeqCst) {
                 return Err(ProviderError::InterruptTimeout { timeout_ms: 10_000 });
             }
-            let event = {
+            let (run, event) = {
                 let turn = crate::lock(&self.turn);
                 let turn = turn.as_ref().ok_or(ProviderError::SessionStopped)?;
-                vec![
-                    provider_turn(turn, "interrupted"),
-                    terminal(turn, TurnStatus::Interrupted, None),
-                ]
+                (
+                    turn.run_id.clone(),
+                    vec![
+                        provider_turn(turn, "interrupted"),
+                        terminal(turn, TurnStatus::Interrupted, None),
+                    ],
+                )
             };
+            crate::lock(&self.calls).push(format!("interrupt {run}"));
             emit(&self.events, event).await;
+            tokio::time::sleep(self.control_delay).await;
+            crate::lock(&self.calls).push(format!("interrupted {run}"));
             Ok(())
         })
     }
@@ -589,11 +637,22 @@ impl Session for FakeSession {
                     app_run_ordinal, ..
                 } => format!("turn {app_run_ordinal}"),
             });
-            if self.fail_rollback {
+            crate::lock(&self.calls).push("rollback".into());
+            tokio::time::sleep(self.control_delay).await;
+            let fail = self
+                .fail_rollbacks
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| match left {
+                    0 => None,
+                    usize::MAX => Some(usize::MAX),
+                    left => Some(left - 1),
+                })
+                .is_ok();
+            if fail {
                 return Err(ProviderError::Protocol {
                     detail: "the fake provider cannot roll back".into(),
                 });
             }
+            crate::lock(&self.calls).push("rolled back".into());
             Ok(conn_provider::ThreadSnapshot {
                 provider_thread: input.provider_thread,
                 provider_turns: vec![],

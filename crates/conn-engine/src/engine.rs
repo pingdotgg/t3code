@@ -14,7 +14,7 @@ use conn_contract::{
 };
 use conn_provider::Provider;
 use serde_json::{Value, json};
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 
 use crate::commands::{self, CommandError, Effect};
 use crate::runner::LiveThread;
@@ -166,10 +166,13 @@ pub(crate) struct Inner {
     pub(crate) clock: Arc<dyn crate::Clock>,
     /// [`EngineConfig::idle_session`].
     pub(crate) idle_session: Option<Duration>,
-    /// Threads with a rollback in flight, each with a gate the rollback holds until it ends.
-    /// A turn start on the thread waits at the gate, as T3's effect outbox runs a thread's
-    /// rollback before the turn start a later command queued. One entry per running rollback.
-    pub(crate) rollback_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// One lane per thread with effects not yet done: the newest effect's number and the
+    /// signal it gives when it ends. A thread's effects run one at a time, in the order they
+    /// were made, as T3's effect outbox claims them (`EffectOutbox.ts`: none while one of the
+    /// thread runs or an older one waits). The entry goes when its last effect ends.
+    pub(crate) effect_lanes: Mutex<HashMap<String, (u64, oneshot::Receiver<()>)>>,
+    /// Numbers the effects, so a lane's last effect knows it is still the last.
+    pub(crate) effect_seq: std::sync::atomic::AtomicU64,
 }
 
 /// Stable project id for a folder, so a fresh database gives clients the same ids.
@@ -235,7 +238,8 @@ impl SqliteEngine {
                 output_tap: config.command_output_tap.clone(),
                 clock: config.clock.clone(),
                 idle_session: config.idle_session,
-                rollback_gates: Mutex::new(HashMap::new()),
+                effect_lanes: Mutex::new(HashMap::new()),
+                effect_seq: std::sync::atomic::AtomicU64::new(0),
             }),
         };
         // Continuations and the reaper start on the caller's runtime; `open` never blocks.
@@ -529,45 +533,35 @@ impl Inner {
         Ok((seq, replayed))
     }
 
+    /// Runs an effect after every earlier effect of its thread. Title generation has its own
+    /// lane in T3 and runs at once here.
     pub(crate) fn spawn_effect(self: &Arc<Self>, effect: Effect) {
         let inner = self.clone();
-        // The gate closes now, before any later command's effect can start a turn.
-        let gate = match &effect {
-            Effect::Rollback(request) => Some(self.close_rollback_gate(&request.thread_id)),
-            _ => None,
-        };
+        let lane = effect.lane().map(str::to_owned);
+        let seq = self
+            .effect_seq
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let (done, ended) = oneshot::channel::<()>();
+        // The lane's tail changes now, before any later command's effect is made.
+        let previous = lane.as_ref().and_then(|thread_id| {
+            crate::lock(&self.effect_lanes)
+                .insert(thread_id.clone(), (seq, ended))
+                .map(|(_, previous)| previous)
+        });
         tokio::spawn(async move {
+            if let Some(previous) = previous {
+                // Ends when the earlier effect ends, or its task is gone.
+                let _ = previous.await;
+            }
             inner.clone().run_effect(effect).await;
-            if let Some((thread_id, gate, guard)) = gate {
-                drop(guard);
-                let mut gates = crate::lock(&inner.rollback_gates);
-                if gates.get(&thread_id).is_some_and(|g| Arc::ptr_eq(g, &gate)) {
-                    gates.remove(&thread_id);
+            drop(done);
+            if let Some(thread_id) = lane {
+                let mut lanes = crate::lock(&inner.effect_lanes);
+                if lanes.get(&thread_id).is_some_and(|(last, _)| *last == seq) {
+                    lanes.remove(&thread_id);
                 }
             }
         });
-    }
-
-    fn close_rollback_gate(
-        &self,
-        thread_id: &str,
-    ) -> (
-        String,
-        Arc<tokio::sync::Mutex<()>>,
-        Option<tokio::sync::OwnedMutexGuard<()>>,
-    ) {
-        let gate = Arc::new(tokio::sync::Mutex::new(()));
-        let guard = gate.clone().try_lock_owned().ok();
-        crate::lock(&self.rollback_gates).insert(thread_id.to_owned(), gate.clone());
-        (thread_id.to_owned(), gate, guard)
-    }
-
-    /// Waits until no rollback of the thread is in flight.
-    pub(crate) async fn after_rollback(&self, thread_id: &str) {
-        let gate = crate::lock(&self.rollback_gates).get(thread_id).cloned();
-        if let Some(gate) = gate {
-            drop(gate.lock().await);
-        }
     }
 
     async fn run_effect(self: Arc<Self>, effect: Effect) {
