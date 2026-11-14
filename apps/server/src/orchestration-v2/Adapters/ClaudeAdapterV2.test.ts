@@ -14168,6 +14168,423 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // Claude opens a wake turn and asks for a tool before T3 has started its continuation run.
+  const EARLY_WAKE_TOOL_USE_ID = "toolu_01EarlyWakeApprovalBash";
+  const earlyWakeApprovalPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+    runtimeMode: "approval-required",
+    interactionMode: "default",
+    cwd: "/workspace",
+  });
+  const askBeforeWakeContinuation = Effect.gen(function* () {
+    const harness = yield* makeWakeHarness;
+    yield* harness.runtime.startTurn(
+      makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-claude-early-wake-approval-1"),
+        text: "Run the build in the background.",
+        attachments: [],
+        runtimePolicy: earlyWakeApprovalPolicy,
+      }),
+    );
+    yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+    yield* Queue.offer(harness.sdkMessages, turnOneResult);
+    yield* harness.awaitTerminal(1);
+
+    yield* harness.offerAndWait(wakeNotification);
+    yield* harness.offerAndWait(wakeTurnInit);
+    assert.lengthOf(harness.continuationRequests, 1);
+    yield* harness.offerAndWait(
+      claudeSdkFrame({
+        type: "assistant",
+        message: {
+          model: "claude-sonnet-4-6",
+          id: "msg_early_wake_bash",
+          type: "message",
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: EARLY_WAKE_TOOL_USE_ID,
+              name: "Bash",
+              input: { command: "ls" },
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+        uuid: "00000000-0000-4000-8000-000000000795",
+        session_id: WAKE_NATIVE_SESSION,
+      }),
+    );
+    // The callback listens for Claude's abort only once it waits for the continuation run.
+    // @effect-diagnostics-next-line abortControllerInEffect:off - Claude, not the test fiber, owns the request.
+    const withdrawal = new AbortController();
+    const listening = Promise.withResolvers<void>();
+    const addEventListener = withdrawal.signal.addEventListener.bind(withdrawal.signal);
+    withdrawal.signal.addEventListener = (...args: Parameters<AbortSignal["addEventListener"]>) => {
+      addEventListener(...args);
+      listening.resolve();
+    };
+    const decision = yield* Effect.promise(() =>
+      harness.getOpenedOptions()!.canUseTool!(
+        "Bash",
+        { command: "ls" },
+        {
+          signal: withdrawal.signal,
+          toolUseID: EARLY_WAKE_TOOL_USE_ID,
+          requestId: "request-early-wake-bash",
+        },
+      ),
+    ).pipe(Effect.forkScoped);
+    const waiting = Effect.promise(() => listening.promise);
+    return { harness, decision, waiting, withdrawal };
+  });
+
+  it.effect("asks for an approval a wake turn raises before its continuation run starts", () =>
+    Effect.gen(function* () {
+      const { harness, decision, waiting } = yield* askBeforeWakeContinuation;
+      const wakeAttempt = RunAttemptId.make("attempt-claude-early-wake-approval-2");
+      const early = yield* Effect.raceFirst(
+        Effect.as(waiting, { type: "waiting" } as const),
+        Fiber.join(decision).pipe(Effect.map((result) => ({ type: "decision", result }) as const)),
+      );
+      assert.equal(
+        early.type,
+        "waiting",
+        `Expected the request to wait for the continuation run, got ${JSON.stringify(early.type === "decision" ? early.result : null)}`,
+      );
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: wakeAttempt,
+          text: "Background task completed.",
+          attachments: [],
+          providerTurnOrdinal: 2,
+          messageCreatedBy: "agent",
+          messageCreationSource: "provider",
+          runtimePolicy: earlyWakeApprovalPolicy,
+        }),
+      );
+      const first = yield* Effect.raceFirst(
+        Queue.take(harness.runtimeRequestReceipts).pipe(
+          Effect.map((event) => ({ type: "request", event }) as const),
+        ),
+        Fiber.join(decision).pipe(Effect.map((result) => ({ type: "decision", result }) as const)),
+      );
+      assert.equal(
+        first.type,
+        "request",
+        `Expected an approval request, got ${JSON.stringify(first.type === "decision" ? first.result : null)}`,
+      );
+      if (first.type !== "request") return;
+      const bashRuns = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.nativeItemRef?.nativeId === EARLY_WAKE_TOOL_USE_ID
+          ? [event.turnItem.runId]
+          : [],
+      );
+      assert.isNotEmpty(bashRuns);
+      assert.isTrue(bashRuns.every((runId) => runId === RunId.make(`run-${wakeAttempt}`)));
+      yield* harness.runtime.respondToRuntimeRequest({
+        requestId: first.event.runtimeRequest.id,
+        decision: "accept",
+      });
+      assert.equal((yield* Fiber.join(decision))?.behavior, "allow");
+
+      yield* harness.offerAndWait(wakeResult);
+      yield* harness.awaitTerminal(2);
+      assert.equal(harness.terminalEvents()[1]?.status, "completed");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect(
+    "denies a wake turn's tool request when its continuation run is cancelled unstarted",
+    () =>
+      Effect.gen(function* () {
+        const { harness, decision, waiting } = yield* askBeforeWakeContinuation;
+        yield* waiting;
+        yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
+        const result = yield* Fiber.join(decision);
+        assert.equal(result?.behavior, "deny");
+        assert.isFalse(harness.events.some((event) => event.type === "runtime_request.updated"));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect(
+    "denies a wake turn's tool request when Claude withdraws it before its continuation run starts",
+    () =>
+      Effect.gen(function* () {
+        const { harness, decision, waiting, withdrawal } = yield* askBeforeWakeContinuation;
+        yield* waiting;
+        withdrawal.abort();
+        const result = yield* Fiber.join(decision);
+        assert.equal(result?.behavior, "deny");
+        assert.isFalse(harness.events.some((event) => event.type === "runtime_request.updated"));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect(
+    "denies a wake turn's tool request when a user turn attaches before its continuation run",
+    () =>
+      Effect.gen(function* () {
+        const { harness, decision, waiting } = yield* askBeforeWakeContinuation;
+        yield* waiting;
+        // The wake's buffered tool_use replays in its continuation, so a user turn must not own it.
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-early-wake-user-turn"),
+            text: "Status?",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            runtimePolicy: earlyWakeApprovalPolicy,
+          }),
+        );
+        const result = yield* Fiber.join(decision);
+        assert.equal(result?.behavior, "deny");
+        assert.isFalse(harness.events.some((event) => event.type === "runtime_request.updated"));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect(
+    "keeps a later wake's tool request out of a Monitor continuation that leaves it buffered",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const taskId = "bmonitorsplit";
+        const monitorToolUseId = "toolu_monitor_split";
+        const bashToolUseId = "toolu_01SplitWakeBash";
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-monitor-split-1"),
+            text: "Watch the run.",
+            attachments: [],
+            runtimePolicy: earlyWakeApprovalPolicy,
+          }),
+        );
+        for (const frame of [
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: "msg_monitor_split",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: monitorToolUseId,
+                  name: "Monitor",
+                  input: { description: "line monitor", command: "./watch.sh" },
+                },
+              ],
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 1, output_tokens: 1 },
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000a01",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            tool_use_id: monitorToolUseId,
+            description: "line monitor",
+            is_backgrounded: true,
+            task_type: "local_bash",
+            uuid: "00000000-0000-4000-8000-000000000a02",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: monitorToolUseId,
+                  content: `Monitor started (task ${taskId}). You will be notified on each event.`,
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000a03",
+            session_id: WAKE_NATIVE_SESSION,
+            tool_use_result: { taskId, persistent: false },
+          }),
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000a04", result: "STARTED" }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* harness.awaitTerminal(1);
+
+        // A Monitor event wakes Claude and ends with its own result; its continuation is queued.
+        yield* harness.offerAndWait(wakeTurnInit);
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000a05", text: "Noted." }),
+        );
+        yield* harness.awaitContinuation(1);
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000a06",
+            result: "Noted.",
+            origin: { kind: "task-notification" },
+          }),
+        );
+        // A later wake asks for a tool while still buffered behind the Monitor continuation.
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            uuid: "00000000-0000-4000-8000-000000000a07",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: "msg_split_wake_bash",
+              type: "message",
+              role: "assistant",
+              content: [
+                { type: "tool_use", id: bashToolUseId, name: "Bash", input: { command: "ls" } },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000a08",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        // @effect-diagnostics-next-line abortControllerInEffect:off - Claude, not the test fiber, owns the request.
+        const withdrawal = new AbortController();
+        const listening = Promise.withResolvers<void>();
+        const addEventListener = withdrawal.signal.addEventListener.bind(withdrawal.signal);
+        withdrawal.signal.addEventListener = (
+          ...args: Parameters<AbortSignal["addEventListener"]>
+        ) => {
+          addEventListener(...args);
+          listening.resolve();
+        };
+        const decision = yield* Effect.promise(() =>
+          harness.getOpenedOptions()!.canUseTool!(
+            "Bash",
+            { command: "ls" },
+            {
+              signal: withdrawal.signal,
+              toolUseID: bashToolUseId,
+              requestId: "request-split-bash",
+            },
+          ),
+        ).pipe(Effect.forkScoped);
+        yield* Effect.promise(() => listening.promise);
+
+        // The Monitor continuation drains only the Monitor wake; the later wake keeps its tool_use.
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-monitor-split-2"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+            runtimePolicy: earlyWakeApprovalPolicy,
+          }),
+        );
+        assert.equal((yield* Fiber.join(decision))?.behavior, "deny");
+        assert.isFalse(harness.events.some((event) => event.type === "runtime_request.updated"));
+        const bashRuns = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === bashToolUseId
+              ? [event.turnItem.runId]
+              : [],
+          );
+        // The Monitor continuation settles without the later wake's tool, which gets its own run.
+        yield* harness.awaitTerminal(2);
+        assert.isEmpty(bashRuns());
+        yield* harness.awaitContinuation(2);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-monitor-split-3"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 3,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+            runtimePolicy: earlyWakeApprovalPolicy,
+          }),
+        );
+        yield* harness.until(() => bashRuns().length > 0);
+        assert.isTrue(
+          bashRuns().every((runId) => runId === RunId.make("run-attempt-claude-monitor-split-3")),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect.each([
     { card: "an approval", toolName: "Bash", toolInput: { command: "echo probe" } },
     {

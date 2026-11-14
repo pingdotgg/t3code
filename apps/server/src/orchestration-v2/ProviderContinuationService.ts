@@ -95,6 +95,14 @@ export const layer = Layer.effectDiscard(
             : [],
         )[0];
         if (runId === undefined) return;
+        // The thread moved to another provider thread, so this run can never show the request's output.
+        const startedOnAnotherProviderThread = (run: {
+          readonly startedAt: unknown;
+          readonly providerThreadId: string | null;
+        }) =>
+          run.startedAt !== null &&
+          run.providerThreadId !== null &&
+          run.providerThreadId !== request.providerThreadId;
         yield* threads
           .streamStoredEventsFrom({
             threadId: request.threadId,
@@ -106,13 +114,15 @@ export const layer = Layer.effectDiscard(
               ({ event }) =>
                 event.type === "run.updated" &&
                 event.payload.id === runId &&
-                ThreadManagementService.isTerminalRunStatus(event.payload.status),
+                (ThreadManagementService.isTerminalRunStatus(event.payload.status) ||
+                  startedOnAnotherProviderThread(event.payload)),
             ),
             Stream.runHead,
             Effect.flatMap((ended) =>
               Option.isSome(ended) &&
               ended.value.event.type === "run.updated" &&
-              ended.value.event.payload.startedAt === null
+              (ended.value.event.payload.startedAt === null ||
+                startedOnAnotherProviderThread(ended.value.event.payload))
                 ? onRunEndedWithoutStarting()
                 : Effect.void,
             ),
