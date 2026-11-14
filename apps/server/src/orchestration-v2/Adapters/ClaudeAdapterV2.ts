@@ -10566,6 +10566,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
           }
 
+          // Every trigger discards the conversation, so reset whatever the trigger is.
+          if (message.type === "conversation_reset") {
+            if (context.streamUsage !== null) context.streamUsage.usage = null;
+            context.compactionTokens = 0;
+            yield* emitContextUsage(context, 0);
+            return;
+          }
+
           if (
             message.type === "system" &&
             (message.subtype === "compact_boundary" ||
