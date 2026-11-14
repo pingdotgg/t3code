@@ -1308,7 +1308,10 @@ mod tests {
             Some("2.1.5".into())
         );
         assert_eq!(parse_version(&out("2.1.293", 1)), None);
-        assert_eq!(parse_version(&out("1.2.3.4", 0)), None);
+        // As `/\bv?(\d+\.\d+\.\d+)\b/` in JavaScript.
+        assert_eq!(parse_version(&out("1.2.3.4", 0)), Some("1.2.3".into()));
+        assert_eq!(parse_version(&out("x2.1.3", 0)), None);
+        assert_eq!(parse_version(&out("v2.1.3a", 0)), None);
     }
 
     #[test]
