@@ -712,6 +712,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         path.join(fixtures.claudeHomePath, ".claude.json"),
         '{"oauthAccount":{"organizationUuid":"fake-org"}}',
       );
+      let claimed = false;
       const client = HttpClient.make((request) =>
         Effect.gen(function* () {
           if (request.url.endsWith("/api/oauth/usage")) {
@@ -720,13 +721,14 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
               Response.json({
                 cedar_ember: {
                   eligible: true,
-                  next_grant_id: "grant_a",
-                  grants: [{ id: "grant_a", resets_left: 1, usable_now: true }],
+                  next_grant_id: claimed ? null : "grant_a",
+                  grants: claimed ? [] : [{ id: "grant_a", resets_left: 1, usable_now: true }],
                 },
               }),
             );
           }
           if (request.url.endsWith("/reset_rate_limits")) {
+            claimed = true;
             yield* fs.writeFileString(marker, "redeemed").pipe(Effect.orDie);
             return HttpClientResponse.fromWeb(request, Response.json({ result: claim.result }));
           }
@@ -775,6 +777,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       });
       expect(outcome).toMatchObject({ _tag: "Success", success: "reset" });
       expect(after.usageLimits?.windows[0]?.usedPercent).toBe(0);
+      expect(after.usageLimits?.resetCredits?.availableCount).toBe(0);
     }),
   );
 
