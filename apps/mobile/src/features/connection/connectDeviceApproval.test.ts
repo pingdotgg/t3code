@@ -71,6 +71,24 @@ describe("createApprovalPromptQueue", () => {
     expect(shown).toEqual(["a", "a"]);
   });
 
+  it("offers a dropped host's on-screen prompt again once the host is back", () => {
+    const shown: string[] = [];
+    const answers: Array<(outcome: "done" | "retry" | "later") => void> = [];
+    const queue = createApprovalPromptQueue<{ pairingLinkId: string; host: string }>(
+      (prompt, answer) => {
+        shown.push(prompt.pairingLinkId);
+        answers.push(answer);
+      },
+    );
+
+    queue.offer([{ pairingLinkId: "a", host: "mini" }]);
+    queue.drop((prompt) => prompt.host === "mini");
+    answers.at(-1)!("retry");
+    expect(shown).toEqual(["a"]);
+    queue.offer([{ pairingLinkId: "a", host: "mini" }]);
+    expect(shown).toEqual(["a", "a"]);
+  });
+
   it("drops a host's waiting prompts so they cannot hold up other hosts", () => {
     const shown: string[] = [];
     const answers: Array<(outcome: "done" | "retry" | "later") => void> = [];

@@ -46,18 +46,20 @@ export function createApprovalPromptQueue<P extends { readonly pairingLinkId: st
 ) {
   const known = new Set<string>();
   const waiting: P[] = [];
-  let showing = false;
+  let showing: { readonly prompt: P; dropped: boolean } | null = null;
   const next = () => {
     if (showing) return;
     const prompt = waiting.shift();
     if (prompt === undefined) return;
-    showing = true;
+    const current = { prompt, dropped: false };
+    showing = current;
     let answered = false;
     present(prompt, (outcome) => {
       if (answered) return;
       answered = true;
-      showing = false;
-      if (outcome !== "done") waiting.unshift(prompt);
+      showing = null;
+      // A dropped prompt is forgotten, so its host can offer it again when it comes back.
+      if (outcome !== "done" && !current.dropped) waiting.unshift(prompt);
       if (outcome !== "later") next();
     });
   };
@@ -65,6 +67,10 @@ export function createApprovalPromptQueue<P extends { readonly pairingLinkId: st
     known: known as ReadonlySet<string>,
     /** Forgets waiting prompts that match, such as a host that went away. */
     drop(matches: (prompt: P) => boolean) {
+      if (showing && matches(showing.prompt)) {
+        showing.dropped = true;
+        known.delete(showing.prompt.pairingLinkId);
+      }
       for (let index = waiting.length - 1; index >= 0; index--) {
         const prompt = waiting[index]!;
         if (!matches(prompt)) continue;
