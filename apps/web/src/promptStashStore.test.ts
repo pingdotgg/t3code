@@ -291,6 +291,39 @@ describe("promptStashStore", () => {
       vi.resetModules();
     }
   });
+
+  it("restores images in this tab when storage rejected their finalize write", async () => {
+    const storage = createMemoryStorage();
+    const rejectImages = {
+      ...storage,
+      setItem: (key: string, value: string) => {
+        if (value.includes("rejected-image")) throw new Error("QuotaExceededError");
+        storage.setItem(key, value);
+      },
+    };
+    vi.stubGlobal("localStorage", rejectImages);
+    vi.resetModules();
+    try {
+      const { usePromptStashStore: store } = await import("./promptStashStore");
+      store.getState().stashEntry({ ...makeEntry({ id: "too-big" }), pendingImageCount: 1 });
+      const { attachments } = makeEntry({ id: "rejected-image", attachmentChars: 4 });
+      expect(
+        store.getState().finalizeEntryImages("too-big", {
+          attachments,
+          droppedImageNames: [],
+          unreadableImageNames: [],
+        }),
+      ).toEqual({ attached: true, durable: false });
+
+      expect(store.getState().takeEntry("too-big").entry).toMatchObject({
+        attachments,
+        unreadableImageNames: [],
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
+  });
 });
 
 describe("prompt stash context records", () => {

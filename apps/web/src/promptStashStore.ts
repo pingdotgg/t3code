@@ -37,24 +37,19 @@ type PersistedPromptStashState = typeof PersistedPromptStashState.Type;
 const decodePersistedPromptStashState = Schema.decodeUnknownSync(PersistedPromptStashState);
 
 // Encoders cannot survive reload; clear orphaned counts so entries remain restorable.
-function clearOrphanedPendingImages(
-  entries: ReadonlyArray<PromptStashEntry>,
-): ReadonlyArray<PromptStashEntry> {
-  return entries.map((entry) => {
-    if (!entry.pendingImageCount) return entry;
-    const lostCount = entry.pendingImageCount;
-    return {
-      ...entry,
-      pendingImageCount: 0,
-      unreadableImageNames: [
-        ...(entry.unreadableImageNames ?? []),
-        ...Array.from(
-          { length: lostCount },
-          (_, index) => `image ${index + 1} (not saved before reload)`,
-        ),
-      ],
-    };
-  });
+function clearOrphanedPendingImages(entry: PromptStashEntry): PromptStashEntry {
+  if (!entry.pendingImageCount) return entry;
+  return {
+    ...entry,
+    pendingImageCount: 0,
+    unreadableImageNames: [
+      ...(entry.unreadableImageNames ?? []),
+      ...Array.from(
+        { length: entry.pendingImageCount },
+        (_, index) => `image ${index + 1} (not saved before reload)`,
+      ),
+    ],
+  };
 }
 
 export function partitionStashAttachments(
@@ -109,30 +104,37 @@ function persistEntries(entries: ReadonlyArray<PromptStashEntry>): {
   }
 }
 
-function readPersistedEntries(): ReadonlyArray<PromptStashEntry> | null {
+function readStoredEntries(): ReadonlyArray<PromptStashEntry> | null {
   try {
     const raw = baseStashStorage.getItem(PROMPT_STASH_STORAGE_KEY);
     if (typeof raw !== "string" || raw.length === 0) return null;
     const parsed: unknown = JSON.parse(raw);
     const state = (parsed as { state?: unknown } | null)?.state;
     if (!state) return null;
-    return clearOrphanedPendingImages(decodePersistedPromptStashState(state).entries);
+    return decodePersistedPromptStashState(state).entries;
   } catch {
     return null;
   }
 }
 
+function readPersistedEntries(): ReadonlyArray<PromptStashEntry> | null {
+  return readStoredEntries()?.map(clearOrphanedPendingImages) ?? null;
+}
+
 /**
  * Starts each write from storage so other tabs' stashes, takes and finalized images survive.
- * Only this tab's encoding entries keep their memory copy: reads clear pending counts as orphaned.
+ * This tab's copy wins only while either side is still pending: storage has no images to keep
+ * yet, and a finalize whose write failed must stay restorable here.
  */
 function latestEntries(memory: ReadonlyArray<PromptStashEntry>): ReadonlyArray<PromptStashEntry> {
-  const stored = readPersistedEntries();
+  const stored = readStoredEntries();
   if (!stored) return memory;
-  const encodingById = new Map(
-    memory.filter((entry) => entry.pendingImageCount).map((entry) => [entry.id, entry]),
-  );
-  return stored.map((entry) => encodingById.get(entry.id) ?? entry);
+  const memoryById = new Map(memory.map((entry) => [entry.id, entry]));
+  return stored.map((entry) => {
+    const local = memoryById.get(entry.id);
+    if (local && (local.pendingImageCount || entry.pendingImageCount)) return local;
+    return clearOrphanedPendingImages(entry);
+  });
 }
 
 interface PromptStashStoreState {
