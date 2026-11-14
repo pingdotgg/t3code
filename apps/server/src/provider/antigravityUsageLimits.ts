@@ -203,15 +203,28 @@ const readAntigravityKeyringSecret = Effect.fn("readAntigravityKeyringSecret")(f
       try: () => import("@napi-rs/keyring"),
       catch: (cause) => new AntigravityKeyringError({ cause }),
     });
-    // `getSecret` resolves empty when the Secret Service is locked or unreachable; this rejects.
-    const credentials = yield* Effect.tryPromise({
-      try: () => Keyring.findCredentialsAsync(KEYRING_SERVICE),
+    const entry = yield* Effect.try({
+      try: () => new Keyring.AsyncEntry(KEYRING_SERVICE, KEYRING_ACCOUNT),
       catch: (cause) => new AntigravityKeyringError({ cause }),
     });
-    const password = credentials.find(
-      (credential) => credential.account === KEYRING_ACCOUNT,
-    )?.password;
-    secret = password === undefined ? undefined : new TextEncoder().encode(password);
+    // Typed `Uint8Array | undefined`, but the binding returns a plain byte array or `null`.
+    secret =
+      (yield* Effect.tryPromise({
+        try: () => entry.getSecret(),
+        catch: (cause) => new AntigravityKeyringError({ cause }),
+      })) ?? undefined;
+    if (!secret) {
+      // `getSecret` also resolves empty when the Secret Service is locked or unreachable, so
+      // confirm the absence with a search, which rejects on those failures.
+      const credentials = yield* Effect.tryPromise({
+        try: () => Keyring.findCredentialsAsync(KEYRING_SERVICE),
+        catch: (cause) => new AntigravityKeyringError({ cause }),
+      });
+      const password = credentials.find(
+        (credential) => credential.account === KEYRING_ACCOUNT,
+      )?.password;
+      secret = password === undefined ? undefined : new TextEncoder().encode(password);
+    }
   }
   if (!secret) return undefined;
   return yield* Effect.try({
