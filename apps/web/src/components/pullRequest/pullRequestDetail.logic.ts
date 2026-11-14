@@ -1342,7 +1342,15 @@ export function buildAddSelectionToAgentHandoff(input: {
 }): FixFindingsHandoff {
   return {
     prompt: bounded(input.request),
-    reviewComments: [pullRequestContextComment(input, []), { ...input.comment, text: "" }],
+    reviewComments: [
+      pullRequestContextComment(input, []),
+      {
+        ...input.comment,
+        id: `pull-request-selection:${input.url}:${input.comment.id}`,
+        sectionTitle: `${input.comment.sectionTitle} (${boundedField(input.url)})`,
+        text: "",
+      },
+    ],
   };
 }
 

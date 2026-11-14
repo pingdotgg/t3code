@@ -6,6 +6,7 @@ import {
   buildDiffReviewComment,
   buildFileReviewComment,
   buildReviewCommentRenderablePatch,
+  diffReviewSelectionId,
   formatReviewCommentFence,
   resolveDiffReviewAnchor,
   resolveDiffReviewPosition,
@@ -74,6 +75,14 @@ describe("review comment context parsing", () => {
         fenceLanguage: "diff",
       }),
     );
+    const ids = (
+      [
+        { start: 2, end: 2, side: "deletions" },
+        { start: 2, end: 2, side: "additions" },
+        { start: 2, end: 2, side: "deletions", endSide: "additions" },
+      ] as const
+    ).map((range) => diffReviewSelectionId("src/app.ts", range));
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("keeps a selection's trailing blank line and whitespace in the rendered excerpt", () => {
