@@ -21,18 +21,18 @@ decode is a defect, not a broken client.
 
 ## dispatchCommand
 
-41 of the 56 command types are handled. The other 15 answer `OrchestrationV2DispatchCommandError`
+42 of the 56 command types are handled. The other 14 answer `OrchestrationV2DispatchCommandError`
 with a reason the client shows (`commands::refusal`).
 
 | Handled                                                                                                                                                             | Refused, and why                                                                             |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `thread.create`, `message.dispatch` (all five dispatch modes), `run.interrupt` (`holdQueue`), `thread.stop`, `runtime-request.respond`, `thread.user-input.dismiss` | `checkpoint.rollback`, `thread.merge_back`: no checkpoints yet                               |
+| `thread.create`, `message.dispatch` (all five dispatch modes), `run.interrupt` (`holdQueue`), `thread.stop`, `runtime-request.respond`, `thread.user-input.dismiss` | `thread.merge_back`: no fork yet                                                             |
 | `queued-run.start`, `.cancel`, `.reorder`, `.edit`, `queue.resume`, `queued-message.promote-to-steer`                                                               | `thread.fork`                                                                                |
 | `thread.archive`, `unarchive`, `delete`, `visit`, `mark-unread`, `metadata.update` (`regenerateTitle`), `title.regeneration.complete`                               | `prepared-run.release`, `.progress`, `.fail`, `.retry`: no worktree preparation              |
 | `thread.settle`, `auto-settle`, `unsettle`, `snooze`, `unsnooze`, `auto-settle.set`, `pin`, `unpin`, `pin.reorder`, `active.reorder`, `tag.set`                     | `thread.pull-request-link.sync`, `.pull-request.watch`, `.pull-request.sync`: no PR watching |
 | `thread.pull-request.link`, `.unlink`                                                                                                                               | `thread.guest-share.close`, `thread.guest-message.dismiss`: no guest sharing                 |
 | `thread.runtime-mode.set`, `interaction-mode.set`, `model-selection.set`, `provider.switch`, `provider-session.detach`                                              | `notification.delivery.accept`, `subagent.stop`, `thread.created.record`                     |
-| `delegated_task.request`, `.wake-policy`, `.completion-delivery.acknowledge`, `.dispose`                                                                            |                                                                                              |
+| `delegated_task.request`, `.wake-policy`, `.completion-delivery.acknowledge`, `.dispose`, `checkpoint.rollback`                                                                            |                                                                                              |
 
 ## The refused commands: a map
 
@@ -66,6 +66,14 @@ all 23 are.
   too. No git repository: `missing` checkpoints. A restart captures a run left `waiting`.
   `getTurnDiff` counts completed runs with a ready checkpoint and cuts the patch at 10 MB with
   T3's marker.
+- **Rollback** (`src/rollback.rs`). `checkpoint.rollback` checks the target as T3 does and
+  sets `rollbackRequestId`; a file restore needs the thread's own worktree
+  (`isCheckpointRestoreIsolated`), else only `restoreFiles: false` (a conversation rewind) is
+  accepted. The effect rolls the provider thread back (only when later runs exist), restores
+  the files, deletes the stale refs, then commits the provider thread, the `stale`
+  checkpoints and the `rolled_back` runs and nodes at once. A failure commits none of that and
+  sets `rollbackFailure` with T3's client message. T3 retries the effect up to 5 times; this
+  server tries once.
 
 - **Busy thread.** While a run is active, a message queues (`queue_after_active`, or any start)
   or steers (`steer_active`, or the client's `deliveryIntent` steer). A steer before the

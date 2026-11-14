@@ -437,3 +437,261 @@ async fn a_restart_finishes_a_run_left_waiting_for_its_checkpoint() {
     assert_eq!(p["runs"][0]["status"], "completed", "{}", p["runs"]);
     assert!(p["runs"][0]["checkpointId"].is_string(), "{}", p["runs"]);
 }
+
+// ---------------------------------------------------------------------------------------
+// Rollback
+
+/// A thread whose worktree is `repo`, so its files may be restored.
+fn create_worktree_thread(repo: &Repo) -> Value {
+    let mut command = create_in(repo, "t1", "c1");
+    command["worktreePath"] = json!(repo.root());
+    command["branch"] = json!("main");
+    command
+}
+
+fn rollback(command: &str, checkpoint: &Value, restore_files: Option<bool>) -> Value {
+    let mut command = json!({
+        "type": "checkpoint.rollback", "commandId": command, "threadId": "t1",
+        "scopeId": checkpoint["scopeId"], "checkpointId": checkpoint["id"],
+    });
+    if let Some(restore) = restore_files {
+        command["restoreFiles"] = json!(restore);
+    }
+    command
+}
+
+fn checkpoint_at(p: &Value, ordinal: u64) -> Value {
+    p["checkpoints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["ordinalWithinScope"] == ordinal)
+        .cloned()
+        .unwrap_or_else(|| panic!("checkpoint {ordinal}"))
+}
+
+/// Waits until `done` holds for the thread's projection.
+async fn until(engine: &SqliteEngine, done: impl Fn(&Value) -> bool) -> Value {
+    for _ in 0..250 {
+        let p = projection(engine, "t1").await;
+        if done(&p) {
+            return p;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!(
+        "the thread never got there: {}",
+        projection(engine, "t1").await
+    )
+}
+
+async fn with_turns(
+    db: &TempDb,
+    repo: &Repo,
+    provider: FakeProvider,
+    thread: Value,
+    texts: &[&str],
+) -> (SqliteEngine, Arc<FakeProvider>) {
+    let provider = Arc::new(provider);
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: repo.root(),
+    }];
+    config.providers = vec![provider.clone()];
+    config.stream_flush = Duration::from_millis(20);
+    config.checkpoints = true;
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, thread).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    for (i, text) in texts.iter().enumerate() {
+        turn(&engine, &mut stream, &format!("turn-{i}"), text).await;
+    }
+    (engine, provider)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn rollback_restores_files_cuts_later_runs_and_rolls_the_provider_back() {
+    let db = TempDb::new("rollback");
+    let repo = Repo::new("rollback");
+    let (engine, provider) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_worktree_thread(&repo),
+        &["write a.txt one", "write b.txt two", "write c.txt three"],
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let (two, three) = (checkpoint_at(&p, 2), checkpoint_at(&p, 3));
+    let target = checkpoint_at(&p, 1);
+    dispatch(&engine, rollback("rb-1", &target, None)).await;
+
+    let p = until(&engine, |p| p["runs"][2]["status"] == "rolled_back").await;
+    assert_eq!(
+        p["thread"]["rollbackRequestId"], "rb-1",
+        "the request is the thread's"
+    );
+    assert!(p["thread"]["rollbackFailure"].is_null(), "{}", p["thread"]);
+    let statuses: Vec<_> = p["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["status"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        statuses,
+        ["completed", "rolled_back", "rolled_back"],
+        "runs after the target"
+    );
+    for n in [2, 3] {
+        assert_eq!(checkpoint_at(&p, n)["status"], "stale", "checkpoint {n}");
+    }
+    assert_eq!(
+        *provider.rollbacks.lock().unwrap(),
+        ["turn 1"],
+        "the provider rolled back"
+    );
+    let pt = &p["providerThreads"][0];
+    assert_eq!(pt["lastRunOrdinal"], 1, "{pt}");
+    assert_eq!(repo.read("a.txt").as_deref(), Some("one\n"), "kept");
+    assert_eq!(repo.read("b.txt"), None, "removed");
+    assert_eq!(repo.read("c.txt"), None, "removed");
+    let refs = repo.git(&["show-ref"]);
+    assert!(
+        !refs.contains(two["ref"].as_str().unwrap()),
+        "stale ref deleted"
+    );
+    assert!(
+        !refs.contains(three["ref"].as_str().unwrap()),
+        "stale ref deleted"
+    );
+    let kinds: Vec<String> = engine
+        .test_events("t1")
+        .await
+        .into_iter()
+        .map(|(ty, _)| ty)
+        .collect();
+    assert!(
+        kinds.contains(&"checkpoint.rollback-requested".to_owned()),
+        "{kinds:?}"
+    );
+
+    // The thread goes on from the restored workspace.
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    turn(&engine, &mut stream, "c9", "write d.txt four").await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["runs"][3]["status"], "completed", "{}", p["runs"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn rollback_to_the_thread_start_and_a_conversation_only_rewind() {
+    let db = TempDb::new("rollback-start");
+    let repo = Repo::new("rollback-start");
+    let (engine, provider) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c1"),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let start = checkpoint_at(&p, 0);
+    // A thread in the project root shares its folder: no file restore.
+    let refused = engine
+        .dispatch(from_json(rollback("rb-1", &start, None)).unwrap())
+        .await;
+    let Err(EngineError::Rejected(error)) = refused else {
+        panic!("a file restore outside a worktree is refused")
+    };
+    assert!(
+        to_json(&error)["message"]
+            .as_str()
+            .unwrap()
+            .contains("File restore requires an isolated worktree."),
+        "{}",
+        to_json(&error)
+    );
+    dispatch(&engine, rollback("rb-2", &start, Some(false))).await;
+    let p = until(&engine, |p| p["runs"][1]["status"] == "rolled_back").await;
+    assert_eq!(p["runs"][0]["status"], "rolled_back", "every run");
+    assert_eq!(
+        *provider.rollbacks.lock().unwrap(),
+        ["start"],
+        "to the thread start"
+    );
+    assert!(
+        p["providerThreads"][0]["lastRunOrdinal"].is_null(),
+        "no run left"
+    );
+    assert_eq!(repo.read("b.txt").as_deref(), Some("two\n"), "files stay");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_provider_rollback_changes_nothing_and_tells_the_client() {
+    let db = TempDb::new("rollback-fail");
+    let repo = Repo::new("rollback-fail");
+    let (engine, provider) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent").with_failing_rollback(),
+        create_worktree_thread(&repo),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    dispatch(&engine, rollback("rb-1", &checkpoint_at(&p, 1), None)).await;
+    let p = until(&engine, |p| p["thread"]["rollbackFailure"].is_object()).await;
+    assert_eq!(
+        p["thread"]["rollbackFailure"],
+        json!({"requestId": "rb-1", "message": "The provider could not roll back this conversation. Try again; if it keeps failing, check the provider and server logs."}),
+        "T3's message"
+    );
+    assert_eq!(p["runs"][1]["status"], "completed", "nothing rolled back");
+    assert_eq!(
+        repo.read("b.txt").as_deref(),
+        Some("two\n"),
+        "files untouched"
+    );
+    assert_eq!(provider.rollbacks.lock().unwrap().len(), 1, "tried once");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn rollback_refuses_a_busy_or_unknown_target() {
+    let db = TempDb::new("rollback-refuse");
+    let repo = Repo::new("rollback-refuse");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_worktree_thread(&repo),
+        &["write a.txt one"],
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let mut unknown = checkpoint_at(&p, 1);
+    unknown["id"] = json!("checkpoint:nope");
+    let refused = engine
+        .dispatch(from_json(rollback("rb-1", &unknown, None)).unwrap())
+        .await;
+    let Err(EngineError::Rejected(error)) = refused else {
+        panic!("unknown checkpoint")
+    };
+    assert!(
+        to_json(&error)["message"]
+            .as_str()
+            .unwrap()
+            .contains("Checkpoint checkpoint:nope was not found."),
+        "{}",
+        to_json(&error)
+    );
+}

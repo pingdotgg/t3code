@@ -224,6 +224,24 @@ impl SqliteEngine {
             .expect("force waiting");
     }
 
+    /// Every stored event of a thread as `(type, payload)`, oldest first.
+    #[cfg(test)]
+    pub(crate) async fn test_events(&self, thread_id: &str) -> Vec<(String, Value)> {
+        let tid = thread_id.to_owned();
+        self.inner
+            .db(move |store| store.thread_events_after(&tid, 0, 100_000))
+            .await
+            .expect("events")
+            .into_iter()
+            .map(|(_, e)| {
+                (
+                    e["type"].as_str().unwrap_or_default().to_owned(),
+                    e["payload"].clone(),
+                )
+            })
+            .collect()
+    }
+
     /// The project id the engine gives a configured folder.
     pub fn project_id_for(workspace_root: &str) -> String {
         project_id(workspace_root)
@@ -443,6 +461,7 @@ impl Inner {
     async fn run_effect(self: Arc<Self>, effect: Effect) {
         match effect {
             Effect::StartTurn { thread_id, run_id } => self.start_turn(thread_id, run_id).await,
+            Effect::Rollback(request) => self.rollback(request).await,
             Effect::CaptureCheckpoint { thread_id, run_id } => {
                 self.capture_run(thread_id, run_id).await;
             }

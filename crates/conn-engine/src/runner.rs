@@ -69,8 +69,21 @@ struct ActiveRun {
 }
 
 impl LiveThread {
-    fn touch(&self) {
+    pub(crate) fn touch(&self) {
         *lock(&self.last_used) = Instant::now();
+    }
+
+    pub(crate) fn session(&self) -> &Arc<dyn Session> {
+        &self.session
+    }
+
+    pub(crate) fn instance(&self) -> &str {
+        &self.instance
+    }
+
+    /// The provider thread the session's next turn continues (after a rollback or a fork).
+    pub(crate) fn set_provider_thread(&self, thread: ProviderThread) {
+        lock(&self.state).provider_thread = Some(thread);
     }
 
     /// Idle: no run and no provider event for `idle`, and no background work, which holds the
@@ -145,7 +158,7 @@ impl Inner {
         }
     }
 
-    fn live_thread(&self, thread_id: &str) -> Option<Arc<LiveThread>> {
+    pub(crate) fn live_thread(&self, thread_id: &str) -> Option<Arc<LiveThread>> {
         lock(&self.live).get(thread_id).cloned()
     }
 
@@ -200,6 +213,112 @@ impl Inner {
         }
         if let Some(observer) = &self.observer {
             self.observe_end(observer.clone(), thread, run).await;
+        }
+    }
+
+    /// Opens a provider session for the thread on `instance` and makes it the thread's live
+    /// one. `None`: shutdown began, or another session for the thread won the race.
+    pub(crate) async fn open_live(
+        self: &Arc<Self>,
+        thread_id: &str,
+        instance: &str,
+        session_id: &str,
+        model_selection: &conn_contract::ModelSelection,
+        runtime_policy: &RuntimePolicy,
+        thread: &Value,
+    ) -> Result<Option<Arc<LiveThread>>, String> {
+        let subagent = thread["lineage"]["relationshipToParent"] == "subagent";
+        // Only a run that names no instance may go to the one configured provider.
+        let provider = self
+            .providers
+            .iter()
+            .find(|p| p.instance_id().as_str() == instance)
+            .or_else(|| {
+                (instance.is_empty() && self.providers.len() == 1)
+                    .then(|| self.providers.first())
+                    .flatten()
+            })
+            .cloned()
+            .ok_or_else(|| {
+                format!("No provider instance `{instance}` is configured on this server.")
+            })?;
+        let tools = self.host.as_ref().and_then(|host| {
+            host.agent_tools(crate::AgentSession {
+                thread_id: thread_id.to_owned(),
+                provider_instance_id: provider.instance_id().as_str().to_owned(),
+                subagent,
+            })
+        });
+        let opened = provider
+            .open_session(OpenSessionInput {
+                thread_id: thread_id.into(),
+                provider_session_id: session_id.into(),
+                model_selection: model_selection.clone(),
+                runtime_policy: runtime_policy.clone(),
+                resume_from_session: None,
+                mcp_servers: tools
+                    .as_ref()
+                    .map(|tools| tools.servers.clone())
+                    .unwrap_or_default(),
+                host: self.host.as_ref().and_then(|host| {
+                    host.provider_host(crate::AgentSession {
+                        thread_id: thread_id.to_owned(),
+                        provider_instance_id: provider.instance_id().as_str().to_owned(),
+                        subagent,
+                    })
+                }),
+            })
+            .await
+            .map_err(|e| {
+                self.revoke_tools(tools.as_ref().map(|t| t.key.as_str()));
+                e.to_string()
+            })?;
+        let session: Arc<dyn Session> = Arc::from(opened.session);
+        let provider_session = to_json(&opened.provider_session);
+        // `open_session` must not yield before the session is in
+        // `live`: on the one runtime thread, nothing else can then open a session for
+        // this thread or begin shutdown in between. Check again anyway, so a provider
+        // that does yield never leaks a session or overwrites one.
+        let raced = self.live_thread(thread_id);
+        if raced.is_some() || self.shutting_down() {
+            self.revoke_tools(tools.as_ref().map(|t| t.key.as_str()));
+            session.close().await;
+            match raced {
+                Some(live) if !self.shutting_down() && live.instance == instance => Ok(Some(live)),
+                _ => Ok(None),
+            }
+        } else {
+            let live = Arc::new(LiveThread {
+                session,
+                instance: instance.to_owned(),
+                state: Mutex::new(LiveState::default()),
+                last_used: Mutex::new(Instant::now()),
+                closed: tokio::sync::Notify::new(),
+                held_since: Mutex::new(None),
+                provider_session_id: provider_session["id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                background_tasks_end_with_process: opened.background_tasks_end_with_process,
+                tools_key: tools.map(|t| t.key),
+            });
+            lock(&self.live).insert(thread_id.to_owned(), live.clone());
+            // The session's row, from `open_session` (T3: the runtime's
+            // `providerSession`), before any of its events.
+            let tid = thread_id.to_owned();
+            self.write(move |tx| {
+                tx.append(Draft::new(
+                    &tid,
+                    "provider-session.updated",
+                    provider_session,
+                ))
+            })
+            .await?;
+            tokio::spawn(
+                self.clone()
+                    .pump(thread_id.to_owned(), live.clone(), opened.events),
+            );
+            Ok(Some(live))
         }
     }
 
@@ -302,101 +421,19 @@ impl Inner {
             // The run stays `starting`; the next server start picks it up (`restart.rs`).
             None if self.shutting_down() => return Err(StartError::Abandoned),
             None => {
-                // Only a run that names no instance may go to the one configured provider.
-                let provider = self
-                    .providers
-                    .iter()
-                    .find(|p| p.instance_id().as_str() == instance)
-                    .or_else(|| {
-                        (instance.is_empty() && self.providers.len() == 1)
-                            .then(|| self.providers.first())
-                            .flatten()
-                    })
-                    .cloned()
-                    .ok_or_else(|| {
-                        format!("No provider instance `{instance}` is configured on this server.")
-                    })?;
-                let tools = self.host.as_ref().and_then(|host| {
-                    host.agent_tools(crate::AgentSession {
-                        thread_id: thread_id.to_owned(),
-                        provider_instance_id: provider.instance_id().as_str().to_owned(),
-                        subagent: context.thread["lineage"]["relationshipToParent"] == "subagent",
-                    })
-                });
-                let opened = provider
-                    .open_session(OpenSessionInput {
-                        thread_id: thread_id.into(),
-                        provider_session_id: format!("provider-session:{thread_id}:{run_id}")
-                            .as_str()
-                            .into(),
-                        model_selection: model_selection.clone(),
-                        runtime_policy: runtime_policy.clone(),
-                        resume_from_session: None,
-                        mcp_servers: tools
-                            .as_ref()
-                            .map(|tools| tools.servers.clone())
-                            .unwrap_or_default(),
-                        host: self.host.as_ref().and_then(|host| {
-                            host.provider_host(crate::AgentSession {
-                                thread_id: thread_id.to_owned(),
-                                provider_instance_id: provider.instance_id().as_str().to_owned(),
-                                subagent: context.thread["lineage"]["relationshipToParent"]
-                                    == "subagent",
-                            })
-                        }),
-                    })
-                    .await
-                    .map_err(|e| {
-                        self.revoke_tools(tools.as_ref().map(|t| t.key.as_str()));
-                        e.to_string()
-                    })?;
-                let session: Arc<dyn Session> = Arc::from(opened.session);
-                let provider_session = to_json(&opened.provider_session);
-                // `open_session` must not yield before the session is in
-                // `live`: on the one runtime thread, nothing else can then open a session for
-                // this thread or begin shutdown in between. Check again anyway, so a provider
-                // that does yield never leaks a session or overwrites one.
-                let raced = self.live_thread(thread_id);
-                if raced.is_some() || self.shutting_down() {
-                    self.revoke_tools(tools.as_ref().map(|t| t.key.as_str()));
-                    session.close().await;
-                    match raced {
-                        Some(live) if !self.shutting_down() && live.instance == instance => live,
-                        _ => return Err(StartError::Abandoned),
-                    }
-                } else {
-                    let live = Arc::new(LiveThread {
-                        session,
-                        instance: instance.to_owned(),
-                        state: Mutex::new(LiveState::default()),
-                        last_used: Mutex::new(Instant::now()),
-                        closed: tokio::sync::Notify::new(),
-                        held_since: Mutex::new(None),
-                        provider_session_id: provider_session["id"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .to_owned(),
-                        background_tasks_end_with_process: opened.background_tasks_end_with_process,
-                        tools_key: tools.map(|t| t.key),
-                    });
-                    lock(&self.live).insert(thread_id.to_owned(), live.clone());
-                    // The session's row, from `open_session` (T3: the runtime's
-                    // `providerSession`), before any of its events.
-                    let tid = thread_id.to_owned();
-                    self.write(move |tx| {
-                        tx.append(Draft::new(
-                            &tid,
-                            "provider-session.updated",
-                            provider_session,
-                        ))
-                    })
-                    .await?;
-                    tokio::spawn(self.clone().pump(
-                        thread_id.to_owned(),
-                        live.clone(),
-                        opened.events,
-                    ));
-                    live
+                match self
+                    .open_live(
+                        thread_id,
+                        instance,
+                        &format!("provider-session:{thread_id}:{run_id}"),
+                        &model_selection,
+                        &runtime_policy,
+                        &context.thread,
+                    )
+                    .await?
+                {
+                    Some(live) => live,
+                    None => return Err(StartError::Abandoned),
                 }
             }
         };

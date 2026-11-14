@@ -39,6 +39,7 @@ mod output;
 mod projects;
 mod reads;
 mod restart;
+mod rollback;
 mod runner;
 mod shell;
 mod store;

@@ -113,6 +113,34 @@ async fn checkpoint_scenario(dir: &std::path::Path) -> Vec<Value> {
     })
     .await;
     read(&mut follow, &mut items, |_| false).await;
+    // Rewind the conversation to the first turn (a root thread keeps its files).
+    let projection = engine
+        .get_thread_projection("thread-cp".into())
+        .await
+        .unwrap();
+    let first = projection["checkpoints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["appRunOrdinal"] == 1)
+        .cloned()
+        .unwrap();
+    engine
+        .dispatch(
+            from_json(json!({
+                "type": "checkpoint.rollback", "commandId": "cp-rollback", "threadId": "thread-cp",
+                "scopeId": first["scopeId"], "checkpointId": first["id"], "restoreFiles": false,
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut follow, &mut items, |item| {
+        item["event"]["type"] == "run.updated"
+            && item["event"]["payload"]["status"] == "rolled_back"
+    })
+    .await;
+    read(&mut follow, &mut items, |_| false).await;
     items
 }
 

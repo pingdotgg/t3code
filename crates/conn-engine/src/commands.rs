@@ -11,6 +11,8 @@ use crate::store::{Draft, StoreResult, Tx};
 /// Work that touches a provider. Runs after the command's events are committed.
 #[derive(Debug)]
 pub(crate) enum Effect {
+    /// Rolls a thread back to a checkpoint (`provider-thread.rollback`).
+    Rollback(crate::rollback::RollbackRequest),
     /// Captures a run's checkpoint and finishes it (`checkpoint.capture`).
     CaptureCheckpoint {
         thread_id: String,
@@ -70,7 +72,7 @@ impl From<String> for CommandError {
     }
 }
 
-fn reject<T>(message: impl Into<String>) -> Result<T, CommandError> {
+pub(crate) fn reject<T>(message: impl Into<String>) -> Result<T, CommandError> {
     Err(CommandError::Rejected(message.into()))
 }
 
@@ -116,6 +118,7 @@ pub(crate) fn handler(command_type: &str) -> Option<Handler> {
         "provider.switch" => provider_switch,
         "thread.title.regeneration.complete" => thread_title_regeneration_complete,
         "delegated_task.request" => crate::families::delegated_task_request,
+        "checkpoint.rollback" => crate::rollback::checkpoint_rollback,
         "delegated_task.wake-policy" => crate::families::wake_policy,
         "delegated_task.completion-delivery.acknowledge"
         | "delegated_task.completion-delivery.dispose" => crate::families::completion_delivery,
@@ -126,9 +129,7 @@ pub(crate) fn handler(command_type: &str) -> Option<Handler> {
 /// Why a contract command this engine does not handle is refused. The client shows the text.
 pub(crate) fn refusal(command_type: &str) -> &'static str {
     match command_type {
-        "checkpoint.rollback" | "thread.merge_back" => {
-            "Conn Server has no checkpoints yet, so it cannot restore or merge a turn."
-        }
+        "thread.merge_back" => "Conn Server cannot merge a fork back yet.",
         "thread.fork" => "Conn Server cannot fork a thread yet.",
         "prepared-run.release"
         | "prepared-run.progress"
@@ -167,7 +168,7 @@ pub(crate) fn normalize_model_selection(selection: &Value) -> Value {
     out
 }
 
-fn live_thread(tx: &Tx<'_>, thread_id: &str) -> Result<Value, CommandError> {
+pub(crate) fn live_thread(tx: &Tx<'_>, thread_id: &str) -> Result<Value, CommandError> {
     match tx.thread(thread_id)? {
         Some(thread) => Ok(thread),
         None => reject(format!("Thread {thread_id} does not exist.")),

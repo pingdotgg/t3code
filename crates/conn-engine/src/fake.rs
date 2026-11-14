@@ -44,6 +44,11 @@ pub struct FakeProvider {
     pub closed: Arc<AtomicUsize>,
     /// Model selections sent to a running turn (`apply_model_selection`), as JSON.
     pub applied_selections: Arc<Mutex<Vec<Value>>>,
+    /// Rollback targets asked for: `start` or `turn <app run ordinal>`.
+    pub rollbacks: Arc<Mutex<Vec<String>>>,
+    /// Forks asked for: `<target thread> <provider turn id or "-">`.
+    pub forks: Arc<Mutex<Vec<String>>>,
+    fail_rollback: bool,
     steering: bool,
     close_delay: std::time::Duration,
     selection_plan: Option<conn_provider::SelectionTransitionPlan>,
@@ -67,6 +72,9 @@ impl FakeProvider {
             mcp_servers: Arc::new(Mutex::new(vec![])),
             closed: Arc::new(AtomicUsize::new(0)),
             applied_selections: Arc::new(Mutex::new(vec![])),
+            rollbacks: Arc::new(Mutex::new(vec![])),
+            forks: Arc::new(Mutex::new(vec![])),
+            fail_rollback: false,
             steering: true,
             close_delay: std::time::Duration::ZERO,
             selection_plan: None,
@@ -82,6 +90,12 @@ impl FakeProvider {
     /// A provider whose sessions take `delay` to close, as a process given time to exit.
     pub fn with_close_delay(mut self, delay: std::time::Duration) -> Self {
         self.close_delay = delay;
+        self
+    }
+
+    /// A provider whose `rollback_thread` fails.
+    pub fn with_failing_rollback(mut self) -> Self {
+        self.fail_rollback = true;
         self
     }
 
@@ -113,6 +127,9 @@ struct FakeSession {
     mcp_servers: Arc<Mutex<Vec<McpServer>>>,
     closed: Arc<AtomicUsize>,
     applied_selections: Arc<Mutex<Vec<Value>>>,
+    rollbacks: Arc<Mutex<Vec<String>>>,
+    forks: Arc<Mutex<Vec<String>>>,
+    fail_rollback: bool,
     close_delay: std::time::Duration,
 }
 
@@ -165,6 +182,9 @@ impl Provider for FakeProvider {
                     mcp_servers: self.mcp_servers.clone(),
                     closed: self.closed.clone(),
                     applied_selections: self.applied_selections.clone(),
+                    rollbacks: self.rollbacks.clone(),
+                    forks: self.forks.clone(),
+                    fail_rollback: self.fail_rollback,
                     close_delay: self.close_delay,
                 }),
                 events: rx,
@@ -541,6 +561,70 @@ impl Session for FakeSession {
 
     fn has_pending_background_work(&self) -> bool {
         self.background.load(Ordering::SeqCst)
+    }
+
+    fn rollback_thread(
+        &self,
+        input: conn_provider::RollbackThreadInput,
+    ) -> BoxFuture<'_, ProviderResult<conn_provider::ThreadSnapshot>> {
+        Box::pin(async move {
+            crate::lock(&self.rollbacks).push(match &input.target {
+                conn_provider::RollbackTarget::ThreadStart { .. } => "start".to_owned(),
+                conn_provider::RollbackTarget::ProviderTurn {
+                    app_run_ordinal, ..
+                } => format!("turn {app_run_ordinal}"),
+            });
+            if self.fail_rollback {
+                return Err(ProviderError::Protocol {
+                    detail: "the fake provider cannot roll back".into(),
+                });
+            }
+            Ok(conn_provider::ThreadSnapshot {
+                provider_thread: input.provider_thread,
+                provider_turns: vec![],
+                messages: vec![],
+                runtime_requests: vec![],
+            })
+        })
+    }
+
+    fn fork_thread(
+        &self,
+        input: conn_provider::ForkThreadInput,
+    ) -> BoxFuture<'_, ProviderResult<ProviderThread>> {
+        Box::pin(async move {
+            crate::lock(&self.forks).push(format!(
+                "{} {}",
+                input.target_thread_id.as_str(),
+                input
+                    .provider_turn_id
+                    .as_ref()
+                    .map_or("-", |id| id.as_str())
+            ));
+            let mut thread = conn_contract::to_json(&input.source_provider_thread);
+            let now = now_iso();
+            thread["id"] = json!(format!(
+                "provider-thread:{}",
+                input.target_thread_id.as_str()
+            ));
+            thread["appThreadId"] = json!(input.target_thread_id.as_str());
+            thread["nativeThreadRef"]["nativeId"] =
+                json!(format!("native-fork-{}", input.target_thread_id.as_str()));
+            let mut forked_from = json!({
+                "providerThreadId": conn_contract::to_json(&input.source_provider_thread)["id"],
+            });
+            if let Some(turn) = &input.provider_turn_id {
+                forked_from["providerTurnId"] = json!(turn.as_str());
+            }
+            thread["forkedFrom"] = forked_from;
+            thread["firstRunOrdinal"] = Value::Null;
+            thread["lastRunOrdinal"] = Value::Null;
+            thread["createdAt"] = json!(now);
+            thread["updatedAt"] = json!(now);
+            from_json(thread).map_err(|e| ProviderError::Protocol {
+                detail: e.to_string(),
+            })
+        })
     }
 
     fn close(&self) -> BoxFuture<'_, ()> {
