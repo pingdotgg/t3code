@@ -70,7 +70,6 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
-import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -2861,36 +2860,6 @@ describe("ClaudeAdapterV2 native fork", () => {
   );
 });
 
-// After `parkAfter(n)`, yields the next fiber to pass n operations since it resumed and holds its continuation.
-const makeParkingScheduler = Effect.gen(function* () {
-  const base = yield* Scheduler.Scheduler;
-  const parked = yield* Queue.unbounded<() => void>();
-  let yieldAfter = -1;
-  let park = false;
-  const scheduler: Scheduler.Scheduler = {
-    executionMode: base.executionMode,
-    shouldYield: (fiber) => {
-      if (yieldAfter < 0 || fiber.currentOpCount <= yieldAfter) return base.shouldYield(fiber);
-      yieldAfter = -1;
-      park = true;
-      return true;
-    },
-    makeDispatcher: () => {
-      const dispatcher = base.makeDispatcher();
-      return {
-        scheduleTask: (task, priority) => {
-          if (!park) return dispatcher.scheduleTask(task, priority);
-          park = false;
-          Queue.offerUnsafe(parked, task);
-        },
-        flush: () => dispatcher.flush(),
-      };
-    },
-  };
-  const parkAfter = (ops: number) => void (yieldAfter = ops);
-  return { scheduler, parked, parkAfter };
-});
-
 function makeFakeClaudeCli(answerSetServers = true, onPrompt?: (content: unknown) => void) {
   const spawns: Array<SpawnOptions> = [];
   const controlRequests: Array<object> = [];
@@ -3002,46 +2971,6 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
       committed = false;
       yield* session.close;
     }),
-  );
-
-  it.effect(
-    "reports a prompt queued before Claude reads it, wherever its offer yields, never after close",
-    () =>
-      Effect.gen(function* () {
-        const prompts = yield* Queue.unbounded<unknown>();
-        const session = yield* openWith(
-          makeFakeClaudeCli(true, (content) => Queue.offerUnsafe(prompts, content)),
-        );
-        const { scheduler, parked, parkAfter } = yield* makeParkingScheduler;
-        // Park the offer at each yield point until it has reported; Claude reads prompts in queue
-        // order, so a probe offered meanwhile arrives first unless the prompt was already queued.
-        for (let step = 0, queued = false; !queued; step++) {
-          let reported = false;
-          parkAfter(step);
-          const offering = yield* session
-            .offer(ClaudeAdapterV2.makeClaudeUserMessage({ text: `Prompt ${step}.` }), () => {
-              reported = true;
-            })
-            .pipe(Effect.provideService(Scheduler.Scheduler, scheduler), Effect.forkChild);
-          const resume = yield* Queue.take(parked);
-          queued = reported;
-          yield* session.offer(ClaudeAdapterV2.makeClaudeUserMessage({ text: "Probe." }));
-          const read = (yield* Queue.take(prompts)) === `Prompt ${step}.`;
-          yield* Effect.sync(resume);
-          yield* Fiber.join(offering);
-          yield* Queue.take(prompts);
-          assert.equal(queued, read);
-        }
-        yield* session.close;
-        let reportedLate = false;
-        const late = yield* session
-          .offer(ClaudeAdapterV2.makeClaudeUserMessage({ text: "Too late." }), () => {
-            reportedLate = true;
-          })
-          .pipe(Effect.exit);
-        assert.isTrue(Exit.isFailure(late));
-        assert.isFalse(reportedLate);
-      }),
   );
 
   it.effect("sends MCP servers over stdin, not argv or the environment", () =>
@@ -3769,16 +3698,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       providerTurnOrdinal,
       ...extra,
     });
-  const turnRecords = (
-    events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
-    attempt?: string,
-  ) =>
-    events.flatMap((event) =>
-      event.type === "provider_turn.updated" &&
-      (attempt === undefined || event.providerTurn.runAttemptId === attempt)
-        ? [`${event.providerTurn.runAttemptId}:${event.providerTurn.status}`]
-        : [],
-    );
 
   it.effect.each([
     { name: "its record", recorded: "/repo/a", history: "/repo/h" },
@@ -3845,252 +3764,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
         Effect.provide(layerClaudeTestServices),
       ),
-    ),
-  );
-
-  it.effect.each([
-    "rejects",
-    "rejects after the query exits",
-    "returns as the turn completes",
-    "returns as the query exits",
-  ] as const)(
-    "records a turn only once Claude accepts its prompt, also when its offer %s",
-    (lateOffer) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const completes = lateOffer.startsWith("returns");
-          const exits = lateOffer.endsWith("exits");
-          const rejection = new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
-            method: "offer",
-            cause: "rejected offer",
-          });
-          const queued = yield* Deferred.make<void>();
-          const offerPending = yield* Deferred.make<void>();
-          const pendingOffer = yield* Deferred.make<void, typeof rejection>();
-          const offers: Array<ClaudeAdapterV2.ClaudeAgentSdkQuerySession["offer"]> = [
-            () => Effect.void,
-            () => Effect.fail(rejection),
-            (_, onQueued) =>
-              Effect.sync(() => onQueued?.()).pipe(
-                Effect.andThen(Deferred.succeed(queued, undefined)),
-                Effect.andThen(Effect.never),
-              ),
-            lateOffer === "rejects"
-              ? () => Effect.fail(rejection)
-              : (_, onQueued) =>
-                  Effect.sync(() => (completes ? onQueued?.() : undefined)).pipe(
-                    Effect.andThen(Deferred.succeed(offerPending, undefined)),
-                    Effect.andThen(Deferred.await(pendingOffer)),
-                  ),
-          ];
-          const harness = yield* makeWakeHarnessWithOptions({
-            offer: (message, onQueued) => offers.shift()!(message, onQueued),
-          });
-          const now = yield* DateTime.now;
-          const turnInput = (attempt: string, providerTurnOrdinal = 2) =>
-            wakeTurnInput(harness, now, attempt, providerTurnOrdinal);
-          const providerTurnId = (attempt: string) =>
-            harness.events.flatMap((event) =>
-              event.type === "provider_turn.updated" && event.providerTurn.runAttemptId === attempt
-                ? [event.providerTurn.id]
-                : [],
-            )[0];
-          const endedSubagentTurnId = () =>
-            harness.events.flatMap((event) =>
-              event.type === "node.updated" &&
-              event.node.kind === "subagent" &&
-              event.node.status === "failed"
-                ? [event.node.providerTurnId]
-                : [],
-            )[0];
-          // The SDK fiber this start forks yields often, so other fibers run while it settles a turn.
-          yield* harness.runtime
-            .startTurn(turnInput("attempt-claude-accepted", 1))
-            .pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 8));
-          yield* harness.offerAndWait(turnOneResult);
-
-          const rejected = yield* harness.runtime
-            .startTurn(turnInput("attempt-claude-rejected"))
-            .pipe(Effect.exit);
-          assert.isTrue(Exit.isFailure(rejected));
-          const retried = yield* harness.runtime
-            .startTurn(turnInput("attempt-claude-retried"))
-            .pipe(Effect.forkChild);
-          yield* Effect.raceFirst(Deferred.await(queued), Fiber.join(retried));
-          yield* Fiber.interrupt(retried);
-          yield* Queue.offer(
-            harness.sdkMessages,
-            makeSubagentTaskStartedFrame({
-              taskId: "audit-task",
-              toolUseId: "audit-tool",
-              uuid: "00000000-0000-4000-8000-000000000392",
-            }),
-          );
-          yield* harness.offerAndWait(
-            makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000391", result: "Retried." }),
-          );
-
-          const pending = yield* harness.runtime
-            .startTurn(turnInput("attempt-claude-pending", 3))
-            .pipe(Effect.exit, Effect.forkChild);
-          if (lateOffer === "rejects") {
-            assert.isTrue(Exit.isFailure(yield* Fiber.join(pending)));
-            yield* Queue.shutdown(harness.sdkMessages);
-          } else {
-            yield* Deferred.await(offerPending);
-            yield* !exits
-              ? Queue.offer(
-                  harness.sdkMessages,
-                  makeResultFrame({
-                    uuid: "00000000-0000-4000-8000-000000000393",
-                    result: "Done.",
-                  }),
-                )
-              : Queue.shutdown(harness.sdkMessages);
-            yield* completes
-              ? harness.until(() => providerTurnId("attempt-claude-pending") !== undefined)
-              : harness.awaitTerminal(3);
-            yield* Deferred.done(pendingOffer, completes ? Exit.void : Exit.fail(rejection));
-            assert.equal(Exit.isSuccess(yield* Fiber.join(pending)), completes);
-            if (!exits) yield* Queue.shutdown(harness.sdkMessages);
-          }
-          yield* harness.until(() => endedSubagentTurnId() !== undefined);
-          assert.equal(
-            endedSubagentTurnId(),
-            providerTurnId(completes ? "attempt-claude-pending" : "attempt-claude-retried"),
-          );
-          assert.deepEqual(turnRecords(harness.events), [
-            "attempt-claude-accepted:running",
-            "attempt-claude-accepted:completed",
-            "attempt-claude-retried:running",
-            "attempt-claude-retried:completed",
-            ...(completes ? [`attempt-claude-pending:${exits ? "failed" : "completed"}`] : []),
-          ]);
-        }).pipe(Effect.provide(layerClaudeTestServices)),
-      ),
-  );
-
-  it.effect(
-    "keeps a query exit's failed record last wherever the running record's publisher yields",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          let offerPending = yield* Deferred.make<void>();
-          let pendingOffer = yield* Deferred.make<void>();
-          let lateOffer = true;
-          const harness = yield* makeWakeHarnessWithOptions({
-            freshQueueOnReopen: true,
-            offer: (_, onQueued) =>
-              lateOffer
-                ? Effect.sync(() => onQueued?.()).pipe(
-                    Effect.andThen(Deferred.succeed(offerPending, undefined)),
-                    Effect.andThen(Deferred.await(pendingOffer)),
-                  )
-                : Effect.void,
-          });
-          const { scheduler, parked, parkAfter } = yield* makeParkingScheduler;
-          const now = yield* DateTime.now;
-          const turnInput = (attempt: string, providerTurnOrdinal: number) =>
-            wakeTurnInput(harness, now, attempt, providerTurnOrdinal);
-          const records = (attempt?: string) => turnRecords(harness.events, attempt);
-          const expected: Array<string> = [];
-          // Sweep every yield point after the offer returns until the record precedes the exit.
-          let step = 0;
-          for (; ; step++) {
-            const attempt = `attempt-claude-${step}`;
-            const pending = yield* harness.runtime
-              .startTurn(turnInput(attempt, step + 1))
-              .pipe(
-                Effect.provideService(Scheduler.Scheduler, scheduler),
-                Effect.exit,
-                Effect.forkChild,
-              );
-            yield* Deferred.await(offerPending);
-            parkAfter(step);
-            yield* Deferred.succeed(pendingOffer, undefined);
-            const resume = yield* Queue.take(parked);
-            yield* Queue.shutdown(harness.processQueues.at(-1)!);
-            yield* harness.awaitTerminal(step + 1);
-            const beforeResume = records(attempt);
-            expected.push(...beforeResume);
-            yield* Effect.sync(resume);
-            assert.isTrue(Exit.isSuccess(yield* Fiber.join(pending)));
-            offerPending = yield* Deferred.make<void>();
-            pendingOffer = yield* Deferred.make<void>();
-            if (beforeResume.includes(`${attempt}:running`)) break;
-          }
-          lateOffer = false;
-          yield* harness.runtime.startTurn(turnInput("attempt-claude-reopened", step + 2));
-          yield* harness.until(() => records("attempt-claude-reopened").length > 0);
-          assert.deepEqual(records(), [...expected, "attempt-claude-reopened:running"]);
-        }).pipe(Effect.provide(layerClaudeTestServices)),
-      ),
-  );
-
-  it.effect("fails a prompt whose query exited before it attached, and lets the retry reopen", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const checkoutLookup = yield* Deferred.make<void>();
-        const releaseLookup = yield* Deferred.make<void>();
-        let gateCheckoutLookup = false;
-        const harness = yield* makeWakeHarnessWithOptions({
-          freshQueueOnReopen: true,
-          applyFlagSettings: () =>
-            Effect.sync(() => {
-              gateCheckoutLookup = true;
-            }),
-        }).pipe(
-          Effect.provideService(FileSystem.FileSystem, {
-            ...fileSystem,
-            exists: (file) =>
-              gateCheckoutLookup && file.endsWith(".git")
-                ? Deferred.succeed(checkoutLookup, undefined).pipe(
-                    Effect.andThen(Deferred.await(releaseLookup)),
-                    Effect.andThen(fileSystem.exists(file)),
-                  )
-                : fileSystem.exists(file),
-          }),
-        );
-        const now = yield* DateTime.now;
-        const turnInput = (attempt: string, providerTurnOrdinal: number, effort = "medium") =>
-          wakeTurnInput(harness, now, attempt, providerTurnOrdinal, {
-            modelSelection: {
-              ...CLAUDE_TEST_MODEL_SELECTION,
-              options: [{ id: "effort", value: effort }],
-            },
-          });
-        yield* harness.runtime.startTurn(turnInput("attempt-claude-accepted", 1));
-        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
-        yield* Queue.offer(harness.sdkMessages, turnOneResult);
-        yield* harness.awaitTerminal(1);
-
-        const dead = yield* harness.runtime
-          .startTurn(turnInput("attempt-claude-dead", 2, "low"))
-          .pipe(Effect.exit, Effect.forkChild);
-        yield* Deferred.await(checkoutLookup);
-        const rosterUpdates = () =>
-          harness.events.filter((event) => event.type === "provider_thread.updated").length;
-        const before = rosterUpdates();
-        yield* Queue.shutdown(harness.sdkMessages);
-        yield* harness.until(() => rosterUpdates() > before);
-        gateCheckoutLookup = false;
-        yield* Deferred.succeed(releaseLookup, undefined);
-        assert.isTrue(Exit.isFailure(yield* Fiber.join(dead)));
-
-        yield* harness.runtime.startTurn(turnInput("attempt-claude-reopened", 2));
-        yield* Queue.offer(
-          harness.processQueues.at(-1)!,
-          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000394", result: "Reopened." }),
-        );
-        yield* harness.awaitTerminal(2);
-        assert.deepEqual(turnRecords(harness.events), [
-          "attempt-claude-accepted:running",
-          "attempt-claude-accepted:completed",
-          "attempt-claude-reopened:running",
-          "attempt-claude-reopened:completed",
-        ]);
-      }).pipe(Effect.provide(layerClaudeTestServices)),
     ),
   );
 
@@ -14977,6 +14650,58 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.lengthOf(
         harness.continuationRequests,
         cause === "a late cleanup after a newer continuation drained" ? 3 : 2,
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerClaudeTestServices)),
+  );
+
+  it.effect("drops a wake's output when its continuation is cancelled before the drain", () =>
+    Effect.gen(function* () {
+      let holdCatalog = false;
+      const loading = yield* Deferred.make<void>();
+      const harness = yield* makeWakeHarnessWithOptions({
+        modelCatalog: Effect.suspend(() =>
+          holdCatalog
+            ? Deferred.succeed(loading, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
+        ),
+      });
+      const now = yield* DateTime.now;
+      const continuation = (attempt: string, ordinal: number) =>
+        wakeTurnInput(harness, now, attempt, ordinal, {
+          text: "Background task completed.",
+          messageCreatedBy: "agent",
+          messageCreationSource: "provider",
+        });
+
+      yield* harness.runtime.startTurn(
+        wakeTurnInput(harness, now, "attempt-cancelled-continuation-1", 1, {
+          text: "Run the build in the background.",
+        }),
+      );
+      yield* harness.offerAndWait(wakeTaskStarted);
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      for (const frame of [wakeNotification, wakeTurnInit, wakeAssistant, wakeResult]) {
+        yield* harness.offerAndWait(frame);
+      }
+      const request = harness.continuationRequests[0]!;
+
+      holdCatalog = true;
+      const cancelled = yield* Effect.forkScoped(
+        harness.runtime.startTurn(continuation("attempt-cancelled-continuation-2", 2)),
+      );
+      yield* Deferred.await(loading);
+      yield* Fiber.interrupt(cancelled);
+      holdCatalog = false;
+      // The run watcher reports the cancelled run after the turn start has already cleaned up.
+      yield* request.onRunEndedWithoutStarting!();
+
+      yield* harness.runtime.startTurn(continuation("attempt-cancelled-continuation-3", 3));
+      yield* harness.awaitTerminal(2);
+      assert.isFalse(
+        harness.events.some(
+          (event) => event.type === "message.updated" && event.message.text === WAKE_ASSISTANT_TEXT,
+        ),
       );
     }).pipe(Effect.scoped, Effect.provide(layerClaudeTestServices)),
   );
