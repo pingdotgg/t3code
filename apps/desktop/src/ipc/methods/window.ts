@@ -48,6 +48,7 @@ import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   extractDistroFromUncPath,
+  isWindowsDrivePath,
   resolveWslPickFolderDefaultPath,
   wslUncPathToLinuxPath,
 } from "../../wsl/wslPathParsing.ts";
@@ -257,15 +258,30 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
           ),
         )
       : environment.resolvePickFolderDefaultPath(options);
-    const selectedPath = yield* dialog.pickFolder({
-      owner: yield* electronWindow.focusedMainOrFirst,
-      defaultPath,
-    });
+    const owner = yield* electronWindow.focusedMainOrFirst;
+    const selectedPath = yield* dialog.pickFolder({ owner, defaultPath });
     if (Option.isNone(selectedPath)) {
       return null;
     }
     if (!useWsl) {
       return selectedPath.value;
+    }
+    if (isWindowsDrivePath(selectedPath.value)) {
+      const { response } = yield* dialog.showMessageBox(
+        {
+          type: "warning",
+          buttons: ["Use Folder", "Cancel"],
+          defaultId: 1,
+          cancelId: 1,
+          message: "This folder is on a Windows drive",
+          detail:
+            "WSL reaches Windows drives through a slow file share, so git and file operations there can be 100 to 350 times slower than inside the distro. For a fast project, clone it into your WSL home folder instead.",
+        },
+        Option.getOrUndefined(owner),
+      );
+      if (response !== 0) {
+        return null;
+      }
     }
     const converted = yield* windowsPathToWsl(wslDistro, selectedPath.value);
     return Option.getOrElse(converted, () => selectedPath.value);

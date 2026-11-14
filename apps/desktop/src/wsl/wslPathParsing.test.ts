@@ -3,6 +3,7 @@ import { describe, it, expect } from "vite-plus/test";
 import {
   extractDistroFromUncPath,
   isValidDistroName,
+  isWindowsDrivePath,
   parseWslDistroList,
   resolveWslPickFolderDefaultPath,
   wslUncPathToLinuxPath,
@@ -62,6 +63,17 @@ describe("extractDistroFromUncPath", () => {
     expect(extractDistroFromUncPath("\\\\wsl.localhost\\Ubuntu-22.04\\home\\josh")).toBe(
       "Ubuntu-22.04",
     );
+  });
+});
+
+describe("isWindowsDrivePath", () => {
+  it("matches drive-letter paths only", () => {
+    expect(isWindowsDrivePath("C:\\src\\t3code")).toBe(true);
+    expect(isWindowsDrivePath("d:/repo")).toBe(true);
+    expect(isWindowsDrivePath("E:")).toBe(true);
+    expect(isWindowsDrivePath("\\\\wsl.localhost\\Ubuntu\\home\\me")).toBe(false);
+    expect(isWindowsDrivePath("\\\\server\\share\\repo")).toBe(false);
+    expect(isWindowsDrivePath("/home/me/repo")).toBe(false);
   });
 });
 

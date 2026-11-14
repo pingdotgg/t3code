@@ -24,6 +24,7 @@ import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfig
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
@@ -33,6 +34,7 @@ import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   getLocalEnvironmentBootstraps,
   installRelayTelemetryEnabled,
+  pickFolder,
   pickProjectFavicon,
   probeRemoteEditors,
   readMedia,
@@ -225,6 +227,51 @@ describe("toLocalBackendPath", () => {
         ),
       ),
     ),
+  );
+});
+
+describe("pickFolder", () => {
+  it.effect("warns before a WSL environment uses a folder on a Windows drive", () =>
+    Effect.gen(function* () {
+      const warnings: string[] = [];
+      const pick = (folder: string, response: number) =>
+        pickFolder.handler({ targetEnvironmentId: "wsl:Ubuntu" }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              DesktopAppSettings.layerTest(),
+              Layer.succeed(
+                DesktopEnvironment.DesktopEnvironment,
+                DesktopEnvironment.DesktopEnvironment.of(
+                  {} as DesktopEnvironment.DesktopEnvironment["Service"],
+                ),
+              ),
+              Layer.mock(ElectronWindow.ElectronWindow)({
+                focusedMainOrFirst: Effect.succeedNone,
+              }),
+              Layer.mock(ElectronDialog.ElectronDialog)({
+                pickFolder: () => Effect.succeedSome(folder),
+                showMessageBox: (options) => {
+                  warnings.push(options.message);
+                  return Effect.succeed({ response, checkboxChecked: false });
+                },
+              }),
+              DesktopWslEnvironment.layerTest({
+                windowsToWslPath: (_, windowsPath) =>
+                  Option.some(`/mnt/c/${windowsPath.slice(3).replaceAll("\\", "/")}`),
+              }),
+            ),
+          ),
+        );
+
+      assert.strictEqual(yield* pick("C:\\src\\repo", 1), null);
+      assert.strictEqual(yield* pick("C:\\src\\repo", 0), "/mnt/c/src/repo");
+      assert.strictEqual(warnings.length, 2);
+      assert.strictEqual(
+        yield* pick("\\\\wsl.localhost\\Ubuntu\\home\\me\\repo", 1),
+        "/home/me/repo",
+      );
+      assert.strictEqual(warnings.length, 2);
+    }),
   );
 });
 

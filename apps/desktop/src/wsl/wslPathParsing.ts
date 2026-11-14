@@ -59,6 +59,11 @@ export function wslUncPathToLinuxPath(windowsPath: string): string | null {
   return `/${rest.split("\\").filter(Boolean).join("/")}`;
 }
 
+// WSL reaches drive-letter paths through its 9p mount, where every stat crosses the VM boundary.
+export function isWindowsDrivePath(windowsPath: string): boolean {
+  return /^[A-Za-z]:(?:[\\/]|$)/.test(windowsPath.trim());
+}
+
 function resolveWslHomeUncPath(config: WslConfig, distros: readonly WslDistro[]): string | null {
   const distroName = config.distro ?? distros.find((distro) => distro.isDefault)?.name ?? null;
   return distroName ? `\\\\wsl.localhost\\${distroName}\\home` : null;
