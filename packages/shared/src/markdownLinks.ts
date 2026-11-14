@@ -421,28 +421,54 @@ const INLINE_CODE = /(`+)[^`]*?\1/g;
 
 const isBlank = (char: string | undefined) => char === " " || char === "\t";
 
-// End of the path in `C:\Jo Doe\a.png "Title")`, or -1 when no `)` closes it. Parentheses
-// inside the path must balance.
-function filesystemDestinationEnd(text: string, start: number): number {
-  const limit = Math.min(text.length, start + MAX_FILESYSTEM_DESTINATION_LENGTH);
+// Index past a title opening at `open` and the blanks after it, or -1 when it does not close.
+function titleEnd(text: string, open: number, limit: number): number {
+  const closer = text[open] === "(" ? ")" : text[open];
+  if (closer !== '"' && closer !== "'" && closer !== ")") return -1;
+  let index = open + 1;
+  while (index < limit && text[index] !== closer) index += text[index] === "\\" ? 2 : 1;
+  if (index >= limit) return -1;
+  index += 1;
+  while (isBlank(text[index])) index += 1;
+  return index;
+}
+
+// Whether CommonMark already reads a link here, as in `C:/a.png "x ) y")` or `C:/a.png (Title))`.
+function parsesAsLink(text: string, start: number, limit: number): boolean {
+  let index = start;
   let depth = 0;
-  let close = -1;
-  for (let index = start; index < limit && close === -1; index += 1) {
-    if (text[index] === "(") depth += 1;
-    else if (text[index] === ")" && depth-- === 0) close = index;
+  while (index < limit && !isBlank(text[index])) {
+    if (text[index] === "\\") index += 1;
+    else if (text[index] === "(") depth += 1;
+    else if (text[index] === ")" && depth-- === 0) return true;
+    index += 1;
   }
-  if (close === -1) return -1;
-  let end = close;
-  while (isBlank(text[end - 1])) end -= 1;
-  const quote = text[end - 1];
-  if (quote === '"' || quote === "'") {
-    const titleStart = text.lastIndexOf(quote, end - 2);
-    if (titleStart > start && isBlank(text[titleStart - 1])) {
-      end = titleStart;
-      while (isBlank(text[end - 1])) end -= 1;
+  if (depth !== 0) return false;
+  while (isBlank(text[index])) index += 1;
+  if (text[index] === ")") return true;
+  const end = titleEnd(text, index, limit);
+  return end !== -1 && text[end] === ")";
+}
+
+// End of the path in `C:\Jo Doe\a.png "Title")`, or -1 when no `)` closes it. Parentheses
+// inside the path must balance; a parenthesized title would read as part of it.
+function filesystemDestinationEnd(text: string, start: number, limit: number): number {
+  let depth = 0;
+  for (let index = start; index < limit; index += 1) {
+    const char = text[index];
+    let close = -1;
+    if (char === "(") depth += 1;
+    else if (char === ")" && depth-- === 0) close = index;
+    else if (depth === 0 && isBlank(char) && (text[index + 1] === '"' || text[index + 1] === "'")) {
+      const end = titleEnd(text, index + 1, limit);
+      if (end !== -1 && text[end] === ")") close = index + 1;
+    }
+    if (close !== -1) {
+      while (isBlank(text[close - 1])) close -= 1;
+      return close;
     }
   }
-  return end;
+  return -1;
 }
 
 type DestinationRewrite = (destination: string) => string;
@@ -452,8 +478,9 @@ function rewriteInSegment(segment: string, rewrite: DestinationRewrite): string 
   let cursor = 0;
   for (const match of segment.matchAll(FILESYSTEM_DESTINATION_START)) {
     const start = match.index + match[0].length;
-    if (start < cursor) continue;
-    const end = filesystemDestinationEnd(segment, start);
+    const limit = Math.min(segment.length, start + MAX_FILESYSTEM_DESTINATION_LENGTH);
+    if (start < cursor || parsesAsLink(segment, start, limit)) continue;
+    const end = filesystemDestinationEnd(segment, start, limit);
     if (end === -1) continue;
     const destination = segment.slice(start, end);
     if (!destination.includes(" ")) continue;

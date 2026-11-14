@@ -595,6 +595,9 @@ it("reads Windows drive path destinations that contain spaces", () => {
   expect(render("![shot](/mnt/c/Users/Jo Doe/shot.png)")).toBe(
     "<img /mnt/c/Users/Jo Doe/shot.png>",
   );
+  expect(
+    render('[a](C:/a.png "x ) y") [b](C:/a.png (Some title)) [c](C:\\Jo Doe\\c.png "x ) y")'),
+  ).toBe(String.raw`<a file:///C:/a.png> <a file:///C:/a.png> <a file:///C:/Jo Doe/c.png>`);
   expect(render(String.raw`[balance.html](C:\Program Files (x86)\a b\balance.html "Run")`)).toBe(
     "<a file:///C:/Program Files (x86)/a b/balance.html>",
   );

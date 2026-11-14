@@ -159,12 +159,14 @@ describe("extractMarkdownLinkHrefs", () => {
     ["[a](<foo)bar> invalid [b](ok)", ["<foo", "ok"]],
     ["[[[nested](src/main.ts) [unfinished", ["src/main.ts"]],
     [
-      String.raw`[a](C:\Users\Jo Doe\.t3\a.png) [b](C:\Jo Doe\b.html "B") [c](C:\Jo Doe\c.html 'C') [d](/mnt/c/Jo Doe/d.md)`,
+      String.raw`[a](C:\Users\Jo Doe\.t3\a.png) [b](C:\Jo Doe\b.html "B") [c](C:\Jo Doe\c.html 'C') [d](/mnt/c/Jo Doe/d.md) [e](C:/a.png "x ) y") [g](C:\Jo Doe\g.png "x ) y")`,
       [
         String.raw`C:\Users\Jo Doe\.t3\a.png`,
         String.raw`C:\Jo Doe\b.html`,
         String.raw`C:\Jo Doe\c.html`,
         "/mnt/c/Jo Doe/d.md",
+        "C:/a.png",
+        String.raw`C:\Jo Doe\g.png`,
       ],
     ],
     [`See ${serializeComposerFileLink("pages/posts/[id].tsx")} now`, ["pages/posts/%5Bid%5D.tsx"]],
