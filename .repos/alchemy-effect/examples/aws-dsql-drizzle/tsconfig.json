@@ -9,5 +9,9 @@
     "customConditions": ["bun"],
     "target": "ESNext"
   },
-  "references": [{ "path": "../../packages/alchemy/tsconfig.json" }]
+  "references": [
+    { "path": "../../packages/alchemy/tsconfig.json" },
+    { "path": "../../packages/aws/tsconfig.json" },
+    { "path": "../../packages/drizzle/tsconfig.json" }
+  ]
 }
